@@ -171,7 +171,29 @@ def handle_retrieve(args: argparse.Namespace) -> int:
 
     if results and not args.no_cache:
         set_cached_chain(args.query, args.dbs, results)
-    print(json.dumps(results))
+    if args.json:
+        print(json.dumps(results))
+    else:
+        if not results:
+            print("No results")
+        else:
+            headers = ["origin_db", "record_id", "score", "snippet"]
+            origin_w = max(
+                [len(headers[0])] + [len(str(r["origin_db"])) for r in results]
+            )
+            record_w = max(
+                [len(headers[1])] + [len(str(r["record_id"])) for r in results]
+            )
+            score_values = [f"{r['score']:.4f}" for r in results]
+            score_w = max([len(headers[2])] + [len(s) for s in score_values])
+            header_line = f"{headers[0]:<{origin_w}}  {headers[1]:<{record_w}}  {headers[2]:>{score_w}}  {headers[3]}"
+            print(header_line)
+            for r in results:
+                snippet = str(r["snippet"]).replace("\n", " ")
+                if len(snippet) > 80:
+                    snippet = snippet[:77] + "..."
+                line = f"{r['origin_db']:<{origin_w}}  {str(r['record_id']):<{record_w}}  {r['score']:{score_w}.4f}  {snippet}"
+                print(line)
     return 0
 
 
@@ -240,11 +262,15 @@ def main(argv: list[str] | None = None) -> int:
     grp.add_argument("--vector", help="Vector identifier")
     grp.add_argument("--license", help="License filter")
 
-    p_retrieve = sub.add_parser("retrieve", help="Semantic code retrieval")
+    p_retrieve = sub.add_parser(
+        "retrieve", help="Semantic code retrieval (text table by default)"
+    )
     p_retrieve.add_argument("query")
     p_retrieve.add_argument("--db", action="append", dest="dbs")
     p_retrieve.add_argument("--top-k", type=int, dest="top_k", default=5)
-    p_retrieve.add_argument("--json", action="store_true", help="Output JSON results")
+    p_retrieve.add_argument(
+        "--json", action="store_true", help="Output JSON results instead of text"
+    )
     p_retrieve.add_argument("--no-cache", action="store_true", help="Bypass retrieval cache")
     p_retrieve.add_argument(
         "--rebuild-cache", action="store_true", help="Force recomputation of cache"
