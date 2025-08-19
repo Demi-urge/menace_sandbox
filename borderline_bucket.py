@@ -36,6 +36,8 @@ class BorderlineBucket:
                     self.candidates[wid]["status"] = "promoted"
                 elif action == "terminate" and wid in self.candidates:
                     self.candidates[wid]["status"] = "terminated"
+                elif action == "purge" and wid in self.candidates:
+                    del self.candidates[wid]
 
     def _append_event(self, data: Dict[str, Any]) -> None:
         with open(self.path, "a", encoding="utf-8") as f:
@@ -80,3 +82,20 @@ class BorderlineBucket:
             raise KeyError(f"Unknown workflow_id {workflow_id}")
         self.candidates[workflow_id]["status"] = "terminated"
         self._append_event({"action": "terminate", "workflow_id": workflow_id})
+
+    def get_candidate(self, workflow_id: str) -> Dict[str, Any] | None:
+        """Return stored info for ``workflow_id`` if present."""
+        return self.candidates.get(workflow_id)
+
+    def all_candidates(self, status: str | None = None) -> Dict[str, Dict[str, Any]]:
+        """Return all candidates, optionally filtered by ``status``."""
+        if status is None:
+            return dict(self.candidates)
+        return {k: v for k, v in self.candidates.items() if v.get("status") == status}
+
+    def purge(self, workflow_id: str) -> None:
+        """Remove ``workflow_id`` from the bucket and record the purge."""
+        if workflow_id not in self.candidates:
+            return
+        del self.candidates[workflow_id]
+        self._append_event({"action": "purge", "workflow_id": workflow_id})

@@ -38,6 +38,7 @@ from .config_loader import (
     get_impact_severity,
     impact_severity_map as load_impact_severity_map,
 )
+from .borderline_bucket import BorderlineBucket
 from .truth_adapter import TruthAdapter
 try:  # pragma: no cover - optional dependency
     from . import self_test_service as _sts
@@ -177,6 +178,8 @@ class ROITracker:
         calibrate: bool | None = None,
         workflow_window: int = 20,
         confidence_threshold: float = 0.5,
+        borderline_threshold: float = 0.0,
+        borderline_bucket: BorderlineBucket | None = None,
     ) -> None:
         """Create a tracker for monitoring ROI deltas.
 
@@ -203,6 +206,11 @@ class ROITracker:
             Size of the rolling window for per-workflow error metrics.
         confidence_threshold:
             Minimum confidence required to avoid flagging a workflow for review.
+        borderline_threshold:
+            RAROI value below which a workflow is considered borderline.
+        borderline_bucket:
+            Optional :class:`BorderlineBucket` instance for tracking borderline
+            workflows. A default instance is created when omitted.
         """
         self.roi_history: List[float] = []
         self.raroi_history: List[float] = []
@@ -216,6 +224,8 @@ class ROITracker:
         self.entropy_delta_history: List[float] = []
         self.needs_review: set[str] = set()
         self.confidence_threshold = float(confidence_threshold)
+        self.borderline_threshold = float(borderline_threshold)
+        self.borderline_bucket = borderline_bucket or BorderlineBucket()
         self.window = window
         self.tolerance = tolerance
         self.entropy_threshold = (
@@ -1289,6 +1299,13 @@ class ROITracker:
         self.final_roi_history.setdefault(wf, []).append(final_score)
         threshold = self.confidence_threshold if tau is None else float(tau)
         needs_review = conf < threshold
+        borderline = raroi < self.borderline_threshold or conf < threshold
+        if borderline:
+            try:
+                if self.borderline_bucket.get_candidate(wf) is None:
+                    self.borderline_bucket.add_candidate(wf, float(raroi), conf)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to add borderline workflow")
         if needs_review:
             self.needs_review.add(wf)
             if _enqueue_for_review is not None:
