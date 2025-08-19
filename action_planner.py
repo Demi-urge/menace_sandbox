@@ -551,7 +551,10 @@ class ActionPlanner:
                 pred_roi = float(pred_cal[0])
                 actual_raroi = float(act_cal[0])
                 self.roi_tracker.record_roi_prediction(
-                    [pred_roi], [actual_raroi], predicted_class=cat
+                    [pred_roi],
+                    [actual_raroi],
+                    predicted_class=cat,
+                    workflow_id=str(top_action),
                 )
                 logger.info(
                     "action prediction",

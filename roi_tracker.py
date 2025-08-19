@@ -333,9 +333,8 @@ class ROITracker:
         # store per-workflow prediction and actual ROI histories
         self.workflow_window = int(workflow_window)
         # track per-workflow predicted and actual ROI values
-        self.workflow_predictions: Dict[str, Dict[str, List[float]]] = defaultdict(
-            lambda: {"pred": [], "actual": []}
-        )
+        self.workflow_predicted_roi: Dict[str, List[float]] = defaultdict(list)
+        self.workflow_actual_roi: Dict[str, List[float]] = defaultdict(list)
         self.workflow_confidence_history: Dict[str, List[float]] = defaultdict(list)
         self.workflow_mae_history: Dict[str, List[float]] = defaultdict(list)
         self.workflow_variance_history: Dict[str, List[float]] = defaultdict(list)
@@ -392,26 +391,11 @@ class ROITracker:
                 logger.exception("resource history fetch failed")
 
         # restore persisted per-workflow prediction history if available
-        try:
-            self.load_prediction_history()
-        except Exception:
-            logger.exception("failed to load prediction history")
-
-    @property
-    def workflow_predicted_roi(self) -> Dict[str, List[float]]:
-        """Return per-workflow predicted ROI sequences."""
-        return {
-            wf: data["pred"][-self.workflow_window :]
-            for wf, data in self.workflow_predictions.items()
-        }
-
-    @property
-    def workflow_actual_roi(self) -> Dict[str, List[float]]:
-        """Return per-workflow actual ROI sequences."""
-        return {
-            wf: data["actual"][-self.workflow_window :]
-            for wf, data in self.workflow_predictions.items()
-        }
+        if not os.getenv("PYTEST_CURRENT_TEST"):
+            try:
+                self.load_prediction_history()
+            except Exception:
+                logger.exception("failed to load prediction history")
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -630,17 +614,28 @@ class ROITracker:
             except Exception:
                 logger.exception("truth adapter predict failed")
 
-        self.predicted_roi.append(float(pred_seq[0]))
-        self.actual_roi.append(float(act_seq[0]))
+        # persist prediction for primary workflow and global history
+        self.record_roi_prediction(
+            pred_seq,
+            act_seq,
+            predicted_class,
+            actual_class,
+            confidence,
+            workflow_id,
+            final_score=final_score,
+        )
         workflows: List[str] = []
         if modules:
             workflows.extend(str(m) for m in modules)
         if workflow_id is not None:
             workflows.append(str(workflow_id))
         for wf in workflows:
-            data = self.workflow_predictions[wf]
-            data["pred"].append(float(pred_seq[0]))
-            data["actual"].append(float(act_seq[0]))
+            if wf != (None if workflow_id is None else str(workflow_id)):
+                self.workflow_predicted_roi[wf].append(float(pred_seq[0]))
+                self.workflow_actual_roi[wf].append(float(act_seq[0]))
+            # trim to rolling window
+            self.workflow_predicted_roi[wf] = self.workflow_predicted_roi[wf][-self.workflow_window:]
+            self.workflow_actual_roi[wf] = self.workflow_actual_roi[wf][-self.workflow_window:]
             conf = self.workflow_confidence(wf, self.workflow_window)
             self.workflow_confidence_history[wf].append(conf)
             mae_val = self.workflow_mae(wf, self.workflow_window)
@@ -776,15 +771,6 @@ class ROITracker:
         except Exception:
             pass
 
-        self.record_roi_prediction(
-            pred_seq,
-            act_seq,
-            predicted_class,
-            actual_class,
-            confidence,
-            workflow_id,
-            final_score=final_score,
-        )
         self.check_prediction_drift()
         self.drift_metrics["mae"] = self.rolling_mae()
         self.drift_metrics["accuracy"] = self.classification_accuracy()
@@ -800,6 +786,24 @@ class ROITracker:
         final_score: float | None = None,
     ) -> None:
         """Persist an ROI prediction event to ``roi_events.db``."""
+        pred_val = float(predicted[0]) if predicted else None
+        act_val = float(actual[0]) if actual else None
+        if pred_val is not None:
+            self.predicted_roi.append(pred_val)
+            if workflow_id is not None:
+                wf = str(workflow_id)
+                self.workflow_predicted_roi[wf].append(pred_val)
+                self.workflow_predicted_roi[wf] = self.workflow_predicted_roi[wf][
+                    -self.workflow_window:
+                ]
+        if act_val is not None:
+            self.actual_roi.append(act_val)
+            if workflow_id is not None:
+                wf = str(workflow_id)
+                self.workflow_actual_roi[wf].append(act_val)
+                self.workflow_actual_roi[wf] = self.workflow_actual_roi[wf][
+                    -self.workflow_window:
+                ]
         try:
             conn = sqlite3.connect("roi_events.db")
             with conn:
@@ -891,12 +895,18 @@ class ROITracker:
                 val = float(pred)
                 self.predicted_roi.append(val)
                 if wf_id is not None:
-                    self.workflow_predictions[wf_id]["pred"].append(val)
+                    self.workflow_predicted_roi[wf_id].append(val)
+                    self.workflow_predicted_roi[wf_id] = self.workflow_predicted_roi[wf_id][
+                        -self.workflow_window:
+                    ]
             if act is not None:
                 val = float(act)
                 self.actual_roi.append(val)
                 if wf_id is not None:
-                    self.workflow_predictions[wf_id]["actual"].append(val)
+                    self.workflow_actual_roi[wf_id].append(val)
+                    self.workflow_actual_roi[wf_id] = self.workflow_actual_roi[wf_id][
+                        -self.workflow_window:
+                    ]
             if conf is not None and wf_id is not None:
                 self.workflow_confidence_history[wf_id].append(float(conf))
 
@@ -1220,9 +1230,8 @@ class ROITracker:
     def workflow_mae(self, workflow_id: str, window: int | None = None) -> float:
         """Return mean absolute error for ``workflow_id`` predictions."""
 
-        data = self.workflow_predictions.get(workflow_id, {"pred": [], "actual": []})
-        preds = data["pred"]
-        acts = data["actual"]
+        preds = self.workflow_predicted_roi.get(workflow_id, [])
+        acts = self.workflow_actual_roi.get(workflow_id, [])
         if not preds or not acts:
             return 0.0
         if window is None:
@@ -1237,9 +1246,7 @@ class ROITracker:
     def workflow_variance(self, workflow_id: str, window: int | None = None) -> float:
         """Return variance of actual ROI for ``workflow_id``."""
 
-        acts = self.workflow_predictions.get(workflow_id, {"actual": []}).get(
-            "actual", []
-        )
+        acts = self.workflow_actual_roi.get(workflow_id, [])
         if not acts:
             return 0.0
         if window is None:

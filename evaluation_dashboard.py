@@ -121,7 +121,7 @@ class EvaluationDashboard:
         wf_conf = summary.get("workflow_confidence", {})
         wf_mae = summary.get("workflow_mae", {})
         wf_var = summary.get("workflow_variance", {})
-        for wf in tracker.workflow_predictions:
+        for wf in tracker.workflow_predicted_roi:
             wid = str(wf)
             workflows[wid] = {
                 "confidence": wf_conf.get(wid, []),
@@ -196,7 +196,7 @@ class EvaluationDashboard:
         wf_mae = summary.get("workflow_mae", {})
         wf_var = summary.get("workflow_variance", {})
         workflows: Dict[str, Any] = {}
-        for wf in tracker.workflow_predictions:
+        for wf in tracker.workflow_predicted_roi:
             wid = str(wf)
             workflows[wid] = {
                 "confidence": wf_conf.get(wid, []),
