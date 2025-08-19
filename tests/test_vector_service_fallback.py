@@ -26,7 +26,7 @@ def _stub_code_db(monkeypatch: pytest.MonkeyPatch, snippet: str) -> None:
 def test_fallback_fts(monkeypatch):
     snippet = "def foo():\n    return 'bar'"
     _stub_code_db(monkeypatch, snippet)
-    retriever = Retriever(retriever=_DummyUR())
+    retriever = Retriever(retriever=_DummyUR(), use_fts_fallback=False)
     res = retriever.search("query")
     assert isinstance(res, FallbackResult)
     assert len(res) == 1
@@ -41,7 +41,7 @@ def test_fallback_fts(monkeypatch):
 def test_fallback_fts_async(monkeypatch):
     snippet = "def async_foo():\n    return 1"
     _stub_code_db(monkeypatch, snippet)
-    retriever = Retriever(retriever=_DummyUR())
+    retriever = Retriever(retriever=_DummyUR(), use_fts_fallback=False)
     res = asyncio.run(retriever.search_async("query"))
     assert isinstance(res, FallbackResult)
     assert len(res) == 1
