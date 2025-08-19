@@ -144,7 +144,7 @@ class MetricsDashboard:
                 except Exception:
                     metrics["relevancy_flagged_modules_impact_total"] = {}
 
-            for name in ("confidence", "workflow_mae", "workflow_variance"):
+            for name in ("workflow_confidence", "workflow_mae", "workflow_variance"):
                 gauge = getattr(exporter, name, None)
                 if gauge is not None:
                     try:
@@ -291,9 +291,19 @@ class MetricsDashboard:
             "actual": tracker.actual_roi,
             "category_counts": tracker.category_summary(),
         }
-        data["workflow_mae"] = {k: v for k, v in tracker.workflow_mae_history.items()}
-        data["workflow_variance"] = {k: v for k, v in tracker.workflow_variance_history.items()}
-        data["workflow_confidence"] = {k: v for k, v in tracker.workflow_confidence_history.items()}
+        data["workflow_mae"] = {
+            k: v for k, v in tracker.workflow_mae_history.items() if k != "_global"
+        }
+        data["workflow_variance"] = {
+            k: v
+            for k, v in tracker.workflow_variance_history.items()
+            if k != "_global"
+        }
+        data["workflow_confidence"] = {
+            k: v
+            for k, v in tracker.workflow_confidence_history.items()
+            if k != "_global"
+        }
         synergy_names = {
             n for n in tracker.metrics_history if n.startswith("synergy_")
         } | set(tracker.synergy_metrics_history)

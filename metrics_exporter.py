@@ -289,8 +289,8 @@ roi_variance = Gauge(
 )
 
 # Gauges capturing per-workflow prediction metrics
-confidence = Gauge(
-    "confidence",
+workflow_confidence = Gauge(
+    "workflow_confidence",
     "Model confidence for ROI predictions",
     ["workflow"],
 )
@@ -828,7 +828,7 @@ __all__ = [
     "roi_confidence",
     "roi_mae",
     "roi_variance",
-    "confidence",
+    "workflow_confidence",
     "workflow_mae",
     "workflow_variance",
     "relevancy_flagged_modules_total",

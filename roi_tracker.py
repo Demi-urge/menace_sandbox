@@ -646,9 +646,9 @@ class ROITracker:
                     workflow=wf,
                     predicted=float(pred_seq[0]),
                     actual=float(act_seq[0]),
-                    mae=mae_val,
-                    variance=var_val,
-                    confidence=conf,
+                    workflow_mae=mae_val,
+                    workflow_variance=var_val,
+                    workflow_confidence=conf,
                     human_review=needs_review if needs_review else None,
                 ),
             )
@@ -657,7 +657,7 @@ class ROITracker:
                     "workflow flagged for human review",
                     extra=log_record(
                         workflow=wf,
-                        confidence=conf,
+                        workflow_confidence=conf,
                         threshold=self.confidence_threshold,
                         human_review=True,
                     ),
@@ -666,7 +666,7 @@ class ROITracker:
                 if _me is not None:
                     _me.workflow_mae.labels(workflow=wf).set(mae_val)
                     _me.workflow_variance.labels(workflow=wf).set(var_val)
-                    _me.confidence.labels(workflow=wf).set(conf)
+                    _me.workflow_confidence.labels(workflow=wf).set(conf)
             except Exception:
                 pass
         try:
@@ -728,7 +728,7 @@ class ROITracker:
                 actual=float(act_seq[0]),
                 predicted_class=predicted_class,
                 actual_class=actual_class,
-                confidence=conf_val,
+                workflow_confidence=conf_val,
                 workflow_id=workflow_id,
                 workflow_mae=wf_mae,
                 workflow_variance=wf_var,
@@ -756,7 +756,7 @@ class ROITracker:
                 try:
                     _me.workflow_mae.labels(workflow=workflow_id).set(wf_mae)
                     _me.workflow_variance.labels(workflow=workflow_id).set(wf_var)
-                    _me.confidence.labels(workflow=workflow_id).set(conf_val)
+                    _me.workflow_confidence.labels(workflow=workflow_id).set(conf_val)
                 except Exception:
                     pass
         except Exception:
@@ -1254,13 +1254,13 @@ class ROITracker:
         workflow's recent ROI predictions and is normalised to the ``[0, 1]``
         range using ``1 / (1 + mae + variance)``.
         """
-
+        stored = self.workflow_confidence_scores.get(workflow_id)
+        if stored:
+            return max(0.0, min(1.0, float(stored)))
         mae = self.workflow_mae(workflow_id, window)
         variance = self.workflow_variance(workflow_id, window)
         confidence = 1.0 / (1.0 + mae + variance)
-        confidence = max(0.0, min(1.0, confidence))
-        self.workflow_confidence_scores[workflow_id] = confidence
-        return confidence
+        return max(0.0, min(1.0, confidence))
 
     # ------------------------------------------------------------------
     def score_workflow(
@@ -1275,7 +1275,11 @@ class ROITracker:
         """
 
         wf = str(workflow_id)
-        conf = self.workflow_confidence(wf, self.workflow_window)
+        stored_conf = self.workflow_confidence_scores.get(wf)
+        if stored_conf:
+            conf = max(0.0, min(1.0, float(stored_conf)))
+        else:
+            conf = self.workflow_confidence(wf, self.workflow_window)
         self.workflow_confidence_history[wf].append(conf)
         if len(self.workflow_confidence_history[wf]) > self.workflow_window:
             self.workflow_confidence_history[wf] = self.workflow_confidence_history[wf][
@@ -1567,6 +1571,10 @@ class ROITracker:
             targets = ["_global"]
             if modules:
                 targets.extend(str(m) for m in modules)
+            if confidence is not None:
+                for wf in targets:
+                    if wf != "_global":
+                        self.workflow_confidence_scores[str(wf)] = float(confidence)
             final_score, _nr, _conf = self.score_workflow(targets[0], raroi)
             for wf in targets[1:]:
                 self.score_workflow(wf, raroi)
