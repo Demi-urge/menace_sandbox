@@ -274,6 +274,20 @@ prediction_reliability = Gauge(
     ["metric"],
 )
 
+# Global ROI prediction gauges
+roi_confidence = Gauge(
+    "roi_confidence",
+    "Model confidence for latest ROI prediction",
+)
+roi_mae = Gauge(
+    "roi_mae",
+    "Rolling mean absolute error for ROI predictions",
+)
+roi_variance = Gauge(
+    "roi_variance",
+    "Rolling variance of actual ROI",
+)
+
 # Gauges capturing per-workflow prediction metrics
 confidence = Gauge(
     "confidence",
@@ -811,6 +825,9 @@ __all__ = [
     "prediction_error",
     "prediction_mae",
     "prediction_reliability",
+    "roi_confidence",
+    "roi_mae",
+    "roi_variance",
     "confidence",
     "workflow_mae",
     "workflow_variance",

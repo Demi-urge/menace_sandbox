@@ -1,6 +1,7 @@
 import json
 import pytest
 import numpy as np
+import logging
 import menace_sandbox.roi_tracker as rt
 import menace_sandbox.self_test_service as sts
 import types
@@ -730,4 +731,16 @@ def test_workflow_confidence_formula():
     assert tracker.workflow_variance("wf") == pytest.approx(1.0)
     expected = 1.0 / (1.0 + 0.5 + 1.0)
     assert tracker.workflow_confidence("wf") == pytest.approx(expected)
+
+
+def test_update_logs_metrics(caplog, monkeypatch):
+    tracker = rt.ROITracker()
+    monkeypatch.setattr(tracker, "calculate_raroi", lambda roi, **kw: (roi, roi))
+    with caplog.at_level(logging.INFO):
+        tracker.update(0.0, 0.5, confidence=0.4)
+    rec = next(r for r in caplog.records if r.msg == "roi update")
+    assert rec.confidence == pytest.approx(0.4)
+    assert rec.mae == pytest.approx(0.0)
+    assert rec.roi_variance == pytest.approx(0.0)
+    assert rec.final_score == pytest.approx(rec.adjusted * 0.4)
 

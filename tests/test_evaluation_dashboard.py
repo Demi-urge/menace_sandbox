@@ -123,6 +123,20 @@ def test_roi_prediction_panel():
     assert panel["accuracy_trend"][1] == pytest.approx(0.5)
 
 
+def test_roi_prediction_panel_workflows():
+    mgr = _make_manager()
+    dash = ed.EvaluationDashboard(mgr)
+    tracker = rt.ROITracker()
+    tracker.record_prediction(0.5, 0.6, workflow_id="wf1")
+    tracker.update(0.0, 0.1, modules=["wf1"], confidence=0.1)
+    panel = dash.roi_prediction_panel(tracker)
+    wf = panel["workflows"]["wf1"]
+    assert wf["mae"] == pytest.approx(tracker.workflow_mae("wf1"))
+    assert wf["variance"] == pytest.approx(tracker.workflow_variance("wf1"))
+    assert wf["confidence"] == pytest.approx(tracker.workflow_confidence("wf1"))
+    assert wf["needs_review"] is True
+
+
 def test_roi_prediction_chart():
     mgr = _make_manager()
     dash = ed.EvaluationDashboard(mgr)
@@ -159,6 +173,20 @@ def test_roi_prediction_events_panel():
     panel_w = dash.roi_prediction_events_panel(tracker, window=1)
     assert panel_w["growth_class_accuracy"] == pytest.approx(0.0)
     assert panel_w["drift_flags"] == [True]
+
+
+def test_roi_prediction_events_panel_workflows():
+    mgr = _make_manager()
+    dash = ed.EvaluationDashboard(mgr)
+    tracker = rt.ROITracker()
+    tracker.record_prediction(0.5, 0.6, workflow_id="wf1")
+    tracker.update(0.0, 0.1, modules=["wf1"], confidence=0.1)
+    panel = dash.roi_prediction_events_panel(tracker)
+    wf = panel["workflows"]["wf1"]
+    assert wf["mae"] == pytest.approx(tracker.workflow_mae("wf1"))
+    assert wf["variance"] == pytest.approx(tracker.workflow_variance("wf1"))
+    assert wf["confidence"] == pytest.approx(tracker.workflow_confidence("wf1"))
+    assert wf["needs_review"] is True
 
 
 def test_alignment_warning_panel(monkeypatch):
