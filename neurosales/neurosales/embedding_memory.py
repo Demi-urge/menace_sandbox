@@ -20,6 +20,16 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     def find_semantic_risks(lines, threshold: float = 0.5):  # type: ignore[override]
         return []
+try:
+    from compliance.license_fingerprint import check as license_check
+except Exception:  # pragma: no cover - optional dependency
+    def license_check(text: str):  # type: ignore
+        return None
+try:
+    from security.secret_redactor import redact
+except Exception:  # pragma: no cover - optional dependency
+    def redact(text: str):  # type: ignore
+        return text
 import logging
 from governed_embeddings import governed_embed
 
@@ -71,13 +81,33 @@ class EmbeddingConversationMemory:
         self._index.add(embeddings)
 
     def add_message(self, role: str, content: str) -> None:
-        original = content.strip()
+        """Add a message to memory, computing an embedding when safe.
+
+        The text is redacted and checked for licensing issues before being
+        scanned with :func:`find_semantic_risks`. If a license is detected the
+        message is dropped. If semantic risks are detected the message is
+        stored without an embedding and the risk list is attached to the
+        ``alerts`` field. Otherwise the message is embedded and indexed for
+        similarity search.
+        """
+
+        original = redact(content.strip())
         if not original:
+            return
+        lic = license_check(original)
+        if lic:
+            logger.warning("license detected: %s", lic)
             return
         alerts = find_semantic_risks(original.splitlines())
         if alerts:
             logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+            msg = EmbeddedMessage(time.time(), role, original, [], alerts)
+            self._messages.append(msg)
+            if len(self._messages) > self.max_messages:
+                self._messages.popleft()
+            self._prune()
             return
+
         if SentenceTransformer is None or faiss is None or np is None:
             msg = EmbeddedMessage(time.time(), role, original, [])
             self._messages.append(msg)
@@ -106,7 +136,16 @@ class EmbeddingConversationMemory:
         alerts = find_semantic_risks(text.splitlines())
         if alerts:
             logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
-            return []
+            results: List[EmbeddedMessage] = []
+            for m in self._messages:
+                msg_alerts = find_semantic_risks(m.content.splitlines())
+                if msg_alerts:
+                    results.append(
+                        EmbeddedMessage(m.timestamp, m.role, m.content, m.embedding, msg_alerts)
+                    )
+                if len(results) >= top_k:
+                    break
+            return results
         vec = governed_embed(text, self._model)
         if vec is None:
             return []
@@ -117,9 +156,11 @@ class EmbeddingConversationMemory:
         results: List[EmbeddedMessage] = []
         for i in indices[0]:
             msg = self._messages[i]
-            alerts = find_semantic_risks(msg.content.splitlines())
-            if alerts:
-                msg = EmbeddedMessage(msg.timestamp, msg.role, msg.content, msg.embedding, alerts)
+            msg_alerts = find_semantic_risks(msg.content.splitlines())
+            if msg_alerts:
+                msg = EmbeddedMessage(
+                    msg.timestamp, msg.role, msg.content, msg.embedding, msg_alerts
+                )
             results.append(msg)
         return results
 
@@ -161,10 +202,13 @@ class DatabaseEmbeddingMemory(EmbeddingConversationMemory):
         super().add_message(role, content)
         if len(self._messages) == before:
             return
+        msg = self._messages[-1]
+        if msg.alerts:
+            return
+
         from .sql_db import EmbeddingMessage
 
         Session = self.session_factory
-        msg = self._messages[-1]
         with Session() as s:
             s.add(
                 EmbeddingMessage(
