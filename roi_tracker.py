@@ -169,6 +169,7 @@ class ROITracker:
         evaluate_every: int = 1,
         calibrate: bool | None = None,
         workflow_window: int = 20,
+        confidence_threshold: float = 0.5,
     ) -> None:
         """Create a tracker for monitoring ROI deltas.
 
@@ -193,14 +194,19 @@ class ROITracker:
             forecasts.
         workflow_window:
             Size of the rolling window for per-workflow error metrics.
+        confidence_threshold:
+            Minimum confidence required to avoid flagging a workflow for review.
         """
         self.roi_history: List[float] = []
         self.raroi_history: List[float] = []
         self.last_raroi: float | None = None
         self.confidence_history: List[float] = []
+        self.final_roi_history: Dict[str, List[float]] = defaultdict(list)
         self.category_history: List[str] = []
         self.entropy_history: List[float] = []
         self.entropy_delta_history: List[float] = []
+        self.needs_review: set[str] = set()
+        self.confidence_threshold = float(confidence_threshold)
         self.window = window
         self.tolerance = tolerance
         self.entropy_threshold = (
@@ -433,6 +439,9 @@ class ROITracker:
         self.roi_history.extend(other.roi_history)
         self.raroi_history.extend(getattr(other, "raroi_history", []))
         self.confidence_history.extend(other.confidence_history)
+        for wf, hist in getattr(other, "final_roi_history", {}).items():
+            self.final_roi_history.setdefault(wf, []).extend(hist)
+        self.needs_review.update(getattr(other, "needs_review", set()))
         self.entropy_history.extend(getattr(other, "entropy_history", []))
         self.entropy_delta_history.extend(getattr(other, "entropy_delta_history", []))
         delta = len(other.roi_history)
@@ -1376,6 +1385,12 @@ class ROITracker:
             )
             self.raroi_history.append(raroi)
             self.confidence_history.append(float(confidence or 0.0))
+            final_score = raroi * float(confidence or 0.0)
+            targets = [str(m) for m in modules] if modules else ["_global"]
+            for wf in targets:
+                self.final_roi_history.setdefault(wf, []).append(final_score)
+                if confidence is not None and confidence < self.confidence_threshold:
+                    self.needs_review.add(wf)
             if modules:
                 for m in modules:
                     cid = self.cluster_map.get(m)
@@ -1507,6 +1522,14 @@ class ROITracker:
             self.entropy_threshold, window=self.window
         )
         return vertex, preds, should_stop, entropy_stop
+
+    # ------------------------------------------------------------------
+    def final_score(self, workflow: str) -> Tuple[float, bool]:
+        """Return latest final score and review status for ``workflow``."""
+
+        hist = self.final_roi_history.get(str(workflow)) or []
+        score = hist[-1] if hist else 0.0
+        return score, str(workflow) in self.needs_review
 
     # ------------------------------------------------------------------
     def forecast(self) -> Tuple[float, Tuple[float, float]]:

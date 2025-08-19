@@ -2217,7 +2217,6 @@ class SelfImprovementEngine:
 
         completed = {Path(m).as_posix() for m in self.entropy_ceiling_modules}
         scored: list[tuple[str, float, str, float]] = []
-        tau = getattr(self, "tau", 0.5)
         for mod in modules:
             if Path(mod).as_posix() in completed:
                 continue
@@ -2252,10 +2251,13 @@ class SelfImprovementEngine:
                 if self.roi_tracker
                 else 1.0
             )
-            final_score = raroi * confidence
-            if confidence < tau:
+            if self.roi_tracker:
+                final_score, needs_review = self.roi_tracker.final_score(mod)
+            else:
+                final_score, needs_review = raroi * confidence, False
+            if needs_review:
                 self.logger.info(
-                    "low confidence; deferring to human review",
+                    "needs review; deferring to human review",
                     extra=log_record(
                         module=mod,
                         confidence=confidence,
@@ -2649,7 +2651,6 @@ class SelfImprovementEngine:
             use_adaptive = getattr(self, "use_adaptive_roi", False)
             tracker = getattr(self, "roi_tracker", None)
             bot_name = getattr(self, "bot_name", "")
-            tau = getattr(self, "tau", 0.5)
             confidence = 1.0
             if predictor and use_adaptive:
                 try:
@@ -2679,10 +2680,12 @@ class SelfImprovementEngine:
                 )
                 if tracker:
                     confidence = tracker.workflow_confidence(bot_name)
-                final_score = raroi * confidence
-                if confidence < tau:
+                    final_score, needs_review = tracker.final_score(bot_name)
+                else:
+                    final_score, needs_review = raroi * confidence, False
+                if needs_review:
                     self.logger.info(
-                        "self optimisation deferred: low confidence",
+                        "self optimisation deferred: needs review",
                         extra=log_record(
                             growth_type=growth,
                             roi_estimate=base_roi,
