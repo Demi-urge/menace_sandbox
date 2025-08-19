@@ -75,6 +75,8 @@ if _LOCAL_KNOWLEDGE is None:
     _LOCAL_KNOWLEDGE = LocalKnowledgeModule(manager=GPT_MEMORY_MANAGER)
 LOCAL_KNOWLEDGE_MODULE = _LOCAL_KNOWLEDGE
 
+from governed_retrieval import govern_retrieval, redact
+
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from gpt_memory_interface import GPTMemoryInterface
 
@@ -265,12 +267,13 @@ class ChatGPTClient:
                         except Exception:
                             entries = []
                     if entries:
-                        ctx_parts.extend(
-                            [
+                        for e in entries:
+                            text = (
                                 f"Prompt: {getattr(e, 'prompt', '')}\nResponse: {getattr(e, 'response', '')}"
-                                for e in entries
-                            ]
-                        )
+                            )
+                            if govern_retrieval(text) is None:
+                                continue
+                            ctx_parts.append(redact(text))
                 if ctx_parts:
                     context_text = "\n\n".join(ctx_parts)
                     if len(context_text) > max_summary_length:
