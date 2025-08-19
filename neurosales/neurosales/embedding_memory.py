@@ -16,18 +16,10 @@ except Exception:  # pragma: no cover - optional heavy deps
     np = None
 
 try:
-    from analysis.semantic_diff_filter import find_semantic_risks
+    from governed_retrieval import govern_retrieval, redact
 except Exception:  # pragma: no cover - optional dependency
-    def find_semantic_risks(lines, threshold: float = 0.5):  # type: ignore[override]
-        return []
-try:
-    from compliance.license_fingerprint import check as license_check
-except Exception:  # pragma: no cover - optional dependency
-    def license_check(text: str):  # type: ignore
-        return None
-try:
-    from security.secret_redactor import redact
-except Exception:  # pragma: no cover - optional dependency
+    def govern_retrieval(text: str, metadata=None, reason=None):  # type: ignore
+        return ({}, None)
     def redact(text: str):  # type: ignore
         return text
 import logging
@@ -83,22 +75,23 @@ class EmbeddingConversationMemory:
     def add_message(self, role: str, content: str) -> None:
         """Add a message to memory, computing an embedding when safe.
 
-        The text is redacted and checked for licensing issues before being
-        scanned with :func:`find_semantic_risks`. If a license is detected the
-        message is dropped. If semantic risks are detected the message is
-        stored without an embedding and the risk list is attached to the
-        ``alerts`` field. Otherwise the message is embedded and indexed for
-        similarity search.
+        The text is redacted and passed through :func:`govern_retrieval` which
+        performs license checks, semantic risk analysis and secret redaction.
+        If a license is detected the message is dropped. If semantic risks are
+        detected the message is stored without an embedding and the risk list
+        is attached to the ``alerts`` field. Otherwise the message is embedded
+        and indexed for similarity search.
         """
 
         original = redact(content.strip())
         if not original:
             return
-        lic = license_check(original)
-        if lic:
-            logger.warning("license detected: %s", lic)
+        governed = govern_retrieval(original, {})
+        if governed is None:
+            logger.warning("license detected; message skipped")
             return
-        alerts = find_semantic_risks(original.splitlines())
+        meta, _ = governed
+        alerts = meta.get("semantic_alerts")
         if alerts:
             logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
             msg = EmbeddedMessage(time.time(), role, original, [], alerts)
@@ -133,12 +126,18 @@ class EmbeddingConversationMemory:
             return []
         if not self._messages:
             return []
-        alerts = find_semantic_risks(text.splitlines())
+        governed = govern_retrieval(text, {})
+        if governed is None:
+            logger.warning("license detected; returning empty results")
+            return []
+        meta, _ = governed
+        alerts = meta.get("semantic_alerts")
         if alerts:
             logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
             results: List[EmbeddedMessage] = []
             for m in self._messages:
-                msg_alerts = find_semantic_risks(m.content.splitlines())
+                gm = govern_retrieval(m.content, {})
+                msg_alerts = gm[0].get("semantic_alerts") if gm else None
                 if msg_alerts:
                     results.append(
                         EmbeddedMessage(m.timestamp, m.role, m.content, m.embedding, msg_alerts)
@@ -156,7 +155,8 @@ class EmbeddingConversationMemory:
         results: List[EmbeddedMessage] = []
         for i in indices[0]:
             msg = self._messages[i]
-            msg_alerts = find_semantic_risks(msg.content.splitlines())
+            gm = govern_retrieval(msg.content, {})
+            msg_alerts = gm[0].get("semantic_alerts") if gm else None
             if msg_alerts:
                 msg = EmbeddedMessage(
                     msg.timestamp, msg.role, msg.content, msg.embedding, msg_alerts
