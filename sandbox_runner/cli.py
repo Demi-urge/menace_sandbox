@@ -79,11 +79,15 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
             delta = sum(tracker.roi_history)
             sec_hist = tracker.metrics_history.get("security_score", [])
             sec_val = sec_hist[-1] if sec_hist else 0.0
+            failing = getattr(tracker, "_last_test_failures", [])
             summary.update(
                 0.0,
                 delta,
                 modules=[f"preset_{idx}"],
-                metrics={"security_score": sec_val},
+                metrics={
+                    "security_score": sec_val,
+                    "test_status": {name: False for name in failing},
+                },
             )
         logger.info("sandbox presets complete", extra={"ranking": summary.rankings()})
         return
