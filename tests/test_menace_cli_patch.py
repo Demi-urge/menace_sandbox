@@ -77,6 +77,26 @@ def test_patch_invalid_path(monkeypatch, tmp_path):
 
 # ---------------------------------------------------------------------------
 
+def test_patch_bad_context(monkeypatch, tmp_path, capsys):
+    module = tmp_path / "mod_bad_ctx.py"
+    module.write_text("x=1\n")
+    monkeypatch.setattr(vector_service, "ContextBuilder", DummyContextBuilder)
+
+    rc = menace_cli.main([
+        "patch",
+        str(module),
+        "--desc",
+        "oops",
+        "--context",
+        "{not json}",
+    ])
+    assert rc == 1
+    err = capsys.readouterr().err.lower()
+    assert "invalid json context" in err
+
+
+# ---------------------------------------------------------------------------
+
 def test_patch_description_and_context(monkeypatch, tmp_path):
     module = tmp_path / "mod2.py"
     module.write_text("x=1\n")
