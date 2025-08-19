@@ -312,6 +312,7 @@ class ROITracker:
         self.workflow_actual_roi: Dict[str, List[float]] = defaultdict(list)
         self._workflow_mae: Dict[str, float] = {}
         self._workflow_variance: Dict[str, float] = {}
+        self.workflow_confidence_history: Dict[str, List[float]] = defaultdict(list)
         self.predicted_metrics: Dict[str, List[float]] = {}
         self.actual_metrics: Dict[str, List[float]] = {}
         self.predicted_classes: List[str] = []
@@ -591,6 +592,8 @@ class ROITracker:
             self._workflow_variance[workflow_id] = (
                 float(np.var(acts)) if acts else 0.0
             )
+            conf = self.workflow_confidence(workflow_id)
+            self.workflow_confidence_history[workflow_id].append(conf)
         try:
             ent_hist = self.metrics_history.get("synergy_shannon_entropy", [])
             if len(ent_hist) >= 2:
@@ -1021,6 +1024,20 @@ class ROITracker:
         """Return variance of actual ROI for ``workflow_id``."""
 
         return self._workflow_variance.get(workflow_id, 0.0)
+
+    # ------------------------------------------------------------------
+    def workflow_confidence(self, workflow_id: str) -> float:
+        """Return confidence score for ``workflow_id`` predictions.
+
+        The confidence combines mean absolute error and variance of the
+        workflow's ROI predictions using ``1 / (1 + mae + variance)`` and is
+        clipped to the ``[0, 1]`` interval.
+        """
+
+        mae = self._workflow_mae.get(workflow_id, 0.0)
+        variance = self._workflow_variance.get(workflow_id, 0.0)
+        confidence = 1.0 / (1.0 + mae + variance)
+        return max(0.0, min(1.0, confidence))
 
     # ------------------------------------------------------------------
     def prediction_summary(self, window: int | None = None) -> Dict[str, Any]:
