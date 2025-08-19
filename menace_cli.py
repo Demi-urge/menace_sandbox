@@ -18,6 +18,7 @@ from patch_provenance import (
     build_chain,
     search_patches_by_vector,
     search_patches_by_license,
+    get_patch_provenance,
 )
 from vector_service.retriever import (
     Retriever,
@@ -100,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     p_quick = sub.add_parser("patch", help="Apply a patch to a module")
     p_quick.add_argument("module")
     p_quick.add_argument("--desc", required=True, help="Patch description")
+    p_quick.add_argument("--context", help="JSON encoded context", default=None)
 
     p_patch = sub.add_parser("patches", help="Patch provenance helpers")
     patch_sub = p_patch.add_subparsers(dest="patches_cmd", required=True)
@@ -162,15 +164,25 @@ def main(argv: list[str] | None = None) -> int:
         from vector_service import ContextBuilder
         import quick_fix_engine
 
+        ctx = None
+        if args.context:
+            try:
+                ctx = json.loads(args.context)
+            except json.JSONDecodeError:
+                print("invalid JSON context", file=sys.stderr)
+                return 1
+
         patch_id = quick_fix_engine.generate_patch(
             args.module,
             context_builder=ContextBuilder(),
             engine=None,
             description=args.desc,
+            context=ctx,
         )
         if not patch_id:
             return 1
-        print(patch_id)
+        provenance = get_patch_provenance(patch_id)
+        print(json.dumps({"patch_id": patch_id, "provenance": provenance}))
         return 0
 
     if args.cmd == "retrieve":

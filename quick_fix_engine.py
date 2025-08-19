@@ -54,6 +54,7 @@ def generate_patch(
     context_builder: ContextBuilder | None = None,
     description: str | None = None,
     patch_logger: PatchLogger | None = None,
+    context: Dict[str, Any] | None = None,
 ) -> int | None:
     """Attempt a quick patch for *module* and return the patch id.
 
@@ -74,6 +75,9 @@ def generate_patch(
     patch_logger:
         Optional :class:`patch_provenance.PatchLogger` for recording vector
         provenance.
+    context:
+        Optional dictionary merged into the patch's ``context_meta`` prior to
+        patch application.
     """
 
     logger = logging.getLogger("QuickFixEngine")
@@ -86,6 +90,8 @@ def generate_patch(
 
     description = description or f"preemptive fix for {path.name}"
     context_meta: Dict[str, Any] = {"module": str(path), "reason": "preemptive_fix"}
+    if context:
+        context_meta.update(context)
     builder = context_builder
     context_block = ""
     cb_session = ""
