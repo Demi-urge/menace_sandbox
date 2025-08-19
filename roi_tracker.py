@@ -389,6 +389,12 @@ class ROITracker:
             except Exception:
                 logger.exception("resource history fetch failed")
 
+        # restore persisted per-workflow prediction history if available
+        try:
+            self.load_prediction_history()
+        except Exception:
+            logger.exception("failed to load prediction history")
+
     @property
     def workflow_predicted_roi(self) -> Dict[str, List[float]]:
         """Return per-workflow predicted ROI sequences."""
@@ -775,27 +781,37 @@ class ROITracker:
                         actual_class TEXT,
                         confidence REAL,
                         mae REAL,
-                        roi_variance REAL,
+                        variance REAL,
                         final_score REAL,
                         predicted_horizons TEXT,
                         actual_horizons TEXT,
                         predicted_categories TEXT,
                         actual_categories TEXT,
                         workflow_id TEXT,
+                        workflow TEXT,
                         ts DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
-                """
+                    """
                 )
-                mae_val = self.workflow_mae(workflow_id) if workflow_id is not None else self.rolling_mae()
-                var_val = self.workflow_variance(workflow_id) if workflow_id is not None else (float(np.var(self.actual_roi)) if self.actual_roi else 0.0)
+                mae_val = (
+                    self.workflow_mae(workflow_id)
+                    if workflow_id is not None
+                    else self.rolling_mae()
+                )
+                var_val = (
+                    self.workflow_variance(workflow_id)
+                    if workflow_id is not None
+                    else (float(np.var(self.actual_roi)) if self.actual_roi else 0.0)
+                )
+                conf_val = None if confidence is None else float(confidence)
                 conn.execute(
-                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, mae, roi_variance, final_score, predicted_horizons, actual_horizons, predicted_categories, actual_categories, workflow_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, mae, variance, final_score, predicted_horizons, actual_horizons, predicted_categories, actual_categories, workflow_id, workflow) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         float(predicted[0]) if predicted else None,
                         float(actual[0]) if actual else None,
                         predicted_class,
                         actual_class,
-                        None if confidence is None else float(confidence),
+                        conf_val,
                         mae_val,
                         var_val,
                         None if final_score is None else float(final_score),
@@ -803,6 +819,7 @@ class ROITracker:
                         json.dumps([float(x) for x in actual]),
                         json.dumps([predicted_class] if predicted_class is not None else []),
                         json.dumps([actual_class] if actual_class is not None else []),
+                        workflow_id,
                         workflow_id,
                     ),
                 )
@@ -813,6 +830,44 @@ class ROITracker:
         """Store predicted and actual ROI classes."""
         self.predicted_classes.append(str(predicted))
         self.actual_classes.append(str(actual))
+
+    def load_prediction_history(self, path: str = "roi_events.db") -> None:
+        """Load prior prediction events to rebuild workflow histories."""
+        if not os.path.exists(path):
+            return
+        try:
+            conn = sqlite3.connect(path)
+            try:
+                cur = conn.execute(
+                    "SELECT workflow, predicted_roi, actual_roi, confidence FROM roi_prediction_events ORDER BY ts"
+                )
+            except sqlite3.OperationalError:
+                cur = conn.execute(
+                    "SELECT workflow_id, predicted_roi, actual_roi, confidence FROM roi_prediction_events ORDER BY ts"
+                )
+            rows = cur.fetchall()
+        except Exception:
+            return
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        for wf, pred, act, conf in rows:
+            wf_id = None if wf is None else str(wf)
+            if pred is not None:
+                val = float(pred)
+                self.predicted_roi.append(val)
+                if wf_id is not None:
+                    self.workflow_predictions[wf_id]["pred"].append(val)
+            if act is not None:
+                val = float(act)
+                self.actual_roi.append(val)
+                if wf_id is not None:
+                    self.workflow_predictions[wf_id]["actual"].append(val)
+            if conf is not None and wf_id is not None:
+                self.workflow_confidence_history[wf_id].append(float(conf))
 
     # ------------------------------------------------------------------
     def evaluate_model(
