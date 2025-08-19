@@ -1,6 +1,22 @@
 from __future__ import annotations
 
-"""Track ROI deltas across self-improvement iterations."""
+"""Track ROI deltas across self-improvement iterations.
+
+The module exposes :func:`calculate_raroi` which converts a raw ROI into a
+risk-adjusted ROI (RAROI). RAROI applies catastrophic risk, recent stability
+and critical safety test modifiers::
+
+    raroi = base_roi * (1 - catastrophic_risk)
+            * stability_factor * safety_factor
+
+``catastrophic_risk`` multiplies rollback probability by workflow impact
+severity. Default severities live in ``config/impact_severity.json`` and can be
+overridden per call via the ``impact_config`` argument. ``stability_factor``
+declines as recent ROI deltas grow more volatile. Each failing security or
+alignment test halves ``safety_factor`` so RAROI drops below the raw ROI when
+risk rises. RAROI close to the raw ROI indicates a stable, low-risk workflow;
+a large gap signals substantial operational risk.
+"""
 
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable, Sequence, Mapping
 
