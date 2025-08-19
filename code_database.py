@@ -1122,15 +1122,13 @@ class PatchHistoryDB:
             vec_id = parts[1] if len(parts) > 1 else None
             score = parts[2] if len(parts) > 2 else None
             lic = parts[3] if len(parts) > 3 else None
+            fp = None
+            alerts = None
             if len(parts) > 5:
                 fp = parts[4]
                 alerts = parts[5]
             elif len(parts) > 4:
-                fp = None
                 alerts = parts[4]
-            else:
-                fp = None
-                alerts = None
             conn.execute(
                 "INSERT INTO patch_provenance(patch_id, origin, vector_id, influence, retrieved_at, position, license, license_fingerprint, semantic_alerts) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
@@ -1166,15 +1164,13 @@ class PatchHistoryDB:
             vec_id = parts[1] if len(parts) > 1 else None
             influence = parts[2] if len(parts) > 2 else None
             lic = parts[3] if len(parts) > 3 else None
+            fp = None
+            alerts = None
             if len(parts) > 5:
                 fp = parts[4]
                 alerts = parts[5]
             elif len(parts) > 4:
-                fp = None
                 alerts = parts[4]
-            else:
-                fp = None
-                alerts = None
             conn.execute(
                 "INSERT INTO patch_ancestry(patch_id, origin, vector_id, influence, license, license_fingerprint, semantic_alerts) VALUES(?,?,?,?,?,?,?)",
                 (

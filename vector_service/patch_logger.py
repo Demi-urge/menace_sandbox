@@ -108,8 +108,12 @@ class PatchLogger:
                 key = f"{o}:{vid}" if o else vid
                 m = meta.get(key, {})
                 lic = m.get("license")
+                fp = m.get("license_fingerprint")
                 alerts = m.get("semantic_alerts")
-                detailed_meta.append((o, vid, score, lic, alerts))
+                if fp is not None:
+                    detailed_meta.append((o, vid, score, lic, fp, alerts))
+                else:
+                    detailed_meta.append((o, vid, score, lic, alerts))
                 vm_vectors.append((vid, score, lic, alerts))
 
             if self.metrics_db is not None:

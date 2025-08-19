@@ -1280,6 +1280,7 @@ def _sandbox_cycle_runner(
                             vectors.append((origin, vid, score))
                             retrieval_metadata[f"{origin}:{vid}"] = {
                                 "license": h.get("license"),
+                                "license_fingerprint": h.get("license_fingerprint"),
                                 "semantic_alerts": h.get("semantic_alerts"),
                             }
                     except Exception:
@@ -1638,6 +1639,7 @@ def _sandbox_cycle_runner(
                             vectors.append((origin, vid, score))
                             retrieval_metadata[f"{origin}:{vid}"] = {
                                 "license": h.get("license"),
+                                "license_fingerprint": h.get("license_fingerprint"),
                                 "semantic_alerts": h.get("semantic_alerts"),
                             }
                     except Exception:

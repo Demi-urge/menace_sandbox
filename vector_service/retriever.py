@@ -96,12 +96,19 @@ class Retriever:
             if governed is None:
                 continue
             meta, reason = governed
+            fp = meta.get("license_fingerprint")
             item["metadata"] = meta
             if reason is not None:
                 item["reason"] = reason
             item["license"] = meta.get("license")
+            item["license_fingerprint"] = fp
             item["semantic_alerts"] = meta.get("semantic_alerts")
-            results.append(redact_dict(pii_redact_dict(item)))
+            item = redact_dict(pii_redact_dict(item))
+            if fp is not None:
+                item["license_fingerprint"] = fp
+                if isinstance(item.get("metadata"), dict):
+                    item["metadata"]["license_fingerprint"] = fp
+            results.append(item)
         return results
 
     # ------------------------------------------------------------------
@@ -115,6 +122,7 @@ class Retriever:
                 "metadata": {},
                 "reason": reason,
                 "license": None,
+                "license_fingerprint": None,
                 "semantic_alerts": [],
             }
         ]
