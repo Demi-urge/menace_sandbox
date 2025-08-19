@@ -148,6 +148,10 @@ from .human_alignment_agent import HumanAlignmentAgent
 from .audit_logger import log_event as audit_log_event, get_recent_events
 from .violation_logger import log_violation
 from .alignment_review_agent import AlignmentReviewAgent
+try:  # persistent review queue for human oversight
+    from .review_queue import enqueue_for_review
+except Exception:  # pragma: no cover - flat layout fallback
+    from review_queue import enqueue_for_review  # type: ignore
 
 logger = get_logger(__name__)
 
@@ -2257,6 +2261,7 @@ class SelfImprovementEngine:
             )
             weight = raroi * confidence * mult
             if tracker and confidence < self.tau:
+                enqueue_for_review(mod)
                 self.logger.info(
                     "low confidence; deferring to human review/shadow testing",
                     extra=log_record(
@@ -2265,6 +2270,7 @@ class SelfImprovementEngine:
                         raroi=raroi,
                         weight=weight,
                         threshold=self.tau,
+                        shadow_test=True,
                     ),
                 )
                 try:
