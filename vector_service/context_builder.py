@@ -365,10 +365,13 @@ class ContextBuilder:
         # Patch safety flags
         flags: Dict[str, Any] = {}
         lic = bundle.get("license") or meta.get("license")
+        fp = bundle.get("license_fingerprint") or meta.get("license_fingerprint")
         alerts = bundle.get("semantic_alerts") or meta.get("semantic_alerts")
         severity = bundle.get("alignment_severity") or meta.get("alignment_severity")
         if lic:
             flags["license"] = lic
+        if fp:
+            flags["license_fingerprint"] = fp
         if alerts:
             flags["semantic_alerts"] = alerts
         if severity is not None:

@@ -107,6 +107,21 @@ class Retriever:
                     "reason": getattr(h, "reason", ""),
                     "metadata": meta,
                 }
+            # Pre-filter based on metadata-only safety signals so all
+            # modalities are subject to the same limits.
+            sev = meta.get("alignment_severity")
+            if sev is not None:
+                try:
+                    if float(sev) > max_alert_severity:
+                        filtered += 1
+                        continue
+                except Exception:
+                    pass
+            lic = meta.get("license")
+            fp_meta = meta.get("license_fingerprint")
+            if fp_meta in _LICENSE_DENYLIST or lic in _DISALLOWED_LICENSES:
+                filtered += 1
+                continue
             text = str(item.get("text") or "")
             governed = govern_retrieval(
                 text, meta, item.get("reason"), max_alert_severity=max_alert_severity
@@ -115,11 +130,15 @@ class Retriever:
                 filtered += 1
                 continue
             meta, reason = governed
+            lic = meta.get("license")
             fp = meta.get("license_fingerprint")
+            if fp in _LICENSE_DENYLIST or lic in _DISALLOWED_LICENSES:
+                filtered += 1
+                continue
             item["metadata"] = meta
             if reason is not None:
                 item["reason"] = reason
-            item["license"] = meta.get("license")
+            item["license"] = lic
             item["license_fingerprint"] = fp
             item["semantic_alerts"] = meta.get("semantic_alerts")
             item["alignment_severity"] = meta.get("alignment_severity")
