@@ -47,6 +47,7 @@ from typing import (
 )
 from contextlib import asynccontextmanager, suppress
 from filelock import FileLock
+from dataclasses import asdict
 
 try:
     from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord
@@ -5214,7 +5215,7 @@ def run_scenarios(
     workflow: Sequence[str] | str,
     tracker: "ROITracker" | None = None,
     presets: Sequence[Mapping[str, Any]] | None = None,
-) -> tuple["ROITracker", Dict[str, Any]]:
+) -> tuple["ROITracker", list["ScenarioScorecard"], Dict[str, Any]]:
     """Run ``workflow`` across predefined sandbox scenarios and compare ROI.
 
     The workflow is executed in a baseline "normal" environment followed by
@@ -5243,15 +5244,16 @@ def run_scenarios(
 
     Returns
     -------
-    tuple[ROITracker, Dict[str, Any]]
-        A pair consisting of the :class:`ROITracker` used for the simulations
-        and a mapping with per-scenario results. ``scenarios`` maps scenario
-        names to dictionaries containing the ROI, ROI delta, raw metrics,
-        metric deltas and recorded synergy metrics. ``worst_scenario`` identifies
-        the scenario causing the largest ROI drop.
+    tuple[ROITracker, list[ScenarioScorecard], Dict[str, Any]]
+        A triple consisting of the :class:`ROITracker` used for the simulations,
+        a list of :class:`~menace.roi_tracker.ScenarioScorecard` instances and a
+        mapping with per-scenario results. ``scenarios`` maps scenario names to
+        dictionaries containing the ROI, RAROI, ROI delta, RAROI delta, raw
+        metrics, metric deltas and recorded synergy metrics. ``worst_scenario``
+        identifies the scenario causing the largest ROI drop.
     """
 
-    from menace.roi_tracker import ROITracker
+    from menace.roi_tracker import ROITracker, ScenarioScorecard
 
     if tracker is None:
         tracker = ROITracker()
@@ -5291,10 +5293,11 @@ def run_scenarios(
 
     results: Dict[str, Dict[str, Any]] = {}
     baseline_roi: float = 0.0
+    baseline_raroi: float = 0.0
     baseline_metrics: Dict[str, float] = {}
 
     async def _run() -> None:
-        nonlocal baseline_roi, baseline_metrics
+        nonlocal baseline_roi, baseline_metrics, baseline_raroi
         for idx, preset in enumerate(presets):
             env_input = dict(preset)
             scenario = env_input.get("SCENARIO_NAME", "")
@@ -5311,14 +5314,6 @@ def run_scenarios(
             roi_off = updates_off[-1][1] if updates_off else 0.0
             metrics_off = updates_off[-1][2] if updates_off else {}
 
-            if idx == 0:
-                baseline_roi, baseline_metrics = roi_on, metrics_on
-                metrics_delta = {k: 0.0 for k in metrics_on}
-            else:
-                metrics_delta = {
-                    k: metrics_on.get(k, 0.0) - baseline_metrics.get(k, 0.0)
-                    for k in set(metrics_on) | set(baseline_metrics)
-                }
             target_metrics_delta = {
                 k: metrics_on.get(k, 0.0) - metrics_off.get(k, 0.0)
                 for k in set(metrics_on) | set(metrics_off)
@@ -5329,9 +5324,16 @@ def run_scenarios(
                 f"synergy_{k}": float(v) for k, v in target_metrics_delta.items()
             }
             synergy_diff["synergy_roi"] = delta
-            tracker.record_scenario_delta(
-                scenario, delta, metrics_delta, synergy_diff
-            )
+
+            if idx == 0:
+                baseline_roi, baseline_metrics = roi_on, metrics_on
+                metrics_delta = {k: 0.0 for k in metrics_on}
+            else:
+                metrics_delta = {
+                    k: metrics_on.get(k, 0.0) - baseline_metrics.get(k, 0.0)
+                    for k in set(metrics_on) | set(baseline_metrics)
+                }
+
             synergy_metrics = {
                 f"synergy_{k}": float(v) for k, v in metrics_delta.items()
             }
@@ -5347,10 +5349,21 @@ def run_scenarios(
                 modules=[f"workflow_{wf_id}", scenario],
                 metrics={**metrics_on, **synergy_metrics},
             )
+            raroi_on = tracker.last_raroi or 0.0
+            if idx == 0:
+                baseline_raroi = raroi_on
+                raroi_delta = 0.0
+            else:
+                raroi_delta = raroi_on - baseline_raroi
+            tracker.record_scenario_delta(
+                scenario, delta, metrics_delta, synergy_diff, raroi_on, raroi_delta
+            )
 
             results[scenario] = {
                 "roi": roi_on,
                 "roi_delta": delta,
+                "raroi": raroi_on,
+                "raroi_delta": raroi_delta,
                 "metrics": metrics_on,
                 "metrics_delta": metrics_delta,
                 "synergy": synergy_metrics,
@@ -5369,7 +5382,11 @@ def run_scenarios(
     worst, _ = tracker.biggest_drop()
 
     export = {
-        scen: {"roi_delta": delta, "worst": scen == worst}
+        scen: {
+            "roi_delta": delta,
+            "raroi_delta": tracker.scenario_raroi_delta.get(scen, 0.0),
+            "worst": scen == worst,
+        }
         for scen, delta in tracker.scenario_roi_deltas.items()
     }
     try:
@@ -5379,9 +5396,13 @@ def run_scenarios(
             json.dump(export, fh)
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to write scenario deltas")
-
-    summary = {"scenarios": results, "worst_scenario": worst}
-    return tracker, summary
+    scorecards = tracker.generate_scorecards()
+    summary = {
+        "scenarios": results,
+        "worst_scenario": worst,
+        "scorecards": [asdict(s) for s in scorecards],
+    }
+    return tracker, scorecards, summary
 
 
 # ----------------------------------------------------------------------

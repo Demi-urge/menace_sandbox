@@ -20,6 +20,7 @@ operational risk.
 """
 
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable, Sequence, Mapping, Callable
+from dataclasses import dataclass
 
 import argparse
 import csv
@@ -149,6 +150,17 @@ def _estimate_rollback_probability(metrics: Mapping[str, float]) -> float:
         return 0.0
     prob = max(probs)
     return max(0.0, min(1.0, prob))
+
+
+@dataclass
+class ScenarioScorecard:
+    """Summary of scenario performance deltas."""
+
+    scenario: str
+    roi_delta: float
+    raroi_delta: float
+    metrics_delta: Dict[str, float]
+    synergy_delta: Dict[str, float]
 
 
 class ROITracker:
@@ -317,6 +329,8 @@ class ROITracker:
         self.synergy_history: list[dict[str, float]] = []
         self.scenario_synergy: Dict[str, List[Dict[str, float]]] = {}
         self.scenario_roi_deltas: Dict[str, float] = {}
+        self.scenario_raroi: Dict[str, float] = {}
+        self.scenario_raroi_delta: Dict[str, float] = {}
         self.scenario_metrics_delta: Dict[str, Dict[str, float]] = {}
         self.scenario_synergy_delta: Dict[str, Dict[str, float]] = {}
         self._worst_scenario: str | None = None
@@ -1351,6 +1365,8 @@ class ROITracker:
             "mae_trend": self.rolling_mae_trend(window),
             "accuracy_trend": self.rolling_accuracy_trend(window),
             "scenario_roi_deltas": dict(self.scenario_roi_deltas),
+            "scenario_raroi": dict(self.scenario_raroi),
+            "scenario_raroi_delta": dict(self.scenario_raroi_delta),
             "scenario_metrics_delta": dict(self.scenario_metrics_delta),
             "scenario_synergy_delta": dict(self.scenario_synergy_delta),
             "worst_scenario": self.biggest_drop()[0] if self.scenario_roi_deltas else None,
@@ -2405,6 +2421,8 @@ class ROITracker:
         delta: float,
         metrics_delta: Mapping[str, float] | None = None,
         synergy_delta: Mapping[str, float] | None = None,
+        raroi: float | None = None,
+        raroi_delta: float | None = None,
     ) -> None:
         """Record ROI ``delta`` and related information for scenario ``name``.
 
@@ -2419,11 +2437,19 @@ class ROITracker:
         synergy_delta:
             Optional mapping capturing the difference between workflow-on and
             workflow-off runs for each synergy metric.
+        raroi:
+            Risk-adjusted ROI for the scenario.
+        raroi_delta:
+            RAROI delta relative to the baseline scenario.
         """
 
         scen = str(name)
         delta = float(delta)
         self.scenario_roi_deltas[scen] = delta
+        if raroi is not None:
+            self.scenario_raroi[scen] = float(raroi)
+        if raroi_delta is not None:
+            self.scenario_raroi_delta[scen] = float(raroi_delta)
         if metrics_delta is not None:
             self.scenario_metrics_delta[scen] = {
                 str(k): float(v) for k, v in metrics_delta.items()
@@ -2472,6 +2498,29 @@ class ROITracker:
 
         return dict(self.scenario_synergy_delta.get(str(name), {}))
 
+    # ------------------------------------------------------------------
+    def get_scenario_raroi_delta(self, name: str) -> float:
+        """Return RAROI delta recorded for scenario ``name``."""
+
+        return float(self.scenario_raroi_delta.get(str(name), 0.0))
+
+    # ------------------------------------------------------------------
+    def generate_scorecards(self) -> List[ScenarioScorecard]:
+        """Return a list of :class:`ScenarioScorecard` summarising scenarios."""
+
+        cards: List[ScenarioScorecard] = []
+        for scen, roi_delta in self.scenario_roi_deltas.items():
+            cards.append(
+                ScenarioScorecard(
+                    scenario=scen,
+                    roi_delta=float(roi_delta),
+                    raroi_delta=float(self.scenario_raroi_delta.get(scen, 0.0)),
+                    metrics_delta=dict(self.scenario_metrics_delta.get(scen, {})),
+                    synergy_delta=dict(self.scenario_synergy_delta.get(scen, {})),
+                )
+            )
+        return cards
+
     def save_history(self, path: str) -> None:
         """Persist ``roi_history`` and ``module_deltas`` to ``path``."""
         if path.endswith(".json"):
@@ -2504,6 +2553,8 @@ class ROITracker:
                 "synergy_history": self.synergy_history,
                 "scenario_synergy": self.scenario_synergy,
                 "scenario_roi_deltas": self.scenario_roi_deltas,
+                "scenario_raroi": self.scenario_raroi,
+                "scenario_raroi_delta": self.scenario_raroi_delta,
                 "scenario_metrics_delta": self.scenario_metrics_delta,
                 "scenario_synergy_delta": self.scenario_synergy_delta,
                 "worst_scenario": self.biggest_drop()[0] if self.scenario_roi_deltas else None,
@@ -2720,6 +2771,29 @@ class ROITracker:
                     ],
                 )
             conn.execute(
+                "CREATE TABLE IF NOT EXISTS scenario_raroi (scenario TEXT, raroi REAL)"
+            )
+            conn.execute("DELETE FROM scenario_raroi")
+            if self.scenario_raroi:
+                conn.executemany(
+                    "INSERT INTO scenario_raroi (scenario, raroi) VALUES (?, ?)",
+                    [
+                        (scen, float(val)) for scen, val in self.scenario_raroi.items()
+                    ],
+                )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS scenario_raroi_delta (scenario TEXT, delta REAL)"
+            )
+            conn.execute("DELETE FROM scenario_raroi_delta")
+            if self.scenario_raroi_delta:
+                conn.executemany(
+                    "INSERT INTO scenario_raroi_delta (scenario, delta) VALUES (?, ?)",
+                    [
+                        (scen, float(val))
+                        for scen, val in self.scenario_raroi_delta.items()
+                    ],
+                )
+            conn.execute(
                 "CREATE TABLE IF NOT EXISTS scenario_metrics_delta (scenario TEXT, data TEXT)"
             )
             conn.execute("DELETE FROM scenario_metrics_delta")
@@ -2807,6 +2881,8 @@ class ROITracker:
                     self.synergy_history = []
                     self.scenario_synergy = {}
                     self.scenario_roi_deltas = {}
+                    self.scenario_raroi = {}
+                    self.scenario_raroi_delta = {}
                     self._worst_scenario = None
                 else:
                     self.roi_history = [float(x) for x in data.get("roi_history", [])]
@@ -2919,6 +2995,14 @@ class ROITracker:
                         str(k): float(v)
                         for k, v in data.get("scenario_roi_deltas", {}).items()
                     }
+                    self.scenario_raroi = {
+                        str(k): float(v)
+                        for k, v in data.get("scenario_raroi", {}).items()
+                    }
+                    self.scenario_raroi_delta = {
+                        str(k): float(v)
+                        for k, v in data.get("scenario_raroi_delta", {}).items()
+                    }
                     self.scenario_metrics_delta = {
                         str(n): {
                             str(k): float(v)
@@ -2997,6 +3081,8 @@ class ROITracker:
                 self.metrics_history = {}
                 self.scenario_synergy = {}
                 self.scenario_roi_deltas = {}
+                self.scenario_raroi = {}
+                self.scenario_raroi_delta = {}
                 self.scenario_metrics_delta = {}
                 self.scenario_synergy_delta = {}
                 self._worst_scenario = None
@@ -3085,6 +3171,18 @@ class ROITracker:
                 except Exception:
                     scen_delta_rows = []
                 try:
+                    scen_raroi_rows = conn.execute(
+                        "SELECT scenario, raroi FROM scenario_raroi ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    scen_raroi_rows = []
+                try:
+                    scen_raroi_delta_rows = conn.execute(
+                        "SELECT scenario, delta FROM scenario_raroi_delta ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    scen_raroi_delta_rows = []
+                try:
                     scen_metric_rows = conn.execute(
                         "SELECT scenario, data FROM scenario_metrics_delta ORDER BY rowid"
                     ).fetchall()
@@ -3131,6 +3229,8 @@ class ROITracker:
             self.actual_metrics = {}
             self.scenario_synergy = {}
             self.scenario_roi_deltas = {}
+            self.scenario_raroi = {}
+            self.scenario_raroi_delta = {}
             self._worst_scenario = None
             self.category_history = []
             self.drift_scores = []
@@ -3209,6 +3309,12 @@ class ROITracker:
                 continue
         self.scenario_roi_deltas = {
             str(scen): float(delta) for scen, delta in scen_delta_rows
+        }
+        self.scenario_raroi = {
+            str(scen): float(val) for scen, val in scen_raroi_rows
+        }
+        self.scenario_raroi_delta = {
+            str(scen): float(val) for scen, val in scen_raroi_delta_rows
         }
         self.scenario_metrics_delta = {}
         for scen, json_data in scen_metric_rows:

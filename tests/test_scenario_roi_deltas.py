@@ -82,23 +82,34 @@ def test_scenario_roi_deltas_and_synergy(monkeypatch):
 
     monkeypatch.setattr(env, "_section_worker", fake_worker)
 
-    tracker_obj, summary = env.run_scenarios(
-        ["simple_functions:print_ten"], tracker=rt.ROITracker()
+    tracker_obj, cards, summary = env.run_scenarios(
+        ["simple_functions:print_ten"], tracker=rt.ROITracker(filter_outliers=False)
     )
 
     assert summary["scenarios"]["normal"]["roi_delta"] == pytest.approx(1.0)
     cs_info = summary["scenarios"]["concurrency_spike"]
     assert cs_info["roi_delta"] == pytest.approx(-1.0)
+    assert "raroi" in cs_info and "raroi_delta" in cs_info
     assert tracker_obj.get_scenario_roi_delta("concurrency_spike") == pytest.approx(-1.0)
+    assert "concurrency_spike" in tracker_obj.scenario_raroi_delta
     assert summary["worst_scenario"] == "concurrency_spike"
     assert tracker_obj.biggest_drop()[0] == "concurrency_spike"
 
-    delta_profit = scenario_data["concurrency_spike"]["on"][1]["profitability"] - scenario_data["normal"]["on"][1]["profitability"]
+    delta_profit = (
+        scenario_data["concurrency_spike"]["on"][1]["profitability"]
+        - scenario_data["normal"]["on"][1]["profitability"]
+    )
     assert cs_info["metrics_delta"]["profitability"] == pytest.approx(delta_profit)
     assert cs_info["synergy"]["synergy_roi"] == pytest.approx(-1.0)
     assert cs_info["synergy"]["synergy_profitability"] == pytest.approx(delta_profit)
-    assert tracker_obj.scenario_metrics_delta["concurrency_spike"]["profitability"] == pytest.approx(delta_profit)
-    assert tracker_obj.scenario_synergy_delta["concurrency_spike"]["synergy_profitability"] == pytest.approx(delta_profit)
+    assert (
+        tracker_obj.scenario_metrics_delta["concurrency_spike"]["profitability"]
+        == pytest.approx(delta_profit)
+    )
+    assert (
+        tracker_obj.scenario_synergy_delta["concurrency_spike"]["synergy_profitability"]
+        == pytest.approx(delta_profit)
+    )
     flags = {r["flag"] for r in cs_info["runs"]}
     assert flags == {"on", "off"}
     assert cs_info["target_delta"]["roi"] == pytest.approx(-1.0)
