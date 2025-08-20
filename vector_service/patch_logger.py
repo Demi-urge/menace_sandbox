@@ -225,32 +225,35 @@ class PatchLogger:
                         )
                     except Exception:
                         pass
-                    for origin, roi in origin_totals.items():
+                    if patch_id:
+                        try:
+                            self.vector_metrics.record_patch_ancestry(patch_id, vm_vectors)
+                        except Exception:
+                            pass
+                for origin, roi in origin_totals.items():
+                    if self.vector_metrics is not None:
                         try:
                             self.vector_metrics.log_retrieval_feedback(
                                 origin, win=result, regret=not result, roi=roi
                             )
                         except Exception:
                             pass
-                        if self.event_bus is not None:
-                            try:
-                                self.event_bus.publish(
-                                    "retrieval:feedback",
-                                    {"db": origin, "win": result, "regret": not result},
-                                )
-                            except Exception:
-                                pass
-                        elif UnifiedEventBus is not None:
-                            try:
-                                UnifiedEventBus().publish(
-                                    "retrieval:feedback",
-                                    {"db": origin, "win": result, "regret": not result},
-                                )
-                            except Exception:
-                                pass
-                    if patch_id:
+                    payload = {
+                        "db": origin,
+                        "win": result,
+                        "regret": not result,
+                        "roi": roi,
+                        "win_rate": 1.0 if result else 0.0,
+                        "regret_rate": 0.0 if result else 1.0,
+                    }
+                    if self.event_bus is not None:
                         try:
-                            self.vector_metrics.record_patch_ancestry(patch_id, vm_vectors)
+                            self.event_bus.publish("retrieval:feedback", payload)
+                        except Exception:
+                            pass
+                    elif UnifiedEventBus is not None:
+                        try:
+                            UnifiedEventBus().publish("retrieval:feedback", payload)
                         except Exception:
                             pass
                 roi_metrics: dict[str, dict[str, float]] = {}
@@ -361,7 +364,12 @@ class PatchLogger:
         _TRACK_OUTCOME.labels(status).inc()
         _TRACK_DURATION.set(time.time() - start)
 
-        payload = {"result": result, "roi_metrics": roi_metrics}
+        payload = {
+            "result": result,
+            "roi_metrics": roi_metrics,
+            "win": result,
+            "regret": not result,
+        }
         if patch_id:
             payload["patch_id"] = patch_id
 
