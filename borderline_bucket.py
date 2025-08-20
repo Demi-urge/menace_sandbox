@@ -1,173 +1,79 @@
-import argparse
+"""Simple JSONL-backed borderline workflow bucket."""
+
+from __future__ import annotations
+
 import json
-import os
-import sqlite3
-from typing import Any, Dict, List, Optional
-
-DB_PATH = os.environ.get("BORDERLINE_BUCKET_DB", "borderline_bucket.db")
+from typing import Any, Dict, Optional
 
 
-def _get_conn() -> sqlite3.Connection:
-    return sqlite3.connect(DB_PATH)
+class BorderlineBucket:
+    """Persist borderline workflow information to a JSONL file.
 
-
-def _init_db() -> None:
-    with _get_conn() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS candidates (
-                workflow_id TEXT PRIMARY KEY,
-                raroi REAL,
-                confidence REAL,
-                status TEXT,
-                outcomes TEXT
-            )
-            """
-        )
-
-
-# Initialise database on import
-_init_db()
-
-
-def add_candidate(workflow_id: str, raroi: float, confidence: float) -> None:
-    """Enqueue a candidate workflow.
-
-    If the workflow already exists, its ``raroi`` and ``confidence`` are
-    updated while preserving status and outcomes. Newly inserted candidates
-    start with ``status`` of ``queued`` and an empty outcomes list.
+    Each record stores ``raroi`` history, confidence and current status. The
+    bucket is deliberately lightweight to keep tests fast and avoids external
+    dependencies.
     """
-    with _get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT outcomes, status FROM candidates WHERE workflow_id=?",
-            (workflow_id,),
+
+    def __init__(self, path: str | None = None) -> None:
+        self.path = path or "borderline_bucket.jsonl"
+        self._load()
+
+    # ------------------------------------------------------------------
+    def _load(self) -> None:
+        self.data: Dict[str, Dict[str, Any]] = {}
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    if line.strip():
+                        obj = json.loads(line)
+                        wf = obj.pop("workflow_id")
+                        self.data[wf] = obj
+        except FileNotFoundError:
+            pass
+
+    def _save(self) -> None:
+        with open(self.path, "w", encoding="utf-8") as fh:
+            for wf, info in self.data.items():
+                rec = {"workflow_id": wf, **info}
+                fh.write(json.dumps(rec) + "\n")
+
+    # ------------------------------------------------------------------
+    def add_candidate(self, workflow_id: str, raroi: float, confidence: float) -> None:
+        info = self.data.setdefault(
+            workflow_id,
+            {"raroi": [], "confidence": float(confidence), "status": "candidate"},
         )
-        row = cur.fetchone()
-        if row is None:
-            cur.execute(
-                "INSERT INTO candidates(workflow_id, raroi, confidence, status, outcomes) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (workflow_id, raroi, confidence, "queued", json.dumps([])),
-            )
-        else:
-            cur.execute(
-                "UPDATE candidates SET raroi=?, confidence=? WHERE workflow_id=?",
-                (raroi, confidence, workflow_id),
-            )
-        conn.commit()
+        info.setdefault("raroi", []).append(float(raroi))
+        info["confidence"] = float(confidence)
+        info.setdefault("status", "candidate")
+        self._save()
 
+    def get_candidate(self, workflow_id: str) -> Optional[Dict[str, Any]]:
+        return self.data.get(workflow_id)
 
-def record_outcome(workflow_id: str, passed: bool) -> None:
-    """Record a test outcome for ``workflow_id``."""
-    with _get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT outcomes FROM candidates WHERE workflow_id=?",
-            (workflow_id,),
-        )
-        row = cur.fetchone()
-        if row is None:
-            raise KeyError(f"Unknown workflow_id {workflow_id}")
-        outcomes = json.loads(row[0]) if row[0] else []
-        outcomes.append(bool(passed))
-        cur.execute(
-            "UPDATE candidates SET outcomes=? WHERE workflow_id=?",
-            (json.dumps(outcomes), workflow_id),
-        )
-        conn.commit()
-
-
-def _set_status(workflow_id: str, status: str) -> None:
-    with _get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE candidates SET status=? WHERE workflow_id=?",
-            (status, workflow_id),
-        )
-        if cur.rowcount == 0:
-            raise KeyError(f"Unknown workflow_id {workflow_id}")
-        conn.commit()
-
-
-def promote(workflow_id: str) -> None:
-    """Mark ``workflow_id`` as promoted."""
-    _set_status(workflow_id, "promoted")
-
-
-def terminate(workflow_id: str) -> None:
-    """Mark ``workflow_id`` as terminated."""
-    _set_status(workflow_id, "terminated")
-
-
-def list_candidates(status: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Return all stored candidates, optionally filtered by ``status``."""
-    with _get_conn() as conn:
-        cur = conn.cursor()
+    def all_candidates(self, status: str | None = None) -> Dict[str, Dict[str, Any]]:
         if status is None:
-            cur.execute(
-                "SELECT workflow_id, raroi, confidence, status, outcomes FROM candidates"
-            )
-        else:
-            cur.execute(
-                "SELECT workflow_id, raroi, confidence, status, outcomes FROM candidates WHERE status=?",
-                (status,),
-            )
-        rows = cur.fetchall()
-    result: List[Dict[str, Any]] = []
-    for wid, raroi, confidence, st, outcomes_json in rows:
-        outcomes = json.loads(outcomes_json) if outcomes_json else []
-        result.append(
-            {
-                "workflow_id": wid,
-                "raroi": raroi,
-                "confidence": confidence,
-                "status": st,
-                "outcomes": outcomes,
-            }
+            return dict(self.data)
+        return {wf: info for wf, info in self.data.items() if info.get("status") == status}
+
+    def record_result(self, workflow_id: str, raroi: float) -> None:
+        info = self.data.setdefault(
+            workflow_id,
+            {"raroi": [], "confidence": 0.0, "status": "candidate"},
         )
-    return result
+        info.setdefault("raroi", []).append(float(raroi))
+        self._save()
+
+    def promote(self, workflow_id: str) -> None:
+        if workflow_id in self.data:
+            self.data[workflow_id]["status"] = "promoted"
+            self._save()
+
+    def terminate(self, workflow_id: str) -> None:
+        if workflow_id in self.data:
+            self.data[workflow_id]["status"] = "terminated"
+            self._save()
 
 
-def _parse_bool(value: str) -> bool:
-    return value.lower() in {"1", "true", "yes", "y"}
+__all__ = ["BorderlineBucket"]
 
-
-def main(argv: Optional[List[str]] = None) -> None:
-    parser = argparse.ArgumentParser(description="Manage borderline bucket")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    add_p = sub.add_parser("add", help="enqueue a candidate")
-    add_p.add_argument("workflow_id")
-    add_p.add_argument("raroi", type=float)
-    add_p.add_argument("confidence", type=float)
-
-    outcome_p = sub.add_parser("outcome", help="record test outcome")
-    outcome_p.add_argument("workflow_id")
-    outcome_p.add_argument("passed", type=_parse_bool)
-
-    promote_p = sub.add_parser("promote", help="promote a workflow")
-    promote_p.add_argument("workflow_id")
-
-    terminate_p = sub.add_parser("terminate", help="terminate a workflow")
-    terminate_p.add_argument("workflow_id")
-
-    list_p = sub.add_parser("list", help="list workflows")
-    list_p.add_argument("--status", choices=["queued", "promoted", "terminated"])
-
-    args = parser.parse_args(argv)
-
-    if args.command == "add":
-        add_candidate(args.workflow_id, args.raroi, args.confidence)
-    elif args.command == "outcome":
-        record_outcome(args.workflow_id, args.passed)
-    elif args.command == "promote":
-        promote(args.workflow_id)
-    elif args.command == "terminate":
-        terminate(args.workflow_id)
-    elif args.command == "list":
-        print(json.dumps(list_candidates(args.status), indent=2))
-
-
-if __name__ == "__main__":
-    main()
