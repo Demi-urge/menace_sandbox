@@ -13,6 +13,7 @@ import logging
 import sys
 from datetime import datetime
 from governed_retrieval import govern_retrieval
+import joblib
 
 _ALIASES = (
     "universal_retriever",
@@ -252,20 +253,33 @@ def _prior_hit_count(origin_db: str, record_id: Any) -> int:
     except Exception:  # pragma: no cover - best effort
         return 0
 
+def _win_regret_rates(origin_db: str, record_id: Any) -> Tuple[float, float]:
+    """Return historical win/regret rates for a vector."""
 
-def load_ranker(path: str | Path) -> dict[str, Any]:
-    """Load a serialized ranking model from ``path``.
+    if _VEC_METRICS is None:
+        return 0.0, 0.0
+    try:
+        cur = _VEC_METRICS.conn.execute(
+            """
+            SELECT AVG(win), AVG(regret)
+              FROM vector_metrics
+             WHERE event_type='retrieval' AND db=? AND vector_id=?
+            """,
+            (origin_db, str(record_id)),
+        )
+        row = cur.fetchone()
+        if row:
+            w, r = row
+            return float(w or 0.0), float(r or 0.0)
+    except Exception:  # pragma: no cover - best effort
+        return 0.0, 0.0
+    return 0.0, 0.0
 
-    The file must be in the JSON format produced by :mod:`retrieval_ranker`.
-    """
 
-    data = json.loads(Path(path).read_text())
-    return {
-        "coef": data.get("coef", [[0.0]])[0],
-        "intercept": float(data.get("intercept", [0.0])[0]),
-        "features": data.get("features", []),
-        "classes": data.get("classes", []),
-    }
+def load_ranker(path: str | Path) -> Any:
+    """Load a serialized ranking model from ``path`` stored via joblib."""
+
+    return joblib.load(path)
 
 
 @dataclass
@@ -489,7 +503,7 @@ class UniversalRetriever:
         knowledge_graph: Any | None = None,
         weights: "RetrievalWeights | None" = None,
         model_path: str | Path | None = None,
-        ranker: dict[str, Any] | None = None,
+        ranker: Any | None = None,
         reliability_threshold: float = 0.0,
         fallback_on_low_reliability: bool = True,
         enable_model_ranking: bool = True,
@@ -506,7 +520,7 @@ class UniversalRetriever:
         self.weights = weights or RetrievalWeights()
         self.reliability_threshold = float(reliability_threshold)
         self.fallback_on_low_reliability = bool(fallback_on_low_reliability)
-        self._ranker_model: dict[str, Any] | None = None
+        self._ranker_model: Any | None = None
         self.use_ranker = bool(enable_model_ranking)
         if enable_model_ranking:
             if ranker is not None:
@@ -581,11 +595,10 @@ class UniversalRetriever:
         return dict(self._reliability_stats)
 
     def reload_ranker_model(self, model_path: str | Path) -> None:
-        """Reload the ranking model from ``model_path``.
+        """Reload the ranking model from ``model_path`` saved via joblib.
 
-        The model file must be in the JSON format produced by
-        :mod:`retrieval_ranker`.  Any errors are logged but otherwise
-        ignored to keep the retriever operational.
+        Any errors are logged but otherwise ignored to keep the retriever
+        operational.
         """
         try:
             self._ranker_model = load_ranker(model_path)
@@ -687,31 +700,44 @@ class UniversalRetriever:
     # ------------------------------------------------------------------
     def _model_predict(self, source: str, feats: Dict[str, float]) -> float:
         """Return ranking model probability for candidate ``source``."""
-
         model = self._ranker_model
         if not model or not feats:
             return 1.0
         try:
-            vec: List[float] = []
             aliases = {
                 "embedding_age": "age",
                 "vector_similarity": "similarity",
                 "workflow_frequency": "exec_freq",
                 "prior_hit_count": "prior_hits",
             }
-            for name in model.get("features", []):
+            feature_names = getattr(model, "feature_names_in_", None)
+            if feature_names is None:
+                feature_names = getattr(model, "get", lambda *_: None)("features", None)
+            vec: List[float] = []
+            for name in feature_names or []:
                 if name.startswith("db_"):
                     vec.append(1.0 if source == name[3:] else 0.0)
                 else:
                     key = aliases.get(name, name)
                     vec.append(float(feats.get(key, 0.0)))
-            z = sum(c * v for c, v in zip(model.get("coef", []), vec)) + model.get(
-                "intercept", 0.0
-            )
-            return 1.0 / (1.0 + math.exp(-z))
+            if hasattr(model, "coef_"):
+                coef = getattr(model, "coef_", [[0.0]])[0]
+                intercept = getattr(model, "intercept_", [0.0])[0]
+                z = sum(c * v for c, v in zip(coef, vec)) + intercept
+                return 1.0 / (1.0 + math.exp(-z))
+            if hasattr(model, "predict_proba"):
+                import numpy as np
+
+                proba = model.predict_proba(np.array([vec]))[0]
+                return float(proba[1] if len(proba) > 1 else proba[0])
+            if isinstance(model, dict):  # backward compatibility
+                z = sum(c * v for c, v in zip(model.get("coef", []), vec)) + model.get(
+                    "intercept", 0.0
+                )
+                return 1.0 / (1.0 + math.exp(-z))
         except Exception:
             logger.exception("ranking model prediction failed")
-            return 1.0
+        return 1.0
 
     def _load_reliability_stats(self) -> Dict[str, Dict[str, float]]:
         """Fetch win/regret rates for each DB from ``MetricsDB``.
@@ -900,6 +926,19 @@ class UniversalRetriever:
                     )
                     roi_delta = float(extra.get("roi") or extra.get("roi_delta") or 0.0)
                     prior_hits = float(_prior_hit_count(source, rec_id))
+                    win_hist, regret_hist = _win_regret_rates(source, rec_id)
+                    try:
+                        severity = float(
+                            extra.get("alignment_severity")
+                            or (
+                                m.get("alignment_severity")
+                                if isinstance(m, dict)
+                                else getattr(m, "alignment_severity", 0.0)
+                            )
+                            or 0.0
+                        )
+                    except Exception:
+                        severity = 0.0
                     feats = {
                         "similarity": similarity,
                         "context_score": ctx_score,
@@ -911,7 +950,10 @@ class UniversalRetriever:
                         "exec_freq": exec_freq,
                         "roi_delta": roi_delta,
                         "prior_hits": prior_hits,
-                        **extra,
+                        "alignment_severity": severity,
+                        "win": win_hist,
+                        "regret": regret_hist,
+                        **{k: v for k, v in extra.items() if k not in {"alignment_severity", "win", "regret"}},
                         "distance": dist,
                     }
                     base_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT

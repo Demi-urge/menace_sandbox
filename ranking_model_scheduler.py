@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Scheduler for periodic ranking model retraining.
 
-This utility ties together the :mod:`retrieval_ranker` training utilities
+This utility ties together the ranking model training utilities
 with :func:`metrics_aggregator.compute_retriever_stats` so that the
 ranking model and database win/regret rates stay up-to-date.  After
 retraining the model it triggers a reload on any running services that
@@ -30,10 +30,12 @@ except Exception:  # pragma: no cover - fallback when executed directly
     from roi_tracker import ROITracker  # type: ignore
 
 try:  # pragma: no cover - package-relative import
-    from . import retrieval_ranker as rr
+    from .analytics.retrieval_ranker_dataset import build_dataset
+    from .analytics.retrieval_ranker_model import train as train_ranker, MODEL_PATH
     from .metrics_aggregator import compute_retriever_stats
 except Exception:  # pragma: no cover - fallback when executed directly
-    import retrieval_ranker as rr  # type: ignore
+    from analytics.retrieval_ranker_dataset import build_dataset  # type: ignore
+    from analytics.retrieval_ranker_model import train as train_ranker, MODEL_PATH  # type: ignore
     from metrics_aggregator import compute_retriever_stats  # type: ignore
 
 
@@ -46,7 +48,7 @@ class RankingModelScheduler:
         *,
         vector_db: Path | str = "vector_metrics.db",
         metrics_db: Path | str = "metrics.db",
-        model_path: Path | str = "retrieval_ranker.json",
+        model_path: Path | str = MODEL_PATH,
         interval: int = 86400,
         roi_tracker: ROITracker | None = None,
     ) -> None:
@@ -102,11 +104,8 @@ class RankingModelScheduler:
             )
 
         # Train model from latest vector metrics
-        df = rr.load_training_data(
-            vector_db=self.vector_db, patch_db=self.metrics_db
-        )
-        tm = rr.train(df)
-        rr.save_model(tm, self.model_path)
+        build_dataset(vec_db_path=self.vector_db)
+        train_ranker(save_path=self.model_path)
 
         # Reload model and reliability scores in running services
         def _reload_all(svc: Any) -> None:

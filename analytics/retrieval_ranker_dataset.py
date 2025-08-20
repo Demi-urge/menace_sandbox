@@ -19,7 +19,18 @@ import argparse
 import pandas as pd
 
 from ..vector_metrics_db import VectorMetricsDB  # type: ignore
-from ..vector_service import Retriever  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from ..vector_service import Retriever  # type: ignore
+except BaseException:  # pragma: no cover - fallback for lightweight environments
+    class Retriever:  # type: ignore
+        def error_frequency(self, *_args: Any, **_kw: Any) -> float:
+            return 0.0
+
+        def workflow_usage(self, *_args: Any, **_kw: Any) -> float:
+            return 0.0
+
+        def bot_deploy_freq(self, *_args: Any, **_kw: Any) -> float:
+            return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +44,10 @@ class FeatureRow:
     exec_freq: float
     roi_delta: float
     prior_hits: int
+    alignment_severity: float
+    win: float
+    regret: float
+    hit: int
 
 
 # ---------------------------------------------------------------------------
@@ -145,16 +160,38 @@ def build_dataset(
     now = datetime.utcnow()
     cur = vmdb.conn.execute(
         """
-        SELECT session_id, vector_id, db, contribution, ts, patch_id, hit
-          FROM vector_metrics
-         WHERE event_type='retrieval'
-         ORDER BY ts
+        SELECT vm.session_id,
+               vm.vector_id,
+               vm.db,
+               vm.contribution,
+               vm.ts,
+               vm.patch_id,
+               vm.hit,
+               vm.win,
+               vm.regret,
+               pa.alignment_severity
+          FROM vector_metrics AS vm
+          LEFT JOIN patch_ancestry AS pa
+            ON vm.patch_id = pa.patch_id AND vm.vector_id = pa.vector_id
+         WHERE vm.event_type='retrieval'
+         ORDER BY vm.ts
         """
     )
 
     rows: list[FeatureRow] = []
     hit_counts: dict[str, int] = {}
-    for session_id, vec_id, db, contrib, ts, patch_id, hit in cur.fetchall():
+    for (
+        session_id,
+        vec_id,
+        db,
+        contrib,
+        ts,
+        patch_id,
+        hit,
+        win,
+        regret,
+        align,
+    ) in cur.fetchall():
         if not vec_id or db == "heuristic":
             continue
         prior = hit_counts.get(str(vec_id), 0)
@@ -173,6 +210,10 @@ def build_dataset(
                 exec_freq=float(freq),
                 roi_delta=float(roi),
                 prior_hits=int(prior),
+                alignment_severity=float(align or 0.0),
+                win=float(win or 0.0),
+                regret=float(regret or 0.0),
+                hit=int(hit or 0),
             )
         )
 
