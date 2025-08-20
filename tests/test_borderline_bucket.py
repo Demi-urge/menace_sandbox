@@ -32,25 +32,34 @@ def test_record_result_appends_history(tmp_path):
     assert cand["confidence"] == 0.9
 
 
-def test_process_promotes_and_terminates(tmp_path):
+def test_process_promotes_candidate(tmp_path):
     path = tmp_path / "bucket.jsonl"
     bucket = BorderlineBucket(str(path))
     bucket.add_candidate("good", 0.05, 0.7)
-    bucket.add_candidate("bad", 0.05, 0.7)
-
-    results = {"good": (0.2, 0.8), "bad": (0.01, 0.7)}
 
     def evaluator(wf, info):
-        return results[wf]
+        return 0.2, 0.8
 
     bucket.process(evaluator, raroi_threshold=0.1, confidence_threshold=0.6)
 
-    good = bucket.get_candidate("good")
-    bad = bucket.get_candidate("bad")
-    assert good["status"] == "promoted"
-    assert good["raroi"][-1] == 0.2
-    assert bad["status"] == "terminated"
-    assert bad["raroi"][-1] == 0.01
+    cand = bucket.get_candidate("good")
+    assert cand["status"] == "promoted"
+    assert cand["raroi"][-1] == 0.2
+
+
+def test_process_terminates_candidate(tmp_path):
+    path = tmp_path / "bucket.jsonl"
+    bucket = BorderlineBucket(str(path))
+    bucket.add_candidate("bad", 0.05, 0.7)
+
+    def evaluator(wf, info):
+        return 0.01, 0.7
+
+    bucket.process(evaluator, raroi_threshold=0.1, confidence_threshold=0.6)
+
+    cand = bucket.get_candidate("bad")
+    assert cand["status"] == "terminated"
+    assert cand["raroi"][-1] == 0.01
 
 
 def test_score_workflow_routes_borderline_cases(tmp_path):
