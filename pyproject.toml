@@ -78,6 +78,9 @@ backfill-embeddings = "scripts.backfill_embeddings:cli"
 retrieval-ranker = "retrieval_ranker:main"
 knowledge-cli = "knowledge_cli:main"
 
+[project.entry-points."menace.plugins"]
+sample = "menace.plugins.sample:register"
+
 [project.optional-dependencies]
 test = [
     "pytest",

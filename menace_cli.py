@@ -5,6 +5,8 @@ import json
 import subprocess
 import sys
 
+from menace.plugins import load_plugins
+
 
 def _run(cmd: list[str]) -> int:
     """Run a subprocess and return its exit code."""
@@ -339,6 +341,8 @@ def main(argv: list[str] | None = None) -> int:
         "--create-migration", action="store_true", help="Create alembic migration"
     )
     p_newvec.set_defaults(func=handle_new_vector)
+    # allow plugins to register additional subcommands
+    load_plugins(sub)
 
     args = parser.parse_args(argv)
 
