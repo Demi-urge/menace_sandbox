@@ -5239,6 +5239,8 @@ class Scorecard:
     roi_delta: float
     metrics_delta: Dict[str, float]
     synergy: Dict[str, float]
+    recommendation: str | None = None
+    status: str | None = None
 
 
 def run_scenarios(
@@ -5428,21 +5430,25 @@ def run_scenarios(
             json.dump(export, fh)
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to write scenario deltas")
-    scorecards = {
-        scen: Scorecard(
+    scenario_cards = {c.scenario: c for c in tracker.generate_scorecards()}
+    scorecards: Dict[str, Scorecard] = {}
+    for scen, info in results.items():
+        rec = scenario_cards.get(scen)
+        scorecards[scen] = Scorecard(
             scenario=scen,
             baseline_roi=baseline_roi,
             stress_roi=info["roi"],
             roi_delta=info["roi"] - baseline_roi,
             metrics_delta=info["metrics_delta"],
             synergy=info["synergy"],
+            recommendation=rec.recommendation if rec else None,
+            status=rec.status if rec else None,
         )
-        for scen, info in results.items()
-    }
     summary = {
         "scenarios": results,
         "worst_scenario": worst,
         "scorecards": {scen: asdict(card) for scen, card in scorecards.items()},
+        "status": tracker.workflow_label,
     }
     return tracker, scorecards, summary
 

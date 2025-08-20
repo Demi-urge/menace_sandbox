@@ -779,7 +779,8 @@ def test_generate_scorecards():
     assert tracker.workflow_label == "situationally weak"
     cs = {c.scenario: c for c in cards}
     assert cs["concurrency_spike"].raroi_delta == pytest.approx(-1.0)
-    assert cs["concurrency_spike"].recommendation == "add rate limiting"
+    assert cs["concurrency_spike"].recommendation == "tune rate limits"
+    assert cs["concurrency_spike"].status == "situationally weak"
     assert cs["normal"].recommendation is None
 
 
@@ -789,7 +790,7 @@ def test_generate_scenario_scorecard(tmp_path):
         "concurrency_spike", -1.0, {"errors": 1.0}, {"cpu": 2.0}, 0.0, -1.0
     )
     tracker.record_scenario_delta(
-        "schema_drift", 0.5, {"schema_errors": 2.0}, {"cpu": 1.0}, 0.0, 0.5
+        "schema_drift", 0.5, {"schema_mismatches": 2.0}, {"cpu": 1.0}, 0.0, 0.5
     )
     card = tracker.generate_scenario_scorecard(
         "wf1", ["concurrency_spike", "schema_drift"]
@@ -798,13 +799,13 @@ def test_generate_scenario_scorecard(tmp_path):
     assert set(card["scenarios"]) == {"concurrency_spike", "schema_drift"}
     assert card["scenarios"]["concurrency_spike"]["roi_delta"] == pytest.approx(-1.0)
     assert (
-        card["scenarios"]["schema_drift"]["metrics_delta"]["schema_errors"]
+        card["scenarios"]["schema_drift"]["metrics_delta"]["schema_mismatches"]
         == pytest.approx(2.0)
     )
-    assert card["workflow_label"] == "situationally weak"
+    assert card["status"] == "situationally weak"
     assert (
         card["scenarios"]["concurrency_spike"]["recommendation"]
-        == "add rate limiting"
+        == "tune rate limits"
     )
     assert (
         card["scenarios"]["schema_drift"]["recommendation"]
@@ -814,9 +815,10 @@ def test_generate_scenario_scorecard(tmp_path):
 
 def test_hardening_recommendations():
     tips = {
-        "concurrency_spike": "add rate limiting",
+        "concurrency_spike": "tune rate limits",
         "schema_drift": "tighten schema validation",
         "hostile_input": "sanitize inputs",
+        "flaky_upstream": "add retries or fallback logic",
     }
     for scen, tip in tips.items():
         tracker = rt.ROITracker()
@@ -824,6 +826,17 @@ def test_hardening_recommendations():
         cards = tracker.generate_scorecards()
         cs = {c.scenario: c for c in cards}
         assert cs[scen].recommendation == tip
+
+
+def test_situationally_weak_from_metrics():
+    tracker = rt.ROITracker()
+    tracker.record_scenario_delta("normal", 0.5, {}, {}, 0.0, 0.0)
+    tracker.record_scenario_delta(
+        "hostile_input", 0.2, {"error_rate": 1.0}, {}, 0.0, 0.0
+    )
+    tracker.record_scenario_delta("schema_drift", 0.3, {}, {}, 0.0, 0.0)
+    tracker.generate_scorecards()
+    assert tracker.workflow_label == "situationally weak"
 
 
 def test_scorecard_cli(tmp_path, capsys):
