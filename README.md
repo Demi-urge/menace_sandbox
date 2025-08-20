@@ -10,6 +10,10 @@
 - Central Menace orchestrator coordinating all stages and hierarchical oversight
 - Self improvement engine automatically runs the workflow on the Menace model when metrics degrade
 - Self-coding manager applies patches then deploys via the automation pipeline
+- Command-line interface for setup, retrieval and scaffolding (see
+  [docs/cli.md](docs/cli.md)). Semantic search falls back to full-text
+  search when needed and cached results expire after one hour. Scaffolding
+  commands expose hooks for router registration and migrations.
 - Memory-aware GPT wrapper injects prior feedback and fixes into prompts when
   calling ChatGPT. Callers pass a module/action key so retrieved context and the
   resulting interaction are logged with standard tags via
