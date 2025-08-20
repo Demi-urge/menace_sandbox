@@ -32,9 +32,10 @@ from .database_manager import update_model, DB_PATH
 from .databases import MenaceDB
 from .contrarian_db import ContrarianDB
 from .governance import evaluate_rules
-from .deployment_governance import evaluate_workflow
+from .deployment_governance import evaluate as deployment_evaluate
 from .borderline_bucket import BorderlineBucket
 from .rollback_manager import RollbackManager
+from .audit_logger import log_event as audit_log_event
 
 # ---------------------------------------------------------------------------
 # SQLite layer for deployment & error tracking
@@ -595,8 +596,17 @@ class DeploymentBot:
         deltas = list(scenario_raroi_deltas or [])
         if deltas:
             scorecard["raroi"] = deltas[-1]
-        eval_res = evaluate_workflow(scorecard, None)
+        metrics = {"raroi": scorecard.get("raroi"), "confidence": scorecard.get("confidence")}
+        eval_res = deployment_evaluate(scorecard, metrics)
         verdict = eval_res.get("verdict")
+        reasons = eval_res.get("reasons", [])
+        try:
+            audit_log_event("deployment_verdict", {"verdict": verdict, "reasons": reasons})
+        except Exception as exc:
+            _log_exception(self.logger, "audit log", exc)
+        self.logger.info(
+            "deployment verdict", extra={"verdict": verdict, "reasons": ";".join(reasons)}
+        )
         if verdict == "demote":
             self.logger.warning("deployment governor demoted workflow")
             try:
@@ -604,7 +614,7 @@ class DeploymentBot:
             except Exception as exc:
                 _log_exception(self.logger, "rollback", exc)
             return -1
-        if verdict == "pilot":
+        if verdict == "micro_pilot":
             self.logger.info("deployment governor requested micro-pilot")
             try:
                 self.borderline_bucket.enqueue(
