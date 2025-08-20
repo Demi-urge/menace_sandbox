@@ -3,6 +3,7 @@ from typing import Mapping
 import menace_sandbox.roi_tracker as rt
 from menace_sandbox.roi_tracker import ROITracker
 import menace_sandbox.self_test_service as sts
+from menace_sandbox.borderline_bucket import BorderlineBucket
 
 
 def test_raroi_formula(monkeypatch):
@@ -85,3 +86,50 @@ def test_raroi_high_risk_instability_and_failures(monkeypatch):
     assert raroi == pytest.approx(expected)
     assert called["metrics"]["errors_per_minute"] == 10.0
     assert called["metrics"]["instability"] == 0.8
+
+
+@pytest.fixture()
+def tracker_with_candidate(tmp_path):
+    bucket = BorderlineBucket(str(tmp_path / "b.jsonl"))
+    tracker = ROITracker(
+        raroi_borderline_threshold=0.1, borderline_bucket=bucket
+    )
+    tracker.workflow_confidence_scores["wf1"] = 0.9
+    tracker.score_workflow("wf1", 0.05)
+    return tracker, bucket
+
+
+def test_borderline_promotion(tracker_with_candidate):
+    tracker, bucket = tracker_with_candidate
+    tracker.process_borderline_candidates(lambda wf, info: 0.2)
+    cand = bucket.get_candidate("wf1")
+    assert cand["status"] == "promoted"
+    assert cand["raroi"][-1] == 0.2
+
+
+def test_borderline_termination(tracker_with_candidate):
+    tracker, bucket = tracker_with_candidate
+    tracker.process_borderline_candidates(lambda wf, info: 0.01)
+    cand = bucket.get_candidate("wf1")
+    assert cand["status"] == "terminated"
+    assert cand["raroi"][-1] == 0.01
+
+
+def test_low_raroi_or_confidence_added_to_bucket(tmp_path):
+    bucket = BorderlineBucket(str(tmp_path / "b.jsonl"))
+    tracker = ROITracker(
+        raroi_borderline_threshold=0.1,
+        confidence_threshold=0.8,
+        borderline_bucket=bucket,
+    )
+    tracker.workflow_confidence_scores["wf_low_raroi"] = 0.9
+    _final, review, _conf = tracker.score_workflow("wf_low_raroi", 0.05)
+    assert not review
+    assert bucket.get_candidate("wf_low_raroi") is not None
+
+    tracker.workflow_confidence_scores["wf_low_conf"] = 0.5
+    _final, review, _conf = tracker.score_workflow("wf_low_conf", 0.5)
+    assert review
+    cand = bucket.get_candidate("wf_low_conf")
+    assert cand is not None
+    assert cand["confidence"] == 0.5
