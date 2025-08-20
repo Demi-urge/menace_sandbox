@@ -829,8 +829,10 @@ def _sandbox_cycle_runner(
                     ),
                 )
                 try:
-                    tracker.process_borderline_candidates(
-                        getattr(ctx, "micro_pilot_evaluator", None)
+                    tracker.borderline_bucket.process(
+                        getattr(ctx, "micro_pilot_evaluator", None),
+                        raroi_threshold=tracker.raroi_borderline_threshold,
+                        confidence_threshold=tracker.confidence_threshold,
                     )
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("failed to process borderline candidates")

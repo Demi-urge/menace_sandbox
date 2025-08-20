@@ -1309,31 +1309,23 @@ class ROITracker:
     # ------------------------------------------------------------------
     def process_borderline_candidates(
         self,
-        evaluator: Callable[[str, Dict[str, Any]], float] | None = None,
+        evaluator: Callable[[str, Dict[str, Any]], float | Tuple[float, float]] | None = None,
     ) -> None:
-        """Run micro-pilot tests for pending borderline candidates.
+        """Convenience wrapper around :meth:`BorderlineBucket.process`.
 
         Parameters
         ----------
         evaluator:
-            Optional callable ``(workflow_id, candidate_info) -> raroi`` used to
-            produce a test RAROI. When omitted, the candidate's last recorded
-            RAROI is re-used.
+            Optional callable returning either ``raroi`` or ``(raroi, confidence)``
+            for ``(workflow_id, candidate_info)``. When omitted the candidate's
+            last recorded values are reused.
         """
 
-        evaluate = evaluator or (lambda wf, info: info["raroi"][-1])
-        for wf, info in self.borderline_bucket.all_candidates(status="candidate").items():
-            try:
-                result = float(evaluate(wf, info))
-                self.borderline_bucket.record_result(
-                    wf, result, info.get("confidence", 0.0)
-                )
-                if result > self.raroi_borderline_threshold:
-                    self.borderline_bucket.promote(wf)
-                else:
-                    self.borderline_bucket.terminate(wf)
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("failed processing borderline candidate %s", wf)
+        self.borderline_bucket.process(
+            evaluator,
+            raroi_threshold=self.raroi_borderline_threshold,
+            confidence_threshold=self.confidence_threshold,
+        )
 
     # ------------------------------------------------------------------
     def prediction_summary(self, window: int | None = None) -> Dict[str, Any]:

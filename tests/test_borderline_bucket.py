@@ -54,3 +54,21 @@ def test_persistence_round_trip(tmp_path):
         "context": {"a": 1},
     }
 
+
+def test_process_promotes_and_terminates(bucket):
+    bucket.enqueue("good", 0.05, 0.8)
+    bucket.enqueue("bad", 0.05, 0.8)
+
+    def evaluator(wf, info):
+        if wf == "good":
+            return 0.2, 0.85
+        return 0.01, 0.4
+
+    bucket.process(
+        evaluator, raroi_threshold=0.1, confidence_threshold=0.5
+    )
+
+    assert bucket.status("good") == "promoted"
+    assert bucket.status("bad") == "terminated"
+    assert bucket.get_candidate("good")["confidence"] == 0.85
+
