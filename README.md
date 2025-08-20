@@ -1350,9 +1350,11 @@ provisioning are shut down automatically.
 
 `ErrorLogger.log_roi_cap()` uses the `propose_fix` helper from
 `roi_calculator` to identify metrics hitting ROI caps and recommends up to
-three remediation hints. The resulting `ROIBottleneck` event can be replicated
-into a fix ticket or fed into Codex to generate an automated patch. See
-[docs/roi_calculator.md](docs/roi_calculator.md) for sample output.
+three remediation hints. Default messages live in
+`configs/roi_fix_rules.yaml` and can be customised per metric. The resulting
+`ROIBottleneck` event powers a feedback loop where low-scoring metrics
+automatically raise tickets or craft Codex prompts for suggested patches.
+See [docs/roi_calculator.md](docs/roi_calculator.md) for sample integrations.
 
 ### Bottleneck Detection Bots
 

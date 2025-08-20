@@ -21,7 +21,7 @@ EXPECTED_METRICS = {
 }
 
 
-REMEDIATION_HINTS: dict[str, str] = {
+DEFAULT_REMEDIATION_HINTS: dict[str, str] = {
     "profitability": "optimise revenue streams; reduce costs",
     "efficiency": "optimise algorithms; reduce overhead",
     "reliability": "increase retries; improve test mocks",
@@ -32,6 +32,24 @@ REMEDIATION_HINTS: dict[str, str] = {
     "energy": "batch work; reduce polling",
     "alignment_violation": "review alignment policies; add safeguards",
 }
+
+
+def _load_remediation_hints() -> dict[str, str]:
+    """Return remediation hints loaded from ``configs/roi_fix_rules.yaml``.
+
+    The YAML file can override or extend :data:`DEFAULT_REMEDIATION_HINTS`.
+    Missing or invalid files fall back to the defaults.
+    """
+
+    try:
+        with Path("configs/roi_fix_rules.yaml").open("r", encoding="utf-8") as fh:
+            file_hints: dict[str, str] = yaml.safe_load(fh) or {}
+    except FileNotFoundError:
+        file_hints = {}
+    return {**DEFAULT_REMEDIATION_HINTS, **file_hints}
+
+
+REMEDIATION_HINTS = _load_remediation_hints()
 
 
 class ROICalculator:
@@ -147,6 +165,10 @@ def propose_fix(
     metrics: dict[str, float], profile: str | dict[str, Any]
 ) -> list[tuple[str, str]]:
     """Return remediation hints for weakest metrics or veto violations.
+
+    Remediation messages are loaded from ``configs/roi_fix_rules.yaml`` where
+    they can be customised per metric. Results feed the ROI feedback loop by
+    helping bots or humans prioritise follow-up actions.
 
     Parameters
     ----------

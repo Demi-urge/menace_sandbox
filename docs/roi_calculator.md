@@ -52,7 +52,9 @@ The :func:`propose_fix` helper highlights metrics that cap ROI and offers
 remediation hints. It first checks the profile's veto rules – any metric below
 its ``min``, above ``max`` or matching an ``equals`` value is treated as a hard
 ROI cap and included in the suggestion list. Remaining metrics are then sorted
-by their weighted contribution so the weakest ones surface next.
+by their weighted contribution so the weakest ones surface next. Hints come
+from ``configs/roi_fix_rules.yaml`` which maps each metric to a default
+remediation message.
 
 ```python
 from menace_sandbox.roi_calculator import ROICalculator, propose_fix
@@ -72,6 +74,32 @@ Sample output:
  ('latency', 'optimise I/O; use caching'),
  ('energy', 'batch work; reduce polling')]
 ```
+
+### Closing the loop
+
+Downstream services can act on these hints to automatically raise tickets or
+craft Codex prompts. For example, a simple ticket integration might look like:
+
+```python
+from menace_sandbox.roi_calculator import propose_fix
+from mytracker import create_issue
+
+fixes = propose_fix(metrics, "scraper_bot")
+for metric, hint in fixes:
+    create_issue(title=f"Improve {metric}", body=hint)
+```
+
+Using Codex to draft a patch can reuse the same hints:
+
+```python
+prompt = """Optimize the following aspect:
+{metric}: {hint}
+"""
+code = openai.Completion.create(model="codex", prompt=prompt.format(metric=metric, hint=hint))
+```
+
+This feedback loop ensures that low-scoring metrics quickly result in concrete
+remediation steps.
 
 ### Error logger integration
 
