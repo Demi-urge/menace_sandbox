@@ -101,10 +101,10 @@ for the full formula.
 
 When a workflow's RAROI drops below ``BORDERLINE_RAROI_THRESHOLD`` or the
 confidence score falls under ``BORDERLINE_CONFIDENCE_THRESHOLD`` it is queued in the
-[borderline bucket](borderline_bucket.md). The bucket stores recent RAROI
-values and the latest confidence so a lightweight **micro‑pilot** can collect
-additional evidence. ``MICROPILOT_MODE`` controls how these candidates are
-handled:
+[borderline bucket](borderline_bucket.md) instead of being discarded. The bucket
+stores recent RAROI values and the latest confidence so a lightweight
+**micro‑pilot** can collect additional evidence. ``MICROPILOT_MODE`` controls how
+these candidates are handled:
 
 - ``auto`` – queue and immediately run a micro‑pilot.
 - ``queue`` – queue only; a later run must call
