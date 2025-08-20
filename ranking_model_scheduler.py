@@ -29,14 +29,22 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback when executed directly
     from roi_tracker import ROITracker  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from .unified_event_bus import UnifiedEventBus
+except Exception:  # pragma: no cover - fallback
+    try:
+        from unified_event_bus import UnifiedEventBus  # type: ignore
+    except Exception:  # pragma: no cover
+        UnifiedEventBus = None  # type: ignore
+
 try:  # pragma: no cover - package-relative import
-    from .analytics.retrieval_ranker_dataset import build_dataset
-    from .analytics.retrieval_ranker_model import train as train_ranker, MODEL_PATH
+    from . import retrieval_ranker as rr
     from .metrics_aggregator import compute_retriever_stats
 except Exception:  # pragma: no cover - fallback when executed directly
-    from analytics.retrieval_ranker_dataset import build_dataset  # type: ignore
-    from analytics.retrieval_ranker_model import train as train_ranker, MODEL_PATH  # type: ignore
+    import retrieval_ranker as rr  # type: ignore
     from metrics_aggregator import compute_retriever_stats  # type: ignore
+
+MODEL_PATH = Path("retrieval_ranker.model")
 
 
 class RankingModelScheduler:
@@ -52,6 +60,7 @@ class RankingModelScheduler:
         interval: int = 86400,
         roi_tracker: ROITracker | None = None,
         roi_signal_threshold: float | None = None,
+        event_bus: "UnifiedEventBus" | None = None,
     ) -> None:
         self.services = list(services)
         self.vector_db = Path(vector_db)
@@ -63,6 +72,25 @@ class RankingModelScheduler:
         self.running = False
         self._thread: Optional[threading.Thread] = None
         self._db_roi_counts: dict[str, int] = {}
+        self.event_bus = event_bus
+        if self.event_bus is None and UnifiedEventBus is not None:
+            try:
+                self.event_bus = UnifiedEventBus()
+            except Exception:
+                self.event_bus = None
+        if self.event_bus is not None:
+            try:
+                self.event_bus.subscribe("patch_logger:outcome", self._handle_patch_outcome)
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    def _handle_patch_outcome(self, topic: str, event: object) -> None:
+        """Handle outcome notifications from :class:`PatchLogger`."""
+        try:
+            self.retrain_and_reload()
+        except Exception:
+            logging.exception("ranking model retrain failed")
 
     # ------------------------------------------------------------------
     def retrain_and_reload(self) -> None:
@@ -107,8 +135,10 @@ class RankingModelScheduler:
             )
 
         # Train model from latest vector metrics
-        build_dataset(vec_db_path=self.vector_db)
-        train_ranker(save_path=self.model_path)
+        df = rr.load_training_data(vector_db=self.vector_db, patch_db=self.metrics_db)
+        trained = rr.train(df)
+        tm = trained[0] if isinstance(trained, tuple) else trained
+        rr.save_model(tm, self.model_path)
 
         # Reload model and reliability scores in running services
         def _reload_all(svc: Any) -> None:

@@ -65,6 +65,7 @@ class PatchLogger:
         vector_metrics: VectorMetricsDB | None = None,
         metrics_db: Any | None = None,
         roi_tracker: ROITracker | None = None,
+        event_bus: "UnifiedEventBus" | None = None,
     ) -> None:
         self.patch_db = patch_db or (PatchHistoryDB() if PatchHistoryDB is not None else None)
         self.vector_metrics = vector_metrics or (
@@ -72,6 +73,7 @@ class PatchLogger:
         )
         self.metrics_db = metrics_db
         self.roi_tracker = roi_tracker
+        self.event_bus = event_bus
 
     # ------------------------------------------------------------------
     def _parse_vectors(
@@ -206,7 +208,15 @@ class PatchLogger:
                             )
                         except Exception:
                             pass
-                        if UnifiedEventBus is not None:
+                        if self.event_bus is not None:
+                            try:
+                                self.event_bus.publish(
+                                    "retrieval:feedback",
+                                    {"db": origin, "win": result, "regret": not result},
+                                )
+                            except Exception:
+                                pass
+                        elif UnifiedEventBus is not None:
                             try:
                                 UnifiedEventBus().publish(
                                     "retrieval:feedback",
@@ -239,6 +249,17 @@ class PatchLogger:
 
         _TRACK_OUTCOME.labels(status).inc()
         _TRACK_DURATION.set(time.time() - start)
+
+        if self.event_bus is not None:
+            try:
+                self.event_bus.publish("patch_logger:outcome", {"result": result})
+            except Exception:
+                pass
+        elif UnifiedEventBus is not None:
+            try:
+                UnifiedEventBus().publish("patch_logger:outcome", {"result": result})
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     @log_and_measure
