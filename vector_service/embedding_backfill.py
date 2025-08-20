@@ -6,8 +6,10 @@ import logging
 import time
 from typing import List, Sequence
 import importlib
+import importlib.util
 import asyncio
 from pathlib import Path
+import pkgutil
 
 from .decorators import log_and_measure
 from compliance.license_fingerprint import (
@@ -67,17 +69,18 @@ class EmbeddingBackfill:
         """
 
         root = Path(__file__).resolve().parents[1]
-        for path in root.rglob("*.py"):  # pragma: no cover - best effort
-            if any(part in {"tests", "scripts", "docs"} for part in path.parts):
+        for mod in pkgutil.walk_packages([str(root)]):  # pragma: no cover - best effort
+            name = mod.name
+            if any(part in {"tests", "scripts", "docs"} for part in name.split(".")):
                 continue
             try:
+                spec = importlib.util.find_spec(name)
+                if not spec or not spec.origin or not spec.origin.endswith(".py"):
+                    continue
+                path = Path(spec.origin)
                 if "EmbeddableDBMixin" not in path.read_text(encoding="utf-8"):
                     continue
-            except Exception:
-                continue
-            module = ".".join(path.relative_to(root).with_suffix("").parts)
-            try:
-                importlib.import_module(module)
+                importlib.import_module(name)
             except Exception:
                 continue
         try:
@@ -218,10 +221,7 @@ async def schedule_backfill(
     if backend is not None:
         backfill.backend = backend
 
-    subclasses = list(EmbeddableDBMixin.__subclasses__())
-    if dbs:
-        wanted = {d.lower() for d in dbs}
-        subclasses = [c for c in subclasses if c.__name__.lower() in wanted]
+    subclasses = backfill._load_known_dbs(names=list(dbs) if dbs else None)
 
     async def _run(cls: type) -> None:
         await asyncio.to_thread(backfill.run, db=cls.__name__)
