@@ -41,6 +41,7 @@ from .config_loader import (
 )
 from .borderline_bucket import BorderlineBucket
 from .truth_adapter import TruthAdapter
+from .roi_calculator import ROICalculator, propose_fix
 try:  # pragma: no cover - optional dependency
     from . import self_test_service as _sts
 except Exception:  # pragma: no cover - self-test service may be absent
@@ -61,6 +62,11 @@ if _me is not None:  # pragma: no cover - metrics optional
             "truth_adapter_low_confidence",
             "TruthAdapter low confidence flag",
         )
+        _ROI_BOTTLENECK_GAUGE = _me.Gauge(
+            "roi_bottleneck_suggestion",
+            "ROI bottleneck suggestion count",
+            ["metric", "hint"],
+        )
     except Exception:  # pragma: no cover - gauge already registered
         try:
             from prometheus_client import REGISTRY  # type: ignore
@@ -71,12 +77,17 @@ if _me is not None:  # pragma: no cover - metrics optional
             _TA_LOW_CONF_GAUGE = REGISTRY._names_to_collectors.get(  # type: ignore[attr-defined]
                 "truth_adapter_low_confidence"
             )
+            _ROI_BOTTLENECK_GAUGE = REGISTRY._names_to_collectors.get(
+                "roi_bottleneck_suggestion"
+            )
         except Exception:
             _DB_ROI_GAUGE = None
             _TA_LOW_CONF_GAUGE = None
+            _ROI_BOTTLENECK_GAUGE = None
 else:  # pragma: no cover - metrics optional
     _DB_ROI_GAUGE = None
     _TA_LOW_CONF_GAUGE = None
+    _ROI_BOTTLENECK_GAUGE = None
 
 logger = get_logger(__name__)
 
@@ -1545,6 +1556,7 @@ class ROITracker:
         category: str | None = None,
         confidence: float | None = None,
         retrieval_metrics: Sequence[Dict[str, Any]] | None = None,
+        profile_type: str | None = None,
     ) -> Tuple[Optional[int], List[float], bool, bool]:
         """Record ROI delta and evaluate stopping criteria.
 
@@ -1553,7 +1565,9 @@ class ROITracker:
         use in forecasting. ``metrics`` allows arbitrary named metrics to be
         recorded for later forecasting with :meth:`forecast_metric`. ``category``
         captures the predicted ROI growth classification for this iteration and
-        ``confidence`` records the model's confidence in the prediction.
+        ``confidence`` records the model's confidence in the prediction.  When
+        ``profile_type`` is supplied, low ROI scores or vetoes trigger bottleneck
+        suggestions via :func:`propose_fix`.
 
         Returns a tuple of ``(vertex, predictions, should_stop, entropy_ceiling)``
         where ``entropy_ceiling`` is ``True`` when the ROI gain per entropy delta
@@ -1767,6 +1781,28 @@ class ROITracker:
                 final_score=final_score,
             ),
         )
+
+        if profile_type is not None and metrics:
+            try:
+                calc = ROICalculator()
+                score, vetoed, _ = calc.calculate(metrics, profile_type)
+                if score < self.raroi_borderline_threshold or vetoed:
+                    suggestions = propose_fix(metrics, profile_type)
+                    if suggestions:
+                        logger.info(
+                            "roi bottlenecks",
+                            extra=log_record(suggestions=suggestions),
+                        )
+                        if _ROI_BOTTLENECK_GAUGE is not None:
+                            for metric, hint in suggestions:
+                                try:
+                                    _ROI_BOTTLENECK_GAUGE.labels(
+                                        metric=metric, hint=hint
+                                    ).set(1)
+                                except Exception:
+                                    pass
+            except Exception:
+                logger.exception("bottleneck suggestion failed")
 
         iteration = len(self.roi_history) - 1
         vertex, preds = self._regression()
