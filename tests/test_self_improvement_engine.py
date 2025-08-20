@@ -119,6 +119,9 @@ if "pydantic" not in sys.modules:
     pyd_dc.dataclass = lambda *a, **k: (lambda f: f)
     pyd_mod.dataclasses = pyd_dc
     pyd_mod.Field = lambda default=None, **k: default
+    pyd_mod.ConfigDict = dict
+    pyd_mod.field_validator = lambda *a, **k: (lambda f: f)
+    pyd_mod.model_validator = lambda *a, **k: (lambda f: f)
     class _VE(Exception):
         pass
     pyd_mod.ValidationError = _VE
@@ -160,6 +163,16 @@ sys.modules["sklearn.linear_model"] = lm_mod
 sys.modules["sklearn.preprocessing"] = pre_mod
 
 spec.loader.exec_module(menace)
+
+run_auto_mod = types.ModuleType("run_autonomous")
+run_auto_mod._verify_required_dependencies = lambda: None
+sys.modules["run_autonomous"] = run_auto_mod
+sys.modules["menace.run_autonomous"] = run_auto_mod
+
+neuro_mod = types.ModuleType("neurosales")
+neuro_mod.add_message = lambda *a, **k: None
+neuro_mod.get_recent_messages = lambda *a, **k: []
+sys.modules["neurosales"] = neuro_mod
 
 pytest.importorskip("pandas")
 
@@ -1003,3 +1016,83 @@ def test_score_modifications_prefers_higher_roi() -> None:
     assert [r[0] for r in ranked] == ["high", "low"]
     assert ranked[0][1] > ranked[1][1]
     assert ranked[0][3] > ranked[1][3]
+
+
+def test_deployment_governor_promote_marks_workflow_ready(
+    tmp_path, monkeypatch
+) -> None:
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def run(self, model: str, energy: int = 1):
+            return mp.AutomationResult(
+                package=None, roi=prb.ROIResult(1.0, 0.0, 0.0, 1.0, 0.0)
+            )
+
+    pipe = StubPipeline()
+    engine = sie.SelfImprovementEngine(
+        interval=0, pipeline=pipe, diagnostics=diag, info_db=info
+    )
+    monkeypatch.setattr(engine.roi_tracker, "generate_scorecards", lambda: [])
+    engine.roi_tracker.last_raroi = 0.2
+    engine.roi_tracker.confidence_history = [0.9]
+    engine.deployment_governor = types.SimpleNamespace(
+        evaluate=lambda *a, **k: {
+            "verdict": "promote",
+            "reasons": ["ok"],
+            "overrides": {},
+        }
+    )
+
+    engine.run_cycle()
+    assert engine.workflow_ready is True
+
+
+def test_deployment_governor_pilot_enqueues_borderline(
+    tmp_path, monkeypatch
+) -> None:
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def run(self, model: str, energy: int = 1):
+            return mp.AutomationResult(
+                package=None, roi=prb.ROIResult(1.0, 0.0, 0.0, 1.0, 0.0)
+            )
+
+    pipe = StubPipeline()
+    engine = sie.SelfImprovementEngine(
+        interval=0, pipeline=pipe, diagnostics=diag, info_db=info
+    )
+    monkeypatch.setattr(engine.roi_tracker, "generate_scorecards", lambda: [])
+    engine.roi_tracker.last_raroi = 0.1
+    engine.roi_tracker.confidence_history = [0.8]
+
+    calls: dict[str, object] = {}
+
+    class DummyBucket:
+        def add_candidate(self, wf, raroi, conf, reason):
+            calls["candidate"] = (wf, raroi, conf, reason)
+
+        def process(self, *a, **k):
+            calls["processed"] = True
+
+    bucket = DummyBucket()
+    engine.borderline_bucket = bucket
+    engine.roi_tracker.borderline_bucket = bucket
+
+    engine.deployment_governor = types.SimpleNamespace(
+        evaluate=lambda *a, **k: {
+            "verdict": "pilot",
+            "reasons": ["borderline"],
+            "overrides": {},
+        }
+    )
+
+    engine.run_cycle()
+    assert "candidate" in calls and calls["candidate"][0] == engine.bot_name

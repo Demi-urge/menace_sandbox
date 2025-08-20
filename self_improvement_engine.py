@@ -150,6 +150,10 @@ from .violation_logger import log_violation
 from .alignment_review_agent import AlignmentReviewAgent
 from .governance import check_veto, load_rules
 from .evaluation_dashboard import append_governance_result
+try:  # pragma: no cover - allow flat imports
+    from .deployment_governance import DeploymentGovernor
+except Exception:  # pragma: no cover - fallback for flat layout
+    from deployment_governance import DeploymentGovernor  # type: ignore
 try:
     from .borderline_bucket import BorderlineBucket
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -732,6 +736,8 @@ class SelfImprovementEngine:
         self.pre_roi_cap = pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
         settings = SandboxSettings()
         self.borderline_bucket = BorderlineBucket()
+        self.deployment_governor = DeploymentGovernor()
+        self.workflow_ready = False
         self.borderline_raroi_threshold = getattr(
             settings, "borderline_raroi_threshold", 0.0
         )
@@ -5392,8 +5398,97 @@ class SelfImprovementEngine:
                 scorecard = {
                     "decision": "rollback" if reverted else "ship",
                     "alignment": "pass",
-                    "raroi_increase": sum(1 for c in cards if getattr(c, "raroi_delta", 0.0) > 0),
+                    "raroi_increase": sum(
+                        1 for c in cards if getattr(c, "raroi_delta", 0.0) > 0
+                    ),
+                    "raroi": getattr(self.roi_tracker, "last_raroi", None),
+                    "confidence": (
+                        self.roi_tracker.confidence_history[-1]
+                        if getattr(self.roi_tracker, "confidence_history", [])
+                        else None
+                    ),
                 }
+                gov_result: Dict[str, Any] | None = None
+                try:
+                    gov_result = self.deployment_governor.evaluate(
+                        scorecard,
+                        scorecard.get("alignment", "pass"),
+                        scorecard.get("security", "pass"),
+                        sandbox_roi=roi_realish,
+                        adapter_roi=pred_realish,
+                    )
+                except Exception:
+                    self.logger.exception("deployment evaluation failed")
+                if gov_result:
+                    verdict = str(gov_result.get("verdict"))
+                    reasons = list(gov_result.get("reasons", []))
+                    overrides = gov_result.get("overrides", {})
+                    if self.event_bus:
+                        try:
+                            self.event_bus.publish(
+                                "deployment_verdict",
+                                {
+                                    "verdict": verdict,
+                                    "reasons": reasons,
+                                    "overrides": overrides,
+                                },
+                            )
+                        except Exception:
+                            self.logger.exception("event bus publish failed")
+                    try:
+                        self.logger.info(
+                            "deployment verdict",
+                            extra=log_record(
+                                verdict=verdict,
+                                reasons=";".join(reasons),
+                                overrides=json.dumps(overrides) if overrides else "",
+                            ),
+                        )
+                    except Exception:
+                        self.logger.exception("deployment verdict logging failed")
+                    scorecard["deployment_verdict"] = verdict
+                    if verdict == "promote":
+                        self.workflow_ready = True
+                    elif verdict == "demote":
+                        self.workflow_ready = False
+                        if (
+                            patch_id is not None
+                            and self.self_coding_engine
+                            and not reverted
+                        ):
+                            try:
+                                self.self_coding_engine.rollback_patch(str(patch_id))
+                                reverted = True
+                                scorecard["decision"] = "rollback"
+                            except Exception:
+                                self.logger.exception("patch rollback failed")
+                    elif verdict == "pilot":
+                        try:
+                            self.borderline_bucket.add_candidate(
+                                self.bot_name,
+                                scorecard.get("raroi"),
+                                scorecard.get("confidence"),
+                                ";".join(reasons),
+                            )
+                            settings = SandboxSettings()
+                            if getattr(settings, "micropilot_mode", "") == "auto":
+                                try:
+                                    evaluator = getattr(
+                                        self, "micro_pilot_evaluator", None
+                                    )
+                                    self.borderline_bucket.process(
+                                        evaluator,
+                                        raroi_threshold=self.borderline_raroi_threshold,
+                                        confidence_threshold=getattr(
+                                            self.roi_tracker,
+                                            "confidence_threshold",
+                                            0.0,
+                                        ),
+                                    )
+                                except Exception:
+                                    pass
+                        except Exception:
+                            self.logger.exception("borderline enqueue failed")
                 vetoes: List[str] = []
                 try:
                     vetoes = check_veto(scorecard, load_rules())
