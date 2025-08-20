@@ -32,7 +32,7 @@ from .database_manager import update_model, DB_PATH
 from .databases import MenaceDB
 from .contrarian_db import ContrarianDB
 from .governance import evaluate_rules
-from .deployment_governance import evaluate as deployment_evaluate
+from .deployment_governance import evaluate_scorecard
 from .borderline_bucket import BorderlineBucket
 from .rollback_manager import RollbackManager
 from .audit_logger import log_event as audit_log_event
@@ -582,6 +582,7 @@ class DeploymentBot:
         hierarchy_levels: Dict[str, str] | None = None,
         alignment_status: str = "pass",
         scenario_raroi_deltas: Iterable[float] | None = None,
+        override_veto: bool = False,
     ) -> int:
         """Main entry point – returns deployment_id."""
         allow_ship, allow_rollback, reasons = evaluate_rules(
@@ -596,36 +597,51 @@ class DeploymentBot:
         deltas = list(scenario_raroi_deltas or [])
         if deltas:
             scorecard["raroi"] = deltas[-1]
-        metrics = {"raroi": scorecard.get("raroi"), "confidence": scorecard.get("confidence")}
-        eval_res = deployment_evaluate(scorecard, metrics)
-        verdict = eval_res.get("verdict")
-        reasons = eval_res.get("reasons", [])
+
+        eval_res = evaluate_scorecard(scorecard)
+        verdict = eval_res.get("decision")
+        reason_codes = eval_res.get("reason_codes", [])
+        override_allowed = bool(eval_res.get("override_allowed"))
         try:
-            audit_log_event("deployment_verdict", {"verdict": verdict, "reasons": reasons})
+            audit_log_event(
+                "deployment_verdict",
+                {"verdict": verdict, "reason_codes": reason_codes},
+            )
         except Exception as exc:
             _log_exception(self.logger, "audit log", exc)
         self.logger.info(
-            "deployment verdict", extra={"verdict": verdict, "reasons": ";".join(reasons)}
+            "deployment verdict",
+            extra={"verdict": verdict, "reason_codes": ";".join(reason_codes)},
         )
-        if verdict == "demote":
-            self.logger.warning("deployment governor demoted workflow")
-            try:
-                self.rollback_manager.rollback("latest")
-            except Exception as exc:
-                _log_exception(self.logger, "rollback", exc)
-            return -1
-        if verdict == "micro_pilot":
-            self.logger.info("deployment governor requested micro-pilot")
-            try:
-                self.borderline_bucket.enqueue(
-                    name, scorecard.get("raroi", 0.0), scorecard.get("confidence", 0.0)
-                )
-            except Exception as exc:
-                _log_exception(self.logger, "micro-pilot enqueue", exc)
-            return -1
+
+        env_override = os.getenv("DEPLOY_OVERRIDE", "").lower() in {"1", "true", "yes"}
+        force_override = override_veto or env_override
+
         if verdict != "promote":
-            self.logger.warning("deployment halted: %s", verdict)
-            return -1
+            if override_allowed and force_override:
+                self.logger.warning(
+                    "governance veto overridden",
+                    extra={"verdict": verdict, "reason_codes": ";".join(reason_codes)},
+                )
+            elif verdict == "demote":
+                self.logger.warning("deployment governor demoted workflow")
+                try:
+                    self.rollback_manager.rollback("latest")
+                except Exception as exc:
+                    _log_exception(self.logger, "rollback", exc)
+                return -1
+            elif verdict in {"pilot", "micro_pilot"}:
+                self.logger.info("deployment governor requested micro-pilot")
+                try:
+                    self.borderline_bucket.enqueue(
+                        name, scorecard.get("raroi", 0.0), scorecard.get("confidence", 0.0)
+                    )
+                except Exception as exc:
+                    _log_exception(self.logger, "micro-pilot enqueue", exc)
+                return -1
+            else:
+                self.logger.warning("deployment halted: %s", verdict)
+                return -1
         if self.db_router:
             try:
                 _ = self.db_router.query_all(name)
