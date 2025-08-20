@@ -171,6 +171,24 @@ def _refresh(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+def _scorecard(args: argparse.Namespace) -> None:
+    """Generate a scenario scorecard for ``workflow_id``."""
+
+    tracker = ROITracker()
+    if args.history:
+        tracker.load_history(args.history)
+
+    scenarios = args.scenarios.split(",") if args.scenarios else None
+    card = tracker.generate_scenario_scorecard(args.workflow_id, scenarios)
+    text = json.dumps(card, indent=2, sort_keys=True)
+    if args.output:
+        Path(args.output).write_text(text)
+        print(f"scorecard saved -> {args.output}")
+    else:
+        print(text)
+
+
+# ---------------------------------------------------------------------------
 def _schedule(args: argparse.Namespace) -> None:
     """Periodically load training data and retrain the model."""
     log_path = Path(args.log_path)
@@ -344,6 +362,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     p_refresh.add_argument("--once", action="store_true", help="Run one cycle and exit")
     p_refresh.set_defaults(func=_refresh)
+
+    p_card = sub.add_parser("scorecard", help="generate scenario scorecard")
+    p_card.add_argument("workflow_id", help="Workflow identifier")
+    p_card.add_argument(
+        "--scenarios",
+        default=None,
+        help="Comma separated scenario names; defaults to standard presets",
+    )
+    p_card.add_argument(
+        "--history", default="sandbox_data/roi_history.json", help="Tracker history path"
+    )
+    p_card.add_argument("--output", default=None, help="Write scorecard JSON to file")
+    p_card.set_defaults(func=_scorecard)
 
     p_sched = sub.add_parser(
         "schedule", help="periodically load data and retrain the model"
