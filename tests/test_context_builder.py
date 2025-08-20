@@ -353,6 +353,49 @@ def test_patch_safety_metrics_influence_ranking():
     assert "semantic_alerts" in s_risky.entry["flags"]
 
 
+def test_risk_penalties_reduce_score():
+    class NoopRetriever:
+        def search(self, q, top_k=5):
+            return []
+
+    builder_plain = ContextBuilder(
+        retriever=NoopRetriever(),
+        safety_weight=0.0,
+        regret_penalty=0.0,
+        alignment_penalty=0.0,
+        alert_penalty=0.0,
+    )
+    builder = ContextBuilder(
+        retriever=NoopRetriever(),
+        safety_weight=0.0,
+        regret_penalty=2.0,
+        alignment_penalty=3.0,
+        alert_penalty=4.0,
+    )
+
+    base = {"origin_db": "code", "record_id": 1, "score": 1.0, "metadata": {}}
+    risky = {
+        "origin_db": "code",
+        "record_id": 2,
+        "score": 1.0,
+        "metadata": {
+            "regret_rate": 0.5,
+            "alignment_severity": 0.5,
+            "semantic_alerts": ["a", "b"],
+        },
+    }
+
+    base_plain = builder_plain._bundle_to_entry(base, "q")[1]
+    risk_plain = builder_plain._bundle_to_entry(risky, "q")[1]
+    metric_only = base_plain.score - risk_plain.score
+
+    s_base = builder._bundle_to_entry(base, "q")[1]
+    s_risk = builder._bundle_to_entry(risky, "q")[1]
+
+    extra = 2.0 * 0.5 + 3.0 * 0.5 + 4.0 * 2
+    assert (s_base.score - s_risk.score) == pytest.approx(metric_only + extra)
+
+
 def test_truncates_when_tokens_small(monkeypatch):
     builder, _ = make_builder(monkeypatch, max_tokens=40)
     ctx = builder.build_context("alpha issue", top_k=2)

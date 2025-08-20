@@ -74,6 +74,9 @@ class ContextBuilder:
         roi_weight: float = ContextBuilderConfig().roi_weight,
         safety_weight: float = getattr(ContextBuilderConfig(), "safety_weight", 1.0),
         max_tokens: int = ContextBuilderConfig().max_tokens,
+        regret_penalty: float = getattr(ContextBuilderConfig(), "regret_penalty", 1.0),
+        alignment_penalty: float = getattr(ContextBuilderConfig(), "alignment_penalty", 1.0),
+        alert_penalty: float = getattr(ContextBuilderConfig(), "alert_penalty", 1.0),
     ) -> None:
         self.retriever = retriever or Retriever()
 
@@ -95,6 +98,9 @@ class ContextBuilder:
         self.ranking_weight = ranking_weight
         self.roi_weight = roi_weight
         self.safety_weight = safety_weight
+        self.regret_penalty = regret_penalty
+        self.alignment_penalty = alignment_penalty
+        self.alert_penalty = alert_penalty
         self.memory = memory_manager
         self._cache: Dict[Tuple[str, int], str] = {}
         self.db_weights = db_weights or {}
@@ -339,6 +345,22 @@ class ContextBuilder:
             except Exception:
                 pass
 
+        penalty = 0.0
+        if regret_rate is not None:
+            try:
+                penalty += float(regret_rate) * self.regret_penalty
+            except Exception:
+                pass
+        if severity is not None:
+            try:
+                penalty += float(severity) * self.alignment_penalty
+            except Exception:
+                pass
+        if alerts:
+            penalty += (
+                len(alerts) if isinstance(alerts, (list, tuple, set)) else 1.0
+            ) * self.alert_penalty
+
         similarity = float(bundle.get("score", 0.0))
         rank_prob = self.ranking_weight
         roi_bias = self.roi_weight
@@ -350,7 +372,7 @@ class ContextBuilder:
             except Exception:
                 roi_bias = self.roi_weight
 
-        score = similarity * rank_prob * roi_bias + (metric or 0.0)
+        score = similarity * rank_prob * roi_bias + (metric or 0.0) - penalty
         score *= self.db_weights.get(origin, 1.0)
 
         key_map = {
