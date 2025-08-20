@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import List
+from typing import List, Sequence
 import importlib
+import asyncio
 
 from .decorators import log_and_measure
 from compliance.license_fingerprint import (
@@ -186,5 +187,36 @@ class EmbeddingBackfill:
         _RUN_DURATION.set(time.time() - start)
 
 
-__all__ = ["EmbeddingBackfill", "EmbeddableDBMixin"]
+async def schedule_backfill(
+    *,
+    batch_size: int | None = None,
+    backend: str | None = None,
+    dbs: Sequence[str] | None = None,
+) -> None:
+    """Asynchronously run :meth:`EmbeddingBackfill.run` for known databases.
+
+    A single :class:`EmbeddingBackfill` instance is created and its
+    :meth:`run` method is executed concurrently for each discovered
+    :class:`EmbeddableDBMixin` subclass.  ``dbs`` can restrict execution to a
+    subset of database names.
+    """
+
+    backfill = EmbeddingBackfill()
+    if batch_size is not None:
+        backfill.batch_size = batch_size
+    if backend is not None:
+        backfill.backend = backend
+
+    subclasses = list(EmbeddableDBMixin.__subclasses__())
+    if dbs:
+        wanted = {d.lower() for d in dbs}
+        subclasses = [c for c in subclasses if c.__name__.lower() in wanted]
+
+    async def _run(cls: type) -> None:
+        await asyncio.to_thread(backfill.run, db=cls.__name__)
+
+    await asyncio.gather(*[_run(cls) for cls in subclasses])
+
+
+__all__ = ["EmbeddingBackfill", "EmbeddableDBMixin", "schedule_backfill"]
 

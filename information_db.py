@@ -11,6 +11,7 @@ import sqlite3
 import logging
 
 from vector_service import EmbeddableDBMixin
+from .unified_event_bus import UnifiedEventBus
 
 
 logger = logging.getLogger(__name__)
@@ -47,8 +48,10 @@ class InformationDB(EmbeddableDBMixin):
         vector_index_path: str = "information_embeddings.index",
         embedding_version: int = 1,
         vector_backend: str = "annoy",
+        event_bus: UnifiedEventBus | None = None,
     ) -> None:
         self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.event_bus = event_bus
         self.conn.row_factory = sqlite3.Row
         self.conn.execute(
             """
@@ -150,6 +153,13 @@ class InformationDB(EmbeddableDBMixin):
         self.conn.commit()
         rec.info_id = int(cur.lastrowid)
         self._embed_record_on_write(rec.info_id, rec)
+        if self.event_bus:
+            try:
+                self.event_bus.publish(
+                    "embedding:backfill", {"db": self.__class__.__name__}
+                )
+            except Exception:
+                logger.exception("failed to publish embedding event")
         return rec.info_id
 
     def update(self, info_id: int, **fields: Any) -> None:
