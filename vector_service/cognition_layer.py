@@ -27,6 +27,7 @@ retrieval ranker used by the context builder.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
+import time
 
 from .retriever import Retriever
 from .context_builder import ContextBuilder
@@ -128,6 +129,7 @@ class CognitionLayer:
         """
 
         stats: Dict[str, Any] = {}
+        metadata: Dict[str, List[Dict[str, Any]]]
         try:
             result = self.context_builder.build_context(
                 prompt,
@@ -135,6 +137,7 @@ class CognitionLayer:
                 include_vectors=True,
                 session_id=session_id,
                 return_stats=True,
+                return_metadata=True,
             )
         except TypeError:  # pragma: no cover - older builders
             result = self.context_builder.build_context(
@@ -144,20 +147,58 @@ class CognitionLayer:
                 session_id=session_id,
             )
 
-        if isinstance(result, tuple) and len(result) == 4:
+        if isinstance(result, tuple) and len(result) == 5:
+            context, sid, vectors, metadata, stats = result
+        elif isinstance(result, tuple) and len(result) == 4:
             context, sid, vectors, stats = result
+            metadata = {}
         else:  # pragma: no cover - defensive fallback
             context, sid, vectors = result  # type: ignore[misc]
+            metadata = {}
 
         self._session_vectors[sid] = vectors
-        # Prepare metadata mapping for later use by PatchLogger
-        meta: Dict[str, Dict[str, Any]] = {}
+        meta_map: Dict[str, Dict[str, Any]] = {}
+        meta_by_vid: Dict[str, Dict[str, Any]] = {}
+        for entries in metadata.values():
+            for entry in entries:
+                vid = str(entry.get("vector_id") or entry.get("id") or entry.get("record_id") or "")
+                if vid:
+                    meta_by_vid[vid] = entry
+
         tokens = int(stats.get("tokens", 0))
         wall_time_ms = float(stats.get("wall_time_ms", 0.0))
         prompt_tokens = int(stats.get("prompt_tokens", 0))
         for rank, (origin, vec_id, score) in enumerate(vectors, start=1):
             key = f"{origin}:{vec_id}" if origin else vec_id
-            meta[key] = {}
+            entry = meta_by_vid.get(vec_id, {})
+            meta_map[key] = entry
+            vec_meta = entry.get("metadata", {}) if isinstance(entry, dict) else {}
+            age = 0.0
+            if isinstance(entry, dict):
+                if "age" in entry:
+                    try:
+                        age = float(entry["age"])
+                    except Exception:
+                        age = 0.0
+                elif "age" in vec_meta:
+                    try:
+                        age = float(vec_meta["age"])
+                    except Exception:
+                        age = 0.0
+                else:
+                    ts = (
+                        entry.get("timestamp")
+                        or entry.get("ts")
+                        or entry.get("created_at")
+                        or vec_meta.get("timestamp")
+                        or vec_meta.get("ts")
+                        or vec_meta.get("created_at")
+                    )
+                    if ts is not None:
+                        try:
+                            age = max(0.0, time.time() - float(ts))
+                        except Exception:
+                            age = 0.0
             if self.vector_metrics is not None:
                 try:  # Best effort metrics logging
                     self.vector_metrics.log_retrieval(
@@ -172,11 +213,11 @@ class CognitionLayer:
                         vector_id=vec_id,
                         similarity=score,
                         context_score=score,
-                        age=0.0,
+                        age=age,
                     )
                 except Exception:
                     pass
-        self._retrieval_meta[sid] = meta
+        self._retrieval_meta[sid] = meta_map
         return context, sid
 
     # ------------------------------------------------------------------
@@ -191,6 +232,7 @@ class CognitionLayer:
         """Asynchronous wrapper for :meth:`query`."""
 
         stats: Dict[str, Any] = {}
+        metadata: Dict[str, List[Dict[str, Any]]]
         try:
             result = await self.context_builder.build_async(
                 prompt,
@@ -198,6 +240,7 @@ class CognitionLayer:
                 include_vectors=True,
                 session_id=session_id,
                 return_stats=True,
+                return_metadata=True,
             )
         except TypeError:  # pragma: no cover - older builders
             result = await self.context_builder.build_async(
@@ -207,19 +250,58 @@ class CognitionLayer:
                 session_id=session_id,
             )
 
-        if isinstance(result, tuple) and len(result) == 4:
+        if isinstance(result, tuple) and len(result) == 5:
+            context, sid, vectors, metadata, stats = result
+        elif isinstance(result, tuple) and len(result) == 4:
             context, sid, vectors, stats = result
+            metadata = {}
         else:  # pragma: no cover - defensive fallback
             context, sid, vectors = result  # type: ignore[misc]
+            metadata = {}
 
         self._session_vectors[sid] = vectors
-        meta: Dict[str, Dict[str, Any]] = {}
+        meta_map: Dict[str, Dict[str, Any]] = {}
+        meta_by_vid: Dict[str, Dict[str, Any]] = {}
+        for entries in metadata.values():
+            for entry in entries:
+                vid = str(entry.get("vector_id") or entry.get("id") or entry.get("record_id") or "")
+                if vid:
+                    meta_by_vid[vid] = entry
+
         tokens = int(stats.get("tokens", 0))
         wall_time_ms = float(stats.get("wall_time_ms", 0.0))
         prompt_tokens = int(stats.get("prompt_tokens", 0))
         for rank, (origin, vec_id, score) in enumerate(vectors, start=1):
             key = f"{origin}:{vec_id}" if origin else vec_id
-            meta[key] = {}
+            entry = meta_by_vid.get(vec_id, {})
+            meta_map[key] = entry
+            vec_meta = entry.get("metadata", {}) if isinstance(entry, dict) else {}
+            age = 0.0
+            if isinstance(entry, dict):
+                if "age" in entry:
+                    try:
+                        age = float(entry["age"])
+                    except Exception:
+                        age = 0.0
+                elif "age" in vec_meta:
+                    try:
+                        age = float(vec_meta["age"])
+                    except Exception:
+                        age = 0.0
+                else:
+                    ts = (
+                        entry.get("timestamp")
+                        or entry.get("ts")
+                        or entry.get("created_at")
+                        or vec_meta.get("timestamp")
+                        or vec_meta.get("ts")
+                        or vec_meta.get("created_at")
+                    )
+                    if ts is not None:
+                        try:
+                            age = max(0.0, time.time() - float(ts))
+                        except Exception:
+                            age = 0.0
             if self.vector_metrics is not None:
                 try:  # Best effort metrics logging
                     self.vector_metrics.log_retrieval(
@@ -234,11 +316,11 @@ class CognitionLayer:
                         vector_id=vec_id,
                         similarity=score,
                         context_score=score,
-                        age=0.0,
+                        age=age,
                     )
                 except Exception:
                     pass
-        self._retrieval_meta[sid] = meta
+        self._retrieval_meta[sid] = meta_map
         return context, sid
 
     # ------------------------------------------------------------------

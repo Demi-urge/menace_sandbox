@@ -1,5 +1,6 @@
 import types
 import pytest
+import time
 
 from vector_service.cognition_layer import CognitionLayer
 from vector_metrics_db import VectorMetricsDB
@@ -39,6 +40,7 @@ class DummyContextBuilder:
         include_vectors=False,
         session_id="",
         return_stats=False,
+        return_metadata=False,
     ):
         vectors = self.retriever.search(prompt, top_k=top_k, session_id=session_id)
         if self.ranking_model is not None:
@@ -50,10 +52,28 @@ class DummyContextBuilder:
             "prompt_tokens": len(prompt.split()),
         }
         sid = session_id or "sid"
+        meta = {"misc": []}
+        ts = time.time() - 30.0
+        for origin, vec_id, _ in vectors:
+            meta["misc"].append(
+                {
+                    "origin_db": origin,
+                    "vector_id": vec_id,
+                    "metadata": {"timestamp": ts},
+                }
+            )
         if include_vectors:
+            if return_metadata:
+                if return_stats:
+                    return "ctx", sid, vectors, meta, stats
+                return "ctx", sid, vectors, meta
             if return_stats:
                 return "ctx", sid, vectors, stats
             return "ctx", sid, vectors
+        if return_metadata:
+            if return_stats:
+                return "ctx", meta, stats
+            return "ctx", meta
         if return_stats:
             return "ctx", stats
         return "ctx"
@@ -170,12 +190,17 @@ def test_query_and_record_patch_outcome_updates_metrics_and_ranking():
     assert ranker.rank_calls == 1
 
     rows = metrics.conn.execute(
-        "SELECT session_id, vector_id, contribution, win, regret FROM vector_metrics"
+        "SELECT session_id, vector_id, contribution, win, regret, tokens, wall_time_ms, prompt_tokens, age FROM vector_metrics"
         " WHERE event_type='retrieval'"
     ).fetchall()
     assert len(rows) == 2
     assert all(row[0] == sid for row in rows)
     assert all(row[2] == 0.0 and row[3] is None and row[4] is None for row in rows)
+    for _sid, _vid, _c, _w, _r, tokens, wall_ms, prompt_tokens, age in rows:
+        assert tokens > 0
+        assert wall_ms > 0.0
+        assert prompt_tokens > 0
+        assert age == pytest.approx(30.0, abs=2.0)
 
     layer.record_patch_outcome(sid, True, contribution=1.0)
 
