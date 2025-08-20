@@ -87,11 +87,12 @@ class CognitionLayer:
         the patch succeeds or fails.
         """
 
-        context, sid, vectors = self.context_builder.build_context(
+        context, sid, vectors, stats = self.context_builder.build_context(
             prompt,
             top_k=top_k,
             include_vectors=True,
             session_id=session_id,
+            return_stats=True,
         )
 
         self._session_vectors[sid] = vectors
@@ -103,12 +104,12 @@ class CognitionLayer:
             try:  # Best effort metrics logging
                 self.vector_metrics.log_retrieval(
                     origin,
-                    tokens=0,
-                    wall_time_ms=0.0,
+                    tokens=stats["tokens"],
+                    wall_time_ms=stats["wall_time_ms"],
                     hit=True,
                     rank=rank,
                     contribution=0.0,
-                    prompt_tokens=0,
+                    prompt_tokens=stats["prompt_tokens"],
                     session_id=sid,
                     vector_id=vec_id,
                     similarity=score,
@@ -131,11 +132,12 @@ class CognitionLayer:
     ) -> Tuple[str, str]:
         """Asynchronous wrapper for :meth:`query`."""
 
-        context, sid, vectors = await self.context_builder.build_async(
+        context, sid, vectors, stats = await self.context_builder.build_async(
             prompt,
             top_k=top_k,
             include_vectors=True,
             session_id=session_id,
+            return_stats=True,
         )
 
         self._session_vectors[sid] = vectors
@@ -146,12 +148,12 @@ class CognitionLayer:
             try:  # Best effort metrics logging
                 self.vector_metrics.log_retrieval(
                     origin,
-                    tokens=0,
-                    wall_time_ms=0.0,
+                    tokens=stats["tokens"],
+                    wall_time_ms=stats["wall_time_ms"],
                     hit=True,
                     rank=rank,
                     contribution=0.0,
-                    prompt_tokens=0,
+                    prompt_tokens=stats["prompt_tokens"],
                     session_id=sid,
                     vector_id=vec_id,
                     similarity=score,
