@@ -1,69 +1,132 @@
-"""Deployment governance evaluation module.
+"""Configurable deployment governance checks.
 
-Provides :func:`evaluate_governance` which applies built-in and
-externally registered rules to determine whether a deployment
-decision should be vetoed.
+This module provides :func:`check_veto` for evaluating a *scorecard*
+against configurable rules loaded from ``config/governance_rules``.
+Rules are defined in YAML or JSON and consist of a ``decision`` field,
+an expression in ``condition`` and a ``message`` returned when the
+condition evaluates to ``True``.  The default configuration mirrors the
+previous hard coded behaviour:
+
+* "ship" is vetoed when ``alignment == 'fail'``
+* "rollback" is vetoed when ``raroi_increase >= 3``
 """
+
 from __future__ import annotations
 
-from typing import Callable, Iterable, List
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable, List, Mapping
 
-# Type for governance rule functions
-GovernanceRule = Callable[[str, str, Iterable[float]], Iterable[str] | None]
+import json
 
-# Registry for additional rules
-_EXTRA_RULES: List[GovernanceRule] = []
+try:  # pragma: no cover - optional dependency in minimal envs
+    import yaml
+except Exception:  # pragma: no cover
+    yaml = None  # type: ignore
 
 
-def register_rule(rule: GovernanceRule) -> None:
-    """Register an external governance rule.
+@dataclass
+class Rule:
+    decision: str | None = None
+    condition: str | None = None
+    message: str = "vetoed"
 
-    Rules are callables accepting ``(decision, alignment_status,
-    scenario_raroi_deltas)`` and returning an iterable of veto messages
-    or ``None``.  Registered rules are evaluated in order of
-    registration.
+
+_DEFAULT_RULES: list[Rule] = [
+    Rule(decision="ship", condition="alignment == 'fail'", message="alignment failure prevents ship"),
+    Rule(
+        decision="rollback",
+        condition="raroi_increase >= 3",
+        message="RAROI increased in >=3 scenarios; rollback vetoed",
+    ),
+]
+
+
+def load_rules(config_dir: str | Path | None = None) -> list[Rule]:
+    """Load governance rules from *config_dir*.
+
+    The loader searches for ``governance_rules.yaml`` or
+    ``governance_rules.json`` inside ``config_dir``.  When no file is
+    found or parsing fails the default rules are returned.
     """
 
-    _EXTRA_RULES.append(rule)
+    if config_dir is None:
+        config_dir = Path(__file__).resolve().parent / "config"
+    cfg = Path(config_dir)
+    paths = [cfg / "governance_rules.yaml", cfg / "governance_rules.json"]
+    for path in paths:
+        if path.exists():
+            try:
+                data = path.read_text()
+                if path.suffix == ".json":
+                    raw = json.loads(data)
+                elif yaml:
+                    raw = yaml.safe_load(data)
+                else:
+                    raw = None
+            except Exception:
+                raw = None
+            if isinstance(raw, Iterable):
+                rules: list[Rule] = []
+                for item in raw:
+                    if not isinstance(item, Mapping):
+                        continue
+                    rules.append(
+                        Rule(
+                            decision=item.get("decision"),
+                            condition=item.get("condition"),
+                            message=item.get("message", "vetoed"),
+                        )
+                    )
+                if rules:
+                    return rules
+    return list(_DEFAULT_RULES)
 
 
-def evaluate_governance(
-    decision: str,
-    alignment_status: str,
-    scenario_raroi_deltas: Iterable[float],
-) -> List[str]:
-    """Return veto messages triggered by governance rules.
+def check_veto(scorecard: Mapping[str, Any], rules: Iterable[Rule]) -> List[str]:
+    """Return messages for rules vetoing a *scorecard*.
 
     Parameters
     ----------
-    decision:
-        The deployment decision, e.g. ``"ship"`` or ``"rollback"``.
-    alignment_status:
-        Result of alignment checks, typically ``"pass"`` or ``"fail"``.
-    scenario_raroi_deltas:
-        Iterable of scenario RAROI deltas used to assess risk.
+    scorecard:
+        Mapping of attributes used in rule conditions.  Typical keys are
+        ``decision``, ``alignment`` and ``raroi_increase``.
+    rules:
+        Iterable of :class:`Rule` objects to evaluate.
     """
 
-    vetoes: List[str] = []
-    deltas = list(scenario_raroi_deltas)
-
-    if decision == "ship" and alignment_status == "fail":
-        vetoes.append("alignment failure prevents ship")
-
-    if decision == "rollback":
-        increased = sum(1 for d in deltas if d > 0)
-        if increased >= 3:
-            vetoes.append("RAROI increased in >=3 scenarios; rollback vetoed")
-
-    for rule in _EXTRA_RULES:
+    vetoes: list[str] = []
+    for rule in rules:
+        if rule.decision and scorecard.get("decision") != rule.decision:
+            continue
+        local = dict(scorecard)
         try:
-            extra = rule(decision, alignment_status, deltas)
+            if rule.condition and not eval(rule.condition, {}, local):  # nosec: B307
+                continue
         except Exception:
-            extra = None
-        if extra:
-            vetoes.extend(list(extra))
-
+            continue
+        vetoes.append(rule.message)
     return vetoes
 
 
-__all__ = ["evaluate_governance", "register_rule"]
+def evaluate_governance(
+    decision: str, alignment_status: str, scenario_raroi_deltas: Iterable[float]
+) -> List[str]:
+    """Backward compatible wrapper around :func:`check_veto`.
+
+    ``scenario_raroi_deltas`` are converted into ``raroi_increase`` which
+    counts how many scenario deltas are greater than zero.
+    """
+
+    raroi_increase = sum(1 for d in scenario_raroi_deltas if d > 0)
+    scorecard = {
+        "decision": decision,
+        "alignment": alignment_status,
+        "raroi_increase": raroi_increase,
+    }
+    rules = load_rules()
+    return check_veto(scorecard, rules)
+
+
+__all__ = ["Rule", "load_rules", "check_veto", "evaluate_governance"]
+

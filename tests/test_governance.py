@@ -2,22 +2,20 @@ import menace.governance as governance
 
 
 def test_ship_veto_on_alignment_failure():
-    assert governance.evaluate_governance("ship", "fail", [])
+    rules = governance.load_rules()
+    scorecard = {"decision": "ship", "alignment": "fail", "raroi_increase": 0}
+    assert governance.check_veto(scorecard, rules)
 
 
 def test_rollback_veto_on_raroi_increase():
-    deltas = [0.1, -0.2, 0.05, 0.3]
-    msgs = governance.evaluate_governance("rollback", "pass", deltas)
+    rules = governance.load_rules()
+    scorecard = {"decision": "rollback", "alignment": "pass", "raroi_increase": 3}
+    msgs = governance.check_veto(scorecard, rules)
     assert msgs and "rollback" in msgs[0]
 
 
-def test_register_rule():
-    def extra(decision, *_):
-        if decision == "ship":
-            return ["extra veto"]
-        return []
+def test_rule_pass_when_conditions_not_met():
+    rules = governance.load_rules()
+    scorecard = {"decision": "ship", "alignment": "pass", "raroi_increase": 0}
+    assert not governance.check_veto(scorecard, rules)
 
-    governance.register_rule(extra)
-    msgs = governance.evaluate_governance("ship", "pass", [])
-    assert "extra veto" in msgs
-    governance._EXTRA_RULES.clear()
