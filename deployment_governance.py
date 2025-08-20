@@ -348,20 +348,55 @@ def evaluate_workflow(
 def evaluate(
     scorecard: Mapping[str, Any] | None,
     metrics: Mapping[str, Any] | None,
+    policy: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Evaluate deployment readiness based on *scorecard* and *metrics*.
 
     The function loads thresholds from ``config/deployment_policy`` and
     combines them with alignment and security vetoes modelled after
-    :func:`governance.check_veto`.
+    :func:`governance.check_veto`.  If ``override_path`` and ``public_key_path``
+    are supplied via ``policy`` or ``metrics``, a signed override file is
+    validated via :func:`override_validator.validate_override_file` and can
+    force the returned verdict.
     """
 
     scorecard = scorecard or {}
     metrics = metrics or {}
 
-    policy = _load_policy()
+    policy_cfg = dict(_load_policy())
+    if policy:
+        policy_cfg.update(policy)
+
     reasons: List[str] = []
     overridable = True
+
+    overrides_cfg = policy_cfg.get("overrides") or {}
+    override_path = (
+        policy_cfg.get("override_path")
+        or overrides_cfg.get("override_path")
+        or metrics.get("override_path")
+    )
+    public_key = (
+        policy_cfg.get("public_key_path")
+        or overrides_cfg.get("public_key_path")
+        or metrics.get("public_key_path")
+    )
+
+    def _finish(verdict: str) -> Dict[str, Any]:
+        if override_path and public_key:
+            valid, data = validate_override_file(str(override_path), str(public_key))
+            if valid:
+                forced = data.get("verdict") or data.get("forced_verdict")
+                if isinstance(forced, str) and forced in {
+                    "promote",
+                    "demote",
+                    "micro_pilot",
+                    "no_go",
+                }:
+                    verdict = forced
+                    if "manual_override" not in reasons:
+                        reasons.append("manual_override")
+        return {"verdict": verdict, "reasons": reasons, "overridable": overridable}
 
     # ------------------------------------------------------------------ vetoes
     veto_card = {
@@ -375,7 +410,8 @@ def evaluate(
     vetoes = check_veto(veto_card, veto_rules)
     if vetoes:
         reasons.extend(vetoes)
-        return {"verdict": "demote", "reasons": reasons, "overridable": False}
+        overridable = False
+        return _finish("demote")
 
     raroi = metrics.get("raroi")
     confidence = metrics.get("confidence")
@@ -419,7 +455,7 @@ def evaluate(
             and adapter_roi < sandbox_roi
         ):
             reasons.append("adapter_underperforms")
-        return {"verdict": "demote", "reasons": reasons, "overridable": overridable}
+        return _finish("demote")
 
     promote_cfg = policy.get("promote", {})
     promote_thr = promote_cfg.get("thresholds", {})
@@ -431,7 +467,7 @@ def evaluate(
         reason = promote_cfg.get("reason_code")
         if reason:
             reasons.append(reason)
-        return {"verdict": "promote", "reasons": reasons, "overridable": overridable}
+        return _finish("promote")
 
     micro_cfg = policy.get("micro_pilot", {})
     micro_thr = micro_cfg.get("thresholds", {})
@@ -458,9 +494,8 @@ def evaluate(
             reason = micro_cfg.get("reason_code")
             if reason:
                 reasons.append(reason)
-            return {"verdict": "micro_pilot", "reasons": reasons, "overridable": overridable}
-
-    return {"verdict": "no_go", "reasons": reasons, "overridable": overridable}
+            return _finish("micro_pilot")
+    return _finish("no_go")
 
 
 __all__ = ["Rule", "DeploymentGovernor", "evaluate_workflow", "evaluate"]
