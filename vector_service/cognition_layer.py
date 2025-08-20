@@ -198,6 +198,34 @@ class CognitionLayer:
             retrieval_metadata=meta,
         )
 
+        if self.roi_tracker is not None:
+            try:  # pragma: no cover - best effort
+                cur = self.vector_metrics.conn.execute(
+                    """
+                    SELECT db, tokens, contribution, hit
+                      FROM vector_metrics
+                     WHERE session_id=? AND event_type='retrieval'
+                    """,
+                    (session_id,),
+                )
+                rows = cur.fetchall()
+                roi_after = sum(float(r[2] or 0.0) for r in rows)
+                retrieval_metrics = [
+                    {
+                        "origin_db": str(db),
+                        "tokens": float(tokens or 0.0),
+                        "hit": bool(hit),
+                    }
+                    for db, tokens, _contrib, hit in rows
+                ]
+                self.roi_tracker.update(
+                    0.0,
+                    roi_after,
+                    retrieval_metrics=retrieval_metrics,
+                )
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
     async def record_patch_outcome_async(
         self,
