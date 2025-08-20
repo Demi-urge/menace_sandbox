@@ -28,6 +28,7 @@ class ErrorCategory(str, Enum):
     ResourceLimit = "resource_limit"
     Timeout = "timeout"
     ExternalAPI = "external_api"
+    MetricBottleneck = "metric_bottleneck"
     Unknown = "unknown"
 
     def __str__(self) -> str:  # pragma: no cover - trivial
@@ -41,6 +42,7 @@ class ErrorCategory(str, Enum):
     RESOURCE_LIMIT = ResourceLimit
     TIMEOUT = Timeout
     EXTERNAL_API = ExternalAPI
+    METRIC_BOTTLENECK = MetricBottleneck
     UNKNOWN = Unknown
 
 
@@ -107,6 +109,7 @@ KEYWORD_MAP: Mapping[str, ErrorCategory] = {
     "gpu error": ErrorCategory.ResourceLimit,
     "gpu out of memory": ErrorCategory.ResourceLimit,
     "accelerator error": ErrorCategory.ResourceLimit,
+    "metric bottleneck": ErrorCategory.MetricBottleneck,
 }
 
 MODULE_MAP: Mapping[str, ErrorCategory] = {
