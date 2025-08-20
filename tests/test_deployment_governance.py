@@ -8,21 +8,21 @@ os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 import menace.deployment_governance as dg
 
 
-def _load_policy(tmp_path, policy, *, ext="yaml"):
-    path = tmp_path / f"policy.{ext}"
+def _load_rules(tmp_path, rules, *, ext="yaml"):
+    path = tmp_path / f"rules.{ext}"
     if ext == "json":
-        path.write_text(json.dumps(policy))
+        path.write_text(json.dumps(rules))
     else:
-        path.write_text(yaml.safe_dump(policy))
-    dg._POLICY_CACHE = None
-    dg._POLICY_PATH = None
-    dg._load_policy(str(path))
+        path.write_text(yaml.safe_dump(rules))
+    dg._RULES_CACHE = None
+    dg._RULES_PATH = None
+    dg._load_rules(str(path))
     return path
 
 
 def test_promotion_when_thresholds_met(monkeypatch):
-    monkeypatch.setattr(dg, "_POLICY_CACHE", {})
-    monkeypatch.setattr(dg, "_POLICY_PATH", None)
+    monkeypatch.setattr(dg, "_RULES_CACHE", None)
+    monkeypatch.setattr(dg, "_RULES_PATH", None)
     gov = dg.DeploymentGovernor()
     scorecard = {"scenario_scores": {"s": 0.8}}
     res = gov.evaluate(scorecard, "pass", 1.2, 0.8, sandbox_roi=None, adapter_roi=None)
@@ -39,17 +39,23 @@ def test_promotion_when_thresholds_met(monkeypatch):
     ],
 )
 def test_demote_when_low_confidence_or_failing_scenario(tmp_path, monkeypatch, confidence, scorecard):
-    policy = {"demote": {"condition": "confidence < 0.5 or min_scenario < 0.3"}}
-    _load_policy(tmp_path, policy, ext="json")
+    rules = [
+        {
+            "decision": "demote",
+            "condition": "confidence < 0.5 or min_scenario < 0.3",
+            "reason_code": "policy_demote",
+        }
+    ]
+    _load_rules(tmp_path, rules, ext="json")
     gov = dg.DeploymentGovernor()
     res = gov.evaluate(scorecard, "pass", 1.2, confidence, sandbox_roi=1.0, adapter_roi=1.0)
     assert res["verdict"] == "demote"
-    assert "demote" in res["reasons"]
+    assert "policy_demote" in res["reasons"]
 
 
 def test_pilot_when_sandbox_roi_low_adapter_high(monkeypatch):
-    monkeypatch.setattr(dg, "_POLICY_CACHE", {})
-    monkeypatch.setattr(dg, "_POLICY_PATH", None)
+    monkeypatch.setattr(dg, "_RULES_CACHE", None)
+    monkeypatch.setattr(dg, "_RULES_PATH", None)
     gov = dg.DeploymentGovernor()
     scorecard = {"scenario_scores": {"s": 0.8}}
     res = gov.evaluate(scorecard, "pass", 1.5, 0.9, sandbox_roi=0.05, adapter_roi=1.2)
@@ -59,22 +65,21 @@ def test_pilot_when_sandbox_roi_low_adapter_high(monkeypatch):
 
 
 def test_veto_on_alignment_failure(monkeypatch):
-    monkeypatch.setattr(dg, "_POLICY_CACHE", {})
-    monkeypatch.setattr(dg, "_POLICY_PATH", None)
+    monkeypatch.setattr(dg, "_RULES_CACHE", None)
+    monkeypatch.setattr(dg, "_RULES_PATH", None)
     gov = dg.DeploymentGovernor()
     res = gov.evaluate({}, "fail", None, None, sandbox_roi=None, adapter_roi=None)
     assert res["verdict"] == "demote"
     assert "alignment_veto" in res["reasons"]
 
 
-def test_override_handling_from_policy(tmp_path, monkeypatch):
-    policy = {
-        "promote": {"condition": "raroi > 1.5"},
-        "overrides": {"promote": {"priority": "fast"}},
-    }
-    _load_policy(tmp_path, policy, ext="yaml")
+def test_custom_rule_precedence_over_defaults(tmp_path, monkeypatch):
+    rules = [
+        {"decision": "pilot", "condition": "raroi > -1", "reason_code": "always_pilot"}
+    ]
+    _load_rules(tmp_path, rules, ext="yaml")
     gov = dg.DeploymentGovernor()
     scorecard = {"scenario_scores": {"s": 0.9}}
     res = gov.evaluate(scorecard, "pass", 2.0, 0.9, sandbox_roi=1.0, adapter_roi=1.0)
-    assert res["verdict"] == "promote"
-    assert res["override"] == {"priority": "fast"}
+    assert res["verdict"] == "pilot"
+    assert res["reasons"] == ["always_pilot"]
