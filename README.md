@@ -101,6 +101,9 @@
    the factor, so RAROI close to the raw ROI signals a stable, low-risk
    workflow while a much lower RAROI highlights risk and volatility. RAROI
    feeds into module ranking and guides self-improvement decisions.
+- Scenario scorecards collate ROI, metrics and synergy deltas for each stress
+  preset. Generate them with `ROITracker.generate_scenario_scorecard` or via
+  `python -m menace_sandbox.adaptive_roi_cli scorecard`.
 
 ### ROI toolkit
 

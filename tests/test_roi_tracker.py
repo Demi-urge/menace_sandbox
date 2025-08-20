@@ -2,6 +2,7 @@ import json
 import pytest
 import numpy as np
 import logging
+import json
 import menace_sandbox.roi_tracker as rt
 import menace_sandbox.self_test_service as sts
 import types
@@ -780,4 +781,50 @@ def test_generate_scorecards():
     assert cs["concurrency_spike"].raroi_delta == pytest.approx(-1.0)
     assert cs["concurrency_spike"].recommendation == "add rate limiting"
     assert cs["normal"].recommendation is None
+
+
+def test_generate_scenario_scorecard(tmp_path):
+    tracker = rt.ROITracker()
+    tracker.record_scenario_delta(
+        "concurrency_spike", -1.0, {"errors": 1.0}, {"cpu": 2.0}, 0.0, -1.0
+    )
+    tracker.record_scenario_delta(
+        "schema_drift", 0.5, {"schema_errors": 2.0}, {"cpu": 1.0}, 0.0, 0.5
+    )
+    card = tracker.generate_scenario_scorecard(
+        "wf1", ["concurrency_spike", "schema_drift"]
+    )
+    assert card["workflow_id"] == "wf1"
+    assert set(card["scenarios"]) == {"concurrency_spike", "schema_drift"}
+    assert card["scenarios"]["concurrency_spike"]["roi_delta"] == pytest.approx(-1.0)
+    assert (
+        card["scenarios"]["schema_drift"]["metrics_delta"]["schema_errors"]
+        == pytest.approx(2.0)
+    )
+
+
+def test_scorecard_cli(tmp_path, capsys):
+    tracker = rt.ROITracker()
+    tracker.record_scenario_delta("concurrency_spike", -1.0, {}, {}, 0.0, -1.0)
+    history = tmp_path / "history.json"
+    tracker.save_history(history.as_posix())
+
+    out = tmp_path / "score.json"
+    from menace_sandbox import adaptive_roi_cli
+
+    adaptive_roi_cli.main(
+        [
+            "scorecard",
+            "wf1",
+            "--scenarios",
+            "concurrency_spike",
+            "--history",
+            history.as_posix(),
+            "--output",
+            out.as_posix(),
+        ]
+    )
+    data = json.loads(out.read_text())
+    assert data["workflow_id"] == "wf1"
+    assert "concurrency_spike" in data["scenarios"]
 

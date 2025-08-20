@@ -2546,6 +2546,55 @@ class ROITracker:
             )
         return cards
 
+    # ------------------------------------------------------------------
+    def generate_scenario_scorecard(
+        self,
+        workflow_id: str,
+        scenarios: Sequence[str] | None = None,
+    ) -> Dict[str, Any]:
+        """Return a mapping summarising stress test deltas per scenario.
+
+        Parameters
+        ----------
+        workflow_id:
+            Identifier of the workflow the scorecard belongs to.
+        scenarios:
+            Optional explicit list of scenario names. When omitted the
+            presets from :func:`sandbox_runner.environment.default_scenario_presets`
+            are used if available, otherwise all tracked scenarios are
+            included.
+
+        Returns
+        -------
+        dict
+            Mapping containing the ``workflow_id`` and per-scenario deltas
+            for ROI, metrics and synergy.
+        """
+
+        names: Sequence[str]
+        if scenarios is None:
+            try:  # pragma: no cover - optional dependency
+                from .sandbox_runner import environment as _env  # type: ignore
+
+                names = [
+                    p.get("SCENARIO_NAME")
+                    for p in _env.default_scenario_presets()
+                    if p.get("SCENARIO_NAME")
+                ]
+            except Exception:  # pragma: no cover - best effort
+                names = list(self.scenario_roi_deltas.keys())
+        else:
+            names = list(scenarios)
+
+        card: Dict[str, Any] = {"workflow_id": str(workflow_id), "scenarios": {}}
+        for scen in names:
+            card["scenarios"][scen] = {
+                "roi_delta": float(self.scenario_roi_deltas.get(scen, 0.0)),
+                "metrics_delta": dict(self.scenario_metrics_delta.get(scen, {})),
+                "synergy_delta": dict(self.scenario_synergy_delta.get(scen, {})),
+            }
+        return card
+
     def save_history(self, path: str) -> None:
         """Persist ``roi_history`` and ``module_deltas`` to ``path``."""
         if path.endswith(".json"):

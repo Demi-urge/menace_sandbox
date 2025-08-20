@@ -22,6 +22,28 @@ whether to stop further iterations. Pass the ``weights`` argument to
 and applied to the most recent deltas, giving greater influence to later
 entries when desired.
 
+## Scenario scorecards
+
+`generate_scenario_scorecard(workflow_id, scenarios=None)` assembles a
+JSON‑serialisable summary of stress test results.  For each scenario preset
+(``concurrency_spike``, ``hostile_input`` and others from
+`sandbox_runner.environment`) the scorecard records:
+
+* ``roi_delta`` – ROI difference between workflow on/off runs
+* ``metrics_delta`` – per‑metric changes against the baseline
+* ``synergy_delta`` – differences in synergy metrics
+
+Use the CLI to emit or persist a scorecard:
+
+```bash
+python -m menace_sandbox.adaptive_roi_cli scorecard WF_ID \
+    --history sandbox_data/roi_history.json \
+    --output sandbox_data/scorecard.json
+```
+
+When ``--output`` is omitted the scorecard prints to STDOUT.  Providing no
+explicit scenarios defaults to the standard presets.
+
 ## Retrieval Source ROI
 
 `ROITracker.update()` accepts a `retrieval_metrics` list describing
