@@ -86,7 +86,37 @@ class RankingModelScheduler:
 
     # ------------------------------------------------------------------
     def _handle_patch_outcome(self, topic: str, event: object) -> None:
-        """Handle outcome notifications from :class:`PatchLogger`."""
+        """Handle outcome notifications from :class:`PatchLogger`.
+
+        The event is expected to include ``roi_metrics`` with per-origin ROI
+        deltas.  These metrics are forwarded to :class:`ROITracker` and used to
+        decide whether to trigger an immediate retrain based on
+        ``roi_signal_threshold``.
+        """
+
+        metrics = {}
+        if isinstance(event, dict):
+            metrics = event.get("roi_metrics", {}) or {}
+
+        if self.roi_tracker is not None and metrics:
+            try:
+                self.roi_tracker.update_db_metrics(metrics)
+            except Exception:
+                logging.exception("roi tracker update failed")
+
+        triggered = self.roi_signal_threshold is None
+        if self.roi_signal_threshold is not None:
+            for stats in metrics.values():
+                try:
+                    if abs(float(stats.get("roi", 0.0))) >= self.roi_signal_threshold:
+                        triggered = True
+                        break
+                except Exception:
+                    continue
+
+        if not triggered:
+            return
+
         try:
             self.retrain_and_reload()
         except Exception:
