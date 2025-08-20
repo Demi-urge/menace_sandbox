@@ -171,6 +171,7 @@ class ScenarioScorecard:
     synergy_delta: Dict[str, float]
     recommendation: str | None = None
     status: str | None = None
+    score: float | None = None
 
 
 class ROITracker:
@@ -232,6 +233,8 @@ class ROITracker:
         self.roi_history: List[float] = []
         self.raroi_history: List[float] = []
         self.last_raroi: float | None = None
+        self.last_confidence: float | None = None
+        self.last_predicted_roi: float | None = None
         self.confidence_history: List[float] = []
         self.mae_history: List[float] = []
         self.variance_history: List[float] = []
@@ -811,6 +814,7 @@ class ROITracker:
         act_val = float(actual[0]) if actual else None
         if pred_val is not None:
             self.predicted_roi.append(pred_val)
+            self.last_predicted_roi = pred_val
             if workflow_id is not None:
                 wf = str(workflow_id)
                 self.workflow_predicted_roi[wf].append(pred_val)
@@ -1319,6 +1323,7 @@ class ROITracker:
         self.final_roi_history.setdefault(wf, []).append(final_score)
         threshold = self.confidence_threshold if tau is None else float(tau)
         needs_review = conf < threshold
+        self.last_confidence = conf
         if raroi < self.raroi_borderline_threshold or needs_review:
             try:
                 if self.borderline_bucket.get_candidate(wf) is None:
@@ -2548,6 +2553,7 @@ class ROITracker:
                     synergy_delta=dict(self.scenario_synergy_delta.get(scen, {})),
                     recommendation=HARDENING_TIPS.get(scen),
                     status=self.workflow_label,
+                    score=float(self.scenario_raroi_delta.get(scen, 0.0)),
                 )
             )
         return cards
@@ -2597,10 +2603,13 @@ class ROITracker:
         if self.workflow_label:
             card["status"] = self.workflow_label
         for scen in names:
+            score_val = float(self.scenario_raroi_delta.get(scen, 0.0))
             entry = {
                 "roi_delta": float(self.scenario_roi_deltas.get(scen, 0.0)),
+                "raroi_delta": score_val,
                 "metrics_delta": dict(self.scenario_metrics_delta.get(scen, {})),
                 "synergy_delta": dict(self.scenario_synergy_delta.get(scen, {})),
+                "score": score_val,
             }
             rec = scorecards.get(scen)
             if rec:
@@ -2610,6 +2619,35 @@ class ROITracker:
                     entry["status"] = rec.status
             card["scenarios"][scen] = entry
         return card
+
+    # ------------------------------------------------------------------
+    def build_governance_scorecard(
+        self, workflow_id: str, scenarios: Sequence[str] | None = None
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """Return ``(scorecard, metrics)`` for deployment governance evaluation.
+
+        The returned ``scorecard`` mirrors :meth:`generate_scenario_scorecard`
+        but also includes the latest RAROI, confidence and predicted ROI values.
+        ``metrics`` exposes these values alongside a ``scenario_scores`` mapping
+        suitable for :func:`deployment_governance.evaluate`.
+        """
+
+        card = self.generate_scenario_scorecard(workflow_id, scenarios)
+        scenario_scores = {
+            name: info.get("score", 0.0)
+            for name, info in card.get("scenarios", {}).items()
+        }
+        card["raroi"] = self.last_raroi
+        card["confidence"] = self.last_confidence
+        card["predicted_roi"] = self.last_predicted_roi
+        card["scenario_scores"] = scenario_scores
+        metrics = {
+            "raroi": self.last_raroi,
+            "confidence": self.last_confidence,
+            "predicted_roi": self.last_predicted_roi,
+            "scenario_scores": scenario_scores,
+        }
+        return card, metrics
 
     def save_history(self, path: str) -> None:
         """Persist ``roi_history`` and ``module_deltas`` to ``path``."""
