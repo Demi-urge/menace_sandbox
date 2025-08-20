@@ -11,6 +11,53 @@ basic alignment/security vetoes.
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping
 
+import json
+import os
+
+import yaml
+
+
+_POLICY_CACHE: Dict[str, Any] | None = None
+_POLICY_PATH: str | None = None
+
+
+def _load_policy(path: str | None = None) -> Dict[str, Any]:
+    """Load deployment policy from YAML or JSON file.
+
+    The policy is cached after first load. ``path`` may specify an explicit
+    policy file; otherwise ``config/deployment_policy.yaml`` or ``.json`` is
+    searched for relative to this module.
+    """
+
+    global _POLICY_CACHE, _POLICY_PATH
+    if _POLICY_CACHE is not None:
+        return _POLICY_CACHE
+
+    candidates = []
+    if path:
+        candidates.append(path)
+    else:
+        base = os.path.join(os.path.dirname(__file__), "config")
+        candidates.append(os.path.join(base, "deployment_policy.yaml"))
+        candidates.append(os.path.join(base, "deployment_policy.json"))
+
+    policy: Dict[str, Any] = {}
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            with open(candidate, "r", encoding="utf-8") as fh:
+                if candidate.endswith(".json"):
+                    policy = json.load(fh) or {}
+                else:
+                    policy = yaml.safe_load(fh) or {}
+            _POLICY_CACHE = policy
+            _POLICY_PATH = candidate
+            break
+    else:
+        _POLICY_CACHE = {}
+        _POLICY_PATH = None
+
+    return _POLICY_CACHE
+
 
 @dataclass
 class DeploymentGovernor:
@@ -44,18 +91,29 @@ class DeploymentGovernor:
             Latest ROI values for the sandbox and adapter evaluation runs.
         """
 
+        policy = _load_policy()
+        policy_overrides = (
+            policy.get("overrides", {}) if isinstance(policy, Mapping) else {}
+        )
+
         reasons: list[str] = []
         overrides: dict[str, Any] = {}
 
+        def _apply_override(code: str) -> None:
+            if code in policy_overrides:
+                overrides[code] = policy_overrides[code]
+
         # Alignment/security vetoes override all other considerations.
         if str(alignment_status).lower() != "pass":
-            reasons.append("alignment veto")
+            reason = "alignment_veto"
+            reasons.append(reason)
+            _apply_override(reason)
             return {"verdict": "demote", "reasons": reasons, "overrides": overrides}
         if str(security_status).lower() != "pass":
-            reasons.append("security veto")
+            reason = "security_veto"
+            reasons.append(reason)
+            _apply_override(reason)
             return {"verdict": "demote", "reasons": reasons, "overrides": overrides}
-
-        verdict = "promote"
 
         raroi = None
         confidence = None
@@ -65,42 +123,73 @@ class DeploymentGovernor:
             confidence = scorecard.get("confidence")
             scenario_scores = scorecard.get("scenario_scores")  # type: ignore[assignment]
 
-        if isinstance(raroi, (int, float)) and raroi < self.raroi_threshold:
-            verdict = "hold"
-            reasons.append(
-                f"RAROI {raroi:.2f} below threshold {self.raroi_threshold:.2f}"
-            )
-
-        if (
-            isinstance(confidence, (int, float))
-            and confidence < self.confidence_threshold
-        ):
-            verdict = "hold"
-            reasons.append(
-                f"confidence {confidence:.2f} below {self.confidence_threshold:.2f}"
-            )
-
+        min_scenario = None
         if isinstance(scenario_scores, Mapping) and scenario_scores:
             try:
-                min_score = min(float(v) for v in scenario_scores.values())
+                min_scenario = min(float(v) for v in scenario_scores.values())
             except Exception:
-                min_score = None
-            if min_score is not None and min_score < self.scenario_score_min:
-                verdict = "hold"
-                reasons.append(
-                    f"scenario score {min_score:.2f} below {self.scenario_score_min:.2f}"
-                )
+                min_scenario = None
 
-        if (
-            sandbox_roi is not None
-            and adapter_roi is not None
-            and sandbox_roi < self.sandbox_roi_low
-            and adapter_roi >= self.adapter_roi_high
-        ):
-            verdict = "pilot"
-            reasons.append(
-                "forcing micro-pilot: sandbox ROI low but adapter ROI high"
-            )
-            overrides["mode"] = "micro-pilot"
+        sandbox_raroi = sandbox_roi
+        adapter_raroi = adapter_roi
+
+        verdict = "hold"
+        if isinstance(policy, Mapping) and policy:
+            for name, block in policy.items():
+                if name == "overrides":
+                    continue
+                condition = block.get("condition") if isinstance(block, Mapping) else None
+                if not isinstance(condition, str):
+                    continue
+                safe_locals = {
+                    "raroi": raroi,
+                    "confidence": confidence,
+                    "min_scenario": min_scenario,
+                    "sandbox_raroi": sandbox_raroi,
+                    "adapter_raroi": adapter_raroi,
+                }
+                try:
+                    if bool(eval(condition, {"__builtins__": {}}, safe_locals)):
+                        verdict = name
+                        reason = name
+                        reasons.append(reason)
+                        _apply_override(reason)
+                        break
+                except Exception:
+                    continue
+        else:
+            verdict = "promote"
+            if isinstance(raroi, (int, float)) and raroi < self.raroi_threshold:
+                verdict = "hold"
+                reason = f"raroi_below_{self.raroi_threshold}"
+                reasons.append(reason)
+                _apply_override(reason)
+            if (
+                isinstance(confidence, (int, float))
+                and confidence < self.confidence_threshold
+            ):
+                verdict = "hold"
+                reason = f"confidence_below_{self.confidence_threshold}"
+                reasons.append(reason)
+                _apply_override(reason)
+            if (
+                min_scenario is not None
+                and min_scenario < self.scenario_score_min
+            ):
+                verdict = "hold"
+                reason = f"scenario_below_{self.scenario_score_min}"
+                reasons.append(reason)
+                _apply_override(reason)
+            if (
+                sandbox_raroi is not None
+                and adapter_raroi is not None
+                and sandbox_raroi < self.sandbox_roi_low
+                and adapter_raroi >= self.adapter_roi_high
+            ):
+                verdict = "pilot"
+                reason = "micro_pilot"
+                reasons.append(reason)
+                _apply_override(reason)
+                overrides["mode"] = "micro-pilot"
 
         return {"verdict": verdict, "reasons": reasons, "overrides": overrides}
