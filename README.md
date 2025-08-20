@@ -109,6 +109,8 @@
   returns a mapping of these scorecards keyed by scenario. They can also be
   generated with `ROITracker.generate_scenario_scorecard` or via `python -m
   menace_sandbox.adaptive_roi_cli scorecard`.
+- Deployment governance evaluates RAROI, confidence and scenario scores with
+  optional signed overrides ([docs/deployment_governance.md](docs/deployment_governance.md)).
 
 ### ROI toolkit
 
