@@ -123,3 +123,73 @@ def test_scheduler_retrains_on_roi_signal(monkeypatch):
     t.join(timeout=0.1)
     assert len(calls) >= 2
 
+
+def test_scheduler_retrains_on_win_rate_drop(tmp_path, monkeypatch):
+    class DummyBus:
+        def __init__(self) -> None:
+            self.cbs = {}
+
+        def subscribe(self, topic, callback):
+            self.cbs[topic] = callback
+
+        def publish(self, topic, event):
+            cb = self.cbs.get(topic)
+            if cb:
+                cb(topic, event)
+
+    bus = DummyBus()
+
+    # Start with perfect win rate
+    vdb = rms.VectorMetricsDB(tmp_path / "vec.db")
+    vdb.log_retrieval_feedback("db", win=True, regret=False)
+    vdb.conn.close()
+
+    class DummyService:
+        def __init__(self) -> None:
+            self.model_path: Path | None = None
+            self.reliability_reloaded = False
+
+        def reload_ranker_model(self, path: Path) -> None:
+            self.model_path = Path(path)
+
+        def reload_reliability_scores(self) -> None:
+            self.reliability_reloaded = True
+
+    svc = DummyService()
+
+    sched = rms.RankingModelScheduler(
+        [svc],
+        vector_db=tmp_path / "vec.db",
+        metrics_db=tmp_path / "metrics.db",
+        model_path=tmp_path / "model.json",
+        event_bus=bus,
+        win_rate_threshold=0.5,
+    )
+
+    monkeypatch.setattr(rms.rr, "load_training_data", lambda **kw: object())
+    dummy_model = SimpleNamespace(coef_=[[1.0]], intercept_=[0.0], classes_=[0, 1])
+    calls: list[int] = []
+
+    def train(df):
+        calls.append(1)
+        return rms.rr.TrainedModel(dummy_model, ["x"])
+
+    monkeypatch.setattr(rms.rr, "train", train)
+    monkeypatch.setattr(rms.rr, "save_model", lambda tm, p: Path(p).write_text("{}"))
+    monkeypatch.setattr(rms, "compute_retriever_stats", lambda m: None)
+
+    # No retrain while win rate above threshold
+    bus.publish("retrieval:feedback", {"db": "db", "win": True, "regret": False})
+    assert not calls
+
+    # Record losses to drop win rate below threshold and publish event
+    vdb = rms.VectorMetricsDB(tmp_path / "vec.db")
+    vdb.log_retrieval_feedback("db", win=False, regret=True)
+    vdb.log_retrieval_feedback("db", win=False, regret=True)
+    vdb.conn.close()
+    bus.publish("retrieval:feedback", {"db": "db", "win": False, "regret": True})
+
+    assert calls
+    assert svc.model_path == tmp_path / "model.json"
+    assert svc.reliability_reloaded
+

@@ -44,6 +44,37 @@ except Exception:  # pragma: no cover - fallback when executed directly
     import retrieval_ranker as rr  # type: ignore
     from metrics_aggregator import compute_retriever_stats  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from .vector_metrics_db import VectorMetricsDB
+except Exception:  # pragma: no cover - fallback when executed directly
+    from vector_metrics_db import VectorMetricsDB  # type: ignore
+
+
+def needs_retrain(vector_db: Path | str, win_rate_threshold: float = 0.5) -> bool:
+    """Return ``True`` if retraining should occur based on win rate.
+
+    The helper inspects :class:`VectorMetricsDB` and compares the overall
+    ``retriever_win_rate`` against ``win_rate_threshold``.  A lower win rate
+    suggests the ranking model has drifted and should be retrained.
+    ``vector_db`` may be a :class:`~pathlib.Path` or path string pointing to the
+    SQLite database file.
+    """
+
+    try:
+        db = VectorMetricsDB(vector_db)
+        try:
+            win_rate = db.retriever_win_rate()
+        finally:
+            try:
+                db.conn.close()
+            except Exception:
+                pass
+        return win_rate < win_rate_threshold
+    except Exception:
+        # When metrics cannot be read we err on the side of retraining to
+        # recover from potential corruption.
+        return True
+
 MODEL_PATH = Path("retrieval_ranker.model")
 
 
@@ -61,6 +92,7 @@ class RankingModelScheduler:
         roi_tracker: ROITracker | None = None,
         roi_signal_threshold: float | None = None,
         event_bus: "UnifiedEventBus" | None = None,
+        win_rate_threshold: float | None = None,
     ) -> None:
         self.services = list(services)
         self.vector_db = Path(vector_db)
@@ -69,6 +101,7 @@ class RankingModelScheduler:
         self.interval = interval
         self.roi_tracker = roi_tracker
         self.roi_signal_threshold = roi_signal_threshold
+        self.win_rate_threshold = win_rate_threshold
         self.running = False
         self._thread: Optional[threading.Thread] = None
         self._db_roi_counts: dict[str, int] = {}
@@ -81,6 +114,7 @@ class RankingModelScheduler:
         if self.event_bus is not None:
             try:
                 self.event_bus.subscribe("patch_logger:outcome", self._handle_patch_outcome)
+                self.event_bus.subscribe("retrieval:feedback", self._handle_retrieval_feedback)
             except Exception:
                 pass
 
@@ -123,8 +157,29 @@ class RankingModelScheduler:
             logging.exception("ranking model retrain failed")
 
     # ------------------------------------------------------------------
+    def _handle_retrieval_feedback(self, topic: str, event: object) -> None:
+        """Handle retrieval feedback events and trigger retrain when needed."""
+
+        if self.win_rate_threshold is None:
+            return
+        try:
+            if needs_retrain(self.vector_db, self.win_rate_threshold):
+                self.retrain_and_reload()
+        except Exception:
+            logging.exception("ranking model retrain failed")
+
+    # ------------------------------------------------------------------
     def retrain_and_reload(self) -> None:
         """Retrain ranking model and notify services to reload."""
+        if self.win_rate_threshold is not None:
+            try:
+                if not needs_retrain(self.vector_db, self.win_rate_threshold):
+                    return
+            except Exception:
+                # If metrics cannot be read we continue with retraining to
+                # recover from potential database issues.
+                pass
+
         # Update reliability KPIs before training so latest values are joined
         compute_retriever_stats(self.metrics_db)
 
