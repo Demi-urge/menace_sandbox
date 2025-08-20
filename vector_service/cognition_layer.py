@@ -76,6 +76,8 @@ class CognitionLayer:
             vector_metrics=self.vector_metrics,
             roi_tracker=self.roi_tracker,
         )
+        if getattr(self.patch_logger, "roi_tracker", None) is not self.roi_tracker:
+            self.patch_logger.roi_tracker = self.roi_tracker
         # Keep track of vectors by session so outcomes can be recorded later
         self._session_vectors: Dict[str, List[Tuple[str, str, float]]] = {}
         self._retrieval_meta: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -283,14 +285,14 @@ class CognitionLayer:
                     (session_id,),
                 )
                 rows = cur.fetchall()
-                roi_after = sum(float(r[2] or 0.0) for r in rows)
+                roi_after = sum(float(contrib or 0.0) for _db, _tok, contrib, _hit in rows)
                 retrieval_metrics = [
                     {
                         "origin_db": str(db),
-                        "tokens": float(tokens or 0.0),
+                        "tokens": float(contrib or 0.0),
                         "hit": bool(hit),
                     }
-                    for db, tokens, _contrib, hit in rows
+                    for db, _tokens, contrib, hit in rows
                 ]
                 self.roi_tracker.update(
                     0.0,
