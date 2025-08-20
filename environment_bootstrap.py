@@ -27,6 +27,7 @@ from .secrets_manager import SecretsManager
 from .vault_secret_provider import VaultSecretProvider
 from .external_dependency_provisioner import ExternalDependencyProvisioner
 from . import startup_checks
+from .vector_service.embedding_scheduler import start_scheduler_from_env
 
 
 class EnvironmentBootstrapper:
@@ -293,6 +294,7 @@ class EnvironmentBootstrapper:
         hosts = [h.strip() for h in hosts if h.strip()]
         if hosts:
             self.deploy_across_hosts(hosts)
+        start_scheduler_from_env()
 
 
 __all__ = ["EnvironmentBootstrapper"]
