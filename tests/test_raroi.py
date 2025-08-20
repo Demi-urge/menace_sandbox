@@ -23,7 +23,7 @@ def test_raroi_formula(monkeypatch):
 
     monkeypatch.setattr(rt, "_estimate_rollback_probability", fake_estimate)
 
-    base, raroi = tracker.calculate_raroi(
+    base, raroi, _ = tracker.calculate_raroi(
         base_roi,
         workflow_type="standard",
         metrics={"errors_per_minute": 2.5},
@@ -73,7 +73,7 @@ def test_raroi_high_risk_instability_and_failures(monkeypatch):
     monkeypatch.setattr(rt, "_estimate_rollback_probability", fake_estimate)
     monkeypatch.setattr(rt, "get_impact_severity", lambda wf: 0.9)
     failing = ["security", "alignment"]
-    base, raroi = tracker.calculate_raroi(
+    base, raroi, _ = tracker.calculate_raroi(
         base_roi,
         metrics={"errors_per_minute": 10.0},
         failing_tests=failing,

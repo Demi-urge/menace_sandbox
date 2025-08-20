@@ -687,7 +687,7 @@ def test_synergy_history_multi_metric(tmp_path):
 def test_raroi_high_risk():
     tracker = rt.ROITracker()
     tracker.roi_history = [0.1, 0.1, 0.1]
-    base, raroi = tracker.calculate_raroi(
+    base, raroi, _ = tracker.calculate_raroi(
         1.0,
         workflow_type="critical",
         rollback_prob=0.8,
@@ -701,7 +701,7 @@ def test_raroi_unstable_roi():
     tracker = rt.ROITracker()
     deltas = [0.5, -0.5, 0.5]
     tracker.roi_history = deltas
-    base, raroi = tracker.calculate_raroi(
+    base, raroi, _ = tracker.calculate_raroi(
         1.0,
         workflow_type="standard",
         rollback_prob=0.0,
@@ -715,7 +715,7 @@ def test_raroi_failing_tests():
     tracker = rt.ROITracker()
     tracker.roi_history = [0.1, 0.1, 0.1]
     sts.set_failed_critical_tests(["security"])
-    base, raroi = tracker.calculate_raroi(
+    base, raroi, _ = tracker.calculate_raroi(
         1.0,
         workflow_type="standard",
         rollback_prob=0.0,
@@ -759,7 +759,7 @@ def test_workflow_confidence_formula():
 
 def test_update_logs_metrics(caplog, monkeypatch):
     tracker = rt.ROITracker()
-    monkeypatch.setattr(tracker, "calculate_raroi", lambda roi, **kw: (roi, roi))
+    monkeypatch.setattr(tracker, "calculate_raroi", lambda roi, **kw: (roi, roi, []))
     with caplog.at_level(logging.INFO):
         tracker.update(0.0, 0.5, confidence=0.4)
     rec = next(r for r in caplog.records if r.msg == "roi update")
@@ -843,7 +843,7 @@ def test_situationally_weak_from_metrics():
 def test_build_governance_scorecard():
     tracker = rt.ROITracker()
     tracker.record_scenario_delta("concurrency_spike", -1.0, {}, {}, 0.0, -1.0)
-    base, raroi = tracker.calculate_raroi(0.5)
+    base, raroi, _ = tracker.calculate_raroi(0.5)
     tracker.score_workflow("wf1", raroi)
     tracker.record_roi_prediction([0.4], [0.3], workflow_id="wf1")
     card, metrics = tracker.build_governance_scorecard("wf1", ["concurrency_spike"])

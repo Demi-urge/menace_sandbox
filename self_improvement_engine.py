@@ -2257,16 +2257,15 @@ class SelfImprovementEngine:
                         roi_est = float(seq[-1])
                 except Exception:
                     roi_est, category = 0.0, "unknown"
-            base_roi, raroi = (
-                self.roi_tracker.calculate_raroi(
+            if self.roi_tracker:
+                base_roi, raroi, _ = self.roi_tracker.calculate_raroi(
                     roi_est,
                     workflow_type="standard",
                     metrics={},
                     failing_tests=sts.get_failed_critical_tests(),
                 )
-                if self.roi_tracker
-                else (roi_est, roi_est)
-            )
+            else:
+                base_roi, raroi, _ = roi_est, roi_est, []
             tracker = self.roi_tracker
             mult = (
                 self.growth_multipliers.get(category, 1.0)
@@ -2722,16 +2721,15 @@ class SelfImprovementEngine:
                     roi_est = float(seq[-1]) if seq else 0.0
                 except Exception:
                     roi_est, growth = 0.0, "unknown"
-                base_roi, raroi = (
-                    tracker.calculate_raroi(
+                if tracker:
+                    base_roi, raroi, _ = tracker.calculate_raroi(
                         roi_est,
                         workflow_type="standard",
                         metrics={},
                         failing_tests=sts.get_failed_critical_tests(),
                     )
-                    if tracker
-                    else (roi_est, roi_est)
-                )
+                else:
+                    base_roi, raroi, _ = roi_est, roi_est, []
                 if tracker:
                     final_score, needs_review, confidence = tracker.score_workflow(
                         bot_name, raroi

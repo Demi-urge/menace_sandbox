@@ -43,7 +43,7 @@ def test_calculate_raroi_formula(
 
     monkeypatch.setattr(rt, "_estimate_rollback_probability", fake_estimate)
 
-    base, raroi = tracker.calculate_raroi(
+    base, raroi, _ = tracker.calculate_raroi(
         base_roi,
         workflow_type=workflow_type,
         metrics={"errors_per_minute": errors},
@@ -84,7 +84,7 @@ def test_calculate_raroi_clamps_impact_severity(
 ) -> None:
     tracker = ROITracker()
     tracker.roi_history = [1.0] * 5
-    base, raroi = tracker.calculate_raroi(
+    base, raroi, _ = tracker.calculate_raroi(
         1.0, rollback_prob=0.5, impact_severity=impact_input, metrics={}
     )
 
@@ -107,7 +107,7 @@ def test_multiple_failing_suites_penalties(monkeypatch) -> None:
 
     monkeypatch.setattr(ROITracker, "_safety_factor", fake_safety)
 
-    base, raroi = tracker.calculate_raroi(2.0, rollback_prob=0.0, metrics={})
+    base, raroi, _ = tracker.calculate_raroi(2.0, rollback_prob=0.0, metrics={})
 
     penalty = (
         rt.CRITICAL_TEST_PENALTIES["security"]
@@ -131,7 +131,7 @@ def test_explicit_failing_tests(failing) -> None:
     tracker = ROITracker()
     tracker.roi_history = [0.1, 0.1, 0.1]
     sts.set_failed_critical_tests([])
-    base, raroi = tracker.calculate_raroi(
+    base, raroi, _ = tracker.calculate_raroi(
         1.0,
         workflow_type="standard",
         rollback_prob=0.0,
@@ -142,3 +142,17 @@ def test_explicit_failing_tests(failing) -> None:
     expected = 1.0 * (1 - 0.0 * 0.5) * (1 - np.std([0.1, 0.1, 0.1])) * penalty
     assert base == 1.0
     assert raroi == pytest.approx(expected)
+
+
+def test_calculate_raroi_returns_bottlenecks(monkeypatch) -> None:
+    tracker = ROITracker(raroi_borderline_threshold=0.8)
+    monkeypatch.setattr(rt, "propose_fix", lambda m, p: [("profitability", "improve")])
+    base, raroi, suggestions = tracker.calculate_raroi(
+        1.0,
+        workflow_type="standard",
+        metrics={"profitability": 0.0},
+        rollback_prob=1.0,
+        impact_severity=1.0,
+    )
+    assert raroi == 0.0
+    assert suggestions == [("profitability", "improve")]

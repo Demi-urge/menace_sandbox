@@ -20,7 +20,7 @@ def test_raroi_with_known_factors(failing_critical_tests):
     tracker.roi_history = [1.0, 1.5, 2.0]
     failing_critical_tests(["security"])
     base_roi = 1.0
-    base, raroi = tracker.calculate_raroi(
+    base, raroi, _ = tracker.calculate_raroi(
         base_roi,
         rollback_prob=0.2,
         impact_severity=0.5,
@@ -40,7 +40,7 @@ def test_raroi_with_known_factors(failing_critical_tests):
 def test_raroi_empty_history_and_metrics(failing_critical_tests):
     tracker = ROITracker()
     failing_critical_tests([])
-    base, raroi = tracker.calculate_raroi(2.0, workflow_type="standard")
+    base, raroi, _ = tracker.calculate_raroi(2.0, workflow_type="standard")
     assert base == 2.0
     assert raroi == pytest.approx(2.0)
 
@@ -49,7 +49,7 @@ def test_raroi_extreme_values(failing_critical_tests):
     tracker = ROITracker()
     tracker.roi_history = [10.0, -10.0, 10.0]
     failing_critical_tests(["security", "alignment"])
-    base, raroi = tracker.calculate_raroi(
+    base, raroi, _ = tracker.calculate_raroi(
         1.0,
         rollback_prob=1.0,
         impact_severity=1.0,
@@ -64,7 +64,7 @@ def test_raroi_with_error_metrics(failing_critical_tests):
     failing_critical_tests([])
     base_roi = 2.0
     metrics = {"errors_per_minute": 5.0, "error_threshold": 10.0}
-    base, raroi = tracker.calculate_raroi(
+    base, raroi, _ = tracker.calculate_raroi(
         base_roi, workflow_type="standard", metrics=metrics
     )
     expected = base_roi * (1.0 - (5.0 / 10.0) * 0.5)
@@ -79,7 +79,7 @@ def test_raroi_multiple_failing_suites_param(failing_critical_tests):
     failing_critical_tests([])
     base_roi = 1.0
     failing = ["security", "alignment"]
-    base, raroi = tracker.calculate_raroi(
+    base, raroi, _ = tracker.calculate_raroi(
         base_roi,
         rollback_prob=0.2,
         impact_severity=0.5,

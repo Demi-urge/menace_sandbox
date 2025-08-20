@@ -2130,7 +2130,7 @@ def test_scheduler_raroi_shortens_interval(monkeypatch):
     tracker = ROITracker()
     tracker.roi_history = [1.0]
     # produce negative RAROI via failing tests and high rollback probability
-    _base, raroi = tracker.calculate_raroi(
+    _base, raroi, _ = tracker.calculate_raroi(
         -1.0,
         rollback_prob=0.9,
         impact_severity=1.0,
@@ -2190,7 +2190,7 @@ def test_self_improvement_engine_raroi_prioritisation(monkeypatch):
                     self._candidate_features(mod)
                 )
                 roi_est = float(seq[-1]) if isinstance(seq, (list, tuple)) and seq else 0.0
-                base_roi, raroi = self.roi_tracker.calculate_raroi(
+                base_roi, raroi, _ = self.roi_tracker.calculate_raroi(
                     roi_est,
                     workflow_type="standard",
                     metrics={},
