@@ -1,0 +1,7 @@
+promote:
+  condition: "raroi > 0.7 and confidence > 0.6 and min_scenario >= 0.3"
+micro_pilot:
+  condition: "sandbox_raroi < 0.3 and adapter_raroi > 0.6"
+overrides:
+  alignment_veto: manual_review
+  security_veto: manual_review
