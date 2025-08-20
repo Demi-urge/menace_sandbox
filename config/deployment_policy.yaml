@@ -1,3 +1,17 @@
+# Deployment policy controlling rollout decisions.
+#
+# Schema overview:
+#   <decision>:
+#     thresholds:
+#       raroi_min      - minimum acceptable risk adjusted ROI
+#       confidence_min - minimum confidence score
+#       scenario_min   - minimum worst-case scenario score
+#     reason_code: short identifier explaining why the rule triggered
+#     optional_conditions:      # optional manual overrides for the rule
+#       <override>:
+#         condition: Python expression evaluated with available metrics
+#         reason_code: override specific reason code
+
 promote:
   thresholds:
     raroi_min: 0.8
