@@ -45,3 +45,37 @@ fired and a list of the triggered veto descriptions.
 
 `log_debug()` uses the standard :mod:`logging` module to emit a human readable
 breakdown of each contribution and any veto triggers at ``DEBUG`` level.
+
+## Suggesting fixes
+
+The :func:`propose_fix` helper highlights metrics that cap ROI and offers
+remediation hints. It first checks the profile's veto rules – any metric below
+its ``min``, above ``max`` or matching an ``equals`` value is treated as a hard
+ROI cap and included in the suggestion list. Remaining metrics are then sorted
+by their weighted contribution so the weakest ones surface next.
+
+```python
+from menace_sandbox.roi_calculator import ROICalculator, propose_fix
+
+calc = ROICalculator()
+profile = calc.profiles["scraper_bot"]
+metrics = {"profitability": 0.5, "efficiency": 0.1, "security": 0.2,
+           "latency": 0.9, "energy": 0.2}
+fixes = propose_fix(metrics, profile)
+print(fixes)
+```
+
+Sample output:
+
+```text
+[('security', 'harden authentication; add input validation'),
+ ('latency', 'optimise I/O; use caching'),
+ ('energy', 'batch work; reduce polling')]
+```
+
+### Error logger integration
+
+The :class:`~menace_sandbox.error_logger.ErrorLogger` calls
+``propose_fix`` via :meth:`log_roi_cap`, emitting a ``ROIBottleneck`` event
+with the suggestions. Downstream services can turn this telemetry into fix
+tickets or craft Codex prompts for automated patches.
