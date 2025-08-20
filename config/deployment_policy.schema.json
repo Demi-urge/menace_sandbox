@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "patternProperties": {
+    "^[A-Za-z_][A-Za-z0-9_]*$": {
+      "type": "object",
+      "properties": {
+        "thresholds": {
+          "type": "object",
+          "properties": {
+            "raroi_min": {"type": "number"},
+            "confidence_min": {"type": "number"},
+            "scenario_min": {"type": "number"}
+          },
+          "additionalProperties": false
+        },
+        "reason_code": {"type": "string"},
+        "optional_conditions": {
+          "type": "object",
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "object",
+              "properties": {
+                "condition": {"type": "string"},
+                "reason_code": {"type": "string"}
+              },
+              "required": ["condition"],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
