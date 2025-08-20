@@ -23,11 +23,9 @@ try:  # pragma: no cover - optional dependency for metrics
 except Exception:  # pragma: no cover - fallback when running as script
     import metrics_exporter as _me  # type: ignore
 
-_FILTERED_RESULTS = _me.Gauge(
-    "retriever_filtered_vectors_total",
-    "Vectors filtered due to high alert severity",
-)
-_DISALLOWED_LICENSES = set(_LICENSE_DENYLIST.values())
+from .patch_logger import _VECTOR_RISK  # type: ignore
+
+_DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 
@@ -78,6 +76,10 @@ class Retriever:
     use_fts_fallback: bool = True
     cache: RetrievalCache | None = field(default_factory=RetrievalCache)
     max_alert_severity: float = 1.0
+    max_alerts: int = 5
+    license_denylist: set[str] = field(
+        default_factory=lambda: set(_DEFAULT_LICENSE_DENYLIST)
+    )
 
     # ------------------------------------------------------------------
     def _get_retriever(self) -> UniversalRetriever:
@@ -88,9 +90,18 @@ class Retriever:
         return self.retriever
 
     # ------------------------------------------------------------------
-    def _parse_hits(self, hits: Iterable[Any], *, max_alert_severity: float = 1.0) -> List[Dict[str, Any]]:
+    def _parse_hits(
+        self,
+        hits: Iterable[Any],
+        *,
+        max_alert_severity: float = 1.0,
+        max_alerts: int | None = None,
+        license_denylist: set[str] | None = None,
+    ) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
         filtered = 0
+        denylist = license_denylist or self.license_denylist
+        alert_limit = max_alerts if max_alerts is not None else self.max_alerts
         for h in hits:
             meta = getattr(h, "metadata", {})
             if not isinstance(meta, dict) or not meta.get("redacted"):
@@ -117,9 +128,18 @@ class Retriever:
                         continue
                 except Exception:
                     pass
+            alerts = meta.get("semantic_alerts")
+            if alerts is not None:
+                try:
+                    if (len(alerts) if isinstance(alerts, (list, tuple, set)) else 1) > alert_limit:
+                        filtered += 1
+                        continue
+                except Exception:
+                    pass
             lic = meta.get("license")
             fp_meta = meta.get("license_fingerprint")
-            if fp_meta in _LICENSE_DENYLIST or lic in _DISALLOWED_LICENSES:
+            lic_meta = _LICENSE_DENYLIST.get(fp_meta)
+            if lic in denylist or lic_meta in denylist:
                 filtered += 1
                 continue
             text = str(item.get("text") or "")
@@ -132,9 +152,18 @@ class Retriever:
             meta, reason = governed
             lic = meta.get("license")
             fp = meta.get("license_fingerprint")
-            if fp in _LICENSE_DENYLIST or lic in _DISALLOWED_LICENSES:
+            lic_detected = _LICENSE_DENYLIST.get(fp)
+            if lic in denylist or lic_detected in denylist:
                 filtered += 1
                 continue
+            alerts = meta.get("semantic_alerts")
+            if alerts is not None:
+                try:
+                    if (len(alerts) if isinstance(alerts, (list, tuple, set)) else 1) > alert_limit:
+                        filtered += 1
+                        continue
+                except Exception:
+                    pass
             item["metadata"] = meta
             if reason is not None:
                 item["reason"] = reason
@@ -155,20 +184,26 @@ class Retriever:
                 except Exception:
                     pass
             lic = meta.get("license")
-            if lic in _DISALLOWED_LICENSES:
+            if lic in denylist or _LICENSE_DENYLIST.get(fp) in denylist:
                 penalty += 1.0
             item["score"] = max(float(item.get("score", 0.0)) - penalty, 0.0)
             results.append(item)
         if filtered:
             try:
-                _FILTERED_RESULTS.inc(filtered)
+                _VECTOR_RISK.labels("filtered").inc(filtered)
             except Exception:
                 pass
         return results
 
     # ------------------------------------------------------------------
     def _fallback(
-        self, query: str, limit: int | None = None, *, max_alert_severity: float = 1.0
+        self,
+        query: str,
+        limit: int | None = None,
+        *,
+        max_alert_severity: float = 1.0,
+        max_alerts: int | None = None,
+        license_denylist: set[str] | None = None,
     ) -> List[Dict[str, Any]]:
         query = redact(pii_redact_text(query))
         try:  # pragma: no cover - best effort import
@@ -181,6 +216,8 @@ class Retriever:
             return []
         results: List[Dict[str, Any]] = []
         filtered = 0
+        denylist = license_denylist or self.license_denylist
+        alert_limit = max_alerts if max_alerts is not None else self.max_alerts
         for row in rows:
             text = str(row.get("code") or row.get("summary") or "")
             governed = govern_retrieval(text, max_alert_severity=max_alert_severity)
@@ -188,16 +225,28 @@ class Retriever:
                 filtered += 1
                 continue
             meta, reason = governed
+            alerts = meta.get("semantic_alerts")
+            if alerts is not None:
+                try:
+                    if (len(alerts) if isinstance(alerts, (list, tuple, set)) else 1) > alert_limit:
+                        filtered += 1
+                        continue
+                except Exception:
+                    pass
             fp = meta.get("license_fingerprint")
+            lic = meta.get("license")
+            if lic in denylist or _LICENSE_DENYLIST.get(fp) in denylist:
+                filtered += 1
+                continue
             item = {
                 "origin_db": row.get("origin_db", "code"),
                 "record_id": row.get("id") or row.get("record_id"),
                 "score": 0.0,
                 "metadata": meta,
                 "text": text,
-                "license": meta.get("license"),
+                "license": lic,
                 "license_fingerprint": fp,
-                "semantic_alerts": meta.get("semantic_alerts"),
+                "semantic_alerts": alerts,
                 "alignment_severity": meta.get("alignment_severity"),
             }
             if reason is not None:
@@ -214,14 +263,13 @@ class Retriever:
                     penalty += float(sev)
                 except Exception:
                     pass
-            lic = meta.get("license")
-            if lic in _DISALLOWED_LICENSES:
+            if lic in denylist or _LICENSE_DENYLIST.get(fp) in denylist:
                 penalty += 1.0
             item["score"] = max(float(item.get("score", 0.0)) - penalty, 0.0)
             results.append(item)
         if filtered:
             try:
-                _FILTERED_RESULTS.inc(filtered)
+                _VECTOR_RISK.labels("filtered").inc(filtered)
             except Exception:
                 pass
         return results
@@ -301,7 +349,12 @@ class Retriever:
                 raise VectorServiceError("vector search failed") from exc
 
             if hits and confidence >= thresh:
-                results = self._parse_hits(hits, max_alert_severity=sev_limit)
+                results = self._parse_hits(
+                    hits,
+                    max_alert_severity=sev_limit,
+                    max_alerts=self.max_alerts,
+                    license_denylist=self.license_denylist,
+                )
                 if results:
                     if self.cache:
                         self.cache.set(query, dbs, results)
@@ -318,7 +371,13 @@ class Retriever:
         fts_hits: List[Dict[str, Any]] = []
         if use_fts_fallback if use_fts_fallback is not None else self.use_fts_fallback:
             fts_hits = fts_search(query, dbs=dbs, limit=k)
-        fb_hits = self._fallback(query, limit=k, max_alert_severity=sev_limit)
+        fb_hits = self._fallback(
+            query,
+            limit=k,
+            max_alert_severity=sev_limit,
+            max_alerts=self.max_alerts,
+            license_denylist=self.license_denylist,
+        )
         merged: List[Dict[str, Any]] = []
         seen = set()
         for item in fts_hits + fb_hits:
