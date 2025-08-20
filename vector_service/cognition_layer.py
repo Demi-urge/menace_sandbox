@@ -72,6 +72,35 @@ class CognitionLayer:
         self._retrieval_meta: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------
+    def reload_ranker_model(self, model_path: str | "Path") -> None:
+        """Reload ranking model on retriever and context builder."""
+
+        try:
+            self.retriever.reload_ranker_model(model_path)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        try:
+            from pathlib import Path
+
+            try:  # pragma: no cover - package relative import
+                from .. import retrieval_ranker as _rr  # type: ignore
+            except Exception:  # pragma: no cover - fallback
+                import retrieval_ranker as _rr  # type: ignore
+
+            self.context_builder.ranking_model = _rr.load_model(Path(model_path))
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    def reload_reliability_scores(self) -> None:
+        """Refresh retriever reliability statistics."""
+
+        try:
+            self.retriever.reload_reliability_scores()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
     @log_and_measure
     def query(
         self,

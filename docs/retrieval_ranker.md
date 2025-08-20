@@ -36,3 +36,23 @@ python analytics/retrain_vector_ranker.py \
     --patch-db path/to/metrics.db \
     --service module:service_instance
 ```
+
+## Scheduled retrain with hot reload
+
+`RankingModelScheduler` exposes a CLI for periodic retraining and hot reloading
+of running services.  Pass one or more service import paths via `--service` and
+the scheduler will invoke `reload_ranker_model` on each after a successful
+retrain:
+
+```bash
+python -m menace_sandbox.ranking_model_scheduler \
+    --vector-db vector_metrics.db \
+    --metrics-db metrics.db \
+    --model-path retrieval_ranker.json \
+    --service mymodule:layer \
+    --interval 3600
+```
+
+In this example `mymodule:layer` refers to a variable holding a
+`CognitionLayer` instance.  The scheduler retrains the model every hour and
+triggers a hot reload on that layer and any dependent services.
