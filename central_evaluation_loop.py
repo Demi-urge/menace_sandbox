@@ -25,6 +25,7 @@ import numpy as np
 from .kpi_reward_core import compute_reward, explain_reward
 from . import reward_dispatcher
 from .roi_calculator import ROICalculator
+from .governance import evaluate_veto
 from .truth_adapter import TruthAdapter
 from .logging_utils import log_record
 
@@ -208,6 +209,20 @@ def process_action(raw_line: str) -> bool:
             )
             return False
 
+    # Governance vetoes based on alignment status and scenario RAROI
+    vetoes = evaluate_veto(action.get("scorecard"), action.get("alignment_status", "pass"))
+    decision = action.get("decision")
+    if decision and decision in vetoes:
+        append_audit(
+            {
+                "timestamp": int(time.time()),
+                "error": "governance_veto",
+                "decision": decision,
+                "action": action,
+            }
+        )
+        return False
+
     try:
         reward = compute_reward(action)
         explanation = explain_reward(action)
@@ -303,7 +318,6 @@ if __name__ == "__main__":
     AUDIT_DIR = args.audit_dir
     SLEEP_INTERVAL = args.sleep_interval
 
-    global ENABLE_TRUTH_CALIBRATION, TRUTH_ADAPTER
     ENABLE_TRUTH_CALIBRATION = not args.disable_calibration and (
         os.getenv("ENABLE_TRUTH_CALIBRATION", "1").lower() not in {"0", "false"}
     )

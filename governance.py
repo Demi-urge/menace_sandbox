@@ -19,6 +19,8 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping
 
 import json
 
+from .roi_tracker import ROITracker
+
 try:  # pragma: no cover - optional dependency in minimal envs
     import yaml
 except Exception:  # pragma: no cover
@@ -128,6 +130,58 @@ def evaluate_governance(
     return check_veto(scorecard, rules)
 
 
+def evaluate_veto(
+    scorecard: Mapping[str, Any] | None, alignment_status: str
+) -> set[str]:
+    """Return vetoed decisions for *scorecard* and *alignment_status*.
+
+    The *scorecard* is expected to contain a ``scenarios`` mapping where each
+    scenario provides a ``roi`` value and optional ``metrics``.  The
+    ``ROITracker.calculate_raroi`` method is used to convert each scenario's ROI
+    into a risk-adjusted ROI.  Deltas are measured relative to the "normal"
+    scenario (or a scenario named "baseline" when present).  When three or more
+    scenarios exhibit a positive RAROI delta the ``rollback`` decision is vetoed.
+
+    Shipping is vetoed whenever ``alignment_status`` equals ``"fail"``.
+    """
+
+    vetoes: set[str] = set()
+    if alignment_status == "fail":
+        vetoes.add("ship")
+
+    scenarios: Mapping[str, Any] | None = None
+    if isinstance(scorecard, Mapping):
+        scenarios = scorecard.get("scenarios")  # type: ignore[assignment]
+    if isinstance(scenarios, Mapping):
+        tracker = ROITracker()
+        baseline = (
+            scenarios.get("normal")
+            or scenarios.get("baseline")
+        )
+        base_raroi = None
+        if isinstance(baseline, Mapping) and "roi" in baseline:
+            base_roi = float(baseline.get("roi", 0.0))
+            _, base_raroi = tracker.calculate_raroi(
+                base_roi, rollback_prob=0.0, metrics=baseline.get("metrics", {})
+            )
+        raroi_deltas: list[float] = []
+        if base_raroi is not None:
+            for name, info in scenarios.items():
+                if name in {"normal", "baseline"}:
+                    continue
+                if not isinstance(info, Mapping) or "roi" not in info:
+                    continue
+                roi = float(info.get("roi", 0.0))
+                _, scen_raroi = tracker.calculate_raroi(
+                    roi, rollback_prob=0.0, metrics=info.get("metrics", {})
+                )
+                raroi_deltas.append(scen_raroi - base_raroi)
+        if sum(1 for d in raroi_deltas if d > 0) >= 3:
+            vetoes.add("rollback")
+
+    return vetoes
+
+
 # ---------------------------------------------------------------------------
 # New rule based governance system
 
@@ -225,6 +279,7 @@ __all__ = [
     "load_rules",
     "check_veto",
     "evaluate_governance",
+    "evaluate_veto",
     "register_rule",
     "evaluate_rules",
 ]
