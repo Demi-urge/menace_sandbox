@@ -155,6 +155,12 @@ class ContextBuilderConfig(BaseModel):
     db_weights: Dict[str, float] = Field(
         default_factory=dict, description="Score multipliers per origin database"
     )
+    ranking_weight: float = Field(
+        1.0, description="Default multiplier when ranking model absent or fails"
+    )
+    roi_weight: float = Field(
+        1.0, description="Default multiplier when ROI tracker lacks bias"
+    )
 
     model_config = ConfigDict(extra="forbid")
 

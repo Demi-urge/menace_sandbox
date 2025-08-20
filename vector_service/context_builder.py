@@ -65,11 +65,19 @@ class ContextBuilder:
         self,
         *,
         retriever: Retriever | None = None,
+        ranking_model: Any | None = None,
+        roi_tracker: Any | None = None,
         memory_manager: Optional[MenaceMemoryManager] = None,
         db_weights: Dict[str, float] | None = None,
+        ranking_weight: float = ContextBuilderConfig().ranking_weight,
+        roi_weight: float = ContextBuilderConfig().roi_weight,
         max_tokens: int = ContextBuilderConfig().max_tokens,
     ) -> None:
         self.retriever = retriever or Retriever()
+        self.ranking_model = ranking_model
+        self.roi_tracker = roi_tracker
+        self.ranking_weight = ranking_weight
+        self.roi_weight = roi_weight
         self.memory = memory_manager
         self._cache: Dict[Tuple[str, int], str] = {}
         self.db_weights = db_weights or {}
@@ -131,7 +139,7 @@ class ContextBuilder:
         return metric
 
     # ------------------------------------------------------------------
-    def _bundle_to_entry(self, bundle: Dict[str, Any]) -> Tuple[str, _ScoredEntry]:
+    def _bundle_to_entry(self, bundle: Dict[str, Any], query: str) -> Tuple[str, _ScoredEntry]:
         meta = bundle.get("metadata", {})
         origin = bundle.get("origin_db", "")
 
@@ -184,7 +192,28 @@ class ContextBuilder:
             except Exception:
                 pass
 
-        score = float(bundle.get("score", 0.0)) + (metric or 0.0)
+        similarity = float(bundle.get("score", 0.0))
+        rank_prob = self.ranking_weight
+        if self.ranking_model is not None:
+            try:
+                if hasattr(self.ranking_model, "score"):
+                    rank_prob = float(self.ranking_model.score(query, text))
+                elif hasattr(self.ranking_model, "rank"):
+                    rank_prob = float(self.ranking_model.rank(query, text))
+                else:
+                    rank_prob = float(self.ranking_model(query, text))  # type: ignore[misc]
+            except Exception:
+                rank_prob = self.ranking_weight
+        roi_bias = self.roi_weight
+        if self.roi_tracker is not None:
+            try:
+                roi_bias = float(
+                    self.roi_tracker.retrieval_bias().get(origin, self.roi_weight)
+                )
+            except Exception:
+                roi_bias = self.roi_weight
+
+        score = similarity * rank_prob * roi_bias + (metric or 0.0)
         score *= self.db_weights.get(origin, 1.0)
 
         key_map = {
@@ -257,7 +286,7 @@ class ContextBuilder:
         }
 
         for bundle in hits:
-            bucket, scored = self._bundle_to_entry(bundle)
+            bucket, scored = self._bundle_to_entry(bundle, query)
             if bucket:
                 buckets[bucket].append(scored)
 

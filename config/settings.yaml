@@ -18,3 +18,5 @@ bot:
 context_builder:
   max_tokens: 800
   db_weights: {}
+  ranking_weight: 1.0
+  roi_weight: 1.0
