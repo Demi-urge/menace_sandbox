@@ -30,6 +30,12 @@ Higher RAROI values promote a workflow in ranking calculations while lower
 values push it downward, allowing ranking systems to favour stable and safe
 workflows.
 
+Workflows that receive a low RAROI or whose confidence scores fall under the
+tracker's threshold can be queued in a [borderline bucket](borderline_bucket.md)
+for micro‑pilot evaluation. This staging area records the workflow's RAROI
+history and only promotes the workflow if a follow‑up test exceeds the
+threshold; otherwise the candidate is terminated.
+
 ## Configuring impact severity
 
 Impact severity values live in `config/impact_severity.yaml`. A minimal example

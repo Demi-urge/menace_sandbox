@@ -97,6 +97,29 @@
    the factor, so RAROI close to the raw ROI signals a stable, low-risk
    workflow while a much lower RAROI highlights risk and volatility. RAROI
    feeds into module ranking and guides self-improvement decisions.
+
+### ROI toolkit
+
+ROI evaluation combines `ROICalculator`, `ROITracker` and the RAROI formula to
+measure and forecast workflow impact. `ROITracker.update()` records ROI deltas
+while `calculate_raroi()` applies risk multipliers. When a workflow's RAROI or
+confidence falls below the configured thresholds the tracker queues it in a
+[borderline bucket](docs/borderline_bucket.md) for micro‑pilot testing. Use
+`process_borderline_candidates()` after updates to promote or terminate these
+candidates based on the trial results:
+
+```python
+from menace_sandbox.roi_tracker import ROITracker
+
+tracker = ROITracker(raroi_borderline_threshold=0.05)
+tracker.update(0.12)
+base, raroi = tracker.calculate_raroi(1.1)
+tracker.process_borderline_candidates()
+```
+
+The snippet records an ROI delta, computes a risk-adjusted score and evaluates
+borderline workflows before full adoption.
+
 - Debug logs report the EMA and standard deviation used for ROI thresholds along
   with per-metric synergy EMA, deviation and confidence. Window sizes and weight
   parameters are included in each `log_record` entry.
