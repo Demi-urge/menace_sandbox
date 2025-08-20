@@ -17,6 +17,8 @@ import os
 
 import yaml
 
+from .override_validator import validate_override_file
+
 
 @dataclass
 class Rule:
@@ -215,3 +217,89 @@ class DeploymentGovernor:
                 continue
 
         return {"verdict": verdict, "reasons": reasons, "override": override}
+
+
+def evaluate_workflow(
+    scorecard: Mapping[str, Any] | None,
+    policy: Mapping[str, Any] | None,
+) -> Dict[str, Any]:
+    """Return deployment verdict and reasoning for *scorecard*.
+
+    The function is a convenience wrapper around :class:`DeploymentGovernor`
+    that also honours operator override files validated via
+    :mod:`override_validator`.
+
+    Parameters
+    ----------
+    scorecard:
+        Mapping containing workflow metrics such as ``alignment_status``,
+        ``raroi`` and ``confidence``.  Absent keys default to safe
+        fallbacks.
+    policy:
+        Optional mapping of threshold overrides.  ``override_path`` and
+        ``public_key_path`` may be supplied to validate a manual override file
+        whose ``data`` entries are merged into the returned ``overrides``
+        mapping.
+    """
+
+    scorecard = scorecard or {}
+    policy = policy or {}
+
+    overrides_cfg = policy.get("overrides") or {}
+    overrides: Dict[str, Any] = dict(overrides_cfg)
+
+    override_path = policy.get("override_path") or overrides_cfg.get("override_path")
+    public_key = policy.get("public_key_path") or overrides_cfg.get("public_key_path")
+    if override_path and public_key:
+        valid, data = validate_override_file(str(override_path), str(public_key))
+        if valid:
+            overrides.update(data)
+            overrides["override_path"] = str(override_path)
+
+    gov = DeploymentGovernor(
+        raroi_threshold=float(policy.get("raroi_threshold", DeploymentGovernor.raroi_threshold)),
+        confidence_threshold=float(
+            policy.get("confidence_threshold", DeploymentGovernor.confidence_threshold)
+        ),
+        scenario_score_min=float(
+            policy.get("scenario_score_min", DeploymentGovernor.scenario_score_min)
+        ),
+        sandbox_roi_low=float(policy.get("sandbox_roi_low", DeploymentGovernor.sandbox_roi_low)),
+        adapter_roi_high=float(policy.get("adapter_roi_high", DeploymentGovernor.adapter_roi_high)),
+    )
+
+    alignment_status = str(scorecard.get("alignment_status", "pass"))
+    raroi = scorecard.get("raroi")
+    confidence = scorecard.get("confidence")
+    sandbox_roi = scorecard.get("sandbox_roi")
+    adapter_roi = scorecard.get("adapter_roi")
+
+    policy_eval = {k: policy[k] for k in ("sandbox_low", "adapter_high") if k in policy}
+
+    result = gov.evaluate(
+        scorecard,
+        alignment_status,
+        raroi,
+        confidence,
+        sandbox_roi,
+        adapter_roi,
+        policy_eval or None,
+        overrides=overrides,
+    )
+
+    forced = overrides.get("verdict") or overrides.get("forced_verdict")
+    if isinstance(forced, str) and forced in {"promote", "demote", "pilot", "no_go"}:
+        result["verdict"] = forced
+        if "manual_override" not in result["reasons"]:
+            result["reasons"].append("manual_override")
+
+    combined_override = {**overrides, **result.get("override", {})}
+
+    return {
+        "verdict": result.get("verdict", "no_go"),
+        "reason_codes": result.get("reasons", []),
+        "overrides": combined_override,
+    }
+
+
+__all__ = ["Rule", "DeploymentGovernor", "evaluate_workflow"]
