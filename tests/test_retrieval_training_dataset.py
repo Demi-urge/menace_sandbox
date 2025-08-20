@@ -45,15 +45,15 @@ def test_feature_extraction_and_labels(tmp_path):
             "CREATE TABLE patch_outcomes(session_id TEXT, vector_id TEXT, success INTEGER, reverted INTEGER)"
         )
         conn.execute(
-            "CREATE TABLE retriever_stats(origin_db TEXT, win_rate REAL, regret_rate REAL, stale_cost REAL, sample_count REAL)"
+            "CREATE TABLE retriever_stats(origin_db TEXT, win_rate REAL, regret_rate REAL, stale_cost REAL, sample_count REAL, roi REAL)"
         )
         conn.execute(
             "INSERT INTO patch_outcomes(session_id, vector_id, success, reverted) VALUES(?,?,?,0)",
             ("s1", "v1", 1),
         )
         conn.execute(
-            "INSERT INTO retriever_stats(origin_db, win_rate, regret_rate, stale_cost, sample_count) VALUES(?,?,?,?,?)",
-            ("demo", 0.7, 0.2, 5.0, 10.0),
+            "INSERT INTO retriever_stats(origin_db, win_rate, regret_rate, stale_cost, sample_count, roi) VALUES(?,?,?,?,?,?)",
+            ("demo", 0.7, 0.2, 5.0, 10.0, 1.2),
         )
         conn.commit()
 
@@ -70,6 +70,7 @@ def test_feature_extraction_and_labels(tmp_path):
     assert row1.regret_rate == pytest.approx(0.2)
     assert row1.stale_cost == pytest.approx(5.0)
     assert row1.sample_count == pytest.approx(10.0)
+    assert row1.roi == pytest.approx(1.2)
 
     row2 = df[df["session_id"] == "s2"].iloc[0]
     assert row2.label == 0
@@ -80,3 +81,4 @@ def test_feature_extraction_and_labels(tmp_path):
     assert row2.regret_rate == pytest.approx(0.0)
     assert row2.stale_cost == pytest.approx(0.0)
     assert row2.sample_count == pytest.approx(0.0)
+    assert row2.roi == pytest.approx(0.0)
