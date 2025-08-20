@@ -111,6 +111,8 @@ class RankingModelScheduler:
                 self.event_bus = UnifiedEventBus()
             except Exception:
                 self.event_bus = None
+        self._win_events = 0
+        self._total_events = 0
         if self.event_bus is not None:
             try:
                 self.event_bus.subscribe("patch_logger:outcome", self._handle_patch_outcome)
@@ -162,8 +164,20 @@ class RankingModelScheduler:
 
         if self.win_rate_threshold is None:
             return
+
+        win = False
+        if isinstance(event, dict):
+            try:
+                win = bool(event.get("win"))
+            except Exception:
+                win = False
+        self._total_events += 1
+        if win:
+            self._win_events += 1
+
         try:
-            if needs_retrain(self.vector_db, self.win_rate_threshold):
+            win_rate = self._win_events / self._total_events if self._total_events else 0.0
+            if win_rate < self.win_rate_threshold:
                 self.retrain_and_reload()
         except Exception:
             logging.exception("ranking model retrain failed")
@@ -239,6 +253,21 @@ class RankingModelScheduler:
 
         for svc in self.services:
             _reload_all(svc)
+
+        if self.event_bus is not None:
+            try:
+                self.event_bus.publish(
+                    "reload_ranker_model", {"path": str(self.model_path)}
+                )
+            except Exception:
+                pass
+            try:
+                self.event_bus.publish("reload_reliability_scores", {})
+            except Exception:
+                pass
+
+        self._win_events = 0
+        self._total_events = 0
 
     # ------------------------------------------------------------------
     def _loop(self) -> None:
