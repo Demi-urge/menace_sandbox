@@ -42,8 +42,10 @@ context = builder.build("fix failing tests", session_id="abc123")
 ````
 
 `ContextBuilder` summarises related bots, workflows, errors and code records,
-applying ranking and ROI weights when available.  The compact JSON blob is ready
-for prompt injection or further processing.
+applying ranking, ROI and safety weights when available.  Win/regret rates and
+alignment severity are pulled from `VectorMetricsDB` and normalised so risky
+vectors are down‑ranked.  The compact JSON blob is ready for prompt injection or
+further processing.
 
 ## Patch logging
 

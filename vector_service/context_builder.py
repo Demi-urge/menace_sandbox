@@ -72,6 +72,7 @@ class ContextBuilder:
         db_weights: Dict[str, float] | None = None,
         ranking_weight: float = ContextBuilderConfig().ranking_weight,
         roi_weight: float = ContextBuilderConfig().roi_weight,
+        safety_weight: float = getattr(ContextBuilderConfig(), "safety_weight", 1.0),
         max_tokens: int = ContextBuilderConfig().max_tokens,
     ) -> None:
         self.retriever = retriever or Retriever()
@@ -93,6 +94,7 @@ class ContextBuilder:
         self.roi_tracker = roi_tracker
         self.ranking_weight = ranking_weight
         self.roi_weight = roi_weight
+        self.safety_weight = safety_weight
         self.memory = memory_manager
         self._cache: Dict[Tuple[str, int], str] = {}
         self.db_weights = db_weights or {}
@@ -109,9 +111,20 @@ class ContextBuilder:
 
     # ------------------------------------------------------------------
     def _metric(
-        self, origin: str, meta: Dict[str, Any], query: str, text: str
+        self,
+        origin: str,
+        meta: Dict[str, Any],
+        query: str,
+        text: str,
+        vector_id: str,
     ) -> float | None:
-        """Extract ROI/success metrics from metadata and ranking model."""
+        """Extract ROI/success metrics from metadata and ranking model.
+
+        The method merges metadata from the retriever with historical safety
+        signals stored in :class:`VectorMetricsDB`.  When a vector ID is
+        provided, win/regret rates and alignment severity are looked up and
+        merged into *meta* so downstream consumers can surface them.
+        """
 
         metric: float | None = None
         try:
@@ -152,15 +165,43 @@ class ContextBuilder:
         except Exception:  # pragma: no cover - defensive
             metric = None
 
-        # Patch safety metrics supplied by PatchLogger
+        # Patch safety metrics supplied by PatchLogger or VectorMetricsDB
         win_rate = meta.get("win_rate")
         regret_rate = meta.get("regret_rate")
+        sev = meta.get("alignment_severity")
+
+        if _VEC_METRICS is not None and vector_id:
+            try:  # pragma: no cover - best effort lookup
+                if win_rate is None or regret_rate is None:
+                    cur = _VEC_METRICS.conn.execute(
+                        "SELECT AVG(win), AVG(regret) FROM vector_metrics WHERE vector_id=?",
+                        (vector_id,),
+                    )
+                    row = cur.fetchone()
+                    if win_rate is None and row and row[0] is not None:
+                        win_rate = float(row[0])
+                        meta["win_rate"] = win_rate
+                    if regret_rate is None and row and row[1] is not None:
+                        regret_rate = float(row[1])
+                        meta["regret_rate"] = regret_rate
+                if sev is None:
+                    cur = _VEC_METRICS.conn.execute(
+                        "SELECT MAX(alignment_severity) FROM patch_ancestry WHERE vector_id=?",
+                        (vector_id,),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        sev = float(row[0])
+                        meta["alignment_severity"] = sev
+            except Exception:
+                pass
+
         alerts = meta.get("semantic_alerts")
         try:
             if win_rate is not None or regret_rate is not None:
-                win = float(win_rate or 0.0)
-                regret = float(regret_rate or 0.0)
-                metric = (metric or 0.0) + win - regret
+                win = min(max(float(win_rate or 0.0), 0.0), 1.0)
+                regret = min(max(float(regret_rate or 0.0), 0.0), 1.0)
+                metric = (metric or 0.0) + self.safety_weight * (win - regret)
             if alerts:
                 metric = (metric or 0.0) - (
                     float(len(alerts))
@@ -170,10 +211,10 @@ class ContextBuilder:
         except Exception:  # pragma: no cover - defensive
             pass
 
-        sev = meta.get("alignment_severity")
         if sev is not None:
             try:
-                metric = (metric or 0.0) - float(sev)
+                sev_val = min(max(float(sev), 0.0), 1.0)
+                metric = (metric or 0.0) - self.safety_weight * sev_val
             except Exception:
                 pass
 
@@ -202,6 +243,7 @@ class ContextBuilder:
         origin = bundle.get("origin_db", "")
 
         text = bundle.get("text") or ""
+        vec_id = str(bundle.get("record_id", ""))
         entry: Dict[str, Any] = {"id": bundle.get("record_id")}
 
         if origin == "error":
@@ -254,7 +296,7 @@ class ContextBuilder:
 
         text = redact_text(str(text))
         entry["desc"] = self._summarise(text)
-        metric = self._metric(origin, meta, query, text)
+        metric = self._metric(origin, meta, query, text, vec_id)
         if metric is not None:
             entry["metric"] = metric
 
@@ -320,7 +362,7 @@ class ContextBuilder:
             "code": "code",
             "discrepancy": "discrepancies",
         }
-        return key_map.get(origin, ""), _ScoredEntry(entry, score, origin, str(bundle.get("record_id", "")))
+        return key_map.get(origin, ""), _ScoredEntry(entry, score, origin, vec_id)
 
     # ------------------------------------------------------------------
     @log_and_measure
