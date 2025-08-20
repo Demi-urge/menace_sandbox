@@ -104,6 +104,7 @@ from menace.config import Config
 import menace.vector_service.decorators as dec
 from menace.vector_service.exceptions import MalformedPromptError
 import pytest
+from vector_metrics_db import VectorMetricsDB
 
 
 class DummyClient:
@@ -360,14 +361,14 @@ def test_risk_penalties_reduce_score():
 
     builder_plain = ContextBuilder(
         retriever=NoopRetriever(),
-        safety_weight=0.0,
+        safety_weight=1.0,
         regret_penalty=0.0,
         alignment_penalty=0.0,
         alert_penalty=0.0,
     )
     builder = ContextBuilder(
         retriever=NoopRetriever(),
-        safety_weight=0.0,
+        safety_weight=1.0,
         regret_penalty=2.0,
         alignment_penalty=3.0,
         alert_penalty=4.0,
@@ -503,6 +504,24 @@ def test_build_context_emits_metrics(monkeypatch):
     ctx = builder.build_context("alpha issue")
     assert g1.inc_calls == 1
     assert g3.set_calls == [len(ctx)]
+
+
+def test_refresh_db_weights(tmp_path):
+    class NoopRetriever:
+        def search(self, q, top_k=5):
+            return []
+
+    db = VectorMetricsDB(tmp_path / "weights.db")
+    db.update_db_weight("db1", 1.2)
+
+    builder = ContextBuilder(retriever=NoopRetriever())
+    assert "db1" not in builder.db_weights
+
+    builder.refresh_db_weights({"db1": 0.5})
+    assert builder.db_weights["db1"] == pytest.approx(0.5)
+
+    builder.refresh_db_weights(vector_metrics=db)
+    assert builder.db_weights["db1"] == pytest.approx(1.2)
 
 
 @pytest.mark.parametrize("bad_query", ["", None, 123])
