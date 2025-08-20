@@ -798,6 +798,7 @@ def test_generate_scenario_scorecard(tmp_path):
     assert card["workflow_id"] == "wf1"
     assert set(card["scenarios"]) == {"concurrency_spike", "schema_drift"}
     assert card["scenarios"]["concurrency_spike"]["roi_delta"] == pytest.approx(-1.0)
+    assert card["scenarios"]["concurrency_spike"]["score"] == pytest.approx(-1.0)
     assert (
         card["scenarios"]["schema_drift"]["metrics_delta"]["schema_mismatches"]
         == pytest.approx(2.0)
@@ -837,6 +838,21 @@ def test_situationally_weak_from_metrics():
     tracker.record_scenario_delta("schema_drift", 0.3, {}, {}, 0.0, 0.0)
     tracker.generate_scorecards()
     assert tracker.workflow_label == "situationally weak"
+
+
+def test_build_governance_scorecard():
+    tracker = rt.ROITracker()
+    tracker.record_scenario_delta("concurrency_spike", -1.0, {}, {}, 0.0, -1.0)
+    base, raroi = tracker.calculate_raroi(0.5)
+    tracker.score_workflow("wf1", raroi)
+    tracker.record_roi_prediction([0.4], [0.3], workflow_id="wf1")
+    card, metrics = tracker.build_governance_scorecard("wf1", ["concurrency_spike"])
+    assert card["raroi"] == pytest.approx(raroi)
+    assert metrics["confidence"] == pytest.approx(tracker.last_confidence)
+    assert metrics["predicted_roi"] == pytest.approx(0.4)
+    assert metrics["scenario_scores"]["concurrency_spike"] == pytest.approx(
+        card["scenarios"]["concurrency_spike"]["score"]
+    )
 
 
 def test_scorecard_cli(tmp_path, capsys):
