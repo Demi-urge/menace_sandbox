@@ -55,7 +55,7 @@ except Exception:  # pragma: no cover
 _TABLE_CLASS_MAP: dict[str, tuple[str, str]] = {
     "bots": ("bot_database", "BotDB"),
     "code": ("code_database", "CodeDB"),
-    "discrepancy": ("failure_learning_system", "DiscrepancyDB"),
+    "discrepancy": ("discrepancy_db", "DiscrepancyDB"),
     "enhancements": ("chatgpt_enhancement_bot", "EnhancementDB"),
     "errors": ("error_bot", "ErrorDB"),
     "information": ("research_aggregator_bot", "InfoDB"),
