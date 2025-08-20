@@ -148,6 +148,8 @@ from .human_alignment_agent import HumanAlignmentAgent
 from .audit_logger import log_event as audit_log_event, get_recent_events
 from .violation_logger import log_violation
 from .alignment_review_agent import AlignmentReviewAgent
+from .governance import check_veto, load_rules
+from .evaluation_dashboard import append_governance_result
 try:
     from .borderline_bucket import BorderlineBucket
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -5382,6 +5384,35 @@ class SelfImprovementEngine:
                 self.logger.info(
                     "cycle roi", extra=log_record(predicted=pred_realish, actual=roi_realish)
                 )
+            if self.roi_tracker:
+                try:
+                    cards = self.roi_tracker.generate_scorecards()
+                except Exception:
+                    cards = []
+                scorecard = {
+                    "decision": "rollback" if reverted else "ship",
+                    "alignment": "pass",
+                    "raroi_increase": sum(1 for c in cards if getattr(c, "raroi_delta", 0.0) > 0),
+                }
+                vetoes: List[str] = []
+                try:
+                    vetoes = check_veto(scorecard, load_rules())
+                except Exception:
+                    self.logger.exception("governance check failed")
+                try:
+                    append_governance_result(scorecard, vetoes)
+                except Exception:
+                    self.logger.exception("governance logging failed")
+                if vetoes and patch_id is not None and self.self_coding_engine and not reverted:
+                    try:
+                        self.self_coding_engine.rollback_patch(str(patch_id))
+                        reverted = True
+                        self.logger.warning(
+                            "patch rolled back due to governance veto",
+                            extra=log_record(patch_id=patch_id, veto=";".join(vetoes)),
+                        )
+                    except Exception:
+                        self.logger.exception("patch rollback failed")
             if self.evolution_history:
                 try:
                     from .evolution_history_db import EvolutionEvent

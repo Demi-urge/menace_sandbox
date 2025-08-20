@@ -43,6 +43,18 @@ from .evaluation_manager import EvaluationManager
 from .roi_tracker import ROITracker
 from .violation_logger import load_persisted_alignment_warnings
 
+GOVERNANCE_LOG = Path("sandbox_data/governance_outcomes.jsonl")
+
+
+def append_governance_result(scorecard: Dict[str, Any], vetoes: List[str]) -> None:
+    """Persist *scorecard* evaluation outcome for later review."""
+
+    rec = dict(scorecard)
+    rec["vetoes"] = list(vetoes)
+    GOVERNANCE_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with GOVERNANCE_LOG.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec) + "\n")
+
 
 def _build_tree(workflow_id: int) -> List[Dict[str, Any]]:
     """Helper returning the lineage tree for ``workflow_id``."""
@@ -212,6 +224,16 @@ class EvaluationDashboard:
             "drift_metrics": drift_metrics,
             "workflows": workflows,
         }
+
+    # ------------------------------------------------------------------
+    def governance_panel(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Return recent governance check outcomes."""
+
+        if not GOVERNANCE_LOG.exists():
+            return []
+        lines = GOVERNANCE_LOG.read_text(encoding="utf-8").splitlines()
+        records = [json.loads(line) for line in lines if line.strip()]
+        return records[-limit:]
 
     # ------------------------------------------------------------------
     def relevancy_radar_panel(self, threshold: int = 5) -> List[Dict[str, Any]]:
