@@ -76,6 +76,9 @@ def _prepare_dataset() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
             "exec_freq",
             "roi_delta",
             "prior_hits",
+            "alignment_severity",
+            "win",
+            "regret",
         }
     ]
     X = df[feature_cols].fillna(0.0)
