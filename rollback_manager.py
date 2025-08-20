@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover - optional dependency
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
 from .unified_event_bus import UnifiedEventBus
-from .governance import evaluate_governance
+from .governance import evaluate_rules
 
 
 
@@ -177,11 +177,11 @@ class RollbackManager:
         scenario_raroi_deltas: Iterable[float] | None = None,
     ) -> None:
         """Notify nodes to rollback then drop the patch record."""
-        vetoes = evaluate_governance(
-            "rollback", alignment_status, scenario_raroi_deltas or []
+        allow_ship, allow_rollback, reasons = evaluate_rules(
+            {}, alignment_status, scenario_raroi_deltas or []
         )
-        if vetoes:
-            for msg in vetoes:
+        if not allow_rollback:
+            for msg in reasons:
                 self.logger.warning("governance veto: %s", msg)
             return
 
