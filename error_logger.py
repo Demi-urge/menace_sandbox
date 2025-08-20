@@ -44,6 +44,11 @@ try:
 except ImportError:  # pragma: no cover - package fallback
     from knowledge_graph import KnowledgeGraph  # type: ignore
 
+try:
+    from .roi_calculator import propose_fix
+except Exception:  # pragma: no cover - package fallback
+    from roi_calculator import propose_fix  # type: ignore
+
 # Backwards compatibility with legacy imports
 ErrorType = ErrorCategory
 
@@ -520,6 +525,49 @@ class ErrorLogger:
             except Exception as e:
                 self.logger.warning("failed to send exception to Sentry: %s", e)
         return event
+
+    def log_roi_cap(
+        self,
+        workflow_id: str,
+        metrics: dict[str, float],
+        profile: dict[str, Any],
+    ) -> list[tuple[str, str]]:
+        """Emit telemetry for ROI bottlenecks and suggest fixes."""
+        suggestions = propose_fix(metrics, profile)
+        payload = {
+            "workflow_id": workflow_id,
+            "metrics": metrics,
+            "suggestions": suggestions,
+        }
+        message = f"ROIBottleneck: {json.dumps(payload, sort_keys=True)}"
+        if self.replicator:
+            try:
+                event = TelemetryEvent(
+                    task_id=workflow_id,
+                    error_type=ErrorCategory.Unknown,
+                    category=ErrorCategory.Unknown,
+                    root_cause="ROIBottleneck",
+                    stack_trace=message,
+                    root_module="roi_calculator",
+                    module="roi_calculator",
+                    module_counts={},
+                    inferred_cause="",
+                    timestamp=datetime.utcnow().isoformat(),
+                    resolution_status="unresolved",
+                    patch_id=None,
+                    deploy_id=None,
+                )
+                self.replicator.replicate(event)
+            except Exception as e:  # pragma: no cover - network issues
+                self.logger.error("failed to replicate ROI telemetry: %s", e)
+        elif self.sentry:
+            try:
+                self.sentry.capture_exception(Exception(message))
+            except Exception as e:  # pragma: no cover - telemetry issues
+                self.logger.warning("failed to send ROI bottleneck to Sentry: %s", e)
+        else:
+            self.logger.info(message)
+        return suggestions
     def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
