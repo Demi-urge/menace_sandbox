@@ -65,7 +65,7 @@ def _infer_schedule(doc: str) -> str:
     return "once"
 
 
-def debug_and_deploy(repo: Path, *, jobs: int = 1) -> None:
+def debug_and_deploy(repo: Path, *, jobs: int = 1, override_veto: bool = False) -> None:
     """Run tests, apply fixes and deploy existing bots in *repo*."""
 
     engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
@@ -170,15 +170,21 @@ def debug_and_deploy(repo: Path, *, jobs: int = 1) -> None:
     spec = DeploymentSpec(name="menace", resources=resources, env={
         f"ERR_{k.upper()}": str(v) for k, v in telem_counts.items()
     })
-    deployer.deploy("menace", [p.stem for p in module_paths], spec)
+    deployer.deploy("menace", [p.stem for p in module_paths], spec, override_veto=override_veto)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Self-debug and deploy Menace")
     parser.add_argument("repo", nargs="?", default=".", help="Path to repo")
     parser.add_argument("--jobs", "-j", type=int, default=1, help="Parallel jobs")
+    parser.add_argument(
+        "--override-veto",
+        action="store_true",
+        default=False,
+        help="Bypass governance vetoes when override is allowed",
+    )
     args = parser.parse_args()
-    debug_and_deploy(Path(args.repo), jobs=args.jobs)
+    debug_and_deploy(Path(args.repo), jobs=args.jobs, override_veto=args.override_veto)
 
 
 if __name__ == "__main__":
