@@ -322,6 +322,33 @@ def test_roi_tracker_weighting():
     assert ids == [10, 1]
 
 
+def test_roi_history_biasing():
+    class Tracker:
+        def retrieval_bias(self):
+            return {}
+
+        def roi_by_origin_db(self):
+            return {"bot": 2.0, "workflow": -1.0}
+
+    class NoopRetriever:
+        def search(self, q, top_k=5):
+            return []
+
+    builder = ContextBuilder(
+        retriever=NoopRetriever(), roi_tracker=Tracker(), roi_history_weight=2.0
+    )
+    b1 = {"origin_db": "bot", "record_id": 1, "score": 0.0, "metadata": {}}
+    b2 = {
+        "origin_db": "workflow",
+        "record_id": 10,
+        "score": 0.0,
+        "metadata": {},
+    }
+    s1 = builder._bundle_to_entry(b1, "q")[1]
+    s2 = builder._bundle_to_entry(b2, "q")[1]
+    assert s1.score > s2.score
+
+
 def test_patch_safety_metrics_influence_ranking():
     class NoopRetriever:
         def search(self, q, top_k=5):

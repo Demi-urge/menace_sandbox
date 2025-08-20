@@ -104,7 +104,14 @@ def generate_patch(
                 description, session_id=cb_session, include_vectors=True
             )
             if isinstance(ctx_res, tuple):
-                context_block, _, vectors = ctx_res
+                context_block, _, raw_vectors = ctx_res
+                vectors = []
+                for t in raw_vectors:
+                    if len(t) >= 4:
+                        o, vid, _sim, score = t
+                    else:
+                        o, vid, score = t  # type: ignore[misc]
+                    vectors.append((o, vid, score))
             else:
                 context_block = ctx_res
             if isinstance(context_block, (FallbackResult, ErrorResult)):

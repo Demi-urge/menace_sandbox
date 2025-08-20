@@ -92,7 +92,7 @@ class CognitionLayer:
         if getattr(self.patch_logger, "roi_tracker", None) is not self.roi_tracker:
             self.patch_logger.roi_tracker = self.roi_tracker
         # Keep track of vectors by session so outcomes can be recorded later
-        self._session_vectors: Dict[str, List[Tuple[str, str, float]]] = {}
+        self._session_vectors: Dict[str, List[Tuple[str, str, float, float]]] = {}
         self._retrieval_meta: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------
@@ -126,7 +126,7 @@ class CognitionLayer:
 
     # ------------------------------------------------------------------
     def update_ranker(
-        self, vectors: List[Tuple[str, str, float]], success: bool
+        self, vectors: List[Tuple[str, str, float, float]], success: bool
     ) -> None:
         """Update ranking weights based on patch outcome.
 
@@ -140,7 +140,7 @@ class CognitionLayer:
             return
         delta = 0.1 if success else -0.1
         per_db: Dict[str, float] = {}
-        for origin, _vec_id, _score in vectors:
+        for origin, _vec_id, _sim, _score in vectors:
             key = origin or ""
             per_db[key] = per_db.get(key, 0.0) + delta
         for origin, change in per_db.items():
@@ -207,7 +207,7 @@ class CognitionLayer:
         tokens = int(stats.get("tokens", 0))
         wall_time_ms = float(stats.get("wall_time_ms", 0.0))
         prompt_tokens = int(stats.get("prompt_tokens", 0))
-        for rank, (origin, vec_id, score) in enumerate(vectors, start=1):
+        for rank, (origin, vec_id, similarity, context_score) in enumerate(vectors, start=1):
             key = f"{origin}:{vec_id}" if origin else vec_id
             entry = meta_by_vid.get(vec_id, {})
             meta_map[key] = entry
@@ -250,8 +250,8 @@ class CognitionLayer:
                         prompt_tokens=prompt_tokens,
                         session_id=sid,
                         vector_id=vec_id,
-                        similarity=score,
-                        context_score=score,
+                        similarity=similarity,
+                        context_score=context_score,
                         age=age,
                     )
                 except Exception:
@@ -310,7 +310,7 @@ class CognitionLayer:
         tokens = int(stats.get("tokens", 0))
         wall_time_ms = float(stats.get("wall_time_ms", 0.0))
         prompt_tokens = int(stats.get("prompt_tokens", 0))
-        for rank, (origin, vec_id, score) in enumerate(vectors, start=1):
+        for rank, (origin, vec_id, similarity, context_score) in enumerate(vectors, start=1):
             key = f"{origin}:{vec_id}" if origin else vec_id
             entry = meta_by_vid.get(vec_id, {})
             meta_map[key] = entry
@@ -353,8 +353,8 @@ class CognitionLayer:
                         prompt_tokens=prompt_tokens,
                         session_id=sid,
                         vector_id=vec_id,
-                        similarity=score,
-                        context_score=score,
+                        similarity=similarity,
+                        context_score=context_score,
                         age=age,
                     )
                 except Exception:
@@ -385,7 +385,7 @@ class CognitionLayer:
         meta = self._retrieval_meta.pop(session_id, None)
         if not vectors:
             return
-        vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
+        vec_ids = [(f"{o}:{vid}", score) for o, vid, _sim, score in vectors]
         self.patch_logger.track_contributors(
             vec_ids,
             success,
@@ -440,7 +440,7 @@ class CognitionLayer:
         meta = self._retrieval_meta.pop(session_id, None)
         if not vectors:
             return
-        vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
+        vec_ids = [(f"{o}:{vid}", score) for o, vid, _sim, score in vectors]
         await self.patch_logger.track_contributors_async(
             vec_ids,
             success,

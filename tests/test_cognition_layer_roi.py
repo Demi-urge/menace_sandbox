@@ -22,9 +22,9 @@ from vector_metrics_db import VectorMetricsDB
 class DummyContextBuilder:
     def build_context(self, prompt, *, top_k=5, include_vectors=False, session_id="", return_stats=False, return_metadata=False):
         vectors = [
-            ("db1", "v1", 0.5),
-            ("db1", "v2", 0.3),
-            ("db2", "v3", 0.2),
+            ("db1", "v1", 0.5, 0.5),
+            ("db1", "v2", 0.3, 0.3),
+            ("db2", "v3", 0.2, 0.2),
         ]
         stats = {"tokens": 1, "wall_time_ms": 1.0, "prompt_tokens": len(prompt.split())}
         meta = {
@@ -34,7 +34,7 @@ class DummyContextBuilder:
                     "vector_id": v,
                     "metadata": {"timestamp": time.time() - 30.0},
                 }
-                for o, v, _ in vectors
+                for o, v, _s, _c in vectors
             ]
         }
         sid = session_id or "sid"
@@ -57,11 +57,11 @@ class DummyContextBuilder:
 
 class DummyTracker:
     def __init__(self):
-        self.metrics = None
+        self.metrics = {}
         self.update_args = None
 
     def update_db_metrics(self, metrics):
-        self.metrics = metrics
+        self.metrics.update(metrics)
 
     def update(self, roi_before, roi_after, *, retrieval_metrics=None, **_):
         self.update_args = {

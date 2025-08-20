@@ -12,8 +12,11 @@ class _VectorServiceError(Exception):
     pass
 
 class _DummyContextBuilder:
+    def __init__(self, *a, **k):
+        pass
+
     def build(self, desc, session_id=None, include_vectors=False):
-        return ("ctx", session_id or "s", [("o", "v", 0.1)])
+        return ("ctx", session_id or "s", [("o", "v", 0.1, 0.1)])
 
 class _DummyEmbeddingBackfill:
     def run(self, session_id="cli", dbs=None, batch_size=None, backend=None):
@@ -28,6 +31,11 @@ def _load_cli(monkeypatch):
     vs.VectorServiceError = _VectorServiceError
     vs.__path__ = []  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "vector_service", vs)
+    monkeypatch.setitem(
+        sys.modules,
+        "vector_service.retriever",
+        types.SimpleNamespace(Retriever=lambda *a, **k: object()),
+    )
     monkeypatch.setitem(
         sys.modules,
         "vector_service.embedding_backfill",
@@ -75,6 +83,11 @@ def _load_cli(monkeypatch):
         sys.modules,
         "quick_fix_engine",
         types.SimpleNamespace(generate_patch=lambda *a, **k: None),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "menace.plugins",
+        types.SimpleNamespace(load_plugins=lambda *a, **k: None),
     )
     import importlib
     menace_cli = importlib.import_module("menace_cli")

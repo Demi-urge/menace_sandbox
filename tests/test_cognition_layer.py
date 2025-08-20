@@ -42,10 +42,11 @@ class DummyContextBuilder:
         return_stats=False,
         return_metadata=False,
     ):
-        vectors = self.retriever.search(prompt, top_k=top_k, session_id=session_id)
+        vectors_raw = self.retriever.search(prompt, top_k=top_k, session_id=session_id)
         if self.ranking_model is not None:
-            vectors = self.ranking_model.rank(vectors)
-        vectors = vectors[:top_k]
+            vectors_raw = self.ranking_model.rank(vectors_raw)
+        vectors_raw = vectors_raw[:top_k]
+        vectors = [(o, vid, s, s) for o, vid, s in vectors_raw]
         stats = {
             "tokens": len(prompt.split()),
             "wall_time_ms": 1.0,
@@ -54,7 +55,7 @@ class DummyContextBuilder:
         sid = session_id or "sid"
         meta = {"misc": []}
         ts = time.time() - 30.0
-        for origin, vec_id, _ in vectors:
+        for origin, vec_id, _sim, _score in vectors:
             meta["misc"].append(
                 {
                     "origin_db": origin,

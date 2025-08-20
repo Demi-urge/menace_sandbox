@@ -57,6 +57,7 @@ class _ScoredEntry:
     score: float
     origin: str
     vector_id: str
+    similarity: float
 
 
 class ContextBuilder:
@@ -72,6 +73,8 @@ class ContextBuilder:
         db_weights: Dict[str, float] | None = None,
         ranking_weight: float = ContextBuilderConfig().ranking_weight,
         roi_weight: float = ContextBuilderConfig().roi_weight,
+        similarity_weight: float = getattr(ContextBuilderConfig(), "similarity_weight", 1.0),
+        roi_history_weight: float = getattr(ContextBuilderConfig(), "roi_history_weight", 1.0),
         safety_weight: float = getattr(ContextBuilderConfig(), "safety_weight", 1.0),
         max_tokens: int = ContextBuilderConfig().max_tokens,
         regret_penalty: float = getattr(ContextBuilderConfig(), "regret_penalty", 1.0),
@@ -97,6 +100,8 @@ class ContextBuilder:
         self.roi_tracker = roi_tracker
         self.ranking_weight = ranking_weight
         self.roi_weight = roi_weight
+        self.similarity_weight = similarity_weight
+        self.roi_history_weight = roi_history_weight
         self.safety_weight = safety_weight
         self.regret_penalty = regret_penalty
         self.alignment_penalty = alignment_penalty
@@ -221,6 +226,14 @@ class ContextBuilder:
             try:
                 sev_val = min(max(float(sev), 0.0), 1.0)
                 metric = (metric or 0.0) - self.safety_weight * sev_val
+            except Exception:
+                pass
+
+        if self.roi_tracker is not None:
+            try:
+                hist = self.roi_tracker.roi_by_origin_db().get(origin)
+                if hist is not None:
+                    metric = (metric or 0.0) + self.roi_history_weight * float(hist)
             except Exception:
                 pass
 
@@ -372,7 +385,11 @@ class ContextBuilder:
             except Exception:
                 roi_bias = self.roi_weight
 
-        score = similarity * rank_prob * roi_bias + (metric or 0.0) - penalty
+        score = (
+            similarity * self.similarity_weight * rank_prob * roi_bias
+            + (metric or 0.0)
+            - penalty
+        )
         score *= self.db_weights.get(origin, 1.0)
 
         key_map = {
@@ -384,7 +401,7 @@ class ContextBuilder:
             "code": "code",
             "discrepancy": "discrepancies",
         }
-        return key_map.get(origin, ""), _ScoredEntry(entry, score, origin, vec_id)
+        return key_map.get(origin, ""), _ScoredEntry(entry, score, origin, vec_id, similarity)
 
     # ------------------------------------------------------------------
     @log_and_measure
@@ -403,9 +420,9 @@ class ContextBuilder:
 
         When ``include_vectors`` is True, the return value is a tuple of
         ``(context_json, session_id, vectors)`` where *vectors* is a list of
-        ``(origin, vector_id, score)`` triples.  If ``return_metadata`` is
-        enabled, the metadata dictionary is appended as the final element of the
-        tuple and contains the full entries including reliability metrics and
+        ``(origin, vector_id, similarity, score)`` tuples.  If ``return_metadata``
+        is enabled, the metadata dictionary is appended as the final element of
+        the tuple and contains the full entries including reliability metrics and
         safety flags.
         """
 
@@ -457,7 +474,7 @@ class ContextBuilder:
 
         result: Dict[str, List[Dict[str, Any]]] = {}
         meta: Dict[str, List[Dict[str, Any]]] = {}
-        vectors: List[Tuple[str, str, float]] = []
+        vectors: List[Tuple[str, str, float, float]] = []
         for key, items in buckets.items():
             if not items:
                 continue
@@ -470,7 +487,7 @@ class ContextBuilder:
                     meta.setdefault(key, []).append(full)
                 summaries.append({k: v for k, v in full.items() if k not in {"win_rate", "regret_rate", "flags"}})
             result[key] = summaries
-            vectors.extend([(e.origin, e.vector_id, e.score) for e in chosen])
+            vectors.extend([(e.origin, e.vector_id, e.similarity, e.score) for e in chosen])
 
         context = json.dumps(result, separators=(",", ":"))
         if not include_vectors and not return_metadata:

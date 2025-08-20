@@ -161,6 +161,12 @@ class ContextBuilderConfig(BaseModel):
     roi_weight: float = Field(
         1.0, description="Default multiplier when ROI tracker lacks bias"
     )
+    similarity_weight: float = Field(
+        1.0, description="Weight applied to raw similarity when scoring"
+    )
+    roi_history_weight: float = Field(
+        1.0, description="Weight applied to historical ROI contribution"
+    )
     safety_weight: float = Field(
         1.0,
         description="Weight applied to safety signals such as win/regret rate and alignment severity",
@@ -174,7 +180,6 @@ class ContextBuilderConfig(BaseModel):
     alert_penalty: float = Field(
         1.0, description="Penalty applied per semantic alert"
     )
-
 
     model_config = ConfigDict(extra="forbid")
 
