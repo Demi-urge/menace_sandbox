@@ -161,6 +161,11 @@ class ContextBuilderConfig(BaseModel):
     roi_weight: float = Field(
         1.0, description="Default multiplier when ROI tracker lacks bias"
     )
+    safety_weight: float = Field(
+        1.0,
+        description="Weight applied to safety signals such as win/regret rate and alignment severity",
+    )
+
 
     model_config = ConfigDict(extra="forbid")
 
