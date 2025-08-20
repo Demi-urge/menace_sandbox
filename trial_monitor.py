@@ -6,6 +6,7 @@ from typing import Optional, TYPE_CHECKING
 import logging
 
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
+from .borderline_bucket import BorderlineBucket
 from . import RAISE_ERRORS
 
 if TYPE_CHECKING:  # pragma: no cover - heavy dependency
@@ -34,6 +35,7 @@ class TrialMonitor:
         *,
         config: TrialConfig | None = None,
         watchdog: Watchdog | None = None,
+        borderline_bucket: BorderlineBucket | None = None,
     ) -> None:
         self.deployer = deployer
         self.optimizer = optimizer
@@ -42,6 +44,7 @@ class TrialMonitor:
         self.config = config or TrialConfig()
         self.logger = logging.getLogger(self.__class__.__name__)
         self.watchdog = watchdog
+        self.borderline_bucket = borderline_bucket or BorderlineBucket()
         self.failure_count = 0
         self._task: Optional[asyncio.Task] = None
         self.running = False
@@ -85,6 +88,7 @@ class TrialMonitor:
 
     def check_trials(self) -> None:
         trials = self.deployer.db.trials("active")
+        pending = self.borderline_bucket.pending()
         for trial in trials:
             bot_id = trial["bot_id"]
             deploy_id = trial["deploy_id"]
@@ -114,6 +118,39 @@ class TrialMonitor:
                 self.deployer.db.update_trial(trial["id"], "failed")
             else:
                 self.deployer.db.update_trial(trial["id"], "passed")
+
+            bot_key = str(bot_id)
+            if bot_key in pending:
+                if (
+                    roi >= self.config.roi_threshold
+                    and success >= self.config.success_threshold
+                ):
+                    try:
+                        self.borderline_bucket.promote(bot_key)
+                        self.logger.info(
+                            "promoted borderline trial %s (roi=%.3f, success=%.3f)",
+                            name,
+                            roi,
+                            success,
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "borderline promote failed for %s", name
+                        )
+                else:
+                    try:
+                        self.borderline_bucket.terminate(bot_key)
+                        self.logger.info(
+                            "terminated borderline trial %s (roi=%.3f, success=%.3f)",
+                            name,
+                            roi,
+                            success,
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "borderline terminate failed for %s", name
+                        )
+                pending.pop(bot_key, None)
             if self.history_db:
                 try:
                     self.history_db.add(
