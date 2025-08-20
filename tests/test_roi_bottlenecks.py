@@ -51,3 +51,26 @@ def test_propose_fix_prioritises_veto_and_lowest_contributors(tmp_path):
     assert (
         "energy", "batch work; reduce polling"
     ) in fixes
+
+
+def test_propose_fix_returns_top_bottlenecks_with_hints():
+    profile = {
+        "weights": {
+            "profitability": 0.4,
+            "efficiency": 0.3,
+            "maintainability": 0.2,
+            "security": 0.1,
+        }
+    }
+    metrics = {
+        "profitability": 0.9,
+        "efficiency": 0.2,
+        "maintainability": 0.4,
+        "security": 0.7,
+    }
+    fixes = propose_fix(metrics, profile)
+    assert fixes == [
+        ("efficiency", "optimise algorithms; reduce overhead"),
+        ("security", "harden authentication; add input validation"),
+        ("maintainability", "refactor for clarity; improve documentation"),
+    ]
