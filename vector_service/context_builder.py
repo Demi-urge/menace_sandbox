@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import logging
 import asyncio
 import uuid
+import time
 
 from redaction_utils import redact_text
 
@@ -307,8 +308,9 @@ class ContextBuilder:
         include_vectors: bool = False,
         return_metadata: bool = False,
         session_id: str | None = None,
+        return_stats: bool = False,
         **_: Any,
-    ) -> str | Tuple[str, str, List[Tuple[str, str, float]]] | Tuple[str, Dict[str, List[Dict[str, Any]]]] | Tuple[str, str, List[Tuple[str, str, float]], Dict[str, List[Dict[str, Any]]]]:
+    ) -> Any:
         """Return a compact JSON context for ``query``.
 
         When ``include_vectors`` is True, the return value is a tuple of
@@ -322,12 +324,14 @@ class ContextBuilder:
         if not isinstance(query, str) or not query.strip():
             raise MalformedPromptError("query must be a non-empty string")
 
+        prompt_tokens = len(query.split())
         query = redact_text(query)
         cache_key = (query, top_k)
         if not include_vectors and not return_metadata and cache_key in self._cache:
             return self._cache[cache_key]
 
         session_id = session_id or uuid.uuid4().hex
+        start = time.perf_counter()
         try:
             hits = self.retriever.search(query, top_k=top_k * 5, session_id=session_id)
         except RateLimitError:
@@ -336,6 +340,7 @@ class ContextBuilder:
             raise
         except Exception as exc:  # pragma: no cover - defensive
             raise VectorServiceError("retriever failure") from exc
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
 
         if isinstance(hits, ErrorResult):
             return "{}"
@@ -382,17 +387,30 @@ class ContextBuilder:
         context = json.dumps(result, separators=(",", ":"))
         if not include_vectors and not return_metadata:
             self._cache[cache_key] = context
+        stats = {
+            "tokens": len(context.split()),
+            "wall_time_ms": elapsed_ms,
+            "prompt_tokens": prompt_tokens,
+        }
         if include_vectors and return_metadata:
+            if return_stats:
+                return context, session_id, vectors, meta, stats
             return context, session_id, vectors, meta
         if include_vectors:
+            if return_stats:
+                return context, session_id, vectors, stats
             return context, session_id, vectors
         if return_metadata:
+            if return_stats:
+                return context, meta, stats
             return context, meta
+        if return_stats:
+            return context, stats
         return context
 
     # ------------------------------------------------------------------
     @log_and_measure
-    def build(self, query: str, **kwargs: Any) -> str:
+    def build(self, query: str, **kwargs: Any) -> Any:
         """Backward compatible alias for :meth:`build_context`.
 
         Older modules invoked :meth:`build` on the service layer.  The
@@ -404,7 +422,7 @@ class ContextBuilder:
 
     # ------------------------------------------------------------------
     @log_and_measure
-    async def build_async(self, query: str, **kwargs: Any) -> str:
+    async def build_async(self, query: str, **kwargs: Any) -> Any:
         """Asynchronous wrapper for :meth:`build_context`."""
 
         return await asyncio.to_thread(self.build_context, query, **kwargs)
