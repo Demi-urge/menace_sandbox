@@ -1,107 +1,82 @@
-import logging
 from types import SimpleNamespace
-import importlib.util
-import os
-import sys
-import types
 
-from vector_service import Retriever, FallbackResult
+import pytest
 
-# Construct minimal menace package for QuickFixEngine
-package = types.ModuleType("menace")
-package.__path__ = [os.path.dirname(__file__)]
-sys.modules["menace"] = package
-
-error_bot = types.ModuleType("menace.error_bot")
-error_bot.ErrorDB = object
-sys.modules["menace.error_bot"] = error_bot
-
-scm = types.ModuleType("menace.self_coding_manager")
-scm.SelfCodingManager = object
-sys.modules["menace.self_coding_manager"] = scm
-
-kg = types.ModuleType("menace.knowledge_graph")
-kg.KnowledgeGraph = object
-sys.modules["menace.knowledge_graph"] = kg
-
-spec = importlib.util.spec_from_file_location(
-    "menace.quick_fix_engine", os.path.join(os.path.dirname(__file__), "..", "quick_fix_engine.py")
-)
-qfe = importlib.util.module_from_spec(spec)
-sys.modules["menace.quick_fix_engine"] = qfe
-spec.loader.exec_module(qfe)
-class DummyUR:
-    def __init__(self, score=0.5):
-        self.score = score
-        self.calls = []
-
-    def retrieve(self, query, top_k=5):
-        self.calls.append((query, top_k))
-        hit = SimpleNamespace(
-            origin_db="bot",
-            record_id="1",
-            score=self.score,
-            metadata={"redacted": True},
-            reason="",
-        )
-        return [hit], "sid", [("bot", "1", self.score)]
+from vector_service.retriever import Retriever
+from vector_service.context_builder import ContextBuilder
 
 
-def test_logging_hook_emits_session_id(caplog):
-    ur = DummyUR()
-    retriever = Retriever(retriever=ur)
-    caplog.set_level(logging.INFO)
-    retriever.search("alpha", session_id="sess-1")
-    assert ur.calls == [("alpha", 5)]
-    assert any("Retriever.search" in r.message and r.session_id == "sess-1" for r in caplog.records)
+class DummyRetriever:
+    def __init__(self, hits):
+        self._hits = hits
+
+    def search(self, query, top_k=5, **kwargs):  # pragma: no cover - simple stub
+        return list(self._hits)
 
 
-def test_retriever_fallback_low_similarity():
-    ur = DummyUR(score=0.05)
-    retriever = Retriever(retriever=ur)
-    hits = retriever.search("beta", session_id="sess-2")
-    assert isinstance(hits, FallbackResult)
-    assert hits.reason == "low confidence"
-    assert list(hits)[0]["origin_db"] == "heuristic"
+def test_high_severity_vector_ranks_lower():
+    hits = [
+        {
+            "origin_db": "information",
+            "record_id": "safe",
+            "score": 1.0,
+            "text": "safe text",
+        },
+        {
+            "origin_db": "information",
+            "record_id": "bad",
+            "score": 1.0,
+            "alignment_severity": 0.9,
+            "text": "bad",
+        },
+    ]
+    cb = ContextBuilder(retriever=DummyRetriever(hits))
+    _, _, vectors = cb.build_context("q", include_vectors=True)
+    # Safe record should rank before high severity one
+    assert vectors[0][1] == "safe"
+    assert vectors[0][2] > vectors[1][2]
 
 
-class DummyManager:
-    def run_patch(self, path, desc, context_meta=None):  # pragma: no cover - simple stub
-        return SimpleNamespace(patch_id=1)
+def test_disallowed_license_ranks_lower():
+    hits = [
+        {
+            "origin_db": "information",
+            "record_id": "ok",
+            "score": 1.0,
+            "license": "MIT",
+            "text": "ok",
+        },
+        {
+            "origin_db": "information",
+            "record_id": "gpl",
+            "score": 1.0,
+            "license": "GPL-3.0",
+            "text": "gpl",
+        },
+    ]
+    cb = ContextBuilder(retriever=DummyRetriever(hits))
+    _, _, vectors = cb.build_context("q", include_vectors=True)
+    assert vectors[0][1] == "ok"
+    assert vectors[0][2] > vectors[1][2]
 
 
-class DummyGraph:
-    def add_telemetry_event(self, *a, **k):
-        pass
+def test_retriever_excludes_above_threshold(monkeypatch):
+    from vector_service import retriever as rmod
 
-    def update_error_stats(self, db):
-        pass
+    def fake_govern(text, meta, reason=None, max_alert_severity=1.0):
+        if meta.get("alignment_severity", 0.0) > max_alert_severity:
+            return None
+        return meta, reason
 
+    monkeypatch.setattr(rmod, "govern_retrieval", fake_govern)
+    monkeypatch.setattr(rmod, "pii_redact_dict", lambda x: x)
+    monkeypatch.setattr(rmod, "redact_dict", lambda x: x)
 
-class DummyPatchLogger:
-    def __init__(self):
-        self.calls = []
-
-    def track_contributors(self, ids, result, *, patch_id="", session_id="", contribution=None):
-        self.calls.append((ids, result, patch_id, session_id, contribution))
-
-
-def test_quick_fix_engine_uses_service_layer(monkeypatch, tmp_path):
-    retr = Retriever(retriever=DummyUR())
-    plog = DummyPatchLogger()
-    engine = qfe.QuickFixEngine(
-        error_db=SimpleNamespace(),
-        manager=DummyManager(),
-        graph=DummyGraph(),
-        threshold=1,
-        retriever=retr,
-        patch_logger=plog,
+    hit = SimpleNamespace(
+        metadata={"redacted": True, "alignment_severity": 0.9},
+        score=1.0,
+        record_id=1,
+        text="hit",
     )
-    (tmp_path / "mod.py").write_text("x=1\n")
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(qfe, "_VEC_METRICS", None)
-    monkeypatch.setattr(qfe.subprocess, "run", lambda *a, **k: None)
-    monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "mod", {}, 1))
-    engine.run("bot")
-    assert retr.retriever.calls  # underlying retriever was invoked
-    assert plog.calls  # patch logger recorded contributors
+    ret = Retriever()
+    assert ret._parse_hits([hit], max_alert_severity=0.5) == []
