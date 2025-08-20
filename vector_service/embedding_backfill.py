@@ -7,6 +7,7 @@ import time
 from typing import List, Sequence
 import importlib
 import asyncio
+from pathlib import Path
 
 from .decorators import log_and_measure
 from compliance.license_fingerprint import (
@@ -56,29 +57,33 @@ class EmbeddingBackfill:
 
     # ------------------------------------------------------------------
     def _load_known_dbs(self, names: List[str] | None = None) -> List[type]:
-        """Import common database modules and return discovered classes.
+        """Import all ``EmbeddableDBMixin`` subclasses dynamically.
 
-        If ``names`` is provided, the returned list is filtered to only include
-        classes whose name matches any entry in ``names``.  Matching is
+        The repository is scanned for Python modules referencing
+        :class:`EmbeddableDBMixin`.  Any classes found to inherit from the mixin
+        are returned.  When ``names`` is provided the result is filtered to
+        include only classes whose name matches any entry. Matching is
         case-insensitive and ignores plural forms or a trailing ``DB`` suffix.
         """
 
-        modules = [
-            "bot_database",
-            "task_handoff_bot",
-            "error_bot",
-            "information_db",
-            "chatgpt_enhancement_bot",
-            "research_aggregator_bot",
-        ]
-        for name in modules:  # pragma: no cover - best effort imports
+        root = Path(__file__).resolve().parents[1]
+        for path in root.rglob("*.py"):  # pragma: no cover - best effort
+            if any(part in {"tests", "scripts", "docs"} for part in path.parts):
+                continue
             try:
-                __import__(name)
+                if "EmbeddableDBMixin" not in path.read_text(encoding="utf-8"):
+                    continue
             except Exception:
-                pass
+                continue
+            module = ".".join(path.relative_to(root).with_suffix("").parts)
+            try:
+                importlib.import_module(module)
+            except Exception:
+                continue
         try:
             subclasses = [
-                cls for cls in EmbeddableDBMixin.__subclasses__()
+                cls
+                for cls in EmbeddableDBMixin.__subclasses__()
                 if hasattr(cls, "backfill_embeddings")
             ]
         except Exception:  # pragma: no cover - defensive

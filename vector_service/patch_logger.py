@@ -257,6 +257,23 @@ class PatchLogger:
                                     UnifiedEventBus().publish("roi:update", payload)
                                 except Exception:
                                     pass
+                unique_origins = {o for o, _, _ in detailed if o}
+                if unique_origins:
+                    if self.event_bus is not None:
+                        for origin in unique_origins:
+                            try:
+                                self.event_bus.publish(
+                                    "embedding:backfill", {"db": origin}
+                                )
+                            except Exception:
+                                pass
+                    elif UnifiedEventBus is not None:
+                        bus = UnifiedEventBus()
+                        for origin in unique_origins:
+                            try:
+                                bus.publish("embedding:backfill", {"db": origin})
+                            except Exception:
+                                pass
         except Exception:
             _TRACK_OUTCOME.labels("error").inc()
             _TRACK_DURATION.set(time.time() - start)

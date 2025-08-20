@@ -325,6 +325,9 @@ class InfoDB(EmbeddableDBMixin):
         if self.event_bus:
             try:
                 self.event_bus.publish("info:new", dataclasses.asdict(item))
+                self.event_bus.publish(
+                    "embedding:backfill", {"db": self.__class__.__name__}
+                )
             except Exception as exc:
                 logging.getLogger(__name__).error("publish failed: %s", exc)
         if self.menace_db:
@@ -376,6 +379,13 @@ class InfoDB(EmbeddableDBMixin):
             )
         except Exception as exc:  # pragma: no cover - best effort
             logger.exception("embedding hook failed for %s: %s", info_id, exc)
+        if self.event_bus:
+            try:
+                self.event_bus.publish(
+                    "embedding:backfill", {"db": self.__class__.__name__}
+                )
+            except Exception as exc:
+                logging.getLogger(__name__).error("publish failed: %s", exc)
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
         """Delegate to :class:`EmbeddableDBMixin` for compatibility."""
