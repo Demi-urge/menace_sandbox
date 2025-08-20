@@ -61,3 +61,55 @@ def test_risky_vectors_rank_lower(monkeypatch, tmp_path):
     data = json.loads(ctx)
     bots = data["bots"]
     assert [b["id"] for b in bots] == ["safe", "risky"]
+
+
+class SevRetriever:
+    def search(self, query, top_k=5, session_id=""):
+        return [
+            {
+                "origin_db": "bot",
+                "record_id": "danger",
+                "score": 0.5,
+                "metadata": {"name": "danger", "alignment_severity": 0.9},
+            },
+            {
+                "origin_db": "bot",
+                "record_id": "ok",
+                "score": 0.5,
+                "metadata": {"name": "ok", "alignment_severity": 0.1},
+            },
+        ]
+
+
+def test_alignment_severity_filter():
+    builder = ContextBuilder(retriever=SevRetriever(), max_alignment_severity=0.5)
+    ctx = builder.build_context("hi", top_k=2)
+    data = json.loads(ctx)
+    bots = data["bots"]
+    assert [b["id"] for b in bots] == ["ok"]
+
+
+class AlertRetriever:
+    def search(self, query, top_k=5, session_id=""):
+        return [
+            {
+                "origin_db": "bot",
+                "record_id": "alert",
+                "score": 0.5,
+                "metadata": {"name": "alert", "semantic_alerts": ["a", "b"]},
+            },
+            {
+                "origin_db": "bot",
+                "record_id": "safe",
+                "score": 0.5,
+                "metadata": {"name": "safe"},
+            },
+        ]
+
+
+def test_alert_count_filter():
+    builder = ContextBuilder(retriever=AlertRetriever(), max_alerts=0)
+    ctx = builder.build_context("hi", top_k=2)
+    data = json.loads(ctx)
+    bots = data["bots"]
+    assert [b["id"] for b in bots] == ["safe"]
