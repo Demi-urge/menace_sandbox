@@ -45,6 +45,9 @@
   documentation. A lightweight FastAPI app in `vector_service_api.py`
   provides `/search`, `/build-context`, `/track-contributors` and
   `/backfill-embeddings` endpoints.
+- Overview of the vectorised cognition pipeline – from embedding backfills to
+  ranking with ROI feedback – is available in
+  [docs/vectorized_cognition.md](docs/vectorized_cognition.md).
 - Compact, offline context assembly via `ContextBuilder` which summarises error,
   bot, workflow and code records for code-generation modules. Enable it in the
   self-improving sandbox by passing `context_builder=ContextBuilder()` to
