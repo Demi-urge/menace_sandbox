@@ -71,3 +71,16 @@ highest contributing metric.
 ## Service Layer
 
 `vector_service` provides lightweight facades—`Retriever`, `ContextBuilder`, `PatchLogger` and `EmbeddingBackfill`—that wrap the embedding components with structured logging and Prometheus metrics. Other modules should depend on this layer instead of calling databases or retrievers directly. The service layer keeps instrumentation consistent and makes unit testing simple by allowing dependencies to be swapped or mocked.
+
+## Embedding Scheduler
+
+`EmbeddingScheduler` periodically invokes `EmbeddingBackfill.run` so new deployments refresh embeddings without manual intervention. The scheduler starts automatically during environment bootstrap when the interval is positive.
+
+Tuning is performed through environment variables:
+
+- `EMBEDDING_SCHEDULER_INTERVAL` – seconds between backfill runs (default `86400`, set to `0` to disable).
+- `EMBEDDING_SCHEDULER_BATCH_SIZE` – override the batch size for each run.
+- `EMBEDDING_SCHEDULER_BACKEND` – choose the vector backend (`annoy` or `faiss`).
+- `EMBEDDING_SCHEDULER_DBS` – comma-separated list of databases to refresh.
+
+Each execution reports `embedding_scheduler_runs_total{status}` and `embedding_scheduler_run_duration_seconds` metrics for visibility.
