@@ -2277,7 +2277,7 @@ class SelfImprovementEngine:
                 except Exception:
                     pass
                 try:
-                    self.roi_tracker.borderline_bucket.enqueue(mod, raroi, confidence)
+                    self.roi_tracker.borderline_bucket.add_candidate(mod, raroi, confidence)
                     settings = SandboxSettings()
                     self.roi_tracker.raroi_borderline_threshold = (
                         settings.raroi_borderline_threshold

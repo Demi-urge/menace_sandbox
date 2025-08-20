@@ -1,86 +1,64 @@
-"""Simple JSONL-backed borderline workflow bucket."""
+"""JSONL-backed storage for borderline workflow candidates.
+
+The :class:`BorderlineBucket` keeps track of workflows whose risk-adjusted
+return on investment (RAROI) or confidence scores fall near the configured
+thresholds.  Each update appends a JSON record to
+``sandbox_data/borderline_bucket.jsonl`` so external tooling can inspect the
+state without needing the process that created it.
+
+Records contain the ``workflow_id``, a history of ``raroi`` measurements, the
+latest ``confidence`` score, current ``status`` and creation/update timestamps.
+The file is append-only and protected with a simple lock file to reduce the
+chance of corruption under concurrent writes.
+"""
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import logging
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
+from filelock import FileLock
 
 logger = logging.getLogger(__name__)
 
 
 class BorderlineBucket:
-    """Persist borderline workflow information to a JSONL file.
+    """Persist borderline workflow information to a JSONL file."""
 
-    Each record stores ``raroi`` history, confidence, context and current
-    status.  The bucket is deliberately lightweight to keep tests fast and
-    avoids external dependencies.
-    """
-
-    def __init__(self, path: str | None = None) -> None:
-        self.path = path or "borderline_bucket.jsonl"
+    def __init__(self, path: str | Path | None = None) -> None:
+        self.path = Path(path) if path else Path("sandbox_data/borderline_bucket.jsonl")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock = FileLock(str(self.path) + ".lock")
         self._load()
 
     # ------------------------------------------------------------------
     def _load(self) -> None:
         self.data: Dict[str, Dict[str, Any]] = {}
-        try:
-            with open(self.path, "r", encoding="utf-8") as fh:
-                for line in fh:
-                    if line.strip():
-                        obj = json.loads(line)
-                        wf = obj.pop("workflow_id")
-                        self.data[wf] = obj
-        except FileNotFoundError:
-            pass
+        if not self.path.exists():
+            return
+        with self.path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record: Dict[str, Any] = json.loads(line)
+                except json.JSONDecodeError:  # pragma: no cover - best effort
+                    continue
+                wf = str(record.get("workflow_id"))
+                self.data[wf] = record
 
-    def _save(self) -> None:
-        with open(self.path, "w", encoding="utf-8") as fh:
-            for wf, info in self.data.items():
-                rec = {"workflow_id": wf, **info}
-                fh.write(json.dumps(rec) + "\n")
+    def _append(self, record: Dict[str, Any]) -> None:
+        """Atomically append *record* to the JSONL file."""
+        with self.lock:
+            with self.path.open("a", encoding="utf-8") as fh:
+                json.dump(record, fh)
+                fh.write("\n")
 
     # ------------------------------------------------------------------
-    def enqueue(
-        self,
-        workflow_id: str,
-        raroi: float,
-        confidence: float,
-        context: Any | None = None,
-    ) -> None:
-        """Persist *workflow_id* as a borderline candidate.
-
-        Parameters
-        ----------
-        workflow_id:
-            Unique identifier for the workflow.
-        raroi:
-            Latest risk-adjusted ROI measurement.
-        confidence:
-            Confidence score associated with the workflow.
-        context:
-            Optional JSON-serialisable payload providing additional information
-            about the workflow.
-        """
-
-        info = self.data.setdefault(
-            workflow_id,
-            {
-                "raroi": [],
-                "confidence": float(confidence),
-                "status": "candidate",
-                "context": context,
-            },
-        )
-        info.setdefault("raroi", []).append(float(raroi))
-        info["confidence"] = float(confidence)
-        if context is not None:
-            info["context"] = context
-        info.setdefault("status", "candidate")
-        self._save()
-
-    # Backwards compatible alias ------------------------------------------------
     def add_candidate(
         self,
         workflow_id: str,
@@ -88,12 +66,77 @@ class BorderlineBucket:
         confidence: float,
         context: Any | None = None,
     ) -> None:
-        self.enqueue(workflow_id, raroi, confidence, context)
+        """Persist *workflow_id* as a pending candidate."""
 
+        now = datetime.utcnow().isoformat()
+        record = {
+            "workflow_id": workflow_id,
+            "raroi": [float(raroi)],
+            "confidence": float(confidence),
+            "status": "pending",
+            "created_at": now,
+            "updated_at": now,
+        }
+        if context is not None:
+            record["context"] = context
+        self.data[workflow_id] = record
+        self._append(record)
+
+    # Backwards-compatible alias --------------------------------------
+    def enqueue(
+        self,
+        workflow_id: str,
+        raroi: float,
+        confidence: float,
+        context: Any | None = None,
+    ) -> None:
+        self.add_candidate(workflow_id, raroi, confidence, context)
+
+    # ------------------------------------------------------------------
+    def record_result(
+        self, workflow_id: str, raroi: float, confidence: float | None = None
+    ) -> None:
+        """Record a new ``raroi`` value for ``workflow_id``."""
+
+        now = datetime.utcnow().isoformat()
+        info = self.data.setdefault(
+            workflow_id,
+            {
+                "workflow_id": workflow_id,
+                "raroi": [],
+                "confidence": float(confidence) if confidence is not None else 0.0,
+                "status": "pending",
+                "created_at": now,
+            },
+        )
+        info.setdefault("raroi", []).append(float(raroi))
+        if confidence is not None:
+            info["confidence"] = float(confidence)
+        info["updated_at"] = now
+        self.data[workflow_id] = info
+        self._append(info)
+
+    def promote(self, workflow_id: str) -> None:
+        info = self.data.get(workflow_id)
+        if not info:
+            return
+        info["status"] = "promoted"
+        info["updated_at"] = datetime.utcnow().isoformat()
+        self._append(info)
+
+    def terminate(self, workflow_id: str) -> None:
+        info = self.data.get(workflow_id)
+        if not info:
+            return
+        info["status"] = "terminated"
+        info["updated_at"] = datetime.utcnow().isoformat()
+        self._append(info)
+
+    # ------------------------------------------------------------------
     def get_candidate(self, workflow_id: str) -> Optional[Dict[str, Any]]:
         return self.data.get(workflow_id)
 
-    def all_candidates(self, status: str | None = None) -> Dict[str, Dict[str, Any]]:
+    def get_candidates(self, status: str | None = "pending") -> Dict[str, Dict[str, Any]]:
         if status is None:
             return dict(self.data)
         return {
@@ -102,42 +145,16 @@ class BorderlineBucket:
             if info.get("status") == status
         }
 
-    def pending(self) -> Dict[str, Dict[str, Any]]:
-        """Return all candidates still awaiting a decision."""
+    # Compatibility helpers -------------------------------------------
+    def all_candidates(self, status: str | None = None) -> Dict[str, Dict[str, Any]]:
+        return self.get_candidates(status)
 
-        return self.all_candidates(status="candidate")
+    def pending(self) -> Dict[str, Dict[str, Any]]:
+        return self.get_candidates("pending")
 
     def status(self, workflow_id: str) -> Optional[str]:
-        """Return the current status for *workflow_id* or ``None``."""
-
         info = self.data.get(workflow_id)
         return info.get("status") if info else None
-
-    def record_result(
-        self, workflow_id: str, raroi: float, confidence: float | None = None
-    ) -> None:
-        info = self.data.setdefault(
-            workflow_id,
-            {
-                "raroi": [],
-                "confidence": float(confidence) if confidence is not None else 0.0,
-                "status": "candidate",
-            },
-        )
-        info.setdefault("raroi", []).append(float(raroi))
-        if confidence is not None:
-            info["confidence"] = float(confidence)
-        self._save()
-
-    def promote(self, workflow_id: str) -> None:
-        if workflow_id in self.data:
-            self.data[workflow_id]["status"] = "promoted"
-            self._save()
-
-    def terminate(self, workflow_id: str) -> None:
-        if workflow_id in self.data:
-            self.data[workflow_id]["status"] = "terminated"
-            self._save()
 
     # ------------------------------------------------------------------
     def process(
@@ -146,32 +163,18 @@ class BorderlineBucket:
         raroi_threshold: float = 0.0,
         confidence_threshold: float = 0.0,
     ) -> None:
-        """Run micro-pilot evaluations for queued candidates.
-
-        Parameters
-        ----------
-        evaluator:
-            Optional callable returning either a ``raroi`` float or a
-            ``(raroi, confidence)`` tuple for ``(workflow_id, info)``.
-            When omitted the candidate's last recorded values are reused.
-        raroi_threshold:
-            Minimum RAROI required for promotion.
-        confidence_threshold:
-            Minimum confidence required for promotion.
-        """
+        """Run micro-pilot evaluations for queued candidates."""
 
         evaluate = evaluator or (
             lambda wf, info: (info["raroi"][-1], info.get("confidence", 0.0))
         )
-        for wf, info in self.all_candidates(status="candidate").items():
+        for wf, info in list(self.get_candidates("pending").items()):
             try:
                 result = evaluate(wf, info)
                 if isinstance(result, (tuple, list)):
-                    raroi, conf = result[0], result[1]
+                    raroi, conf = float(result[0]), float(result[1])
                 else:
-                    raroi, conf = result, info.get("confidence", 0.0)
-                raroi = float(raroi)
-                conf = float(conf)
+                    raroi, conf = float(result), info.get("confidence", 0.0)
                 self.record_result(wf, raroi, conf)
                 if raroi > raroi_threshold and conf >= confidence_threshold:
                     self.promote(wf)

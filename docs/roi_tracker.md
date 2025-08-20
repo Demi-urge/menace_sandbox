@@ -88,8 +88,8 @@ engine should continue iterating or deprioritise a workflow. See the
 Workflows whose RAROI drops below ``raroi_borderline_threshold`` or whose
 confidence score falls under ``confidence_threshold`` are routed to a
 [borderline bucket](borderline_bucket.md). The tracker adds the workflow as a
-**candidate** and the lightweight bucket records its RAROI history and latest
-confidence. Calling ``borderline_bucket.process`` (or the convenience
+pending candidate and the lightweight bucket records its RAROI history and
+latest confidence. Calling ``borderline_bucket.process`` (or the convenience
 ``process_borderline_candidates`` wrapper) runs a micro‑pilot evaluation for
 each pending candidate. Results above the thresholds trigger ``promote()``
 while lower scores call ``terminate()`` so borderline workflows are either
