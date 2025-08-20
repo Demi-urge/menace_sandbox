@@ -108,6 +108,7 @@ class PatchLogger:
             pairs = [(o, vid) for o, vid, _ in detailed]
             meta = retrieval_metadata or {}
             detailed_meta = []
+            provenance_meta = []
             vm_vectors = []
             for o, vid, score in detailed:
                 key = f"{o}:{vid}" if o else vid
@@ -115,11 +116,14 @@ class PatchLogger:
                 lic = m.get("license")
                 fp = m.get("license_fingerprint")
                 alerts = m.get("semantic_alerts")
+                sev = m.get("alignment_severity")
                 if fp is not None:
                     detailed_meta.append((o, vid, score, lic, fp, alerts))
+                    provenance_meta.append((o, vid, score, lic, fp, alerts, sev))
                 else:
                     detailed_meta.append((o, vid, score, lic, alerts))
-                vm_vectors.append((vid, score, lic, alerts))
+                    provenance_meta.append((o, vid, score, lic, alerts, sev))
+                vm_vectors.append((vid, score, lic, alerts, sev))
 
             if self.metrics_db is not None:
                 try:  # pragma: no cover - legacy path
@@ -142,7 +146,7 @@ class PatchLogger:
                     except Exception:
                         pass
                     try:
-                        self.patch_db.record_provenance(int(patch_id), detailed_meta)
+                        self.patch_db.record_provenance(int(patch_id), provenance_meta)
                     except Exception:
                         pass
                     try:

@@ -88,39 +88,47 @@ class ContextBuilder:
     def _metric(self, origin: str, meta: Dict[str, Any]) -> float | None:
         """Extract ROI/success metrics from metadata."""
 
+        metric: float | None = None
         try:
             if origin == "error":
                 freq = meta.get("frequency")
                 if freq is not None:
-                    return 1.0 / (1.0 + float(freq))
-
-            if origin == "bot":
+                    metric = 1.0 / (1.0 + float(freq))
+            elif origin == "bot":
                 for key in ("roi", "deploy_count"):
                     if key in meta and meta[key] is not None:
-                        return float(meta[key])
-
-            if origin == "workflow":
+                        metric = float(meta[key])
+                        break
+            elif origin == "workflow":
                 for key in ("roi", "usage", "runs"):
                     if key in meta and meta[key] is not None:
-                        return float(meta[key])
-
-            if origin == "enhancement":
+                        metric = float(meta[key])
+                        break
+            elif origin == "enhancement":
                 for key in ("roi", "adoption"):
                     if key in meta and meta[key] is not None:
-                        return float(meta[key])
-
-            if origin == "code":
+                        metric = float(meta[key])
+                        break
+            elif origin == "code":
                 for key in ("roi", "patch_success"):
                     if key in meta and meta[key] is not None:
-                        return float(meta[key])
-
-            if origin == "discrepancy":
+                        metric = float(meta[key])
+                        break
+            elif origin == "discrepancy":
                 for key in ("roi", "severity", "impact"):
                     if key in meta and meta[key] is not None:
-                        return float(meta[key])
+                        metric = float(meta[key])
+                        break
         except Exception:  # pragma: no cover - defensive
-            return None
-        return None
+            metric = None
+
+        sev = meta.get("alignment_severity")
+        if sev is not None:
+            try:
+                metric = (metric or 0.0) - float(sev)
+            except Exception:
+                pass
+        return metric
 
     # ------------------------------------------------------------------
     def _bundle_to_entry(self, bundle: Dict[str, Any]) -> Tuple[str, _ScoredEntry]:
@@ -159,10 +167,13 @@ class ContextBuilder:
         flags: Dict[str, Any] = {}
         lic = bundle.get("license") or meta.get("license")
         alerts = bundle.get("semantic_alerts") or meta.get("semantic_alerts")
+        severity = bundle.get("alignment_severity") or meta.get("alignment_severity")
         if lic:
             flags["license"] = lic
         if alerts:
             flags["semantic_alerts"] = alerts
+        if severity is not None:
+            flags["alignment_severity"] = severity
         if flags:
             entry["flags"] = flags
 

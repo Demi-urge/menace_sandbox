@@ -1367,6 +1367,21 @@ class UniversalRetriever:
                 )
                 combined_score *= model_score
 
+                severity = 0.0
+                try:
+                    if isinstance(item, dict):
+                        severity = float(item.get("alignment_severity") or feats.get("alignment_severity") or 0.0)
+                    else:
+                        severity = float(
+                            getattr(item, "alignment_severity", 0.0)
+                            or feats.get("alignment_severity", 0.0)
+                        )
+                except Exception:
+                    severity = 0.0
+                if severity:
+                    combined_score /= 1.0 + severity
+                metrics["alignment_severity"] = severity
+
                 scored.append(
                     {
                         "source": source,
@@ -1689,6 +1704,7 @@ class UniversalRetriever:
                 "license": h.metadata.get("license"),
                 "license_fingerprint": h.metadata.get("license_fingerprint"),
                 "semantic_alerts": h.metadata.get("semantic_alerts"),
+                "alignment_severity": h.metadata.get("alignment_severity"),
             }
             for h in hits
         ]
