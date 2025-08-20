@@ -335,6 +335,12 @@ class BotDB(EmbeddableDBMixin):
             if not publish_with_retry(self.event_bus, "bot:new", payload):
                 logger.exception("failed to publish bot:new event")
                 self.failed_events.append(FailedEvent("bot:new", payload))
+            else:
+                publish_with_retry(
+                    self.event_bus,
+                    "embedding:backfill",
+                    {"db": self.__class__.__name__},
+                )
         return rec.bid
 
     def update_bot(self, bot_id: int, **fields: Any) -> None:

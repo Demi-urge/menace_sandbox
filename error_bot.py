@@ -413,6 +413,7 @@ class ErrorDB(EmbeddableDBMixin):
                 "resolution": resolution,
             },
         )
+        self._publish("embedding:backfill", {"db": self.__class__.__name__})
         return err_id
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:

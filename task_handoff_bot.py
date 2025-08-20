@@ -290,6 +290,9 @@ class WorkflowDB(EmbeddableDBMixin):
         if self.event_bus:
             try:
                 self.event_bus.publish("workflows:new", asdict(wf))
+                self.event_bus.publish(
+                    "embedding:backfill", {"db": self.__class__.__name__}
+                )
             except Exception as exc:
                 logger.warning(
                     "failed to publish new workflow %s: %s",

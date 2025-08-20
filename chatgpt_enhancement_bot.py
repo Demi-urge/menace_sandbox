@@ -30,6 +30,7 @@ try:  # shared GPT memory instance
 except Exception:  # pragma: no cover - fallback for flat layout
     from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 from vector_service import EmbeddableDBMixin
+from .unified_event_bus import UnifiedEventBus
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -98,6 +99,7 @@ class EnhancementDB(EmbeddableDBMixin):
         vector_index_path: Path | str = "enhancement_embeddings.ann",
         metadata_path: Path | str | None = None,
         embedding_version: int = 1,
+        event_bus: UnifiedEventBus | None = None,
     ) -> None:
         self.path = Path(path) if path else DB_PATH
         self.override_manager = override_manager
@@ -105,6 +107,7 @@ class EnhancementDB(EmbeddableDBMixin):
         self.conn.row_factory = sqlite3.Row
         self._init()
         self.vector_backend = vector_backend  # kept for compatibility
+        self.event_bus = event_bus
         if metadata_path is None:
             metadata_path = Path(vector_index_path).with_suffix(".json")
         EmbeddableDBMixin.__init__(
@@ -284,6 +287,13 @@ class EnhancementDB(EmbeddableDBMixin):
             logger.exception("failed to add enhancement embedding: %s", exc)
             if RAISE_ERRORS:
                 raise
+        if self.event_bus:
+            try:
+                self.event_bus.publish(
+                    "embedding:backfill", {"db": self.__class__.__name__}
+                )
+            except Exception:
+                logger.exception("failed to publish embedding event")
         return enh_id
 
     def update(self, enhancement_id: int, enh: Enhancement) -> None:
