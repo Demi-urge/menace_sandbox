@@ -39,10 +39,21 @@ def _setup_tracker(monkeypatch):
     sys.modules.setdefault("sklearn.linear_model", lin_mod)
     sys.modules.setdefault("sklearn.preprocessing", pre_mod)
 
+    cfg_mod = types.ModuleType("menace.config_loader")
+    cfg_mod.get_impact_severity = lambda *a, **k: 0.0
+    cfg_mod.impact_severity_map = {}
+    sys.modules.setdefault("menace.config_loader", cfg_mod)
+
+    bb_mod = types.ModuleType("menace.borderline_bucket")
+    class BorderlineBucket:
+        pass
+    bb_mod.BorderlineBucket = BorderlineBucket
+    sys.modules.setdefault("menace.borderline_bucket", bb_mod)
+
     spec = importlib.util.spec_from_file_location("menace.roi_tracker", ROOT / "roi_tracker.py")
     rt = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(rt)
     sys.modules["menace.roi_tracker"] = rt
+    spec.loader.exec_module(rt)
     return rt
 
 

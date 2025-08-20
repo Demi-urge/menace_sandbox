@@ -36,16 +36,23 @@ def test_run_scenarios_all_paths(monkeypatch):
     )
 
     assert set(summary["scenarios"]) == set(scenario_data)
+    assert isinstance(cards, dict)
+    assert set(cards) == set(scenario_data)
 
+    baseline = scenario_data["normal"]
     for scen in scenario_data:
         info = summary["scenarios"][scen]
+        card = cards[scen]
         assert isinstance(info["roi_delta"], float)
         assert "raroi" in info and "raroi_delta" in info
         assert {r["flag"] for r in info["runs"]} == {"on", "off"}
         assert scen in tracker_obj.scenario_raroi_delta
+        assert card.baseline_roi == pytest.approx(baseline)
+        assert card.stress_roi == pytest.approx(scenario_data[scen])
 
     assert summary["worst_scenario"] in scenario_data
     assert len(cards) == len(scenario_data)
+    assert summary["scorecards"] and set(summary["scorecards"]) == set(cards)
 
     hi_info = summary["scenarios"]["hostile_input"]
     assert "roi" in hi_info["target_delta"]

@@ -1662,7 +1662,7 @@ def main(argv: List[str] | None = None) -> None:
             print(f"workflow {args.run_scenarios} not found")
             return
         wf = wf_db._row_to_record(row)
-        _, summary = run_scenarios(wf)
+        _, _, summary = run_scenarios(wf)
         worst = summary.get("worst_scenario")
         for scen, info in sorted(summary.get("scenarios", {}).items()):
             marker = " <== WORST" if scen == worst else ""
