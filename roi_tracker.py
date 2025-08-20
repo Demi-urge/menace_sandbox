@@ -103,9 +103,10 @@ except Exception:
 
 # Recommendations to harden scenarios that show weaknesses.
 HARDENING_TIPS: dict[str, str] = {
-    "concurrency_spike": "add rate limiting",
+    "concurrency_spike": "tune rate limits",
     "schema_drift": "tighten schema validation",
     "hostile_input": "sanitize inputs",
+    "flaky_upstream": "add retries or fallback logic",
 }
 
 if TYPE_CHECKING:  # pragma: no cover - for typing only
@@ -169,6 +170,7 @@ class ScenarioScorecard:
     metrics_delta: Dict[str, float]
     synergy_delta: Dict[str, float]
     recommendation: str | None = None
+    status: str | None = None
 
 
 class ROITracker:
@@ -2519,13 +2521,20 @@ class ROITracker:
 
         cards: List[ScenarioScorecard] = []
         threshold = 0.0
-        negative = [s for s, d in self.scenario_roi_deltas.items() if d < threshold]
-        positive = [s for s, d in self.scenario_roi_deltas.items() if d >= threshold]
-        if (
-            len(negative) == 1
-            and len(negative) + len(positive) == len(self.scenario_roi_deltas)
-            and positive
-        ):
+        failing: List[str] = []
+        passing: List[str] = []
+        for scen, delta in self.scenario_roi_deltas.items():
+            metrics = self.scenario_metrics_delta.get(scen, {})
+            triggers_failure = any(
+                (("failure" in k) or ("error" in k) or k.endswith("_breach"))
+                and v > 0
+                for k, v in metrics.items()
+            )
+            if delta < threshold or triggers_failure:
+                failing.append(scen)
+            else:
+                passing.append(scen)
+        if len(failing) == 1 and passing:
             self.workflow_label = "situationally weak"
         else:
             self.workflow_label = None
@@ -2538,6 +2547,7 @@ class ROITracker:
                     metrics_delta=dict(self.scenario_metrics_delta.get(scen, {})),
                     synergy_delta=dict(self.scenario_synergy_delta.get(scen, {})),
                     recommendation=HARDENING_TIPS.get(scen),
+                    status=self.workflow_label,
                 )
             )
         return cards
@@ -2585,7 +2595,7 @@ class ROITracker:
         card: Dict[str, Any] = {"workflow_id": str(workflow_id), "scenarios": {}}
         scorecards = {c.scenario: c for c in self.generate_scorecards()}
         if self.workflow_label:
-            card["workflow_label"] = self.workflow_label
+            card["status"] = self.workflow_label
         for scen in names:
             entry = {
                 "roi_delta": float(self.scenario_roi_deltas.get(scen, 0.0)),
@@ -2593,8 +2603,11 @@ class ROITracker:
                 "synergy_delta": dict(self.scenario_synergy_delta.get(scen, {})),
             }
             rec = scorecards.get(scen)
-            if rec and rec.recommendation:
-                entry["recommendation"] = rec.recommendation
+            if rec:
+                if rec.recommendation:
+                    entry["recommendation"] = rec.recommendation
+                if rec.status:
+                    entry["status"] = rec.status
             card["scenarios"][scen] = entry
         return card
 

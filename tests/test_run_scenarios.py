@@ -62,12 +62,19 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
     assert summary["worst_scenario"] == worst
     assert tracker_obj.biggest_drop()[0] == worst
 
+    assert summary["status"] == "situationally weak"
+
     # scorecards returned and included in summary
     assert len(cards) == len(expected)
     assert summary["scorecards"] and set(summary["scorecards"]) == set(cards)
     for scen, card in cards.items():
         assert summary["scorecards"][scen]["roi_delta"] == pytest.approx(card.roi_delta)
-
+        assert summary["scorecards"][scen]["status"] == "situationally weak"
+    assert (
+        summary["scorecards"]["concurrency_spike"]["recommendation"]
+        == "tune rate limits"
+    )
+    
     data = json.loads(out.read_text())
     for scen, delta in expected.items():
         assert data[scen]["roi_delta"] == pytest.approx(delta)
