@@ -117,6 +117,11 @@ class ContextBuilder:
                     if key in meta and meta[key] is not None:
                         metric = float(meta[key])
                         break
+            elif origin == "information":
+                for key in ("roi", "data_depth", "data_depth_score", "quality"):
+                    if key in meta and meta[key] is not None:
+                        metric = float(meta[key])
+                        break
             elif origin == "code":
                 for key in ("roi", "patch_success"):
                     if key in meta and meta[key] is not None:
@@ -157,9 +162,38 @@ class ContextBuilder:
             if "title" in meta:
                 entry["title"] = redact_text(str(meta["title"]))
         elif origin == "enhancement":
-            text = text or meta.get("title") or meta.get("description") or ""
+            text = (
+                text
+                or meta.get("title")
+                or meta.get("description")
+                or meta.get("lessons")
+                or ""
+            )
             if "title" in meta:
                 entry["title"] = redact_text(str(meta["title"]))
+            elif "name" in meta:
+                entry["name"] = redact_text(str(meta["name"]))
+            if meta.get("lessons"):
+                entry["lessons"] = self._summarise(
+                    redact_text(str(meta["lessons"]))
+                )
+        elif origin == "information":
+            text = (
+                text
+                or meta.get("title")
+                or meta.get("summary")
+                or meta.get("content")
+                or meta.get("lessons")
+                or ""
+            )
+            if "title" in meta:
+                entry["title"] = redact_text(str(meta["title"]))
+            elif "name" in meta:
+                entry["name"] = redact_text(str(meta["name"]))
+            if meta.get("lessons"):
+                entry["lessons"] = self._summarise(
+                    redact_text(str(meta["lessons"]))
+                )
         elif origin == "discrepancy":
             text = text or meta.get("message") or meta.get("description") or ""
         elif origin == "code":
@@ -221,6 +255,7 @@ class ContextBuilder:
             "bot": "bots",
             "workflow": "workflows",
             "enhancement": "enhancements",
+            "information": "information",
             "code": "code",
             "discrepancy": "discrepancies",
         }
@@ -281,6 +316,7 @@ class ContextBuilder:
             "bots": [],
             "workflows": [],
             "enhancements": [],
+            "information": [],
             "code": [],
             "discrepancies": [],
         }

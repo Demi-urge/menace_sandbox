@@ -133,8 +133,12 @@ def make_builder(monkeypatch, db_weights=None, max_tokens=800):
         {"id": 10, "title": "deploy", "roi": 7},
     ]
     enhancement_data = [
-        {"id": 301, "title": "refactor", "roi": 3},
-        {"id": 300, "title": "speedup", "roi": 8},
+        {"id": 301, "title": "refactor", "roi": 3, "lessons": "simplify"},
+        {"id": 300, "title": "speedup", "roi": 8, "lessons": "optimize"},
+    ]
+    information_data = [
+        {"id": 401, "title": "guide", "roi": 6, "lessons": "useful"},
+        {"id": 400, "title": "manual", "roi": 1, "lessons": "basic"},
     ]
     error_data = [
         {"id": 101, "message": "worse", "frequency": 3},
@@ -152,6 +156,7 @@ def make_builder(monkeypatch, db_weights=None, max_tokens=800):
                 ("bot", MemDB(bot_data)),
                 ("workflow", MemDB(workflow_data)),
                 ("enhancement", MemDB(enhancement_data)),
+                ("information", MemDB(information_data)),
                 ("error", MemDB(error_data)),
                 ("code", MemDB(code_data)),
             ]:
@@ -181,7 +186,22 @@ def make_builder(monkeypatch, db_weights=None, max_tokens=800):
             {"id": 10, "title": "deploy", "desc": "deploy", "metric": 7.0}
         ],
         "enhancements": [
-            {"id": 300, "title": "speedup", "desc": "speedup", "metric": 8.0}
+            {
+                "id": 300,
+                "title": "speedup",
+                "lessons": "optimize",
+                "desc": "speedup",
+                "metric": 8.0,
+            }
+        ],
+        "information": [
+            {
+                "id": 401,
+                "title": "guide",
+                "lessons": "useful",
+                "desc": "guide",
+                "metric": 6.0,
+            }
         ],
         "code": [{"id": 200, "desc": "fix", "metric": 9.0}],
     }
@@ -307,7 +327,7 @@ def test_truncates_when_tokens_small(monkeypatch):
     ctx = builder.build_context("alpha issue", top_k=2)
     data = json.loads(ctx)
     total_items = sum(len(v) for v in data.values())
-    assert total_items <= 10
+    assert total_items <= 12
 
 
 def test_builder_from_config(monkeypatch):
@@ -381,7 +401,7 @@ def test_config_respects_max_tokens(monkeypatch):
     total_items = sum(len(v) for v in data.values())
     assert builder.db_weights == cfg.context_builder.db_weights
     assert builder.max_tokens == cfg.context_builder.max_tokens
-    assert total_items <= 10
+    assert total_items <= 12
 
 
 def test_build_context_emits_metrics(monkeypatch):
