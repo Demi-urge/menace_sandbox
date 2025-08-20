@@ -109,8 +109,9 @@ measure and forecast workflow impact. `ROITracker.update()` records ROI deltas
 while `calculate_raroi()` applies risk multipliers. When a workflow's RAROI or
 confidence falls below the configured thresholds the tracker queues it in a
 [borderline bucket](docs/borderline_bucket.md) for micro‑pilot testing. Use
-`process_borderline_candidates()` after updates to promote or terminate these
-candidates based on the trial results:
+`borderline_bucket.process()` (or the tracker's
+`process_borderline_candidates()` wrapper) after updates to promote or
+terminate these candidates based on the trial results:
 
 ```python
 from menace_sandbox.roi_tracker import ROITracker
@@ -118,7 +119,10 @@ from menace_sandbox.roi_tracker import ROITracker
 tracker = ROITracker(raroi_borderline_threshold=0.05)
 tracker.update(0.12)
 base, raroi = tracker.calculate_raroi(1.1)
-tracker.process_borderline_candidates()
+tracker.borderline_bucket.process(
+    raroi_threshold=tracker.raroi_borderline_threshold,
+    confidence_threshold=tracker.confidence_threshold,
+)
 ```
 
 The snippet records an ROI delta, computes a risk-adjusted score and evaluates

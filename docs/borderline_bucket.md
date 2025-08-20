@@ -21,17 +21,18 @@ Each line in `borderline_bucket.jsonl` stores a JSON object with:
 
 `ROITracker` adds a workflow to the bucket when its RAROI falls below the
 configured `raroi_borderline_threshold` or when the tracker’s confidence score
-drops under `confidence_threshold`.  The tracker periodically runs
-`process_borderline_candidates` which performs a small test and records the new
-RAROI.  Candidates with RAROI above the threshold are **promoted** while the
-rest are **terminated** and removed from further consideration.
+drops under `confidence_threshold`.  Calling `borderline_bucket.process()` runs
+a small micro‑pilot for each pending candidate and records the new RAROI and
+confidence.  Candidates exceeding the supplied thresholds are **promoted**
+while the rest are **terminated** and removed from further consideration.
 
 ## Micro‑pilot mechanics
 
 Micro‑pilots supply a quick signal before committing to large scale changes.
-During a micro‑pilot, an evaluator function produces a temporary RAROI for the
-candidate workflow.  `ROITracker` records this value via `record_result()` and
-updates the status using `promote()` or `terminate()`.  This allows risky or
-uncertain workflows to be tested in isolation before wider deployment.
+During a micro‑pilot, an evaluator function produces a temporary RAROI and
+optionally a confidence score for the candidate workflow.  The bucket records
+these via `record_result()` and updates the status using `promote()` or
+`terminate()`.  This allows risky or uncertain workflows to be tested in
+isolation before wider deployment.
 
 See [docs/roi_tracker.md](roi_tracker.md) for integration details.

@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+import logging
+from typing import Any, Callable, Dict, Optional, Tuple
+
+
+logger = logging.getLogger(__name__)
 
 
 class BorderlineBucket:
@@ -134,6 +138,47 @@ class BorderlineBucket:
         if workflow_id in self.data:
             self.data[workflow_id]["status"] = "terminated"
             self._save()
+
+    # ------------------------------------------------------------------
+    def process(
+        self,
+        evaluator: Callable[[str, Dict[str, Any]], Tuple[float, float] | float] | None = None,
+        raroi_threshold: float = 0.0,
+        confidence_threshold: float = 0.0,
+    ) -> None:
+        """Run micro-pilot evaluations for queued candidates.
+
+        Parameters
+        ----------
+        evaluator:
+            Optional callable returning either a ``raroi`` float or a
+            ``(raroi, confidence)`` tuple for ``(workflow_id, info)``.
+            When omitted the candidate's last recorded values are reused.
+        raroi_threshold:
+            Minimum RAROI required for promotion.
+        confidence_threshold:
+            Minimum confidence required for promotion.
+        """
+
+        evaluate = evaluator or (
+            lambda wf, info: (info["raroi"][-1], info.get("confidence", 0.0))
+        )
+        for wf, info in self.all_candidates(status="candidate").items():
+            try:
+                result = evaluate(wf, info)
+                if isinstance(result, (tuple, list)):
+                    raroi, conf = result[0], result[1]
+                else:
+                    raroi, conf = result, info.get("confidence", 0.0)
+                raroi = float(raroi)
+                conf = float(conf)
+                self.record_result(wf, raroi, conf)
+                if raroi > raroi_threshold and conf >= confidence_threshold:
+                    self.promote(wf)
+                else:
+                    self.terminate(wf)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed processing borderline candidate %s", wf)
 
 
 __all__ = ["BorderlineBucket"]
