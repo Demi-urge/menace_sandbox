@@ -103,7 +103,7 @@ except Exception:
 
 # Recommendations to harden scenarios that show weaknesses.
 HARDENING_TIPS: dict[str, str] = {
-    "concurrency_spike": "tune rate limits",
+    "concurrency_spike": "add locking or queueing",
     "schema_drift": "tighten schema validation",
     "hostile_input": "sanitize inputs",
     "flaky_upstream": "add retries or fallback logic",

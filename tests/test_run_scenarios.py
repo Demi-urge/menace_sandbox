@@ -72,7 +72,7 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
         assert summary["scorecards"][scen]["status"] == "situationally weak"
     assert (
         summary["scorecards"]["concurrency_spike"]["recommendation"]
-        == "tune rate limits"
+        == "add locking or queueing"
     )
     
     data = json.loads(out.read_text())

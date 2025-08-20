@@ -5481,12 +5481,36 @@ def generate_scorecard(
 
     wf_id = str(getattr(workflow, "wid", getattr(workflow, "id", "0")))
     card: Dict[str, Any] = {"workflow_id": wf_id, "scenarios": {}}
+
+    # Import lazily to avoid expensive module import when not needed.
+    try:  # pragma: no cover - import error shouldn't crash
+        from menace.roi_tracker import HARDENING_TIPS
+    except Exception:  # pragma: no cover
+        HARDENING_TIPS = {}
+
+    failing: List[str] = []
+    passing: List[str] = []
     for scen, info in summary.get("scenarios", {}).items():
         metrics = info.get("target_delta", {}).get("metrics", {})
+        roi_delta = float(info.get("roi_delta", 0.0))
         card["scenarios"][scen] = {
-            "roi_delta": float(info.get("roi_delta", 0.0)),
+            "roi_delta": roi_delta,
             "metrics": {k: float(v) for k, v in metrics.items()},
+            "recommendation": HARDENING_TIPS.get(scen),
         }
+
+        triggers_failure = any(
+            (("failure" in k) or ("error" in k) or k.endswith("_breach"))
+            and v > 0
+            for k, v in metrics.items()
+        )
+        if roi_delta < 0.0 or triggers_failure:
+            failing.append(scen)
+        else:
+            passing.append(scen)
+
+    if len(failing) == 1 and passing:
+        card["status"] = "situationally weak"
     out_path = Path("sandbox_data") / f"scorecard_{wf_id}.json"
     try:  # pragma: no cover - best effort
         out_path.parent.mkdir(parents=True, exist_ok=True)
