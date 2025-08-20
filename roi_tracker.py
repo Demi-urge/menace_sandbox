@@ -101,6 +101,11 @@ try:  # pragma: no cover - best effort
 except Exception:
     pass
 
+# Recommendations to harden scenarios that show weaknesses.
+HARDENING_TIPS: dict[str, str] = {
+    "concurrency_spike": "add rate limiting",
+}
+
 if TYPE_CHECKING:  # pragma: no cover - for typing only
     from .resources_bot import ROIHistoryDB
     from .prediction_manager_bot import PredictionManager
@@ -161,6 +166,7 @@ class ScenarioScorecard:
     raroi_delta: float
     metrics_delta: Dict[str, float]
     synergy_delta: Dict[str, float]
+    recommendation: str | None = None
 
 
 class ROITracker:
@@ -335,6 +341,7 @@ class ROITracker:
         self.scenario_synergy_delta: Dict[str, Dict[str, float]] = {}
         self._worst_scenario: str | None = None
         self._best_order: Optional[Tuple[int, int, int]] = None
+        self.workflow_label: str | None = None
         self._order_history: Tuple[float, ...] = ()
         self.resource_db = resource_db
         self.resource_metrics: List[Tuple[float, float, float, float, float]] = []
@@ -2509,7 +2516,24 @@ class ROITracker:
         """Return a list of :class:`ScenarioScorecard` summarising scenarios."""
 
         cards: List[ScenarioScorecard] = []
+        negative = [
+            s for s, d in self.scenario_raroi_delta.items() if d < 0
+        ]
+        positive = [
+            s for s, d in self.scenario_raroi_delta.items() if d > 0
+        ]
+        failing: str | None = None
+        if (
+            len(negative) == 1
+            and len(negative) + len(positive) == len(self.scenario_raroi_delta)
+            and positive
+        ):
+            failing = negative[0]
+            self.workflow_label = "situationally weak"
+        else:
+            self.workflow_label = None
         for scen, roi_delta in self.scenario_roi_deltas.items():
+            rec = HARDENING_TIPS.get(scen) if scen == failing else None
             cards.append(
                 ScenarioScorecard(
                     scenario=scen,
@@ -2517,6 +2541,7 @@ class ROITracker:
                     raroi_delta=float(self.scenario_raroi_delta.get(scen, 0.0)),
                     metrics_delta=dict(self.scenario_metrics_delta.get(scen, {})),
                     synergy_delta=dict(self.scenario_synergy_delta.get(scen, {})),
+                    recommendation=rec,
                 )
             )
         return cards
