@@ -68,11 +68,23 @@ class CognitionLayer:
         self.retriever = retriever or Retriever()
         self.vector_metrics = vector_metrics or VectorMetricsDB()
         self.roi_tracker = roi_tracker or (ROITracker() if ROITracker is not None else None)
+        db_weights = None
+        if self.vector_metrics is not None:
+            try:
+                db_weights = self.vector_metrics.get_db_weights()
+            except Exception:  # pragma: no cover - best effort
+                db_weights = None
         self.context_builder = context_builder or ContextBuilder(
             retriever=self.retriever,
             ranking_model=ranking_model,
             roi_tracker=self.roi_tracker,
+            db_weights=db_weights,
         )
+        if context_builder is not None and db_weights:
+            try:
+                self.context_builder.db_weights.update(db_weights)
+            except Exception:
+                pass
         self.patch_logger = patch_logger or PatchLogger(
             vector_metrics=self.vector_metrics,
             roi_tracker=self.roi_tracker,
@@ -111,6 +123,33 @@ class CognitionLayer:
             self.retriever.reload_reliability_scores()  # type: ignore[attr-defined]
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    def update_ranker(
+        self, vectors: List[Tuple[str, str, float]], success: bool
+    ) -> None:
+        """Update ranking weights based on patch outcome.
+
+        The method aggregates updates by origin database so that future
+        retrievals can prioritise sources that historically produced
+        successful patches.  Weights are persisted in
+        :class:`VectorMetricsDB` so the behaviour survives restarts.
+        """
+
+        if self.vector_metrics is None:
+            return
+        delta = 0.1 if success else -0.1
+        per_db: Dict[str, float] = {}
+        for origin, _vec_id, _score in vectors:
+            key = origin or ""
+            per_db[key] = per_db.get(key, 0.0) + delta
+        for origin, change in per_db.items():
+            try:
+                weight = self.vector_metrics.update_db_weight(origin, change)
+                if hasattr(self.context_builder, "db_weights"):
+                    self.context_builder.db_weights[origin] = weight
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     @log_and_measure
@@ -384,6 +423,8 @@ class CognitionLayer:
             except Exception:
                 pass
 
+        self.update_ranker(vectors, success)
+
     # ------------------------------------------------------------------
     async def record_patch_outcome_async(
         self,
@@ -408,6 +449,7 @@ class CognitionLayer:
             contribution=contribution,
             retrieval_metadata=meta,
         )
+        self.update_ranker(vectors, success)
 
 
 __all__ = ["CognitionLayer"]

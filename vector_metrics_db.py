@@ -106,6 +106,15 @@ class VectorMetricsDB:
             )
             """
         )
+        # Store adaptive ranking weights so the ranker can learn over time.
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ranking_weights(
+                db TEXT PRIMARY KEY,
+                weight REAL
+            )
+            """
+        )
         self.conn.commit()
         cols = [r[1] for r in self.conn.execute("PRAGMA table_info(vector_metrics)").fetchall()]
         migrations = {
@@ -131,6 +140,32 @@ class VectorMetricsDB:
                 "ALTER TABLE patch_ancestry ADD COLUMN alignment_severity REAL"
             )
         self.conn.commit()
+
+    # ------------------------------------------------------------------
+    def get_db_weights(self) -> dict[str, float]:
+        """Return mapping of origin database to current ranking weight."""
+
+        cur = self.conn.execute("SELECT db, weight FROM ranking_weights")
+        rows = cur.fetchall()
+        return {str(db): float(weight) for db, weight in rows}
+
+    # ------------------------------------------------------------------
+    def update_db_weight(self, db: str, delta: float) -> float:
+        """Adjust ranking weight for *db* by ``delta`` and persist it.
+
+        Returns the new weight value."""
+
+        cur = self.conn.execute(
+            "SELECT weight FROM ranking_weights WHERE db=?", (db,)
+        )
+        row = cur.fetchone()
+        weight = float(row[0]) if row and row[0] is not None else 0.0
+        weight += delta
+        self.conn.execute(
+            "REPLACE INTO ranking_weights(db, weight) VALUES(?, ?)", (db, weight)
+        )
+        self.conn.commit()
+        return weight
 
     # ------------------------------------------------------------------
     def add(self, rec: VectorMetric) -> None:
