@@ -121,6 +121,49 @@ class CognitionLayer:
         return context, sid
 
     # ------------------------------------------------------------------
+    @log_and_measure
+    async def query_async(
+        self,
+        prompt: str,
+        *,
+        top_k: int = 5,
+        session_id: str = "",
+    ) -> Tuple[str, str]:
+        """Asynchronous wrapper for :meth:`query`."""
+
+        context, sid, vectors = await self.context_builder.build_async(
+            prompt,
+            top_k=top_k,
+            include_vectors=True,
+            session_id=session_id,
+        )
+
+        self._session_vectors[sid] = vectors
+        meta: Dict[str, Dict[str, Any]] = {}
+        for rank, (origin, vec_id, score) in enumerate(vectors, start=1):
+            key = f"{origin}:{vec_id}" if origin else vec_id
+            meta[key] = {}
+            try:  # Best effort metrics logging
+                self.vector_metrics.log_retrieval(
+                    origin,
+                    tokens=0,
+                    wall_time_ms=0.0,
+                    hit=True,
+                    rank=rank,
+                    contribution=0.0,
+                    prompt_tokens=0,
+                    session_id=sid,
+                    vector_id=vec_id,
+                    similarity=score,
+                    context_score=score,
+                    age=0.0,
+                )
+            except Exception:
+                pass
+        self._retrieval_meta[sid] = meta
+        return context, sid
+
+    # ------------------------------------------------------------------
     def record_patch_outcome(
         self,
         session_id: str,
@@ -145,6 +188,31 @@ class CognitionLayer:
             return
         vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
         self.patch_logger.track_contributors(
+            vec_ids,
+            success,
+            patch_id=patch_id,
+            session_id=session_id,
+            contribution=contribution,
+            retrieval_metadata=meta,
+        )
+
+    # ------------------------------------------------------------------
+    async def record_patch_outcome_async(
+        self,
+        session_id: str,
+        success: bool,
+        *,
+        patch_id: str = "",
+        contribution: float | None = None,
+    ) -> None:
+        """Asynchronous wrapper for :meth:`record_patch_outcome`."""
+
+        vectors = self._session_vectors.pop(session_id, [])
+        meta = self._retrieval_meta.pop(session_id, None)
+        if not vectors:
+            return
+        vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
+        await self.patch_logger.track_contributors_async(
             vec_ids,
             success,
             patch_id=patch_id,

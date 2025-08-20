@@ -80,6 +80,25 @@ Metrics emitted by `PatchLogger.track_contributors`:
   counter of contributor tracking attempts.
 - `patch_logger_track_contributors_duration_seconds` – duration of each call.
 
+## CognitionLayer
+
+```python
+from vector_service import CognitionLayer
+
+layer = CognitionLayer()
+ctx, sid = layer.query("What is ROI?")
+# ... apply patch ...
+layer.record_patch_outcome(sid, True)
+
+# Async
+ctx, sid = await layer.query_async("What is ROI?")
+await layer.record_patch_outcome_async(sid, True)
+```
+
+`CognitionLayer` orchestrates retrieval, context assembly and patch logging.
+The `query_async` and `record_patch_outcome_async` helpers mirror their
+synchronous counterparts for applications built on `asyncio`.
+
 ## EmbeddingBackfill
 
 ```python
