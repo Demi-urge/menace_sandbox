@@ -69,5 +69,5 @@ def test_run_scenarios_all_paths(monkeypatch):
     assert summary["status"] == "situationally weak"
     assert (
         summary["scorecards"]["concurrency_spike"]["recommendation"]
-        == "tune rate limits"
+        == "add locking or queueing"
     )

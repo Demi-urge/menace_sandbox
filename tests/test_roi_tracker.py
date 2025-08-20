@@ -779,7 +779,7 @@ def test_generate_scorecards():
     assert tracker.workflow_label == "situationally weak"
     cs = {c.scenario: c for c in cards}
     assert cs["concurrency_spike"].raroi_delta == pytest.approx(-1.0)
-    assert cs["concurrency_spike"].recommendation == "tune rate limits"
+    assert cs["concurrency_spike"].recommendation == "add locking or queueing"
     assert cs["concurrency_spike"].status == "situationally weak"
     assert cs["normal"].recommendation is None
 
@@ -805,7 +805,7 @@ def test_generate_scenario_scorecard(tmp_path):
     assert card["status"] == "situationally weak"
     assert (
         card["scenarios"]["concurrency_spike"]["recommendation"]
-        == "tune rate limits"
+        == "add locking or queueing"
     )
     assert (
         card["scenarios"]["schema_drift"]["recommendation"]
@@ -815,7 +815,7 @@ def test_generate_scenario_scorecard(tmp_path):
 
 def test_hardening_recommendations():
     tips = {
-        "concurrency_spike": "tune rate limits",
+        "concurrency_spike": "add locking or queueing",
         "schema_drift": "tighten schema validation",
         "hostile_input": "sanitize inputs",
         "flaky_upstream": "add retries or fallback logic",

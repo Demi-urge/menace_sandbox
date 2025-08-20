@@ -125,6 +125,12 @@ def test_scenario_roi_deltas_and_synergy(monkeypatch):
     flags = {r["flag"] for r in cs_info["runs"]}
     assert flags == {"on", "off"}
     assert cs_info["target_delta"]["roi"] == pytest.approx(-1.0)
+    assert summary["status"] == "situationally weak"
+    assert summary["scorecards"]["concurrency_spike"]["status"] == "situationally weak"
+    assert (
+        summary["scorecards"]["concurrency_spike"]["recommendation"]
+        == "add locking or queueing"
+    )
 
 
 def test_generate_scorecard(monkeypatch):
@@ -160,6 +166,11 @@ def test_generate_scorecard(monkeypatch):
         assert card["scenarios"][scen]["roi_delta"] == pytest.approx(
             info["roi_delta"]
         )
+    assert card["status"] == "situationally weak"
+    assert (
+        card["scenarios"]["concurrency_spike"]["recommendation"]
+        == "add locking or queueing"
+    )
 
     wf_id = card["workflow_id"]
     out_path = Path("sandbox_data") / f"scorecard_{wf_id}.json"
