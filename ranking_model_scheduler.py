@@ -14,6 +14,7 @@ import threading
 import time
 from typing import Iterable, Sequence, Any, Optional
 import logging
+import json
 
 try:  # pragma: no cover - optional dependency
     from .logging_utils import log_record
@@ -75,7 +76,7 @@ def needs_retrain(vector_db: Path | str, win_rate_threshold: float = 0.5) -> boo
         # recover from potential corruption.
         return True
 
-MODEL_PATH = Path("retrieval_ranker.model")
+MODEL_PATH = Path("retrieval_ranker.json")
 
 
 class RankingModelScheduler:
@@ -111,8 +112,6 @@ class RankingModelScheduler:
                 self.event_bus = UnifiedEventBus()
             except Exception:
                 self.event_bus = None
-        self._win_events = 0
-        self._total_events = 0
         if self.event_bus is not None:
             try:
                 self.event_bus.subscribe("patch_logger:outcome", self._handle_patch_outcome)
@@ -165,22 +164,51 @@ class RankingModelScheduler:
         if self.win_rate_threshold is None:
             return
 
-        win = False
-        if isinstance(event, dict):
-            try:
-                win = bool(event.get("win"))
-            except Exception:
-                win = False
-        self._total_events += 1
-        if win:
-            self._win_events += 1
-
         try:
-            win_rate = self._win_events / self._total_events if self._total_events else 0.0
+            db = VectorMetricsDB(self.vector_db)
+            try:
+                win_rate = db.retriever_win_rate()
+            finally:
+                try:
+                    db.conn.close()
+                except Exception:
+                    pass
             if win_rate <= self.win_rate_threshold:
                 self.retrain_and_reload()
         except Exception:
             logging.exception("ranking model retrain failed")
+
+    # ------------------------------------------------------------------
+    def _persist_model_path(self, new_path: Path, *, keep: int = 3) -> None:
+        """Record *new_path* in the model registry and rotate old entries."""
+
+        data = {"current": str(new_path), "history": []}
+        if self.model_path.exists():
+            try:
+                with open(self.model_path, "r", encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                    if isinstance(loaded, dict):
+                        data.update(loaded)
+            except Exception:
+                pass
+        history = data.get("history", []) or []
+        current = data.get("current")
+        if current and current != str(new_path):
+            history.insert(0, current)
+        # Trim history and remove excess files
+        for old in history[keep - 1 :]:
+            try:
+                Path(old).unlink()
+            except Exception:
+                pass
+        history = history[: keep - 1]
+        data["current"] = str(new_path)
+        data["history"] = history
+        try:
+            with open(self.model_path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def retrain_and_reload(self) -> None:
@@ -237,13 +265,17 @@ class RankingModelScheduler:
         df = rr.load_training_data(vector_db=self.vector_db, patch_db=self.metrics_db)
         trained = rr.train(df)
         tm = trained[0] if isinstance(trained, tuple) else trained
-        rr.save_model(tm, self.model_path)
+        model_dir = self.model_path.parent
+        model_dir.mkdir(parents=True, exist_ok=True)
+        model_file = model_dir / f"{self.model_path.stem}_{int(time.time())}.json"
+        rr.save_model(tm, model_file)
+        self._persist_model_path(model_file)
 
         # Reload model and reliability scores in running services
         def _reload_all(svc: Any) -> None:
             try:
                 if hasattr(svc, "reload_ranker_model"):
-                    svc.reload_ranker_model(self.model_path)
+                    svc.reload_ranker_model(model_file)
                 if hasattr(svc, "reload_reliability_scores"):
                     svc.reload_reliability_scores()
             except Exception:
@@ -257,7 +289,7 @@ class RankingModelScheduler:
         if self.event_bus is not None:
             try:
                 self.event_bus.publish(
-                    "reload_ranker_model", {"path": str(self.model_path)}
+                    "CognitionLayer.reload_ranker_model", {"path": str(model_file)}
                 )
             except Exception:
                 pass
@@ -265,9 +297,6 @@ class RankingModelScheduler:
                 self.event_bus.publish("reload_reliability_scores", {})
             except Exception:
                 pass
-
-        self._win_events = 0
-        self._total_events = 0
 
     # ------------------------------------------------------------------
     def _loop(self) -> None:

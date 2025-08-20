@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 import threading
+import json
 
 import menace.ranking_model_scheduler as rms
 
@@ -43,10 +44,12 @@ def test_scheduler_trains_and_reloads(tmp_path, monkeypatch):
 
     sched.retrain_and_reload()
 
-    assert svc.model_path == tmp_path / "model.json"
+    cfg = json.loads((tmp_path / "model.json").read_text())
+    current = Path(cfg["current"])
+    assert svc.model_path == current
     assert svc.reliability_reloaded
     assert stats_called == [tmp_path / "metrics.db"]
-    assert (tmp_path / "model.json").exists()
+    assert current.exists()
 
 
 def test_scheduler_reloads_dependents(tmp_path, monkeypatch):
@@ -78,9 +81,9 @@ def test_scheduler_reloads_dependents(tmp_path, monkeypatch):
     parent = ParentService()
 
     sched = rms.RankingModelScheduler([parent],
-                                      vector_db=tmp_path / "vec.db", 
-                                      metrics_db=tmp_path / "metrics.db", 
-                                      model_path=tmp_path / "model.json", 
+                                      vector_db=tmp_path / "vec.db",
+                                      metrics_db=tmp_path / "metrics.db",
+                                      model_path=tmp_path / "model.json",
                                       interval=0)
 
     monkeypatch.setattr(rms.rr, "load_training_data", lambda **kw: object())
@@ -190,6 +193,8 @@ def test_scheduler_retrains_on_win_rate_drop(tmp_path, monkeypatch):
     bus.publish("retrieval:feedback", {"db": "db", "win": False, "regret": True})
 
     assert calls
-    assert svc.model_path == tmp_path / "model.json"
+    cfg = json.loads((tmp_path / "model.json").read_text())
+    current = Path(cfg["current"])
+    assert svc.model_path == current
     assert svc.reliability_reloaded
 
