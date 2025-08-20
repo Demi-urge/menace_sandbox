@@ -104,6 +104,11 @@ class ContextBuilder:
                     if key in meta and meta[key] is not None:
                         return float(meta[key])
 
+            if origin == "enhancement":
+                for key in ("roi", "adoption"):
+                    if key in meta and meta[key] is not None:
+                        return float(meta[key])
+
             if origin == "code":
                 for key in ("roi", "patch_success"):
                     if key in meta and meta[key] is not None:
@@ -132,6 +137,10 @@ class ContextBuilder:
             if "name" in meta:
                 entry["name"] = redact_text(str(meta["name"]))
         elif origin == "workflow":
+            text = text or meta.get("title") or meta.get("description") or ""
+            if "title" in meta:
+                entry["title"] = redact_text(str(meta["title"]))
+        elif origin == "enhancement":
             text = text or meta.get("title") or meta.get("description") or ""
             if "title" in meta:
                 entry["title"] = redact_text(str(meta["title"]))
@@ -171,6 +180,7 @@ class ContextBuilder:
             "error": "errors",
             "bot": "bots",
             "workflow": "workflows",
+            "enhancement": "enhancements",
             "code": "code",
             "discrepancy": "discrepancies",
         }
@@ -230,6 +240,7 @@ class ContextBuilder:
             "errors": [],
             "bots": [],
             "workflows": [],
+            "enhancements": [],
             "code": [],
             "discrepancies": [],
         }
