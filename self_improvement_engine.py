@@ -2278,15 +2278,20 @@ class SelfImprovementEngine:
                     pass
                 try:
                     self.roi_tracker.borderline_bucket.enqueue(mod, raroi, confidence)
-                    try:
-                        evaluator = getattr(self, "micro_pilot_evaluator", None)
-                        self.roi_tracker.borderline_bucket.process(
-                            evaluator,
-                            raroi_threshold=self.roi_tracker.raroi_borderline_threshold,
-                            confidence_threshold=self.roi_tracker.confidence_threshold,
-                        )
-                    except Exception:
-                        pass
+                    settings = SandboxSettings()
+                    self.roi_tracker.raroi_borderline_threshold = (
+                        settings.raroi_borderline_threshold
+                    )
+                    if settings.micropilot_mode == "auto":
+                        try:
+                            evaluator = getattr(self, "micro_pilot_evaluator", None)
+                            self.roi_tracker.borderline_bucket.process(
+                                evaluator,
+                                raroi_threshold=self.roi_tracker.raroi_borderline_threshold,
+                                confidence_threshold=self.roi_tracker.confidence_threshold,
+                            )
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 continue
