@@ -88,6 +88,33 @@ sched.retrain_and_reload()
 refreshes reliability KPIs.  When an `ROITracker` is supplied, strong ROI signals
 can trigger an earlier retrain.
 
+## CognitionLayer
+
+````python
+from roi_tracker import ROITracker
+from vector_service import CognitionLayer
+from ranking_model_scheduler import RankingModelScheduler
+
+tracker = ROITracker()
+layer = CognitionLayer(roi_tracker=tracker)
+
+ctx, sid = layer.query("optimise database indexes", session_id="abc123")
+# ... apply patch ...
+layer.record_patch_outcome(sid, True)
+
+# metrics now feed ranking updates
+sched = RankingModelScheduler([], roi_tracker=tracker)
+sched.retrain_and_reload()
+````
+
+`CognitionLayer` bundles retrieval, context assembly, ranking and patch logging
+behind two calls.  Each `query` logs token, rank and hit metrics to
+`VectorMetricsDB`; these records train the ranking model the next time
+`RankingModelScheduler` retrains.  When `record_patch_outcome` is invoked the
+same vectors are forwarded to `PatchLogger` and `ROITracker`, updating success
+rates and per‑database ROI.  Subsequent queries will surface higher ROI vectors
+earlier as both the ranker and ROI weights adapt to the accumulated metrics.
+
 ## Scheduling and retraining
 
 ### Embedding scheduler
