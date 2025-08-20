@@ -287,15 +287,23 @@ class DeploymentGovernor:
             scenario_scores = scorecard.get("scenario_scores")  # type: ignore[assignment]
 
         min_scenario = None
+        score_variance = None
         if isinstance(scenario_scores, Mapping) and scenario_scores:
             try:
-                min_scenario = min(float(v) for v in scenario_scores.values())
+                values = [float(v) for v in scenario_scores.values()]
+                min_scenario = min(values)
+                if len(values) > 1:
+                    mean = sum(values) / len(values)
+                    score_variance = sum((v - mean) ** 2 for v in values) / len(values)
             except Exception:
                 min_scenario = None
+                score_variance = None
 
         policy = policy or {}
         sandbox_low = float(policy.get("sandbox_low", self.sandbox_roi_low))
         adapter_high = float(policy.get("adapter_high", self.adapter_roi_high))
+        max_variance = policy.get("max_variance")
+        scenario_thresholds = policy.get("scenario_thresholds") or {}
 
         verdict = "no_go"
 
@@ -311,10 +319,30 @@ class DeploymentGovernor:
                 override["mode"] = "micro-pilot"
                 return {"verdict": verdict, "reasons": reasons, "override": override}
 
+        if (
+            max_variance is not None
+            and score_variance is not None
+            and score_variance > float(max_variance)
+        ):
+            reasons.append("variance_above_max")
+            return {"verdict": verdict, "reasons": reasons, "override": override}
+
+        if isinstance(scenario_thresholds, Mapping) and scenario_scores:
+            for name, thr in scenario_thresholds.items():
+                try:
+                    val = float(scenario_scores.get(name, float("inf")))
+                except Exception:
+                    continue
+                if val < float(thr):
+                    reasons.append(f"{name}_below_min")
+            if reasons:
+                return {"verdict": verdict, "reasons": reasons, "override": override}
+
         safe_locals = {
             "raroi": raroi,
             "confidence": confidence,
             "min_scenario": min_scenario,
+            "score_variance": score_variance,
             "sandbox_roi": sandbox_roi,
             "adapter_roi": adapter_roi,
             "alignment_status": alignment_status,
@@ -323,6 +351,7 @@ class DeploymentGovernor:
             "scenario_score_min": self.scenario_score_min,
             "sandbox_roi_low": sandbox_low,
             "adapter_roi_high": adapter_high,
+            "max_variance": max_variance,
         }
         for rule in rules:
             try:
@@ -394,7 +423,11 @@ def evaluate_workflow(
     sandbox_roi = scorecard.get("sandbox_roi")
     adapter_roi = scorecard.get("adapter_roi")
 
-    policy_eval = {k: policy[k] for k in ("sandbox_low", "adapter_high") if k in policy}
+    policy_eval = {
+        k: policy[k]
+        for k in ("sandbox_low", "adapter_high", "max_variance", "scenario_thresholds")
+        if k in policy
+    }
 
     result = gov.evaluate(
         scorecard,
@@ -499,34 +532,63 @@ def evaluate(
 
     scenario_scores = metrics.get("scenario_scores") or scorecard.get("scenario_scores")
     min_scenario = None
+    score_variance = None
     if isinstance(scenario_scores, Mapping) and scenario_scores:
         try:
-            min_scenario = min(float(v) for v in scenario_scores.values())
+            values = [float(v) for v in scenario_scores.values()]
+            min_scenario = min(values)
+            if len(values) > 1:
+                mean = sum(values) / len(values)
+                score_variance = sum((v - mean) ** 2 for v in values) / len(values)
         except Exception:
             min_scenario = None
+            score_variance = None
 
-    def meets(thr: Mapping[str, Any]) -> bool:
-        r_ok = raroi is None or raroi >= float(thr.get("raroi_min", -float("inf")))
-        c_ok = confidence is None or confidence >= float(
+    def meets(thr: Mapping[str, Any]) -> tuple[bool, list[str]]:
+        reasons: list[str] = []
+        if raroi is not None and raroi < float(thr.get("raroi_min", -float("inf"))):
+            reasons.append("raroi_below_min")
+        if confidence is not None and confidence < float(
             thr.get("confidence_min", -float("inf"))
-        )
-        s_ok = (
-            min_scenario is None
-            or min_scenario >= float(thr.get("scenario_min", -float("inf")))
-        )
-        return r_ok and c_ok and s_ok
+        ):
+            reasons.append("confidence_below_min")
+        if min_scenario is not None and min_scenario < float(
+            thr.get("scenario_min", -float("inf"))
+        ):
+            reasons.append("scenario_below_min")
+        mv = thr.get("max_variance")
+        if (
+            mv is not None
+            and score_variance is not None
+            and score_variance > float(mv)
+        ):
+            reasons.append("variance_above_max")
+        per_thr = thr.get("scenario_thresholds")
+        if isinstance(per_thr, Mapping) and scenario_scores:
+            for name, val in per_thr.items():
+                try:
+                    sval = float(scenario_scores.get(name, float("inf")))
+                except Exception:
+                    continue
+                if sval < float(val):
+                    reasons.append(f"{name}_below_min")
+        return (len(reasons) == 0, reasons)
 
     # Demotion when below minimum standards or adapter underperforms.
     demote_cfg = policy_cfg.get("demote", {})
     demote_thr = demote_cfg.get("thresholds", {})
-    if not meets(demote_thr) or (
+    ok, fail_reasons = meets(demote_thr)
+    if not ok or (
         adapter_roi is not None
         and sandbox_roi is not None
         and adapter_roi < sandbox_roi
     ):
-        reason = demote_cfg.get("reason_code")
-        if reason:
-            reasons.append(reason)
+        if fail_reasons:
+            reasons.extend(fail_reasons)
+        else:
+            reason = demote_cfg.get("reason_code")
+            if reason:
+                reasons.append(reason)
         if (
             adapter_roi is not None
             and sandbox_roi is not None
@@ -537,7 +599,7 @@ def evaluate(
 
     promote_cfg = policy_cfg.get("promote", {})
     promote_thr = promote_cfg.get("thresholds", {})
-    if meets(promote_thr) and (
+    if meets(promote_thr)[0] and (
         adapter_roi is None
         or sandbox_roi is None
         or adapter_roi >= sandbox_roi
@@ -549,7 +611,7 @@ def evaluate(
 
     micro_cfg = policy_cfg.get("micro_pilot", {})
     micro_thr = micro_cfg.get("thresholds", {})
-    if meets(micro_thr):
+    if meets(micro_thr)[0]:
         cond_met = False
         opt = micro_cfg.get("optional_conditions", {})
         for cfg in opt.values():

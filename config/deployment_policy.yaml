@@ -24,6 +24,9 @@ demote:
     raroi_min: 0.2
     confidence_min: 0.3
     scenario_min: 0.1
+    max_variance: 1.0
+    scenario_thresholds:
+      stress: 0.1
   reason_code: below_minimum_standards
 
 micro_pilot:

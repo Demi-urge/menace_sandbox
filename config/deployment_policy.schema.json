@@ -10,7 +10,12 @@
           "properties": {
             "raroi_min": {"type": "number"},
             "confidence_min": {"type": "number"},
-            "scenario_min": {"type": "number"}
+            "scenario_min": {"type": "number"},
+            "max_variance": {"type": "number"},
+            "scenario_thresholds": {
+              "type": "object",
+              "additionalProperties": {"type": "number"}
+            }
           },
           "additionalProperties": false
         },
