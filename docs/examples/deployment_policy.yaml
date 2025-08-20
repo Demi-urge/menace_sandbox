@@ -1,0 +1,12 @@
+# Example deployment governance policy
+# Each rule provides a decision, condition and reason_code.
+
+- decision: demote
+  condition: "raroi < 0.5"
+  reason_code: raroi_low
+- decision: pilot
+  condition: "sandbox_roi < 0.1 and adapter_roi >= 1.0"
+  reason_code: micro_pilot
+- decision: promote
+  condition: "raroi >= 0.5"
+  reason_code: meets_baseline
