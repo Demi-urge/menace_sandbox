@@ -6,7 +6,7 @@ import logging
 import os
 import threading
 import time
-from typing import Sequence, Optional
+from typing import Optional
 
 from .embedding_backfill import EmbeddingBackfill
 
@@ -35,12 +35,10 @@ class EmbeddingScheduler:
         interval: float = 86400,
         batch_size: Optional[int] = None,
         backend: Optional[str] = None,
-        dbs: Sequence[str] | None = None,
     ) -> None:
         self.interval = interval
         self.batch_size = batch_size
         self.backend = backend
-        self.dbs = list(dbs) if dbs else None
         self._thread: Optional[threading.Thread] = None
         self.running = False
         self.backfill = EmbeddingBackfill()
@@ -54,12 +52,11 @@ class EmbeddingScheduler:
             try:
                 logger.info(
                     "embedding scheduler triggering backfill",
-                    extra={"dbs": self.dbs, "backend": self.backend},
+                    extra={"backend": self.backend},
                 )
                 self.backfill.run(
                     batch_size=self.batch_size,
                     backend=self.backend,
-                    dbs=self.dbs,
                 )
             except Exception:  # pragma: no cover - best effort
                 status = "failure"
@@ -95,13 +92,10 @@ def start_scheduler_from_env() -> EmbeddingScheduler | None:
         return None
     batch = os.getenv("EMBEDDING_SCHEDULER_BATCH_SIZE")
     backend = os.getenv("EMBEDDING_SCHEDULER_BACKEND")
-    dbs_env = os.getenv("EMBEDDING_SCHEDULER_DBS")
-    dbs = [d.strip() for d in dbs_env.split(",") if d.strip()] if dbs_env else None
     scheduler = EmbeddingScheduler(
         interval=interval,
         batch_size=int(batch) if batch else None,
         backend=backend,
-        dbs=dbs,
     )
     scheduler.start()
     return scheduler
