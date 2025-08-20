@@ -34,8 +34,11 @@ from .adaptive_roi_predictor import AdaptiveROIPredictor
 from .roi_tracker import ROITracker
 from sandbox_settings import SandboxSettings
 from vector_service import ContextBuilder, FallbackResult, ErrorResult
+from .governance import check_veto, load_rules
 
 logger = logging.getLogger(__name__)
+
+RULES = load_rules()
 
 
 class _RLModel:
@@ -356,6 +359,7 @@ class ActionPlanner:
 
     def _reward(self, action: str, rec: PathwayRecord) -> float:
         """Return reward for taking *action* in *rec*."""
+        success = True
         if self.reward_fn:
             try:
                 reward = float(self.reward_fn(action, rec))
@@ -569,6 +573,17 @@ class ActionPlanner:
             score *= self.priority_weights.get(action, 1.0)
             if ctx:
                 score += self._context_metric(action, ctx)
+            scorecard = {
+                "decision": action,
+                "alignment": ctx.get("alignment", "pass"),
+                "raroi_increase": ctx.get("raroi_increase", 0),
+            }
+            veto = check_veto(scorecard, RULES)
+            if veto:
+                logger.info(
+                    "action vetoed", extra=log_record(action=action, veto=";".join(veto))
+                )
+                continue
             scored.append((action, score, raroi_est, category))
         scored.sort(key=lambda x: x[1], reverse=True)
         if scored and self.roi_tracker:

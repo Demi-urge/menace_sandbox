@@ -1,0 +1,11 @@
+# Default governance veto rules.
+# Rules consist of a decision, a condition expression evaluated against
+# the scorecard, and the message returned when the rule triggers.
+
+- decision: ship
+  condition: alignment == "fail"
+  message: alignment failure prevents ship
+- decision: rollback
+  condition: raroi_increase >= 3
+  message: RAROI increased in >=3 scenarios; rollback vetoed
+
