@@ -10,7 +10,7 @@ files may provide rule expressions that override the built in heuristics.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, Iterable, List, Mapping
 
 import json
 import os
@@ -362,6 +362,7 @@ def evaluate(
 
     scorecard = scorecard or {}
     metrics = metrics or {}
+    policy = policy or {}
 
     policy_cfg = dict(_load_policy())
     if policy:
@@ -439,7 +440,7 @@ def evaluate(
         return r_ok and c_ok and s_ok
 
     # Demotion when below minimum standards or adapter underperforms.
-    demote_cfg = policy.get("demote", {})
+    demote_cfg = policy_cfg.get("demote", {})
     demote_thr = demote_cfg.get("thresholds", {})
     if not meets(demote_thr) or (
         adapter_roi is not None
@@ -457,7 +458,7 @@ def evaluate(
             reasons.append("adapter_underperforms")
         return _finish("demote")
 
-    promote_cfg = policy.get("promote", {})
+    promote_cfg = policy_cfg.get("promote", {})
     promote_thr = promote_cfg.get("thresholds", {})
     if meets(promote_thr) and (
         adapter_roi is None
@@ -469,7 +470,7 @@ def evaluate(
             reasons.append(reason)
         return _finish("promote")
 
-    micro_cfg = policy.get("micro_pilot", {})
+    micro_cfg = policy_cfg.get("micro_pilot", {})
     micro_thr = micro_cfg.get("thresholds", {})
     if meets(micro_thr):
         cond_met = False
@@ -498,4 +499,144 @@ def evaluate(
     return _finish("no_go")
 
 
-__all__ = ["Rule", "DeploymentGovernor", "evaluate_workflow", "evaluate"]
+# ---------------------------------------------------------------------------
+# Simplified rule evaluator
+
+
+@dataclass
+class EvalRule:
+    decision: str
+    condition: str
+    reason_code: str
+
+
+_EVAL_RULES: list[EvalRule] = [
+    EvalRule("demote", "raroi is None or raroi < 1.0", "raroi_below_threshold"),
+    EvalRule(
+        "demote",
+        "confidence is None or confidence < 0.7",
+        "confidence_below_threshold",
+    ),
+    EvalRule(
+        "demote",
+        "min_scenario is not None and min_scenario < 0.5",
+        "scenario_below_min",
+    ),
+    EvalRule(
+        "promote",
+        "raroi is not None and raroi >= 1.2 and confidence is not None and confidence >= 0.8",
+        "meets_promotion_criteria",
+    ),
+    EvalRule("pilot", "True", "pilot_default"),
+]
+
+
+class RuleEvaluator:
+    """Evaluate deployment readiness from a simple scorecard.
+
+    The evaluator first applies alignment and security vetoes.  Remaining rules
+    are processed in three phases: demotion rules aggregate all failing reasons;
+    promotion rules trigger a promotion decision when matched; otherwise the
+    decision falls back to ``pilot``.
+    """
+
+    def __init__(self, rules: Iterable[EvalRule] | None = None) -> None:
+        self.rules = list(rules) if rules else list(_EVAL_RULES)
+
+    def evaluate(self, scorecard: Mapping[str, Any] | None) -> Dict[str, Any]:
+        scorecard = scorecard or {}
+        alignment = str(
+            scorecard.get("alignment_status")
+            or scorecard.get("alignment")
+            or ""
+        ).lower()
+        security = str(
+            scorecard.get("security_status")
+            or scorecard.get("security")
+            or ""
+        ).lower()
+        if alignment != "pass":
+            return {
+                "decision": "demote",
+                "reason_codes": ["alignment_veto"],
+                "override_allowed": False,
+            }
+        if security != "pass":
+            return {
+                "decision": "demote",
+                "reason_codes": ["security_veto"],
+                "override_allowed": False,
+            }
+
+        raroi = scorecard.get("raroi")
+        confidence = scorecard.get("confidence")
+        scenario_scores = scorecard.get("scenario_scores")
+        min_scenario = None
+        if isinstance(scenario_scores, Mapping) and scenario_scores:
+            try:
+                min_scenario = min(float(v) for v in scenario_scores.values())
+            except Exception:
+                min_scenario = None
+
+        local_vars = {
+            "raroi": raroi,
+            "confidence": confidence,
+            "min_scenario": min_scenario,
+        }
+
+        demote_reasons: list[str] = []
+        for rule in self.rules:
+            if rule.decision != "demote":
+                continue
+            try:
+                if bool(eval(rule.condition, {"__builtins__": {}}, local_vars)):
+                    demote_reasons.append(rule.reason_code)
+            except Exception:
+                continue
+        if demote_reasons:
+            return {
+                "decision": "demote",
+                "reason_codes": demote_reasons,
+                "override_allowed": True,
+            }
+
+        for decision in ("promote", "pilot"):
+            for rule in self.rules:
+                if rule.decision != decision:
+                    continue
+                try:
+                    if bool(eval(rule.condition, {"__builtins__": {}}, local_vars)):
+                        reasons = [rule.reason_code] if rule.reason_code else []
+                        return {
+                            "decision": decision,
+                            "reason_codes": reasons,
+                            "override_allowed": True,
+                        }
+                except Exception:
+                    continue
+
+        return {
+            "decision": "pilot",
+            "reason_codes": ["no_rule_matched"],
+            "override_allowed": True,
+        }
+
+
+def evaluate_scorecard(
+    scorecard: Mapping[str, Any] | None,
+    rules: Iterable[EvalRule] | None = None,
+) -> Dict[str, Any]:
+    """Convenience wrapper around :class:`RuleEvaluator`."""
+
+    return RuleEvaluator(rules).evaluate(scorecard)
+
+
+__all__ = [
+    "Rule",
+    "DeploymentGovernor",
+    "evaluate_workflow",
+    "evaluate",
+    "EvalRule",
+    "RuleEvaluator",
+    "evaluate_scorecard",
+]
