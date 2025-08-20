@@ -18,6 +18,7 @@ import os
 import yaml
 
 from .override_validator import validate_override_file
+from .governance import Rule as GovRule, check_veto
 
 
 @dataclass
@@ -102,6 +103,48 @@ def _load_rules(path: str | None = None) -> List[Rule]:
         _RULES_PATH = None
 
     return _RULES_CACHE
+
+
+_POLICY_CACHE: Dict[str, Any] | None = None
+
+
+def _load_policy(path: str | None = None) -> Mapping[str, Any]:
+    """Load deployment policy configuration.
+
+    Searches for ``deployment_policy.yaml`` or ``deployment_policy.json`` in the
+    module's ``config`` directory.  Parsed data is cached for subsequent calls.
+    """
+
+    global _POLICY_CACHE
+    if _POLICY_CACHE is not None:
+        return _POLICY_CACHE
+
+    candidates: List[str] = []
+    if path:
+        candidates.append(path)
+    else:
+        base = os.path.join(os.path.dirname(__file__), "config")
+        candidates.append(os.path.join(base, "deployment_policy.yaml"))
+        candidates.append(os.path.join(base, "deployment_policy.json"))
+
+    policy: Mapping[str, Any] | None = None
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            try:
+                with open(candidate, "r", encoding="utf-8") as fh:
+                    if candidate.endswith(".json"):
+                        data = json.load(fh)
+                    else:
+                        data = yaml.safe_load(fh)
+            except Exception:
+                data = None
+            if isinstance(data, Mapping):
+                policy = data
+                break
+    if policy is None:
+        policy = {}
+    _POLICY_CACHE = dict(policy)
+    return _POLICY_CACHE
 
 
 @dataclass
@@ -302,4 +345,122 @@ def evaluate_workflow(
     }
 
 
-__all__ = ["Rule", "DeploymentGovernor", "evaluate_workflow"]
+def evaluate(
+    scorecard: Mapping[str, Any] | None,
+    metrics: Mapping[str, Any] | None,
+) -> Dict[str, Any]:
+    """Evaluate deployment readiness based on *scorecard* and *metrics*.
+
+    The function loads thresholds from ``config/deployment_policy`` and
+    combines them with alignment and security vetoes modelled after
+    :func:`governance.check_veto`.
+    """
+
+    scorecard = scorecard or {}
+    metrics = metrics or {}
+
+    policy = _load_policy()
+    reasons: List[str] = []
+    overridable = True
+
+    # ------------------------------------------------------------------ vetoes
+    veto_card = {
+        "alignment": scorecard.get("alignment") or scorecard.get("alignment_status"),
+        "security": scorecard.get("security") or scorecard.get("security_status"),
+    }
+    veto_rules = [
+        GovRule(condition="alignment != 'pass'", message="alignment_veto"),
+        GovRule(condition="security != 'pass'", message="security_veto"),
+    ]
+    vetoes = check_veto(veto_card, veto_rules)
+    if vetoes:
+        reasons.extend(vetoes)
+        return {"verdict": "demote", "reasons": reasons, "overridable": False}
+
+    raroi = metrics.get("raroi")
+    confidence = metrics.get("confidence")
+    sandbox_roi = metrics.get("sandbox_roi")
+    adapter_roi = metrics.get("adapter_roi")
+    predicted_roi = metrics.get("predicted_roi")
+
+    scenario_scores = metrics.get("scenario_scores") or scorecard.get("scenario_scores")
+    min_scenario = None
+    if isinstance(scenario_scores, Mapping) and scenario_scores:
+        try:
+            min_scenario = min(float(v) for v in scenario_scores.values())
+        except Exception:
+            min_scenario = None
+
+    def meets(thr: Mapping[str, Any]) -> bool:
+        r_ok = raroi is None or raroi >= float(thr.get("raroi_min", -float("inf")))
+        c_ok = confidence is None or confidence >= float(
+            thr.get("confidence_min", -float("inf"))
+        )
+        s_ok = (
+            min_scenario is None
+            or min_scenario >= float(thr.get("scenario_min", -float("inf")))
+        )
+        return r_ok and c_ok and s_ok
+
+    # Demotion when below minimum standards or adapter underperforms.
+    demote_cfg = policy.get("demote", {})
+    demote_thr = demote_cfg.get("thresholds", {})
+    if not meets(demote_thr) or (
+        adapter_roi is not None
+        and sandbox_roi is not None
+        and adapter_roi < sandbox_roi
+    ):
+        reason = demote_cfg.get("reason_code")
+        if reason:
+            reasons.append(reason)
+        if (
+            adapter_roi is not None
+            and sandbox_roi is not None
+            and adapter_roi < sandbox_roi
+        ):
+            reasons.append("adapter_underperforms")
+        return {"verdict": "demote", "reasons": reasons, "overridable": overridable}
+
+    promote_cfg = policy.get("promote", {})
+    promote_thr = promote_cfg.get("thresholds", {})
+    if meets(promote_thr) and (
+        adapter_roi is None
+        or sandbox_roi is None
+        or adapter_roi >= sandbox_roi
+    ):
+        reason = promote_cfg.get("reason_code")
+        if reason:
+            reasons.append(reason)
+        return {"verdict": "promote", "reasons": reasons, "overridable": overridable}
+
+    micro_cfg = policy.get("micro_pilot", {})
+    micro_thr = micro_cfg.get("thresholds", {})
+    if meets(micro_thr):
+        cond_met = False
+        opt = micro_cfg.get("optional_conditions", {})
+        for cfg in opt.values():
+            cond = cfg.get("condition")
+            if not isinstance(cond, str):
+                continue
+            try:
+                if bool(eval(cond, {"__builtins__": {}}, metrics)):
+                    cond_met = True
+                    rc = cfg.get("reason_code")
+                    if rc:
+                        reasons.append(rc)
+            except Exception:
+                continue
+        if cond_met or (
+            adapter_roi is not None
+            and sandbox_roi is not None
+            and adapter_roi > sandbox_roi
+        ):
+            reason = micro_cfg.get("reason_code")
+            if reason:
+                reasons.append(reason)
+            return {"verdict": "micro_pilot", "reasons": reasons, "overridable": overridable}
+
+    return {"verdict": "no_go", "reasons": reasons, "overridable": overridable}
+
+
+__all__ = ["Rule", "DeploymentGovernor", "evaluate_workflow", "evaluate"]
