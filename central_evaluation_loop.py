@@ -28,6 +28,9 @@ from .roi_calculator import ROICalculator
 from .governance import evaluate_veto
 from .truth_adapter import TruthAdapter
 from .logging_utils import log_record
+from .deployment_governance import evaluate_workflow
+from .borderline_bucket import BorderlineBucket
+from .rollback_manager import RollbackManager
 
 try:  # pragma: no cover - metrics optional
     from . import metrics_exporter as _me
@@ -60,6 +63,9 @@ if TRUTH_ADAPTER is None and _TA_LOW_CONF_GAUGE is not None:  # pragma: no cover
     _TA_LOW_CONF_GAUGE.set(0)
 
 load_dotenv()
+
+BORDERLINE_BUCKET = BorderlineBucket()
+ROLLBACK_MANAGER = RollbackManager()
 
 # Paths for input logs and output records
 ACTIONS_FILE = os.getenv("ACTIONS_FILE", "/mnt/shared/menace_logs/actions.jsonl")
@@ -211,6 +217,41 @@ def process_action(raw_line: str) -> bool:
 
     # Governance vetoes based on alignment status and scenario RAROI
     vetoes = evaluate_veto(action.get("scorecard"), action.get("alignment_status", "pass"))
+
+    alignment_status = action.get("alignment_status", "pass")
+    if flags or ("ship" in vetoes):
+        alignment_status = "fail"
+    scorecard = dict(action.get("scorecard") or {})
+    if roi_score is not None:
+        scorecard["raroi"] = roi_score
+    scorecard["alignment_status"] = alignment_status
+    eval_result = evaluate_workflow(scorecard, action.get("deployment_policy"))
+    verdict = eval_result.get("verdict")
+    if verdict == "promote":
+        wf_id = action.get("workflow_id")
+        if wf_id is not None:
+            try:
+                BORDERLINE_BUCKET.promote(str(wf_id))
+            except Exception:
+                logging.exception("workflow promotion failed")
+    elif verdict == "demote":
+        try:
+            ROLLBACK_MANAGER.rollback("latest")
+        except Exception:
+            logging.exception("rollback failed")
+    elif verdict == "pilot":
+        wf_id = action.get("workflow_id")
+        if wf_id is not None:
+            try:
+                BORDERLINE_BUCKET.enqueue(
+                    str(wf_id),
+                    roi_score or 0.0,
+                    scorecard.get("confidence") or 0.0,
+                    context=action,
+                )
+            except Exception:
+                logging.exception("micro-pilot enqueue failed")
+
     decision = action.get("decision")
     if decision and decision in vetoes:
         append_audit(
@@ -256,6 +297,8 @@ def process_action(raw_line: str) -> bool:
         audit_record["roi"] = roi_score
         if action.get("flags", {}).get("low_confidence"):
             audit_record["truth_adapter_low_confidence"] = True
+    audit_record["workflow_verdict"] = verdict
+    audit_record["workflow_reason_codes"] = eval_result.get("reason_codes", [])
     if dispatch_error:
         audit_record["dispatch_error"] = dispatch_error
     append_audit(audit_record)

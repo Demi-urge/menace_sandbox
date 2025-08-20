@@ -32,6 +32,9 @@ from .database_manager import update_model, DB_PATH
 from .databases import MenaceDB
 from .contrarian_db import ContrarianDB
 from .governance import evaluate_rules
+from .deployment_governance import evaluate_workflow
+from .borderline_bucket import BorderlineBucket
+from .rollback_manager import RollbackManager
 
 # ---------------------------------------------------------------------------
 # SQLite layer for deployment & error tracking
@@ -246,6 +249,9 @@ class DeploymentBot:
         self.memory_mgr = memory_mgr
         self.last_deployment_event: object | None = None
         self.last_memory_entry: MemoryEntry | None = None
+
+        self.rollback_manager = RollbackManager()
+        self.borderline_bucket = BorderlineBucket()
 
         # Logging
         logging.basicConfig(level=logging.INFO)
@@ -583,6 +589,32 @@ class DeploymentBot:
         if not allow_ship:
             for msg in reasons:
                 self.logger.warning("governance veto: %s", msg)
+            return -1
+
+        scorecard = {"alignment_status": alignment_status}
+        deltas = list(scenario_raroi_deltas or [])
+        if deltas:
+            scorecard["raroi"] = deltas[-1]
+        eval_res = evaluate_workflow(scorecard, None)
+        verdict = eval_res.get("verdict")
+        if verdict == "demote":
+            self.logger.warning("deployment governor demoted workflow")
+            try:
+                self.rollback_manager.rollback("latest")
+            except Exception as exc:
+                _log_exception(self.logger, "rollback", exc)
+            return -1
+        if verdict == "pilot":
+            self.logger.info("deployment governor requested micro-pilot")
+            try:
+                self.borderline_bucket.enqueue(
+                    name, scorecard.get("raroi", 0.0), scorecard.get("confidence", 0.0)
+                )
+            except Exception as exc:
+                _log_exception(self.logger, "micro-pilot enqueue", exc)
+            return -1
+        if verdict != "promote":
+            self.logger.warning("deployment halted: %s", verdict)
             return -1
         if self.db_router:
             try:
