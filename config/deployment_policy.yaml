@@ -1,7 +1,25 @@
 promote:
-  condition: "raroi > 0.7 and confidence > 0.6 and min_scenario >= 0.3"
+  thresholds:
+    raroi_min: 0.8
+    confidence_min: 0.65
+    scenario_min: 0.4
+  reason_code: meets_promotion_criteria
+
+demote:
+  thresholds:
+    raroi_min: 0.2
+    confidence_min: 0.3
+    scenario_min: 0.1
+  reason_code: below_minimum_standards
+
 micro_pilot:
-  condition: "sandbox_raroi < 0.3 and adapter_raroi > 0.6"
-overrides:
-  alignment_veto: manual_review
-  security_veto: manual_review
+  thresholds:
+    raroi_min: 0.5
+    confidence_min: 0.5
+    scenario_min: 0.3
+  optional_conditions:
+    force_micro_pilot:
+      condition: "predicted_roi > sandbox_roi"
+      reason_code: predicted_roi_exceeds_sandbox_roi
+  reason_code: evaluate_via_micro_pilot
+
