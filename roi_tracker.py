@@ -1297,9 +1297,9 @@ class ROITracker:
         if raroi < self.raroi_borderline_threshold or needs_review:
             try:
                 if self.borderline_bucket.get_candidate(wf) is None:
-                    self.borderline_bucket.enqueue(wf, float(raroi), conf)
+                    self.borderline_bucket.add_candidate(wf, float(raroi), conf)
             except Exception:  # pragma: no cover - best effort
-                logger.exception("failed to enqueue borderline workflow")
+                logger.exception("failed to add borderline workflow")
         if needs_review:
             self.needs_review.add(wf)
         else:

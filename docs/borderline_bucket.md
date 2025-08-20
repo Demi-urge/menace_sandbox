@@ -8,23 +8,24 @@ workflows, the bucket preserves their recent history so that a limited
 
 ## Data fields
 
-Each line in `borderline_bucket.jsonl` stores a JSON object with:
+Each line in `sandbox_data/borderline_bucket.jsonl` stores a JSON object with:
 
 | field       | type      | description |
 |-------------|-----------|-------------|
 | `workflow_id` | string | Unique identifier for the workflow. |
 | `raroi`     | list of numbers | Recorded RAROI values from evaluations and micro‑pilots. |
 | `confidence` | number | Last confidence score in `[0,1]`. |
-| `status`   | string | One of `candidate`, `promoted` or `terminated`. |
+| `status`   | string | One of `pending`, `promoted` or `terminated`. |
 
 ## Promotion and termination
 
-`ROITracker` adds a workflow to the bucket when its RAROI falls below the
-configured `raroi_borderline_threshold` or when the tracker’s confidence score
-drops under `confidence_threshold`.  Calling `borderline_bucket.process()` runs
-a small micro‑pilot for each pending candidate and records the new RAROI and
-confidence.  Candidates exceeding the supplied thresholds are **promoted**
-while the rest are **terminated** and removed from further consideration.
+`ROITracker` adds a workflow to the bucket using :func:`add_candidate` when its
+RAROI falls below the configured `raroi_borderline_threshold` or when the
+tracker’s confidence score drops under `confidence_threshold`.  Calling
+``borderline_bucket.process()`` runs a small micro‑pilot for each pending
+candidate and records the new RAROI and confidence.  Candidates exceeding the
+supplied thresholds are **promoted** while the rest are **terminated** and
+removed from further consideration.
 
 ## Micro‑pilot mechanics
 

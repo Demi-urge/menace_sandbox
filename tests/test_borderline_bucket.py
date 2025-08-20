@@ -9,13 +9,13 @@ def test_enqueue_and_retrieve(tmp_path):
     path = tmp_path / "bucket.jsonl"
     bucket = BorderlineBucket(str(path))
 
-    bucket.enqueue("wf1", 0.1, 0.6, {"foo": "bar"})
+    bucket.add_candidate("wf1", 0.1, 0.6, {"foo": "bar"})
 
     cand = bucket.get_candidate("wf1")
     assert cand is not None
     assert cand["raroi"] == [0.1]
     assert cand["confidence"] == 0.6
-    assert cand["status"] == "candidate"
+    assert cand["status"] == "pending"
     assert cand["context"] == {"foo": "bar"}
 
 
@@ -23,7 +23,7 @@ def test_record_result_appends_history(tmp_path):
     path = tmp_path / "bucket.jsonl"
     bucket = BorderlineBucket(str(path))
 
-    bucket.enqueue("wf1", 0.1, 0.8)
+    bucket.add_candidate("wf1", 0.1, 0.8)
     bucket.record_result("wf1", 0.2, 0.9)
     bucket.record_result("wf1", 0.3)
 
@@ -35,8 +35,8 @@ def test_record_result_appends_history(tmp_path):
 def test_process_promotes_and_terminates(tmp_path):
     path = tmp_path / "bucket.jsonl"
     bucket = BorderlineBucket(str(path))
-    bucket.enqueue("good", 0.05, 0.7)
-    bucket.enqueue("bad", 0.05, 0.7)
+    bucket.add_candidate("good", 0.05, 0.7)
+    bucket.add_candidate("bad", 0.05, 0.7)
 
     results = {"good": (0.2, 0.8), "bad": (0.01, 0.7)}
 
@@ -62,7 +62,7 @@ def test_score_workflow_routes_borderline_cases(tmp_path):
         borderline_bucket=bucket,
     )
 
-    bucket.enqueue = MagicMock()
+    bucket.add_candidate = MagicMock()
 
     tracker.workflow_confidence_scores["low_raroi"] = 0.9
     tracker.workflow_confidence_scores["low_conf"] = 0.4
@@ -70,5 +70,5 @@ def test_score_workflow_routes_borderline_cases(tmp_path):
     tracker.score_workflow("low_raroi", 0.05)
     tracker.score_workflow("low_conf", 0.2)
 
-    called_ids = {call.args[0] for call in bucket.enqueue.call_args_list}
+    called_ids = {call.args[0] for call in bucket.add_candidate.call_args_list}
     assert called_ids == {"low_raroi", "low_conf"}
