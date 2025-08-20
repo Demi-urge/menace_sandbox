@@ -19,6 +19,7 @@ from patch_provenance import (
     search_patches_by_license,
 )
 from cache_utils import get_cached_chain, set_cached_chain, _get_cache
+from cache_utils import clear_cache, show_cache, cache_stats
 
 
 def _normalise_hits(hits, origin=None):
@@ -220,6 +221,24 @@ def handle_embed(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_cache_show(args: argparse.Namespace) -> int:
+    """Handle ``cache show`` command."""
+    print(json.dumps(show_cache()))
+    return 0
+
+
+def handle_cache_clear(args: argparse.Namespace) -> int:
+    """Handle ``cache clear`` command."""
+    clear_cache()
+    return 0
+
+
+def handle_cache_stats(args: argparse.Namespace) -> int:
+    """Handle ``cache stats`` command."""
+    print(json.dumps(cache_stats()))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Menace workflow helper")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -261,6 +280,18 @@ def main(argv: list[str] | None = None) -> int:
     grp = p_search.add_mutually_exclusive_group(required=True)
     grp.add_argument("--vector", help="Vector identifier")
     grp.add_argument("--license", help="License filter")
+
+    p_cache = sub.add_parser("cache", help="Manage retrieval cache")
+    cache_sub = p_cache.add_subparsers(dest="cache_cmd", required=True)
+    cache_sub.add_parser("show", help="Show all cached entries").set_defaults(
+        func=handle_cache_show
+    )
+    cache_sub.add_parser("clear", help="Clear the retrieval cache").set_defaults(
+        func=handle_cache_clear
+    )
+    cache_sub.add_parser("stats", help="Display cache statistics").set_defaults(
+        func=handle_cache_stats
+    )
 
     p_retrieve = sub.add_parser(
         "retrieve", help="Semantic code retrieval (text table by default)"
