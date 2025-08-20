@@ -100,7 +100,16 @@ class ContextBuilder:
                 except Exception:  # pragma: no cover - fallback
                     import retrieval_ranker as _rr  # type: ignore
 
-                self.ranking_model = _rr.load_model(Path("retrieval_ranker.json"))
+                cfg = Path("retrieval_ranker.json")
+                model_path = cfg
+                if cfg.exists():
+                    try:
+                        data = json.loads(cfg.read_text())
+                        if isinstance(data, dict) and data.get("current"):
+                            model_path = Path(str(data["current"]))
+                    except Exception:
+                        pass
+                self.ranking_model = _rr.load_model(model_path)
             except Exception:
                 self.ranking_model = None
         else:
