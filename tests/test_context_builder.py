@@ -257,15 +257,49 @@ def test_weighted_ordering():
     plain = ContextBuilder(retriever=NoopRetriever())
     weighted = ContextBuilder(retriever=NoopRetriever(), db_weights={"error": 4.0, "bot": 0.1})
 
-    plain_scores = [plain._bundle_to_entry(b)[1] for b in bundles]
+    plain_scores = [plain._bundle_to_entry(b, "q")[1] for b in bundles]
     plain_ids = [s.entry["id"] for s in sorted(plain_scores, key=lambda s: s.score, reverse=True)]
     assert plain_ids == [1, 10, 100]
 
-    weighted_scores = [weighted._bundle_to_entry(b)[1] for b in bundles]
+    weighted_scores = [weighted._bundle_to_entry(b, "q")[1] for b in bundles]
     weighted_ids = [
         s.entry["id"] for s in sorted(weighted_scores, key=lambda s: s.score, reverse=True)
     ]
     assert weighted_ids == [100, 10, 1]
+
+
+def test_ranking_model_weighting():
+    class Ranker:
+        def rank(self, query, text):
+            return 0.2 if "alpha" in text else 0.9
+
+    class NoopRetriever:
+        def search(self, q, top_k=5):
+            return []
+
+    builder = ContextBuilder(retriever=NoopRetriever(), ranking_model=Ranker())
+    b1 = {"origin_db": "bot", "record_id": 1, "score": 1.0, "metadata": {"name": "alpha"}}
+    b2 = {"origin_db": "bot", "record_id": 2, "score": 1.0, "metadata": {"name": "beta"}}
+    s1 = builder._bundle_to_entry(b1, "q")[1]
+    s2 = builder._bundle_to_entry(b2, "q")[1]
+    assert s2.score > s1.score
+
+
+def test_roi_tracker_weighting():
+    class Tracker:
+        def retrieval_bias(self):
+            return {"bot": 0.5, "workflow": 2.0}
+
+    class NoopRetriever:
+        def search(self, q, top_k=5):
+            return []
+
+    builder = ContextBuilder(retriever=NoopRetriever(), roi_tracker=Tracker())
+    b1 = {"origin_db": "bot", "record_id": 1, "score": 1.0, "metadata": {"name": "a"}}
+    b2 = {"origin_db": "workflow", "record_id": 10, "score": 1.0, "metadata": {"title": "d"}}
+    scores = [builder._bundle_to_entry(b, "q")[1] for b in (b1, b2)]
+    ids = [s.entry["id"] for s in sorted(scores, key=lambda s: s.score, reverse=True)]
+    assert ids == [10, 1]
 
 
 def test_truncates_when_tokens_small(monkeypatch):
@@ -320,7 +354,7 @@ def test_builder_from_config(monkeypatch):
         },
     ]
 
-    weighted_scores = [builder._bundle_to_entry(b)[1] for b in bundles]
+    weighted_scores = [builder._bundle_to_entry(b, "q")[1] for b in bundles]
     weighted_ids = [
         s.entry["id"] for s in sorted(weighted_scores, key=lambda s: s.score, reverse=True)
     ]
