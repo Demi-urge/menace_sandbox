@@ -38,6 +38,7 @@ from .error_logger import TelemetryEvent
 from .data_bot import MetricsDB
 from .meta_logging import SecureLog
 from .sentry_client import SentryClient
+from .governance import evaluate_governance
 from .anomaly_detection import _ae_scores, _cluster_scores
 
 
@@ -256,11 +257,21 @@ class AutomatedRollbackManager(RollbackManager):
         rpc_client: Optional[object] = None,
         endpoints: Optional[Dict[str, str]] = None,
         weights: Optional[Dict[str, float]] = None,
+        alignment_status: str = "pass",
+        scenario_raroi_deltas: Iterable[float] | None = None,
     ) -> bool:
         """Notify nodes to rollback and drop DB record on quorum success.
 
         ``weights`` allows weighting node reliability for quorum calculations.
         """
+
+        vetoes = evaluate_governance(
+            "rollback", alignment_status, scenario_raroi_deltas or []
+        )
+        if vetoes:
+            for msg in vetoes:
+                self.logger.warning("governance veto: %s", msg)
+            return False
 
         confirmed = 0.0
         node_list = list(nodes)
