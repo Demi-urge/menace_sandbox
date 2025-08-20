@@ -17,6 +17,15 @@ from retrieval_cache import RetrievalCache
 
 from redaction_utils import redact_dict as pii_redact_dict, redact_text as pii_redact_text
 from governed_retrieval import govern_retrieval, redact, redact_dict
+try:  # pragma: no cover - optional dependency for metrics
+    from . import metrics_exporter as _me  # type: ignore
+except Exception:  # pragma: no cover - fallback when running as script
+    import metrics_exporter as _me  # type: ignore
+
+_FILTERED_RESULTS = _me.Gauge(
+    "retriever_filtered_vectors_total",
+    "Vectors filtered due to high alert severity",
+)
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 
@@ -66,6 +75,7 @@ class Retriever:
     content_filtering: bool = field(default=True)
     use_fts_fallback: bool = True
     cache: RetrievalCache | None = field(default_factory=RetrievalCache)
+    max_alert_severity: float = 1.0
 
     # ------------------------------------------------------------------
     def _get_retriever(self) -> UniversalRetriever:
@@ -76,8 +86,9 @@ class Retriever:
         return self.retriever
 
     # ------------------------------------------------------------------
-    def _parse_hits(self, hits: Iterable[Any]) -> List[Dict[str, Any]]:
+    def _parse_hits(self, hits: Iterable[Any], *, max_alert_severity: float = 1.0) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
+        filtered = 0
         for h in hits:
             meta = getattr(h, "metadata", {})
             if not isinstance(meta, dict) or not meta.get("redacted"):
@@ -95,8 +106,11 @@ class Retriever:
                     "metadata": meta,
                 }
             text = str(item.get("text") or "")
-            governed = govern_retrieval(text, meta, item.get("reason"))
+            governed = govern_retrieval(
+                text, meta, item.get("reason"), max_alert_severity=max_alert_severity
+            )
             if governed is None:
+                filtered += 1
                 continue
             meta, reason = governed
             fp = meta.get("license_fingerprint")
@@ -106,16 +120,24 @@ class Retriever:
             item["license"] = meta.get("license")
             item["license_fingerprint"] = fp
             item["semantic_alerts"] = meta.get("semantic_alerts")
+            item["alignment_severity"] = meta.get("alignment_severity")
             item = redact_dict(pii_redact_dict(item))
             if fp is not None:
                 item["license_fingerprint"] = fp
                 if isinstance(item.get("metadata"), dict):
                     item["metadata"]["license_fingerprint"] = fp
             results.append(item)
+        if filtered:
+            try:
+                _FILTERED_RESULTS.inc(filtered)
+            except Exception:
+                pass
         return results
 
     # ------------------------------------------------------------------
-    def _fallback(self, query: str, limit: int | None = None) -> List[Dict[str, Any]]:
+    def _fallback(
+        self, query: str, limit: int | None = None, *, max_alert_severity: float = 1.0
+    ) -> List[Dict[str, Any]]:
         query = redact(pii_redact_text(query))
         try:  # pragma: no cover - best effort import
             from code_database import CodeDB
@@ -126,10 +148,12 @@ class Retriever:
         except Exception:
             return []
         results: List[Dict[str, Any]] = []
+        filtered = 0
         for row in rows:
             text = str(row.get("code") or row.get("summary") or "")
-            governed = govern_retrieval(text)
+            governed = govern_retrieval(text, max_alert_severity=max_alert_severity)
             if governed is None:
+                filtered += 1
                 continue
             meta, reason = governed
             fp = meta.get("license_fingerprint")
@@ -142,6 +166,7 @@ class Retriever:
                 "license": meta.get("license"),
                 "license_fingerprint": fp,
                 "semantic_alerts": meta.get("semantic_alerts"),
+                "alignment_severity": meta.get("alignment_severity"),
             }
             if reason is not None:
                 item["reason"] = reason
@@ -151,6 +176,11 @@ class Retriever:
                 if isinstance(item.get("metadata"), dict):
                     item["metadata"]["license_fingerprint"] = fp
             results.append(item)
+        if filtered:
+            try:
+                _FILTERED_RESULTS.inc(filtered)
+            except Exception:
+                pass
         return results
 
     # ------------------------------------------------------------------
@@ -164,6 +194,7 @@ class Retriever:
         similarity_threshold: float | None = None,
         dbs: Sequence[str] | None = None,
         use_fts_fallback: bool | None = None,
+        max_alert_severity: float | None = None,
     ) -> List[Dict[str, Any]] | FallbackResult:
         """Perform semantic search and return normalised results.
 
@@ -181,6 +212,9 @@ class Retriever:
         k = top_k or self.top_k
         thresh = (
             similarity_threshold if similarity_threshold is not None else self.similarity_threshold
+        )
+        sev_limit = (
+            max_alert_severity if max_alert_severity is not None else self.max_alert_severity
         )
         cached: List[Dict[str, Any]] | None = None
         if self.cache:
@@ -224,7 +258,7 @@ class Retriever:
                 raise VectorServiceError("vector search failed") from exc
 
             if hits and confidence >= thresh:
-                results = self._parse_hits(hits)
+                results = self._parse_hits(hits, max_alert_severity=sev_limit)
                 if results:
                     if self.cache:
                         self.cache.set(query, dbs, results)
@@ -241,7 +275,7 @@ class Retriever:
         fts_hits: List[Dict[str, Any]] = []
         if use_fts_fallback if use_fts_fallback is not None else self.use_fts_fallback:
             fts_hits = fts_search(query, dbs=dbs, limit=k)
-        fb_hits = self._fallback(query, limit=k)
+        fb_hits = self._fallback(query, limit=k, max_alert_severity=sev_limit)
         merged: List[Dict[str, Any]] = []
         seen = set()
         for item in fts_hits + fb_hits:
@@ -263,6 +297,7 @@ class Retriever:
         similarity_threshold: float | None = None,
         dbs: Sequence[str] | None = None,
         use_fts_fallback: bool | None = None,
+        max_alert_severity: float | None = None,
     ) -> List[Dict[str, Any]] | FallbackResult:
         """Asynchronous wrapper for :meth:`search`.
 
@@ -279,6 +314,7 @@ class Retriever:
             similarity_threshold=similarity_threshold,
             dbs=dbs,
             use_fts_fallback=use_fts_fallback,
+            max_alert_severity=max_alert_severity,
         )
 
     # ------------------------------------------------------------------

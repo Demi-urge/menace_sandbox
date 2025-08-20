@@ -22,6 +22,7 @@ def govern_retrieval(
     text: str,
     metadata: Optional[Dict[str, Any]] = None,
     reason: Optional[str] = None,
+    max_alert_severity: float = 1.0,
 ) -> Optional[Tuple[Dict[str, Any], Optional[str]]]:
     """Return governed ``(metadata, reason)`` for *text* or ``None`` if blocked.
 
@@ -32,7 +33,10 @@ def govern_retrieval(
       item entirely.
     * Identify semantic risks with :func:`find_semantic_risks` and attach the
       resulting alert list under ``"semantic_alerts"`` in the returned
-      metadata.
+      metadata.  ``max_alert_severity`` controls the maximum allowed alert
+      score; when exceeded ``None`` is returned to signal that the item should
+      be skipped.  The highest alert score is also stored under
+      ``"alignment_severity"`` for downstream tracking.
     * Redact secrets from ``metadata`` and ``reason`` using the
       :mod:`security.secret_redactor` helpers.  The ``"redacted"`` flag is set
       on the metadata to signal downstream consumers that secrets have been
@@ -47,6 +51,10 @@ def govern_retrieval(
     meta: Dict[str, Any] = metadata.copy() if isinstance(metadata, dict) else {}
     if alerts:
         meta.setdefault("semantic_alerts", alerts)
+        max_sev = max(score for _, _, score in alerts)
+        meta.setdefault("alignment_severity", max_sev)
+        if max_sev > max_alert_severity:
+            return None
     meta = redact_dict(meta)
     meta.setdefault("redacted", True)
     meta.setdefault("license_fingerprint", license_fingerprint(text))

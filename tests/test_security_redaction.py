@@ -52,3 +52,38 @@ def test_encode_text_uses_redacted_text():
     assert secret not in obj._model.tokenizer.last_text
     assert secret not in obj._model.last_text
     assert "[REDACTED]" in obj._model.last_text
+
+
+def test_govern_retrieval_filters_by_severity(monkeypatch):
+    import governed_retrieval as gr
+
+    def fake_find(lines):
+        return [("line", "msg", 0.9)]
+
+    monkeypatch.setattr(gr, "find_semantic_risks", fake_find)
+    assert gr.govern_retrieval("text", max_alert_severity=0.5) is None
+
+
+def test_retriever_skips_risky_hits(monkeypatch):
+    from vector_service import retriever as rmod
+
+    class Hit:
+        def __init__(self, text):
+            self.metadata = {"redacted": True}
+            self.text = text
+            self.score = 0.0
+
+        def to_dict(self):  # pragma: no cover - simple container
+            return {"metadata": self.metadata, "text": self.text, "score": self.score}
+
+    def fake_govern(text, meta=None, reason=None, max_alert_severity=1.0):
+        if "bad" in text:
+            return None
+        return ({**(meta or {}), "alignment_severity": 0.4}, reason)
+
+    monkeypatch.setattr(rmod, "govern_retrieval", fake_govern)
+    r = rmod.Retriever()
+    hits = [Hit("ok"), Hit("bad")]
+    results = r._parse_hits(hits, max_alert_severity=0.5)
+    assert len(results) == 1
+    assert results[0]["alignment_severity"] == 0.4

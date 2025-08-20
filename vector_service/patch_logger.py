@@ -24,6 +24,12 @@ _TRACK_DURATION = _me.Gauge(
     "Duration of PatchLogger.track_contributors calls",
 )
 
+_VECTOR_RISK = _me.Gauge(
+    "patch_logger_vectors_total",
+    "Vectors processed by PatchLogger grouped by risk level",
+    labelnames=["risk"],
+)
+
 try:  # pragma: no cover - optional dependencies
     from vector_metrics_db import VectorMetricsDB  # type: ignore
 except Exception:  # pragma: no cover
@@ -117,6 +123,8 @@ class PatchLogger:
             detailed_meta = []
             provenance_meta = []
             vm_vectors = []
+            risky = 0
+            safe = 0
             for o, vid, score in detailed:
                 key = f"{o}:{vid}" if o else vid
                 m = meta.get(key, {})
@@ -131,6 +139,13 @@ class PatchLogger:
                     detailed_meta.append((o, vid, score, lic, alerts))
                     provenance_meta.append((o, vid, score, lic, alerts, sev))
                 vm_vectors.append((vid, score, lic, alerts, sev))
+                if sev:
+                    risky += 1
+                else:
+                    safe += 1
+
+            _VECTOR_RISK.labels("risky").inc(risky)
+            _VECTOR_RISK.labels("safe").inc(safe)
 
             if self.metrics_db is not None:
                 try:  # pragma: no cover - legacy path
