@@ -1632,7 +1632,7 @@ class ROITracker:
             except Exception:
                 rb = None
 
-            _base_roi, raroi = self.calculate_raroi(
+            _base_roi, raroi, _suggestions = self.calculate_raroi(
                 adjusted,
                 workflow_type=str(metrics.get("workflow_type", "standard")),
                 rollback_prob=rb,
@@ -3583,8 +3583,8 @@ class ROITracker:
         impact_severity: float | None = None,
         metrics: Mapping[str, float] | None = None,
         failing_tests: Iterable[str] | Mapping[str, bool] | None = None,
-    ) -> tuple[float, float]:
-        """Return ``(base_roi, risk_adjusted_roi)`` for ``workflow_type``.
+    ) -> tuple[float, float, list[tuple[str, str]]]:
+        """Return ``(base_roi, risk_adjusted_roi, bottlenecks)`` for ``workflow_type``.
 
         The method estimates the catastrophic risk of continuing a workflow by
         combining rollback probability, workflow impact severity and recent
@@ -3596,6 +3596,9 @@ class ROITracker:
         ``failing_tests`` may explicitly list failing critical suites or map
         suite names to boolean pass/fail flags. When omitted, failing suites are
         looked up via :func:`self_test_service.get_failed_critical_tests`.
+        If the resulting RAROI dips below ``raroi_borderline_threshold`` the
+        function invokes :func:`propose_fix` to return bottleneck suggestions
+        alongside the score.
         """
 
         recent = self.roi_history[-self.window :]
@@ -3649,8 +3652,17 @@ class ROITracker:
         raroi = float(
             base_roi * (1.0 - catastrophic_risk) * stability_factor * safety_factor
         )
+
+        bottlenecks: list[tuple[str, str]] = []
+        if raroi < self.raroi_borderline_threshold:
+            try:
+                profile = workflow_type or "standard"
+                bottlenecks = propose_fix(metrics_map, profile)
+            except Exception:
+                bottlenecks = []
+
         self.last_raroi = raroi
-        return float(base_roi), raroi
+        return float(base_roi), raroi, bottlenecks
 
     # ------------------------------------------------------------------
     def plot_history(self, output_path: str) -> None:

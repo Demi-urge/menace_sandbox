@@ -231,12 +231,12 @@ class ActionPlanner:
                         if self.growth_weighting
                         else 1.0
                     )
-                    base_roi, raroi = (
+                    base_roi, raroi, _ = (
                         self.roi_tracker.calculate_raroi(
                             roi_est, workflow_type="standard", metrics={}
                         )
                         if self.roi_tracker
-                        else (roi_est, roi_est)
+                        else (roi_est, roi_est, [])
                     )
                     if self.roi_tracker:
                         final_score, needs_review, confidence = self.roi_tracker.score_workflow(
@@ -292,7 +292,7 @@ class ActionPlanner:
             base = (rev - cost) / cpu
             if self.roi_tracker:
                 try:
-                    _base, raroi = self.roi_tracker.calculate_raroi(
+                    _base, raroi, _ = self.roi_tracker.calculate_raroi(
                         base, workflow_type="standard", metrics={}
                     )
                 except Exception:
@@ -377,7 +377,7 @@ class ActionPlanner:
                 reward, needs_review, confidence = raroi, False, 1.0
             if reward == 0.0 and self.roi_tracker:
                 try:
-                    _, raroi = self.roi_tracker.calculate_raroi(
+                    _, raroi, _ = self.roi_tracker.calculate_raroi(
                         rec.roi, workflow_type="standard", metrics={}
                     )
                     reward, needs_review, confidence = self.roi_tracker.score_workflow(
@@ -405,10 +405,10 @@ class ActionPlanner:
                 reward *= conf
                 if self.roi_tracker:
                     try:
-                        pred_base, pred_raroi = self.roi_tracker.calculate_raroi(
+                        pred_base, pred_raroi, _ = self.roi_tracker.calculate_raroi(
                             roi_est, workflow_type="standard", metrics={}
                         )
-                        actual_base, actual_raroi = self.roi_tracker.calculate_raroi(
+                        actual_base, actual_raroi, _ = self.roi_tracker.calculate_raroi(
                             rec.roi, workflow_type="standard", metrics={}
                         )
                         self.roi_tracker.record_prediction(
@@ -560,7 +560,7 @@ class ActionPlanner:
             final_score = raroi_est
             if self.roi_tracker:
                 try:
-                    _, raroi_est = self.roi_tracker.calculate_raroi(
+                    _, raroi_est, _ = self.roi_tracker.calculate_raroi(
                         roi_est, workflow_type="standard", metrics={}
                     )
                     final_score, _needs_review, _conf = self.roi_tracker.score_workflow(

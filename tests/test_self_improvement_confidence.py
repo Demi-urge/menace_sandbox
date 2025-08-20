@@ -35,7 +35,7 @@ class _DummyPredictor:
 
 class _DummyTracker:
     def calculate_raroi(self, roi_est, workflow_type="standard", metrics=None, failing_tests=None):
-        return float(roi_est), float(roi_est) * 0.8
+        return float(roi_est), float(roi_est) * 0.8, []
 
     def workflow_confidence(self, workflow_id):
         return {"mod1": 0.9, "mod2": 0.3}.get(workflow_id, 0.0)
@@ -57,6 +57,7 @@ class _DummyEngine:
         self.logger = types.SimpleNamespace(info=lambda *a, **k: None, debug=lambda *a, **k: None)
         self._log_action = lambda *a, **k: None
         self._candidate_features = lambda mod: [10] if mod == "mod1" else [5]
+        self.borderline_raroi_threshold = 0.0
 
 
 def test_final_weighting_and_low_confidence_demotes():

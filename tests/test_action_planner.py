@@ -317,8 +317,8 @@ def test_plan_actions_ranks_by_raroi(monkeypatch, tmp_path):
 
     def fake_calculate(base_roi, *args, **kwargs):
         if base_roi == 1.0:
-            return base_roi, 0.1
-        return base_roi, 0.9
+            return base_roi, 0.1, []
+        return base_roi, 0.9, []
 
     monkeypatch.setattr(planner.roi_tracker, "calculate_raroi", fake_calculate)
 

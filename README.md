@@ -106,8 +106,10 @@
    from sandbox modules and failing test results passed via `failing_tests`
    shape the `safety_factor`. Each failing security or alignment test halves
    the factor, so RAROI close to the raw ROI signals a stable, low-risk
-   workflow while a much lower RAROI highlights risk and volatility. RAROI
-   feeds into module ranking and guides self-improvement decisions.
+   workflow while a much lower RAROI highlights risk and volatility. When the
+   score drops below `raroi_borderline_threshold` the method also returns
+   bottleneck suggestions via `propose_fix`. RAROI feeds into module ranking
+   and guides self-improvement decisions.
 - Scenario scorecards collate baseline and stress ROI plus metric and synergy
   deltas for each stress preset. `sandbox_runner.environment.run_scenarios`
   returns a mapping of these scorecards keyed by scenario. They can also be
@@ -134,7 +136,7 @@ from menace_sandbox.roi_tracker import ROITracker
 
 tracker = ROITracker(raroi_borderline_threshold=0.05)
 tracker.update(0.12)
-base, raroi = tracker.calculate_raroi(1.1)
+  base, raroi, _ = tracker.calculate_raroi(1.1)
 tracker.borderline_bucket.process(
     raroi_threshold=tracker.raroi_borderline_threshold,
     confidence_threshold=tracker.confidence_threshold,

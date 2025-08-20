@@ -204,7 +204,7 @@ class RankingModelScheduler:
                     if self.roi_tracker.roi_history
                     else 0.0
                 )
-                _base, raroi = self.roi_tracker.calculate_raroi(
+                _base, raroi, _ = self.roi_tracker.calculate_raroi(
                     base_roi, workflow_type="standard", metrics={}
                 )
                 final_score, needs_review, confidence = self.roi_tracker.score_workflow(
@@ -281,6 +281,9 @@ class RankingModelScheduler:
                 except Exception:
                     pass
             start = time.time()
+            if not self.running:
+                time.sleep(base_interval)
+                break
             while self.running:
                 triggered = False
                 if (

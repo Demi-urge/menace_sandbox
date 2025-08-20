@@ -161,7 +161,7 @@ def evaluate_veto(
         base_raroi = None
         if isinstance(baseline, Mapping) and "roi" in baseline:
             base_roi = float(baseline.get("roi", 0.0))
-            _, base_raroi = tracker.calculate_raroi(
+            _, base_raroi, _ = tracker.calculate_raroi(
                 base_roi, rollback_prob=0.0, metrics=baseline.get("metrics", {})
             )
         raroi_deltas: list[float] = []
@@ -172,7 +172,7 @@ def evaluate_veto(
                 if not isinstance(info, Mapping) or "roi" not in info:
                     continue
                 roi = float(info.get("roi", 0.0))
-                _, scen_raroi = tracker.calculate_raroi(
+                _, scen_raroi, _ = tracker.calculate_raroi(
                     roi, rollback_prob=0.0, metrics=info.get("metrics", {})
                 )
                 raroi_deltas.append(scen_raroi - base_raroi)
