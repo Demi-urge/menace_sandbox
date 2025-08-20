@@ -75,7 +75,21 @@ class ContextBuilder:
         max_tokens: int = ContextBuilderConfig().max_tokens,
     ) -> None:
         self.retriever = retriever or Retriever()
-        self.ranking_model = ranking_model
+
+        if ranking_model is None:
+            try:  # pragma: no cover - best effort model load
+                from pathlib import Path
+
+                try:  # package relative import when available
+                    from .. import retrieval_ranker as _rr  # type: ignore
+                except Exception:  # pragma: no cover - fallback
+                    import retrieval_ranker as _rr  # type: ignore
+
+                self.ranking_model = _rr.load_model(Path("retrieval_ranker.json"))
+            except Exception:
+                self.ranking_model = None
+        else:
+            self.ranking_model = ranking_model
         self.roi_tracker = roi_tracker
         self.ranking_weight = ranking_weight
         self.roi_weight = roi_weight
@@ -94,8 +108,10 @@ class ContextBuilder:
         return _summarise_text(text)
 
     # ------------------------------------------------------------------
-    def _metric(self, origin: str, meta: Dict[str, Any]) -> float | None:
-        """Extract ROI/success metrics from metadata."""
+    def _metric(
+        self, origin: str, meta: Dict[str, Any], query: str, text: str
+    ) -> float | None:
+        """Extract ROI/success metrics from metadata and ranking model."""
 
         metric: float | None = None
         try:
@@ -160,6 +176,24 @@ class ContextBuilder:
                 metric = (metric or 0.0) - float(sev)
             except Exception:
                 pass
+
+        if self.ranking_model is not None:
+            try:
+                if hasattr(self.ranking_model, "score"):
+                    metric = (metric or 0.0) + float(
+                        self.ranking_model.score(query, text)
+                    )
+                elif hasattr(self.ranking_model, "rank"):
+                    metric = (metric or 0.0) + float(
+                        self.ranking_model.rank(query, text)
+                    )
+                else:
+                    metric = (metric or 0.0) + float(
+                        self.ranking_model(query, text)  # type: ignore[misc]
+                    )
+            except Exception:
+                pass
+
         return metric
 
     # ------------------------------------------------------------------
@@ -220,7 +254,7 @@ class ContextBuilder:
 
         text = redact_text(str(text))
         entry["desc"] = self._summarise(text)
-        metric = self._metric(origin, meta)
+        metric = self._metric(origin, meta, query, text)
         if metric is not None:
             entry["metric"] = metric
 
@@ -265,16 +299,6 @@ class ContextBuilder:
 
         similarity = float(bundle.get("score", 0.0))
         rank_prob = self.ranking_weight
-        if self.ranking_model is not None:
-            try:
-                if hasattr(self.ranking_model, "score"):
-                    rank_prob = float(self.ranking_model.score(query, text))
-                elif hasattr(self.ranking_model, "rank"):
-                    rank_prob = float(self.ranking_model.rank(query, text))
-                else:
-                    rank_prob = float(self.ranking_model(query, text))  # type: ignore[misc]
-            except Exception:
-                rank_prob = self.ranking_weight
         roi_bias = self.roi_weight
         if self.roi_tracker is not None:
             try:

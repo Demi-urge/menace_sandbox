@@ -203,19 +203,34 @@ def main(argv: Iterable[str] | None = None) -> int:
     """CLI entry point for manual scheduling."""
 
     import argparse
+    from importlib import import_module
+
+    def _import_obj(path: str) -> Any:
+        mod_name, attr = path.rsplit(":", 1)
+        mod = import_module(mod_name)
+        return getattr(mod, attr)
 
     p = argparse.ArgumentParser(description="Retrain ranking model periodically")
     p.add_argument("--vector-db", default="vector_metrics.db")
     p.add_argument("--metrics-db", default="metrics.db")
     p.add_argument("--model-path", default="retrieval_ranker.json")
     p.add_argument("--interval", type=int, default=86400)
+    p.add_argument(
+        "--service",
+        action="append",
+        default=[],
+        help="Import path to service exposing reload_ranker_model",
+    )
     args = p.parse_args(list(argv) if argv is not None else None)
 
-    sched = RankingModelScheduler([],
-                                   vector_db=args.vector_db,
-                                   metrics_db=args.metrics_db,
-                                   model_path=args.model_path,
-                                   interval=args.interval)
+    services = [_import_obj(s) for s in args.service]
+    sched = RankingModelScheduler(
+        services,
+        vector_db=args.vector_db,
+        metrics_db=args.metrics_db,
+        model_path=args.model_path,
+        interval=args.interval,
+    )
     sched.start()
     try:
         while True:
