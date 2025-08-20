@@ -120,11 +120,18 @@ class SandboxSettings(BaseSettings):
     synergy_threshold: float | None = Field(None, env="SYNERGY_THRESHOLD")
     roi_confidence: float | None = Field(None, env="ROI_CONFIDENCE")
     synergy_confidence: float | None = Field(None, env="SYNERGY_CONFIDENCE")
-    raroi_borderline_threshold: float = Field(
-        0.05,
-        env="RAROI_BORDERLINE_THRESHOLD",
+    borderline_raroi_threshold: float = Field(
+        0.0,
+        env="BORDERLINE_RAROI_THRESHOLD",
         description=(
             "RAROI below this value queues workflows in the borderline bucket."
+        ),
+    )
+    borderline_confidence_threshold: float = Field(
+        0.0,
+        env="BORDERLINE_CONFIDENCE_THRESHOLD",
+        description=(
+            "Confidence below this value queues workflows in the borderline bucket."
         ),
     )
     micropilot_mode: str = Field(
