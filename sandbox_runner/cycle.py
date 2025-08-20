@@ -791,7 +791,8 @@ def _sandbox_cycle_runner(
             except Exception:
                 raroi = roi
             settings = getattr(ctx, "settings", SandboxSettings())
-            tracker.raroi_borderline_threshold = settings.raroi_borderline_threshold
+            tracker.raroi_borderline_threshold = settings.borderline_raroi_threshold
+            tracker.confidence_threshold = settings.borderline_confidence_threshold
             needs_review = conf_val < tracker.confidence_threshold
             low_raroi = raroi < tracker.raroi_borderline_threshold
             logger.info(

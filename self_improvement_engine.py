@@ -722,7 +722,6 @@ class SelfImprovementEngine:
             except Exception:
                 self.metrics_db = None
         self.auto_refresh_map = bool(auto_refresh_map)
-        self.tau = tau
         self.pre_roi_bot = pre_roi_bot
         self.pre_roi_scale = (
             pre_roi_scale if pre_roi_scale is not None else PRE_ROI_SCALE
@@ -732,12 +731,19 @@ class SelfImprovementEngine:
         settings = SandboxSettings()
         self.borderline_bucket = BorderlineBucket()
         self.borderline_raroi_threshold = getattr(
-            settings, "raroi_borderline_threshold", 0.0
+            settings, "borderline_raroi_threshold", 0.0
+        )
+        self.tau = tau if tau is not None else getattr(
+            settings, "borderline_confidence_threshold", 0.0
         )
         self.use_adaptive_roi = getattr(settings, "adaptive_roi_prioritization", True)
         if self.use_adaptive_roi:
             self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
-            self.roi_tracker = roi_tracker or ROITracker()
+            self.roi_tracker = roi_tracker or ROITracker(
+                confidence_threshold=self.tau,
+                raroi_borderline_threshold=self.borderline_raroi_threshold,
+                borderline_bucket=self.borderline_bucket,
+            )
             self._adaptive_roi_last_train = time.time()
             self.adaptive_roi_train_interval = getattr(
                 settings, "adaptive_roi_train_interval", ADAPTIVE_ROI_TRAIN_INTERVAL
@@ -2262,7 +2268,7 @@ class SelfImprovementEngine:
             )
             if tracker:
                 final_score, needs_review, confidence = tracker.score_workflow(
-                    mod, raroi, tau=self.tau
+                    mod, raroi
                 )
             else:
                 confidence = 1.0
@@ -2707,7 +2713,7 @@ class SelfImprovementEngine:
                 )
                 if tracker:
                     final_score, needs_review, confidence = tracker.score_workflow(
-                        bot_name, raroi, tau=self.tau
+                        bot_name, raroi
                     )
                 else:
                     confidence = 1.0

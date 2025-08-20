@@ -99,8 +99,8 @@ for the full formula.
 
 ## Borderline bucket and micro‑pilots
 
-When a workflow's RAROI drops below ``RAROI_BORDERLINE_THRESHOLD`` or the
-confidence score is too low it is queued in the
+When a workflow's RAROI drops below ``BORDERLINE_RAROI_THRESHOLD`` or the
+confidence score falls under ``BORDERLINE_CONFIDENCE_THRESHOLD`` it is queued in the
 [borderline bucket](borderline_bucket.md). The bucket stores recent RAROI
 values and the latest confidence so a lightweight **micro‑pilot** can collect
 additional evidence. ``MICROPILOT_MODE`` controls how these candidates are
@@ -114,7 +114,7 @@ handled:
 Run the sandbox with automatic micro‑pilots enabled:
 
 ```bash
-MICROPILOT_MODE=auto RAROI_BORDERLINE_THRESHOLD=0.1 \
+MICROPILOT_MODE=auto BORDERLINE_RAROI_THRESHOLD=0.1 \
 python run_autonomous.py --runs 1
 ```
 
