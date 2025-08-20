@@ -8,6 +8,8 @@ import json
 import pytest
 import numpy as np
 import menace.roi_tracker as rt
+from menace.roi_tracker import ROITracker
+from menace.borderline_bucket import BorderlineBucket
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -2203,3 +2205,21 @@ def test_self_improvement_engine_raroi_prioritisation(monkeypatch):
     scored = engine._score_modifications(["risky", "safe"])
     assert [s[0] for s in scored] == ["safe", "risky"]
     assert scored[0][3] > scored[1][3]
+
+
+def test_low_raroi_or_confidence_added_to_borderline_bucket(tmp_path):
+    bucket = BorderlineBucket(str(tmp_path / "b.jsonl"))
+    tracker = ROITracker(
+        raroi_borderline_threshold=0.1,
+        confidence_threshold=0.8,
+        borderline_bucket=bucket,
+    )
+    tracker.workflow_confidence_scores["low_raroi"] = 0.9
+    _final, review, _conf = tracker.score_workflow("low_raroi", 0.05)
+    assert not review
+    assert bucket.get_candidate("low_raroi") is not None
+
+    tracker.workflow_confidence_scores["low_conf"] = 0.5
+    _final, review, _conf = tracker.score_workflow("low_conf", 0.5)
+    assert review
+    assert bucket.get_candidate("low_conf") is not None
