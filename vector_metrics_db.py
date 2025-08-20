@@ -230,6 +230,28 @@ class VectorMetricsDB:
         self.add(rec)
 
     # ------------------------------------------------------------------
+    def log_retrieval_feedback(
+        self,
+        db: str,
+        *,
+        win: bool = False,
+        regret: bool = False,
+        roi: float = 0.0,
+    ) -> None:
+        """Persist aggregate feedback for *db* without session context."""
+
+        rec = VectorMetric(
+            event_type="retrieval",
+            db=db,
+            tokens=0,
+            wall_time_ms=0.0,
+            contribution=roi,
+            win=win,
+            regret=regret,
+        )
+        self.add(rec)
+
+    # ------------------------------------------------------------------
     def embedding_tokens_total(self, db: str | None = None) -> int:
         cur = self.conn.execute(
             "SELECT COALESCE(SUM(tokens),0) FROM vector_metrics WHERE event_type='embedding'" +

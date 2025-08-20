@@ -34,6 +34,11 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     PatchHistoryDB = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from unified_event_bus import UnifiedEventBus  # type: ignore
+except Exception:  # pragma: no cover
+    UnifiedEventBus = None  # type: ignore
+
 
 class PatchLogger:
     """Record patch outcomes in ``PatchHistoryDB`` or ``VectorMetricsDB``.
@@ -151,17 +156,34 @@ class PatchLogger:
                     except Exception:
                         pass
                 if self.vector_metrics is not None:
-                    try:  # pragma: no cover - best effort
-                        self.vector_metrics.update_outcome(
-                            session_id,
-                            pairs,
-                            contribution=0.0 if contribution is None else contribution,
-                            patch_id=patch_id,
-                            win=result,
-                            regret=not result,
-                        )
-                    except Exception:
-                        pass
+                    roi_base = 0.0 if contribution is None else contribution
+                    for origin, vid, score in detailed:
+                        try:  # pragma: no cover - best effort
+                            roi = roi_base if contribution is not None else score
+                            self.vector_metrics.update_outcome(
+                                session_id,
+                                [(origin, vid)],
+                                contribution=roi,
+                                patch_id=patch_id,
+                                win=result,
+                                regret=not result,
+                            )
+                            try:
+                                self.vector_metrics.log_retrieval_feedback(
+                                    origin or "", win=result, regret=not result, roi=roi
+                                )
+                            except Exception:
+                                pass
+                            if UnifiedEventBus is not None:
+                                try:
+                                    UnifiedEventBus().publish(
+                                        "retrieval:feedback",
+                                        {"db": origin or "", "win": result, "regret": not result},
+                                    )
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
                     if patch_id:
                         try:
                             self.vector_metrics.record_patch_ancestry(patch_id, vm_vectors)
