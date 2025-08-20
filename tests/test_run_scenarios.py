@@ -29,16 +29,23 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
 
     out = Path("sandbox_data/scenario_deltas.json")
     out.unlink(missing_ok=True)
-    tracker_obj, summary = env.run_scenarios(
-        ["simple_functions:print_ten"], tracker=rt.ROITracker()
+    tracker_obj, cards, summary = env.run_scenarios(
+        ["simple_functions:print_ten"], tracker=rt.ROITracker(filter_outliers=False)
     )
 
     expected = {scen: roi_on - roi_off for scen, (roi_on, roi_off) in scenario_data.items()}
+    baseline_roi = scenario_data["normal"][0]
+    expected_raroi_delta = {scen: roi_on - baseline_roi for scen, (roi_on, _) in scenario_data.items()}
     assert set(summary["scenarios"]) == set(expected)
     for scen, delta in expected.items():
         info = summary["scenarios"][scen]
         assert info["roi_delta"] == pytest.approx(delta)
+        assert "raroi" in info and isinstance(info["raroi"], float)
+        assert "raroi_delta" in info and isinstance(info["raroi_delta"], float)
+        if scen == "normal":
+            assert info["raroi_delta"] == pytest.approx(0.0)
         assert tracker_obj.get_scenario_roi_delta(scen) == pytest.approx(delta)
+        assert scen in tracker_obj.scenario_raroi_delta
         flags = {r["flag"] for r in info["runs"]}
         assert flags == {"on", "off"}
         assert info["target_delta"]["roi"] == pytest.approx(delta)
@@ -46,7 +53,12 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
     assert summary["worst_scenario"] == worst
     assert tracker_obj.biggest_drop()[0] == worst
 
+    # scorecards returned and included in summary
+    assert len(cards) == len(expected)
+    assert summary["scorecards"] and len(summary["scorecards"]) == len(cards)
+
     data = json.loads(out.read_text())
     for scen, delta in expected.items():
         assert data[scen]["roi_delta"] == pytest.approx(delta)
+        assert "raroi_delta" in data[scen]
         assert data[scen]["worst"] is (scen == worst)
