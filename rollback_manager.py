@@ -18,6 +18,7 @@ except Exception:  # pragma: no cover - optional dependency
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
 from .unified_event_bus import UnifiedEventBus
+from .governance import evaluate_governance
 
 
 
@@ -172,8 +173,18 @@ class RollbackManager:
         requesting_bot: str | None = None,
         rpc_client: Optional[object] = None,
         endpoints: Optional[Dict[str, str]] = None,
+        alignment_status: str = "pass",
+        scenario_raroi_deltas: Iterable[float] | None = None,
     ) -> None:
         """Notify nodes to rollback then drop the patch record."""
+        vetoes = evaluate_governance(
+            "rollback", alignment_status, scenario_raroi_deltas or []
+        )
+        if vetoes:
+            for msg in vetoes:
+                self.logger.warning("governance veto: %s", msg)
+            return
+
         try:
             self._check_permission(WRITE, requesting_bot)
         except PermissionError:
