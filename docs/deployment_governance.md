@@ -35,7 +35,11 @@ file with the same structure at `config/deployment_governance.yaml` or
 
 Custom rule files are searched for in the module's `config` directory. Threshold
 defaults such as `raroi_threshold`, `confidence_threshold` and
-`scenario_score_min` come from `config/deployment_policy.yaml`. Operators may
+`scenario_score_min` come from `config/deployment_policy.yaml`. The policy file
+also supports a `max_variance` field limiting the allowed variance between
+scenario scores and a `scenario_thresholds` mapping for per‑scenario minimums.
+Workflows are demoted when variance exceeds `max_variance` or any listed
+scenario falls below its configured threshold. Operators may
 override these values by passing a `policy` mapping to `evaluate_workflow`.
 
 ## Sample scorecard
