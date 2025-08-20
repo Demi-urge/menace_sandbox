@@ -26,6 +26,24 @@ Rules loaded from YAML or JSON are prepended to the built-in defaults.
   reason_code: ""
 ```
 
+An example policy file is available at
+[`examples/deployment_policy.yaml`](examples/deployment_policy.yaml). Placing a
+file with the same structure at `config/deployment_governance.yaml` or
+`config/deployment_governance.json` will make the rules load automatically.
+
+## Configuration
+
+Custom rule files are searched for in the module's `config` directory. Threshold
+defaults such as `raroi_threshold`, `confidence_threshold` and
+`scenario_score_min` come from `config/deployment_policy.yaml`. Operators may
+override these values by passing a `policy` mapping to `evaluate_workflow`.
+
+## Sample scorecard
+
+`evaluate_workflow` expects a mapping of workflow metrics including alignment,
+RAROI and confidence. A minimal example scorecard is provided in
+[`examples/scorecard.json`](examples/scorecard.json).
+
 ## Evaluation process
 
 1. Alignment and security statuses are checked first. Any failure immediately
@@ -56,7 +74,11 @@ PY
 
 Manual override files contain a `data` object and HMAC `signature`. When a
 valid override is supplied via `override_path` / `public_key_path`, its entries
-are merged into the returned `overrides` mapping. Overrides may specify flags
-like ``bypass_micro_pilot`` or force a ``verdict`` such as ``promote``. A
-validated forced verdict appends the ``manual_override`` reason code and
+are merged into the returned `overrides` mapping. Common flags include:
+
+- `bypass_micro_pilot` – skip the automatic micro-pilot trigger.
+- `verdict` / `forced_verdict` – force the final decision (`promote`, `demote`,
+  `pilot` or `no_go`).
+
+A validated forced verdict appends the `manual_override` reason code and
 replaces the computed decision.
