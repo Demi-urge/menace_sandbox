@@ -2277,13 +2277,12 @@ class SelfImprovementEngine:
                 except Exception:
                     pass
                 try:
-                    if (
-                        self.roi_tracker.borderline_bucket.get_candidate(mod)
-                        is None
-                    ):
-                        self.roi_tracker.borderline_bucket.add_candidate(
-                            mod, raroi, confidence
-                        )
+                    self.roi_tracker.borderline_bucket.enqueue(mod, raroi, confidence)
+                    try:
+                        evaluator = getattr(self, "micro_pilot_evaluator", None)
+                        self.roi_tracker.process_borderline_candidates(evaluator)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
                 continue
