@@ -5450,7 +5450,51 @@ def run_scenarios(
         "scorecards": {scen: asdict(card) for scen, card in scorecards.items()},
         "status": tracker.workflow_label,
     }
+    try:
+        summary["workflow_scorecard"] = generate_scorecard(workflow, summary)
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to generate workflow scorecard")
+        summary["workflow_scorecard"] = {}
     return tracker, scorecards, summary
+
+
+# ----------------------------------------------------------------------
+def generate_scorecard(
+    workflow: Sequence[str] | str, summary: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """Return workflow stress test scorecard and persist it.
+
+    Parameters
+    ----------
+    workflow:
+        Workflow object or sequence of step names identifying the workflow.
+    summary:
+        Mapping produced by :func:`run_scenarios` containing per-scenario
+        results.
+
+    Returns
+    -------
+    dict
+        Mapping containing the ``workflow_id`` and per-scenario ROI delta and
+        metrics.
+    """
+
+    wf_id = str(getattr(workflow, "wid", getattr(workflow, "id", "0")))
+    card: Dict[str, Any] = {"workflow_id": wf_id, "scenarios": {}}
+    for scen, info in summary.get("scenarios", {}).items():
+        metrics = info.get("target_delta", {}).get("metrics", {})
+        card["scenarios"][scen] = {
+            "roi_delta": float(info.get("roi_delta", 0.0)),
+            "metrics": {k: float(v) for k, v in metrics.items()},
+        }
+    out_path = Path("sandbox_data") / f"scorecard_{wf_id}.json"
+    try:  # pragma: no cover - best effort
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with out_path.open("w", encoding="utf-8") as fh:
+            json.dump(card, fh)
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to write workflow scorecard")
+    return card
 
 
 # ----------------------------------------------------------------------

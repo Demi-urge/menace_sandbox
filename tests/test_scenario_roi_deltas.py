@@ -1,5 +1,6 @@
 import types, sys, importlib.util
 from pathlib import Path
+import json
 import pytest
 from tests.test_menace_master import _setup_mm_stubs
 
@@ -124,3 +125,44 @@ def test_scenario_roi_deltas_and_synergy(monkeypatch):
     flags = {r["flag"] for r in cs_info["runs"]}
     assert flags == {"on", "off"}
     assert cs_info["target_delta"]["roi"] == pytest.approx(-1.0)
+
+
+def test_generate_scorecard(monkeypatch):
+    """Each scenario should appear in the persisted workflow scorecard."""
+
+    _setup_mm_stubs(monkeypatch)
+    rt = _setup_tracker(monkeypatch)
+    import sandbox_runner.environment as env
+
+    scenario_data = {
+        "normal": (1.0, 0.0),
+        "concurrency_spike": (0.0, 1.0),
+        "hostile_input": (1.2, 1.2),
+        "schema_drift": (1.2, 1.2),
+        "flaky_upstream": (1.2, 1.2),
+    }
+
+    async def fake_worker(snippet, env_input, threshold):
+        scen = env_input.get("SCENARIO_NAME")
+        roi_on, roi_off = scenario_data[scen]
+        roi = roi_off if snippet.strip() == "pass" else roi_on
+        return {"exit_code": 0}, [(0.0, roi, {})]
+
+    monkeypatch.setattr(env, "_section_worker", fake_worker)
+
+    tracker_obj, cards, summary = env.run_scenarios(
+        ["simple_functions:print_ten"], tracker=rt.ROITracker(filter_outliers=False)
+    )
+
+    card = env.generate_scorecard(["simple_functions:print_ten"], summary)
+    assert set(card["scenarios"]) == set(scenario_data)
+    for scen, info in summary["scenarios"].items():
+        assert card["scenarios"][scen]["roi_delta"] == pytest.approx(
+            info["roi_delta"]
+        )
+
+    wf_id = card["workflow_id"]
+    out_path = Path("sandbox_data") / f"scorecard_{wf_id}.json"
+    assert out_path.exists()
+    persisted = json.loads(out_path.read_text())
+    assert persisted == card
