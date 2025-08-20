@@ -64,6 +64,24 @@ def test_pilot_when_sandbox_roi_low_adapter_high(monkeypatch):
     assert res["override"].get("mode") == "micro-pilot"
 
 
+def test_can_bypass_micro_pilot(monkeypatch):
+    monkeypatch.setattr(dg, "_RULES_CACHE", None)
+    monkeypatch.setattr(dg, "_RULES_PATH", None)
+    gov = dg.DeploymentGovernor()
+    scorecard = {"scenario_scores": {"s": 0.8}}
+    res = gov.evaluate(
+        scorecard,
+        "pass",
+        1.5,
+        0.9,
+        sandbox_roi=0.05,
+        adapter_roi=1.2,
+        overrides={"bypass_micro_pilot": True},
+    )
+    assert res["verdict"] == "promote"
+    assert "micro_pilot" not in res["reasons"]
+
+
 def test_veto_on_alignment_failure(monkeypatch):
     monkeypatch.setattr(dg, "_RULES_CACHE", None)
     monkeypatch.setattr(dg, "_RULES_PATH", None)

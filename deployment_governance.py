@@ -44,11 +44,6 @@ _DEFAULT_RULES: List[Rule] = [
         condition="min_scenario is not None and min_scenario < scenario_score_min",
         reason_code="scenario_below_min",
     ),
-    Rule(
-        decision="pilot",
-        condition="sandbox_roi is not None and adapter_roi is not None and sandbox_roi < sandbox_roi_low and adapter_roi >= adapter_roi_high",
-        reason_code="micro_pilot",
-    ),
     Rule(decision="promote", condition="True", reason_code=""),
 ]
 
@@ -125,6 +120,9 @@ class DeploymentGovernor:
         confidence: float | None,
         sandbox_roi: float | None,
         adapter_roi: float | None,
+        policy: Mapping[str, float] | None = None,
+        *,
+        overrides: Mapping[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Return deployment verdict and reasoning.
 
@@ -140,9 +138,19 @@ class DeploymentGovernor:
             Risk‑adjusted ROI and confidence score for the workflow.
         sandbox_roi, adapter_roi:
             Latest ROI values for the sandbox and adapter evaluation runs.
+        policy:
+            Optional mapping supplying ``sandbox_low`` and ``adapter_high``
+            threshold overrides. When omitted the governor's defaults are
+            used.
+        overrides:
+            Optional operator override flags. Set ``bypass_micro_pilot`` to
+            ``True`` to ignore the automatic micro pilot trigger.
         """
 
         rules = _load_rules()
+        overrides = overrides or {}
+        if overrides.get("bypass_micro_pilot"):
+            rules = [r for r in rules if r.reason_code != "micro_pilot"]
         reasons: list[str] = []
         override: dict[str, Any] = {}
 
@@ -163,7 +171,24 @@ class DeploymentGovernor:
             except Exception:
                 min_scenario = None
 
+        policy = policy or {}
+        sandbox_low = float(policy.get("sandbox_low", self.sandbox_roi_low))
+        adapter_high = float(policy.get("adapter_high", self.adapter_roi_high))
+
         verdict = "no_go"
+
+        if not overrides.get("bypass_micro_pilot"):
+            if (
+                sandbox_roi is not None
+                and adapter_roi is not None
+                and sandbox_roi < sandbox_low
+                and adapter_roi > adapter_high
+            ):
+                verdict = "pilot"
+                reasons.append("micro_pilot")
+                override["mode"] = "micro-pilot"
+                return {"verdict": verdict, "reasons": reasons, "override": override}
+
         safe_locals = {
             "raroi": raroi,
             "confidence": confidence,
@@ -174,8 +199,8 @@ class DeploymentGovernor:
             "raroi_threshold": self.raroi_threshold,
             "confidence_threshold": self.confidence_threshold,
             "scenario_score_min": self.scenario_score_min,
-            "sandbox_roi_low": self.sandbox_roi_low,
-            "adapter_roi_high": self.adapter_roi_high,
+            "sandbox_roi_low": sandbox_low,
+            "adapter_roi_high": adapter_high,
         }
         for rule in rules:
             try:
