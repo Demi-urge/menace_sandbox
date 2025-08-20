@@ -151,9 +151,9 @@ from .alignment_review_agent import AlignmentReviewAgent
 from .governance import check_veto, load_rules
 from .evaluation_dashboard import append_governance_result
 try:  # pragma: no cover - allow flat imports
-    from .deployment_governance import DeploymentGovernor
+    from .deployment_governance import evaluate as deployment_evaluate
 except Exception:  # pragma: no cover - fallback for flat layout
-    from deployment_governance import DeploymentGovernor  # type: ignore
+    from deployment_governance import evaluate as deployment_evaluate  # type: ignore
 try:
     from .borderline_bucket import BorderlineBucket
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -736,7 +736,6 @@ class SelfImprovementEngine:
         self.pre_roi_cap = pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
         settings = SandboxSettings()
         self.borderline_bucket = BorderlineBucket()
-        self.deployment_governor = DeploymentGovernor()
         self.workflow_ready = False
         self.borderline_raroi_threshold = getattr(
             settings, "borderline_raroi_threshold", 0.0
@@ -5410,29 +5409,29 @@ class SelfImprovementEngine:
                 }
                 gov_result: Dict[str, Any] | None = None
                 try:
-                    gov_result = self.deployment_governor.evaluate(
-                        scorecard,
-                        scorecard.get("alignment", "pass"),
-                        scorecard.get("raroi"),
-                        scorecard.get("confidence"),
-                        sandbox_roi=roi_realish,
-                        adapter_roi=pred_realish,
-                    )
+                    metrics = {
+                        "raroi": scorecard.get("raroi"),
+                        "confidence": scorecard.get("confidence"),
+                        "sandbox_roi": roi_realish,
+                        "adapter_roi": pred_realish,
+                    }
+                    gov_result = deployment_evaluate(scorecard, metrics)
                 except Exception:
                     self.logger.exception("deployment evaluation failed")
                 if gov_result:
                     verdict = str(gov_result.get("verdict"))
                     reasons = list(gov_result.get("reasons", []))
-                    overrides = gov_result.get("override", {})
+                    try:
+                        audit_log_event(
+                            "deployment_verdict", {"verdict": verdict, "reasons": reasons}
+                        )
+                    except Exception:
+                        self.logger.exception("audit log failed")
                     if self.event_bus:
                         try:
                             self.event_bus.publish(
                                 "deployment_verdict",
-                                {
-                                    "verdict": verdict,
-                                    "reasons": reasons,
-                                    "overrides": overrides,
-                                },
+                                {"verdict": verdict, "reasons": reasons},
                             )
                         except Exception:
                             self.logger.exception("event bus publish failed")
@@ -5440,9 +5439,7 @@ class SelfImprovementEngine:
                         self.logger.info(
                             "deployment verdict",
                             extra=log_record(
-                                verdict=verdict,
-                                reasons=";".join(reasons),
-                                overrides=json.dumps(overrides) if overrides else "",
+                                verdict=verdict, reasons=";".join(reasons)
                             ),
                         )
                     except Exception:
@@ -5463,7 +5460,7 @@ class SelfImprovementEngine:
                                 scorecard["decision"] = "rollback"
                             except Exception:
                                 self.logger.exception("patch rollback failed")
-                    elif verdict == "pilot":
+                    elif verdict == "micro_pilot":
                         try:
                             self.borderline_bucket.add_candidate(
                                 self.bot_name,
