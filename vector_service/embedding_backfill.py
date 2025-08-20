@@ -58,7 +58,7 @@ _TABLE_CLASS_MAP: dict[str, tuple[str, str]] = {
     "discrepancy": ("discrepancy_db", "DiscrepancyDB"),
     "enhancements": ("chatgpt_enhancement_bot", "EnhancementDB"),
     "errors": ("error_bot", "ErrorDB"),
-    "information": ("research_aggregator_bot", "InfoDB"),
+    "information": ("information_db", "InformationDB"),
     "workflows": ("task_handoff_bot", "WorkflowDB"),
 }
 
