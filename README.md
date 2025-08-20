@@ -32,6 +32,10 @@
   embedding fields and can use either a FAISS or Annoy backend for
   similarity queries. See [docs/embedding_system.md](docs/embedding_system.md)
   for configuration details and backfilling instructions.
+- `EmbeddingBackfill` and `EmbeddingScheduler` now handle `bots`, `workflows`,
+  `enhancements` and `errors` tables directly.  Operators can schedule
+  periodic backfills by setting `EMBEDDING_SCHEDULER_SOURCES` to a comma
+  separated list (e.g. `bots,workflows,enhancements,errors`).
 - Unified cross-database search through `UniversalRetriever`.  The
   `retrieve(query, top_k=10, link_multiplier=1.1)` API returns
   `ResultBundle` objects with `origin_db`, record metadata, a final score and a
