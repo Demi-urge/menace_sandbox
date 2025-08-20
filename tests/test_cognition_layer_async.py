@@ -8,18 +8,36 @@ from vector_service.cognition_layer import CognitionLayer
 
 
 class DummyContextBuilder:
-    def build_context(self, prompt, *, top_k=5, include_vectors=False, session_id="", return_stats=False):
+    def build_context(self, prompt, *, top_k=5, include_vectors=False, session_id="", return_stats=False, return_metadata=False):
         vectors = [(prompt, "v1", 0.5)]
         stats = {"tokens": 1, "wall_time_ms": 1.0, "prompt_tokens": len(prompt.split())}
+        meta = {
+            "misc": [
+                {
+                    "origin_db": prompt,
+                    "vector_id": "v1",
+                    "metadata": {"timestamp": time.time() - 30.0},
+                }
+            ]
+        }
+        sid = session_id or f"sid-{prompt}"
         if include_vectors:
+            if return_metadata:
+                if return_stats:
+                    return "ctx", sid, vectors, meta, stats
+                return "ctx", sid, vectors, meta
             if return_stats:
-                return "ctx", session_id or f"sid-{prompt}", vectors, stats
-            return "ctx", session_id or f"sid-{prompt}", vectors
+                return "ctx", sid, vectors, stats
+            return "ctx", sid, vectors
+        if return_metadata:
+            if return_stats:
+                return "ctx", meta, stats
+            return "ctx", meta
         if return_stats:
             return "ctx", stats
         return "ctx"
 
-    async def build_async(self, prompt, *, top_k=5, include_vectors=False, session_id="", return_stats=False):
+    async def build_async(self, prompt, *, top_k=5, include_vectors=False, session_id="", return_stats=False, return_metadata=False):
         await asyncio.sleep(0.05)
         return self.build_context(
             prompt,
@@ -27,6 +45,7 @@ class DummyContextBuilder:
             include_vectors=include_vectors,
             session_id=session_id,
             return_stats=return_stats,
+            return_metadata=return_metadata,
         )
 
 
