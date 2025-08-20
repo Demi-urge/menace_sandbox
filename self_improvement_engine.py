@@ -148,6 +148,10 @@ from .human_alignment_agent import HumanAlignmentAgent
 from .audit_logger import log_event as audit_log_event, get_recent_events
 from .violation_logger import log_violation
 from .alignment_review_agent import AlignmentReviewAgent
+try:
+    from .borderline_bucket import BorderlineBucket
+except Exception:  # pragma: no cover - fallback for flat layout
+    from borderline_bucket import BorderlineBucket  # type: ignore
 
 logger = get_logger(__name__)
 
@@ -726,6 +730,10 @@ class SelfImprovementEngine:
         self.pre_roi_bias = pre_roi_bias if pre_roi_bias is not None else PRE_ROI_BIAS
         self.pre_roi_cap = pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
         settings = SandboxSettings()
+        self.borderline_bucket = BorderlineBucket()
+        self.borderline_raroi_threshold = getattr(
+            settings, "raroi_borderline_threshold", 0.0
+        )
         self.use_adaptive_roi = getattr(settings, "adaptive_roi_prioritization", True)
         if self.use_adaptive_roi:
             self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
@@ -2260,9 +2268,10 @@ class SelfImprovementEngine:
                 confidence = 1.0
                 final_score, needs_review = raroi, False
             weight = final_score * mult
-            if needs_review:
+            if needs_review or raroi < self.borderline_raroi_threshold:
+                reason = "needs_review" if needs_review else "low_raroi"
                 self.logger.info(
-                    "low confidence; deferring to human review/shadow testing",
+                    "borderline workflow; deferring to review/shadow testing",
                     extra=log_record(
                         module=mod,
                         confidence=confidence,
@@ -2270,6 +2279,7 @@ class SelfImprovementEngine:
                         weight=weight,
                         threshold=self.tau,
                         shadow_test=True,
+                        reason=reason,
                     ),
                 )
                 try:
@@ -2277,18 +2287,17 @@ class SelfImprovementEngine:
                 except Exception:
                     pass
                 try:
-                    self.roi_tracker.borderline_bucket.add_candidate(mod, raroi, confidence)
+                    self.borderline_bucket.add_candidate(mod, raroi, confidence, reason)
                     settings = SandboxSettings()
-                    self.roi_tracker.raroi_borderline_threshold = (
-                        settings.raroi_borderline_threshold
-                    )
-                    if settings.micropilot_mode == "auto":
+                    if getattr(settings, "micropilot_mode", "") == "auto":
                         try:
                             evaluator = getattr(self, "micro_pilot_evaluator", None)
-                            self.roi_tracker.borderline_bucket.process(
+                            self.borderline_bucket.process(
                                 evaluator,
-                                raroi_threshold=self.roi_tracker.raroi_borderline_threshold,
-                                confidence_threshold=self.roi_tracker.confidence_threshold,
+                                raroi_threshold=self.borderline_raroi_threshold,
+                                confidence_threshold=getattr(
+                                    self.roi_tracker, "confidence_threshold", 0.0
+                                ),
                             )
                         except Exception:
                             pass
@@ -2703,19 +2712,38 @@ class SelfImprovementEngine:
                 else:
                     confidence = 1.0
                     final_score, needs_review = raroi, False
-                if needs_review:
+                if needs_review or raroi < self.borderline_raroi_threshold:
+                    reason = "needs_review" if needs_review else "low_raroi"
                     self.logger.info(
-                        "self optimisation deferred: needs review",
+                        "self optimisation deferred: borderline",
                         extra=log_record(
                             growth_type=growth,
                             roi_estimate=base_roi,
                             raroi=raroi,
                             confidence=confidence,
                             final_score=final_score,
+                            reason=reason,
                         ),
                     )
                     try:
                         self._log_action("review", bot_name, final_score, growth, confidence)
+                    except Exception:
+                        pass
+                    try:
+                        self.borderline_bucket.add_candidate(bot_name, raroi, confidence, reason)
+                        settings = SandboxSettings()
+                        if getattr(settings, "micropilot_mode", "") == "auto":
+                            try:
+                                evaluator = getattr(self, "micro_pilot_evaluator", None)
+                                self.borderline_bucket.process(
+                                    evaluator,
+                                    raroi_threshold=self.borderline_raroi_threshold,
+                                    confidence_threshold=getattr(
+                                        self.roi_tracker, "confidence_threshold", 0.0
+                                    ),
+                                )
+                            except Exception:
+                                pass
                     except Exception:
                         pass
                     return None, False, 0.0
