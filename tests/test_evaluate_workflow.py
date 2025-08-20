@@ -45,3 +45,89 @@ def test_honours_override_file(tmp_path, monkeypatch):
     assert res["verdict"] == "promote"
     assert "manual_override" in res["reason_codes"]
     assert res["overrides"]["override_path"] == str(override)
+
+
+def _reset(monkeypatch):
+    monkeypatch.setattr(dg, "_RULES_CACHE", None)
+    monkeypatch.setattr(dg, "_RULES_PATH", None)
+
+
+def test_no_go_when_raroi_low(monkeypatch):
+    _reset(monkeypatch)
+    scorecard = {
+        "scenario_scores": {"s": 0.8},
+        "alignment_status": "pass",
+        "raroi": 0.2,
+        "confidence": 0.9,
+    }
+    res = dg.evaluate_workflow(scorecard, {})
+    assert res["verdict"] == "no_go"
+    assert "raroi_below_threshold" in res["reason_codes"]
+
+
+def test_no_go_when_confidence_low(monkeypatch):
+    _reset(monkeypatch)
+    scorecard = {
+        "scenario_scores": {"s": 0.8},
+        "alignment_status": "pass",
+        "raroi": 1.2,
+        "confidence": 0.2,
+    }
+    res = dg.evaluate_workflow(scorecard, {})
+    assert res["verdict"] == "no_go"
+    assert "confidence_below_threshold" in res["reason_codes"]
+
+
+def test_no_go_when_scenario_low(monkeypatch):
+    _reset(monkeypatch)
+    scorecard = {
+        "scenario_scores": {"s": 0.2},
+        "alignment_status": "pass",
+        "raroi": 1.2,
+        "confidence": 0.8,
+    }
+    res = dg.evaluate_workflow(scorecard, {})
+    assert res["verdict"] == "no_go"
+    assert "scenario_below_min" in res["reason_codes"]
+
+
+def test_micro_pilot_trigger(monkeypatch):
+    _reset(monkeypatch)
+    scorecard = {
+        "scenario_scores": {"s": 0.8},
+        "alignment_status": "pass",
+        "raroi": 1.5,
+        "confidence": 0.9,
+        "sandbox_roi": 0.05,
+        "adapter_roi": 1.2,
+    }
+    res = dg.evaluate_workflow(scorecard, {})
+    assert res["verdict"] == "pilot"
+    assert "micro_pilot" in res["reason_codes"]
+    assert res["overrides"].get("mode") == "micro-pilot"
+
+
+def test_override_path_nested_bypasses_micro_pilot(tmp_path, monkeypatch):
+    _reset(monkeypatch)
+    key = tmp_path / "key"
+    key.write_text("secret")
+    data = {"bypass_micro_pilot": True}
+    sig = generate_signature(data, str(key))
+    override = tmp_path / "override.json"
+    override.write_text(json.dumps({"data": data, "signature": sig}))
+
+    scorecard = {
+        "scenario_scores": {"s": 0.8},
+        "alignment_status": "pass",
+        "raroi": 1.5,
+        "confidence": 0.9,
+        "sandbox_roi": 0.05,
+        "adapter_roi": 1.2,
+    }
+
+    policy = {"overrides": {"override_path": str(override), "public_key_path": str(key)}}
+    res = dg.evaluate_workflow(scorecard, policy)
+    assert res["verdict"] == "promote"
+    assert "micro_pilot" not in res["reason_codes"]
+    assert res["overrides"]["override_path"] == str(override)
+    assert res["overrides"]["bypass_micro_pilot"] is True
