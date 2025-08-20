@@ -80,6 +80,10 @@ class ContextBuilder:
         regret_penalty: float = getattr(ContextBuilderConfig(), "regret_penalty", 1.0),
         alignment_penalty: float = getattr(ContextBuilderConfig(), "alignment_penalty", 1.0),
         alert_penalty: float = getattr(ContextBuilderConfig(), "alert_penalty", 1.0),
+        max_alignment_severity: float = getattr(
+            ContextBuilderConfig(), "max_alignment_severity", 1.0
+        ),
+        max_alerts: int = getattr(ContextBuilderConfig(), "max_alerts", 5),
     ) -> None:
         self.retriever = retriever or Retriever()
 
@@ -104,6 +108,8 @@ class ContextBuilder:
         self.regret_penalty = regret_penalty
         self.alignment_penalty = alignment_penalty
         self.alert_penalty = alert_penalty
+        self.max_alignment_severity = max_alignment_severity
+        self.max_alerts = max_alerts
         self.memory = memory_manager
         self._cache: Dict[Tuple[str, int], str] = {}
         self.db_weights = db_weights or {}
@@ -292,6 +298,22 @@ class ContextBuilder:
 
         text = bundle.get("text") or ""
         vec_id = str(bundle.get("record_id", ""))
+        alerts = bundle.get("semantic_alerts") or meta.get("semantic_alerts")
+        severity = bundle.get("alignment_severity") or meta.get("alignment_severity")
+        try:
+            if (
+                severity is not None
+                and float(severity) > self.max_alignment_severity
+            ) or (
+                alerts is not None
+                and (
+                    (len(alerts) if isinstance(alerts, (list, tuple, set)) else 1)
+                    > self.max_alerts
+                )
+            ):
+                return "", _ScoredEntry({}, 0.0, origin, vec_id)
+        except Exception:
+            pass
         entry: Dict[str, Any] = {"id": bundle.get("record_id")}
 
         if origin == "error":
@@ -366,8 +388,6 @@ class ContextBuilder:
         flags: Dict[str, Any] = {}
         lic = bundle.get("license") or meta.get("license")
         fp = bundle.get("license_fingerprint") or meta.get("license_fingerprint")
-        alerts = bundle.get("semantic_alerts") or meta.get("semantic_alerts")
-        severity = bundle.get("alignment_severity") or meta.get("alignment_severity")
         if lic:
             flags["license"] = lic
         if fp:
