@@ -5413,7 +5413,8 @@ class SelfImprovementEngine:
                     gov_result = self.deployment_governor.evaluate(
                         scorecard,
                         scorecard.get("alignment", "pass"),
-                        scorecard.get("security", "pass"),
+                        scorecard.get("raroi"),
+                        scorecard.get("confidence"),
                         sandbox_roi=roi_realish,
                         adapter_roi=pred_realish,
                     )
@@ -5422,7 +5423,7 @@ class SelfImprovementEngine:
                 if gov_result:
                     verdict = str(gov_result.get("verdict"))
                     reasons = list(gov_result.get("reasons", []))
-                    overrides = gov_result.get("overrides", {})
+                    overrides = gov_result.get("override", {})
                     if self.event_bus:
                         try:
                             self.event_bus.publish(

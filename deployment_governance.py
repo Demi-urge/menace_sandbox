@@ -3,9 +3,10 @@ from __future__ import annotations
 """Light‑weight deployment governance decisions.
 
 This module exposes :class:`DeploymentGovernor` for deciding whether a
-workflow should be promoted, demoted, piloted or held.  Decisions are based on
-risk‑adjusted ROI (RAROI), confidence scores, scenario stress test results and
-basic alignment/security vetoes.
+workflow should be **promoted**, **demoted**, sent to **pilot** or receive a
+"no_go" verdict.  Decisions are driven by risk‑adjusted ROI (RAROI), confidence
+scores, scenario stress test results and alignment checks.  Optional policy
+files may provide rule expressions that override the built in heuristics.
 """
 
 from dataclasses import dataclass
@@ -73,7 +74,8 @@ class DeploymentGovernor:
         self,
         scorecard: Mapping[str, Any] | None,
         alignment_status: str,
-        security_status: str,
+        raroi: float | None,
+        confidence: float | None,
         sandbox_roi: float | None,
         adapter_roi: float | None,
     ) -> Dict[str, Any]:
@@ -82,11 +84,13 @@ class DeploymentGovernor:
         Parameters
         ----------
         scorecard:
-            Mapping containing ``raroi``, ``confidence`` and optional
-            ``scenario_scores`` mapping.
-        alignment_status, security_status:
-            Expected to be ``"pass"`` when respective checks succeed. Any
-            other value triggers a demotion veto.
+            Mapping that may include ``scenario_scores`` and other metrics for
+            diagnostic purposes.
+        alignment_status:
+            Expected to be ``"pass"`` when the workflow satisfies alignment and
+            safety checks. Any other value triggers a demotion veto.
+        raroi, confidence:
+            Risk‑adjusted ROI and confidence score for the workflow.
         sandbox_roi, adapter_roi:
             Latest ROI values for the sandbox and adapter evaluation runs.
         """
@@ -97,30 +101,22 @@ class DeploymentGovernor:
         )
 
         reasons: list[str] = []
-        overrides: dict[str, Any] = {}
+        override: dict[str, Any] = {}
 
         def _apply_override(code: str) -> None:
-            if code in policy_overrides:
-                overrides[code] = policy_overrides[code]
+            data = policy_overrides.get(code)
+            if isinstance(data, Mapping):
+                override.update(data)
 
-        # Alignment/security vetoes override all other considerations.
+        # Alignment veto overrides all other considerations.
         if str(alignment_status).lower() != "pass":
             reason = "alignment_veto"
             reasons.append(reason)
             _apply_override(reason)
-            return {"verdict": "demote", "reasons": reasons, "overrides": overrides}
-        if str(security_status).lower() != "pass":
-            reason = "security_veto"
-            reasons.append(reason)
-            _apply_override(reason)
-            return {"verdict": "demote", "reasons": reasons, "overrides": overrides}
+            return {"verdict": "demote", "reasons": reasons, "override": override}
 
-        raroi = None
-        confidence = None
         scenario_scores: Mapping[str, Any] | None = None
         if isinstance(scorecard, Mapping):
-            raroi = scorecard.get("raroi")
-            confidence = scorecard.get("confidence")
             scenario_scores = scorecard.get("scenario_scores")  # type: ignore[assignment]
 
         min_scenario = None
@@ -130,10 +126,7 @@ class DeploymentGovernor:
             except Exception:
                 min_scenario = None
 
-        sandbox_raroi = sandbox_roi
-        adapter_raroi = adapter_roi
-
-        verdict = "hold"
+        verdict = "no_go"
         if isinstance(policy, Mapping) and policy:
             for name, block in policy.items():
                 if name == "overrides":
@@ -145,8 +138,9 @@ class DeploymentGovernor:
                     "raroi": raroi,
                     "confidence": confidence,
                     "min_scenario": min_scenario,
-                    "sandbox_raroi": sandbox_raroi,
-                    "adapter_raroi": adapter_raroi,
+                    "sandbox_roi": sandbox_roi,
+                    "adapter_roi": adapter_roi,
+                    "alignment_status": alignment_status,
                 }
                 try:
                     if bool(eval(condition, {"__builtins__": {}}, safe_locals)):
@@ -159,16 +153,13 @@ class DeploymentGovernor:
                     continue
         else:
             verdict = "promote"
-            if isinstance(raroi, (int, float)) and raroi < self.raroi_threshold:
-                verdict = "hold"
+            if raroi is None or raroi < self.raroi_threshold:
+                verdict = "no_go"
                 reason = f"raroi_below_{self.raroi_threshold}"
                 reasons.append(reason)
                 _apply_override(reason)
-            if (
-                isinstance(confidence, (int, float))
-                and confidence < self.confidence_threshold
-            ):
-                verdict = "hold"
+            if confidence is None or confidence < self.confidence_threshold:
+                verdict = "no_go"
                 reason = f"confidence_below_{self.confidence_threshold}"
                 reasons.append(reason)
                 _apply_override(reason)
@@ -176,20 +167,20 @@ class DeploymentGovernor:
                 min_scenario is not None
                 and min_scenario < self.scenario_score_min
             ):
-                verdict = "hold"
+                verdict = "no_go"
                 reason = f"scenario_below_{self.scenario_score_min}"
                 reasons.append(reason)
                 _apply_override(reason)
             if (
-                sandbox_raroi is not None
-                and adapter_raroi is not None
-                and sandbox_raroi < self.sandbox_roi_low
-                and adapter_raroi >= self.adapter_roi_high
+                sandbox_roi is not None
+                and adapter_roi is not None
+                and sandbox_roi < self.sandbox_roi_low
+                and adapter_roi >= self.adapter_roi_high
             ):
                 verdict = "pilot"
                 reason = "micro_pilot"
                 reasons.append(reason)
                 _apply_override(reason)
-                overrides["mode"] = "micro-pilot"
+                override["mode"] = "micro-pilot"
 
-        return {"verdict": verdict, "reasons": reasons, "overrides": overrides}
+        return {"verdict": verdict, "reasons": reasons, "override": override}
