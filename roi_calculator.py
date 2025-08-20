@@ -204,35 +204,36 @@ def propose_fix(
     suggestions: list[tuple[str, str]] = []
     selected: set[str] = set()
 
+    def _add(metric: str) -> None:
+        if metric in selected or len(suggestions) >= 3:
+            return
+        hint = REMEDIATION_HINTS.get(metric, f"improve {metric}")
+        suggestions.append((metric, hint))
+        selected.add(metric)
+
     for name, rule in veto_rules.items():
         value = metrics.get(
             name, 0.0 if any(k in rule for k in ("min", "max")) else None
         )
-        violated = False
-        if "min" in rule and float(value) < rule["min"]:
-            violated = True
-        if "max" in rule and float(value) > rule["max"]:
-            violated = True
-        if "equals" in rule and value == rule["equals"]:
-            violated = True
-        if violated:
-            suggestions.append((name, REMEDIATION_HINTS.get(name, f"improve {name}")))
-            selected.add(name)
+        if (
+            ("min" in rule and float(value) < rule["min"])
+            or ("max" in rule and float(value) > rule["max"])
+            or ("equals" in rule and value == rule["equals"])
+        ):
+            _add(name)
 
-    contributions: list[tuple[str, float]] = []
-    for name, weight in weights.items():
-        value = float(metrics.get(name, 0.0))
-        contributions.append((name, value * weight))
-
-    contributions.sort(key=lambda item: item[1])
+    contributions = sorted(
+        (
+            (name, float(metrics.get(name, 0.0)) * weight)
+            for name, weight in weights.items()
+        ),
+        key=lambda item: item[1],
+    )
 
     for name, _ in contributions:
+        _add(name)
         if len(suggestions) >= 3:
             break
-        if name in selected:
-            continue
-        suggestions.append((name, REMEDIATION_HINTS.get(name, f"improve {name}")))
-        selected.add(name)
 
     return suggestions
 
