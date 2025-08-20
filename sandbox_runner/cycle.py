@@ -811,7 +811,7 @@ def _sandbox_cycle_runner(
             )
             if needs_review or low_raroi:
                 try:
-                    tracker.borderline_bucket.add_candidate(
+                    tracker.borderline_bucket.enqueue(
                         wf_id, float(raroi), conf_val
                     )
                 except Exception:  # pragma: no cover - best effort
