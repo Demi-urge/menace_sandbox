@@ -582,55 +582,84 @@ class ErrorLogger:
         bottlenecks: list[tuple[str, str]] | list[str],
         task_id: str | None = None,
         bot_id: str | None = None,
-    ) -> TelemetryEvent:
+    ) -> list[TelemetryEvent]:
         """Record fix suggestions and trigger patching."""
-        suggestions: list[str] = []
-        modules: list[str] = []
+
+        events: list[TelemetryEvent] = []
         for item in bottlenecks:
             if isinstance(item, tuple):
-                mod, hint = item
-                modules.append(mod)
-                suggestions.append(hint)
+                module, hint = item
             else:
-                suggestions.append(str(item))
-        payload = {
-            'task_id': task_id,
-            'bot_id': bot_id,
-            'suggestions': suggestions,
-        }
-        event = TelemetryEvent(
-            task_id=task_id,
-            bot_id=bot_id,
-            error_type=ErrorCategory.Unknown,
-            category=ErrorCategory.Unknown,
-            root_cause='FixSuggestion',
-            stack_trace=json.dumps(payload, sort_keys=True),
-            root_module='fix_suggestions',
-            module='fix_suggestions',
-            module_counts={},
-            inferred_cause='',
-            timestamp=datetime.utcnow().isoformat(),
-            resolution_status='unresolved',
-            patch_id=None,
-            deploy_id=None,
-            fix_suggestions=suggestions,
-        )
-        try:
-            self.db.add_telemetry(event)
-        except Exception as e:  # pragma: no cover - db issues
-            self.logger.error('failed to record telemetry: %s', e)
-        if self.replicator:
+                module, hint = "", str(item)
+
+            payload = {
+                "task_id": task_id,
+                "bot_id": bot_id,
+                "module": module,
+                "suggestion": hint,
+            }
+            event = TelemetryEvent(
+                task_id=task_id,
+                bot_id=bot_id,
+                error_type=ErrorCategory.MetricBottleneck,
+                category=ErrorCategory.MetricBottleneck,
+                root_cause=hint,
+                stack_trace=json.dumps(payload, sort_keys=True),
+                root_module=module or "fix_suggestions",
+                module=module or "fix_suggestions",
+                module_counts={module: 1} if module else {},
+                inferred_cause="",
+                timestamp=datetime.utcnow().isoformat(),
+                resolution_status="unresolved",
+                patch_id=None,
+                deploy_id=None,
+                fix_suggestions=[hint],
+            )
             try:
-                self.replicator.replicate(event)
-            except Exception as e:  # pragma: no cover - network issues
-                self.logger.error('failed to replicate telemetry: %s', e)
-        if generate_patch is not None:
-            for mod in modules:
+                self.db.add_telemetry(event)
+            except Exception as e:  # pragma: no cover - db issues
+                self.logger.error("failed to record telemetry: %s", e)
+
+            if self.graph and bot_id:
                 try:
-                    generate_patch(mod)
+                    self.graph.add_telemetry_event(
+                        bot_id,
+                        ErrorCategory.MetricBottleneck.value,
+                        module or None,
+                        {module: 1} if module else None,
+                    )
+                except Exception as e:  # pragma: no cover - graph issues
+                    self.logger.error("failed to update knowledge graph: %s", e)
+
+            if self.replicator:
+                try:
+                    self.replicator.replicate(event)
+                except Exception as e:  # pragma: no cover - network issues
+                    self.logger.error("failed to replicate telemetry: %s", e)
+            if self.sentry:
+                try:
+                    self.sentry.capture_exception(
+                        Exception(json.dumps(payload, sort_keys=True))
+                    )
+                except Exception as e:
+                    self.logger.warning(
+                        "failed to send fix suggestion to Sentry: %s", e
+                    )
+
+            if generate_patch is not None and module:
+                try:
+                    generate_patch(module)
                 except Exception as e:  # pragma: no cover - patch failures
-                    self.logger.error('quick fix generation failed for %s: %s', mod, e)
-        return event
+                    self.logger.error(
+                        "quick fix generation failed for %s: %s", module, e
+                    )
+            else:
+                prompt = f"Fix bottleneck in {module or 'unknown module'}: {hint}"
+                self.logger.info("Codex prompt: %s", prompt)
+
+            events.append(event)
+
+        return events
 
     def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)

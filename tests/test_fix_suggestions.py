@@ -15,8 +15,11 @@ def test_log_fix_suggestions_records_and_triggers(tmp_path, monkeypatch):
 
     monkeypatch.setattr(elog, "generate_patch", fake_patch, raising=False)
 
-    event = logger.log_fix_suggestions([("mod", "hint")], task_id="t1", bot_id="b1")
+    events = logger.log_fix_suggestions([("mod", "hint")], task_id="t1", bot_id="b1")
+    assert isinstance(events, list) and events
+    event = events[0]
     assert event.fix_suggestions == ["hint"]
+    assert event.error_type == elog.ErrorCategory.MetricBottleneck
     assert calls == ["mod"]
     rows = db.conn.execute("SELECT fix_suggestions FROM telemetry").fetchall()
     assert rows and rows[0][0] == json.dumps(event.fix_suggestions)
