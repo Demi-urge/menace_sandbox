@@ -1,8 +1,11 @@
 import pytest
+import importlib
+import types
 from vector_service import (
     Retriever,
     PatchLogger,
     EmbeddingBackfill,
+    EmbeddableDBMixin,
     RateLimitError,
     MalformedPromptError,
     FallbackResult,
@@ -260,3 +263,53 @@ def test_embedding_backfill_filters_by_db(monkeypatch):
     eb = EmbeddingBackfill()
     eb.run(db="workflows")
     assert called == [WorkflowDB]
+
+
+def test_embedding_backfill_run_with_dbs(monkeypatch):
+    class BaseDB(EmbeddableDBMixin):
+        def __init__(self, vector_backend="annoy"):
+            self.vector_backend = vector_backend
+
+        def backfill_embeddings(self, batch_size=0):
+            pass
+
+    class InformationDB(BaseDB):
+        pass
+
+    class CodeDB(BaseDB):
+        pass
+
+    class DiscrepancyDB(BaseDB):
+        pass
+
+    modules = {
+        "information_db": types.ModuleType("information_db"),
+        "code_database": types.ModuleType("code_database"),
+        "discrepancy_db": types.ModuleType("discrepancy_db"),
+    }
+    modules["information_db"].InformationDB = InformationDB
+    modules["code_database"].CodeDB = CodeDB
+    modules["discrepancy_db"].DiscrepancyDB = DiscrepancyDB
+
+    real_import = importlib.import_module
+
+    def fake_import(name, package=None):
+        if name in modules:
+            return modules[name]
+        return real_import(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+
+    called = []
+
+    def fake_process(self, db, *, batch_size, session_id=""):
+        called.append(db.__class__)
+
+    monkeypatch.setattr(EmbeddingBackfill, "_process_db", fake_process)
+
+    eb = EmbeddingBackfill()
+    subclasses = eb._load_known_dbs(names=["information", "code", "discrepancy"])
+    assert subclasses == [InformationDB, CodeDB, DiscrepancyDB]
+
+    eb.run(dbs=["information", "code", "discrepancy"])
+    assert called == [InformationDB, CodeDB, DiscrepancyDB]
