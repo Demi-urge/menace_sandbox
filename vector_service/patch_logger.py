@@ -183,12 +183,14 @@ class PatchLogger:
                         )
                     except Exception:
                         pass
-                if self.vector_metrics is not None:
-                    roi_base = 0.0 if contribution is None else contribution
-                    origin_totals: dict[str, float] = {}
-                    for origin, vid, score in detailed:
+                roi_base = 0.0 if contribution is None else contribution
+                origin_totals: dict[str, float] = {}
+                for origin, vid, score in detailed:
+                    roi = roi_base if contribution is not None else score
+                    key = origin or ""
+                    origin_totals[key] = origin_totals.get(key, 0.0) + roi
+                    if self.vector_metrics is not None:
                         try:  # pragma: no cover - best effort
-                            roi = roi_base if contribution is not None else score
                             self.vector_metrics.update_outcome(
                                 session_id,
                                 [(origin, vid)],
@@ -197,10 +199,9 @@ class PatchLogger:
                                 win=result,
                                 regret=not result,
                             )
-                            key = origin or ""
-                            origin_totals[key] = origin_totals.get(key, 0.0) + roi
                         except Exception:
                             pass
+                if self.vector_metrics is not None:
                     for origin, roi in origin_totals.items():
                         try:
                             self.vector_metrics.log_retrieval_feedback(
@@ -224,24 +225,38 @@ class PatchLogger:
                                 )
                             except Exception:
                                 pass
-                    if self.roi_tracker is not None and origin_totals:
-                        try:
-                            metrics = {
-                                origin: {
-                                    "roi": roi,
-                                    "win_rate": 1.0 if result else 0.0,
-                                    "regret_rate": 0.0 if result else 1.0,
-                                }
-                                for origin, roi in origin_totals.items()
-                            }
-                            self.roi_tracker.update_db_metrics(metrics)
-                        except Exception:
-                            pass
                     if patch_id:
                         try:
                             self.vector_metrics.record_patch_ancestry(patch_id, vm_vectors)
                         except Exception:
                             pass
+                if origin_totals:
+                    metrics = {
+                        origin: {
+                            "roi": roi,
+                            "win_rate": 1.0 if result else 0.0,
+                            "regret_rate": 0.0 if result else 1.0,
+                        }
+                        for origin, roi in origin_totals.items()
+                    }
+                    if self.roi_tracker is not None:
+                        try:
+                            self.roi_tracker.update_db_metrics(metrics)
+                        except Exception:
+                            pass
+                    else:
+                        for origin, stats in metrics.items():
+                            payload = {"db": origin, **stats}
+                            if self.event_bus is not None:
+                                try:
+                                    self.event_bus.publish("roi:update", payload)
+                                except Exception:
+                                    pass
+                            elif UnifiedEventBus is not None:
+                                try:
+                                    UnifiedEventBus().publish("roi:update", payload)
+                                except Exception:
+                                    pass
         except Exception:
             _TRACK_OUTCOME.labels("error").inc()
             _TRACK_DURATION.set(time.time() - start)

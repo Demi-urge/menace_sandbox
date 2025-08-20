@@ -181,6 +181,19 @@ def test_track_contributors_forwards_roi_feedback(monkeypatch):
     assert rt.metrics["db1"]["roi"] == pytest.approx(1.0)
 
 
+def test_track_contributors_forwards_roi_feedback_failure(monkeypatch):
+    _, _, _, _, _, _, _ = patch_metrics(monkeypatch)
+    vm = DummyVectorMetricsDB()
+    rt = DummyROITracker()
+    pl = PatchLogger(vector_metrics=vm, roi_tracker=rt)
+    pl.track_contributors(["db1:v1", "db1:v2", "db2:v3"], False, session_id="s", contribution=0.5)
+    fb = {c["db"]: c["roi"] for c in vm.fb_calls}
+    assert fb["db1"] == pytest.approx(1.0)
+    assert fb["db2"] == pytest.approx(0.5)
+    assert rt.metrics["db1"]["win_rate"] == pytest.approx(0.0)
+    assert rt.metrics["db1"]["regret_rate"] == pytest.approx(1.0)
+
+
 # ---------------------------------------------------------------------------
 # EmbeddingBackfill.run retry/skip behavior
 # ---------------------------------------------------------------------------
