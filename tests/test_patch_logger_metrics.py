@@ -219,3 +219,43 @@ def test_embedding_backfill_run_retries_and_skips(monkeypatch):
     assert ("inc", "EmbeddingBackfill._process_db", 1.0) in call.calls
     assert ("inc", "success", 1.0) in run_outcome.calls
     assert any(c[0] == "set" for c in run_duration.calls)
+
+
+def test_embedding_backfill_license_skip_metric(monkeypatch):
+    patch_metrics(monkeypatch)
+
+    class MultiGauge:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple[str, str], float]] = []
+            self.label: tuple[str, str] = ("", "")
+
+        def labels(self, *labels):
+            self.label = labels  # type: ignore[assignment]
+            return self
+
+        def inc(self, amount: float = 1.0) -> None:
+            self.calls.append(("inc", self.label, amount))
+
+    gauge = MultiGauge()
+    import vector_service.embedding_backfill as eb_mod
+
+    monkeypatch.setattr(eb_mod, "_RUN_SKIPPED", gauge)
+    monkeypatch.setattr(eb_mod, "license_check", lambda text: "GPL")
+    monkeypatch.setattr(eb_mod, "license_fingerprint", lambda text: "hash")
+    monkeypatch.setattr(eb_mod, "_log_violation", lambda *a, **k: None)
+
+    added: list[str] = []
+
+    class LicenseDB(EmbeddableDBMixin):
+        def add_embedding(self, record_id, record, kind, *, source_id=""):
+            added.append(record_id)
+
+        def backfill_embeddings(self, batch_size: int = 0) -> None:
+            self.add_embedding("1", "text", "kind")
+
+    monkeypatch.setattr(
+        EmbeddingBackfill, "_load_known_dbs", lambda self, names=None: [LicenseDB]
+    )
+    EmbeddingBackfill().run()
+    assert added == []
+    assert ("inc", ("LicenseDB", "GPL"), 1.0) in gauge.calls

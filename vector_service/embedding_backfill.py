@@ -35,6 +35,11 @@ _RUN_DURATION = _me.Gauge(
     "embedding_backfill_run_duration_seconds",
     "Duration of EmbeddingBackfill.run calls",
 )
+_RUN_SKIPPED = _me.Gauge(
+    "embedding_backfill_skipped_total",
+    "Records skipped during EmbeddingBackfill due to licensing",
+    labelnames=["db", "license"],
+)
 
 try:  # pragma: no cover - optional dependency
     from embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
@@ -113,6 +118,7 @@ class EmbeddingBackfill:
                         lic,
                         license_fingerprint(text),
                     )
+                    _RUN_SKIPPED.labels(db.__class__.__name__, lic).inc()
                     skipped.append((str(record_id), lic))
                     return
                 return original_add(record_id, record, kind, source_id=source_id)

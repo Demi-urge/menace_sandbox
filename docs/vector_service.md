@@ -101,6 +101,8 @@ Metrics emitted by `EmbeddingBackfill.run`:
 - `embedding_backfill_runs_total{status="success|failure"}` – counter of
   backfill runs.
 - `embedding_backfill_run_duration_seconds` – duration of each run in seconds.
+- `embedding_backfill_skipped_total{db,license}` – records dropped due to
+  license restrictions.
 
 ## HTTP API configuration
 
