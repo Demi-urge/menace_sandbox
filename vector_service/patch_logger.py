@@ -39,6 +39,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover
     UnifiedEventBus = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from roi_tracker import ROITracker  # type: ignore
+except Exception:  # pragma: no cover
+    ROITracker = None  # type: ignore
+
 
 class PatchLogger:
     """Record patch outcomes in ``PatchHistoryDB`` or ``VectorMetricsDB``.
@@ -53,12 +58,14 @@ class PatchLogger:
         patch_db: PatchHistoryDB | None = None,
         vector_metrics: VectorMetricsDB | None = None,
         metrics_db: Any | None = None,
+        roi_tracker: ROITracker | None = None,
     ) -> None:
         self.patch_db = patch_db or (PatchHistoryDB() if PatchHistoryDB is not None else None)
         self.vector_metrics = vector_metrics or (
             VectorMetricsDB() if VectorMetricsDB is not None else None
         )
         self.metrics_db = metrics_db
+        self.roi_tracker = roi_tracker
 
     # ------------------------------------------------------------------
     def _parse_vectors(
@@ -161,6 +168,7 @@ class PatchLogger:
                         pass
                 if self.vector_metrics is not None:
                     roi_base = 0.0 if contribution is None else contribution
+                    origin_totals: dict[str, float] = {}
                     for origin, vid, score in detailed:
                         try:  # pragma: no cover - best effort
                             roi = roi_base if contribution is not None else score
@@ -172,20 +180,36 @@ class PatchLogger:
                                 win=result,
                                 regret=not result,
                             )
+                            key = origin or ""
+                            origin_totals[key] = origin_totals.get(key, 0.0) + roi
+                        except Exception:
+                            pass
+                    for origin, roi in origin_totals.items():
+                        try:
+                            self.vector_metrics.log_retrieval_feedback(
+                                origin, win=result, regret=not result, roi=roi
+                            )
+                        except Exception:
+                            pass
+                        if UnifiedEventBus is not None:
                             try:
-                                self.vector_metrics.log_retrieval_feedback(
-                                    origin or "", win=result, regret=not result, roi=roi
+                                UnifiedEventBus().publish(
+                                    "retrieval:feedback",
+                                    {"db": origin, "win": result, "regret": not result},
                                 )
                             except Exception:
                                 pass
-                            if UnifiedEventBus is not None:
-                                try:
-                                    UnifiedEventBus().publish(
-                                        "retrieval:feedback",
-                                        {"db": origin or "", "win": result, "regret": not result},
-                                    )
-                                except Exception:
-                                    pass
+                    if self.roi_tracker is not None and origin_totals:
+                        try:
+                            metrics = {
+                                origin: {
+                                    "roi": roi,
+                                    "win_rate": 1.0 if result else 0.0,
+                                    "regret_rate": 0.0 if result else 1.0,
+                                }
+                                for origin, roi in origin_totals.items()
+                            }
+                            self.roi_tracker.update_db_metrics(metrics)
                         except Exception:
                             pass
                     if patch_id:

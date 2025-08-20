@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import threading
 
 import menace.ranking_model_scheduler as rms
 
@@ -92,4 +93,33 @@ def test_scheduler_reloads_dependents(tmp_path, monkeypatch):
 
     assert parent.reliability_reloaded
     assert child.reliability_reloaded
+
+
+def test_scheduler_retrains_on_roi_signal(monkeypatch):
+    tracker = SimpleNamespace(origin_db_deltas={"db": []}, raroi_history=[])
+    sched = rms.RankingModelScheduler(
+        [],
+        roi_tracker=tracker,
+        interval=100,
+        roi_signal_threshold=0.5,
+    )
+
+    calls: list[int] = []
+
+    def retrain() -> None:
+        calls.append(len(calls))
+        if len(calls) >= 2:
+            sched.running = False
+
+    monkeypatch.setattr(rms.time, "sleep", lambda s: None)
+    sched.retrain_and_reload = retrain  # type: ignore
+    sched.running = True
+    t = threading.Thread(target=sched._loop)
+    t.start()
+    # wait for first call
+    while len(calls) == 0:
+        pass
+    tracker.origin_db_deltas["db"].append(1.0)
+    t.join(timeout=0.1)
+    assert len(calls) >= 2
 

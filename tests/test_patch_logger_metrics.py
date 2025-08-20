@@ -34,6 +34,7 @@ class DummyMetricsDB:
 class DummyVectorMetricsDB:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.fb_calls: list[dict[str, Any]] = []
 
     def update_outcome(
         self,
@@ -57,7 +58,15 @@ class DummyVectorMetricsDB:
         )
 
     def log_retrieval_feedback(self, db, *, win=False, regret=False, roi=0.0):
-        pass
+        self.fb_calls.append({"db": db, "win": win, "regret": regret, "roi": roi})
+
+
+class DummyROITracker:
+    def __init__(self) -> None:
+        self.metrics: dict[str, dict[str, float]] = {}
+
+    def update_db_metrics(self, metrics: dict[str, dict[str, float]]) -> None:
+        self.metrics.update(metrics)
 
 
 class DummyPatchDB:
@@ -157,6 +166,19 @@ def test_track_contributors_forwards_contribution_patch_db(monkeypatch):
     pl = PatchLogger(patch_db=pdb)
     pl.track_contributors(["v2"], False, patch_id="7", session_id="s", contribution=0.8)
     assert pdb.kwargs and pdb.kwargs["contribution"] == 0.8
+
+
+def test_track_contributors_forwards_roi_feedback(monkeypatch):
+    _, _, _, _, _, _, _ = patch_metrics(monkeypatch)
+    vm = DummyVectorMetricsDB()
+    rt = DummyROITracker()
+    pl = PatchLogger(vector_metrics=vm, roi_tracker=rt)
+    pl.track_contributors(["db1:v1", "db1:v2", "db2:v3"], True, session_id="s", contribution=0.5)
+    # aggregated ROI per origin
+    fb = {c["db"]: c["roi"] for c in vm.fb_calls}
+    assert fb["db1"] == pytest.approx(1.0)
+    assert fb["db2"] == pytest.approx(0.5)
+    assert rt.metrics["db1"]["roi"] == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------

@@ -56,7 +56,14 @@ def build_dataset(
     p_path = Path(patch_db)
     patch_df = pd.DataFrame()
     stats_df = pd.DataFrame(
-        columns=["origin_db", "win_rate", "regret_rate", "stale_cost", "sample_count"]
+        columns=[
+            "origin_db",
+            "win_rate",
+            "regret_rate",
+            "stale_cost",
+            "sample_count",
+            "roi",
+        ]
     )
     if p_path.exists():
         with sqlite3.connect(p_path) as pconn:
@@ -70,7 +77,7 @@ def build_dataset(
             )
             try:
                 stats_df = pd.read_sql(
-                    "SELECT origin_db, win_rate, regret_rate, stale_cost, sample_count FROM retriever_stats",
+                    "SELECT origin_db, win_rate, regret_rate, stale_cost, sample_count, roi FROM retriever_stats",
                     pconn,
                 )
             except Exception:
@@ -84,6 +91,7 @@ def build_dataset(
                     tmp["regret_rate"] = tmp["regrets"].fillna(0) / total.where(total > 0, 1)
                     tmp["stale_cost"] = 0.0
                     tmp["sample_count"] = total
+                    tmp["roi"] = 0.0
                     stats_df = tmp[
                         [
                             "origin_db",
@@ -91,6 +99,7 @@ def build_dataset(
                             "regret_rate",
                             "stale_cost",
                             "sample_count",
+                            "roi",
                         ]
                     ]
                 except Exception:
@@ -115,6 +124,7 @@ def build_dataset(
     df["regret_rate"] = df["regret_rate"].fillna(0.0)
     df["stale_cost"] = df["stale_cost"].fillna(0.0)
     df["sample_count"] = df["sample_count"].fillna(0.0)
+    df["roi"] = df["roi"].fillna(0.0)
 
     df = df.sort_values("ts")
     grp = df.groupby("vector_id", sort=False)
@@ -136,6 +146,7 @@ def build_dataset(
             "regret_rate",
             "stale_cost",
             "sample_count",
+            "roi",
             "label",
         ]
     ]

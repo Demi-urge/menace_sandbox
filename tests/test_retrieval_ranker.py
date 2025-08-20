@@ -48,6 +48,7 @@ def test_training_and_serialisation(tmp_path):
             "regret_rate": [0.1, 0.2, 0.3, 0.4],
             "stale_cost": [1.0, 2.0, 3.0, 4.0],
             "sample_count": [10.0, 20.0, 30.0, 40.0],
+            "roi": [0.5, 0.4, 0.3, 0.2],
             "label": [1, 0, 1, 0],
         }
     )
@@ -67,6 +68,7 @@ def test_training_and_serialisation(tmp_path):
         "regret_rate",
         "stale_cost",
         "sample_count",
+        "roi",
     }.issubset(set(tm.feature_names))
     assert {"db_bot", "db_error"}.issubset(set(tm.feature_names))
     assert metrics and ("accuracy" in metrics or "auc" in metrics)

@@ -125,6 +125,7 @@ def train(df: pd.DataFrame) -> Tuple[TrainedModel, dict[str, float]]:
         "regret_rate",
         "stale_cost",
         "sample_count",
+        "roi",
     ]
     available = [c for c in feature_cols if c in df.columns]
     X = pd.get_dummies(

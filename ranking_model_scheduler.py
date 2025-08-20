@@ -51,6 +51,7 @@ class RankingModelScheduler:
         model_path: Path | str = MODEL_PATH,
         interval: int = 86400,
         roi_tracker: ROITracker | None = None,
+        roi_signal_threshold: float | None = None,
     ) -> None:
         self.services = list(services)
         self.vector_db = Path(vector_db)
@@ -58,8 +59,10 @@ class RankingModelScheduler:
         self.model_path = Path(model_path)
         self.interval = interval
         self.roi_tracker = roi_tracker
+        self.roi_signal_threshold = roi_signal_threshold
         self.running = False
         self._thread: Optional[threading.Thread] = None
+        self._db_roi_counts: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     def retrain_and_reload(self) -> None:
@@ -126,15 +129,31 @@ class RankingModelScheduler:
     def _loop(self) -> None:
         while self.running:
             self.retrain_and_reload()
-            sleep = self.interval
+            base_interval = self.interval
             if self.roi_tracker and self.roi_tracker.raroi_history:
                 try:
-                    last_raroi = float(self.roi_tracker.raroi_history[-1])
-                    if last_raroi < 0:
-                        sleep = max(self.interval / 2, 1)
+                    if float(self.roi_tracker.raroi_history[-1]) < 0:
+                        base_interval = max(self.interval / 2, 1)
                 except Exception:
                     pass
-            time.sleep(sleep)
+            start = time.time()
+            while self.running:
+                triggered = False
+                if (
+                    self.roi_tracker is not None
+                    and self.roi_signal_threshold is not None
+                ):
+                    for origin, deltas in getattr(self.roi_tracker, "origin_db_deltas", {}).items():
+                        last = self._db_roi_counts.get(origin, 0)
+                        if len(deltas) > last:
+                            self._db_roi_counts[origin] = len(deltas)
+                            if abs(deltas[-1]) >= self.roi_signal_threshold:
+                                triggered = True
+                    if triggered:
+                        break
+                if time.time() - start >= base_interval:
+                    break
+                time.sleep(1)
 
     def start(self) -> None:
         if self.running:
