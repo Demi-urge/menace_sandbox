@@ -322,6 +322,37 @@ def test_roi_tracker_weighting():
     assert ids == [10, 1]
 
 
+def test_patch_safety_metrics_influence_ranking():
+    class NoopRetriever:
+        def search(self, q, top_k=5):
+            return []
+
+    builder = ContextBuilder(retriever=NoopRetriever())
+    good = {
+        "origin_db": "code",
+        "record_id": 1,
+        "score": 1.0,
+        "metadata": {"summary": "ok", "win_rate": 0.9, "regret_rate": 0.1},
+    }
+    risky = {
+        "origin_db": "code",
+        "record_id": 2,
+        "score": 1.0,
+        "metadata": {
+            "summary": "warn",
+            "win_rate": 0.1,
+            "regret_rate": 0.9,
+            "semantic_alerts": ["alert"],
+        },
+    }
+    s_good = builder._bundle_to_entry(good, "q")[1]
+    s_risky = builder._bundle_to_entry(risky, "q")[1]
+    assert s_good.score > s_risky.score
+    assert s_good.entry["win_rate"] == 0.9
+    assert s_risky.entry["regret_rate"] == 0.9
+    assert "semantic_alerts" in s_risky.entry["flags"]
+
+
 def test_truncates_when_tokens_small(monkeypatch):
     builder, _ = make_builder(monkeypatch, max_tokens=40)
     ctx = builder.build_context("alpha issue", top_k=2)

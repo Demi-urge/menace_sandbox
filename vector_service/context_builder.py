@@ -135,6 +135,24 @@ class ContextBuilder:
         except Exception:  # pragma: no cover - defensive
             metric = None
 
+        # Patch safety metrics supplied by PatchLogger
+        win_rate = meta.get("win_rate")
+        regret_rate = meta.get("regret_rate")
+        alerts = meta.get("semantic_alerts")
+        try:
+            if win_rate is not None or regret_rate is not None:
+                win = float(win_rate or 0.0)
+                regret = float(regret_rate or 0.0)
+                metric = (metric or 0.0) + win - regret
+            if alerts:
+                metric = (metric or 0.0) - (
+                    float(len(alerts))
+                    if isinstance(alerts, (list, tuple, set))
+                    else 1.0
+                )
+        except Exception:  # pragma: no cover - defensive
+            pass
+
         sev = meta.get("alignment_severity")
         if sev is not None:
             try:
@@ -205,6 +223,20 @@ class ContextBuilder:
         if metric is not None:
             entry["metric"] = metric
 
+        # Surface patch safety metrics when available
+        win_rate = meta.get("win_rate")
+        regret_rate = meta.get("regret_rate")
+        if win_rate is not None:
+            try:
+                entry["win_rate"] = float(win_rate)
+            except Exception:
+                pass
+        if regret_rate is not None:
+            try:
+                entry["regret_rate"] = float(regret_rate)
+            except Exception:
+                pass
+
         # Patch safety flags
         flags: Dict[str, Any] = {}
         lic = bundle.get("license") or meta.get("license")
@@ -221,8 +253,12 @@ class ContextBuilder:
 
         if _VEC_METRICS is not None and origin:
             try:  # pragma: no cover - best effort metrics lookup
-                entry["win_rate"] = _VEC_METRICS.retriever_win_rate(origin)
-                entry["regret_rate"] = _VEC_METRICS.retriever_regret_rate(origin)
+                entry.setdefault(
+                    "win_rate", _VEC_METRICS.retriever_win_rate(origin)
+                )
+                entry.setdefault(
+                    "regret_rate", _VEC_METRICS.retriever_regret_rate(origin)
+                )
             except Exception:
                 pass
 
