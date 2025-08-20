@@ -20,7 +20,7 @@ except Exception:  # pragma: no cover - optional dependency
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
-from vector_service import ContextBuilder, Retriever, FallbackResult
+from vector_service import ContextBuilder, Retriever, FallbackResult, EmbeddingBackfill
 from patch_provenance import PatchLogger
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
@@ -186,6 +186,14 @@ def generate_patch(
                     )
                 except Exception:
                     pass
+                else:  # run embedding backfill on success
+                    try:
+                        EmbeddingBackfill().run(
+                            db="code",
+                            backend=os.getenv("VECTOR_BACKEND", "annoy"),
+                        )
+                    except BaseException:  # pragma: no cover - best effort
+                        logger.debug("embedding backfill failed", exc_info=True)
             return patch_id
     except Exception as exc:  # pragma: no cover - runtime issues
         logger.error("quick fix generation failed for %s: %s", module, exc)
