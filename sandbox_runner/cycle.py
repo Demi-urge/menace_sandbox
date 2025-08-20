@@ -75,10 +75,6 @@ ADAPTIVE_ROI_RETRAIN_INTERVAL = int(
     os.getenv("ADAPTIVE_ROI_RETRAIN_INTERVAL", "20")
 )
 
-RAROI_BORDERLINE_THRESHOLD = float(
-    os.getenv("RAROI_BORDERLINE_THRESHOLD", "0.05")
-)
-
 from metrics_exporter import (
     orphan_modules_reintroduced_total,
     orphan_modules_tested_total,
@@ -794,8 +790,10 @@ def _sandbox_cycle_runner(
                 raroi = roi - getattr(ctx, "prev_roi", 0.0)
             except Exception:
                 raroi = roi
+            settings = getattr(ctx, "settings", SandboxSettings())
+            tracker.raroi_borderline_threshold = settings.raroi_borderline_threshold
             needs_review = conf_val < tracker.confidence_threshold
-            low_raroi = raroi < RAROI_BORDERLINE_THRESHOLD
+            low_raroi = raroi < tracker.raroi_borderline_threshold
             logger.info(
                 "workflow prediction evaluation",
                 extra=log_record(
@@ -825,17 +823,18 @@ def _sandbox_cycle_runner(
                         workflow=wf_id,
                         confidence=conf_val,
                         raroi=raroi,
-                        threshold=RAROI_BORDERLINE_THRESHOLD,
+                        threshold=tracker.raroi_borderline_threshold,
                     ),
                 )
-                try:
-                    tracker.borderline_bucket.process(
-                        getattr(ctx, "micro_pilot_evaluator", None),
-                        raroi_threshold=tracker.raroi_borderline_threshold,
-                        confidence_threshold=tracker.confidence_threshold,
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    logger.exception("failed to process borderline candidates")
+                if settings.micropilot_mode == "auto":
+                    try:
+                        tracker.borderline_bucket.process(
+                            getattr(ctx, "micro_pilot_evaluator", None),
+                            raroi_threshold=tracker.raroi_borderline_threshold,
+                            confidence_threshold=tracker.confidence_threshold,
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        logger.exception("failed to process borderline candidates")
         if ctx.predicted_lucrativity is not None:
             tracker.record_metric_prediction(
                 "projected_lucrativity", ctx.predicted_lucrativity, roi

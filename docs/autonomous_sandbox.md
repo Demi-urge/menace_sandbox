@@ -97,6 +97,27 @@ test names so high-risk modules drop in priority. See the
 [ROI tracker](roi_tracker.md#risk-adjusted-roi) and [RAROI overview](raroi.md)
 for the full formula.
 
+## Borderline bucket and micro‑pilots
+
+When a workflow's RAROI drops below ``RAROI_BORDERLINE_THRESHOLD`` or the
+confidence score is too low it is queued in the
+[borderline bucket](borderline_bucket.md). The bucket stores recent RAROI
+values and the latest confidence so a lightweight **micro‑pilot** can collect
+additional evidence. ``MICROPILOT_MODE`` controls how these candidates are
+handled:
+
+- ``auto`` – queue and immediately run a micro‑pilot.
+- ``queue`` – queue only; a later run must call
+  ``process_borderline_candidates``.
+- ``off`` – disable the bucket.
+
+Run the sandbox with automatic micro‑pilots enabled:
+
+```bash
+MICROPILOT_MODE=auto RAROI_BORDERLINE_THRESHOLD=0.1 \
+python run_autonomous.py --runs 1
+```
+
 ## Entropy delta tracking and module completion
 
 `ROITracker` derives a Shannon entropy ratio for each patched module by comparing

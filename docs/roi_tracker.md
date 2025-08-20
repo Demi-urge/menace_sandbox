@@ -95,6 +95,21 @@ each pending candidate. Results above the thresholds trigger ``promote()``
 while lower scores call ``terminate()`` so borderline workflows are either
 adopted or discarded based on the micro‑pilot outcome.
 
+Set ``RAROI_BORDERLINE_THRESHOLD`` to control when a workflow is queued and
+``MICROPILOT_MODE`` to decide how candidates are handled:
+
+* ``auto`` – immediately run a micro‑pilot when a workflow enters the bucket.
+* ``queue`` – only enqueue candidates; call ``process_borderline_candidates``
+  later.
+* ``off`` – disable the bucket entirely.
+
+Example CLI usage that enables automatic micro‑pilots:
+
+```bash
+MICROPILOT_MODE=auto RAROI_BORDERLINE_THRESHOLD=0.1 \
+python run_autonomous.py --runs 1
+```
+
 ## Entropy delta tracking
 
 The constructor also accepts ``entropy_threshold`` which sets the minimum ROI
