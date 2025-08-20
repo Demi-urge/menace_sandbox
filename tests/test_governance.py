@@ -1,21 +1,21 @@
-import menace.governance as governance
+import governance
 
 
-def test_ship_veto_on_alignment_failure():
-    rules = governance.load_rules()
-    scorecard = {"decision": "ship", "alignment": "fail", "raroi_increase": 0}
-    assert governance.check_veto(scorecard, rules)
+def test_alignment_failure_blocks_shipping():
+    scorecards = {"normal": {"roi_delta": 0.1}}
+    allow_ship, allow_rollback, reasons = governance.evaluate_rules(
+        scorecards, "fail", [0.0, -0.1]
+    )
+    assert not allow_ship
+    assert allow_rollback
+    assert any("alignment failure" in r for r in reasons)
 
 
-def test_rollback_veto_on_raroi_increase():
-    rules = governance.load_rules()
-    scorecard = {"decision": "rollback", "alignment": "pass", "raroi_increase": 3}
-    msgs = governance.check_veto(scorecard, rules)
-    assert msgs and "rollback" in msgs[0]
-
-
-def test_rule_pass_when_conditions_not_met():
-    rules = governance.load_rules()
-    scorecard = {"decision": "ship", "alignment": "pass", "raroi_increase": 0}
-    assert not governance.check_veto(scorecard, rules)
-
+def test_raroi_increase_blocks_rollback():
+    scorecards = {"normal": {"roi_delta": 0.1}}
+    allow_ship, allow_rollback, reasons = governance.evaluate_rules(
+        scorecards, "pass", [0.2, 0.1, 0.3, -0.1]
+    )
+    assert allow_ship
+    assert not allow_rollback
+    assert any("RAROI increased" in r for r in reasons)
