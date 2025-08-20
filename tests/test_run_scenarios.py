@@ -37,8 +37,17 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
     baseline_roi = scenario_data["normal"][0]
     expected_raroi_delta = {scen: roi_on - baseline_roi for scen, (roi_on, _) in scenario_data.items()}
     assert set(summary["scenarios"]) == set(expected)
+    assert isinstance(cards, dict)
+    assert set(cards) == set(expected)
     for scen, delta in expected.items():
         info = summary["scenarios"][scen]
+        card = cards[scen]
+        assert card.scenario == scen
+        assert card.baseline_roi == pytest.approx(baseline_roi)
+        assert card.stress_roi == pytest.approx(info["roi"])
+        assert card.roi_delta == pytest.approx(info["roi"] - baseline_roi)
+        assert card.metrics_delta == info["metrics_delta"]
+        assert card.synergy == info["synergy"]
         assert info["roi_delta"] == pytest.approx(delta)
         assert "raroi" in info and isinstance(info["raroi"], float)
         assert "raroi_delta" in info and isinstance(info["raroi_delta"], float)
@@ -55,7 +64,9 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
 
     # scorecards returned and included in summary
     assert len(cards) == len(expected)
-    assert summary["scorecards"] and len(summary["scorecards"]) == len(cards)
+    assert summary["scorecards"] and set(summary["scorecards"]) == set(cards)
+    for scen, card in cards.items():
+        assert summary["scorecards"][scen]["roi_delta"] == pytest.approx(card.roi_delta)
 
     data = json.loads(out.read_text())
     for scen, delta in expected.items():

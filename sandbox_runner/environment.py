@@ -47,7 +47,7 @@ from typing import (
 )
 from contextlib import asynccontextmanager, suppress
 from filelock import FileLock
-from dataclasses import asdict
+from dataclasses import dataclass, asdict
 
 try:
     from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord
@@ -5211,11 +5211,41 @@ def default_scenario_presets() -> List[Dict[str, Any]]:
 
 
 # ----------------------------------------------------------------------
+
+
+@dataclass
+class Scorecard:
+    """Scorecard summarising scenario performance.
+
+    Attributes
+    ----------
+    scenario:
+        Name of the scenario preset.
+    baseline_roi:
+        ROI recorded for the baseline "normal" run.
+    stress_roi:
+        ROI observed when executing under this scenario.
+    roi_delta:
+        Difference between ``stress_roi`` and ``baseline_roi``.
+    metrics_delta:
+        Metric deltas relative to the baseline run.
+    synergy:
+        Recorded synergy metrics for the scenario.
+    """
+
+    scenario: str
+    baseline_roi: float
+    stress_roi: float
+    roi_delta: float
+    metrics_delta: Dict[str, float]
+    synergy: Dict[str, float]
+
+
 def run_scenarios(
     workflow: Sequence[str] | str,
     tracker: "ROITracker" | None = None,
     presets: Sequence[Mapping[str, Any]] | None = None,
-) -> tuple["ROITracker", list["ScenarioScorecard"], Dict[str, Any]]:
+) -> tuple["ROITracker", Dict[str, Scorecard], Dict[str, Any]]:
     """Run ``workflow`` across predefined sandbox scenarios and compare ROI.
 
     The workflow is executed in a baseline "normal" environment followed by
@@ -5244,16 +5274,18 @@ def run_scenarios(
 
     Returns
     -------
-    tuple[ROITracker, list[ScenarioScorecard], Dict[str, Any]]
+    tuple[ROITracker, Dict[str, Scorecard], Dict[str, Any]]
         A triple consisting of the :class:`ROITracker` used for the simulations,
-        a list of :class:`~menace.roi_tracker.ScenarioScorecard` instances and a
-        mapping with per-scenario results. ``scenarios`` maps scenario names to
-        dictionaries containing the ROI, RAROI, ROI delta, RAROI delta, raw
-        metrics, metric deltas and recorded synergy metrics. ``worst_scenario``
-        identifies the scenario causing the largest ROI drop.
+        a mapping of :class:`Scorecard` instances keyed by scenario name and a
+        summary mapping. ``scenarios`` maps scenario names to dictionaries
+        containing the ROI, RAROI, ROI delta between workflow on/off,
+        RAROI delta, raw metrics, metric deltas and recorded synergy metrics.
+        ``scorecards`` mirrors the returned mapping with serialisable
+        dictionaries. ``worst_scenario`` identifies the scenario causing the
+        largest ROI drop relative to the baseline run.
     """
 
-    from menace.roi_tracker import ROITracker, ScenarioScorecard
+    from menace.roi_tracker import ROITracker
 
     if tracker is None:
         tracker = ROITracker()
@@ -5396,11 +5428,21 @@ def run_scenarios(
             json.dump(export, fh)
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to write scenario deltas")
-    scorecards = tracker.generate_scorecards()
+    scorecards = {
+        scen: Scorecard(
+            scenario=scen,
+            baseline_roi=baseline_roi,
+            stress_roi=info["roi"],
+            roi_delta=info["roi"] - baseline_roi,
+            metrics_delta=info["metrics_delta"],
+            synergy=info["synergy"],
+        )
+        for scen, info in results.items()
+    }
     summary = {
         "scenarios": results,
         "worst_scenario": worst,
-        "scorecards": [asdict(s) for s in scorecards],
+        "scorecards": {scen: asdict(card) for scen, card in scorecards.items()},
     }
     return tracker, scorecards, summary
 
