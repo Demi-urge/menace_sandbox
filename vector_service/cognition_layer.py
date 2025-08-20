@@ -4,6 +4,21 @@ The :class:`CognitionLayer` combines the retriever, context builder,
 patch logger and metrics database into a single convenience facade.  It
 exposes a small API used by services that want to perform a retrieval
 request and later record the outcome of a patch based on that retrieval.
+
+An optional :class:`roi_tracker.ROITracker` instance can be supplied to
+record ROI deltas for the origin databases contributing to a patch::
+
+    from roi_tracker import ROITracker
+    from vector_service.cognition_layer import CognitionLayer
+
+    tracker = ROITracker()
+    layer = CognitionLayer(roi_tracker=tracker)
+    ctx, sid = layer.query("What is ROI?")
+    # ... apply patch ...
+    layer.record_patch_outcome(sid, True, contribution=1.0)
+
+This automatically forwards the patch outcome to ``tracker`` so ROI
+histories stay up to date.
 """
 
 from __future__ import annotations
@@ -16,9 +31,22 @@ from .patch_logger import PatchLogger
 from vector_metrics_db import VectorMetricsDB
 from .decorators import log_and_measure
 
+try:  # pragma: no cover - optional dependency
+    from roi_tracker import ROITracker  # type: ignore
+except Exception:  # pragma: no cover - ROI tracking optional
+    ROITracker = None  # type: ignore
+
 
 class CognitionLayer:
-    """Tie together retrieval, context building and patch logging."""
+    """Tie together retrieval, context building and patch logging.
+
+    Parameters
+    ----------
+    roi_tracker:
+        Optional :class:`roi_tracker.ROITracker` instance used to update
+        ROI histories when recording patch outcomes.  If not provided and
+        the tracker can be imported, a default instance is created.
+    """
 
     def __init__(
         self,
@@ -27,14 +55,17 @@ class CognitionLayer:
         context_builder: ContextBuilder | None = None,
         patch_logger: PatchLogger | None = None,
         vector_metrics: VectorMetricsDB | None = None,
+        roi_tracker: ROITracker | None = None,
     ) -> None:
         self.retriever = retriever or Retriever()
         self.vector_metrics = vector_metrics or VectorMetricsDB()
         self.context_builder = context_builder or ContextBuilder(
             retriever=self.retriever
         )
+        self.roi_tracker = roi_tracker or (ROITracker() if ROITracker is not None else None)
         self.patch_logger = patch_logger or PatchLogger(
-            vector_metrics=self.vector_metrics
+            vector_metrics=self.vector_metrics,
+            roi_tracker=self.roi_tracker,
         )
         # Keep track of vectors by session so outcomes can be recorded later
         self._session_vectors: Dict[str, List[Tuple[str, str, float]]] = {}
@@ -102,7 +133,10 @@ class CognitionLayer:
 
         ``session_id`` must match the value returned from :meth:`query`.  The
         stored vector identifiers will be passed to
-        :meth:`PatchLogger.track_contributors`.
+        :meth:`PatchLogger.track_contributors`.  When an
+        :class:`roi_tracker.ROITracker` is configured, ROI metrics for each
+        origin database are updated automatically based on ``contribution`` or
+        similarity scores.
         """
 
         vectors = self._session_vectors.pop(session_id, [])
