@@ -22,10 +22,12 @@ import argparse
 import os
 import logging
 from pathlib import Path
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, TYPE_CHECKING, Set
 import sys
 import site
 import copy
+
+from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 
 try:  # pragma: no cover - optional dependencies
     from .unified_config_store import UnifiedConfigStore
@@ -179,6 +181,10 @@ class ContextBuilderConfig(BaseModel):
     )
     max_alerts: int = Field(
         5, description="Skip vectors with more than this number of semantic alerts",
+    )
+    license_denylist: Set[str] = Field(
+        default_factory=lambda: set(_LICENSE_DENYLIST.values()),
+        description="Skip vectors carrying these licenses",
     )
 
 

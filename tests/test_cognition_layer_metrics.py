@@ -7,7 +7,7 @@ from vector_metrics_db import VectorMetricsDB
 
 
 class DummyRetriever:
-    def search(self, query, top_k=5, session_id=""):
+    def search(self, query, top_k=5, session_id="", **kwargs):
         time.sleep(0.001)
         return [
             {
@@ -49,6 +49,7 @@ def test_retriever_filters_unsafe_vectors(monkeypatch):
     from types import SimpleNamespace
 
     license_fp = next(iter(rmod._LICENSE_DENYLIST))
+    license_id = rmod._LICENSE_DENYLIST[license_fp]
 
     monkeypatch.setattr(
         rmod,
@@ -58,13 +59,19 @@ def test_retriever_filters_unsafe_vectors(monkeypatch):
     monkeypatch.setattr(rmod, "pii_redact_dict", lambda x: x)
     monkeypatch.setattr(rmod, "redact_dict", lambda x: x)
 
-    calls: list[int] = []
-
     class DummyGauge:
-        def inc(self, value):
-            calls.append(value)
+        def __init__(self):
+            self.calls: list[tuple[str, object]] = []
 
-    monkeypatch.setattr(rmod, "_FILTERED_RESULTS", DummyGauge())
+        def labels(self, risk):
+            self.calls.append(("labels", risk))
+            return self
+
+        def inc(self, value=1.0):
+            self.calls.append(("inc", value))
+
+    gauge = DummyGauge()
+    monkeypatch.setattr(rmod, "_VECTOR_RISK", gauge)
 
     hits = [
         SimpleNamespace(
@@ -83,9 +90,14 @@ def test_retriever_filters_unsafe_vectors(monkeypatch):
     ]
 
     ret = rmod.Retriever()
-    res = ret._parse_hits(hits, max_alert_severity=0.5)
+    res = ret._parse_hits(
+        hits,
+        max_alert_severity=0.5,
+        license_denylist={license_id},
+    )
     assert [r["record_id"] for r in res] == ["ok"]
-    assert calls == [2]
+    assert ("labels", "filtered") in gauge.calls
+    assert ("inc", 2) in gauge.calls
 
 
 def test_bundle_to_entry_surfaces_flags(monkeypatch):
@@ -93,7 +105,7 @@ def test_bundle_to_entry_surfaces_flags(monkeypatch):
 
     monkeypatch.setattr(cmod, "_VEC_METRICS", None)
 
-    cb = ContextBuilder()
+    cb = ContextBuilder(license_denylist=set())
     bundle = {
         "origin_db": "information",
         "record_id": "1",

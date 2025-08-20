@@ -5,7 +5,7 @@ from vector_metrics_db import VectorMetricsDB, VectorMetric
 
 
 class DummyRetriever:
-    def search(self, query, top_k=5, session_id=""):
+    def search(self, query, top_k=5, session_id="", **kwargs):
         return [
             {
                 "origin_db": "bot",
@@ -64,7 +64,7 @@ def test_risky_vectors_rank_lower(monkeypatch, tmp_path):
 
 
 class SevRetriever:
-    def search(self, query, top_k=5, session_id=""):
+    def search(self, query, top_k=5, session_id="", **kwargs):
         return [
             {
                 "origin_db": "bot",
@@ -90,7 +90,7 @@ def test_alignment_severity_filter():
 
 
 class AlertRetriever:
-    def search(self, query, top_k=5, session_id=""):
+    def search(self, query, top_k=5, session_id="", **kwargs):
         return [
             {
                 "origin_db": "bot",
@@ -113,3 +113,45 @@ def test_alert_count_filter():
     data = json.loads(ctx)
     bots = data["bots"]
     assert [b["id"] for b in bots] == ["safe"]
+
+
+class LicenseRetriever:
+    def search(self, query, top_k=5, session_id="", **kwargs):
+        return [
+            {
+                "origin_db": "bot",
+                "record_id": "bad",
+                "score": 0.5,
+                "metadata": {"name": "bad", "license": "GPL-3.0"},
+            },
+            {
+                "origin_db": "bot",
+                "record_id": "ok",
+                "score": 0.5,
+                "metadata": {"name": "ok"},
+            },
+        ]
+
+
+def test_license_denylist_filter(monkeypatch):
+    import vector_service.context_builder as cb
+
+    class Gauge:
+        def __init__(self):
+            self.calls: list[tuple[str, object]] = []
+
+        def labels(self, risk):
+            self.calls.append(("labels", risk))
+            return self
+
+        def inc(self, amount=1.0):
+            self.calls.append(("inc", amount))
+
+    gauge = Gauge()
+    monkeypatch.setattr(cb, "_VECTOR_RISK", gauge)
+    builder = ContextBuilder(retriever=LicenseRetriever(), license_denylist={"GPL-3.0"})
+    ctx = builder.build_context("hi", top_k=2)
+    data = json.loads(ctx)
+    bots = data["bots"]
+    assert [b["id"] for b in bots] == ["ok"]
+    assert ("labels", "filtered") in gauge.calls

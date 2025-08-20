@@ -17,8 +17,9 @@ from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 from .retriever import Retriever, FallbackResult
 from config import ContextBuilderConfig
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
+from .patch_logger import _VECTOR_RISK  # type: ignore
 
-_DISALLOWED_LICENSES = set(_LICENSE_DENYLIST.values())
+_DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 
 try:  # pragma: no cover - optional dependency
     from vector_metrics_db import VectorMetricsDB  # type: ignore
@@ -84,6 +85,9 @@ class ContextBuilder:
             ContextBuilderConfig(), "max_alignment_severity", 1.0
         ),
         max_alerts: int = getattr(ContextBuilderConfig(), "max_alerts", 5),
+        license_denylist: set[str] | None = getattr(
+            ContextBuilderConfig(), "license_denylist", _DEFAULT_LICENSE_DENYLIST
+        ),
     ) -> None:
         self.retriever = retriever or Retriever()
 
@@ -110,10 +114,19 @@ class ContextBuilder:
         self.alert_penalty = alert_penalty
         self.max_alignment_severity = max_alignment_severity
         self.max_alerts = max_alerts
+        self.license_denylist = set(license_denylist or ())
         self.memory = memory_manager
         self._cache: Dict[Tuple[str, int], str] = {}
         self.db_weights = db_weights or {}
         self.max_tokens = max_tokens
+
+        # propagate thresholds to retriever when possible
+        try:
+            self.retriever.max_alert_severity = max_alignment_severity
+            self.retriever.max_alerts = max_alerts
+            self.retriever.license_denylist = self.license_denylist
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def refresh_db_weights(
@@ -269,7 +282,8 @@ class ContextBuilder:
                 pass
 
         lic = meta.get("license")
-        if lic in _DISALLOWED_LICENSES:
+        fp = meta.get("license_fingerprint")
+        if lic in self.license_denylist or _LICENSE_DENYLIST.get(fp) in self.license_denylist:
             metric = (metric or 0.0) - self.safety_weight
 
         if self.ranking_model is not None:
@@ -311,9 +325,17 @@ class ContextBuilder:
                     > self.max_alerts
                 )
             ):
+                if _VECTOR_RISK is not None:
+                    _VECTOR_RISK.labels("filtered").inc()
                 return "", _ScoredEntry({}, 0.0, origin, vec_id)
         except Exception:
             pass
+        lic = bundle.get("license") or meta.get("license")
+        fp = bundle.get("license_fingerprint") or meta.get("license_fingerprint")
+        if lic in self.license_denylist or _LICENSE_DENYLIST.get(fp) in self.license_denylist:
+            if _VECTOR_RISK is not None:
+                _VECTOR_RISK.labels("filtered").inc()
+            return "", _ScoredEntry({}, 0.0, origin, vec_id)
         entry: Dict[str, Any] = {"id": bundle.get("record_id")}
 
         if origin == "error":
@@ -425,7 +447,7 @@ class ContextBuilder:
             penalty += (
                 len(alerts) if isinstance(alerts, (list, tuple, set)) else 1.0
             ) * self.alert_penalty
-        if lic in _DISALLOWED_LICENSES:
+        if lic in self.license_denylist or _LICENSE_DENYLIST.get(fp) in self.license_denylist:
             penalty += 1.0
         penalty *= self.safety_weight
 
@@ -489,7 +511,12 @@ class ContextBuilder:
         session_id = session_id or uuid.uuid4().hex
         start = time.perf_counter()
         try:
-            hits = self.retriever.search(query, top_k=top_k * 5, session_id=session_id)
+            hits = self.retriever.search(
+                query,
+                top_k=top_k * 5,
+                session_id=session_id,
+                max_alert_severity=self.max_alignment_severity,
+            )
         except RateLimitError:
             raise
         except VectorServiceError:
