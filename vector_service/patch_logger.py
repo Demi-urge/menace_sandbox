@@ -50,6 +50,25 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover
     ROITracker = None  # type: ignore
 
+try:  # pragma: no cover - optional summariser
+    from menace_memory_manager import _summarise_text  # type: ignore
+except Exception:  # pragma: no cover - lightweight fallback
+    def _summarise_text(text: str, ratio: float = 0.2) -> str:
+        text = text.strip()
+        if len(text) <= 120:
+            return text
+        return text[:117] + "..."
+
+try:  # pragma: no cover - optional info database
+    from research_aggregator_bot import InfoDB, ResearchItem  # type: ignore
+except Exception:  # pragma: no cover
+    InfoDB = ResearchItem = None  # type: ignore
+
+try:  # pragma: no cover - optional enhancement database
+    from chatgpt_enhancement_bot import EnhancementDB, Enhancement  # type: ignore
+except Exception:  # pragma: no cover
+    EnhancementDB = Enhancement = None  # type: ignore
+
 
 class PatchLogger:
     """Record patch outcomes in ``PatchHistoryDB`` or ``VectorMetricsDB``.
@@ -66,6 +85,8 @@ class PatchLogger:
         metrics_db: Any | None = None,
         roi_tracker: ROITracker | None = None,
         event_bus: "UnifiedEventBus" | None = None,
+        info_db: InfoDB | None = None,
+        enhancement_db: EnhancementDB | None = None,
     ) -> None:
         self.patch_db = patch_db or (PatchHistoryDB() if PatchHistoryDB is not None else None)
         self.vector_metrics = vector_metrics or (
@@ -74,6 +95,8 @@ class PatchLogger:
         self.metrics_db = metrics_db
         self.roi_tracker = roi_tracker
         self.event_bus = event_bus
+        self.info_db = info_db
+        self.enhancement_db = enhancement_db
 
     # ------------------------------------------------------------------
     def _parse_vectors(
@@ -274,6 +297,59 @@ class PatchLogger:
                                 bus.publish("embedding:backfill", {"db": origin})
                             except Exception:
                                 pass
+                if result and retrieval_metadata:
+                    for origin, vid, _ in detailed:
+                        key = f"{origin}:{vid}" if origin else vid
+                        meta = retrieval_metadata.get(key, {})
+                        text = ""
+                        if origin == "code":
+                            text = meta.get("code") or meta.get("summary") or ""
+                        elif origin == "error":
+                            text = meta.get("message") or meta.get("description") or ""
+                        elif origin == "enhancement":
+                            text = (
+                                meta.get("description")
+                                or meta.get("lessons")
+                                or meta.get("title")
+                                or meta.get("idea")
+                                or ""
+                            )
+                        elif origin == "information":
+                            text = meta.get("content") or meta.get("summary") or ""
+                        if not text:
+                            continue
+                        try:
+                            summary = _summarise_text(str(text))
+                        except Exception:
+                            summary = str(text)[:120]
+                        try:
+                            if (
+                                origin == "enhancement"
+                                and self.enhancement_db is not None
+                                and Enhancement is not None
+                            ):
+                                enh = Enhancement(
+                                    idea=summary,
+                                    rationale="",
+                                    summary=summary,
+                                    description=summary,
+                                )
+                                self.enhancement_db.add(enh)
+                            elif (
+                                self.info_db is not None
+                                and InfoDB is not None
+                                and ResearchItem is not None
+                            ):
+                                item = ResearchItem(
+                                    topic=f"patch:{patch_id}" if patch_id else "patch",
+                                    content=summary,
+                                    summary=summary,
+                                    category=origin,
+                                    type_="lesson",
+                                )
+                                self.info_db.add(item)
+                        except Exception:
+                            pass
         except Exception:
             _TRACK_OUTCOME.labels("error").inc()
             _TRACK_DURATION.set(time.time() - start)
