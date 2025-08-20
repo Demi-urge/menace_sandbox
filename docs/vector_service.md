@@ -34,7 +34,29 @@ context = builder.build("fix failing tests")
 ```
 
 This helper summarises related bots, workflows and errors while recording
-metrics for each build.
+metrics for each build.  Each entry now exposes reliability metrics pulled from
+`VectorMetricsDB` and patch‑safety flags when available:
+
+```json
+{
+  "id": 1,
+  "desc": "alpha bot",
+  "metric": 10.0,
+  "win_rate": 0.8,
+  "regret_rate": 0.1,
+  "flags": {"license": "GPL", "semantic_alerts": ["unsafe"]}
+}
+```
+
+To inspect these fields without inflating the prompt context, pass
+`return_metadata=True`:
+
+```python
+context, meta = builder.build_context("fix failing tests", return_metadata=True)
+```
+
+`context` contains the compact summaries while `meta` mirrors the structure with
+the additional `win_rate`, `regret_rate` and `flags` details for each entry.
 
 ## PatchLogger
 

@@ -16,6 +16,13 @@ from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 from .retriever import Retriever, FallbackResult
 from config import ContextBuilderConfig
 
+try:  # pragma: no cover - optional dependency
+    from vector_metrics_db import VectorMetricsDB  # type: ignore
+except Exception:  # pragma: no cover
+    VectorMetricsDB = None  # type: ignore
+
+_VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
+
 # Alias retained for backward compatibility with tests expecting
 # ``UniversalRetriever`` to be injectable.
 UniversalRetriever = Retriever
@@ -139,6 +146,24 @@ class ContextBuilder:
         if metric is not None:
             entry["metric"] = metric
 
+        # Patch safety flags
+        flags: Dict[str, Any] = {}
+        lic = bundle.get("license") or meta.get("license")
+        alerts = bundle.get("semantic_alerts") or meta.get("semantic_alerts")
+        if lic:
+            flags["license"] = lic
+        if alerts:
+            flags["semantic_alerts"] = alerts
+        if flags:
+            entry["flags"] = flags
+
+        if _VEC_METRICS is not None and origin:
+            try:  # pragma: no cover - best effort metrics lookup
+                entry["win_rate"] = _VEC_METRICS.retriever_win_rate(origin)
+                entry["regret_rate"] = _VEC_METRICS.retriever_regret_rate(origin)
+            except Exception:
+                pass
+
         score = float(bundle.get("score", 0.0)) + (metric or 0.0)
         score *= self.db_weights.get(origin, 1.0)
 
@@ -159,14 +184,18 @@ class ContextBuilder:
         top_k: int = 5,
         *,
         include_vectors: bool = False,
+        return_metadata: bool = False,
         session_id: str | None = None,
         **_: Any,
-    ) -> str | Tuple[str, str, List[Tuple[str, str, float]]]:
+    ) -> str | Tuple[str, str, List[Tuple[str, str, float]]] | Tuple[str, Dict[str, List[Dict[str, Any]]]] | Tuple[str, str, List[Tuple[str, str, float]], Dict[str, List[Dict[str, Any]]]]:
         """Return a compact JSON context for ``query``.
 
         When ``include_vectors`` is True, the return value is a tuple of
         ``(context_json, session_id, vectors)`` where *vectors* is a list of
-        ``(origin, vector_id, score)`` triples.
+        ``(origin, vector_id, score)`` triples.  If ``return_metadata`` is
+        enabled, the metadata dictionary is appended as the final element of the
+        tuple and contains the full entries including reliability metrics and
+        safety flags.
         """
 
         if not isinstance(query, str) or not query.strip():
@@ -174,7 +203,7 @@ class ContextBuilder:
 
         query = redact_text(query)
         cache_key = (query, top_k)
-        if not include_vectors and cache_key in self._cache:
+        if not include_vectors and not return_metadata and cache_key in self._cache:
             return self._cache[cache_key]
 
         session_id = session_id or uuid.uuid4().hex
@@ -211,19 +240,31 @@ class ContextBuilder:
                 buckets[bucket].append(scored)
 
         result: Dict[str, List[Dict[str, Any]]] = {}
+        meta: Dict[str, List[Dict[str, Any]]] = {}
         vectors: List[Tuple[str, str, float]] = []
         for key, items in buckets.items():
             if not items:
                 continue
             items.sort(key=lambda e: e.score, reverse=True)
             chosen = items[:top_k]
-            result[key] = [e.entry for e in chosen]
+            summaries: List[Dict[str, Any]] = []
+            for e in chosen:
+                full = e.entry
+                if return_metadata:
+                    meta.setdefault(key, []).append(full)
+                summaries.append({k: v for k, v in full.items() if k not in {"win_rate", "regret_rate", "flags"}})
+            result[key] = summaries
             vectors.extend([(e.origin, e.vector_id, e.score) for e in chosen])
 
         context = json.dumps(result, separators=(",", ":"))
-        self._cache[cache_key] = context
+        if not include_vectors and not return_metadata:
+            self._cache[cache_key] = context
+        if include_vectors and return_metadata:
+            return context, session_id, vectors, meta
         if include_vectors:
             return context, session_id, vectors
+        if return_metadata:
+            return context, meta
         return context
 
     # ------------------------------------------------------------------
