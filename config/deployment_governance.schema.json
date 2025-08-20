@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "decision": {"type": "string"},
+      "condition": {"type": "string"},
+      "reason_code": {"type": "string"}
+    },
+    "required": ["decision", "condition"],
+    "additionalProperties": false
+  }
+}

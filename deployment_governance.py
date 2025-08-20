@@ -12,13 +12,89 @@ files may provide rule expressions that override the built in heuristics.
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping
 
+import ast
 import json
+import logging
 import os
 
 import yaml
+from jsonschema import ValidationError, validate
 
 from .override_validator import validate_override_file
 from .governance import Rule as GovRule, check_veto
+
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_eval(expr: str, variables: Mapping[str, Any]) -> Any:
+    """Safely evaluate a limited Python expression.
+
+    Only a restricted subset of Python expressions is permitted.  Function
+    calls, attribute access and subscripting are rejected.
+    """
+
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError as exc:  # pragma: no cover - handled as invalid
+        raise ValueError(f"invalid expression: {expr}") from exc
+
+    allowed_nodes = (
+        ast.Expression,
+        ast.BoolOp,
+        ast.BinOp,
+        ast.UnaryOp,
+        ast.Compare,
+        ast.Name,
+        ast.Load,
+        ast.Constant,
+        ast.cmpop,
+        ast.operator,
+        ast.unaryop,
+        ast.boolop,
+    )
+    allowed_binops = (
+        ast.Add,
+        ast.Sub,
+        ast.Mult,
+        ast.Div,
+        ast.Mod,
+        ast.Pow,
+        ast.FloorDiv,
+    )
+    allowed_boolops = (ast.And, ast.Or)
+    allowed_unary = (ast.Not, ast.UAdd, ast.USub)
+    allowed_cmp = (
+        ast.Eq,
+        ast.NotEq,
+        ast.Lt,
+        ast.LtE,
+        ast.Gt,
+        ast.GtE,
+        ast.Is,
+        ast.IsNot,
+        ast.In,
+        ast.NotIn,
+    )
+
+    for node in ast.walk(tree):
+        if not isinstance(node, allowed_nodes):
+            raise ValueError(f"unsafe expression: {expr}")
+        if isinstance(node, ast.Call) or isinstance(node, ast.Attribute) or isinstance(node, ast.Subscript):
+            raise ValueError(f"unsafe expression: {expr}")
+        if isinstance(node, ast.BoolOp) and not isinstance(node.op, allowed_boolops):
+            raise ValueError(f"unsafe expression: {expr}")
+        if isinstance(node, ast.BinOp) and not isinstance(node.op, allowed_binops):
+            raise ValueError(f"unsafe expression: {expr}")
+        if isinstance(node, ast.UnaryOp) and not isinstance(node.op, allowed_unary):
+            raise ValueError(f"unsafe expression: {expr}")
+        if isinstance(node, ast.Compare):
+            for op in node.ops:
+                if not isinstance(op, allowed_cmp):
+                    raise ValueError(f"unsafe expression: {expr}")
+
+    compiled = compile(tree, "<safe_eval>", "eval")
+    return eval(compiled, {"__builtins__": {}}, dict(variables))
 
 
 @dataclass
@@ -72,29 +148,29 @@ def _load_rules(path: str | None = None) -> List[Rule]:
         candidates.append(os.path.join(base, "deployment_governance.json"))
 
     loaded: List[Rule] = []
+    schema_path = os.path.join(os.path.dirname(__file__), "config", "deployment_governance.schema.json")
     for candidate in candidates:
         if os.path.exists(candidate):
             try:
                 with open(candidate, "r", encoding="utf-8") as fh:
                     data = json.load(fh) if candidate.endswith(".json") else yaml.safe_load(fh)
-            except Exception:
-                data = None
-            if isinstance(data, list):
-                for item in data:
-                    if not isinstance(item, Mapping):
-                        continue
-                    decision = item.get("decision")
-                    condition = item.get("condition")
-                    reason = item.get("reason_code") or item.get("reason")
-                    if not isinstance(decision, str) or not isinstance(condition, str):
-                        continue
-                    loaded.append(
-                        Rule(
-                            decision=decision,
-                            condition=condition,
-                            reason_code=str(reason) if reason else decision,
-                        )
+                with open(schema_path, "r", encoding="utf-8") as sfh:
+                    schema = json.load(sfh)
+                validate(data, schema)
+            except (OSError, ValidationError, json.JSONDecodeError, yaml.YAMLError) as exc:
+                logger.error("Invalid deployment governance rules file %s: %s", candidate, exc)
+                raise ValueError(f"invalid rules file: {candidate}") from exc
+            for item in data:
+                decision = str(item.get("decision"))
+                condition = str(item.get("condition"))
+                reason = item.get("reason_code") or item.get("reason")
+                loaded.append(
+                    Rule(
+                        decision=decision,
+                        condition=condition,
+                        reason_code=str(reason) if reason else decision,
                     )
+                )
             _RULES_CACHE = loaded + list(_DEFAULT_RULES)
             _RULES_PATH = candidate
             break
@@ -128,19 +204,20 @@ def _load_policy(path: str | None = None) -> Mapping[str, Any]:
         candidates.append(os.path.join(base, "deployment_policy.json"))
 
     policy: Mapping[str, Any] | None = None
+    schema_path = os.path.join(os.path.dirname(__file__), "config", "deployment_policy.schema.json")
     for candidate in candidates:
         if os.path.exists(candidate):
             try:
                 with open(candidate, "r", encoding="utf-8") as fh:
-                    if candidate.endswith(".json"):
-                        data = json.load(fh)
-                    else:
-                        data = yaml.safe_load(fh)
-            except Exception:
-                data = None
-            if isinstance(data, Mapping):
-                policy = data
-                break
+                    data = json.load(fh) if candidate.endswith(".json") else yaml.safe_load(fh)
+                with open(schema_path, "r", encoding="utf-8") as sfh:
+                    schema = json.load(sfh)
+                validate(data, schema)
+            except (OSError, ValidationError, json.JSONDecodeError, yaml.YAMLError) as exc:
+                logger.error("Invalid deployment policy file %s: %s", candidate, exc)
+                raise ValueError(f"invalid policy file: {candidate}") from exc
+            policy = data
+            break
     if policy is None:
         policy = {}
     _POLICY_CACHE = dict(policy)
@@ -249,7 +326,7 @@ class DeploymentGovernor:
         }
         for rule in rules:
             try:
-                if bool(eval(rule.condition, {"__builtins__": {}}, safe_locals)):
+                if bool(_safe_eval(rule.condition, safe_locals)):
                     verdict = rule.decision
                     if rule.reason_code:
                         reasons.append(rule.reason_code)
@@ -480,7 +557,7 @@ def evaluate(
             if not isinstance(cond, str):
                 continue
             try:
-                if bool(eval(cond, {"__builtins__": {}}, metrics)):
+                if bool(_safe_eval(cond, metrics)):
                     cond_met = True
                     rc = cfg.get("reason_code")
                     if rc:
@@ -589,7 +666,7 @@ class RuleEvaluator:
             if rule.decision != "demote":
                 continue
             try:
-                if bool(eval(rule.condition, {"__builtins__": {}}, local_vars)):
+                if bool(_safe_eval(rule.condition, local_vars)):
                     demote_reasons.append(rule.reason_code)
             except Exception:
                 continue
@@ -605,7 +682,7 @@ class RuleEvaluator:
                 if rule.decision != decision:
                     continue
                 try:
-                    if bool(eval(rule.condition, {"__builtins__": {}}, local_vars)):
+                    if bool(_safe_eval(rule.condition, local_vars)):
                         reasons = [rule.reason_code] if rule.reason_code else []
                         return {
                             "decision": decision,
