@@ -38,7 +38,7 @@ from .error_logger import TelemetryEvent
 from .data_bot import MetricsDB
 from .meta_logging import SecureLog
 from .sentry_client import SentryClient
-from .governance import evaluate_governance
+from .governance import evaluate_rules
 from .anomaly_detection import _ae_scores, _cluster_scores
 
 
@@ -265,11 +265,11 @@ class AutomatedRollbackManager(RollbackManager):
         ``weights`` allows weighting node reliability for quorum calculations.
         """
 
-        vetoes = evaluate_governance(
-            "rollback", alignment_status, scenario_raroi_deltas or []
+        allow_ship, allow_rollback, reasons = evaluate_rules(
+            {}, alignment_status, scenario_raroi_deltas or []
         )
-        if vetoes:
-            for msg in vetoes:
+        if not allow_rollback:
+            for msg in reasons:
                 self.logger.warning("governance veto: %s", msg)
             return False
 

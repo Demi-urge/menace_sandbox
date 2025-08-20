@@ -31,7 +31,7 @@ from .code_database import CodeDB, CodeRecord
 from .database_manager import update_model, DB_PATH
 from .databases import MenaceDB
 from .contrarian_db import ContrarianDB
-from .governance import evaluate_governance
+from .governance import evaluate_rules
 
 # ---------------------------------------------------------------------------
 # SQLite layer for deployment & error tracking
@@ -577,11 +577,11 @@ class DeploymentBot:
         scenario_raroi_deltas: Iterable[float] | None = None,
     ) -> int:
         """Main entry point – returns deployment_id."""
-        vetoes = evaluate_governance(
-            "ship", alignment_status, scenario_raroi_deltas or []
+        allow_ship, allow_rollback, reasons = evaluate_rules(
+            {}, alignment_status, scenario_raroi_deltas or []
         )
-        if vetoes:
-            for msg in vetoes:
+        if not allow_ship:
+            for msg in reasons:
                 self.logger.warning("governance veto: %s", msg)
             return -1
         if self.db_router:

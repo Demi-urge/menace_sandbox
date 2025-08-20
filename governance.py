@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, List, Mapping
+from typing import Any, Callable, Dict, Iterable, List, Mapping
 
 import json
 
@@ -128,5 +128,104 @@ def evaluate_governance(
     return check_veto(scorecard, rules)
 
 
-__all__ = ["Rule", "load_rules", "check_veto", "evaluate_governance"]
+# ---------------------------------------------------------------------------
+# New rule based governance system
+
+# Registry for pluggable rules
+RuleFunc = Callable[[Mapping[str, Any] | None, str, Iterable[float]], Dict[str, Any]]
+_RULE_REGISTRY: Dict[str, RuleFunc] = {}
+
+
+def register_rule(name: str, func: RuleFunc | None = None):
+    """Register a governance *rule*.
+
+    Can be used as a decorator::
+
+        @register_rule("my_rule")
+        def check(scorecards, alignment_status, raroi_history):
+            return {"allow_ship": True}
+
+    """
+
+    if func is None:
+        def decorator(fn: RuleFunc) -> RuleFunc:
+            _RULE_REGISTRY[name] = fn
+            return fn
+
+        return decorator
+
+    _RULE_REGISTRY[name] = func
+    return func
+
+
+@register_rule("alignment_blocks_shipping")
+def _rule_alignment(
+    scorecards: Mapping[str, Any] | None,
+    alignment_status: str,
+    raroi_history: Iterable[float],
+) -> Dict[str, Any]:
+    if alignment_status == "fail":
+        return {
+            "allow_ship": False,
+            "reason": "alignment failure prevents ship",
+        }
+    return {}
+
+
+@register_rule("raroi_blocks_rollback")
+def _rule_raroi(
+    scorecards: Mapping[str, Any] | None,
+    alignment_status: str,
+    raroi_history: Iterable[float],
+) -> Dict[str, Any]:
+    increases = sum(1 for d in raroi_history if d > 0)
+    if increases >= 3:
+        return {
+            "allow_rollback": False,
+            "reason": "RAROI increased in >=3 scenarios; rollback vetoed",
+        }
+    return {}
+
+
+def evaluate_rules(
+    scorecards: Mapping[str, Any] | None,
+    alignment_status: str,
+    raroi_history: Iterable[float],
+) -> tuple[bool, bool, list[str]]:
+    """Evaluate registered governance rules.
+
+    Returns ``(allow_ship, allow_rollback, reasons)`` where *reasons* lists
+    messages for any rules that veto a decision.
+    """
+
+    allow_ship = True
+    allow_rollback = True
+    reasons: list[str] = []
+    context = scorecards or {}
+
+    for func in _RULE_REGISTRY.values():
+        try:
+            result = func(context, alignment_status, raroi_history) or {}
+        except Exception:
+            continue
+        if result.get("allow_ship") is False:
+            allow_ship = False
+        if result.get("allow_rollback") is False:
+            allow_rollback = False
+        if (result.get("allow_ship") is False or result.get("allow_rollback") is False) and result.get(
+            "reason"
+        ):
+            reasons.append(str(result["reason"]))
+
+    return allow_ship, allow_rollback, reasons
+
+
+__all__ = [
+    "Rule",
+    "load_rules",
+    "check_veto",
+    "evaluate_governance",
+    "register_rule",
+    "evaluate_rules",
+]
 
