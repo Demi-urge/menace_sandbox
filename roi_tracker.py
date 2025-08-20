@@ -1326,7 +1326,9 @@ class ROITracker:
         for wf, info in self.borderline_bucket.all_candidates(status="candidate").items():
             try:
                 result = float(evaluate(wf, info))
-                self.borderline_bucket.record_result(wf, result)
+                self.borderline_bucket.record_result(
+                    wf, result, info.get("confidence", 0.0)
+                )
                 if result > self.raroi_borderline_threshold:
                     self.borderline_bucket.promote(wf)
                 else:
