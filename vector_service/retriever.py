@@ -17,6 +17,7 @@ from retrieval_cache import RetrievalCache
 
 from redaction_utils import redact_dict as pii_redact_dict, redact_text as pii_redact_text
 from governed_retrieval import govern_retrieval, redact, redact_dict
+from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me  # type: ignore
 except Exception:  # pragma: no cover - fallback when running as script
@@ -26,6 +27,7 @@ _FILTERED_RESULTS = _me.Gauge(
     "retriever_filtered_vectors_total",
     "Vectors filtered due to high alert severity",
 )
+_DISALLOWED_LICENSES = set(_LICENSE_DENYLIST.values())
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 
@@ -126,6 +128,17 @@ class Retriever:
                 item["license_fingerprint"] = fp
                 if isinstance(item.get("metadata"), dict):
                     item["metadata"]["license_fingerprint"] = fp
+            penalty = 0.0
+            sev = meta.get("alignment_severity")
+            if sev is not None:
+                try:
+                    penalty += float(sev)
+                except Exception:
+                    pass
+            lic = meta.get("license")
+            if lic in _DISALLOWED_LICENSES:
+                penalty += 1.0
+            item["score"] = max(float(item.get("score", 0.0)) - penalty, 0.0)
             results.append(item)
         if filtered:
             try:
@@ -175,6 +188,17 @@ class Retriever:
                 item["license_fingerprint"] = fp
                 if isinstance(item.get("metadata"), dict):
                     item["metadata"]["license_fingerprint"] = fp
+            penalty = 0.0
+            sev = meta.get("alignment_severity")
+            if sev is not None:
+                try:
+                    penalty += float(sev)
+                except Exception:
+                    pass
+            lic = meta.get("license")
+            if lic in _DISALLOWED_LICENSES:
+                penalty += 1.0
+            item["score"] = max(float(item.get("score", 0.0)) - penalty, 0.0)
             results.append(item)
         if filtered:
             try:

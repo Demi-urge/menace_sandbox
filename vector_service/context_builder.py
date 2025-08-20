@@ -16,6 +16,9 @@ from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 from .retriever import Retriever, FallbackResult
 from config import ContextBuilderConfig
+from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
+
+_DISALLOWED_LICENSES = set(_LICENSE_DENYLIST.values())
 
 try:  # pragma: no cover - optional dependency
     from vector_metrics_db import VectorMetricsDB  # type: ignore
@@ -224,6 +227,10 @@ class ContextBuilder:
             except Exception:
                 pass
 
+        lic = meta.get("license")
+        if lic in _DISALLOWED_LICENSES:
+            metric = (metric or 0.0) - self.safety_weight
+
         if self.ranking_model is not None:
             try:
                 if hasattr(self.ranking_model, "score"):
@@ -360,6 +367,9 @@ class ContextBuilder:
             penalty += (
                 len(alerts) if isinstance(alerts, (list, tuple, set)) else 1.0
             ) * self.alert_penalty
+        if lic in _DISALLOWED_LICENSES:
+            penalty += 1.0
+        penalty *= self.safety_weight
 
         similarity = float(bundle.get("score", 0.0))
         rank_prob = self.ranking_weight
