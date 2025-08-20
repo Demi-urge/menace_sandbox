@@ -140,6 +140,7 @@ class PatchLogger:
 
         start = time.time()
         status = "success" if result else "failure"
+        roi_metrics: dict[str, dict[str, float]] = {}
         try:
             detailed = self._parse_vectors(vector_ids)
             detailed.sort(key=lambda t: t[2], reverse=True)
@@ -253,8 +254,9 @@ class PatchLogger:
                             self.vector_metrics.record_patch_ancestry(patch_id, vm_vectors)
                         except Exception:
                             pass
+                roi_metrics: dict[str, dict[str, float]] = {}
                 if origin_totals:
-                    metrics = {
+                    roi_metrics = {
                         origin: {
                             "roi": roi,
                             "win_rate": 1.0 if result else 0.0,
@@ -263,12 +265,14 @@ class PatchLogger:
                         for origin, roi in origin_totals.items()
                     }
                     if self.roi_tracker is not None:
-                        try:
-                            self.roi_tracker.update_db_metrics(metrics)
-                        except Exception:
-                            pass
+                        for origin, stats in roi_metrics.items():
+                            try:
+                                # send deltas for each origin individually
+                                self.roi_tracker.update_db_metrics({origin: stats})
+                            except Exception:
+                                pass
                     else:
-                        for origin, stats in metrics.items():
+                        for origin, stats in roi_metrics.items():
                             payload = {"db": origin, **stats}
                             if self.event_bus is not None:
                                 try:
@@ -358,14 +362,18 @@ class PatchLogger:
         _TRACK_OUTCOME.labels(status).inc()
         _TRACK_DURATION.set(time.time() - start)
 
+        payload = {"result": result, "roi_metrics": roi_metrics}
+        if patch_id:
+            payload["patch_id"] = patch_id
+
         if self.event_bus is not None:
             try:
-                self.event_bus.publish("patch_logger:outcome", {"result": result})
+                self.event_bus.publish("patch_logger:outcome", payload)
             except Exception:
                 pass
         elif UnifiedEventBus is not None:
             try:
-                UnifiedEventBus().publish("patch_logger:outcome", {"result": result})
+                UnifiedEventBus().publish("patch_logger:outcome", payload)
             except Exception:
                 pass
 
