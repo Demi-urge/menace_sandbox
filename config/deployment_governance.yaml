@@ -1,0 +1,16 @@
+# Optional deployment governance rules.
+# Each rule provides a decision, a Python expression evaluated against
+# the available metrics and a reason code identifying the trigger.
+
+- decision: promote
+  condition: "raroi > 2.0 and confidence > 0.9 and min_scenario >= 0.5"
+  reason_code: strong_candidate
+- decision: pilot
+  condition: "sandbox_roi < 0.1 and adapter_roi >= 1.0"
+  reason_code: micro_pilot
+- decision: demote
+  condition: "confidence is not None and confidence < 0.2"
+  reason_code: low_confidence
+- decision: no_go
+  condition: "raroi is not None and raroi < 0.2"
+  reason_code: poor_raroi

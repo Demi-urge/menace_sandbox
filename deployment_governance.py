@@ -10,7 +10,7 @@ files may provide rule expressions that override the built in heuristics.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, List, Mapping
 
 import json
 import os
@@ -18,46 +18,93 @@ import os
 import yaml
 
 
-_POLICY_CACHE: Dict[str, Any] | None = None
-_POLICY_PATH: str | None = None
+@dataclass
+class Rule:
+    decision: str
+    condition: str
+    reason_code: str
 
 
-def _load_policy(path: str | None = None) -> Dict[str, Any]:
-    """Load deployment policy from YAML or JSON file.
+_RULES_CACHE: List[Rule] | None = None
+_RULES_PATH: str | None = None
 
-    The policy is cached after first load. ``path`` may specify an explicit
-    policy file; otherwise ``config/deployment_policy.yaml`` or ``.json`` is
-    searched for relative to this module.
+_DEFAULT_RULES: List[Rule] = [
+    Rule(
+        decision="no_go",
+        condition="raroi is None or raroi < raroi_threshold",
+        reason_code="raroi_below_threshold",
+    ),
+    Rule(
+        decision="no_go",
+        condition="confidence is None or confidence < confidence_threshold",
+        reason_code="confidence_below_threshold",
+    ),
+    Rule(
+        decision="no_go",
+        condition="min_scenario is not None and min_scenario < scenario_score_min",
+        reason_code="scenario_below_min",
+    ),
+    Rule(
+        decision="pilot",
+        condition="sandbox_roi is not None and adapter_roi is not None and sandbox_roi < sandbox_roi_low and adapter_roi >= adapter_roi_high",
+        reason_code="micro_pilot",
+    ),
+    Rule(decision="promote", condition="True", reason_code=""),
+]
+
+
+def _load_rules(path: str | None = None) -> List[Rule]:
+    """Load deployment governance rules from YAML or JSON file.
+
+    The loaded rules are prepended to the built-in defaults.  ``path`` may
+    specify an explicit rules file; otherwise ``config/deployment_governance``
+    is searched for relative to this module.
     """
 
-    global _POLICY_CACHE, _POLICY_PATH
-    if _POLICY_CACHE is not None:
-        return _POLICY_CACHE
+    global _RULES_CACHE, _RULES_PATH
+    if _RULES_CACHE is not None:
+        return _RULES_CACHE
 
-    candidates = []
+    candidates: List[str] = []
     if path:
         candidates.append(path)
     else:
         base = os.path.join(os.path.dirname(__file__), "config")
-        candidates.append(os.path.join(base, "deployment_policy.yaml"))
-        candidates.append(os.path.join(base, "deployment_policy.json"))
+        candidates.append(os.path.join(base, "deployment_governance.yaml"))
+        candidates.append(os.path.join(base, "deployment_governance.json"))
 
-    policy: Dict[str, Any] = {}
+    loaded: List[Rule] = []
     for candidate in candidates:
         if os.path.exists(candidate):
-            with open(candidate, "r", encoding="utf-8") as fh:
-                if candidate.endswith(".json"):
-                    policy = json.load(fh) or {}
-                else:
-                    policy = yaml.safe_load(fh) or {}
-            _POLICY_CACHE = policy
-            _POLICY_PATH = candidate
+            try:
+                with open(candidate, "r", encoding="utf-8") as fh:
+                    data = json.load(fh) if candidate.endswith(".json") else yaml.safe_load(fh)
+            except Exception:
+                data = None
+            if isinstance(data, list):
+                for item in data:
+                    if not isinstance(item, Mapping):
+                        continue
+                    decision = item.get("decision")
+                    condition = item.get("condition")
+                    reason = item.get("reason_code") or item.get("reason")
+                    if not isinstance(decision, str) or not isinstance(condition, str):
+                        continue
+                    loaded.append(
+                        Rule(
+                            decision=decision,
+                            condition=condition,
+                            reason_code=str(reason) if reason else decision,
+                        )
+                    )
+            _RULES_CACHE = loaded + list(_DEFAULT_RULES)
+            _RULES_PATH = candidate
             break
     else:
-        _POLICY_CACHE = {}
-        _POLICY_PATH = None
+        _RULES_CACHE = list(_DEFAULT_RULES)
+        _RULES_PATH = None
 
-    return _POLICY_CACHE
+    return _RULES_CACHE
 
 
 @dataclass
@@ -95,24 +142,14 @@ class DeploymentGovernor:
             Latest ROI values for the sandbox and adapter evaluation runs.
         """
 
-        policy = _load_policy()
-        policy_overrides = (
-            policy.get("overrides", {}) if isinstance(policy, Mapping) else {}
-        )
-
+        rules = _load_rules()
         reasons: list[str] = []
         override: dict[str, Any] = {}
-
-        def _apply_override(code: str) -> None:
-            data = policy_overrides.get(code)
-            if isinstance(data, Mapping):
-                override.update(data)
 
         # Alignment veto overrides all other considerations.
         if str(alignment_status).lower() != "pass":
             reason = "alignment_veto"
             reasons.append(reason)
-            _apply_override(reason)
             return {"verdict": "demote", "reasons": reasons, "override": override}
 
         scenario_scores: Mapping[str, Any] | None = None
@@ -127,60 +164,29 @@ class DeploymentGovernor:
                 min_scenario = None
 
         verdict = "no_go"
-        if isinstance(policy, Mapping) and policy:
-            for name, block in policy.items():
-                if name == "overrides":
-                    continue
-                condition = block.get("condition") if isinstance(block, Mapping) else None
-                if not isinstance(condition, str):
-                    continue
-                safe_locals = {
-                    "raroi": raroi,
-                    "confidence": confidence,
-                    "min_scenario": min_scenario,
-                    "sandbox_roi": sandbox_roi,
-                    "adapter_roi": adapter_roi,
-                    "alignment_status": alignment_status,
-                }
-                try:
-                    if bool(eval(condition, {"__builtins__": {}}, safe_locals)):
-                        verdict = name
-                        reason = name
-                        reasons.append(reason)
-                        _apply_override(reason)
-                        break
-                except Exception:
-                    continue
-        else:
-            verdict = "promote"
-            if raroi is None or raroi < self.raroi_threshold:
-                verdict = "no_go"
-                reason = f"raroi_below_{self.raroi_threshold}"
-                reasons.append(reason)
-                _apply_override(reason)
-            if confidence is None or confidence < self.confidence_threshold:
-                verdict = "no_go"
-                reason = f"confidence_below_{self.confidence_threshold}"
-                reasons.append(reason)
-                _apply_override(reason)
-            if (
-                min_scenario is not None
-                and min_scenario < self.scenario_score_min
-            ):
-                verdict = "no_go"
-                reason = f"scenario_below_{self.scenario_score_min}"
-                reasons.append(reason)
-                _apply_override(reason)
-            if (
-                sandbox_roi is not None
-                and adapter_roi is not None
-                and sandbox_roi < self.sandbox_roi_low
-                and adapter_roi >= self.adapter_roi_high
-            ):
-                verdict = "pilot"
-                reason = "micro_pilot"
-                reasons.append(reason)
-                _apply_override(reason)
-                override["mode"] = "micro-pilot"
+        safe_locals = {
+            "raroi": raroi,
+            "confidence": confidence,
+            "min_scenario": min_scenario,
+            "sandbox_roi": sandbox_roi,
+            "adapter_roi": adapter_roi,
+            "alignment_status": alignment_status,
+            "raroi_threshold": self.raroi_threshold,
+            "confidence_threshold": self.confidence_threshold,
+            "scenario_score_min": self.scenario_score_min,
+            "sandbox_roi_low": self.sandbox_roi_low,
+            "adapter_roi_high": self.adapter_roi_high,
+        }
+        for rule in rules:
+            try:
+                if bool(eval(rule.condition, {"__builtins__": {}}, safe_locals)):
+                    verdict = rule.decision
+                    if rule.reason_code:
+                        reasons.append(rule.reason_code)
+                        if rule.reason_code == "micro_pilot":
+                            override["mode"] = "micro-pilot"
+                    break
+            except Exception:
+                continue
 
         return {"verdict": verdict, "reasons": reasons, "override": override}
