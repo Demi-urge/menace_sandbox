@@ -35,10 +35,12 @@ class EmbeddingScheduler:
         interval: float = 86400,
         batch_size: Optional[int] = None,
         backend: Optional[str] = None,
+        sources: Optional[list[str]] = None,
     ) -> None:
         self.interval = interval
         self.batch_size = batch_size
         self.backend = backend
+        self.sources = sources
         self._thread: Optional[threading.Thread] = None
         self.running = False
         self.backfill = EmbeddingBackfill()
@@ -57,6 +59,7 @@ class EmbeddingScheduler:
                 self.backfill.run(
                     batch_size=self.batch_size,
                     backend=self.backend,
+                    dbs=self.sources,
                 )
             except Exception:  # pragma: no cover - best effort
                 status = "failure"
@@ -92,10 +95,15 @@ def start_scheduler_from_env() -> EmbeddingScheduler | None:
         return None
     batch = os.getenv("EMBEDDING_SCHEDULER_BATCH_SIZE")
     backend = os.getenv("EMBEDDING_SCHEDULER_BACKEND")
+    sources_env = os.getenv("EMBEDDING_SCHEDULER_SOURCES", "")
+    sources = [s.strip() for s in sources_env.split(",") if s.strip()]
+    if not sources:
+        sources = None
     scheduler = EmbeddingScheduler(
         interval=interval,
         batch_size=int(batch) if batch else None,
         backend=backend,
+        sources=sources,
     )
     scheduler.start()
     return scheduler
