@@ -104,6 +104,8 @@ except Exception:
 # Recommendations to harden scenarios that show weaknesses.
 HARDENING_TIPS: dict[str, str] = {
     "concurrency_spike": "add rate limiting",
+    "schema_drift": "tighten schema validation",
+    "hostile_input": "sanitize inputs",
 }
 
 if TYPE_CHECKING:  # pragma: no cover - for typing only
@@ -2516,24 +2518,18 @@ class ROITracker:
         """Return a list of :class:`ScenarioScorecard` summarising scenarios."""
 
         cards: List[ScenarioScorecard] = []
-        negative = [
-            s for s, d in self.scenario_raroi_delta.items() if d < 0
-        ]
-        positive = [
-            s for s, d in self.scenario_raroi_delta.items() if d > 0
-        ]
-        failing: str | None = None
+        threshold = 0.0
+        negative = [s for s, d in self.scenario_roi_deltas.items() if d < threshold]
+        positive = [s for s, d in self.scenario_roi_deltas.items() if d >= threshold]
         if (
             len(negative) == 1
-            and len(negative) + len(positive) == len(self.scenario_raroi_delta)
+            and len(negative) + len(positive) == len(self.scenario_roi_deltas)
             and positive
         ):
-            failing = negative[0]
             self.workflow_label = "situationally weak"
         else:
             self.workflow_label = None
         for scen, roi_delta in self.scenario_roi_deltas.items():
-            rec = HARDENING_TIPS.get(scen) if scen == failing else None
             cards.append(
                 ScenarioScorecard(
                     scenario=scen,
@@ -2541,7 +2537,7 @@ class ROITracker:
                     raroi_delta=float(self.scenario_raroi_delta.get(scen, 0.0)),
                     metrics_delta=dict(self.scenario_metrics_delta.get(scen, {})),
                     synergy_delta=dict(self.scenario_synergy_delta.get(scen, {})),
-                    recommendation=rec,
+                    recommendation=HARDENING_TIPS.get(scen),
                 )
             )
         return cards
@@ -2587,12 +2583,19 @@ class ROITracker:
             names = list(scenarios)
 
         card: Dict[str, Any] = {"workflow_id": str(workflow_id), "scenarios": {}}
+        scorecards = {c.scenario: c for c in self.generate_scorecards()}
+        if self.workflow_label:
+            card["workflow_label"] = self.workflow_label
         for scen in names:
-            card["scenarios"][scen] = {
+            entry = {
                 "roi_delta": float(self.scenario_roi_deltas.get(scen, 0.0)),
                 "metrics_delta": dict(self.scenario_metrics_delta.get(scen, {})),
                 "synergy_delta": dict(self.scenario_synergy_delta.get(scen, {})),
             }
+            rec = scorecards.get(scen)
+            if rec and rec.recommendation:
+                entry["recommendation"] = rec.recommendation
+            card["scenarios"][scen] = entry
         return card
 
     def save_history(self, path: str) -> None:

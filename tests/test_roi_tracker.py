@@ -801,6 +801,29 @@ def test_generate_scenario_scorecard(tmp_path):
         card["scenarios"]["schema_drift"]["metrics_delta"]["schema_errors"]
         == pytest.approx(2.0)
     )
+    assert card["workflow_label"] == "situationally weak"
+    assert (
+        card["scenarios"]["concurrency_spike"]["recommendation"]
+        == "add rate limiting"
+    )
+    assert (
+        card["scenarios"]["schema_drift"]["recommendation"]
+        == "tighten schema validation"
+    )
+
+
+def test_hardening_recommendations():
+    tips = {
+        "concurrency_spike": "add rate limiting",
+        "schema_drift": "tighten schema validation",
+        "hostile_input": "sanitize inputs",
+    }
+    for scen, tip in tips.items():
+        tracker = rt.ROITracker()
+        tracker.record_scenario_delta(scen, -0.5, {}, {}, 0.0, -0.5)
+        cards = tracker.generate_scorecards()
+        cs = {c.scenario: c for c in cards}
+        assert cs[scen].recommendation == tip
 
 
 def test_scorecard_cli(tmp_path, capsys):

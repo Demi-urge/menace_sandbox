@@ -2276,6 +2276,18 @@ class SelfImprovementEngine:
             weight = final_score * mult
             if needs_review or raroi < self.borderline_raroi_threshold:
                 reason = "needs_review" if needs_review else "low_raroi"
+                label: str | None = None
+                recs: Dict[str, str] = {}
+                try:
+                    cards = tracker.generate_scorecards() if tracker else []
+                    label = tracker.workflow_label if tracker else None
+                    recs = {
+                        c.scenario: c.recommendation
+                        for c in cards
+                        if c.recommendation and c.roi_delta < 0.0
+                    }
+                except Exception:
+                    pass
                 self.logger.info(
                     "borderline workflow; deferring to review/shadow testing",
                     extra=log_record(
@@ -2286,6 +2298,8 @@ class SelfImprovementEngine:
                         threshold=self.tau,
                         shadow_test=True,
                         reason=reason,
+                        workflow_label=label,
+                        recommendations=recs,
                     ),
                 )
                 try:
@@ -2720,6 +2734,18 @@ class SelfImprovementEngine:
                     final_score, needs_review = raroi, False
                 if needs_review or raroi < self.borderline_raroi_threshold:
                     reason = "needs_review" if needs_review else "low_raroi"
+                    label: str | None = None
+                    recs: Dict[str, str] = {}
+                    try:
+                        cards = tracker.generate_scorecards() if tracker else []
+                        label = tracker.workflow_label if tracker else None
+                        recs = {
+                            c.scenario: c.recommendation
+                            for c in cards
+                            if c.recommendation and c.roi_delta < 0.0
+                        }
+                    except Exception:
+                        pass
                     self.logger.info(
                         "self optimisation deferred: borderline",
                         extra=log_record(
@@ -2729,6 +2755,8 @@ class SelfImprovementEngine:
                             confidence=confidence,
                             final_score=final_score,
                             reason=reason,
+                            workflow_label=label,
+                            recommendations=recs,
                         ),
                     )
                     try:
@@ -5752,7 +5780,7 @@ class SelfImprovementEngine:
                 self._schedule_task = None
 
 
-from typing import Any, Callable, Optional, Type, Iterable, Sequence
+from typing import Any, Callable, Optional, Type, Iterable, Sequence, Dict
 
 
 class ImprovementEngineRegistry:
