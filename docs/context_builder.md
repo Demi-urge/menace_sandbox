@@ -2,7 +2,7 @@
 
 `ContextBuilder` assembles a compact cross‑database context so language‑model
 helpers see only the most relevant history.  It queries the local error, bot,
-workflow, discrepancy and code databases through
+workflow, enhancement, discrepancy and code databases through
 [`UniversalRetriever`](universal_retriever.md) and returns a condensed JSON
 block that fits within strict token budgets.
 
@@ -58,9 +58,13 @@ source while lower weights trade recall for diversity.
   "errors": [{"id": 1, "desc": "...", "metric": 0.8}],
   "bots": [{"id": 2, "desc": "..."}],
   "workflows": [{"id": 3, "desc": "..."}],
-  "code": [{"id": 4, "desc": "..."}]
+  "enhancements": [{"id": 5, "desc": "..."}],
+  "code": [{"id": 6, "desc": "..."}]
 }
 ```
+
+Enhancement entries derive their text from the record's title or description and
+use ROI or adoption metrics when available to bias ranking.
 
 ## Token‑efficiency strategies
 
