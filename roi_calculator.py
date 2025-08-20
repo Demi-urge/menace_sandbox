@@ -144,18 +144,40 @@ class ROICalculator:
 
 
 def propose_fix(
-    metrics: dict[str, float], profile: dict[str, Any]
+    metrics: dict[str, float], profile: str | dict[str, Any]
 ) -> list[tuple[str, str]]:
     """Return remediation hints for weakest metrics or veto violations.
+
+    Parameters
+    ----------
+    metrics:
+        Observed metric values.
+    profile:
+        Either a mapping containing ``weights`` and optional ``veto`` rules or
+        the name of a profile to load from ``configs/roi_profiles.yaml``.
 
     The profile's weights are used to determine each metric's contribution to the
     overall ROI score. The metrics with the lowest contributions are highlighted
     together with any metrics violating veto rules. The returned list contains up
-    to three ``(metric, hint)`` pairs ordered by priority.
+    to three ``(metric, hint)`` pairs ordered by priority. Unknown metrics fall
+    back to a generic ``"improve <name>"`` suggestion. If the profile name cannot
+    be resolved the function returns an empty list.
     """
 
-    weights: dict[str, float] = profile.get("weights", {})
-    veto_rules: dict[str, dict[str, Any]] = profile.get("veto", {})
+    if isinstance(profile, str):
+        try:
+            with Path("configs/roi_profiles.yaml").open(
+                "r", encoding="utf-8"
+            ) as fh:
+                profiles: dict[str, Any] = yaml.safe_load(fh) or {}
+        except FileNotFoundError:
+            profiles = {}
+        profile_dict: dict[str, Any] = profiles.get(profile, {})
+    else:
+        profile_dict = profile or {}
+
+    weights: dict[str, float] = profile_dict.get("weights", {})
+    veto_rules: dict[str, dict[str, Any]] = profile_dict.get("veto", {})
 
     suggestions: list[tuple[str, str]] = []
     selected: set[str] = set()
