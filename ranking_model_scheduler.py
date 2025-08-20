@@ -177,7 +177,7 @@ class RankingModelScheduler:
 
         try:
             win_rate = self._win_events / self._total_events if self._total_events else 0.0
-            if win_rate < self.win_rate_threshold:
+            if win_rate <= self.win_rate_threshold:
                 self.retrain_and_reload()
         except Exception:
             logging.exception("ranking model retrain failed")

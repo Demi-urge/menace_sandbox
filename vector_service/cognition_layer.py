@@ -40,6 +40,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - ROI tracking optional
     ROITracker = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from menace.unified_event_bus import UnifiedEventBus  # type: ignore
+except Exception:  # pragma: no cover - event bus optional
+    UnifiedEventBus = None  # type: ignore
+
 
 class CognitionLayer:
     """Tie together retrieval, context building and patch logging.
@@ -129,21 +134,26 @@ class CognitionLayer:
 
     # ------------------------------------------------------------------
     def update_ranker(
-        self, vectors: List[Tuple[str, str, float]], success: bool
-    ) -> None:
+        self,
+        vectors: List[Tuple[str, str, float]],
+        success: bool,
+        roi_deltas: Dict[str, float] | None = None,
+    ) -> Dict[str, float]:
         """Update ranking weights based on patch outcome.
 
         The method aggregates updates by origin database so that future
         retrievals can prioritise sources that historically produced
-        successful patches.  Weights are persisted in
-        :class:`VectorMetricsDB` so the behaviour survives restarts.
+        successful patches.  ROI deltas from ``roi_tracker`` or the provided
+        ``roi_deltas`` mapping directly influence the weight adjustments.
+        Weights are persisted in :class:`VectorMetricsDB` so the behaviour
+        survives restarts.  The new weights are returned as a mapping.
         """
 
         if self.vector_metrics is None:
-            return
+            return {}
 
-        per_db: Dict[str, float] = {}
-        if self.roi_tracker is not None:
+        per_db: Dict[str, float] = roi_deltas.copy() if roi_deltas else {}
+        if not per_db and self.roi_tracker is not None:
             try:
                 deltas = getattr(self.roi_tracker, "origin_db_deltas", {})
                 for origin, _vec_id, _score in vectors:
@@ -173,6 +183,7 @@ class CognitionLayer:
                     self.context_builder.db_weights.update(updates)  # type: ignore[attr-defined]
             except Exception:
                 pass
+        return updates
 
     # ------------------------------------------------------------------
     @log_and_measure
@@ -418,6 +429,8 @@ class CognitionLayer:
             retrieval_metadata=meta,
         )
 
+        roi_contribs: Dict[str, float] = {}
+        used_tracker_deltas = False
         if self.roi_tracker is not None:
             try:  # pragma: no cover - best effort
                 cur = self.vector_metrics.conn.execute(
@@ -443,10 +456,58 @@ class CognitionLayer:
                     roi_after,
                     retrieval_metrics=retrieval_metrics,
                 )
+                deltas = getattr(self.roi_tracker, "origin_db_deltas", {})
+                for origin, _vid, _score in vectors:
+                    key = origin or ""
+                    vals = deltas.get(key)
+                    if vals:
+                        roi_contribs[key] = abs(vals[-1])
+                        used_tracker_deltas = True
             except Exception:
                 pass
 
-        self.update_ranker(vectors, success)
+        if not roi_contribs:
+            base = 0.0 if contribution is None else contribution
+            for origin, _vid, score in vectors:
+                roi = base if contribution is not None else score
+                key = origin or ""
+                roi_contribs[key] = roi_contribs.get(key, 0.0) + abs(roi)
+
+        if self.roi_tracker is not None and roi_contribs and not used_tracker_deltas:
+            metrics = {
+                origin: {
+                    "roi": roi,
+                    "win_rate": 1.0 if success else 0.0,
+                    "regret_rate": 0.0 if success else 1.0,
+                }
+                for origin, roi in roi_contribs.items()
+            }
+            try:
+                self.roi_tracker.update_db_metrics(metrics)
+            except Exception:
+                pass
+
+        roi_deltas = {
+            origin: (roi if success else -roi) for origin, roi in roi_contribs.items()
+        }
+        updates = self.update_ranker(vectors, success, roi_deltas=roi_deltas)
+
+        if roi_contribs:
+            bus = getattr(self.patch_logger, "event_bus", None)
+            if bus is None and UnifiedEventBus is not None:
+                try:
+                    bus = UnifiedEventBus()
+                except Exception:
+                    bus = None
+            if bus is not None:
+                for origin, roi in roi_contribs.items():
+                    payload = {"db": origin, "roi": roi, "win": success}
+                    if origin in updates:
+                        payload["weight"] = updates[origin]
+                    try:
+                        bus.publish("retrieval:feedback", payload)
+                    except Exception:
+                        pass
 
     # ------------------------------------------------------------------
     async def record_patch_outcome_async(
@@ -472,7 +533,84 @@ class CognitionLayer:
             contribution=contribution,
             retrieval_metadata=meta,
         )
-        self.update_ranker(vectors, success)
+        roi_contribs: Dict[str, float] = {}
+        used_tracker_deltas = False
+        if self.roi_tracker is not None:
+            try:  # pragma: no cover - best effort
+                cur = self.vector_metrics.conn.execute(
+                    """
+                    SELECT db, tokens, contribution, hit
+                      FROM vector_metrics
+                     WHERE session_id=? AND event_type='retrieval'
+                    """,
+                    (session_id,),
+                )
+                rows = cur.fetchall()
+                roi_after = sum(float(contrib or 0.0) for _db, _tok, contrib, _hit in rows)
+                retrieval_metrics = [
+                    {
+                        "origin_db": str(db),
+                        "tokens": float(contrib or 0.0),
+                        "hit": bool(hit),
+                    }
+                    for db, _tokens, contrib, hit in rows
+                ]
+                self.roi_tracker.update(
+                    0.0,
+                    roi_after,
+                    retrieval_metrics=retrieval_metrics,
+                )
+                deltas = getattr(self.roi_tracker, "origin_db_deltas", {})
+                for origin, _vid, _score in vectors:
+                    key = origin or ""
+                    vals = deltas.get(key)
+                    if vals:
+                        roi_contribs[key] = abs(vals[-1])
+                        used_tracker_deltas = True
+            except Exception:
+                pass
+
+        if not roi_contribs:
+            base = 0.0 if contribution is None else contribution
+            for origin, _vid, score in vectors:
+                roi = base if contribution is not None else score
+                key = origin or ""
+                roi_contribs[key] = roi_contribs.get(key, 0.0) + abs(roi)
+
+        if self.roi_tracker is not None and roi_contribs and not used_tracker_deltas:
+            metrics = {
+                origin: {
+                    "roi": roi,
+                    "win_rate": 1.0 if success else 0.0,
+                    "regret_rate": 0.0 if success else 1.0,
+                }
+                for origin, roi in roi_contribs.items()
+            }
+            try:
+                self.roi_tracker.update_db_metrics(metrics)
+            except Exception:
+                pass
+
+        roi_deltas = {
+            origin: (roi if success else -roi) for origin, roi in roi_contribs.items()
+        }
+        updates = self.update_ranker(vectors, success, roi_deltas=roi_deltas)
+        if roi_contribs:
+            bus = getattr(self.patch_logger, "event_bus", None)
+            if bus is None and UnifiedEventBus is not None:
+                try:
+                    bus = UnifiedEventBus()
+                except Exception:
+                    bus = None
+            if bus is not None:
+                for origin, roi in roi_contribs.items():
+                    payload = {"db": origin, "roi": roi, "win": success}
+                    if origin in updates:
+                        payload["weight"] = updates[origin]
+                    try:
+                        bus.publish("retrieval:feedback", payload)
+                    except Exception:
+                        pass
 
 
 __all__ = ["CognitionLayer"]
