@@ -770,13 +770,14 @@ def test_update_logs_metrics(caplog, monkeypatch):
 
 def test_generate_scorecards():
     tracker = rt.ROITracker()
-    tracker.record_scenario_delta("normal", 1.0, {}, {}, 1.0, 0.0)
+    tracker.record_scenario_delta("normal", 1.0, {}, {}, 1.0, 1.0)
     tracker.record_scenario_delta(
         "concurrency_spike", -1.0, {}, {}, 0.0, -1.0
     )
     cards = tracker.generate_scorecards()
-    assert any(
-        c.scenario == "concurrency_spike" and c.raroi_delta == pytest.approx(-1.0)
-        for c in cards
-    )
+    assert tracker.workflow_label == "situationally weak"
+    cs = {c.scenario: c for c in cards}
+    assert cs["concurrency_spike"].raroi_delta == pytest.approx(-1.0)
+    assert cs["concurrency_spike"].recommendation == "add rate limiting"
+    assert cs["normal"].recommendation is None
 
