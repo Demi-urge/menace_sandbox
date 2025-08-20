@@ -57,3 +57,60 @@ def test_roi_logged_without_veto(tmp_path, monkeypatch):
     record = _read_last(_audit_path(tmp_path))
     assert "error" not in record
     assert isinstance(record.get("roi"), float)
+
+
+def test_alignment_veto(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    action = {
+        "decision": "ship",
+        "alignment_status": "fail",
+        "metrics": {
+            "profitability": 0.5,
+            "efficiency": 0.6,
+            "reliability": 0.7,
+            "resilience": 0.8,
+            "maintainability": 0.9,
+            "security": 0.9,
+            "latency": 0.1,
+            "energy": 0.1,
+        },
+        "roi_profile": "scraper_bot",
+    }
+    ok = cel.process_action(json.dumps(action))
+    assert not ok
+    record = _read_last(_audit_path(tmp_path))
+    assert record["error"] == "governance_veto"
+    assert record["decision"] == "ship"
+
+
+def test_raroi_increase_veto(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    scorecard = {
+        "scenarios": {
+            "normal": {"roi": 1.0},
+            "a": {"roi": 2.0},
+            "b": {"roi": 3.0},
+            "c": {"roi": 4.0},
+        }
+    }
+    action = {
+        "decision": "rollback",
+        "alignment_status": "pass",
+        "scorecard": scorecard,
+        "metrics": {
+            "profitability": 0.5,
+            "efficiency": 0.6,
+            "reliability": 0.7,
+            "resilience": 0.8,
+            "maintainability": 0.9,
+            "security": 0.9,
+            "latency": 0.1,
+            "energy": 0.1,
+        },
+        "roi_profile": "scraper_bot",
+    }
+    ok = cel.process_action(json.dumps(action))
+    assert not ok
+    record = _read_last(_audit_path(tmp_path))
+    assert record["error"] == "governance_veto"
+    assert record["decision"] == "rollback"
