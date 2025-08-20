@@ -110,6 +110,41 @@ class ContextBuilder:
         self.max_tokens = max_tokens
 
     # ------------------------------------------------------------------
+    def refresh_db_weights(
+        self,
+        weights: Dict[str, float] | None = None,
+        *,
+        vector_metrics: "VectorMetricsDB" | None = None,
+    ) -> None:
+        """Refresh ranking weights for origin databases.
+
+        Parameters
+        ----------
+        weights:
+            Optional mapping of database name to weight. When omitted the
+            method attempts to load weights from ``vector_metrics`` or the
+            global :class:`VectorMetricsDB` instance.
+        vector_metrics:
+            Database from which weights are loaded when ``weights`` is ``None``.
+            The argument defaults to the module-level instance when available.
+        """
+
+        if weights is None:
+            vm = vector_metrics or _VEC_METRICS
+            if vm is None:
+                return
+            try:
+                weights = vm.get_db_weights()
+            except Exception:
+                return
+        if not isinstance(weights, dict):  # pragma: no cover - defensive
+            return
+        try:
+            self.db_weights.update(weights)
+        except Exception:  # pragma: no cover - best effort
+            self.db_weights = dict(weights)
+
+    # ------------------------------------------------------------------
     def _summarise(self, text: str) -> str:
         if self.memory and hasattr(self.memory, "_summarise_text"):
             try:

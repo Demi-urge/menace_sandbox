@@ -82,7 +82,10 @@ class CognitionLayer:
         )
         if context_builder is not None and db_weights:
             try:
-                self.context_builder.db_weights.update(db_weights)
+                if hasattr(self.context_builder, "refresh_db_weights"):
+                    self.context_builder.refresh_db_weights(db_weights)  # type: ignore[attr-defined]
+                elif hasattr(self.context_builder, "db_weights"):
+                    self.context_builder.db_weights.update(db_weights)  # type: ignore[attr-defined]
             except Exception:
                 pass
         self.patch_logger = patch_logger or PatchLogger(
@@ -138,16 +141,36 @@ class CognitionLayer:
 
         if self.vector_metrics is None:
             return
-        delta = 0.1 if success else -0.1
+
         per_db: Dict[str, float] = {}
-        for origin, _vec_id, _score in vectors:
-            key = origin or ""
-            per_db[key] = per_db.get(key, 0.0) + delta
+        if self.roi_tracker is not None:
+            try:
+                deltas = getattr(self.roi_tracker, "origin_db_deltas", {})
+                for origin, _vec_id, _score in vectors:
+                    key = origin or ""
+                    vals = deltas.get(key)
+                    if vals:
+                        per_db[key] = vals[-1]
+            except Exception:
+                per_db = {}
+        if not per_db:
+            delta = 0.1 if success else -0.1
+            for origin, _vec_id, _score in vectors:
+                key = origin or ""
+                per_db[key] = per_db.get(key, 0.0) + delta
+
+        updates: Dict[str, float] = {}
         for origin, change in per_db.items():
             try:
-                weight = self.vector_metrics.update_db_weight(origin, change)
-                if hasattr(self.context_builder, "db_weights"):
-                    self.context_builder.db_weights[origin] = weight
+                updates[origin] = self.vector_metrics.update_db_weight(origin, change)
+            except Exception:
+                pass
+        if updates:
+            try:
+                if hasattr(self.context_builder, "refresh_db_weights"):
+                    self.context_builder.refresh_db_weights(updates)  # type: ignore[attr-defined]
+                elif hasattr(self.context_builder, "db_weights"):
+                    self.context_builder.db_weights.update(updates)  # type: ignore[attr-defined]
             except Exception:
                 pass
 
