@@ -19,6 +19,9 @@ record ROI deltas for the origin databases contributing to a patch::
 
 This automatically forwards the patch outcome to ``tracker`` so ROI
 histories stay up to date.
+
+A custom ranking model may also be supplied to override the default
+retrieval ranker used by the context builder.
 """
 
 from __future__ import annotations
@@ -46,6 +49,9 @@ class CognitionLayer:
         Optional :class:`roi_tracker.ROITracker` instance used to update
         ROI histories when recording patch outcomes.  If not provided and
         the tracker can be imported, a default instance is created.
+    ranking_model:
+        Optional ranking model object passed to :class:`ContextBuilder`
+        when one is not supplied directly.
     """
 
     def __init__(
@@ -56,13 +62,16 @@ class CognitionLayer:
         patch_logger: PatchLogger | None = None,
         vector_metrics: VectorMetricsDB | None = None,
         roi_tracker: ROITracker | None = None,
+        ranking_model: Any | None = None,
     ) -> None:
         self.retriever = retriever or Retriever()
         self.vector_metrics = vector_metrics or VectorMetricsDB()
-        self.context_builder = context_builder or ContextBuilder(
-            retriever=self.retriever
-        )
         self.roi_tracker = roi_tracker or (ROITracker() if ROITracker is not None else None)
+        self.context_builder = context_builder or ContextBuilder(
+            retriever=self.retriever,
+            ranking_model=ranking_model,
+            roi_tracker=self.roi_tracker,
+        )
         self.patch_logger = patch_logger or PatchLogger(
             vector_metrics=self.vector_metrics,
             roi_tracker=self.roi_tracker,
