@@ -1336,6 +1336,7 @@ def _sandbox_cycle_runner(
                                 "license": h.get("license"),
                                 "license_fingerprint": h.get("license_fingerprint"),
                                 "semantic_alerts": h.get("semantic_alerts"),
+                                "alignment_severity": h.get("alignment_severity"),
                             }
                     except Exception:
                         logger.debug("retriever lookup failed", exc_info=True)
@@ -1695,6 +1696,7 @@ def _sandbox_cycle_runner(
                                 "license": h.get("license"),
                                 "license_fingerprint": h.get("license_fingerprint"),
                                 "semantic_alerts": h.get("semantic_alerts"),
+                                "alignment_severity": h.get("alignment_severity"),
                             }
                     except Exception:
                         logger.debug("retriever lookup failed", exc_info=True)

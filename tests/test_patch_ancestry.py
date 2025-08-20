@@ -7,6 +7,7 @@ sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBu
 from code_database import PatchHistoryDB, PatchRecord
 from vector_service.patch_logger import PatchLogger
 from patch_provenance import get_patch_provenance
+from vector_metrics_db import VectorMetricsDB
 
 
 def test_patch_logger_logs_ancestry(tmp_path):
@@ -43,3 +44,14 @@ def test_patch_logger_records_provenance(tmp_path):
             "semantic_alerts": ["unsafe"],
         }
     ]
+
+
+def test_vector_metrics_records_alignment_severity(tmp_path):
+    db = PatchHistoryDB(tmp_path / "p.db")
+    vm = VectorMetricsDB(tmp_path / "v.db")
+    pid = db.add(PatchRecord("a.py", "desc", 1.0, 2.0))
+    pl = PatchLogger(patch_db=db, vector_metrics=vm)
+    meta = {"o1:v1": {"alignment_severity": 2}}
+    pl.track_contributors({"o1:v1": 0.5}, True, patch_id=str(pid), session_id="s", retrieval_metadata=meta)
+    rows = vm.conn.execute("SELECT vector_id, alignment_severity FROM patch_ancestry").fetchall()
+    assert rows == [("v1", 2.0)]

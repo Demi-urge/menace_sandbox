@@ -101,7 +101,8 @@ class VectorMetricsDB:
                 rank INTEGER,
                 contribution REAL,
                 license TEXT,
-                semantic_alerts TEXT
+                semantic_alerts TEXT,
+                alignment_severity REAL
             )
             """
         )
@@ -125,6 +126,10 @@ class VectorMetricsDB:
             self.conn.execute("ALTER TABLE patch_ancestry ADD COLUMN license TEXT")
         if "semantic_alerts" not in pcols:
             self.conn.execute("ALTER TABLE patch_ancestry ADD COLUMN semantic_alerts TEXT")
+        if "alignment_severity" not in pcols:
+            self.conn.execute(
+                "ALTER TABLE patch_ancestry ADD COLUMN alignment_severity REAL"
+            )
         self.conn.commit()
 
     # ------------------------------------------------------------------
@@ -362,9 +367,11 @@ class VectorMetricsDB:
         self, patch_id: str, vectors: list[tuple]
     ) -> None:
         for rank, vec in enumerate(vectors):
-            vec_id, contrib, lic, alerts = (list(vec) + [None, None, None])[:4]
+            vec_id, contrib, lic, alerts, sev = (
+                list(vec) + [None, None, None, None]
+            )[:5]
             self.conn.execute(
-                "INSERT INTO patch_ancestry(patch_id, vector_id, rank, contribution, license, semantic_alerts) VALUES(?,?,?,?,?,?)",
+                "INSERT INTO patch_ancestry(patch_id, vector_id, rank, contribution, license, semantic_alerts, alignment_severity) VALUES(?,?,?,?,?,?,?)",
                 (
                     patch_id,
                     vec_id,
@@ -372,6 +379,7 @@ class VectorMetricsDB:
                     contrib,
                     lic,
                     json.dumps(alerts) if alerts is not None else None,
+                    sev,
                 ),
             )
         self.conn.commit()

@@ -330,6 +330,7 @@ class QuickFixEngine:
                     "license": h.get("license"),
                     "license_fingerprint": h.get("license_fingerprint"),
                     "semantic_alerts": h.get("semantic_alerts"),
+                    "alignment_severity": h.get("alignment_severity"),
                 }
                 for h in _hits
             }
@@ -430,6 +431,7 @@ class QuickFixEngine:
                         "license": h.get("license"),
                         "license_fingerprint": h.get("license_fingerprint"),
                         "semantic_alerts": h.get("semantic_alerts"),
+                        "alignment_severity": h.get("alignment_severity"),
                     }
                     for h in _hits
                 }
