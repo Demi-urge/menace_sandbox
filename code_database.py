@@ -18,6 +18,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from dataclasses import asdict
 
 import license_detector
+from vector_service import EmbeddableDBMixin
 from embeddable_db_mixin import log_embedding_metrics
 
 try:  # optional dependency for future scalability
@@ -207,7 +208,7 @@ class CodeRecord:
         assert self.code, "code cannot be empty"
 
 
-class CodeDB:
+class CodeDB(EmbeddableDBMixin):
     """SQLite storage for code templates and relationships."""
 
     def __init__(
@@ -255,12 +256,22 @@ class CodeDB:
 
         if self.engine is not None:
             self._init_engine()
-            return
+        else:
+            with sqlite3.connect(self.path) as conn:
+                conn.execute("PRAGMA foreign_keys = ON")
+                self._ensure_schema(conn)
+                conn.commit()
 
-        with sqlite3.connect(self.path) as conn:
-            conn.execute("PRAGMA foreign_keys = ON")
-            self._ensure_schema(conn)
-            conn.commit()
+        index_path = (
+            self.path.with_suffix(".index") if self.path else Path("code_embeddings.index")
+        )
+        meta_path = index_path.with_suffix(".json")
+        EmbeddableDBMixin.__init__(
+            self,
+            index_path=index_path,
+            metadata_path=meta_path,
+            backend="annoy",
+        )
 
     @contextmanager
     def _connect(self) -> Iterator[Any]:
@@ -463,6 +474,10 @@ class CodeDB:
             return rec.cid
 
         cid = self._with_retry(lambda: self._conn_wrapper(op))
+        try:
+            self.add_embedding(cid, rec, "code", source_id=str(cid))
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("embedding hook failed for %s: %s", cid, exc)
         if self.event_bus:
             if not publish_with_retry(self.event_bus, "code:new", asdict(rec)):
                 logger.exception("failed to publish code:new event")
@@ -965,6 +980,100 @@ class PatchHistoryDB:
         """Return simple keyword list from ``text``."""
         words = re.findall(r"\b[a-zA-Z]{3,}\b", text.lower())
         return words
+
+    # ------------------------------------------------------------------
+    def _embed_text(self, data: dict[str, Any]) -> str:
+        """Return a concatenated text representation for embedding."""
+        parts = [
+            str(data.get("summary", "")),
+            str(data.get("code", "")),
+            str(data.get("template_type", "")),
+            str(data.get("language", "")),
+        ]
+        return " ".join(p for p in parts if p)
+
+    def license_text(self, rec: CodeRecord | dict[str, Any]) -> str | None:
+        if isinstance(rec, CodeRecord):
+            return rec.code
+        if isinstance(rec, dict):
+            return rec.get("code")
+        return None
+
+    def backfill_embeddings(self, batch_size: int = 100) -> None:
+        """Delegate to :class:`EmbeddableDBMixin` for compatibility."""
+        EmbeddableDBMixin.backfill_embeddings(self)
+
+    def iter_records(self) -> Iterator[tuple[int, dict[str, Any], str]]:
+        """Yield code rows for embedding backfill."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "SELECT id, summary, code, template_type, language FROM code"
+            )
+            rows = cur.fetchall()
+        for row in rows:
+            data = dict(row) if isinstance(row, sqlite3.Row) else {
+                "id": row[0],
+                "summary": row[1],
+                "code": row[2],
+                "template_type": row[3],
+                "language": row[4],
+            }
+            yield data["id"], data, "code"
+
+    def vector(self, rec: Any) -> List[float] | None:
+        """Return an embedding vector for ``rec`` or record id."""
+        if isinstance(rec, (int, str)):
+            rid = str(rec)
+            meta = getattr(self, "_metadata", {}).get(rid)
+            if meta and "vector" in meta:
+                return meta["vector"]
+            try:
+                rec_id = int(rec)
+            except (TypeError, ValueError):
+                return None
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT summary, code, template_type, language FROM code WHERE id=?",
+                    (rec_id,),
+                ).fetchone()
+            if not row:
+                return None
+            data = dict(row) if isinstance(row, sqlite3.Row) else {
+                "summary": row[0],
+                "code": row[1],
+                "template_type": row[2],
+                "language": row[3],
+            }
+            text = self._embed_text(data)
+            return self.encode_text(text) if text else None
+        if isinstance(rec, CodeRecord):
+            data = asdict(rec)
+        elif isinstance(rec, dict):
+            data = rec
+        else:
+            return None
+        text = self._embed_text(data)
+        return self.encode_text(text) if text else None
+
+    def search_by_vector(
+        self, vector: Sequence[float], top_k: int = 5
+    ) -> List[dict[str, Any]]:
+        matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
+        results: List[dict[str, Any]] = []
+        with self._connect() as conn:
+            for cid, dist in matches:
+                row = conn.execute(
+                    "SELECT id, summary, code FROM code WHERE id=?", (cid,)
+                ).fetchone()
+                if row:
+                    data = dict(row) if isinstance(row, sqlite3.Row) else {
+                        "id": row[0],
+                        "summary": row[1],
+                        "code": row[2],
+                    }
+                    data["_distance"] = dist
+                    results.append(data)
+        return results
 
     def add(
         self, rec: PatchRecord, vectors: Sequence[tuple[str, float]] | None = None

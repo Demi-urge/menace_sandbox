@@ -213,19 +213,18 @@ class PatchLogger:
                     roi = roi_base if contribution is not None else score
                     key = origin or ""
                     origin_totals[key] = origin_totals.get(key, 0.0) + roi
-                    if self.vector_metrics is not None:
-                        try:  # pragma: no cover - best effort
-                            self.vector_metrics.update_outcome(
-                                session_id,
-                                [(origin, vid)],
-                                contribution=roi,
-                                patch_id=patch_id,
-                                win=result,
-                                regret=not result,
-                            )
-                        except Exception:
-                            pass
                 if self.vector_metrics is not None:
+                    try:  # pragma: no cover - best effort
+                        self.vector_metrics.update_outcome(
+                            session_id,
+                            pairs,
+                            contribution=roi_base if contribution is not None else 0.0,
+                            patch_id=patch_id,
+                            win=result,
+                            regret=not result,
+                        )
+                    except Exception:
+                        pass
                     for origin, roi in origin_totals.items():
                         try:
                             self.vector_metrics.log_retrieval_feedback(
