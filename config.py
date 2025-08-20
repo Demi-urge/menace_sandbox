@@ -165,6 +165,15 @@ class ContextBuilderConfig(BaseModel):
         1.0,
         description="Weight applied to safety signals such as win/regret rate and alignment severity",
     )
+    regret_penalty: float = Field(
+        1.0, description="Penalty multiplier for regret rate when ranking results"
+    )
+    alignment_penalty: float = Field(
+        1.0, description="Penalty multiplier for alignment severity"
+    )
+    alert_penalty: float = Field(
+        1.0, description="Penalty applied per semantic alert"
+    )
 
 
     model_config = ConfigDict(extra="forbid")
