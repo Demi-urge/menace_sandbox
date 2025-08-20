@@ -49,6 +49,14 @@ try:
 except Exception:  # pragma: no cover - package fallback
     from roi_calculator import propose_fix  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from .quick_fix_engine import generate_patch
+except Exception:
+    try:
+        from quick_fix_engine import generate_patch  # type: ignore
+    except Exception:
+        generate_patch = None  # type: ignore
+
 # Backwards compatibility with legacy imports
 ErrorType = ErrorCategory
 
@@ -106,6 +114,7 @@ class TelemetryEvent(BaseModel):
     resolution_status: str = "unresolved"
     patch_id: int | None = None
     deploy_id: int | None = None
+    fix_suggestions: list[str] | None = None
     checksum: str = ""
 
 
@@ -568,6 +577,61 @@ class ErrorLogger:
         else:
             self.logger.info(message)
         return suggestions
+    def log_fix_suggestions(
+        self,
+        bottlenecks: list[tuple[str, str]] | list[str],
+        task_id: str | None = None,
+        bot_id: str | None = None,
+    ) -> TelemetryEvent:
+        """Record fix suggestions and trigger patching."""
+        suggestions: list[str] = []
+        modules: list[str] = []
+        for item in bottlenecks:
+            if isinstance(item, tuple):
+                mod, hint = item
+                modules.append(mod)
+                suggestions.append(hint)
+            else:
+                suggestions.append(str(item))
+        payload = {
+            'task_id': task_id,
+            'bot_id': bot_id,
+            'suggestions': suggestions,
+        }
+        event = TelemetryEvent(
+            task_id=task_id,
+            bot_id=bot_id,
+            error_type=ErrorCategory.Unknown,
+            category=ErrorCategory.Unknown,
+            root_cause='FixSuggestion',
+            stack_trace=json.dumps(payload, sort_keys=True),
+            root_module='fix_suggestions',
+            module='fix_suggestions',
+            module_counts={},
+            inferred_cause='',
+            timestamp=datetime.utcnow().isoformat(),
+            resolution_status='unresolved',
+            patch_id=None,
+            deploy_id=None,
+            fix_suggestions=suggestions,
+        )
+        try:
+            self.db.add_telemetry(event)
+        except Exception as e:  # pragma: no cover - db issues
+            self.logger.error('failed to record telemetry: %s', e)
+        if self.replicator:
+            try:
+                self.replicator.replicate(event)
+            except Exception as e:  # pragma: no cover - network issues
+                self.logger.error('failed to replicate telemetry: %s', e)
+        if generate_patch is not None:
+            for mod in modules:
+                try:
+                    generate_patch(mod)
+                except Exception as e:  # pragma: no cover - patch failures
+                    self.logger.error('quick fix generation failed for %s: %s', mod, e)
+        return event
+
     def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
