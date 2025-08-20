@@ -33,7 +33,7 @@ class DummyMetricsDB:
 
 class DummyVectorMetricsDB:
     def __init__(self) -> None:
-        self.kwargs: dict[str, Any] | None = None
+        self.calls: list[dict[str, Any]] = []
 
     def update_outcome(
         self,
@@ -45,14 +45,19 @@ class DummyVectorMetricsDB:
         win,
         regret,
     ):
-        self.kwargs = {
-            "session_id": session_id,
-            "pairs": pairs,
-            "contribution": contribution,
-            "patch_id": patch_id,
-            "win": win,
-            "regret": regret,
-        }
+        self.calls.append(
+            {
+                "session_id": session_id,
+                "pairs": pairs,
+                "contribution": contribution,
+                "patch_id": patch_id,
+                "win": win,
+                "regret": regret,
+            }
+        )
+
+    def log_retrieval_feedback(self, db, *, win=False, regret=False, roi=0.0):
+        pass
 
 
 class DummyPatchDB:
@@ -143,7 +148,7 @@ def test_track_contributors_forwards_contribution_vector_metrics(monkeypatch):
     vm = DummyVectorMetricsDB()
     pl = PatchLogger(vector_metrics=vm)
     pl.track_contributors(["v1"], True, patch_id="p", session_id="s", contribution=0.3)
-    assert vm.kwargs and vm.kwargs["contribution"] == 0.3
+    assert vm.calls and vm.calls[0]["contribution"] == 0.3
 
 
 def test_track_contributors_forwards_contribution_patch_db(monkeypatch):

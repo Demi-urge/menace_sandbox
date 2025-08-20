@@ -48,6 +48,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback when module unavailable
     VectorMetricsDB = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from .unified_event_bus import UnifiedEventBus
+except Exception:  # pragma: no cover - fallback when event bus unavailable
+    UnifiedEventBus = None  # type: ignore
+
 _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 
 try:  # pragma: no cover - typing only
@@ -489,6 +494,7 @@ class UniversalRetriever:
         fallback_on_low_reliability: bool = True,
         enable_model_ranking: bool = True,
         enable_reliability_bias: bool = True,
+        event_bus: UnifiedEventBus | None = None,
     ) -> None:
         self.bot_db = bot_db
         self.workflow_db = workflow_db
@@ -543,6 +549,20 @@ class UniversalRetriever:
 
         if self._encoder is None and code_db is None:
             raise ValueError("At least one database instance is required")
+
+        self.event_bus = event_bus
+        if self.event_bus is None and UnifiedEventBus is not None:
+            try:
+                self.event_bus = UnifiedEventBus()
+            except Exception:
+                self.event_bus = None
+        if self.event_bus is not None:
+            try:
+                self.event_bus.subscribe(
+                    "retrieval:feedback", lambda *_: self.reload_reliability_scores()
+                )
+            except Exception:
+                pass
 
     @property
     def reliability_metrics(self) -> Dict[str, Dict[str, float]]:

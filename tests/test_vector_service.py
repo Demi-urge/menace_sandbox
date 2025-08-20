@@ -99,8 +99,20 @@ class DummyVectorMetricsDB:
     def __init__(self):
         self.called = False
 
-    def update_outcome(self, session_id, pairs, contribution, patch_id, win, regret):
+    def update_outcome(
+        self,
+        session_id,
+        pairs,
+        *,
+        contribution=0.0,
+        patch_id="",
+        win=False,
+        regret=False,
+    ):
         self.called = True
+
+    def log_retrieval_feedback(self, db, *, win=False, regret=False, roi=0.0):
+        pass
 
 
 class DummyPatchDB:
