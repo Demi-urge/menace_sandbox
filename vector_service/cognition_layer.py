@@ -125,37 +125,55 @@ class CognitionLayer:
         the patch succeeds or fails.
         """
 
-        context, sid, vectors, stats = self.context_builder.build_context(
-            prompt,
-            top_k=top_k,
-            include_vectors=True,
-            session_id=session_id,
-            return_stats=True,
-        )
+        stats: Dict[str, Any] = {}
+        try:
+            result = self.context_builder.build_context(
+                prompt,
+                top_k=top_k,
+                include_vectors=True,
+                session_id=session_id,
+                return_stats=True,
+            )
+        except TypeError:  # pragma: no cover - older builders
+            result = self.context_builder.build_context(
+                prompt,
+                top_k=top_k,
+                include_vectors=True,
+                session_id=session_id,
+            )
+
+        if isinstance(result, tuple) and len(result) == 4:
+            context, sid, vectors, stats = result
+        else:  # pragma: no cover - defensive fallback
+            context, sid, vectors = result  # type: ignore[misc]
 
         self._session_vectors[sid] = vectors
         # Prepare metadata mapping for later use by PatchLogger
         meta: Dict[str, Dict[str, Any]] = {}
+        tokens = int(stats.get("tokens", 0))
+        wall_time_ms = float(stats.get("wall_time_ms", 0.0))
+        prompt_tokens = int(stats.get("prompt_tokens", 0))
         for rank, (origin, vec_id, score) in enumerate(vectors, start=1):
             key = f"{origin}:{vec_id}" if origin else vec_id
             meta[key] = {}
-            try:  # Best effort metrics logging
-                self.vector_metrics.log_retrieval(
-                    origin,
-                    tokens=stats["tokens"],
-                    wall_time_ms=stats["wall_time_ms"],
-                    hit=True,
-                    rank=rank,
-                    contribution=0.0,
-                    prompt_tokens=stats["prompt_tokens"],
-                    session_id=sid,
-                    vector_id=vec_id,
-                    similarity=score,
-                    context_score=score,
-                    age=0.0,
-                )
-            except Exception:
-                pass
+            if self.vector_metrics is not None:
+                try:  # Best effort metrics logging
+                    self.vector_metrics.log_retrieval(
+                        origin,
+                        tokens=tokens,
+                        wall_time_ms=wall_time_ms,
+                        hit=True,
+                        rank=rank,
+                        contribution=0.0,
+                        prompt_tokens=prompt_tokens,
+                        session_id=sid,
+                        vector_id=vec_id,
+                        similarity=score,
+                        context_score=score,
+                        age=0.0,
+                    )
+                except Exception:
+                    pass
         self._retrieval_meta[sid] = meta
         return context, sid
 
@@ -170,36 +188,54 @@ class CognitionLayer:
     ) -> Tuple[str, str]:
         """Asynchronous wrapper for :meth:`query`."""
 
-        context, sid, vectors, stats = await self.context_builder.build_async(
-            prompt,
-            top_k=top_k,
-            include_vectors=True,
-            session_id=session_id,
-            return_stats=True,
-        )
+        stats: Dict[str, Any] = {}
+        try:
+            result = await self.context_builder.build_async(
+                prompt,
+                top_k=top_k,
+                include_vectors=True,
+                session_id=session_id,
+                return_stats=True,
+            )
+        except TypeError:  # pragma: no cover - older builders
+            result = await self.context_builder.build_async(
+                prompt,
+                top_k=top_k,
+                include_vectors=True,
+                session_id=session_id,
+            )
+
+        if isinstance(result, tuple) and len(result) == 4:
+            context, sid, vectors, stats = result
+        else:  # pragma: no cover - defensive fallback
+            context, sid, vectors = result  # type: ignore[misc]
 
         self._session_vectors[sid] = vectors
         meta: Dict[str, Dict[str, Any]] = {}
+        tokens = int(stats.get("tokens", 0))
+        wall_time_ms = float(stats.get("wall_time_ms", 0.0))
+        prompt_tokens = int(stats.get("prompt_tokens", 0))
         for rank, (origin, vec_id, score) in enumerate(vectors, start=1):
             key = f"{origin}:{vec_id}" if origin else vec_id
             meta[key] = {}
-            try:  # Best effort metrics logging
-                self.vector_metrics.log_retrieval(
-                    origin,
-                    tokens=stats["tokens"],
-                    wall_time_ms=stats["wall_time_ms"],
-                    hit=True,
-                    rank=rank,
-                    contribution=0.0,
-                    prompt_tokens=stats["prompt_tokens"],
-                    session_id=sid,
-                    vector_id=vec_id,
-                    similarity=score,
-                    context_score=score,
-                    age=0.0,
-                )
-            except Exception:
-                pass
+            if self.vector_metrics is not None:
+                try:  # Best effort metrics logging
+                    self.vector_metrics.log_retrieval(
+                        origin,
+                        tokens=tokens,
+                        wall_time_ms=wall_time_ms,
+                        hit=True,
+                        rank=rank,
+                        contribution=0.0,
+                        prompt_tokens=prompt_tokens,
+                        session_id=sid,
+                        vector_id=vec_id,
+                        similarity=score,
+                        context_score=score,
+                        age=0.0,
+                    )
+                except Exception:
+                    pass
         self._retrieval_meta[sid] = meta
         return context, sid
 
