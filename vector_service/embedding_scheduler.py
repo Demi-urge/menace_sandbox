@@ -47,10 +47,15 @@ class EmbeddingScheduler:
 
     # ------------------------------------------------------------------
     def _loop(self) -> None:
+        logger = logging.getLogger(__name__)
         while self.running:
             start = time.time()
             status = "success"
             try:
+                logger.info(
+                    "embedding scheduler triggering backfill",
+                    extra={"dbs": self.dbs, "backend": self.backend},
+                )
                 self.backfill.run(
                     batch_size=self.batch_size,
                     backend=self.backend,

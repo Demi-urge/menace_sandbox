@@ -90,12 +90,15 @@ can trigger an earlier retrain.
 
 ### Embedding scheduler
 
-The scheduler runs `EmbeddingBackfill` on a timer.  Environment variables
-control the interval and optional database filters:
+The scheduler runs `EmbeddingBackfill` on a timer over all
+`EmbeddableDBMixin` subclasses. Environment variables control the interval,
+batch size, backend and optional database filters:
 
 ````bash
 export EMBEDDING_SCHEDULER_INTERVAL=3600   # run every hour
-export EMBEDDING_SCHEDULER_DBS="bots,errors"
+export EMBEDDING_SCHEDULER_BATCH_SIZE=50   # override batch size
+export EMBEDDING_SCHEDULER_BACKEND=hnsw    # choose vector backend
+export EMBEDDING_SCHEDULER_DBS="bots,errors"  # optional filter
 python - <<'PY'
 from vector_service.embedding_scheduler import start_scheduler_from_env
 start_scheduler_from_env()
