@@ -1348,6 +1348,12 @@ provisioning are shut down automatically.
 
 `ErrorBot` now records detailed telemetry for every exception. An `ErrorLogger` middleware wraps bot entry points, capturing tracebacks, Codex API payloads and shell exit codes. Each incident is stored in a new `telemetry` table with fields for `task_id`, `bot_id`, `error_type`, `stack_trace`, `root_module`, `timestamp`, `resolution_status`, `patch_id` and `deploy_id`. A cascading classifier first applies regex rules to the stack trace and then optional SBERT similarity matching to assign semantic tags (e.g. "Runtime/Reference"). This structured taxonomy enables Menace to analyse spikes after dependency updates and preload remediation prompts.
 
+`ErrorLogger.log_roi_cap()` uses the `propose_fix` helper from
+`roi_calculator` to identify metrics hitting ROI caps and recommends up to
+three remediation hints. The resulting `ROIBottleneck` event can be replicated
+into a fix ticket or fed into Codex to generate an automated patch. See
+[docs/roi_calculator.md](docs/roi_calculator.md) for sample output.
+
 ### Bottleneck Detection Bots
 
 Performance isn’t a luxury; it’s a multiplier on ROI. Each critical function is decorated with an `@perf_monitor` that records wall-clock time via `time.perf_counter` and stores `(function_signature, runtime_ms, cpu_pct, mem_mb)` into `PerfDB`. A nightly cron triggers `bottleneck_scanner.py`, ranking the P95 latencies per module. When a spike exceeds a configurable threshold, the scanner opens a Git issue via API, tagging the responsible bot and auto-assigning the Enhancement Bot.
