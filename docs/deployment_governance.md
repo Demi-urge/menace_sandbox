@@ -26,6 +26,17 @@ Rules loaded from YAML or JSON are prepended to the built-in defaults.
   reason_code: ""
 ```
 
+## Evaluation process
+
+1. Alignment and security statuses are checked first. Any failure immediately
+   returns a demotion with an `alignment_veto` or `security_veto` reason code.
+2. Unless a `bypass_micro_pilot` override is present, low sandbox ROI paired
+   with high adapter ROI triggers the automatic **micro‑pilot** path.
+3. Remaining rules are evaluated in order using the metrics from the supplied
+   scorecard. The first rule whose `condition` evaluates truthy decides the
+   verdict and contributes its `reason_code` to the output.
+4. If no rule matches, the built‑in default of ``promote`` is returned.
+
 ## CLI and automation usage
 
 Automation such as `deployment_bot` and `central_evaluation_loop` calls
@@ -41,6 +52,11 @@ print(evaluate_workflow(scorecard, policy))
 PY
 ```
 
+## Override procedures
+
 Manual override files contain a `data` object and HMAC `signature`. When a
 valid override is supplied via `override_path` / `public_key_path`, its entries
-are merged into the returned `overrides` mapping.
+are merged into the returned `overrides` mapping. Overrides may specify flags
+like ``bypass_micro_pilot`` or force a ``verdict`` such as ``promote``. A
+validated forced verdict appends the ``manual_override`` reason code and
+replaces the computed decision.
