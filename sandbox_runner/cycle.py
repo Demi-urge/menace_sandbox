@@ -75,6 +75,10 @@ ADAPTIVE_ROI_RETRAIN_INTERVAL = int(
     os.getenv("ADAPTIVE_ROI_RETRAIN_INTERVAL", "20")
 )
 
+RAROI_BORDERLINE_THRESHOLD = float(
+    os.getenv("RAROI_BORDERLINE_THRESHOLD", "0.05")
+)
+
 from metrics_exporter import (
     orphan_modules_reintroduced_total,
     orphan_modules_tested_total,
@@ -786,7 +790,12 @@ def _sandbox_cycle_runner(
             wf_mae = tracker.workflow_mae(wf_id)
             wf_var = tracker.workflow_variance(wf_id)
             conf_val = tracker.workflow_confidence(wf_id)
+            try:
+                raroi = roi - getattr(ctx, "prev_roi", 0.0)
+            except Exception:
+                raroi = roi
             needs_review = conf_val < tracker.confidence_threshold
+            low_raroi = raroi < RAROI_BORDERLINE_THRESHOLD
             logger.info(
                 "workflow prediction evaluation",
                 extra=log_record(
@@ -797,13 +806,10 @@ def _sandbox_cycle_runner(
                     variance=wf_var,
                     confidence=conf_val,
                     human_review=needs_review if needs_review else None,
+                    borderline=low_raroi if low_raroi else None,
                 ),
             )
-            if needs_review:
-                try:
-                    raroi = roi - getattr(ctx, "prev_roi", 0.0)
-                except Exception:
-                    raroi = roi
+            if needs_review or low_raroi:
                 try:
                     tracker.borderline_bucket.add_candidate(
                         wf_id, float(raroi), conf_val
@@ -814,14 +820,20 @@ def _sandbox_cycle_runner(
                         extra=log_record(workflow=wf_id),
                     )
                 logger.info(
-                    "workflow flagged for human review",
+                    "workflow queued for borderline evaluation",
                     extra=log_record(
                         workflow=wf_id,
                         confidence=conf_val,
-                        threshold=tracker.confidence_threshold,
-                        human_review=True,
+                        raroi=raroi,
+                        threshold=RAROI_BORDERLINE_THRESHOLD,
                     ),
                 )
+                try:
+                    tracker.process_borderline_candidates(
+                        getattr(ctx, "micro_pilot_evaluator", None)
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("failed to process borderline candidates")
         if ctx.predicted_lucrativity is not None:
             tracker.record_metric_prediction(
                 "projected_lucrativity", ctx.predicted_lucrativity, roi

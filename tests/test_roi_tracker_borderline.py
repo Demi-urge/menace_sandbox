@@ -5,7 +5,7 @@ from menace_sandbox.roi_tracker import ROITracker
 def test_borderline_added_on_low_raroi(tmp_path):
     path = tmp_path / "b.jsonl"
     bucket = BorderlineBucket(str(path))
-    tracker = ROITracker(borderline_threshold=0.1, borderline_bucket=bucket)
+    tracker = ROITracker(raroi_borderline_threshold=0.1, borderline_bucket=bucket)
     tracker.workflow_confidence_scores["wf1"] = 0.9
 
     final, needs_review, conf = tracker.score_workflow("wf1", 0.05)
@@ -20,7 +20,7 @@ def test_borderline_added_on_low_raroi(tmp_path):
 def test_process_promotes_on_improved_raroi(tmp_path):
     path = tmp_path / "b.jsonl"
     bucket = BorderlineBucket(str(path))
-    tracker = ROITracker(borderline_threshold=0.1, borderline_bucket=bucket)
+    tracker = ROITracker(raroi_borderline_threshold=0.1, borderline_bucket=bucket)
     tracker.workflow_confidence_scores["wf1"] = 0.9
     tracker.score_workflow("wf1", 0.05)
 
@@ -34,7 +34,7 @@ def test_process_promotes_on_improved_raroi(tmp_path):
 def test_process_terminates_on_poor_raroi(tmp_path):
     path = tmp_path / "c.jsonl"
     bucket = BorderlineBucket(str(path))
-    tracker = ROITracker(borderline_threshold=0.1, borderline_bucket=bucket)
+    tracker = ROITracker(raroi_borderline_threshold=0.1, borderline_bucket=bucket)
     tracker.workflow_confidence_scores["wf1"] = 0.9
     tracker.score_workflow("wf1", 0.05)
 
