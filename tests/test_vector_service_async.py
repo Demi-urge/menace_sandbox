@@ -74,7 +74,7 @@ def test_retriever_search_async(monkeypatch):
 
 def test_context_builder_build_async(monkeypatch):
     class DummyRetriever:
-        def search(self, query, top_k=5, session_id=None):
+        def search(self, query, top_k=5, session_id=None, **kwargs):
             return [
                 {
                     "origin_db": "error",

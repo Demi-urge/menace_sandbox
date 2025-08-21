@@ -11,6 +11,11 @@ from .decorators import log_and_measure
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_safety import check_patch_safety
 
+try:  # pragma: no cover - optional dependency for similarity risk
+    from patch_safety import PatchSafety  # type: ignore
+except Exception:  # pragma: no cover
+    PatchSafety = None  # type: ignore
+
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me  # type: ignore
 except Exception:  # pragma: no cover - fallback when running as script
@@ -94,6 +99,7 @@ class PatchLogger:
         max_alert_severity: float = 1.0,
         max_alerts: int = 5,
         license_denylist: set[str] | None = None,
+        patch_safety: PatchSafety | None = None,
     ) -> None:
         self.patch_db = patch_db or (PatchHistoryDB() if PatchHistoryDB is not None else None)
         self.vector_metrics = vector_metrics or (
@@ -107,6 +113,7 @@ class PatchLogger:
         self.max_alert_severity = max_alert_severity
         self.max_alerts = max_alerts
         self.license_denylist = set(license_denylist or _DEFAULT_LICENSE_DENYLIST)
+        self.patch_safety = patch_safety or (PatchSafety() if PatchSafety is not None else None)
 
     # ------------------------------------------------------------------
     def _parse_vectors(
@@ -145,8 +152,13 @@ class PatchLogger:
         session_id: str = "",
         contribution: float | None = None,
         retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
-    ) -> None:
-        """Log patch outcome for vectors contributing to a patch."""
+    ) -> dict[str, float]:
+        """Log patch outcome for vectors contributing to a patch.
+
+        Returns a mapping of origin database to the maximum risk score
+        calculated by :class:`patch_safety.PatchSafety` for the vectors that
+        contributed to the patch.
+        """
 
         start = time.time()
         status = "success" if result else "failure"
@@ -164,6 +176,7 @@ class PatchLogger:
             filtered = 0
             origin_alerts: dict[str, set[str]] = {}
             origin_sev: dict[str, float] = {}
+            origin_risk: dict[str, float] = {}
             for o, vid, score in detailed:
                 key = f"{o}:{vid}" if o else vid
                 m = meta.get(key, {})
@@ -179,19 +192,40 @@ class PatchLogger:
                 fp = m.get("license_fingerprint")
                 alerts = m.get("semantic_alerts")
                 sev = m.get("alignment_severity")
+                risk = 0.0
+                if self.patch_safety is not None:
+                    try:
+                        risk = float(self.patch_safety.score(m))
+                    except Exception:
+                        risk = 0.0
+                if self.patch_safety is not None and risk >= getattr(self.patch_safety, "threshold", 1.0):
+                    payload = {"vector": key, "score": risk, "threshold": self.patch_safety.threshold}
+                    bus = self.event_bus
+                    if bus is None and UnifiedEventBus is not None:
+                        try:
+                            bus = UnifiedEventBus()
+                        except Exception:
+                            bus = None
+                    if bus is not None:
+                        try:
+                            bus.publish("patch:risk_alert", payload)
+                        except Exception:
+                            pass
                 if fp is not None:
                     detailed_meta.append((o, vid, score, lic, fp, alerts))
                     provenance_meta.append((o, vid, score, lic, fp, alerts, sev))
                 else:
                     detailed_meta.append((o, vid, score, lic, alerts))
                     provenance_meta.append((o, vid, score, lic, alerts, sev))
-                vm_vectors.append((vid, score, lic, alerts, sev))
+                vm_vectors.append((vid, score, lic, alerts, sev, risk))
                 ok = o or ""
+                origin_risk[ok] = max(origin_risk.get(ok, 0.0), risk)
                 if sev:
                     try:
                         origin_sev[ok] = max(origin_sev.get(ok, 0.0), float(sev))
                     except Exception:
                         origin_sev[ok] = max(origin_sev.get(ok, 0.0), 1.0)
+                if self.patch_safety is not None and risk >= getattr(self.patch_safety, "threshold", 1.0):
                     risky += 1
                 else:
                     safe += 1
@@ -298,6 +332,7 @@ class PatchLogger:
                             "regret_rate": 0.0 if result else 1.0,
                             "alignment_severity": origin_sev.get(origin, 0.0),
                             "semantic_alerts": sorted(origin_alerts.get(origin, [])),
+                            "risk_score": origin_risk.get(origin, 0.0),
                         }
                         roi_metrics[origin] = metrics
                     if self.roi_tracker is not None:
@@ -402,6 +437,7 @@ class PatchLogger:
         if origin_alerts:
             all_alerts = sorted({a for s in origin_alerts.values() for a in s})
         max_sev = max(origin_sev.values(), default=0.0)
+        max_risk = max(origin_risk.values(), default=0.0)
         payload = {
             "result": result,
             "roi_metrics": roi_metrics,
@@ -409,6 +445,7 @@ class PatchLogger:
             "regret": not result,
             "alignment_severity": max_sev,
             "semantic_alerts": all_alerts,
+            "risk_score": max_risk,
         }
         if patch_id:
             payload["patch_id"] = patch_id
@@ -424,6 +461,8 @@ class PatchLogger:
             except Exception:
                 pass
 
+        return origin_risk
+
     # ------------------------------------------------------------------
     @log_and_measure
     async def track_contributors_async(
@@ -435,10 +474,10 @@ class PatchLogger:
         session_id: str = "",
         contribution: float | None = None,
         retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
-    ) -> None:
+    ) -> dict[str, float]:
         """Asynchronous wrapper for :meth:`track_contributors`."""
 
-        await asyncio.to_thread(
+        return await asyncio.to_thread(
             self.track_contributors.__wrapped__,
             self,
             vector_ids,

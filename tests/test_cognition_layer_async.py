@@ -61,6 +61,7 @@ class DummyPatchLogger:
     async def track_contributors_async(self, vector_ids, result, *, patch_id="", session_id="", contribution=None, retrieval_metadata=None):
         await asyncio.sleep(0.05)
         self.sessions.append(session_id)
+        return {}
 
 
 async def _run_session(layer, name):

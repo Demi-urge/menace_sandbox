@@ -68,7 +68,7 @@ def test_patch_logger_updates_vector_metrics_db():
     pl.track_contributors(["db1:123", "id2"], True, patch_id="p1", session_id="s1")
     assert vm.args == (
         "s1",
-        [("", "id2")],
+        [("db1", "123"), ("", "id2")],
         0.0,
         "p1",
         True,
