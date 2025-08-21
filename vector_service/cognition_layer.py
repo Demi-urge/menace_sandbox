@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 import time
+import asyncio
 import json
 from pathlib import Path
 
@@ -471,24 +472,19 @@ class CognitionLayer:
         return context, sid
 
     # ------------------------------------------------------------------
-    def record_patch_outcome(
+
+
+
+    async def _record_patch_outcome_impl(
         self,
         session_id: str,
         success: bool,
         *,
         patch_id: str = "",
         contribution: float | None = None,
+        async_mode: bool = False,
     ) -> None:
-        """Forward patch outcome to :class:`PatchLogger`.
-
-        ``session_id`` must match the value returned from :meth:`query`.  The
-        stored vector identifiers will be passed to
-        :meth:`PatchLogger.track_contributors`.  When an
-        :class:`roi_tracker.ROITracker` is configured, ROI metrics for each
-        origin database are updated automatically based on ``contribution`` or
-        similarity scores.
-        """
-
+        """Shared implementation for patch outcome recording."""
         vectors = self._session_vectors.pop(session_id, [])
         meta = self._retrieval_meta.pop(session_id, None)
         if (not vectors or meta is None) and self.vector_metrics is not None:
@@ -502,14 +498,24 @@ class CognitionLayer:
         if not vectors:
             return
         vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
-        self.patch_logger.track_contributors(
-            vec_ids,
-            success,
-            patch_id=patch_id,
-            session_id=session_id,
-            contribution=contribution,
-            retrieval_metadata=meta,
-        )
+        if async_mode:
+            await self.patch_logger.track_contributors_async(
+                vec_ids,
+                success,
+                patch_id=patch_id,
+                session_id=session_id,
+                contribution=contribution,
+                retrieval_metadata=meta,
+            )
+        else:
+            self.patch_logger.track_contributors(
+                vec_ids,
+                success,
+                patch_id=patch_id,
+                session_id=session_id,
+                contribution=contribution,
+                retrieval_metadata=meta,
+            )
 
         risk_scores: Dict[str, float] = {}
         if meta:
@@ -618,6 +624,27 @@ class CognitionLayer:
                 pass
 
     # ------------------------------------------------------------------
+    def record_patch_outcome(
+        self,
+        session_id: str,
+        success: bool,
+        *,
+        patch_id: str = "",
+        contribution: float | None = None,
+    ) -> None:
+        """Forward patch outcome to :class:`PatchLogger`."""
+
+        asyncio.run(
+            self._record_patch_outcome_impl(
+                session_id,
+                success,
+                patch_id=patch_id,
+                contribution=contribution,
+                async_mode=False,
+            )
+        )
+
+    # ------------------------------------------------------------------
     async def record_patch_outcome_async(
         self,
         session_id: str,
@@ -628,131 +655,13 @@ class CognitionLayer:
     ) -> None:
         """Asynchronous wrapper for :meth:`record_patch_outcome`."""
 
-        vectors = self._session_vectors.pop(session_id, [])
-        meta = self._retrieval_meta.pop(session_id, None)
-        if (not vectors or meta is None) and self.vector_metrics is not None:
-            try:
-                pending = self.vector_metrics.load_sessions()
-                stored = pending.get(session_id)
-                if stored:
-                    vectors, meta = stored
-            except Exception:
-                pass
-        if not vectors:
-            return
-        vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
-        await self.patch_logger.track_contributors_async(
-            vec_ids,
+        await self._record_patch_outcome_impl(
+            session_id,
             success,
             patch_id=patch_id,
-            session_id=session_id,
             contribution=contribution,
-            retrieval_metadata=meta,
+            async_mode=True,
         )
-        risk_scores: Dict[str, float] = {}
-        if meta:
-            for origin, vid, _ in vectors:
-                key = f"{origin}:{vid}" if origin else vid
-                m = meta.get(key, {})
-                sev = m.get("alignment_severity")
-                alerts = m.get("semantic_alerts")
-                risk = 0.0
-                if sev:
-                    try:
-                        risk = max(risk, float(sev))
-                    except Exception:
-                        risk = max(risk, 1.0)
-                if alerts:
-                    risk = max(risk, 1.0)
-                if risk:
-                    ok = origin or ""
-                    risk_scores[ok] = max(risk_scores.get(ok, 0.0), risk)
-
-        roi_contribs: Dict[str, float] = {}
-        used_tracker_deltas = False
-        if self.roi_tracker is not None:
-            try:  # pragma: no cover - best effort
-                cur = self.vector_metrics.conn.execute(
-                    """
-                    SELECT db, tokens, contribution, hit
-                      FROM vector_metrics
-                     WHERE session_id=? AND event_type='retrieval'
-                    """,
-                    (session_id,),
-                )
-                rows = cur.fetchall()
-                roi_after = sum(float(contrib or 0.0) for _db, _tok, contrib, _hit in rows)
-                retrieval_metrics = [
-                    {
-                        "origin_db": str(db),
-                        "tokens": float(contrib or 0.0),
-                        "hit": bool(hit),
-                    }
-                    for db, _tokens, contrib, hit in rows
-                ]
-                self.roi_tracker.update(
-                    0.0,
-                    roi_after,
-                    retrieval_metrics=retrieval_metrics,
-                )
-                deltas = getattr(self.roi_tracker, "origin_db_deltas", {})
-                for origin, _vid, _score in vectors:
-                    key = origin or ""
-                    vals = deltas.get(key)
-                    if vals:
-                        roi_contribs[key] = abs(vals[-1])
-                        used_tracker_deltas = True
-            except Exception:
-                pass
-
-        if not roi_contribs:
-            base = 0.0 if contribution is None else contribution
-            for origin, _vid, score in vectors:
-                roi = base if contribution is not None else score
-                key = origin or ""
-                roi_contribs[key] = roi_contribs.get(key, 0.0) + abs(roi)
-
-        if self.roi_tracker is not None and roi_contribs and not used_tracker_deltas:
-            metrics = {
-                origin: {
-                    "roi": roi,
-                    "win_rate": 1.0 if success else 0.0,
-                    "regret_rate": 0.0 if success else 1.0,
-                }
-                for origin, roi in roi_contribs.items()
-            }
-            try:
-                self.roi_tracker.update_db_metrics(metrics)
-            except Exception:
-                pass
-
-        roi_deltas = {
-            origin: (roi if success else -roi) for origin, roi in roi_contribs.items()
-        }
-        updates = self.update_ranker(
-            vectors, success, roi_deltas=roi_deltas, risk_scores=risk_scores
-        )
-        if roi_contribs:
-            bus = getattr(self.patch_logger, "event_bus", None)
-            if bus is None and UnifiedEventBus is not None:
-                try:
-                    bus = UnifiedEventBus()
-                except Exception:
-                    bus = None
-            if bus is not None:
-                for origin, roi in roi_contribs.items():
-                    payload = {"db": origin, "roi": roi, "win": success}
-                    if origin in updates:
-                        payload["weight"] = updates[origin]
-                    try:
-                        bus.publish("retrieval:feedback", payload)
-                    except Exception:
-                        pass
-        if self.vector_metrics is not None:
-            try:
-                self.vector_metrics.delete_session(session_id)
-            except Exception:
-                pass
 
 
 __all__ = ["CognitionLayer"]
