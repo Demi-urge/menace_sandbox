@@ -104,7 +104,7 @@ from logging_utils import log_record, get_logger, setup_logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, TYPE_CHECKING, Iterable
+from typing import Any, Dict, List, TYPE_CHECKING, Iterable, Mapping
 
 from menace.unified_event_bus import UnifiedEventBus
 from menace.menace_orchestrator import MenaceOrchestrator
@@ -143,14 +143,36 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
             volatility_threshold: float = 1.0,
             N: int | None = None,
         ) -> None:  # pragma: no cover - stub
-            pass
+            if N is not None:
+                window = N
+            self.window = window
+            self.volatility_threshold = volatility_threshold
+            self.history: dict[str, list[dict[str, float]]] = {}
 
         @property
         def max_cycles(self) -> int:  # pragma: no cover - stub
-            return 0
+            return self.window
+
+        def record_cycle_metrics(
+            self, workflow_id: str, metrics: Mapping[str, float]
+        ) -> None:  # pragma: no cover - stub
+            return None
+
+        def get_trend_curve(
+            self, workflow_id: str
+        ) -> tuple[float, float, float]:  # pragma: no cover - stub
+            return 0.0, 0.0, 0.0
+
+        def is_stable(self, workflow_id: str) -> bool:  # pragma: no cover - stub
+            return False
 
         def to_dict(self) -> dict:  # pragma: no cover - stub
-            return {}
+            return {
+                "max_cycles": self.window,
+                "window": self.window,
+                "volatility_threshold": self.volatility_threshold,
+                "history": self.history,
+            }
 
         @classmethod
         def from_dict(
@@ -160,7 +182,19 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
             volatility_threshold: float | None = None,
             N: int | None = None,
         ) -> "ForesightTracker":  # pragma: no cover - stub
-            return cls()
+            if N is not None:
+                window = N
+            if window is None:
+                window = int(
+                    data.get("max_cycles", data.get("N", data.get("window", 10)))
+                )
+            if volatility_threshold is None:
+                volatility_threshold = float(
+                    data.get("volatility_threshold", 1.0)
+                )
+            inst = cls(window=window, volatility_threshold=volatility_threshold)
+            inst.history = data.get("history", {})
+            return inst
 else:  # pragma: no cover - import when not in light mode
     from foresight_tracker import ForesightTracker
 from relevancy_metrics_db import RelevancyMetricsDB
