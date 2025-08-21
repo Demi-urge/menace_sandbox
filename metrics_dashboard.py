@@ -7,11 +7,14 @@ import sqlite3
 from pathlib import Path
 from typing import List
 import json
+from io import BytesIO
 
 from flask import Flask, jsonify, send_file
 
 import sys
 from types import ModuleType
+
+from .telemetry_backend import TelemetryBackend
 
 
 def _get_metrics_exporter() -> ModuleType | None:
@@ -39,6 +42,7 @@ class MetricsDashboard:
         self.app.add_url_rule("/dashboard", "dashboard", self.index)
         self.app.add_url_rule("/metrics", "metrics", self.metrics)
         self.app.add_url_rule("/roi", "roi", self.roi)
+        self.app.add_url_rule("/readiness", "readiness", self.readiness)
         self.app.add_url_rule("/metrics/<name>", "metric_series", self.metric_series)
         self.app.add_url_rule(
             "/plots/predictions.png", "plot_predictions", self.plot_predictions
@@ -62,6 +66,11 @@ class MetricsDashboard:
             "/plots/prediction_stats.png",
             "plot_prediction_stats",
             self.plot_prediction_stats,
+        )
+        self.app.add_url_rule(
+            "/plots/readiness_distribution.png",
+            "plot_readiness_distribution",
+            self.plot_readiness_distribution,
         )
         self.app.add_url_rule(
             "/vector_heatmap", "vector_heatmap_default", self.vector_heatmap
@@ -353,6 +362,101 @@ class MetricsDashboard:
 
         return jsonify(data), 200
 
+    def readiness(self) -> tuple[str, int]:
+        """Render readiness overview with Chart.js plots."""
+        history: list[dict] = []
+        try:
+            tb = TelemetryBackend()
+            history = tb.fetch_history()
+        except Exception:
+            history = []
+
+        labels = sorted({h.get("ts") for h in history})
+        readiness_map: dict[str, dict[str, float | None]] = {}
+        error_map: dict[str, dict[str, tuple[float, bool]]] = {}
+        readiness_values: list[float] = []
+        flagged: set[str] = set()
+
+        for h in history:
+            wf = h.get("workflow_id") or "unknown"
+            ts = h.get("ts")
+            ready = h.get("readiness")
+            readiness_map.setdefault(wf, {})[ts] = ready
+            if ready is not None:
+                readiness_values.append(ready)
+            pred = h.get("predicted")
+            act = h.get("actual")
+            if pred is not None and act is not None:
+                err = abs(pred - act)
+                error_map.setdefault(wf, {})[ts] = (err, bool(h.get("drift_flag")))
+            if (ready is not None and ready < 0.5) or h.get("drift_flag"):
+                flagged.add(wf)
+
+        ready_datasets = []
+        for wf, ts_map in readiness_map.items():
+            data = [ts_map.get(ts) for ts in labels]
+            ready_datasets.append({"label": wf, "data": data, "fill": False})
+
+        error_datasets = []
+        for wf, ts_map in error_map.items():
+            data = [ts_map.get(ts, (None, False))[0] for ts in labels]
+            colors = [
+                "red" if ts_map.get(ts, (0.0, False))[1] else "blue" for ts in labels
+            ]
+            error_datasets.append(
+                {
+                    "label": wf,
+                    "data": data,
+                    "fill": False,
+                    "pointBackgroundColor": colors,
+                }
+            )
+
+        bins = [0] * 10
+        for r in readiness_values:
+            idx = min(int(r * 10), 9)
+            bins[idx] += 1
+        bin_labels = [f"{i/10:.1f}-{(i+1)/10:.1f}" for i in range(10)]
+
+        flagged_html = (
+            "".join(f"<li>{wf}</li>" for wf in sorted(flagged)) if flagged else "<li>None</li>"
+        )
+
+        html = f"""
+<html>
+<head>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <h1>Readiness Dashboard</h1>
+  <div><canvas id="readiness_over_time"></canvas></div>
+  <div><canvas id="readiness_hist"></canvas></div>
+  <div><canvas id="error_rate_chart"></canvas></div>
+  <h2>Flagged Instability</h2>
+  <ul>{flagged_html}</ul>
+  <script>
+    const labels = {json.dumps(labels)};
+    new Chart(document.getElementById('readiness_over_time'), {{
+      type: 'line',
+      data: {{ labels: labels, datasets: {json.dumps(ready_datasets)} }}
+    }});
+    new Chart(document.getElementById('readiness_hist'), {{
+      type: 'bar',
+      data: {{
+        labels: {json.dumps(bin_labels)},
+        datasets: [{{ label: 'Readiness distribution', data: {json.dumps(bins)} }}]
+      }}
+    }});
+    new Chart(document.getElementById('error_rate_chart'), {{
+      type: 'line',
+      data: {{ labels: labels, datasets: {json.dumps(error_datasets)} }}
+    }});
+  </script>
+</body>
+</html>
+        """
+        return html, 200
+
     def plot_predictions(self) -> tuple[bytes, int, dict[str, str]]:
         """Return a PNG plot showing predicted vs. actual values."""
         try:
@@ -440,6 +544,34 @@ class MetricsDashboard:
         from io import BytesIO
 
         buf = BytesIO()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.getvalue(), 200, {"Content-Type": "image/png"}
+
+    def plot_readiness_distribution(self) -> tuple[bytes, int, dict[str, str]]:
+        """Return a PNG histogram of readiness scores."""
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+        except Exception:
+            return b"", 200, {"Content-Type": "image/png"}
+
+        try:
+            tb = TelemetryBackend()
+            history = tb.fetch_history()
+            values = [h["readiness"] for h in history if h.get("readiness") is not None]
+        except Exception:
+            values = []
+
+        fig, ax = plt.subplots()
+        if values:
+            ax.hist(values, bins=10, range=(0, 1))
+        ax.set_title("Readiness Distribution")
+        ax.set_xlabel("Readiness")
+        ax.set_ylabel("Count")
+
+        buf = BytesIO()
+        fig.tight_layout()
         fig.savefig(buf, format="png")
         plt.close(fig)
         buf.seek(0)
