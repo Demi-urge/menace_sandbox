@@ -527,6 +527,21 @@ class ContextBuilder:
     ) -> Any:
         """Return a compact JSON context for ``query``.
 
+        Parameters
+        ----------
+        query:
+            Search query used when retrieving vectors.
+        top_k:
+            Maximum number of entries from each bucket to consider before
+            trimming.
+        include_vectors:
+            When ``True`` the return value includes vector IDs and scores.
+        return_metadata:
+            When ``True`` the full metadata for each entry is returned.
+        prioritise:
+            Optional trimming strategy. ``"newest"`` prefers more recent
+            entries while ``"roi"`` favours higher ROI vectors.
+
         When ``include_vectors`` is True, the return value is a tuple of
         ``(context_json, session_id, vectors)`` where *vectors* is a list of
         ``(origin, vector_id, score)`` triples.  If ``return_metadata`` is
@@ -600,26 +615,31 @@ class ContextBuilder:
                 summary = {
                     k: v for k, v in full.items() if k not in {"win_rate", "regret_rate", "flags"}
                 }
-                candidates.append(
-                    {
-                        "bucket": key,
-                        "summary": summary,
-                        "meta": full,
-                        "raw": e.metadata,
-                        "score": e.score,
-                        "origin": e.origin,
-                        "vector_id": e.vector_id,
-                        "summarised": False,
-                    }
+                cand = {
+                    "bucket": key,
+                    "summary": summary,
+                    "meta": full,
+                    "raw": e.metadata,
+                    "score": e.score,
+                    "origin": e.origin,
+                    "vector_id": e.vector_id,
+                    "summarised": False,
+                }
+                cand["tokens"] = self._count_tokens(
+                    json.dumps(summary, separators=(",", ":"))
                 )
+                candidates.append(cand)
 
         def estimate_tokens(cands: List[Dict[str, Any]]) -> int:
             ctx: Dict[str, List[Dict[str, Any]]] = {}
             for c in cands:
                 ctx.setdefault(c["bucket"], []).append(c["summary"])
             return self._count_tokens(json.dumps(ctx, separators=(",", ":")))
-
+        sum_tokens = sum(c["tokens"] for c in candidates)
         total_tokens = estimate_tokens(candidates)
+        overhead = total_tokens - sum_tokens
+        total_tokens = sum_tokens + overhead
+
         if total_tokens > self.max_tokens and candidates:
             if prioritise == "newest":
                 candidates.sort(
@@ -643,10 +663,23 @@ class ContextBuilder:
                 if not cand["summarised"]:
                     cand["summary"]["desc"] = self._summarise(desc)
                     cand["summarised"] = True
-                    total_tokens = estimate_tokens(candidates)
+                    new_tokens = self._count_tokens(
+                        json.dumps(cand["summary"], separators=(",", ":"))
+                    )
+                    sum_tokens += new_tokens - cand["tokens"]
+                    cand["tokens"] = new_tokens
+                    total_tokens = sum_tokens + overhead
                 else:
+                    sum_tokens -= cand["tokens"]
                     candidates.pop(idx)
-                    total_tokens = estimate_tokens(candidates)
+                    if candidates:
+                        sum_tokens = sum(c["tokens"] for c in candidates)
+                        overhead = estimate_tokens(candidates) - sum_tokens
+                        total_tokens = sum_tokens + overhead
+                    else:
+                        total_tokens = 0
+                        sum_tokens = 0
+                        overhead = 0
 
         result: Dict[str, List[Dict[str, Any]]] = {}
         meta: Dict[str, List[Dict[str, Any]]] = {}
@@ -660,6 +693,7 @@ class ContextBuilder:
                     vectors.append((c["origin"], c["vector_id"], c["score"]))
 
         context = json.dumps(result, separators=(",", ":"))
+        total_tokens = self._count_tokens(context)
         if not include_vectors and not return_metadata:
             self._cache[cache_key] = context
         stats = {
