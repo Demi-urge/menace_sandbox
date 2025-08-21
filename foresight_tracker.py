@@ -9,7 +9,16 @@ import numpy as np
 class ForesightTracker:
     """Track workflow foresight metrics and evaluate stability."""
 
-    def __init__(self, max_cycles: int = 10, volatility_threshold: float = 1.0) -> None:
+    def __init__(
+        self,
+        max_cycles: int | None = None,
+        volatility_threshold: float = 1.0,
+        N: int | None = None,
+    ) -> None:
+        if max_cycles is None:
+            max_cycles = 10
+        if N is not None:
+            max_cycles = N
         self.max_cycles = max_cycles
         self.volatility_threshold = volatility_threshold
         self.history: Dict[str, Deque[Dict[str, float]]] = {}
