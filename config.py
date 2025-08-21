@@ -186,6 +186,13 @@ class ContextBuilderConfig(BaseModel):
         default_factory=lambda: set(_LICENSE_DENYLIST.values()),
         description="Skip vectors carrying these licenses",
     )
+    precise_token_count: bool = Field(
+        True,
+        description=(
+            "Use a tokenizer such as tiktoken for exact token counting when available;"
+            " if set to False or the dependency is missing, a regex approximation is used."
+        ),
+    )
 
 
 

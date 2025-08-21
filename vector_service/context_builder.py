@@ -20,6 +20,14 @@ from config import ContextBuilderConfig
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_logger import _VECTOR_RISK  # type: ignore
 
+try:  # pragma: no cover - optional precise tokenizer
+    import tiktoken
+
+    _FALLBACK_ENCODER = tiktoken.get_encoding("cl100k_base")
+except Exception:  # pragma: no cover - dependency missing or failed
+    tiktoken = None  # type: ignore
+    _FALLBACK_ENCODER = None
+
 _DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 
 try:  # pragma: no cover - optional dependency
@@ -90,6 +98,9 @@ class ContextBuilder:
         license_denylist: set[str] | None = getattr(
             ContextBuilderConfig(), "license_denylist", _DEFAULT_LICENSE_DENYLIST
         ),
+        precise_token_count: bool = getattr(
+            ContextBuilderConfig(), "precise_token_count", True
+        ),
     ) -> None:
         self.retriever = retriever or Retriever()
 
@@ -130,12 +141,16 @@ class ContextBuilder:
         self._cache: Dict[Tuple[str, int], str] = {}
         self.db_weights = db_weights or {}
         self.max_tokens = max_tokens
+        self.precise_token_count = precise_token_count
 
         # Attempt to use tokenizer from retriever or embedder if provided.
         tok = getattr(self.retriever, "tokenizer", None)
         if tok is None:
             tok = getattr(getattr(self.retriever, "embedder", None), "tokenizer", None)
         self._tokenizer = tok
+        self._fallback_tokenizer = (
+            _FALLBACK_ENCODER if self.precise_token_count else None
+        )
 
         # propagate thresholds to retriever when possible
         try:
@@ -194,15 +209,21 @@ class ContextBuilder:
         """Return an estimate of tokens for ``text``.
 
         The method prefers a tokenizer supplied by the retriever or its
-        embedder.  When unavailable it falls back to a lightweight regex based
-        approximation which counts contiguous word characters.  The goal here is
-        not perfect parity with any model but a consistent budget estimate for
-        trimming.
+        embedder.  When unavailable, and ``precise_token_count`` is enabled, it
+        attempts to use a lightweight dependency such as ``tiktoken`` for more
+        accurate measurement.  If this dependency is missing or disabled the
+        method falls back to a regex approximation which counts contiguous word
+        characters.  The goal here is not perfect parity with any model but a
+        consistent budget estimate for trimming.
         """
-
         if self._tokenizer is not None:
             try:  # pragma: no cover - defensive against tokeniser failures
                 return len(self._tokenizer.encode(text))
+            except Exception:
+                pass
+        if self.precise_token_count and self._fallback_tokenizer is not None:
+            try:  # pragma: no cover - fallback tokenizer
+                return len(self._fallback_tokenizer.encode(text))
             except Exception:
                 pass
         return len(re.findall(r"\w+", text))
