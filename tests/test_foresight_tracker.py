@@ -134,3 +134,76 @@ def test_capture_from_roi_records_latest_metrics():
     assert entry["confidence"] == 0.9
     assert entry["resilience"] == 0.8
     assert entry["scenario_degradation"] == 0.3
+
+
+def test_to_dict_from_dict_roundtrip_after_capture_from_roi():
+    ft = ForesightTracker()
+
+    class DummyROITracker:
+        def __init__(self):
+            self.roi_history: list[float] = []
+            self.raroi_history: list[float] = []
+            self.confidence_history: list[float] = []
+            self.metrics_history = {"synergy_resilience": []}
+
+        def scenario_degradation(self) -> float:
+            return 0.0
+
+    dummy = DummyROITracker()
+    for v in [0.0, 0.1, 0.2]:
+        dummy.roi_history.append(v)
+        dummy.raroi_history.append(v)
+        dummy.confidence_history.append(0.9)
+        dummy.metrics_history["synergy_resilience"].append(0.8)
+        ft.capture_from_roi(dummy, "wf")
+
+    data = ft.to_dict()
+    restored = ForesightTracker.from_dict(data)
+    assert restored.to_dict() == data
+
+
+def test_capture_from_roi_self_improvement_cycle_affects_stability():
+    ft = ForesightTracker(volatility_threshold=0.5)
+
+    class DummyROITracker:
+        def __init__(self):
+            self.roi_history: list[float] = []
+            self.raroi_history: list[float] = []
+            self.confidence_history: list[float] = []
+            self.metrics_history = {"synergy_resilience": []}
+
+        def scenario_degradation(self) -> float:
+            return 0.0
+
+    # Stable improvement should be considered stable
+    stable = DummyROITracker()
+    for v in [0.0, 0.1, 0.2, 0.3]:
+        stable.roi_history.append(v)
+        stable.raroi_history.append(v)
+        stable.confidence_history.append(0.9)
+        stable.metrics_history["synergy_resilience"].append(0.8)
+        ft.capture_from_roi(stable, "stable")
+
+    history = ft.history["stable"]
+    assert [e["roi_delta"] for e in history] == [0.0, 0.1, 0.2, 0.3]
+    assert ft.is_stable("stable")
+
+    # Negative trend should be unstable
+    negative = DummyROITracker()
+    for v in [0.3, 0.2, 0.1, 0.0]:
+        negative.roi_history.append(v)
+        negative.raroi_history.append(v)
+        negative.confidence_history.append(0.9)
+        negative.metrics_history["synergy_resilience"].append(0.8)
+        ft.capture_from_roi(negative, "negative")
+    assert not ft.is_stable("negative")
+
+    # High volatility should be unstable
+    volatile = DummyROITracker()
+    for v in [0.0, 1.0, 0.0, 1.0]:
+        volatile.roi_history.append(v)
+        volatile.raroi_history.append(v)
+        volatile.confidence_history.append(0.9)
+        volatile.metrics_history["synergy_resilience"].append(0.8)
+        ft.capture_from_roi(volatile, "volatile")
+    assert not ft.is_stable("volatile")
