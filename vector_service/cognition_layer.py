@@ -173,7 +173,8 @@ class CognitionLayer:
         if risk_scores:
             for origin, sev in risk_scores.items():
                 key = origin or ""
-                per_db[key] = per_db.get(key, 0.0) - abs(sev)
+                penalty = abs(sev) * 2
+                per_db[key] = per_db.get(key, 0.0) - penalty
 
         updates: Dict[str, float] = {}
         for origin, change in per_db.items():

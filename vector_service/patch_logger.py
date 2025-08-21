@@ -275,11 +275,9 @@ class PatchLogger:
                             "roi": roi,
                             "win_rate": 1.0 if result else 0.0,
                             "regret_rate": 0.0 if result else 1.0,
+                            "alignment_severity": origin_sev.get(origin, 0.0),
+                            "semantic_alerts": sorted(origin_alerts.get(origin, [])),
                         }
-                        if origin in origin_sev:
-                            metrics["alignment_severity"] = origin_sev[origin]
-                        if origin in origin_alerts:
-                            metrics["semantic_alerts"] = sorted(origin_alerts[origin])
                         roi_metrics[origin] = metrics
                     if self.roi_tracker is not None:
                         for origin, stats in roi_metrics.items():
@@ -388,13 +386,11 @@ class PatchLogger:
             "roi_metrics": roi_metrics,
             "win": result,
             "regret": not result,
+            "alignment_severity": max_sev,
+            "semantic_alerts": all_alerts,
         }
         if patch_id:
             payload["patch_id"] = patch_id
-        if max_sev:
-            payload["alignment_severity"] = max_sev
-        if all_alerts:
-            payload["semantic_alerts"] = all_alerts
 
         if self.event_bus is not None:
             try:
