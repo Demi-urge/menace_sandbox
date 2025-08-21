@@ -35,6 +35,7 @@ sys.modules.setdefault("menace.action_learning_engine", ae_mod)
 import menace.evaluation_manager as em
 import menace.evaluation_dashboard as ed
 import menace.roi_tracker as rt
+import menace.telemetry_backend as tb
 
 rt.ROITracker.load_prediction_history = lambda self, path="roi_events.db": None
 # Clear stubs for optional libs after import
@@ -198,6 +199,30 @@ def test_alignment_warning_panel(monkeypatch):
     )
     warnings = dash.alignment_warning_panel()
     assert warnings and warnings[0]["entry_id"] == "w"
+
+
+def test_readiness_panels_and_refresh(tmp_path):
+    mgr = _make_manager()
+    dash = ed.EvaluationDashboard(mgr)
+    tel = tb.TelemetryBackend(str(tmp_path / "tel.db"))
+    tel.log_prediction("wf1", 1.0, 0.8, 0.9, {}, False, 0.6, ts="2021-01-01")
+    tel.log_prediction("wf1", 0.5, 0.4, 0.8, {}, True, 0.3, ts="2021-01-02")
+    chart = dash.readiness_chart(tel)
+    assert chart["readiness"] == [0.6, 0.3]
+    dist = dash.readiness_distribution_panel(tel)
+    assert dist["readiness"] == [0.6, 0.3]
+    assert dist["prediction_errors"] == [pytest.approx(0.2), pytest.approx(0.1)]
+    tracker = rt.ROITracker()
+    tracker.drift_flags.extend([False, True])
+    tracker.metrics_history["instability"] = [0.1, 0.2]
+    drift = dash.drift_instability_panel(tracker)
+    assert drift["drift_flags"] == [False, True]
+    out = tmp_path / "dash.json"
+    hist = tmp_path / "roi_history.json"
+    hist.write_text("[]")
+    ed.refresh_dashboard(out, history=str(hist), telemetry_db=str(tmp_path / "tel.db"))
+    data = json.loads(out.read_text())
+    assert "readiness_over_time" in data
 
 
 def test_governance_panel(tmp_path, monkeypatch):
