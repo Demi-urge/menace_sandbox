@@ -10,6 +10,7 @@ import json
 from io import BytesIO
 import queue
 import statistics
+from collections import defaultdict
 
 from flask import Flask, jsonify, send_file, request
 
@@ -673,7 +674,7 @@ class MetricsDashboard:
         return buf.getvalue(), 200, {"Content-Type": "image/png"}
 
     def plot_prediction_error(self) -> tuple[bytes, int, dict[str, str]]:
-        """Return a PNG plot of absolute prediction error over time."""
+        """Return a PNG plot of prediction error and confidence statistics."""
         try:
             import matplotlib.pyplot as plt  # type: ignore
         except Exception:
@@ -681,14 +682,82 @@ class MetricsDashboard:
 
         tracker = self._load_tracker()
         errors = [abs(p - a) for p, a in zip(tracker.predicted_roi, tracker.actual_roi)]
-        fig, ax = plt.subplots()
-        ax.plot(errors, label="error")
-        ax.set_title("Prediction Error Over Time")
-        ax.set_xlabel("Iteration")
-        ax.set_ylabel("Absolute Error")
-        ax.legend()
-        from io import BytesIO
+        confidences = list(tracker.confidence_history)
+        drift_flags = list(tracker.drift_flags)
 
+        fig = plt.figure(figsize=(10, 8))
+        gs = fig.add_gridspec(3, 2)
+        ax_err = fig.add_subplot(gs[0, :])
+        ax_horizon = fig.add_subplot(gs[1, :])
+        ax_conf = fig.add_subplot(gs[2, 0])
+        ax_conf_dist = fig.add_subplot(gs[2, 1])
+
+        # Plot raw prediction errors with outlier annotation
+        ax_err.plot(errors, label="error")
+        if len(errors) >= 2:
+            mean_err = statistics.mean(errors)
+            stdev_err = statistics.stdev(errors)
+            thresh = mean_err + 2 * stdev_err
+            outliers = [i for i, e in enumerate(errors) if e > thresh]
+            if outliers:
+                ax_err.scatter(outliers, [errors[i] for i in outliers], color="red", label="outlier")
+                for i in outliers:
+                    ax_err.annotate(f"{errors[i]:.2f}", (i, errors[i]))
+        ax_err.set_title("Prediction Error Over Time")
+        ax_err.set_xlabel("Iteration")
+        ax_err.set_ylabel("Absolute Error")
+        ax_err.legend()
+
+        # Error distribution per horizon
+        horizon_errs: dict[int, list[float]] = defaultdict(list)
+        for hist in tracker.horizon_mae_history:
+            for h, v in hist.items():
+                horizon_errs[int(h)].append(float(v))
+        if horizon_errs:
+            horizons = sorted(horizon_errs)
+            data = [horizon_errs[h] for h in horizons]
+            ax_horizon.boxplot(data, labels=horizons)
+            ax_horizon.set_ylabel("MAE")
+        else:
+            ax_horizon.text(0.5, 0.5, "No horizon data", ha="center", va="center")
+        ax_horizon.set_title("Error Distribution by Horizon")
+        ax_horizon.set_xlabel("Horizon")
+
+        # Confidence evolution with drift and decay highlighting
+        ax_conf.plot(confidences, label="confidence")
+        for i, flag in enumerate(drift_flags[: len(confidences)]):
+            if flag:
+                ax_conf.axvspan(i - 0.5, i + 0.5, color="orange", alpha=0.3, label="drift" if i == 0 else "")
+        decay_start = None
+        for i in range(1, len(confidences)):
+            if confidences[i] < confidences[i - 1]:
+                if decay_start is None:
+                    decay_start = i - 1
+            elif decay_start is not None:
+                ax_conf.axvspan(decay_start, i - 1, color="red", alpha=0.1, label="decay" if decay_start == 0 else "")
+                decay_start = None
+        if decay_start is not None and len(confidences) - 1 > decay_start:
+            ax_conf.axvspan(decay_start, len(confidences) - 1, color="red", alpha=0.1, label="decay" if decay_start == 0 else "")
+        if len(confidences) >= 2:
+            mean_conf = statistics.mean(confidences)
+            stdev_conf = statistics.stdev(confidences)
+            low_conf = [i for i, c in enumerate(confidences) if c < mean_conf - 2 * stdev_conf]
+            if low_conf:
+                ax_conf.scatter(low_conf, [confidences[i] for i in low_conf], color="red", marker="x", label="outlier")
+        ax_conf.set_title("Confidence Scores Over Time")
+        ax_conf.set_xlabel("Iteration")
+        ax_conf.set_ylabel("Confidence")
+        ax_conf.legend()
+
+        # Distribution of confidence scores
+        if confidences:
+            bins = min(10, max(1, len(confidences) // 2))
+            ax_conf_dist.hist(confidences, bins=bins, color="gray", alpha=0.7)
+        ax_conf_dist.set_title("Confidence Score Distribution")
+        ax_conf_dist.set_xlabel("Confidence")
+        ax_conf_dist.set_ylabel("Frequency")
+
+        fig.tight_layout()
         buf = BytesIO()
         fig.savefig(buf, format="png")
         plt.close(fig)
