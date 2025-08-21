@@ -90,6 +90,15 @@ class Retriever:
         return self.retriever
 
     # ------------------------------------------------------------------
+    def reload_reliability_scores(self) -> None:
+        """Refresh retriever reliability statistics."""
+
+        try:
+            self._get_retriever().reload_reliability_scores()
+        except AttributeError:
+            pass
+
+    # ------------------------------------------------------------------
     def _parse_hits(
         self,
         hits: Iterable[Any],
