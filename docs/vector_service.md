@@ -115,6 +115,22 @@ EmbeddingBackfill().run(session_id="bulk", db="workflows")
 argument is supplied the run is restricted to matching subclasses. Records
 flagged by the lightweight license detector are skipped and logged.
 
+Known databases are listed in `vector_service/embedding_registry.json`. Each
+entry maps a short name to the module and class implementing
+`EmbeddableDBMixin`:
+
+```json
+{
+  "bot": {"module": "bot_database", "class": "BotDB"},
+  "workflow": {"module": "task_handoff_bot", "class": "WorkflowDB"}
+}
+```
+
+`EmbeddingBackfill` loads this registry at runtime so new sources can be added
+simply by editing the file—no code changes are required. Additional databases
+for bots, workflows, enhancements, errors and more can be integrated by adding a
+new entry with the appropriate module and class name.
+
 Metrics emitted by `EmbeddingBackfill.run`:
 
 - `embedding_backfill_runs_total{status="success|failure"}` – counter of

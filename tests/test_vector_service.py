@@ -1,6 +1,7 @@
 import pytest
 import importlib
 import types
+import json
 from vector_service import (
     Retriever,
     PatchLogger,
@@ -265,22 +266,27 @@ def test_embedding_backfill_filters_by_db(monkeypatch):
     assert called == [WorkflowDB]
 
 
-def test_embedding_backfill_run_with_dbs(monkeypatch):
-    class BaseDB(EmbeddableDBMixin):
+def test_embedding_backfill_run_with_dbs(monkeypatch, tmp_path):
+    class InformationDB(EmbeddableDBMixin):
         def __init__(self, vector_backend="annoy"):
             self.vector_backend = vector_backend
 
         def backfill_embeddings(self, batch_size=0):
             pass
 
-    class InformationDB(BaseDB):
-        pass
+    class CodeDB(EmbeddableDBMixin):
+        def __init__(self, vector_backend="annoy"):
+            self.vector_backend = vector_backend
 
-    class CodeDB(BaseDB):
-        pass
+        def backfill_embeddings(self, batch_size=0):
+            pass
 
-    class DiscrepancyDB(BaseDB):
-        pass
+    class DiscrepancyDB(EmbeddableDBMixin):
+        def __init__(self, vector_backend="annoy"):
+            self.vector_backend = vector_backend
+
+        def backfill_embeddings(self, batch_size=0):
+            pass
 
     modules = {
         "information_db": types.ModuleType("information_db"),
@@ -299,6 +305,20 @@ def test_embedding_backfill_run_with_dbs(monkeypatch):
         return real_import(name, package)
 
     monkeypatch.setattr(importlib, "import_module", fake_import)
+
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "information": {"module": "information_db", "class": "InformationDB"},
+                "code": {"module": "code_database", "class": "CodeDB"},
+                "discrepancy": {"module": "discrepancy_db", "class": "DiscrepancyDB"},
+            }
+        )
+    )
+    import vector_service.embedding_backfill as eb_mod
+    monkeypatch.setattr(eb_mod, "_REGISTRY_FILE", reg)
+    monkeypatch.setattr(eb_mod.pkgutil, "walk_packages", lambda *a, **k: [])
 
     called = []
 

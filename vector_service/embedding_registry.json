@@ -1,0 +1,11 @@
+{
+  "bot": {"module": "bot_database", "class": "BotDB"},
+  "workflow": {"module": "task_handoff_bot", "class": "WorkflowDB"},
+  "enhancement": {"module": "chatgpt_enhancement_bot", "class": "EnhancementDB"},
+  "error": {"module": "error_bot", "class": "ErrorDB"},
+  "information": {"module": "information_db", "class": "InformationDB"},
+  "code": {"module": "code_database", "class": "CodeDB"},
+  "discrepancy": {"module": "discrepancy_db", "class": "DiscrepancyDB"},
+  "failure": {"module": "failure_learning_system", "class": "DiscrepancyDB"},
+  "research": {"module": "research_aggregator_bot", "class": "InfoDB"}
+}
