@@ -86,5 +86,15 @@ export RANKER_SCHEDULER_ROI_THRESHOLD=5  # optional ROI delta for immediate retr
 python -m analytics.ranker_scheduler
 ```
 
-`RANKER_SCHEDULER_SERVICES` may list comma‑separated `module:attr` paths for
-services exposing `reload_ranker_model`.
+Additional knobs:
+
+* `RANKER_SCHEDULER_SERVICES` – comma‑separated `module:attr` paths whose
+  instances expose `reload_ranker_model`.
+* `RANKER_SCHEDULER_VECTOR_DB` / `RANKER_SCHEDULER_PATCH_DB` – override the
+  metric and ROI database locations.
+* `RANKER_SCHEDULER_MODEL_DIR` – destination directory for newly retrained
+  ranker models.
+
+When `RANKER_SCHEDULER_ROI_THRESHOLD` is set, the scheduler also subscribes to
+`UnifiedEventBus` on topic `retrieval:feedback` so large ROI swings trigger an
+immediate retrain.
