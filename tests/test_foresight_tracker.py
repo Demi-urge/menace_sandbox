@@ -1,6 +1,7 @@
+
 import numpy as np
 
-from menace_sandbox.foresight_tracker import ForesightTracker
+from foresight_tracker import ForesightTracker
 
 
 def test_records_truncated_to_max_cycles():
@@ -53,7 +54,7 @@ def test_to_dict_from_dict_roundtrip_configuration_and_history():
         tracker.record_cycle_metrics("wf", {"m": v})
 
     data = tracker.to_dict()
-    assert data["max_cycles"] == 4
+    assert data["window"] == 4
     assert data["volatility_threshold"] == 2.5
     assert data["history"]["wf"] == [
         {"m": 0.0},
@@ -76,7 +77,7 @@ def test_from_dict_allows_overrides_and_truncates_history():
 
     data = tracker.to_dict()
     restored = ForesightTracker.from_dict(
-        data, max_cycles=3, volatility_threshold=1.0
+        data, N=3, volatility_threshold=1.0
     )
     assert restored.max_cycles == 3
     assert np.isclose(restored.volatility_threshold, 1.0)
@@ -92,11 +93,11 @@ def test_init_accepts_aliases():
     assert tracker_w.max_cycles == 4
 
 
-def test_to_dict_includes_window_alias():
+def test_to_dict_serializes_window():
     tracker = ForesightTracker(max_cycles=7)
     data = tracker.to_dict()
-    assert data["max_cycles"] == 7
     assert data["window"] == 7
+    assert "max_cycles" not in data
 
 
 def test_from_dict_reads_legacy_keys():
