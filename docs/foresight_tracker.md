@@ -1,6 +1,6 @@
 # ForesightTracker
 
-`ForesightTracker` maintains a rolling window of cycle metrics for each workflow and derives basic trend curves.  It acts as a light‑weight temporal forecaster that lets the sandbox spot deteriorating behaviour early.
+`ForesightTracker` maintains a rolling window of ``N`` cycle metrics for each workflow and derives basic trend curves.  It acts as a light‑weight temporal forecaster that lets the sandbox spot deteriorating behaviour early.
 
 ## Required metrics
 
@@ -20,7 +20,7 @@ Any additional numeric metrics can be supplied; they are included in the stabili
 from menace_sandbox.foresight_tracker import ForesightTracker
 from menace_sandbox.self_improvement_engine import SelfImprovementEngine
 
-tracker = ForesightTracker(window=5, volatility_threshold=2.0)
+tracker = ForesightTracker(N=5, volatility_threshold=2.0)
 engine = SelfImprovementEngine(foresight_tracker=tracker)
 
 # within the improvement loop the engine will record metrics automatically
@@ -31,19 +31,20 @@ if tracker.is_stable("workflow-1"):
     print("workflow-1 metrics trending upward")
 ```
 
-The tracker stores only the recent `window` cycles per workflow, keeping memory usage predictable.
+The tracker stores only the recent `max_cycles` cycles per workflow, keeping memory usage predictable.
 
 ## Persisting state
 
 `ForesightTracker` can serialise its configuration and recent history for
 later restoration.  The :meth:`to_dict` method returns a JSON‑serialisable
 dictionary containing the tracked ``history`` together with the current
-``window`` and ``volatility_threshold`` settings.  The companion
+``max_cycles`` and ``volatility_threshold`` settings.  The companion
 :meth:`from_dict` classmethod rebuilds an instance from this data and accepts
-optional overrides for the configuration values.
+optional overrides for the configuration values (using ``N`` as the alias for
+``max_cycles``).
 
 ```python
-tracker = ForesightTracker(window=5, volatility_threshold=2.0)
+tracker = ForesightTracker(N=5, volatility_threshold=2.0)
 # ... record some cycles
 data = tracker.to_dict()
 
@@ -51,8 +52,8 @@ data = tracker.to_dict()
 restored = ForesightTracker.from_dict(data)
 
 # Or restore while changing the configuration
-restored_custom = ForesightTracker.from_dict(data, window=3, volatility_threshold=1.5)
+restored_custom = ForesightTracker.from_dict(data, N=3, volatility_threshold=1.5)
 ```
 
-Only the most recent ``window`` entries per workflow are retained when
+Only the most recent ``max_cycles`` entries per workflow are retained when
 deserialising.

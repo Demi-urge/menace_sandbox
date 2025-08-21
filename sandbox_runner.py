@@ -138,9 +138,16 @@ from menace.quick_fix_engine import QuickFixEngine
 if os.getenv("MENACE_LIGHT_IMPORTS"):
     class ForesightTracker:  # type: ignore[no-redef]
         def __init__(
-            self, window: int = 10, volatility_threshold: float = 1.0
+            self,
+            window: int = 10,
+            volatility_threshold: float = 1.0,
+            N: int | None = None,
         ) -> None:  # pragma: no cover - stub
             pass
+
+        @property
+        def max_cycles(self) -> int:  # pragma: no cover - stub
+            return 0
 
         def to_dict(self) -> dict:  # pragma: no cover - stub
             return {}
@@ -151,6 +158,7 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
             data: dict,
             window: int | None = None,
             volatility_threshold: float | None = None,
+            N: int | None = None,
         ) -> "ForesightTracker":  # pragma: no cover - stub
             return cls()
 else:  # pragma: no cover - import when not in light mode
@@ -934,7 +942,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     foresight_tracker = getattr(args, "foresight_tracker", None)
     if foresight_tracker is None:
         foresight_tracker = ForesightTracker(
-            window=10,
+            N=10,
             volatility_threshold=volatility_threshold,
         )
     roi_history_file = data_dir / "roi_history.json"
@@ -949,7 +957,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                 data = json.load(fh)
             loaded = ForesightTracker.from_dict(
                 data,
-                window=foresight_tracker.window,
+                N=foresight_tracker.max_cycles,
                 volatility_threshold=volatility_threshold,
             )
             foresight_tracker.history = loaded.history
