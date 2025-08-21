@@ -109,4 +109,22 @@ def start_scheduler_from_env() -> EmbeddingScheduler | None:
     return scheduler
 
 
-__all__ = ["EmbeddingScheduler", "start_scheduler_from_env"]
+def run_backfill_from_env() -> None:
+    """Run a one-shot :class:`EmbeddingBackfill` based on environment variables."""
+
+    batch = os.getenv("EMBEDDING_SCHEDULER_BATCH_SIZE")
+    backend = os.getenv("EMBEDDING_SCHEDULER_BACKEND")
+    sources_env = os.getenv("EMBEDDING_SCHEDULER_SOURCES", "")
+    sources = [s.strip() for s in sources_env.split(",") if s.strip()] or None
+    EmbeddingBackfill().run(
+        batch_size=int(batch) if batch else None,
+        backend=backend,
+        dbs=sources,
+    )
+
+
+__all__ = ["EmbeddingScheduler", "start_scheduler_from_env", "run_backfill_from_env"]
+
+
+if __name__ == "__main__":  # pragma: no cover - convenience for cron
+    run_backfill_from_env()

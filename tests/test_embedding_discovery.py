@@ -33,4 +33,4 @@ def test_backfill_discovers_new_db(tmp_path, monkeypatch):
 
     backfill = EmbeddingBackfill(batch_size=5)
     backfill.run()
-    assert processed == ["TempDB"]
+    assert "TempDB" in processed

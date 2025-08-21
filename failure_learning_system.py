@@ -7,6 +7,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Sequence
+import importlib
 
 from vector_service import EmbeddableDBMixin
 
@@ -158,6 +159,13 @@ class DiscrepancyDB(EmbeddableDBMixin):
         if isinstance(rec, dict):
             return self._embed_text(rec)
         return None
+
+    def log_license_violation(self, path: str, license_name: str, hash_: str) -> None:
+        try:  # pragma: no cover - best effort
+            CodeDB = importlib.import_module("code_database").CodeDB
+            CodeDB().log_license_violation(path, license_name, hash_)
+        except Exception:
+            pass
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
         """Delegate to :class:`EmbeddableDBMixin` for compatibility."""
