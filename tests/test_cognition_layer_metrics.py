@@ -4,6 +4,7 @@ from vector_metrics_db import VectorMetricsDB
 from vector_service.context_builder import ContextBuilder
 from vector_service.cognition_layer import CognitionLayer
 from vector_service.patch_logger import PatchLogger
+from vector_service.patch_safety import _VIOLATIONS
 
 
 class DummyRetriever:
@@ -59,3 +60,14 @@ def test_update_ranker_aggregates_subsequent_deltas(tmp_path):
     assert tracker.calls == 2
     assert weights["A"] == pytest.approx(0.5)
     assert builder.db_weights["A"] == pytest.approx(0.5)
+
+
+def test_track_contributors_applies_safety_thresholds(tmp_path):
+    pl = PatchLogger(patch_db=object(), vector_metrics=object(), metrics_db=object())
+    start = _VIOLATIONS.labels("license")._value.get()
+    pl.track_contributors(
+        ["db:1"],
+        True,
+        retrieval_metadata={"db:1": {"license": "GPL-3.0"}},
+    )
+    assert _VIOLATIONS.labels("license")._value.get() == start + 1
