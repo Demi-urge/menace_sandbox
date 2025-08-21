@@ -135,6 +135,12 @@ from menace.error_logger import ErrorLogger
 from menace.knowledge_graph import KnowledgeGraph
 from menace.error_forecaster import ErrorForecaster
 from menace.quick_fix_engine import QuickFixEngine
+if os.getenv("MENACE_LIGHT_IMPORTS"):
+    class ForesightTracker:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - stub
+            pass
+else:  # pragma: no cover - import when not in light mode
+    from foresight_tracker import ForesightTracker
 from relevancy_metrics_db import RelevancyMetricsDB
 from relevancy_radar import scan as relevancy_radar_scan, radar
 from sandbox_runner.cycle import _async_track_usage
@@ -147,7 +153,6 @@ except Exception:  # pragma: no cover - optional dependency
 
 if TYPE_CHECKING:  # pragma: no cover
     from menace.roi_tracker import ROITracker
-    from foresight_tracker import ForesightTracker
 
 __path__ = [os.path.join(os.path.dirname(__file__), "sandbox_runner")]
 logger = get_logger(__name__)
@@ -563,7 +568,7 @@ class SandboxContext:
     sandbox: Any
     tester: SelfTestService
     tracker: "ROITracker"
-    foresight_tracker: "ForesightTracker"
+    foresight_tracker: ForesightTracker
     meta_log: _SandboxMetaLogger
     backups: Dict[str, Any]
     env: Dict[str, str]
@@ -848,7 +853,6 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         ),
     )
     from menace.roi_tracker import ROITracker
-    from foresight_tracker import ForesightTracker
 
     try:
         from menace.resources_bot import ROIHistoryDB
@@ -906,12 +910,16 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     entropy_threshold = float(
         env.get("SANDBOX_ENTROPY_THRESHOLD", str(roi_tolerance))
     )
+    volatility_threshold = float(env.get("SANDBOX_VOLATILITY_THRESHOLD", "1.0"))
     tracker = ROITracker(
         resource_db=res_db,
         cluster_map=improver.module_clusters,
         entropy_threshold=entropy_threshold,
     )
-    foresight_tracker = ForesightTracker()
+    foresight_tracker = ForesightTracker(
+        N=10,
+        volatility_threshold=volatility_threshold,
+    )
     roi_history_file = data_dir / "roi_history.json"
     try:
         tracker.load_history(str(roi_history_file))

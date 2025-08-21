@@ -422,46 +422,27 @@ def append_orphan_cache(repo: Path | str, entries: Dict[str, Dict[str, Any]]) ->
         return
     data = load_orphan_cache(repo)
     changed = False
-    for key, info in entries.items():
+    for mod, info in entries.items():
         if not isinstance(info, dict):
             continue
-        current = data.get(key, {}) if isinstance(data.get(key), dict) else {}
+        current = data.get(mod, {}) if isinstance(data.get(mod), dict) else {}
         parents = info.get("parents")
         if parents is not None:
-            existing = set(current.get("parents", [])) if isinstance(current.get("parents"), list) else set()
+            existing = (
+                set(current.get("parents", []))
+                if isinstance(current.get("parents"), list)
+                else set()
+            )
             new_parents = (
                 set(parents) if isinstance(parents, (set, list, tuple)) else {parents}
             )
             current["parents"] = sorted(existing | new_parents)
-        cls = info.get("classification")
-        if cls:
-            current["classification"] = cls
-        if "redundant" in info:
-            current["redundant"] = bool(info["redundant"])
-        for key in (
-            "functions",
-            "complexity",
-            "docstring",
-            "calls",
-            "exec_success",
-            "warnings",
-            "threads_started",
-            "process_calls",
-            "env_writes",
-        ):
-            if key in info:
-                current[key] = info[key]
-        if "failed" in info:
-            if info["failed"]:
-                current["failed"] = True
-            elif "failed" in current:
-                del current["failed"]
-        if "mtime" in info:
-            try:
-                current["mtime"] = float(info["mtime"])
-            except Exception:
-                pass
-        data[key] = current
+        redundant = info.get("redundant")
+        if redundant is None:
+            cls = info.get("classification")
+            redundant = cls in {"legacy", "redundant"} if cls else False
+        current["redundant"] = bool(redundant)
+        data[mod] = current
         changed = True
     if changed:
         _save_orphan_cache(repo, data)
@@ -488,14 +469,16 @@ def append_orphan_classifications(
     if not isinstance(existing, dict):
         existing = {}
     changed = False
-    for key, info in entries.items():
+    for mod, info in entries.items():
         if not isinstance(info, dict):
             continue
-        current = existing.get(key, {}) if isinstance(existing.get(key), dict) else {}
+        current = existing.get(mod, {}) if isinstance(existing.get(mod), dict) else {}
         parents = info.get("parents")
         if parents is not None:
             existing_parents = (
-                set(current.get("parents", [])) if isinstance(current.get("parents"), list) else set()
+                set(current.get("parents", []))
+                if isinstance(current.get("parents"), list)
+                else set()
             )
             new_parents = (
                 set(parents) if isinstance(parents, (set, list, tuple)) else {parents}
@@ -504,23 +487,13 @@ def append_orphan_classifications(
         cls = info.get("classification")
         if cls:
             current["classification"] = cls
-        if "redundant" in info:
-            current["redundant"] = bool(info["redundant"])
-        for key in (
-            "functions",
-            "complexity",
-            "docstring",
-            "calls",
-            "exec_success",
-            "warnings",
-            "threads_started",
-            "process_calls",
-            "env_writes",
-        ):
-            if key in info:
-                current[key] = info[key]
+        redundant = info.get("redundant")
+        if redundant is None and cls is not None:
+            redundant = cls in {"legacy", "redundant"}
+        if redundant is not None:
+            current["redundant"] = bool(redundant)
         if current:
-            existing[key] = current
+            existing[mod] = current
             changed = True
     if changed:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -832,15 +805,22 @@ def discover_recursive_orphans(
                 orphans.add(name)
                 queue.append(name)
 
-    result = {
-        m: {
+    result: Dict[str, Dict[str, Any]] = {}
+    for m in sorted(found - known):
+        cls = classifications.get(m, "candidate")
+        mod_path = repo / Path(*m.split(".")).with_suffix(".py")
+        pkg_init = repo / Path(*m.split(".")) / "__init__.py"
+        target = mod_path if mod_path.exists() else pkg_init
+        try:
+            redundant_flag = orphan_analyzer.analyze_redundancy(target)
+        except Exception:
+            redundant_flag = cls in {"legacy", "redundant"}
+        result[m] = {
             "parents": sorted(parents.get(m, [])),
-            "classification": classifications.get(m, "candidate"),
-            "redundant": classifications.get(m) in {"legacy", "redundant"},
+            "classification": cls,
+            "redundant": bool(redundant_flag),
             **meta.get(m, {}),
         }
-        for m in sorted(found - known)
-    }
 
     try:  # best effort cache
         entries: Dict[str, Dict[str, Any]] = {}
@@ -849,27 +829,17 @@ def discover_recursive_orphans(
             mod_path = Path(*name.split(".")).with_suffix(".py")
             pkg_init = Path(*name.split(".")) / "__init__.py"
             target = mod_path if (repo / mod_path).exists() else pkg_init
-            full_path = (repo / target)
+            full_path = repo / target
             rel = full_path.relative_to(repo).as_posix()
             cls = info.get("classification", "candidate")
+            redundant_flag = info.get("redundant")
+            if redundant_flag is None:
+                redundant_flag = cls in {"legacy", "redundant"}
             entry = {
                 "parents": info.get("parents", []),
                 "classification": cls,
-                "redundant": cls in {"legacy", "redundant"},
+                "redundant": bool(redundant_flag),
             }
-            for key in (
-                "functions",
-                "complexity",
-                "docstring",
-                "calls",
-                "exec_success",
-                "warnings",
-                "threads_started",
-                "process_calls",
-                "env_writes",
-            ):
-                if key in info:
-                    entry[key] = info[key]
             entries[rel] = entry
             class_entries[rel] = dict(entry)
         append_orphan_cache(repo, entries)
