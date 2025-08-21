@@ -22,6 +22,15 @@ def get_patch_provenance(
 
     db = patch_db or PatchHistoryDB()
     rows = db.get_ancestry(patch_id)
+    try:
+        rec = db.get(patch_id)
+        roi_before = float(getattr(rec, "roi_before", 0.0)) if rec else 0.0
+        roi_after = float(getattr(rec, "roi_after", 0.0)) if rec else 0.0
+        roi_delta = float(getattr(rec, "roi_delta", roi_after - roi_before))
+        if roi_delta == 0.0:
+            roi_delta = roi_after - roi_before
+    except Exception:
+        roi_before = roi_after = roi_delta = 0.0
     result: List[Dict[str, Any]] = []
     for row in rows:
         origin, vid, infl, *rest = row
@@ -36,6 +45,9 @@ def get_patch_provenance(
                 "license": lic,
                 "license_fingerprint": fp,
                 "semantic_alerts": json.loads(alerts) if alerts else [],
+                "roi_before": roi_before,
+                "roi_after": roi_after,
+                "roi_delta": roi_delta,
             }
         )
     return result
@@ -168,6 +180,9 @@ def build_chain(
                 "patch_id": pid,
                 "filename": rec.filename,
                 "parent_patch_id": rec.parent_patch_id,
+                "roi_before": rec.roi_before,
+                "roi_after": rec.roi_after,
+                "roi_delta": rec.roi_delta,
                 "vectors": get_patch_provenance(pid, patch_db=db),
             }
         )
