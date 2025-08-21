@@ -1,0 +1,68 @@
+from menace_sandbox.foresight_tracker import ForesightTracker
+
+
+class DummyROITracker:
+    def __init__(self, deltas):
+        self._deltas = iter(deltas)
+        self.raroi_history = [0.0]
+        self.confidence_history = [0.0]
+        self.metrics_history = {"synergy_resilience": [0.0]}
+
+    def next_delta(self):
+        delta = next(self._deltas)
+        self.raroi_history.append(self.raroi_history[-1] + delta / 2.0)
+        return delta
+
+    def scenario_degradation(self):
+        return 0.0
+
+
+class MiniSelfImprovementEngine:
+    def __init__(self, tracker, foresight_tracker):
+        self.tracker = tracker
+        self.foresight_tracker = foresight_tracker
+
+    def run_cycle(self, workflow_id="wf"):
+        delta = self.tracker.next_delta()
+        raroi_delta = self.tracker.raroi_history[-1] - self.tracker.raroi_history[-2]
+        confidence = self.tracker.confidence_history[-1]
+        resilience = self.tracker.metrics_history["synergy_resilience"][-1]
+        scenario_deg = self.tracker.scenario_degradation()
+        self.foresight_tracker.record_cycle_metrics(
+            workflow_id,
+            {
+                "roi_delta": float(delta),
+                "raroi_delta": float(raroi_delta),
+                "confidence": float(confidence),
+                "resilience": float(resilience),
+                "scenario_degradation": float(scenario_deg),
+            },
+        )
+
+
+def test_run_cycle_records_and_stability():
+    ft = ForesightTracker(window=3, volatility_threshold=5.0)
+    tracker = DummyROITracker([1.0, 2.0, 3.0, 0.0])
+    eng = MiniSelfImprovementEngine(tracker, ft)
+
+    for _ in range(3):
+        eng.run_cycle()
+    # initial positive trend
+    assert ft.is_stable("wf")
+
+    eng.run_cycle()  # negative slope but low volatility
+    history = ft.history["wf"]
+    assert len(history) == 3
+    assert [entry["roi_delta"] for entry in history] == [2.0, 3.0, 0.0]
+    assert [entry["raroi_delta"] for entry in history] == [1.0, 1.5, 0.0]
+    assert not ft.is_stable("wf")
+
+
+def test_is_stable_reacts_to_high_volatility():
+    ft = ForesightTracker(window=3, volatility_threshold=0.5)
+    tracker = DummyROITracker([1.0, 5.0, 9.0])
+    eng = MiniSelfImprovementEngine(tracker, ft)
+
+    for _ in range(3):
+        eng.run_cycle()
+    assert not ft.is_stable("wf")
