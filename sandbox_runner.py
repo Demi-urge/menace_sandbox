@@ -137,8 +137,22 @@ from menace.error_forecaster import ErrorForecaster
 from menace.quick_fix_engine import QuickFixEngine
 if os.getenv("MENACE_LIGHT_IMPORTS"):
     class ForesightTracker:  # type: ignore[no-redef]
-        def __init__(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - stub
+        def __init__(
+            self, window: int = 10, volatility_threshold: float = 1.0
+        ) -> None:  # pragma: no cover - stub
             pass
+
+        def to_dict(self) -> dict:  # pragma: no cover - stub
+            return {}
+
+        @classmethod
+        def from_dict(
+            cls,
+            data: dict,
+            window: int | None = None,
+            volatility_threshold: float | None = None,
+        ) -> "ForesightTracker":  # pragma: no cover - stub
+            return cls()
 else:  # pragma: no cover - import when not in light mode
     from foresight_tracker import ForesightTracker
 from relevancy_metrics_db import RelevancyMetricsDB

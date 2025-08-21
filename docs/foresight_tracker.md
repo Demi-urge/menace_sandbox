@@ -32,3 +32,27 @@ if tracker.is_stable("workflow-1"):
 ```
 
 The tracker stores only the recent `window` cycles per workflow, keeping memory usage predictable.
+
+## Persisting state
+
+`ForesightTracker` can serialise its configuration and recent history for
+later restoration.  The :meth:`to_dict` method returns a JSON‑serialisable
+dictionary containing the tracked ``history`` together with the current
+``window`` and ``volatility_threshold`` settings.  The companion
+:meth:`from_dict` classmethod rebuilds an instance from this data and accepts
+optional overrides for the configuration values.
+
+```python
+tracker = ForesightTracker(window=5, volatility_threshold=2.0)
+# ... record some cycles
+data = tracker.to_dict()
+
+# Re-create an identical tracker
+restored = ForesightTracker.from_dict(data)
+
+# Or restore while changing the configuration
+restored_custom = ForesightTracker.from_dict(data, window=3, volatility_threshold=1.5)
+```
+
+Only the most recent ``window`` entries per workflow are retained when
+deserialising.

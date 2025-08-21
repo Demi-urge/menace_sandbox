@@ -94,16 +94,21 @@ class ForesightTracker:
         """
 
         return {
+            "window": self.window,
+            "volatility_threshold": self.volatility_threshold,
             "history": {
                 wf_id: list(entries)
                 for wf_id, entries in self.history.items()
-            }
+            },
         }
 
     # ------------------------------------------------------------------
     @classmethod
     def from_dict(
-        cls, data: dict, window: int, volatility_threshold: float
+        cls,
+        data: dict,
+        window: int | None = None,
+        volatility_threshold: float | None = None,
     ) -> "ForesightTracker":
         """Reconstruct a tracker from :meth:`to_dict` output.
 
@@ -112,18 +117,25 @@ class ForesightTracker:
         data:
             Dictionary produced by :meth:`to_dict`.
         window:
-            Maximum number of entries to keep per workflow.  Histories are
-            clipped to this size with older records discarded.
+            Optional override for the maximum number of entries to keep per
+            workflow.  When ``None`` the value stored in ``data`` is used or the
+            class default (``10``) if unavailable.
         volatility_threshold:
-            Threshold to use for volatility checks in the reconstructed
-            instance.
+            Optional override for the volatility threshold.  When ``None`` the
+            value stored in ``data`` is used or the class default (``1.0``) if
+            missing.
         """
+
+        if window is None:
+            window = int(data.get("window", 10))
+        if volatility_threshold is None:
+            volatility_threshold = float(data.get("volatility_threshold", 1.0))
 
         tracker = cls(window=window, volatility_threshold=volatility_threshold)
         raw_history = data.get("history", {})
         for wf_id, entries in raw_history.items():
-            queue: Deque[Dict[str, float]] = deque(maxlen=window)
-            for entry in list(entries)[-window:]:
+            queue: Deque[Dict[str, float]] = deque(maxlen=tracker.window)
+            for entry in list(entries)[-tracker.window:]:
                 queue.append({k: float(v) for k, v in entry.items()})
             tracker.history[wf_id] = queue
         return tracker
