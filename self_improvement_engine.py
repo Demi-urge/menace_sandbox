@@ -299,6 +299,7 @@ except Exception:  # pragma: no cover - fallback for tests
         return []
 from .adaptive_roi_dataset import build_dataset
 from .roi_tracker import ROITracker
+from .foresight_tracker import ForesightTracker
 from .truth_adapter import TruthAdapter
 from .evaluation_history_db import EvaluationHistoryDB
 from .self_improvement_policy import (
@@ -681,6 +682,7 @@ class SelfImprovementEngine:
         error_predictor: ErrorClusterPredictor | None = None,
         roi_predictor: AdaptiveROIPredictor | None = None,
         roi_tracker: ROITracker | None = None,
+        foresight_tracker: ForesightTracker | None = None,
         gpt_memory: GPTMemoryInterface | None = None,
         knowledge_service: GPTKnowledgeService | None = None,
         relevancy_radar: RelevancyRadar | None = None,
@@ -760,6 +762,7 @@ class SelfImprovementEngine:
             self.roi_tracker = None
             self._adaptive_roi_last_train = 0.0
             self.adaptive_roi_train_interval = ADAPTIVE_ROI_TRAIN_INTERVAL
+        self.foresight_tracker = foresight_tracker or ForesightTracker()
         self.truth_adapter = TruthAdapter()
         self._truth_adapter_needs_retrain = False
         self.synergy_weight_roi = (
@@ -4907,7 +4910,11 @@ class SelfImprovementEngine:
 
     @radar.track
     def run_cycle(self, energy: int = 1) -> AutomationResult:
-        """Execute a self-improvement cycle."""
+        """Execute a self-improvement cycle.
+
+        The ``workflow_id`` used for foresight tracking is derived from the
+        current sandbox workflow context.
+        """
         self._cycle_running = True
         self._cycle_count += 1
         cid = f"cycle-{self._cycle_count}"
@@ -5723,6 +5730,41 @@ class SelfImprovementEngine:
             raroi_delta = 0.0
             if tracker is not None and len(tracker.raroi_history) >= 2:
                 raroi_delta = tracker.raroi_history[-1] - tracker.raroi_history[-2]
+            workflow_id = "self_improvement"
+            wf_ctx = getattr(environment, "current_context", None)
+            try:
+                ctx_obj = wf_ctx() if callable(wf_ctx) else wf_ctx
+                workflow_id = getattr(ctx_obj, "workflow_id", workflow_id)
+            except Exception:
+                pass
+            confidence = 0.0
+            resilience = 0.0
+            scenario_deg = 0.0
+            if tracker is not None:
+                try:
+                    if getattr(tracker, "confidence_history", []):
+                        confidence = float(tracker.confidence_history[-1])
+                    res_hist = tracker.metrics_history.get("synergy_resilience", [])
+                    if res_hist:
+                        resilience = float(res_hist[-1])
+                    scenario_deg = float(
+                        getattr(tracker, "scenario_degradation", lambda: 0.0)()
+                    )
+                except Exception:
+                    pass
+            try:
+                self.foresight_tracker.record_cycle_metrics(
+                    workflow_id,
+                    {
+                        "roi_delta": float(delta),
+                        "raroi_delta": float(raroi_delta),
+                        "confidence": float(confidence),
+                        "resilience": float(resilience),
+                        "scenario_degradation": float(scenario_deg),
+                    },
+                )
+            except Exception:
+                self.logger.exception("foresight tracker record failed")
             self.roi_history.append(delta)
             self.raroi_history.append(raroi_delta)
             self._save_state()
