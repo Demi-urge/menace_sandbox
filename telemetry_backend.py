@@ -28,10 +28,17 @@ class TelemetryBackend:
                         confidence REAL,
                         scenario_deltas TEXT,
                         drift_flag INTEGER,
+                        readiness REAL,
                         ts DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                     """
                 )
+                try:
+                    conn.execute(
+                        "ALTER TABLE roi_telemetry ADD COLUMN readiness REAL"
+                    )
+                except sqlite3.OperationalError:
+                    pass
         finally:
             conn.close()
 
@@ -44,6 +51,7 @@ class TelemetryBackend:
         confidence: float | None,
         scenario_deltas: Optional[Dict[str, float]],
         drift_flag: bool,
+        readiness: float | None,
     ) -> None:
         """Store a prediction outcome and associated metrics."""
 
@@ -51,7 +59,7 @@ class TelemetryBackend:
         try:
             with conn:
                 conn.execute(
-                    "INSERT INTO roi_telemetry (workflow_id, predicted, actual, confidence, scenario_deltas, drift_flag) VALUES (?,?,?,?,?,?)",
+                    "INSERT INTO roi_telemetry (workflow_id, predicted, actual, confidence, scenario_deltas, drift_flag, readiness) VALUES (?,?,?,?,?,?,?)",
                     (
                         workflow_id,
                         None if predicted is None else float(predicted),
@@ -59,6 +67,7 @@ class TelemetryBackend:
                         None if confidence is None else float(confidence),
                         json.dumps(scenario_deltas or {}),
                         int(bool(drift_flag)),
+                        None if readiness is None else float(readiness),
                     ),
                 )
         finally:
@@ -73,16 +82,16 @@ class TelemetryBackend:
             cur = conn.cursor()
             if workflow_id is None:
                 cur.execute(
-                    "SELECT workflow_id, predicted, actual, confidence, scenario_deltas, drift_flag, ts FROM roi_telemetry ORDER BY ts"
+                    "SELECT workflow_id, predicted, actual, confidence, scenario_deltas, drift_flag, readiness, ts FROM roi_telemetry ORDER BY ts"
                 )
             else:
                 cur.execute(
-                    "SELECT workflow_id, predicted, actual, confidence, scenario_deltas, drift_flag, ts FROM roi_telemetry WHERE workflow_id = ? ORDER BY ts",
+                    "SELECT workflow_id, predicted, actual, confidence, scenario_deltas, drift_flag, readiness, ts FROM roi_telemetry WHERE workflow_id = ? ORDER BY ts",
                     (workflow_id,),
                 )
             rows = cur.fetchall()
             result: List[Dict[str, Any]] = []
-            for wf, pred, act, conf, scen, drift, ts in rows:
+            for wf, pred, act, conf, scen, drift, ready, ts in rows:
                 result.append(
                     {
                         "workflow_id": wf,
@@ -91,6 +100,7 @@ class TelemetryBackend:
                         "confidence": conf,
                         "scenario_deltas": json.loads(scen) if scen else {},
                         "drift_flag": bool(drift),
+                        "readiness": ready,
                         "ts": ts,
                     }
                 )
