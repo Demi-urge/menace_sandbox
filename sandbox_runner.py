@@ -920,7 +920,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     foresight_tracker = getattr(args, "foresight_tracker", None)
     if foresight_tracker is None:
         foresight_tracker = ForesightTracker(
-            N=10,
+            window=10,
             volatility_threshold=volatility_threshold,
         )
     roi_history_file = data_dir / "roi_history.json"
@@ -935,7 +935,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                 data = json.load(fh)
             loaded = ForesightTracker.from_dict(
                 data,
-                N=getattr(foresight_tracker, "max_cycles", 10),
+                window=getattr(foresight_tracker, "window", 10),
                 volatility_threshold=volatility_threshold,
             )
             foresight_tracker.history = loaded.history
