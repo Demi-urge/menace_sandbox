@@ -13,25 +13,28 @@ class ForesightTracker:
 
     def __init__(
         self,
-        window: int = 10,
+        max_cycles: int = 10,
         volatility_threshold: float = 1.0,
+        window: int | None = None,
         N: int | None = None,
     ) -> None:
         """Create a new tracker.
 
         Parameters
         ----------
-        window, N:
-            ``N`` is an alias for ``window`` specifying the number of recent
-            cycles to retain per workflow.
+        max_cycles, window, N:
+            Aliases specifying the number of recent cycles to retain per
+            workflow.
         volatility_threshold:
             Maximum standard deviation across stored metrics considered stable.
         """
 
+        if window is not None:
+            max_cycles = window
         if N is not None:
-            window = N
+            max_cycles = N
 
-        self.max_cycles = window
+        self.max_cycles = max_cycles
         self.volatility_threshold = volatility_threshold
         self.history: Dict[str, Deque[Dict[str, float]]] = {}
 
@@ -133,8 +136,9 @@ class ForesightTracker:
     def from_dict(
         cls,
         data: dict,
-        window: int | None = None,
+        max_cycles: int | None = None,
         volatility_threshold: float | None = None,
+        window: int | None = None,
         N: int | None = None,
     ) -> "ForesightTracker":
         """Reconstruct a tracker from :meth:`to_dict` output.
@@ -143,21 +147,23 @@ class ForesightTracker:
         ----------
         data:
             Dictionary produced by :meth:`to_dict`.
-        window, N:
+        max_cycles, window, N:
             Optional override for the maximum number of entries to keep per
-            workflow. ``N`` is an alias for ``window``. When both are ``None``
-            the value stored in ``data`` is used or the class default (``10``)
-            if unavailable.
+            workflow. ``window`` and ``N`` are aliases for ``max_cycles``. When
+            all are ``None`` the value stored in ``data`` is used or the class
+            default (``10``) if unavailable.
         volatility_threshold:
             Optional override for the volatility threshold.  When ``None`` the
             value stored in ``data`` is used or the class default (``1.0``) if
             missing.
         """
 
+        if window is not None:
+            max_cycles = window
         if N is not None:
-            window = N
-        if window is None:
-            window = int(
+            max_cycles = N
+        if max_cycles is None:
+            max_cycles = int(
                 data.get(
                     "max_cycles",
                     data.get("N", data.get("window", 10)),
@@ -166,7 +172,9 @@ class ForesightTracker:
         if volatility_threshold is None:
             volatility_threshold = float(data.get("volatility_threshold", 1.0))
 
-        tracker = cls(window=window, volatility_threshold=volatility_threshold)
+        tracker = cls(
+            max_cycles=max_cycles, volatility_threshold=volatility_threshold
+        )
         raw_history = data.get("history", {})
         for wf_id, entries in raw_history.items():
             queue: Deque[Dict[str, float]] = deque(maxlen=tracker.max_cycles)

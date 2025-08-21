@@ -3,8 +3,8 @@ import numpy as np
 from menace_sandbox.foresight_tracker import ForesightTracker
 
 
-def test_records_truncated_to_window():
-    tracker = ForesightTracker(window=3)
+def test_records_truncated_to_max_cycles():
+    tracker = ForesightTracker(max_cycles=3)
     for i in range(5):
         tracker.record_cycle_metrics("wf", {"m": float(i)})
 
@@ -48,7 +48,7 @@ def test_is_stable_considers_trend_and_volatility():
 
 
 def test_to_dict_from_dict_roundtrip_configuration_and_history():
-    tracker = ForesightTracker(window=4, volatility_threshold=2.5)
+    tracker = ForesightTracker(max_cycles=4, volatility_threshold=2.5)
     for v in [0.0, 1.0, 2.0, 3.0]:
         tracker.record_cycle_metrics("wf", {"m": v})
 
@@ -70,13 +70,13 @@ def test_to_dict_from_dict_roundtrip_configuration_and_history():
 
 
 def test_from_dict_allows_overrides_and_truncates_history():
-    tracker = ForesightTracker(window=5, volatility_threshold=3.0)
+    tracker = ForesightTracker(max_cycles=5, volatility_threshold=3.0)
     for i in range(6):
         tracker.record_cycle_metrics("wf", {"m": float(i)})
 
     data = tracker.to_dict()
     restored = ForesightTracker.from_dict(
-        data, window=3, volatility_threshold=1.0
+        data, max_cycles=3, volatility_threshold=1.0
     )
     assert restored.max_cycles == 3
     assert np.isclose(restored.volatility_threshold, 1.0)
@@ -85,14 +85,15 @@ def test_from_dict_allows_overrides_and_truncates_history():
     assert len(history) == 3
 
 
-def test_init_aliases_N_to_window():
-    tracker = ForesightTracker(N=5)
-    assert tracker.max_cycles == 5
-    assert tracker.window == 5
+def test_init_accepts_aliases():
+    tracker_n = ForesightTracker(N=5)
+    tracker_w = ForesightTracker(window=4)
+    assert tracker_n.max_cycles == 5
+    assert tracker_w.max_cycles == 4
 
 
 def test_to_dict_includes_window_alias():
-    tracker = ForesightTracker(window=7)
+    tracker = ForesightTracker(max_cycles=7)
     data = tracker.to_dict()
     assert data["max_cycles"] == 7
     assert data["window"] == 7

@@ -43,7 +43,7 @@ class MiniSelfImprovementEngine:
 
 
 def test_run_cycle_records_and_stability():
-    ft = ForesightTracker(window=3, volatility_threshold=5.0)
+    ft = ForesightTracker(max_cycles=3, volatility_threshold=5.0)
     tracker = DummyROITracker([1.0, 2.0, 3.0, 0.0])
     eng = MiniSelfImprovementEngine(tracker, ft)
 
@@ -61,7 +61,7 @@ def test_run_cycle_records_and_stability():
 
 
 def test_is_stable_reacts_to_high_volatility():
-    ft = ForesightTracker(window=3, volatility_threshold=0.5)
+    ft = ForesightTracker(max_cycles=3, volatility_threshold=0.5)
     tracker = DummyROITracker([1.0, 5.0, 9.0])
     eng = MiniSelfImprovementEngine(tracker, ft)
 
@@ -71,7 +71,7 @@ def test_is_stable_reacts_to_high_volatility():
 
 
 def test_metrics_persist_through_save_load(tmp_path):
-    ft = ForesightTracker(window=3)
+    ft = ForesightTracker(max_cycles=3)
     tracker1 = DummyROITracker([1.0])
     eng1 = MiniSelfImprovementEngine(tracker1, ft)
     eng1.run_cycle()
