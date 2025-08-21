@@ -362,15 +362,11 @@ class ContextBuilder:
             ):
                 if _VECTOR_RISK is not None:
                     _VECTOR_RISK.labels("filtered").inc()
-                return "", _ScoredEntry({}, 0.0, origin, vec_id)
+                return "", _ScoredEntry({}, 0.0, origin, vec_id, {})
         except Exception:
             pass
         lic = bundle.get("license") or meta.get("license")
         fp = bundle.get("license_fingerprint") or meta.get("license_fingerprint")
-        if lic in self.license_denylist or _LICENSE_DENYLIST.get(fp) in self.license_denylist:
-            if _VECTOR_RISK is not None:
-                _VECTOR_RISK.labels("filtered").inc()
-            return "", _ScoredEntry({}, 0.0, origin, vec_id)
         entry: Dict[str, Any] = {"id": bundle.get("record_id")}
 
         if origin == "error":

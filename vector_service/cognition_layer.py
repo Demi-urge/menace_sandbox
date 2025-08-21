@@ -28,6 +28,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 import time
+import json
+from pathlib import Path
 
 from .retriever import Retriever
 from .context_builder import ContextBuilder
@@ -192,6 +194,31 @@ class CognitionLayer:
                     self.context_builder.refresh_db_weights(updates)  # type: ignore[attr-defined]
                 elif hasattr(self.context_builder, "db_weights"):
                     self.context_builder.db_weights.update(updates)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            # Persist updates so external services can reload weights after
+            # restarts.  We merge into ``retrieval_ranker.json`` which already
+            # tracks the current ranking model path.
+            try:
+                cfg = Path("retrieval_ranker.json")
+                data = {"weights": {}}
+                if cfg.exists():
+                    try:
+                        loaded = json.loads(cfg.read_text())
+                        if isinstance(loaded, dict):
+                            data.update(loaded)
+                    except Exception:
+                        pass
+                weights = data.get("weights") or {}
+                if not isinstance(weights, dict):
+                    weights = {}
+                for db, wt in updates.items():
+                    try:
+                        weights[str(db)] = float(wt)
+                    except Exception:
+                        continue
+                data["weights"] = weights
+                cfg.write_text(json.dumps(data))
             except Exception:
                 pass
         return updates

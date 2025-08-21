@@ -279,13 +279,33 @@ class RankingModelScheduler:
         rr.save_model(tm, model_file)
         self._persist_model_path(model_file)
 
-        # Reload model and reliability scores in running services
+        # Load any persisted ranking weights so services can refresh their
+        # ContextBuilder instances.  ``update_ranker`` stores these weights
+        # under the ``weights`` key in ``retrieval_ranker.json``.
+        weights: dict[str, float] = {}
+        try:
+            cfg = json.loads(self.model_path.read_text())
+            if isinstance(cfg, dict):
+                w = cfg.get("weights")
+                if isinstance(w, dict):
+                    weights = {str(k): float(v) for k, v in w.items()}
+        except Exception:
+            pass
+
+        # Reload model, reliability scores and ranking weights in running services
         def _reload_all(svc: Any) -> None:
             try:
                 if hasattr(svc, "reload_ranker_model"):
                     svc.reload_ranker_model(model_file)
                 if hasattr(svc, "reload_reliability_scores"):
                     svc.reload_reliability_scores()
+                if weights:
+                    if hasattr(svc, "refresh_db_weights"):
+                        svc.refresh_db_weights(weights)  # type: ignore[arg-type]
+                    else:
+                        cb = getattr(svc, "context_builder", None)
+                        if cb is not None and hasattr(cb, "refresh_db_weights"):
+                            cb.refresh_db_weights(weights)  # type: ignore[attr-defined]
             except Exception:
                 return
             for dep in getattr(svc, "dependent_services", []) or []:
