@@ -44,6 +44,7 @@ from typing import (
     Mapping,
     get_origin,
     get_args,
+    TYPE_CHECKING,
 )
 from contextlib import asynccontextmanager, suppress
 from filelock import FileLock
@@ -59,6 +60,9 @@ try:
     import psutil  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover
+    from foresight_tracker import ForesightTracker
 
 # Relevancy radar integration -------------------------------------------------
 _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
@@ -5247,6 +5251,8 @@ def run_scenarios(
     workflow: Sequence[str] | str,
     tracker: "ROITracker" | None = None,
     presets: Sequence[Mapping[str, Any]] | None = None,
+    *,
+    foresight_tracker: "ForesightTracker" | None = None,
 ) -> tuple["ROITracker", Dict[str, Scorecard], Dict[str, Any]]:
     """Run ``workflow`` across predefined sandbox scenarios and compare ROI.
 
@@ -5273,6 +5279,8 @@ def run_scenarios(
         :func:`default_scenario_presets` helper provides a baseline "normal"
         run plus canonical adverse scenarios for concurrency pressure, hostile
         input, schema drift and flaky upstreams.
+    foresight_tracker:
+        Optional foresight tracker for synchronising ROI foresight metrics.
 
     Returns
     -------
@@ -6522,6 +6530,7 @@ def run_workflow_simulations(
     module_semantic: bool = False,
     return_details: bool = False,
     tracker: "ROITracker" | None = None,
+    foresight_tracker: "ForesightTracker" | None = None,
 ) -> "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]:
     """Execute stored workflows under optional environment presets.
 
