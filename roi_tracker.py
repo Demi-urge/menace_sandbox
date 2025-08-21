@@ -43,6 +43,7 @@ from .telemetry_backend import TelemetryBackend
 from .borderline_bucket import BorderlineBucket
 from .truth_adapter import TruthAdapter
 from .roi_calculator import ROICalculator, propose_fix
+from .readiness_index import compute_readiness
 try:  # pragma: no cover - optional dependency
     from . import self_test_service as _sts
 except Exception:  # pragma: no cover - self-test service may be absent
@@ -250,6 +251,7 @@ class ROITracker:
         self.raroi_history: List[float] = []
         self.last_raroi: float | None = None
         self.last_confidence: float | None = None
+        self.confidence_decay = 0.9
         self.last_predicted_roi: float | None = None
         self.confidence_history: List[float] = []
         self.mae_history: List[float] = []
@@ -815,15 +817,17 @@ class ROITracker:
         drift = self.check_prediction_drift()
         self.drift_metrics["mae"] = self.rolling_mae()
         self.drift_metrics["accuracy"] = self.classification_accuracy()
+        readiness = self._compute_readiness()
         if self.telemetry is not None:
             try:
                 self.telemetry.log_prediction(
                     None if workflow_id is None else str(workflow_id),
                     float(pred_seq[0]) if pred_seq else None,
                     float(act_seq[0]) if act_seq else None,
-                    conf_val,
+                    self.last_confidence,
                     dict(self.scenario_roi_deltas),
                     drift,
+                    readiness,
                 )
             except Exception:
                 logger.exception("failed to log telemetry event")
@@ -1134,6 +1138,10 @@ class ROITracker:
                 self._adaptive_predictor.train()
             except Exception:
                 logger.exception("failed to trigger adaptive ROI retrain")
+        if drift:
+            current = self.last_confidence if self.last_confidence is not None else 1.0
+            self.last_confidence = current * self.confidence_decay
+        readiness = self._compute_readiness()
         if self.telemetry is not None:
             try:
                 pred = self.predicted_roi[-1] if self.predicted_roi else None
@@ -1142,13 +1150,33 @@ class ROITracker:
                     None,
                     pred,
                     act,
-                    None,
+                    self.last_confidence,
                     None,
                     drift,
+                    readiness,
                 )
             except Exception:
                 logger.exception("failed to log drift telemetry")
         return drift
+
+    def _compute_readiness(self) -> float:
+        """Return readiness score from latest metrics."""
+
+        reliability = float(self.reliability())
+        safety_hist = (
+            self.metrics_history.get("security_score")
+            or self.metrics_history.get("synergy_safety_rating")
+            or [1.0]
+        )
+        safety = float(safety_hist[-1]) if safety_hist else 1.0
+        res_hist = (
+            self.metrics_history.get("synergy_resilience")
+            or self.metrics_history.get("resilience")
+            or [1.0]
+        )
+        resilience = float(res_hist[-1]) if res_hist else 1.0
+        raroi = float(self.last_raroi or 0.0)
+        return compute_readiness(raroi, reliability, safety, resilience)
 
     def record_metric_prediction(
         self, metric: str, predicted: float, actual: float

@@ -8,6 +8,8 @@ import menace_sandbox.self_test_service as sts
 import types
 import sys
 import pytest
+from menace_sandbox.telemetry_backend import TelemetryBackend
+from menace_sandbox.readiness_index import compute_readiness
 
 
 def test_roi_tracker_basic():
@@ -879,4 +881,25 @@ def test_scorecard_cli(tmp_path, capsys):
     data = json.loads(out.read_text())
     assert data["workflow_id"] == "wf1"
     assert "concurrency_spike" in data["scenarios"]
+
+
+def test_prediction_drift_adjusts_confidence_and_logs_readiness(tmp_path):
+    backend = TelemetryBackend(str(tmp_path / "tel.db"))
+    tracker = rt.ROITracker(
+        evaluation_window=3, mae_threshold=0.1, telemetry_backend=backend
+    )
+    tracker.calculate_raroi(0.5)
+    tracker.score_workflow("wf1", 0.5)
+    for _ in range(3):
+        tracker.record_prediction([0.0], [1.0], workflow_id="wf1")
+    assert tracker.last_confidence == pytest.approx(0.9)
+    readiness = compute_readiness(
+        tracker.last_raroi or 0.0,
+        tracker.reliability(),
+        1.0,
+        1.0,
+    )
+    hist = backend.fetch_history()
+    assert hist[-1]["confidence"] == pytest.approx(tracker.last_confidence)
+    assert hist[-1]["readiness"] == pytest.approx(readiness)
 
