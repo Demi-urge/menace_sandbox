@@ -65,15 +65,21 @@ class ForesightTracker:
         return slope, second_derivative, rolling_stability
 
     # ------------------------------------------------------------------
-    def is_stable(self, workflow_id: str, volatility_threshold: float = 1.0) -> bool:
-        """Check if ROI trend is positive and volatility below threshold."""
+    def is_stable(self, workflow_id: str) -> bool:
+        """Evaluate the latest trend's slope and volatility.
+
+        A workflow is considered stable when the most recent ROI trend is
+        non-negative and its volatility stays below ``1.0``.  The method relies
+        on :meth:`get_trend_curve` to obtain the current slope and rolling
+        standard deviation (treated as volatility).
+        """
 
         data = self.history.get(workflow_id)
         if not data or len(data) < 2:
             return False
 
         slope, _, volatility = self.get_trend_curve(workflow_id)
-        return slope > 0 and volatility < volatility_threshold
+        return slope >= 0 and volatility <= 1.0
 
 
 __all__ = ["ForesightTracker"]
