@@ -11,6 +11,7 @@ import asyncio
 from pathlib import Path
 import pkgutil
 import json
+import sys
 
 from .decorators import log_and_measure
 from compliance.license_fingerprint import (
@@ -152,7 +153,67 @@ class EmbeddingBackfill:
                         filtered.append(cls)
                         break
             subclasses = filtered
+        # ensure discovered classes implement the expected interface
+        for cls in subclasses:
+            for meth in ("iter_records", "vector"):
+                if not callable(getattr(cls, meth, None)):
+                    raise TypeError(f"{cls.__name__} missing required method {meth}")
         return subclasses
+
+    # ------------------------------------------------------------------
+    def _verify_registry(self, names: List[str] | None = None) -> None:
+        """Ensure registry entries expose the expected EmbeddableDB interface."""
+
+        default_required = {
+            "bot",
+            "workflow",
+            "enhancement",
+            "error",
+            "information",
+            "code",
+            "discrepancy",
+            "failure",
+            "research",
+        }
+        registry = _load_registry()
+        problems: list[str] = []
+        pkg_root_path = Path(__file__).resolve().parents[1]
+        pkg_root = pkg_root_path.name
+        parent = pkg_root_path.parent
+        if str(parent) not in sys.path:
+            sys.path.insert(0, str(parent))
+        to_check = set(names or registry.keys())
+        for name in to_check:
+            mod_cls = registry.get(name)
+            if not mod_cls:
+                if names is None and _REGISTRY_FILE == Path(__file__).with_name("embedding_registry.json"):
+                    problems.append(f"{name}: not registered")
+                continue
+            mod_name, cls_name = mod_cls
+            try:
+                mod = importlib.import_module(mod_name)
+            except Exception:
+                try:
+                    mod = importlib.import_module(f"{pkg_root}.{mod_name}")
+                except Exception as exc:  # pragma: no cover - defensive
+                    problems.append(f"{name}: import failed ({exc})")
+                    continue
+            try:
+                cls = getattr(mod, cls_name)
+            except Exception as exc:  # pragma: no cover - defensive
+                problems.append(f"{name}: import failed ({exc})")
+                continue
+            if not issubclass(cls, EmbeddableDBMixin):
+                problems.append(f"{name}: not EmbeddableDBMixin")
+                continue
+            missing = [m for m in ("iter_records", "vector") if not callable(getattr(cls, m, None))]
+            if missing:
+                problems.append(f"{name}: missing {', '.join(missing)}")
+        if names is None and _REGISTRY_FILE == Path(__file__).with_name("embedding_registry.json"):
+            for name in sorted(default_required - registry.keys()):
+                problems.append(f"{name}: not registered")
+        if problems:
+            raise TypeError("invalid EmbeddableDB registrations: " + "; ".join(problems))
 
     # ------------------------------------------------------------------
     @log_and_measure
@@ -212,6 +273,7 @@ class EmbeddingBackfill:
             bs = batch_size if batch_size is not None else self.batch_size
             be = backend or self.backend
             names = dbs or ([db] if db else None)
+            self._verify_registry(names)
             subclasses = self._load_known_dbs(names=names)
             logger = logging.getLogger(__name__)
             total = len(subclasses)
