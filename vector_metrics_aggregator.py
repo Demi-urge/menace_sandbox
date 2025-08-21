@@ -18,13 +18,13 @@ class VectorMetricsAggregator:
         self.db_path = Path(db_path)
 
     # ------------------------------------------------------------------
-    def _rows(self) -> Iterable[Tuple[str, str, int, str]]:
-        """Yield ``(event_type, db, tokens, ts)`` rows from the database."""
+    def _rows(self) -> Iterable[Tuple[str, str, int, float, str]]:
+        """Yield ``(event_type, db, tokens, contribution, ts)`` rows from the database."""
         if not self.db_path.exists():
             return []
         with sqlite3.connect(self.db_path) as conn:
             cur = conn.execute(
-                "SELECT event_type, db, tokens, ts FROM vector_metrics"
+                "SELECT event_type, db, tokens, COALESCE(contribution,0), ts FROM vector_metrics"
             )
             return cur.fetchall()
 
@@ -38,8 +38,8 @@ class VectorMetricsAggregator:
         if not rows:
             return []
 
-        agg: Dict[Tuple[str, str, str], Dict[str, int]] = {}
-        for event, db, tokens, ts in rows:
+        agg: Dict[Tuple[str, str, str], Dict[str, float]] = {}
+        for event, db, tokens, contrib, ts in rows:
             try:
                 dt = datetime.fromisoformat(ts)
             except ValueError:
@@ -48,9 +48,10 @@ class VectorMetricsAggregator:
             bucket = dt.strftime("%Y-%m-%d %H:00" if period == "hourly" else "%Y-%m-%d")
             key = (bucket, db or "", event or "")
             if key not in agg:
-                agg[key] = {"count": 0, "tokens_total": 0}
+                agg[key] = {"count": 0, "tokens_total": 0, "roi_total": 0.0}
             agg[key]["count"] += 1
             agg[key]["tokens_total"] += int(tokens or 0)
+            agg[key]["roi_total"] += float(contrib or 0.0)
 
         result = [
             {
@@ -58,7 +59,8 @@ class VectorMetricsAggregator:
                 "db": k[1],
                 "event_type": k[2],
                 "count": v["count"],
-                "tokens_total": v["tokens_total"],
+                "tokens_total": int(v["tokens_total"]),
+                "roi_total": float(v["roi_total"]),
             }
             for k, v in sorted(agg.items())
         ]
@@ -75,7 +77,8 @@ class VectorMetricsAggregator:
         Path(json_file).write_text(json.dumps(data, indent=2))
         with open(csv_file, "w", newline="") as fh:
             writer = csv.DictWriter(
-                fh, fieldnames=["period", "db", "event_type", "count", "tokens_total"]
+                fh,
+                fieldnames=["period", "db", "event_type", "count", "tokens_total", "roi_total"],
             )
             writer.writeheader()
             writer.writerows(data)

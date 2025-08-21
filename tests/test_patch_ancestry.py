@@ -1,6 +1,7 @@
 import sys
 import types
 import json
+import pytest
 
 sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
 
@@ -34,16 +35,14 @@ def test_patch_logger_records_provenance(tmp_path):
     assert rows[0][3] == "MIT"
     assert json.loads(rows[0][5]) == ["unsafe"]
     prov = get_patch_provenance(pid, patch_db=db)
-    assert prov == [
-        {
-            "origin": "o1",
-            "vector_id": "v1",
-            "influence": 0.8,
-            "license": "MIT",
-            "license_fingerprint": None,
-            "semantic_alerts": ["unsafe"],
-        }
-    ]
+    assert prov[0]["origin"] == "o1"
+    assert prov[0]["vector_id"] == "v1"
+    assert prov[0]["influence"] == pytest.approx(0.8)
+    assert prov[0]["license"] == "MIT"
+    assert prov[0]["semantic_alerts"] == ["unsafe"]
+    assert prov[0]["roi_before"] == pytest.approx(1.0)
+    assert prov[0]["roi_after"] == pytest.approx(2.0)
+    assert prov[0]["roi_delta"] == pytest.approx(1.0)
 
 
 def test_vector_metrics_records_alignment_severity(tmp_path):

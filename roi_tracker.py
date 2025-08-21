@@ -1743,6 +1743,13 @@ class ROITracker:
         falls below the configured tolerance.
         """
         predicted_class = self._next_category
+        if self._adaptive_predictor is None:
+            try:
+                from .adaptive_roi_predictor import AdaptiveROIPredictor
+
+                self._adaptive_predictor = AdaptiveROIPredictor()
+            except Exception:
+                self._adaptive_predictor = None
         if metrics is None:
             metrics = {}
         metrics.setdefault("roi_reliability", self.reliability())
@@ -1768,6 +1775,22 @@ class ROITracker:
         adjusted: float | None = None
         final_score = 0.0
         if filtered is not None:
+            hist_for_pred = self.roi_history or [roi_before]
+            if self._next_prediction is None:
+                if self._adaptive_predictor is not None:
+                    try:
+                        feats = [[float(x)] for x in (hist_for_pred + [hist_for_pred[-1]])]
+                        preds, cls, _, cls_conf = self._adaptive_predictor.predict(
+                            feats, horizon=len(feats)
+                        )
+                        self._next_prediction = float(preds[-1][0])
+                        predicted_class = predicted_class or cls
+                        if confidence is None:
+                            confidence = cls_conf
+                    except Exception:
+                        self._next_prediction = float(hist_for_pred[-1])
+                else:
+                    self._next_prediction = float(hist_for_pred[-1])
             adjusted = filtered * weight
             self.roi_history.append(adjusted)
 
@@ -1996,11 +2019,19 @@ class ROITracker:
                 should_stop = True
         if len(self.roi_history) % self.evaluate_every == 0:
             try:
-                self.evaluate_model(
-                    window=self.evaluation_window,
-                    mae_threshold=self.mae_threshold,
-                    acc_threshold=self.acc_threshold,
-                )
+                if self._adaptive_predictor is not None:
+                    self._adaptive_predictor.evaluate_model(
+                        self,
+                        window=self.evaluation_window,
+                        mae_threshold=self.mae_threshold,
+                        accuracy_threshold=self.acc_threshold,
+                    )
+                else:
+                    self.evaluate_model(
+                        window=self.evaluation_window,
+                        mae_threshold=self.mae_threshold,
+                        acc_threshold=self.acc_threshold,
+                    )
             except Exception:
                 logger.exception("model evaluation failed")
         entropy_stop = self.entropy_ceiling(
