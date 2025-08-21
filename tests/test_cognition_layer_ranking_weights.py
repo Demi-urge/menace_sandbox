@@ -46,7 +46,7 @@ class DummyRetriever:
             },
         ]
 
-    def search(self, query: str, top_k: int = 5, session_id: str = ""):
+    def search(self, query: str, top_k: int = 5, session_id: str = "", **_):
         return list(self.hits)
 
 
@@ -55,12 +55,14 @@ class DummyBus:
         pass
 
 
-def _make_layer(tmp_path):
+def _make_layer(tmp_path, with_tracker=True):
     retriever = DummyRetriever()
     vec_db = VectorMetricsDB(tmp_path / "vec.db")
-    tracker = rt.ROITracker()
+    tracker = rt.ROITracker() if with_tracker else None
     builder = ContextBuilder(retriever=retriever, roi_tracker=tracker)
-    patch_logger = PatchLogger(vector_metrics=vec_db, roi_tracker=tracker, event_bus=DummyBus())
+    patch_logger = PatchLogger(
+        vector_metrics=vec_db, roi_tracker=tracker, event_bus=DummyBus()
+    )
     layer = CognitionLayer(
         retriever=retriever,
         context_builder=builder,
@@ -103,3 +105,18 @@ def test_patch_failure_decreases_weights(tmp_path):
     assert weights["workflow"] == pytest.approx(-1.0)
     assert tracker.origin_db_deltas["bot"][-1] == pytest.approx(-1.0)
     assert vec_db.retriever_regret_rate("bot") == pytest.approx(1.0)
+
+
+def test_high_risk_vectors_penalize_weights(tmp_path):
+    layer, vec_db, _ = _make_layer(tmp_path, with_tracker=False)
+    _ctx, sid = layer.query("hello", top_k=5)
+    meta = layer._retrieval_meta[sid]
+    for origin, vid, _score in layer._session_vectors[sid]:
+        if origin == "bot":
+            key = f"{origin}:{vid}"
+            meta[key]["alignment_severity"] = 2.0
+            meta[key]["semantic_alerts"] = ["risky"]
+    layer.record_patch_outcome(sid, True, contribution=1.0)
+    weights = vec_db.get_db_weights()
+    assert weights["bot"] == pytest.approx(0.0)
+    assert weights["workflow"] == pytest.approx(1.0)

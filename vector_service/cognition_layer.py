@@ -138,6 +138,7 @@ class CognitionLayer:
         vectors: List[Tuple[str, str, float]],
         success: bool,
         roi_deltas: Dict[str, float] | None = None,
+        risk_scores: Dict[str, float] | None = None,
     ) -> Dict[str, float]:
         """Update ranking weights based on patch outcome.
 
@@ -168,6 +169,11 @@ class CognitionLayer:
             for origin, _vec_id, _score in vectors:
                 key = origin or ""
                 per_db[key] = per_db.get(key, 0.0) + delta
+
+        if risk_scores:
+            for origin, sev in risk_scores.items():
+                key = origin or ""
+                per_db[key] = per_db.get(key, 0.0) - abs(sev)
 
         updates: Dict[str, float] = {}
         for origin, change in per_db.items():
@@ -429,6 +435,25 @@ class CognitionLayer:
             retrieval_metadata=meta,
         )
 
+        risk_scores: Dict[str, float] = {}
+        if meta:
+            for origin, vid, _ in vectors:
+                key = f"{origin}:{vid}" if origin else vid
+                m = meta.get(key, {})
+                sev = m.get("alignment_severity")
+                alerts = m.get("semantic_alerts")
+                risk = 0.0
+                if sev:
+                    try:
+                        risk = max(risk, float(sev))
+                    except Exception:
+                        risk = max(risk, 1.0)
+                if alerts:
+                    risk = max(risk, 1.0)
+                if risk:
+                    ok = origin or ""
+                    risk_scores[ok] = max(risk_scores.get(ok, 0.0), risk)
+
         roi_contribs: Dict[str, float] = {}
         used_tracker_deltas = False
         if self.roi_tracker is not None:
@@ -490,7 +515,9 @@ class CognitionLayer:
         roi_deltas = {
             origin: (roi if success else -roi) for origin, roi in roi_contribs.items()
         }
-        updates = self.update_ranker(vectors, success, roi_deltas=roi_deltas)
+        updates = self.update_ranker(
+            vectors, success, roi_deltas=roi_deltas, risk_scores=risk_scores
+        )
 
         if roi_contribs:
             bus = getattr(self.patch_logger, "event_bus", None)
@@ -533,6 +560,25 @@ class CognitionLayer:
             contribution=contribution,
             retrieval_metadata=meta,
         )
+        risk_scores: Dict[str, float] = {}
+        if meta:
+            for origin, vid, _ in vectors:
+                key = f"{origin}:{vid}" if origin else vid
+                m = meta.get(key, {})
+                sev = m.get("alignment_severity")
+                alerts = m.get("semantic_alerts")
+                risk = 0.0
+                if sev:
+                    try:
+                        risk = max(risk, float(sev))
+                    except Exception:
+                        risk = max(risk, 1.0)
+                if alerts:
+                    risk = max(risk, 1.0)
+                if risk:
+                    ok = origin or ""
+                    risk_scores[ok] = max(risk_scores.get(ok, 0.0), risk)
+
         roi_contribs: Dict[str, float] = {}
         used_tracker_deltas = False
         if self.roi_tracker is not None:
@@ -594,7 +640,9 @@ class CognitionLayer:
         roi_deltas = {
             origin: (roi if success else -roi) for origin, roi in roi_contribs.items()
         }
-        updates = self.update_ranker(vectors, success, roi_deltas=roi_deltas)
+        updates = self.update_ranker(
+            vectors, success, roi_deltas=roi_deltas, risk_scores=risk_scores
+        )
         if roi_contribs:
             bus = getattr(self.patch_logger, "event_bus", None)
             if bus is None and UnifiedEventBus is not None:

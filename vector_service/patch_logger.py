@@ -151,6 +151,8 @@ class PatchLogger:
             vm_vectors = []
             risky = 0
             safe = 0
+            origin_alerts: dict[str, set[str]] = {}
+            origin_sev: dict[str, float] = {}
             for o, vid, score in detailed:
                 key = f"{o}:{vid}" if o else vid
                 m = meta.get(key, {})
@@ -165,10 +167,20 @@ class PatchLogger:
                     detailed_meta.append((o, vid, score, lic, alerts))
                     provenance_meta.append((o, vid, score, lic, alerts, sev))
                 vm_vectors.append((vid, score, lic, alerts, sev))
+                ok = o or ""
                 if sev:
+                    try:
+                        origin_sev[ok] = max(origin_sev.get(ok, 0.0), float(sev))
+                    except Exception:
+                        origin_sev[ok] = max(origin_sev.get(ok, 0.0), 1.0)
                     risky += 1
                 else:
                     safe += 1
+                if alerts:
+                    if isinstance(alerts, (list, tuple, set)):
+                        origin_alerts.setdefault(ok, set()).update(map(str, alerts))
+                    else:
+                        origin_alerts.setdefault(ok, set()).add(str(alerts))
 
             _VECTOR_RISK.labels("risky").inc(risky)
             _VECTOR_RISK.labels("safe").inc(safe)
@@ -258,14 +270,17 @@ class PatchLogger:
                             pass
                 roi_metrics: dict[str, dict[str, float]] = {}
                 if origin_totals:
-                    roi_metrics = {
-                        origin: {
+                    for origin, roi in origin_totals.items():
+                        metrics = {
                             "roi": roi,
                             "win_rate": 1.0 if result else 0.0,
                             "regret_rate": 0.0 if result else 1.0,
                         }
-                        for origin, roi in origin_totals.items()
-                    }
+                        if origin in origin_sev:
+                            metrics["alignment_severity"] = origin_sev[origin]
+                        if origin in origin_alerts:
+                            metrics["semantic_alerts"] = sorted(origin_alerts[origin])
+                        roi_metrics[origin] = metrics
                     if self.roi_tracker is not None:
                         for origin, stats in roi_metrics.items():
                             try:
@@ -364,6 +379,10 @@ class PatchLogger:
         _TRACK_OUTCOME.labels(status).inc()
         _TRACK_DURATION.set(time.time() - start)
 
+        all_alerts: list[str] = []
+        if origin_alerts:
+            all_alerts = sorted({a for s in origin_alerts.values() for a in s})
+        max_sev = max(origin_sev.values(), default=0.0)
         payload = {
             "result": result,
             "roi_metrics": roi_metrics,
@@ -372,6 +391,10 @@ class PatchLogger:
         }
         if patch_id:
             payload["patch_id"] = patch_id
+        if max_sev:
+            payload["alignment_severity"] = max_sev
+        if all_alerts:
+            payload["semantic_alerts"] = all_alerts
 
         if self.event_bus is not None:
             try:
