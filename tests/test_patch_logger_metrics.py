@@ -203,7 +203,7 @@ def test_track_contributors_emits_safety_metrics(monkeypatch):
             if topic == "patch_logger:outcome":
                 events.append(payload)
 
-    pl = PatchLogger(event_bus=Bus())
+    pl = PatchLogger(event_bus=Bus(), max_alert_severity=5.0)
     meta = {
         "db1:v1": {
             "alignment_severity": 2.0,

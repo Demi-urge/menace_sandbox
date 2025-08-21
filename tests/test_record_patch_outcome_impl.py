@@ -74,6 +74,7 @@ class DualPatchLogger:
                 "retrieval_metadata": retrieval_metadata,
             }
         )
+        return {}
 
     async def track_contributors_async(
         self,
@@ -95,6 +96,7 @@ class DualPatchLogger:
                 "retrieval_metadata": retrieval_metadata,
             }
         )
+        return {}
 
 
 def _prep_layer():

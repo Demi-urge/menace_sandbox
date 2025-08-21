@@ -163,6 +163,7 @@ class DummyPatchLogger:
                 self.roi_tracker.update_db_metrics(metrics)
             except Exception:
                 pass
+        return {}
 
 
 def _make_layer(results):

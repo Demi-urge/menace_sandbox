@@ -499,7 +499,7 @@ class CognitionLayer:
             return
         vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
         if async_mode:
-            await self.patch_logger.track_contributors_async(
+            risk_scores = await self.patch_logger.track_contributors_async(
                 vec_ids,
                 success,
                 patch_id=patch_id,
@@ -508,7 +508,7 @@ class CognitionLayer:
                 retrieval_metadata=meta,
             )
         else:
-            self.patch_logger.track_contributors(
+            risk_scores = self.patch_logger.track_contributors(
                 vec_ids,
                 success,
                 patch_id=patch_id,
@@ -517,24 +517,7 @@ class CognitionLayer:
                 retrieval_metadata=meta,
             )
 
-        risk_scores: Dict[str, float] = {}
-        if meta:
-            for origin, vid, _ in vectors:
-                key = f"{origin}:{vid}" if origin else vid
-                m = meta.get(key, {})
-                sev = m.get("alignment_severity")
-                alerts = m.get("semantic_alerts")
-                risk = 0.0
-                if sev:
-                    try:
-                        risk = max(risk, float(sev))
-                    except Exception:
-                        risk = max(risk, 1.0)
-                if alerts:
-                    risk = max(risk, 1.0)
-                if risk:
-                    ok = origin or ""
-                    risk_scores[ok] = max(risk_scores.get(ok, 0.0), risk)
+        risk_scores = risk_scores or {}
 
         roi_contribs: Dict[str, float] = {}
         used_tracker_deltas = False

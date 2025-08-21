@@ -49,7 +49,7 @@ def test_vector_metrics_records_alignment_severity(tmp_path):
     db = PatchHistoryDB(tmp_path / "p.db")
     vm = VectorMetricsDB(tmp_path / "v.db")
     pid = db.add(PatchRecord("a.py", "desc", 1.0, 2.0))
-    pl = PatchLogger(patch_db=db, vector_metrics=vm)
+    pl = PatchLogger(patch_db=db, vector_metrics=vm, max_alert_severity=5.0)
     meta = {"o1:v1": {"alignment_severity": 2}}
     pl.track_contributors({"o1:v1": 0.5}, True, patch_id=str(pid), session_id="s", retrieval_metadata=meta)
     rows = vm.conn.execute("SELECT vector_id, alignment_severity FROM patch_ancestry").fetchall()
