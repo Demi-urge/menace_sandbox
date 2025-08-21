@@ -156,3 +156,17 @@ sched.start()
 ````
 
 Stop the scheduler with `sched.stop()` when shutting down.
+
+## End-to-end autonomous run
+
+The full pipeline can be exercised inside the sandbox using
+`run_autonomous.py`.  This command wires together embedding backfills,
+context assembly, patch logging and ROI feedback for a single cycle:
+
+````bash
+python run_autonomous.py --runs 1 --preset-file presets.json
+````
+
+The run generates embeddings, builds retrieval context for each task and
+records patch outcomes.  Subsequent executions reuse the accumulated metrics
+so higher ROI vectors surface earlier in the context.
