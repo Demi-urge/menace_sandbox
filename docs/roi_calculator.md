@@ -75,6 +75,21 @@ Sample output:
  ('energy', 'batch work; reduce polling')]
 ```
 
+### Configuring suggestion mappings
+
+Remediation messages are loaded from ``configs/roi_fix_rules.yaml`` where each
+metric maps to a human‑readable hint. The file can override or extend the
+built‑in defaults:
+
+```yaml
+profitability: "optimise revenue streams; reduce costs"
+latency: "cache API responses"
+new_metric: "add unit tests"
+```
+
+Metrics missing from the file fall back to ``"improve <metric>"`` so additional
+metrics can be introduced incrementally.
+
 ### Closing the loop
 
 Downstream services can act on these hints to automatically raise tickets or
@@ -105,5 +120,16 @@ remediation steps.
 
 The :class:`~menace_sandbox.error_logger.ErrorLogger` calls
 ``propose_fix`` via :meth:`log_roi_cap`, emitting a ``ROIBottleneck`` event
-with the suggestions. Downstream services can turn this telemetry into fix
-tickets or craft Codex prompts for automated patches.
+with the suggestions. Consumers can translate the event into automatic fix
+tickets or feed the hints into a Codex prompt.
+
+```python
+from menace_sandbox.error_logger import ErrorLogger
+
+elog = ErrorLogger()
+elog.log_roi_cap(metrics, "scraper_bot")
+```
+
+Each event's ``suggestions`` field contains the ``(metric, hint)`` pairs shown
+above, allowing downstream automation to open tracker tickets or craft patch
+prompts for large language models.
