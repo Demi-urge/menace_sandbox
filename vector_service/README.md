@@ -17,3 +17,15 @@ With `max_alignment_severity=0.5`, `max_alerts=1` and `license_denylist={"GPL-3.
 - a vector with `alignment_severity=0.8` is dropped;
 - a vector containing two `semantic_alerts` is dropped;
 - a vector marked with license `GPL-3.0` is dropped.
+
+## Retraining the ranker
+
+`analytics/retrain_vector_ranker.py` rebuilds the ranking model from the latest
+metrics, stores its path in `retrieval_ranker.json` and asks running
+`CognitionLayer` instances to hot‑reload:
+
+```bash
+python -m analytics.retrain_vector_ranker --service myapp.layer:svc
+```
+
+Use `--interval 3600` to keep retraining hourly.
