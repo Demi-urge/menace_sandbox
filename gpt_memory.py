@@ -28,13 +28,13 @@ from gpt_memory_interface import GPTMemoryInterface
 from embeddable_db_mixin import log_embedding_metrics
 from analysis.semantic_diff_filter import find_semantic_risks
 from governed_retrieval import govern_retrieval
+from vector_service import SharedVectorService
 
 try:
     from security.secret_redactor import redact as redact_secrets
 except Exception:  # pragma: no cover - legacy path
     from secret_redactor import redact_secrets  # type: ignore
 
-from governed_embeddings import governed_embed
 
 try:  # Optional dependency used for event publication
     from unified_event_bus import UnifiedEventBus
@@ -127,12 +127,14 @@ class GPTMemoryManager(GPTMemoryInterface):
         embedder: SentenceTransformer | None = None,
         event_bus: Optional[UnifiedEventBus] = None,
         knowledge_graph: "KnowledgeGraph | None" = None,
+        vector_service: SharedVectorService | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.conn = sqlite3.connect(self.db_path)
         self.embedder = embedder
         self.event_bus = event_bus
         self.graph = knowledge_graph
+        self.vector_service = vector_service or SharedVectorService(embedder)
         self._ensure_schema()
 
     # ------------------------------------------------------------------ utils
@@ -185,16 +187,17 @@ class GPTMemoryManager(GPTMemoryInterface):
         embedding: str | None = None
         tokens = 0
         wall_time = 0.0
-        if self.embedder is not None and not alerts:
+        if self.vector_service is not None and not alerts:
             try:
                 start = perf_counter()
-                vec = governed_embed(original_prompt, self.embedder)
+                vec = self.vector_service.vectorise_and_store(
+                    "text", timestamp, {"text": original_prompt}
+                )
                 wall_time = perf_counter() - start
-                if vec is not None:
-                    tokenizer = getattr(self.embedder, "tokenizer", None)
-                    if tokenizer:
-                        tokens = len(tokenizer.encode(prompt))
-                    embedding = json.dumps([float(x) for x in vec])
+                tokenizer = getattr(self.vector_service.text_embedder, "tokenizer", None)
+                if tokenizer:
+                    tokens = len(tokenizer.encode(prompt))
+                embedding = json.dumps([float(x) for x in vec])
             except Exception:  # pragma: no cover - embedding is optional
                 embedding = None
                 tokens = 0
@@ -260,7 +263,7 @@ class GPTMemoryManager(GPTMemoryInterface):
     ) -> List[MemoryEntry]:
         """Search stored interactions matching ``query``.
 
-        When ``use_embeddings`` is true and an embedder is available cosine
+        When ``use_embeddings`` is true and a vector service is available cosine
         similarity between the query and stored prompts is used; otherwise a
         simple substring search over prompt/response is performed.
         """
@@ -281,38 +284,37 @@ class GPTMemoryManager(GPTMemoryInterface):
         cur = self.conn.execute(sql, params)
         rows = cur.fetchall()
 
-        if use_embeddings and self.embedder is not None:
+        if use_embeddings and self.vector_service is not None:
             try:
-                q_emb = governed_embed(query, self.embedder)
-                if q_emb is not None:
-                    scored: list[tuple[float, MemoryEntry]] = []
-                    for prompt, response, tag_str, ts, emb_json in rows:
-                        if not emb_json:
-                            continue
-                        try:
-                            emb = json.loads(emb_json)
-                        except Exception:
-                            continue
-                        tags_raw = [t for t in tag_str.split(",") if t]
-                        governed = govern_retrieval(
-                            f"{prompt}\n{response}", {"tags": tags_raw}
-                        )
-                        if governed is None:
-                            continue
-                        meta, _ = governed
-                        tags = meta.pop("tags", tags_raw)
-                        score = _cosine_similarity(q_emb, emb)
-                        entry = MemoryEntry(
-                            redact_secrets(prompt),
-                            redact_secrets(response),
-                            tags,
-                            ts,
-                            score,
-                            meta,
-                        )
-                        scored.append((score, entry))
-                    scored.sort(key=lambda x: x[0], reverse=True)
-                    return [e for _, e in scored[:limit]]
+                q_emb = self.vector_service.vectorise("text", {"text": query})
+                scored: list[tuple[float, MemoryEntry]] = []
+                for prompt, response, tag_str, ts, emb_json in rows:
+                    if not emb_json:
+                        continue
+                    try:
+                        emb = json.loads(emb_json)
+                    except Exception:
+                        continue
+                    tags_raw = [t for t in tag_str.split(",") if t]
+                    governed = govern_retrieval(
+                        f"{prompt}\n{response}", {"tags": tags_raw}
+                    )
+                    if governed is None:
+                        continue
+                    meta, _ = governed
+                    tags = meta.pop("tags", tags_raw)
+                    score = _cosine_similarity(q_emb, emb)
+                    entry = MemoryEntry(
+                        redact_secrets(prompt),
+                        redact_secrets(response),
+                        tags,
+                        ts,
+                        score,
+                        meta,
+                    )
+                    scored.append((score, entry))
+                scored.sort(key=lambda x: x[0], reverse=True)
+                return [e for _, e in scored[:limit]]
             except Exception:  # pragma: no cover - embedding is optional
                 pass
 
@@ -349,13 +351,13 @@ class GPTMemoryManager(GPTMemoryInterface):
     ) -> List[tuple[float, MemoryEntry]]:
         """Return scored entries most similar to ``query``.
 
-        When ``use_embeddings`` is true and an embedder is available cosine
-        similarity between embeddings is used.  Otherwise a simple keyword
+        When ``use_embeddings`` is true and a vector service is available
+        cosine similarity between embeddings is used.  Otherwise a simple keyword
         search with a crude relevance score is performed.
         """
 
         use_embeddings = (
-            use_embeddings if use_embeddings is not None else self.embedder is not None
+            use_embeddings if use_embeddings is not None else self.vector_service is not None
         )
         entries = self.search_context(
             query,
@@ -365,7 +367,7 @@ class GPTMemoryManager(GPTMemoryInterface):
         )
 
         results: list[tuple[float, MemoryEntry]] = []
-        if use_embeddings and self.embedder is not None:
+        if use_embeddings and self.vector_service is not None:
             for e in entries:
                 results.append((e.score, e))
             results.sort(key=lambda x: x[0], reverse=True)
