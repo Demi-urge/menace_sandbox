@@ -21,6 +21,7 @@ from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT, ERROR_FIX
 from memory_logging import log_with_tags
 from memory_aware_gpt_client import ask_with_memory
 from vector_service import Retriever, FallbackResult
+from foresight_tracker import ForesightTracker
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when unavailable
@@ -635,6 +636,9 @@ def _sandbox_cycle_runner(
 
     knowledge_service = GPT_KNOWLEDGE_SERVICE
 
+    if getattr(ctx, "foresight_tracker", None) is None:
+        ctx.foresight_tracker = ForesightTracker()
+
     if getattr(ctx, "patch_logger", None) is None:
         try:
             ctx.patch_logger = PatchLogger(patch_db=getattr(ctx, "patch_db", None))
@@ -1193,8 +1197,8 @@ def _sandbox_cycle_runner(
         ctx.foresight_tracker.record_cycle_metrics(
             wf_id,
             {
-                "roi_deltas": roi_delta,
-                "raroi_deltas": raroi_delta,
+                "roi_delta": roi_delta,
+                "raroi_delta": raroi_delta,
                 "confidence": conf_val,
                 "resilience": resilience,
                 "scenario_degradation": metrics.get("scenario_degradation", 0.0),
