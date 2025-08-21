@@ -620,6 +620,7 @@ def _sandbox_cycle_runner(
     snippet: str | None,
     tracker: "ROITracker",
     scenario: str | None = None,
+    foresight_tracker: ForesightTracker | None = None,
 ) -> None:
     """Run one self-improvement cycle within the sandbox.
 
@@ -641,8 +642,11 @@ def _sandbox_cycle_runner(
 
     knowledge_service = GPT_KNOWLEDGE_SERVICE
 
-    if getattr(ctx, "foresight_tracker", None) is None:
-        ctx.foresight_tracker = ForesightTracker()
+    if foresight_tracker is None:
+        foresight_tracker = getattr(ctx, "foresight_tracker", None)
+    if foresight_tracker is None:
+        foresight_tracker = ForesightTracker()
+    ctx.foresight_tracker = foresight_tracker
 
     if getattr(ctx, "patch_logger", None) is None:
         try:
@@ -1096,7 +1100,7 @@ def _sandbox_cycle_runner(
                     code_quality = cq_total / len(targets)
         except Exception as exc:
             record_error(exc)
-        metrics = {
+        metrics_dict = {
             "security_score": security_score,
             "safety_rating": safety_rating,
             "adaptability": adaptability,
@@ -1133,23 +1137,23 @@ def _sandbox_cycle_runner(
                 record_error(exc)
                 extra = None
             if extra:
-                metrics.update(extra)
+                metrics_dict.update(extra)
         if ctx.extra_metrics:
-            metrics.update(ctx.extra_metrics)
+            metrics_dict.update(ctx.extra_metrics)
         # include error category summaries
         for cat, count in ERROR_CATEGORY_COUNTS.items():
-            metrics[f"error_category_{cat}"] = float(count)
+            metrics_dict[f"error_category_{cat}"] = float(count)
         ERROR_CATEGORY_COUNTS.clear()
         try:
             detections = ctx.dd_bot.scan()
         except Exception as exc:
             record_error(exc)
             detections = []
-        metrics["discrepancy_count"] = len(detections)
+        metrics_dict["discrepancy_count"] = len(detections)
         scenario_metrics = (
-            {f"{k}:{scenario}": v for k, v in metrics.items()} if scenario else {}
+            {f"{k}:{scenario}": v for k, v in metrics_dict.items()} if scenario else {}
         )
-        tracker.register_metrics(*metrics.keys(), *scenario_metrics.keys())
+        tracker.register_metrics(*metrics_dict.keys(), *scenario_metrics.keys())
         if scenario:
             tracker.register_metrics("synergy_safety_rating")
             tracker.synergy_metrics_history.setdefault(
@@ -1180,40 +1184,25 @@ def _sandbox_cycle_runner(
         )
         name_list = [mapped_section] if section else mapped_mods
         vertex, curve, should_stop, entropy_ceiling = tracker.update(
-            ctx.prev_roi, roi, name_list, resources, {**metrics, **scenario_metrics}
+            ctx.prev_roi, roi, name_list, resources, {**metrics_dict, **scenario_metrics}
         )
         if entropy_ceiling:
             ctx.meta_log.ceiling(tracker.tolerance)
-
-        roi_delta = 0.0
-        if len(tracker.roi_history) >= 2:
-            roi_delta = tracker.roi_history[-1] - tracker.roi_history[-2]
-        elif tracker.roi_history:
-            roi_delta = tracker.roi_history[-1]
-
-        raroi_delta = 0.0
-        if len(tracker.raroi_history) >= 2:
-            raroi_delta = tracker.raroi_history[-1] - tracker.raroi_history[-2]
-        elif tracker.raroi_history:
-            raroi_delta = tracker.raroi_history[-1]
-
-        metrics["scenario_degradation"] = getattr(
+        metrics_dict["scenario_degradation"] = getattr(
             tracker, "scenario_degradation", lambda: 0.0
         )()
         wf_id = getattr(ctx, "workflow_id", "_global")
         conf_val = tracker.workflow_confidence(wf_id)
-        ctx.foresight_tracker.record_cycle_metrics(
-            wf_id,
-            {
-                "roi_delta": roi_delta,
-                "raroi_delta": raroi_delta,
-                "confidence": conf_val,
-                "resilience": resilience,
-                "scenario_degradation": metrics.get("scenario_degradation", 0.0),
-            },
-        )
-        ctx.workflow_stable = ctx.foresight_tracker.is_stable(wf_id)
-        last_metrics = metrics
+        foresight_metrics = {
+            "roi_delta": roi - ctx.prev_roi,
+            "raroi_delta": raroi,
+            "confidence": conf_val,
+            "resilience": resilience,
+            "scenario_degradation": metrics_dict.get("scenario_degradation", 0.0),
+        }
+        foresight_tracker.record_cycle_metrics(wf_id, foresight_metrics)
+        ctx.workflow_stable = foresight_tracker.is_stable(wf_id)
+        last_metrics = metrics_dict
         feat_vec = [
             roi,
             security_score,
