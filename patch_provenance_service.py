@@ -9,12 +9,14 @@ from __future__ import annotations
 from flask import Flask, jsonify, request
 import sys
 import types
+import tempfile
+from pathlib import Path
 
 sys.modules.setdefault(
     "unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object)
 )
 
-from code_database import PatchHistoryDB
+from code_database import PatchHistoryDB, PatchRecord
 from patch_provenance import (
     get_patch_provenance,
     search_patches_by_vector,
@@ -22,6 +24,9 @@ from patch_provenance import (
     search_patches,
     search_patches_by_license_fingerprint,
 )
+from analysis.semantic_diff_filter import find_semantic_risks
+from patch_suggestion_db import PatchSuggestionDB
+from patch_safety import PatchSafety
 
 
 def _rec_to_dict(rec):
@@ -54,9 +59,17 @@ def _rec_to_dict(rec):
     }
 
 
-def create_app(db: PatchHistoryDB | None = None) -> Flask:
+def create_app(
+    db: PatchHistoryDB | None = None,
+    suggestion_db: PatchSuggestionDB | None = None,
+    safety: PatchSafety | None = None,
+) -> Flask:
     app = Flask(__name__)
     pdb = db or PatchHistoryDB()
+    sdb = suggestion_db or PatchSuggestionDB(
+        Path(tempfile.gettempdir()) / "suggestions.db"
+    )
+    safety_checker = safety or PatchSafety()
 
     @app.get("/patches")
     def list_patches():
@@ -83,6 +96,28 @@ def create_app(db: PatchHistoryDB | None = None) -> Flask:
                 for pid, rec in pdb.list_patches()
             ]
         return jsonify(patches)
+
+    @app.post("/patches")
+    def accept_patch():
+        data = request.get_json(force=True)
+        desc = data.get("description", "")
+        module = data.get("module") or data.get("filename", "")
+        risks = find_semantic_risks(desc.splitlines())
+        if risks:
+            sdb.log_decision(module, desc, False, risks[0][1])
+            return jsonify({"error": risks[0][1]}), 400
+        if safety_checker.is_risky({"category": desc, "module": module}):
+            sdb.log_decision(module, desc, False, "failure similarity")
+            return jsonify({"error": "failure similarity"}), 400
+        rec = PatchRecord(
+            data.get("filename", ""),
+            desc,
+            data.get("roi_before", 0.0),
+            data.get("roi_after", 0.0),
+        )
+        pid = pdb.add(rec)
+        sdb.log_decision(module, desc, True, "")
+        return jsonify({"id": pid}), 201
 
     @app.get("/patches/<int:patch_id>")
     def show_patch(patch_id: int):
