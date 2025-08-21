@@ -354,7 +354,6 @@ class RankingModelScheduler:
             while self.running:
                 triggered = False
                 if self.roi_signal_threshold is not None:
-                    # Watch ROITracker for cumulative ROI deltas
                     if self.roi_tracker is not None:
                         for origin, deltas in getattr(
                             self.roi_tracker, "origin_db_deltas", {}
@@ -363,28 +362,30 @@ class RankingModelScheduler:
                             last = self._tracker_roi_totals.get(origin, 0.0)
                             if abs(total - last) >= self.roi_signal_threshold:
                                 triggered = True
-                            self._tracker_roi_totals[origin] = total
-                    # Watch VectorMetricsDB for cumulative ROI deltas
-                    try:
-                        db = VectorMetricsDB(self.vector_db)
+                                break
+                    if not triggered:
                         try:
-                            cur = db.conn.execute(
-                                "SELECT db, COALESCE(SUM(contribution),0) FROM vector_metrics GROUP BY db"
-                            )
-                            rows = cur.fetchall()
-                        finally:
-                            db.conn.close()
-                        for origin, total in rows:
-                            origin = str(origin)
-                            total = float(total or 0.0)
-                            last = self._vector_db_roi_totals.get(origin, 0.0)
-                            if abs(total - last) >= self.roi_signal_threshold:
-                                triggered = True
-                            self._vector_db_roi_totals[origin] = total
-                    except Exception:
-                        pass
+                            db = VectorMetricsDB(self.vector_db)
+                            try:
+                                cur = db.conn.execute(
+                                    "SELECT db, COALESCE(SUM(contribution),0) FROM vector_metrics GROUP BY db"
+                                )
+                                rows = cur.fetchall()
+                            finally:
+                                db.conn.close()
+                            for origin, total in rows:
+                                origin = str(origin)
+                                total = float(total or 0.0)
+                                last = self._vector_db_roi_totals.get(origin, 0.0)
+                                if abs(total - last) >= self.roi_signal_threshold:
+                                    triggered = True
+                                    break
+                        except Exception:
+                            pass
                     if triggered:
-                        break
+                        self.retrain_and_reload()
+                        start = time.time()
+                        continue
                 if time.time() - start >= base_interval:
                     break
                 time.sleep(1)
