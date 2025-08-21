@@ -1,5 +1,50 @@
 # Vector Service
 
+## Cognition Flow
+
+`vectorizer.py` turns raw records into embeddings. `retriever.py` searches
+existing vectors, and `context_builder.py` assembles a JSON context from the
+top hits. `cognition_layer.py` orchestrates this flow, storing session metadata
+so `patch_logger.py` can later record the outcome of a patch. If
+`roi_tracker.py` is available it accumulates ROI deltas per database and feeds
+them back into the ranking model.
+
+### Example
+
+```python
+from roi_tracker import ROITracker  # optional
+from vector_service.cognition_layer import CognitionLayer
+
+tracker = ROITracker()
+layer = CognitionLayer(roi_tracker=tracker)
+
+ctx, session_id = layer.query("How can I fix latency?")
+# ...apply patch based on ctx...
+layer.record_patch_outcome(session_id, True, contribution=1.0)
+```
+
+The final call updates ROI metrics and adjusts ranking weights.
+
+### Optional dependencies
+
+These modules gracefully degrade when optional packages are missing:
+
+- **ROITracker** – tracks ROI history. Without it, ROI feedback is ignored.
+- **UnifiedEventBus** – publishes retrieval and patch events; skipped if absent.
+- **VectorMetricsDB** and **PatchHistoryDB** – persist metrics and history; in
+  their absence, data is kept in memory only.
+- **MenaceMemoryManager** – summarises long texts; falls back to simple
+  truncation.
+- **SentenceTransformer** – text embeddings for `SharedVectorService`; if
+  unavailable, text vectorisation raises `RuntimeError`.
+- **tiktoken** – precise token counting for `ContextBuilder`; without it a
+  rough estimate is used.
+- **UniversalRetriever** – search backend used by `Retriever`; retrieval fails
+  if it is missing.
+
+To run without these dependencies simply omit them from the environment; the
+service continues with reduced functionality.
+
 ## Safety filtering
 
 `ContextBuilder` and `Retriever` apply configurable safety thresholds:
