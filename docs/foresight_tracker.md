@@ -50,3 +50,7 @@ restored_custom = ForesightTracker.from_dict(data, window=3, volatility_threshol
 ```
 
 Only the most recent `max_cycles` entries per workflow are retained when deserialising.
+
+Within the sandbox runner these dictionaries are written to `foresight_history.json`
+after each cycle and loaded on the next run via `from_dict`, ensuring metric history
+survives restarts of the self‑improvement process.

@@ -1,3 +1,5 @@
+import json
+
 from menace_sandbox.foresight_tracker import ForesightTracker
 
 
@@ -66,3 +68,26 @@ def test_is_stable_reacts_to_high_volatility():
     for _ in range(3):
         eng.run_cycle()
     assert not ft.is_stable("wf")
+
+
+def test_metrics_persist_through_save_load(tmp_path):
+    ft = ForesightTracker(window=3)
+    tracker1 = DummyROITracker([1.0])
+    eng1 = MiniSelfImprovementEngine(tracker1, ft)
+    eng1.run_cycle()
+    history_file = tmp_path / "foresight_history.json"
+    with history_file.open("w", encoding="utf-8") as fh:
+        json.dump(ft.to_dict(), fh, indent=2)
+
+    with history_file.open("r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    restored = ForesightTracker.from_dict(data)
+    tracker2 = DummyROITracker([2.0])
+    eng2 = MiniSelfImprovementEngine(tracker2, restored)
+    eng2.run_cycle()
+    with history_file.open("w", encoding="utf-8") as fh:
+        json.dump(restored.to_dict(), fh, indent=2)
+
+    with history_file.open("r", encoding="utf-8") as fh:
+        final = json.load(fh)
+    assert [e["roi_delta"] for e in final["history"]["wf"]] == [1.0, 2.0]
