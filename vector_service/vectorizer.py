@@ -10,7 +10,7 @@ using :mod:`vector_utils`.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 from action_vectorizer import ActionVectorizer
 from error_vectorizer import ErrorVectorizer
@@ -42,6 +42,19 @@ class SharedVectorService:
     _information: InformationVectorizer = field(default_factory=InformationVectorizer)
     _code: CodeVectorizer = field(default_factory=CodeVectorizer)
     _discrepancy: DiscrepancyVectorizer = field(default_factory=DiscrepancyVectorizer)
+    _handlers: Dict[str, Callable[[Dict[str, Any]], List[float]]] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._handlers = {
+            "action": self._action.transform,
+            "error": self._error.transform,
+            "workflow": self._workflow.transform,
+            "enhancement": self._enhancement.transform,
+            "bot": self._bot.transform,
+            "information": self._information.transform,
+            "code": self._code.transform,
+            "discrepancy": self._discrepancy.transform,
+        }
 
     def _encode_text(self, text: str) -> List[float]:
         if self.text_embedder is None:
@@ -54,22 +67,9 @@ class SharedVectorService:
     def vectorise(self, kind: str, record: Dict[str, Any]) -> List[float]:
         """Return an embedding for ``record`` of type ``kind``."""
         kind = kind.lower()
-        if kind == "action":
-            return self._action.transform(record)
-        if kind == "error":
-            return self._error.transform(record)
-        if kind == "workflow":
-            return self._workflow.transform(record)
-        if kind == "enhancement":
-            return self._enhancement.transform(record)
-        if kind == "bot":
-            return self._bot.transform(record)
-        if kind == "information":
-            return self._information.transform(record)
-        if kind == "code":
-            return self._code.transform(record)
-        if kind == "discrepancy":
-            return self._discrepancy.transform(record)
+        handler = self._handlers.get(kind)
+        if handler:
+            return handler(record)
         if kind in {"text", "prompt"}:
             return self._encode_text(str(record.get("text", "")))
         raise ValueError(f"unknown record type: {kind}")
@@ -83,10 +83,8 @@ class SharedVectorService:
         """
 
         vec = self.vectorise(kind, record)
-        if kind == "bot":
-            persist_embedding("bot", record_id, vec)
-        else:
-            persist_embedding(kind, record_id, vec)
+        kind = kind.lower()
+        persist_embedding("bot" if kind == "bot" else kind, record_id, vec)
         return vec
 
 
