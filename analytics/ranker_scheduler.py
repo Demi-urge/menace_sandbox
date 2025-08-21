@@ -14,6 +14,9 @@ import threading
 import time
 from typing import Any, Sequence
 
+# Topic emitted by ``UnifiedEventBus`` when ROI feedback is recorded.
+FEEDBACK_TOPIC = "retrieval:feedback"
+
 try:  # pragma: no cover - optional dependency
     from unified_event_bus import UnifiedEventBus
 except Exception:  # pragma: no cover - fallback when executed directly
@@ -54,7 +57,7 @@ class RankerScheduler:
                 self.event_bus = None
         if self.event_bus is not None:
             try:
-                self.event_bus.subscribe("retrieval:feedback", self._handle_feedback)
+                self.event_bus.subscribe(FEEDBACK_TOPIC, self._handle_feedback)
             except Exception:
                 pass
 
