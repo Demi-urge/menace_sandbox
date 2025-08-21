@@ -39,6 +39,7 @@ from .config_loader import (
     get_impact_severity,
     impact_severity_map as load_impact_severity_map,
 )
+from .telemetry_backend import TelemetryBackend
 from .borderline_bucket import BorderlineBucket
 from .truth_adapter import TruthAdapter
 from .roi_calculator import ROICalculator, propose_fix
@@ -207,6 +208,7 @@ class ROITracker:
         confidence_threshold: float = 0.5,
         raroi_borderline_threshold: float = 0.0,
         borderline_bucket: BorderlineBucket | None = None,
+        telemetry_backend: TelemetryBackend | None = None,
     ) -> None:
         """Create a tracker for monitoring ROI deltas.
 
@@ -240,6 +242,9 @@ class ROITracker:
         borderline_bucket:
             Optional :class:`BorderlineBucket` instance for tracking borderline
             workflows. A default instance is created when omitted.
+        telemetry_backend:
+            Optional backend used to persist prediction and drift telemetry.
+            A default SQLite-backed implementation is used when not provided.
         """
         self.roi_history: List[float] = []
         self.raroi_history: List[float] = []
@@ -257,6 +262,7 @@ class ROITracker:
         self.confidence_threshold = float(confidence_threshold)
         self.raroi_borderline_threshold = float(raroi_borderline_threshold)
         self.borderline_bucket = borderline_bucket or BorderlineBucket()
+        self.telemetry = telemetry_backend or TelemetryBackend()
         self.window = window
         self.tolerance = tolerance
         self.entropy_threshold = (
@@ -806,9 +812,21 @@ class ROITracker:
         except Exception:
             pass
 
-        self.check_prediction_drift()
+        drift = self.check_prediction_drift()
         self.drift_metrics["mae"] = self.rolling_mae()
         self.drift_metrics["accuracy"] = self.classification_accuracy()
+        if self.telemetry is not None:
+            try:
+                self.telemetry.log_prediction(
+                    None if workflow_id is None else str(workflow_id),
+                    float(pred_seq[0]) if pred_seq else None,
+                    float(act_seq[0]) if act_seq else None,
+                    conf_val,
+                    dict(self.scenario_roi_deltas),
+                    drift,
+                )
+            except Exception:
+                logger.exception("failed to log telemetry event")
 
     def record_roi_prediction(
         self,
@@ -1116,6 +1134,20 @@ class ROITracker:
                 self._adaptive_predictor.train()
             except Exception:
                 logger.exception("failed to trigger adaptive ROI retrain")
+        if self.telemetry is not None:
+            try:
+                pred = self.predicted_roi[-1] if self.predicted_roi else None
+                act = self.actual_roi[-1] if self.actual_roi else None
+                self.telemetry.log_prediction(
+                    None,
+                    pred,
+                    act,
+                    None,
+                    None,
+                    drift,
+                )
+            except Exception:
+                logger.exception("failed to log drift telemetry")
         return drift
 
     def record_metric_prediction(
