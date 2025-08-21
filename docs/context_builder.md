@@ -37,7 +37,10 @@ context_json = builder.build_context("upload failed", top_k=5)
   configuration to bias towards certain sources.
 
 `ContextBuilder` can bias ranking toward specific sources and adjust the
-overall token budget via optional configuration:
+overall token budget via optional configuration.  Token usage is estimated for
+each candidate segment and the lowest‑scoring entries are iteratively
+summarised or removed until the budget is satisfied.  Trimming can optionally
+prioritise newer vectors or those with higher ROI:
 
 ```yaml
 context_builder:
@@ -45,6 +48,9 @@ context_builder:
   db_weights:
     error: 1.5  # emphasise error records
     code: 0.5   # de‑emphasise code snippets
+  # during trimming prefer the most recent entries
+  # (use "roi" to favour high‑ROI results instead)
+  prioritise: newest
 ```
 
 The defaults keep all databases equally weighted and limit the context to
@@ -75,6 +81,8 @@ prompts.
   small offline helper truncates text.
 - Per‑type limits and `max_tokens` prevent runaway context growth; lists are
   trimmed round‑robin until the estimate fits within the budget.
+- Optional `prioritise` parameter allows keeping newer or high‑ROI entries
+  when trimming.
 - Metrics bias the ranking so only high‑value records reach the final JSON.
 
 ## Offline operation

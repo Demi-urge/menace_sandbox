@@ -529,3 +529,41 @@ def test_build_context_invalid_query(monkeypatch, bad_query):
     builder, _ = make_builder(monkeypatch)
     with pytest.raises(MalformedPromptError):
         builder.build_context(bad_query)  # type: ignore[arg-type]
+
+
+def test_prioritise_newer_trimming(monkeypatch):
+    records = [
+        {"id": 2, "name": "new", "roi": 1, "timestamp": 2},
+        {"id": 1, "name": "old", "roi": 1, "timestamp": 1},
+    ]
+
+    class DummyRetriever:
+        def search(self, q, top_k=5, **_):
+            return [
+                {"origin_db": "bot", "record_id": r["id"], "score": 0.0, "metadata": r}
+                for r in records
+            ]
+
+    builder = ContextBuilder(retriever=DummyRetriever(), max_tokens=10)
+    ctx = builder.build_context("q", top_k=2, prioritise="newest")
+    data = json.loads(ctx)
+    assert data["bots"][0]["id"] == 2
+
+
+def test_prioritise_roi_trimming(monkeypatch):
+    records = [
+        {"id": 2, "message": "x", "frequency": 1, "roi": 10},
+        {"id": 1, "message": "y", "frequency": 1, "roi": 1},
+    ]
+
+    class DummyRetriever:
+        def search(self, q, top_k=5, **_):
+            return [
+                {"origin_db": "error", "record_id": r["id"], "score": 0.0, "metadata": r}
+                for r in records
+            ]
+
+    builder = ContextBuilder(retriever=DummyRetriever(), max_tokens=10)
+    ctx = builder.build_context("q", top_k=2, prioritise="roi")
+    data = json.loads(ctx)
+    assert data["errors"][0]["id"] == 2
