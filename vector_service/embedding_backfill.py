@@ -60,6 +60,8 @@ _TABLE_CLASS_MAP: dict[str, tuple[str, str]] = {
     "errors": ("error_bot", "ErrorDB"),
     "information": ("information_db", "InformationDB"),
     "workflows": ("task_handoff_bot", "WorkflowDB"),
+    "failures": ("failure_learning_system", "DiscrepancyDB"),
+    "research": ("research_aggregator_bot", "InfoDB"),
 }
 
 

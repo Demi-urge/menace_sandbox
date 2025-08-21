@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import dataclasses
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Iterator
+import importlib
 
 from .auto_link import auto_link
 
@@ -396,6 +397,18 @@ class InfoDB(EmbeddableDBMixin):
         cur = self.conn.execute("SELECT * FROM info")
         for row in cur.fetchall():
             yield row["id"], row, "info"
+
+    def license_text(self, rec: Any) -> str | None:
+        if isinstance(rec, (ResearchItem, dict, sqlite3.Row)):
+            return self._embed_text(rec)
+        return None
+
+    def log_license_violation(self, path: str, license_name: str, hash_: str) -> None:
+        try:  # pragma: no cover - best effort
+            CodeDB = importlib.import_module("code_database").CodeDB
+            CodeDB().log_license_violation(path, license_name, hash_)
+        except Exception:
+            pass
 
     def _flatten_fields(self, data: dict[str, Any]) -> list[str]:
         pairs: list[str] = []
