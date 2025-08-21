@@ -118,3 +118,36 @@ def test_weights_route(tmp_path):
     assert data["labels"] == [0, 1]
     assert data["weights"]["roi"] == [1.0, 1.1]
     assert data["weights"]["efficiency"] == [0.5, 0.6]
+
+
+def test_scenario_summary_route(tmp_path):
+    history = tmp_path / "hist.json"
+    _make_history(history)
+    summary = tmp_path / "sandbox_data" / "scenario_summary.json"
+    summary.parent.mkdir(parents=True, exist_ok=True)
+    content = {"scenarios": {"A": {"roi": 1.2, "failures": 3, "successes": 5}}}
+    summary.write_text(json.dumps(content))
+    dash = SandboxDashboard(history, summary_file=summary)
+    client = dash.app.test_client()
+    resp = client.get("/scenario_summary")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["labels"] == ["A"]
+    assert data["roi"] == [1.2]
+    assert data["failures"] == [3.0]
+    assert data["successes"] == [5.0]
+
+
+def test_relevancy_route(tmp_path, monkeypatch):
+    history = tmp_path / "hist.json"
+    _make_history(history)
+    fake = types.SimpleNamespace(
+        flagged_modules=lambda: {"m1": "low", "m2": "low", "m3": "high"}
+    )
+    monkeypatch.setitem(sys.modules, "relevancy_radar", fake)
+    dash = SandboxDashboard(history)
+    client = dash.app.test_client()
+    resp = client.get("/relevancy")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["counts"] == {"low": 2, "high": 1}
