@@ -31,23 +31,28 @@ class ForesightTracker:
         if N is not None:
             window = N
 
-        self.window = window
+        self.max_cycles = window
         self.volatility_threshold = volatility_threshold
         self.history: Dict[str, Deque[Dict[str, float]]] = {}
 
     # ------------------------------------------------------------------
     @property
-    def max_cycles(self) -> int:
-        """Return the maximum number of cycles retained per workflow."""
+    def window(self) -> int:
+        """Legacy alias for :attr:`max_cycles`.
 
-        return self.window
+        The tracker historically exposed the maximum retention window under
+        the name ``window``.  The public attribute :attr:`max_cycles` now holds
+        this value directly; this property preserves backwards compatibility.
+        """
+
+        return self.max_cycles
 
     # ------------------------------------------------------------------
     def record_cycle_metrics(self, workflow_id: str, metrics: Mapping[str, float]) -> None:
         """Append ``metrics`` for ``workflow_id`` and cap history length."""
 
         entry = {k: float(v) for k, v in metrics.items()}
-        queue = self.history.setdefault(workflow_id, deque(maxlen=self.window))
+        queue = self.history.setdefault(workflow_id, deque(maxlen=self.max_cycles))
         queue.append(entry)
 
     # ------------------------------------------------------------------
@@ -77,7 +82,7 @@ class ForesightTracker:
         else:
             second_derivative = 0.0
 
-        window = min(self.window, len(averages))
+        window = min(self.max_cycles, len(averages))
         std = float(np.std(averages[-window:], ddof=1)) if window > 1 else 0.0
         avg_stability = 1.0 / (1.0 + std)
         return slope, second_derivative, avg_stability
@@ -111,8 +116,8 @@ class ForesightTracker:
         """
 
         return {
-            "max_cycles": self.window,
-            "window": self.window,  # legacy key for backwards compatibility
+            "max_cycles": self.max_cycles,
+            "window": self.max_cycles,  # legacy key for backwards compatibility
             "volatility_threshold": self.volatility_threshold,
             "history": {
                 wf_id: list(entries)
@@ -161,8 +166,8 @@ class ForesightTracker:
         tracker = cls(window=window, volatility_threshold=volatility_threshold)
         raw_history = data.get("history", {})
         for wf_id, entries in raw_history.items():
-            queue: Deque[Dict[str, float]] = deque(maxlen=tracker.window)
-            for entry in list(entries)[-tracker.window:]:
+            queue: Deque[Dict[str, float]] = deque(maxlen=tracker.max_cycles)
+            for entry in list(entries)[-tracker.max_cycles:]:
                 queue.append({k: float(v) for k, v in entry.items()})
             tracker.history[wf_id] = queue
         return tracker
