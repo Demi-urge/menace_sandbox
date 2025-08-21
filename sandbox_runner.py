@@ -935,7 +935,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                 data = json.load(fh)
             loaded = ForesightTracker.from_dict(
                 data,
-                window=getattr(foresight_tracker, "window", 10),
+                window=foresight_tracker.window,
                 volatility_threshold=volatility_threshold,
             )
             foresight_tracker.history = loaded.history

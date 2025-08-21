@@ -84,6 +84,50 @@ class ForesightTracker:
         std = float(np.std(all_values, ddof=1)) if all_values.size > 1 else 0.0
         return slope > 0 and std < self.volatility_threshold
 
+    # ------------------------------------------------------------------
+    def to_dict(self) -> dict:
+        """Return a JSON‑serialisable representation of the tracker.
+
+        The history for each workflow is emitted in chronological order so that
+        the oldest entry appears first in the list.  Only the currently retained
+        window is serialised.
+        """
+
+        return {
+            "history": {
+                wf_id: list(entries)
+                for wf_id, entries in self.history.items()
+            }
+        }
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def from_dict(
+        cls, data: dict, window: int, volatility_threshold: float
+    ) -> "ForesightTracker":
+        """Reconstruct a tracker from :meth:`to_dict` output.
+
+        Parameters
+        ----------
+        data:
+            Dictionary produced by :meth:`to_dict`.
+        window:
+            Maximum number of entries to keep per workflow.  Histories are
+            clipped to this size with older records discarded.
+        volatility_threshold:
+            Threshold to use for volatility checks in the reconstructed
+            instance.
+        """
+
+        tracker = cls(window=window, volatility_threshold=volatility_threshold)
+        raw_history = data.get("history", {})
+        for wf_id, entries in raw_history.items():
+            queue: Deque[Dict[str, float]] = deque(maxlen=window)
+            for entry in list(entries)[-window:]:
+                queue.append({k: float(v) for k, v in entry.items()})
+            tracker.history[wf_id] = queue
+        return tracker
+
 
 __all__ = ["ForesightTracker"]
 

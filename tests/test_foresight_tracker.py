@@ -45,3 +45,16 @@ def test_is_stable_considers_trend_and_volatility():
     for v in [0.0, 10.0, 0.0, 10.0]:
         tracker.record_cycle_metrics("vol", {"m": v})
     assert not tracker.is_stable("vol")
+
+
+def test_to_from_dict_preserves_order_and_window():
+    tracker = ForesightTracker(window=3)
+    for v in [0.0, 1.0, 2.0, 3.0]:
+        tracker.record_cycle_metrics("wf", {"m": v})
+
+    data = tracker.to_dict()
+    assert data["history"]["wf"] == [{"m": 1.0}, {"m": 2.0}, {"m": 3.0}]
+
+    restored = ForesightTracker.from_dict(data, window=2, volatility_threshold=1.0)
+    history = restored.history["wf"]
+    assert [entry["m"] for entry in history] == [2.0, 3.0]
