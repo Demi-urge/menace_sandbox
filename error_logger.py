@@ -115,6 +115,7 @@ class TelemetryEvent(BaseModel):
     patch_id: int | None = None
     deploy_id: int | None = None
     fix_suggestions: list[str] | None = None
+    bottlenecks: list[str] | None = None
     checksum: str = ""
 
 
@@ -577,21 +578,19 @@ class ErrorLogger:
         else:
             self.logger.info(message)
         return suggestions
+
     def log_fix_suggestions(
         self,
-        bottlenecks: list[tuple[str, str]] | list[str],
+        metrics: dict[str, float],
+        profile: dict[str, Any] | str,
         task_id: str | None = None,
         bot_id: str | None = None,
     ) -> list[TelemetryEvent]:
-        """Record fix suggestions and trigger patching."""
+        """Derive and record fix suggestions for metric bottlenecks."""
 
+        suggestions = propose_fix(metrics, profile)
         events: list[TelemetryEvent] = []
-        for item in bottlenecks:
-            if isinstance(item, tuple):
-                module, hint = item
-            else:
-                module, hint = "", str(item)
-
+        for module, hint in suggestions:
             payload = {
                 "task_id": task_id,
                 "bot_id": bot_id,
@@ -614,6 +613,7 @@ class ErrorLogger:
                 patch_id=None,
                 deploy_id=None,
                 fix_suggestions=[hint],
+                bottlenecks=[module] if module else [],
             )
             try:
                 self.db.add_telemetry(event)
@@ -645,6 +645,14 @@ class ErrorLogger:
                     self.logger.warning(
                         "failed to send fix suggestion to Sentry: %s", e
                     )
+
+            ticket_file = os.getenv("FIX_TICKET_FILE")
+            if ticket_file:
+                try:
+                    with open(ticket_file, "a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(payload, sort_keys=True) + "\n")
+                except Exception as e:  # pragma: no cover - I/O issues
+                    self.logger.error("failed to open fix ticket: %s", e)
 
             if generate_patch is not None and module:
                 try:
