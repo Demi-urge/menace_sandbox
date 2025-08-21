@@ -10,6 +10,9 @@ from typing import Any, Dict, List
 import types
 from relevancy_radar import flagged_modules
 
+# optional CLI support
+import argparse
+
 try:  # optional dependency
     import pandas as pd  # type: ignore
 except Exception:  # pragma: no cover - optional
@@ -41,6 +44,7 @@ except Exception:  # pragma: no cover - optional
 
 from .evaluation_manager import EvaluationManager
 from .roi_tracker import ROITracker
+from .telemetry_backend import TelemetryBackend
 from .violation_logger import load_persisted_alignment_warnings
 
 GOVERNANCE_LOG = Path("sandbox_data/governance_outcomes.jsonl")
@@ -226,6 +230,78 @@ class EvaluationDashboard:
         }
 
     # ------------------------------------------------------------------
+    def readiness_chart(
+        self,
+        telemetry: TelemetryBackend,
+        workflow_id: str | None = None,
+        window: int | None = None,
+    ) -> Dict[str, Any]:
+        """Return readiness index values over time.
+
+        Parameters
+        ----------
+        telemetry:
+            Telemetry backend containing readiness snapshots.
+        workflow_id:
+            Optional workflow identifier to filter history.
+        window:
+            Optional number of most recent samples to return.
+
+        Returns
+        -------
+        dict
+            Dictionary with ``labels`` (timestamps) and ``readiness`` values.
+        """
+
+        history = telemetry.fetch_history(workflow_id)
+        records = [rec for rec in history if rec.get("readiness") is not None]
+        if window is not None:
+            records = records[-window:]
+        labels = [rec.get("ts") for rec in records]
+        readiness = [float(rec.get("readiness", 0.0)) for rec in records]
+        return {"labels": labels, "readiness": readiness}
+
+    # ------------------------------------------------------------------
+    def readiness_distribution_panel(
+        self, telemetry: TelemetryBackend, workflow_id: str | None = None
+    ) -> Dict[str, List[float]]:
+        """Return distributions for readiness and prediction errors."""
+
+        history = telemetry.fetch_history(workflow_id)
+        readiness = [
+            float(rec["readiness"])
+            for rec in history
+            if rec.get("readiness") is not None
+        ]
+        errors = [
+            abs(float(rec["predicted"]) - float(rec["actual"]))
+            for rec in history
+            if rec.get("predicted") is not None and rec.get("actual") is not None
+        ]
+        return {"readiness": readiness, "prediction_errors": errors}
+
+    # ------------------------------------------------------------------
+    def drift_instability_panel(
+        self, tracker: ROITracker, window: int | None = None
+    ) -> Dict[str, Any]:
+        """Return drift flags alongside instability metrics."""
+
+        drift_flags = tracker.drift_flags[-window:] if window else list(tracker.drift_flags)
+        instability = tracker.metrics_history.get("instability", [])
+        if window is not None:
+            instability = instability[-window:]
+        if len(instability) > len(drift_flags):
+            instability = instability[-len(drift_flags) :]
+        elif len(drift_flags) > len(instability):
+            drift_flags = drift_flags[-len(instability) :]
+        labels = list(range(len(drift_flags)))
+        return {
+            "labels": labels,
+            "drift_flags": drift_flags,
+            "instability": instability,
+        }
+
+    # ------------------------------------------------------------------
     def governance_panel(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Return recent governance check outcomes."""
 
@@ -313,4 +389,51 @@ class EvaluationDashboard:
         )
 
 
-__all__ = ["EvaluationDashboard"]
+def refresh_dashboard(
+    output: str | Path = "evaluation_dashboard.json",
+    *,
+    history: str = "roi_history.json",
+    telemetry_db: str = "telemetry.db",
+) -> Path:
+    """Rebuild dashboard data and persist to ``output``.
+
+    This helper loads the ROI prediction history and telemetry metrics to
+    regenerate dashboard artefacts after each test cycle or deployment batch.
+    """
+
+    tracker = ROITracker()
+    try:
+        tracker.load_history(history)
+    except Exception:
+        pass
+    telemetry = TelemetryBackend(telemetry_db)
+    dash = EvaluationDashboard(EvaluationManager())
+    data = {
+        "readiness_over_time": dash.readiness_chart(telemetry),
+        "readiness_distribution": dash.readiness_distribution_panel(telemetry),
+        "drift_instability": dash.drift_instability_panel(tracker),
+    }
+    out = Path(output)
+    out.write_text(json.dumps(data, indent=2))
+    return out
+
+
+def main() -> None:  # pragma: no cover - CLI hook
+    """CLI entry point used to refresh dashboard artefacts."""
+
+    parser = argparse.ArgumentParser(description="Rebuild evaluation dashboard")
+    parser.add_argument("--output", default="evaluation_dashboard.json")
+    parser.add_argument("--history", default="roi_history.json")
+    parser.add_argument("--telemetry", default="telemetry.db")
+    args = parser.parse_args()
+    path = refresh_dashboard(
+        args.output, history=args.history, telemetry_db=args.telemetry
+    )
+    print(f"dashboard refreshed: {path}")
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI execution
+    main()
+
+
+__all__ = ["EvaluationDashboard", "refresh_dashboard", "main"]
