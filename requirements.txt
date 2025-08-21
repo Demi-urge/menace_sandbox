@@ -419,6 +419,8 @@ sympy==1.14.0
     # via torch
 threadpoolctl==3.6.0
     # via scikit-learn
+tiktoken==0.11.0
+    # via menace (pyproject.toml)
 tokenizers==0.21.2
     # via transformers
 torch==2.7.1

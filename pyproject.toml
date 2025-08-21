@@ -67,6 +67,7 @@ dependencies = [
     ,"torch"
     ,"sentry-sdk"
     ,"cryptography"
+    ,"tiktoken"
 ]
 
 [project.scripts]
