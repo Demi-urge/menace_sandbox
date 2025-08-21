@@ -6,6 +6,8 @@ import json
 import sqlite3
 from typing import Any, Dict, List, Optional
 
+ROI_EVENTS_DB = "roi_events.db"
+
 
 class TelemetryBackend:
     """Persist ROI prediction telemetry to SQLite."""
@@ -163,3 +165,143 @@ class TelemetryBackend:
             return {"total": total, "drifted": drifted, "rate": rate}
         finally:
             conn.close()
+
+
+# ---------------------------------------------------------------------------
+def _init_roi_events_db(db_path: str = ROI_EVENTS_DB) -> None:
+    """Ensure the ``roi_prediction_events`` table exists."""
+
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS roi_prediction_events (
+                    ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    workflow_id TEXT,
+                    predicted_roi REAL,
+                    actual_roi REAL,
+                    confidence REAL,
+                    scenario_deltas TEXT,
+                    drift_flag INTEGER,
+                    predicted_class TEXT,
+                    actual_class TEXT,
+                    predicted_horizons TEXT,
+                    actual_horizons TEXT,
+                    predicted_categories TEXT,
+                    actual_categories TEXT
+                )
+                """
+            )
+            for stmt in (
+                "ALTER TABLE roi_prediction_events ADD COLUMN predicted_class TEXT",
+                "ALTER TABLE roi_prediction_events ADD COLUMN actual_class TEXT",
+                "ALTER TABLE roi_prediction_events ADD COLUMN predicted_horizons TEXT",
+                "ALTER TABLE roi_prediction_events ADD COLUMN actual_horizons TEXT",
+                "ALTER TABLE roi_prediction_events ADD COLUMN predicted_categories TEXT",
+                "ALTER TABLE roi_prediction_events ADD COLUMN actual_categories TEXT",
+                "ALTER TABLE roi_prediction_events ADD COLUMN scenario_deltas TEXT",
+                "ALTER TABLE roi_prediction_events ADD COLUMN drift_flag INTEGER",
+            ):
+                try:
+                    conn.execute(stmt)
+                except sqlite3.OperationalError:
+                    pass
+    finally:
+        conn.close()
+
+
+def log_roi_event(
+    predicted_roi: float | None,
+    actual_roi: float | None,
+    confidence: float | None,
+    scenario_deltas: Optional[Dict[str, float]],
+    drift_flag: bool,
+    *,
+    workflow_id: str | None = None,
+    predicted_class: str | None = None,
+    actual_class: str | None = None,
+    predicted_horizons: Optional[List[float]] = None,
+    actual_horizons: Optional[List[float]] = None,
+    predicted_categories: Optional[List[str]] = None,
+    actual_categories: Optional[List[str]] = None,
+    db_path: str = ROI_EVENTS_DB,
+) -> None:
+    """Persist a ROI prediction event to ``roi_prediction_events``."""
+
+    _init_roi_events_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO roi_prediction_events (workflow_id, predicted_roi, actual_roi, confidence, scenario_deltas, drift_flag, predicted_class, actual_class, predicted_horizons, actual_horizons, predicted_categories, actual_categories) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    workflow_id,
+                    None if predicted_roi is None else float(predicted_roi),
+                    None if actual_roi is None else float(actual_roi),
+                    None if confidence is None else float(confidence),
+                    json.dumps(scenario_deltas or {}),
+                    int(bool(drift_flag)),
+                    predicted_class,
+                    actual_class,
+                    json.dumps([float(x) for x in (predicted_horizons or [])]),
+                    json.dumps([float(x) for x in (actual_horizons or [])]),
+                    json.dumps(predicted_categories or []),
+                    json.dumps(actual_categories or []),
+                ),
+            )
+    finally:
+        conn.close()
+
+
+def fetch_roi_events(
+    workflow_id: str | None = None,
+    *,
+    start_ts: str | None = None,
+    end_ts: str | None = None,
+    limit: int | None = None,
+    db_path: str = ROI_EVENTS_DB,
+) -> List[Dict[str, Any]]:
+    """Return persisted ROI prediction events for dashboards."""
+
+    _init_roi_events_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        base = (
+            "SELECT ts, workflow_id, predicted_roi, actual_roi, confidence, scenario_deltas, drift_flag "
+            "FROM roi_prediction_events"
+        )
+        clauses: List[str] = []
+        params: List[Any] = []
+        if workflow_id is not None:
+            clauses.append("workflow_id = ?")
+            params.append(workflow_id)
+        if start_ts is not None:
+            clauses.append("ts >= ?")
+            params.append(start_ts)
+        if end_ts is not None:
+            clauses.append("ts <= ?")
+            params.append(end_ts)
+        if clauses:
+            base += " WHERE " + " AND ".join(clauses)
+        base += " ORDER BY ts"
+        if limit is not None:
+            base += " LIMIT ?"
+            params.append(int(limit))
+        cur.execute(base, params)
+        rows = cur.fetchall()
+        return [
+            {
+                "ts": ts,
+                "workflow_id": wf,
+                "predicted_roi": pred,
+                "actual_roi": act,
+                "confidence": conf,
+                "scenario_deltas": json.loads(deltas) if deltas else {},
+                "drift_flag": bool(flag),
+            }
+            for ts, wf, pred, act, conf, deltas, flag in rows
+        ]
+    finally:
+        conn.close()
