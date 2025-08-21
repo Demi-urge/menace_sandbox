@@ -33,6 +33,42 @@ if tracker.is_stable("workflow-1"):
 
 The tracker stores only the recent `max_cycles` cycles per workflow, keeping memory usage predictable.
 
+## Cold starts and template curves
+
+Workflows with fewer than three recorded cycles are treated as cold starts.
+The `is_cold_start(workflow_id)` helper returns ``True`` in this situation or
+when no ROI metric has been captured yet. During this phase the tracker can
+fall back to synthetic ROI templates defined in `configs/foresight_templates.yaml`.
+The YAML maps workflow identifiers to template names under `profiles` and
+provides ROI curves under `templates`.
+
+When capturing metrics, the first five cycles blend real observations with the
+template curve using:
+
+```python
+alpha = min(cycles / 5.0, 1.0)
+effective_roi = alpha * real_roi + (1.0 - alpha) * template_val
+```
+
+This weighted `effective_roi` is stored as both `roi_delta` and `raroi_delta`
+until enough history accrues, after which real ROI values take over completely.
+
+```python
+from menace_sandbox.foresight_tracker import ForesightTracker
+from menace_sandbox.roi_tracker import ROITracker
+
+tracker = ForesightTracker()
+tracker.workflow_profiles = {"analyst_bot": "steady_growth"}
+roi_tracker = ROITracker()
+
+# For the first few cycles the ROI deltas follow the `steady_growth` template.
+for _ in range(5):
+    tracker.capture_from_roi(roi_tracker, "analyst_bot")
+
+# Once real ROI history exists, templates are no longer used.
+tracker.capture_from_roi(roi_tracker, "analyst_bot")
+```
+
 ## Persisting state
 
 `ForesightTracker` can serialise its configuration and recent history for later restoration. The :meth:`to_dict` method returns a JSON-serialisable dictionary containing the tracked `history` together with the current `max_cycles` and `volatility_threshold` settings. The companion :meth:`from_dict` classmethod rebuilds an instance from this data and accepts optional overrides for the configuration values (`window` and `N` remain supported aliases for `max_cycles`).
