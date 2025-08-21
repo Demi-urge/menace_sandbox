@@ -110,3 +110,27 @@ def test_from_dict_reads_legacy_keys():
     tracker_w = ForesightTracker.from_dict(data_w)
     assert tracker_w.max_cycles == 3
     assert [e["m"] for e in tracker_w.history["wf"]] == [1.0, 2.0, 3.0]
+
+
+def test_capture_from_roi_records_latest_metrics():
+    ft = ForesightTracker()
+
+    class DummyROITracker:
+        def __init__(self):
+            self.roi_history = [0.1]
+            self.raroi_history = [0.2, 0.5]
+            self.confidence_history = [0.9]
+            self.metrics_history = {"synergy_resilience": [0.8]}
+
+        def scenario_degradation(self):
+            return 0.3
+
+    dummy = DummyROITracker()
+    ft.capture_from_roi(dummy, "wf")
+
+    entry = ft.history["wf"][0]
+    assert entry["roi_delta"] == 0.1
+    assert entry["raroi_delta"] == 0.3  # 0.5 - 0.2
+    assert entry["confidence"] == 0.9
+    assert entry["resilience"] == 0.8
+    assert entry["scenario_degradation"] == 0.3

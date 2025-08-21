@@ -59,6 +59,70 @@ class ForesightTracker:
         queue.append(entry)
 
     # ------------------------------------------------------------------
+    def capture_from_roi(self, tracker: "ROITracker" | None, workflow_id: str) -> None:
+        """Record metrics extracted from an :class:`ROITracker` instance.
+
+        Parameters
+        ----------
+        tracker:
+            ROI tracker providing ``roi_history``, ``raroi_history``,
+            ``confidence_history`` and ``metrics_history``.
+        workflow_id:
+            Identifier of the workflow for which the metrics should be
+            recorded.
+
+        The helper pulls the latest ROI delta, RAROI delta, resilience,
+        confidence and scenario degradation metrics from ``tracker`` and
+        forwards them to :meth:`record_cycle_metrics`.
+        """
+
+        if tracker is None:
+            return
+
+        try:
+            roi_hist = getattr(tracker, "roi_history", [])
+            roi_delta = float(roi_hist[-1]) if roi_hist else 0.0
+
+            raroi_hist = getattr(tracker, "raroi_history", [])
+            if len(raroi_hist) >= 2:
+                raroi_delta = float(raroi_hist[-1] - raroi_hist[-2])
+            elif raroi_hist:
+                raroi_delta = float(raroi_hist[-1])
+            else:
+                raroi_delta = 0.0
+
+            conf_hist = getattr(tracker, "confidence_history", [])
+            confidence = float(conf_hist[-1]) if conf_hist else 0.0
+
+            metrics_hist = getattr(tracker, "metrics_history", {})
+            res_hist = metrics_hist.get("synergy_resilience") or metrics_hist.get(
+                "resilience", []
+            )
+            resilience = float(res_hist[-1]) if res_hist else 0.0
+
+            try:
+                scenario_deg = float(
+                    getattr(tracker, "scenario_degradation", lambda: 0.0)()
+                )
+            except Exception:
+                scenario_deg = 0.0
+
+            self.record_cycle_metrics(
+                workflow_id,
+                {
+                    "roi_delta": roi_delta,
+                    "raroi_delta": raroi_delta,
+                    "confidence": confidence,
+                    "resilience": resilience,
+                    "scenario_degradation": scenario_deg,
+                },
+            )
+        except Exception:
+            # best effort; failing to record foresight metrics shouldn't break
+            # the calling workflow
+            pass
+
+    # ------------------------------------------------------------------
     def get_trend_curve(self, workflow_id: str) -> Tuple[float, float, float]:
         """Return slope, second derivative and average window stability.
 
@@ -136,6 +200,7 @@ class ForesightTracker:
         data: Mapping,
         N: int | None = None,
         volatility_threshold: float | None = None,
+        max_cycles: int | None = None,
     ) -> "ForesightTracker":
         """Reconstruct a tracker from :meth:`to_dict` output.
 
@@ -153,6 +218,8 @@ class ForesightTracker:
             missing.
         """
 
+        if max_cycles is not None and N is None:
+            N = max_cycles
         if N is None:
             N = int(data.get("window", data.get("N", 10)))
         if volatility_threshold is None:
