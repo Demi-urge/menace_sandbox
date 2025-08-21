@@ -598,6 +598,7 @@ class SandboxContext:
     sections: Dict[str, Dict[str, List[str]]]
     all_section_names: set[str]
     roi_history_file: Path
+    foresight_history_file: Path
     brainstorm_history: List[str]
     conversations: Dict[str, List[Dict[str, str]]]
     offline_suggestions: bool = False
@@ -916,15 +917,30 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         cluster_map=improver.module_clusters,
         entropy_threshold=entropy_threshold,
     )
-    foresight_tracker = ForesightTracker(
-        N=10,
-        volatility_threshold=volatility_threshold,
-    )
+    foresight_tracker = getattr(args, "foresight_tracker", None)
+    if foresight_tracker is None:
+        foresight_tracker = ForesightTracker(
+            N=10,
+            volatility_threshold=volatility_threshold,
+        )
     roi_history_file = data_dir / "roi_history.json"
+    foresight_history_file = data_dir / "foresight_history.json"
     try:
         tracker.load_history(str(roi_history_file))
     except Exception:
         logger.exception("failed to load roi history")
+    if foresight_history_file.exists():
+        try:
+            with foresight_history_file.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            loaded = ForesightTracker.from_dict(
+                data,
+                N=getattr(foresight_tracker, "max_cycles", 10),
+                volatility_threshold=volatility_threshold,
+            )
+            foresight_tracker.history = loaded.history
+        except Exception:
+            logger.exception("failed to load foresight history")
     meta_log.module_deltas.update(tracker.module_deltas)
     prev_roi = 0.0
     predicted_roi = None
@@ -1085,6 +1101,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         sections=sections,
         all_section_names=all_section_names,
         roi_history_file=roi_history_file,
+        foresight_history_file=foresight_history_file,
         brainstorm_history=brainstorm_history,
         conversations=conversations,
         offline_suggestions=offline_suggestions,
@@ -1584,6 +1601,12 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
         ctx.tracker.save_history(str(ctx.roi_history_file))
     except Exception:
         logger.exception("failed to save roi history")
+    try:
+        if getattr(ctx, "foresight_tracker", None) and getattr(ctx, "foresight_history_file", None):
+            with ctx.foresight_history_file.open("w", encoding="utf-8") as fh:
+                json.dump(ctx.foresight_tracker.to_dict(), fh, indent=2)
+    except Exception:
+        logger.exception("failed to save foresight history")
     logger.info("sandbox run complete")
     _sandbox_cleanup(ctx)
     return ctx.tracker

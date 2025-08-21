@@ -155,6 +155,7 @@ from menace.audit_trail import AuditTrail
 from menace.auto_env_setup import ensure_env
 from menace.environment_generator import generate_presets
 from menace.roi_tracker import ROITracker
+from foresight_tracker import ForesightTracker
 from menace.synergy_exporter import SynergyExporter
 from menace.synergy_history_db import migrate_json_to_db, insert_entry, connect_locked
 import menace.synergy_history_db as shd
@@ -668,11 +669,13 @@ def execute_iteration(
     presets: list[dict],
     synergy_history: list[dict[str, float]],
     synergy_ma_history: list[dict[str, float]],
-) -> ROITracker | None:
-    """Run one autonomous iteration using ``presets`` and return tracker."""
+) -> tuple[ROITracker | None, ForesightTracker | None]:
+    """Run one autonomous iteration using ``presets`` and return trackers."""
 
     recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
     sandbox_runner._sandbox_main = recovery.run
+    foresight_tracker = ForesightTracker()
+    setattr(args, "foresight_tracker", foresight_tracker)
     try:
         full_autonomous_run(
             args,
@@ -681,6 +684,8 @@ def execute_iteration(
         )
     finally:
         sandbox_runner._sandbox_main = recovery.sandbox_main
+        if hasattr(args, "foresight_tracker"):
+            delattr(args, "foresight_tracker")
 
     data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
     hist_file = data_dir / "roi_history.json"
@@ -689,8 +694,8 @@ def execute_iteration(
         tracker.load_history(str(hist_file))
     except Exception:
         logger.exception("failed to load tracker history: %s", hist_file)
-        return None
-    return tracker
+        return None, foresight_tracker
+    return tracker, foresight_tracker
 
 
 def update_metrics(
@@ -1205,6 +1210,18 @@ def main(argv: List[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
+        "--foresight-trend",
+        nargs=2,
+        metavar=("FILE", "WORKFLOW_ID"),
+        help="show ROI trend metrics from foresight history file",
+    )
+    parser.add_argument(
+        "--foresight-stable",
+        nargs=2,
+        metavar=("FILE", "WORKFLOW_ID"),
+        help="check workflow stability from foresight history file",
+    )
+    parser.add_argument(
         "--check-settings",
         action="store_true",
         help="validate environment settings and exit",
@@ -1212,6 +1229,15 @@ def main(argv: List[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
+
+    if args.foresight_trend:
+        file, workflow_id = args.foresight_trend
+        cli.foresight_trend(file, workflow_id)
+        return
+    if args.foresight_stable:
+        file, workflow_id = args.foresight_stable
+        cli.foresight_stability(file, workflow_id)
+        return
 
     mem_db = args.memory_db or os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
     global LOCAL_KNOWLEDGE_MODULE, GPT_MEMORY_MANAGER, GPT_KNOWLEDGE_SERVICE
@@ -1838,7 +1864,7 @@ def main(argv: List[str] | None = None) -> None:
             extra=log_record(run=run_idx, preset_source=preset_source, presets=presets),
         )
 
-        tracker = execute_iteration(
+        tracker, foresight_tracker = execute_iteration(
             args,
             settings,
             presets,
@@ -1890,6 +1916,26 @@ def main(argv: List[str] | None = None) -> None:
             threshold_log,
             forecast_log,
         )
+
+        if foresight_tracker is not None:
+            try:
+                slope, curve, volatility, stability = foresight_tracker.get_trend_curve("_global")
+                logger.info(
+                    "foresight trend: slope=%.3f curve=%.3f volatility=%.3f stability=%.3f",
+                    slope,
+                    curve,
+                    volatility,
+                    stability,
+                    extra=log_record(
+                        run=run_idx,
+                        foresight_slope=slope,
+                        foresight_curve=curve,
+                        foresight_volatility=volatility,
+                        foresight_stability=stability,
+                    ),
+                )
+            except Exception:
+                logger.exception("failed to compute foresight trend")
 
         logger.info(
             "run %d summary: roi_threshold=%.3f ema=%.3f converged=%s flagged_modules=%d",
