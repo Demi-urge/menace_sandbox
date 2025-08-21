@@ -16,7 +16,7 @@ class DiscrepancyRetriever:
     def __init__(self, db: DiscrepancyDB):
         self.db = db
 
-    def search(self, query: str, top_k: int = 5, session_id: str = ""):
+    def search(self, query: str, top_k: int = 5, session_id: str = "", **_):
         vec = self.db.encode_text(query)
         results = []
         for rid, dist in self.db.search_by_vector(vec, top_k=top_k):
