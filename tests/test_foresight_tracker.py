@@ -4,7 +4,7 @@ from menace_sandbox.foresight_tracker import ForesightTracker
 
 
 def test_records_truncated_to_window():
-    tracker = ForesightTracker(window=3)
+    tracker = ForesightTracker(N=3)
     for i in range(5):
         tracker.record_cycle_metrics("wf", {"m": float(i)})
 
@@ -48,12 +48,12 @@ def test_is_stable_considers_trend_and_volatility():
 
 
 def test_to_dict_from_dict_roundtrip_configuration_and_history():
-    tracker = ForesightTracker(window=4, volatility_threshold=2.5)
+    tracker = ForesightTracker(N=4, volatility_threshold=2.5)
     for v in [0.0, 1.0, 2.0, 3.0]:
         tracker.record_cycle_metrics("wf", {"m": v})
 
     data = tracker.to_dict()
-    assert data["window"] == 4
+    assert data["max_cycles"] == 4
     assert data["volatility_threshold"] == 2.5
     assert data["history"]["wf"] == [
         {"m": 0.0},
@@ -63,22 +63,22 @@ def test_to_dict_from_dict_roundtrip_configuration_and_history():
     ]
 
     restored = ForesightTracker.from_dict(data)
-    assert restored.window == 4
+    assert restored.max_cycles == 4
     assert np.isclose(restored.volatility_threshold, 2.5)
     history = restored.history["wf"]
     assert [entry["m"] for entry in history] == [0.0, 1.0, 2.0, 3.0]
 
 
 def test_from_dict_allows_overrides_and_truncates_history():
-    tracker = ForesightTracker(window=5, volatility_threshold=3.0)
+    tracker = ForesightTracker(N=5, volatility_threshold=3.0)
     for i in range(6):
         tracker.record_cycle_metrics("wf", {"m": float(i)})
 
     data = tracker.to_dict()
     restored = ForesightTracker.from_dict(
-        data, window=3, volatility_threshold=1.0
+        data, N=3, volatility_threshold=1.0
     )
-    assert restored.window == 3
+    assert restored.max_cycles == 3
     assert np.isclose(restored.volatility_threshold, 1.0)
     history = restored.history["wf"]
     assert [entry["m"] for entry in history] == [3.0, 4.0, 5.0]

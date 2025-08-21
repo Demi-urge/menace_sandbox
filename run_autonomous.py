@@ -675,7 +675,7 @@ def execute_iteration(
     recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
     sandbox_runner._sandbox_main = recovery.run
     volatility_threshold = float(os.getenv("SANDBOX_VOLATILITY_THRESHOLD", "1.0"))
-    foresight_tracker = ForesightTracker(window=10, volatility_threshold=volatility_threshold)
+    foresight_tracker = ForesightTracker(N=10, volatility_threshold=volatility_threshold)
     setattr(args, "foresight_tracker", foresight_tracker)
     try:
         full_autonomous_run(

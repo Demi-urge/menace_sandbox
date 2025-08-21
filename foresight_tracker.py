@@ -11,20 +11,36 @@ import numpy as np
 class ForesightTracker:
     """Maintain recent cycle metrics for workflows and evaluate stability."""
 
-    def __init__(self, window: int = 10, volatility_threshold: float = 1.0) -> None:
+    def __init__(
+        self,
+        window: int = 10,
+        volatility_threshold: float = 1.0,
+        N: int | None = None,
+    ) -> None:
         """Create a new tracker.
 
         Parameters
         ----------
-        window:
-            Number of recent cycles to retain per workflow.
+        window, N:
+            ``N`` is an alias for ``window`` specifying the number of recent
+            cycles to retain per workflow.
         volatility_threshold:
             Maximum standard deviation across stored metrics considered stable.
         """
 
+        if N is not None:
+            window = N
+
         self.window = window
         self.volatility_threshold = volatility_threshold
         self.history: Dict[str, Deque[Dict[str, float]]] = {}
+
+    # ------------------------------------------------------------------
+    @property
+    def max_cycles(self) -> int:
+        """Return the maximum number of cycles retained per workflow."""
+
+        return self.window
 
     # ------------------------------------------------------------------
     def record_cycle_metrics(self, workflow_id: str, metrics: Mapping[str, float]) -> None:
@@ -90,11 +106,13 @@ class ForesightTracker:
 
         The history for each workflow is emitted in chronological order so that
         the oldest entry appears first in the list.  Only the currently retained
-        window is serialised.
+        window is serialised.  The ``max_cycles`` field mirrors the old
+        ``window`` key for backwards compatibility.
         """
 
         return {
-            "window": self.window,
+            "max_cycles": self.window,
+            "window": self.window,  # legacy key for backwards compatibility
             "volatility_threshold": self.volatility_threshold,
             "history": {
                 wf_id: list(entries)
@@ -109,6 +127,7 @@ class ForesightTracker:
         data: dict,
         window: int | None = None,
         volatility_threshold: float | None = None,
+        N: int | None = None,
     ) -> "ForesightTracker":
         """Reconstruct a tracker from :meth:`to_dict` output.
 
@@ -116,18 +135,26 @@ class ForesightTracker:
         ----------
         data:
             Dictionary produced by :meth:`to_dict`.
-        window:
+        window, N:
             Optional override for the maximum number of entries to keep per
-            workflow.  When ``None`` the value stored in ``data`` is used or the
-            class default (``10``) if unavailable.
+            workflow. ``N`` is an alias for ``window``. When both are ``None``
+            the value stored in ``data`` is used or the class default (``10``)
+            if unavailable.
         volatility_threshold:
             Optional override for the volatility threshold.  When ``None`` the
             value stored in ``data`` is used or the class default (``1.0``) if
             missing.
         """
 
+        if N is not None:
+            window = N
         if window is None:
-            window = int(data.get("window", 10))
+            window = int(
+                data.get(
+                    "max_cycles",
+                    data.get("N", data.get("window", 10)),
+                )
+            )
         if volatility_threshold is None:
             volatility_threshold = float(data.get("volatility_threshold", 1.0))
 
