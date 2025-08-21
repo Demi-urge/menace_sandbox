@@ -83,3 +83,28 @@ def test_from_dict_allows_overrides_and_truncates_history():
     history = restored.history["wf"]
     assert [entry["m"] for entry in history] == [3.0, 4.0, 5.0]
     assert len(history) == 3
+
+
+def test_init_aliases_N_to_window():
+    tracker = ForesightTracker(N=5)
+    assert tracker.max_cycles == 5
+    assert tracker.window == 5
+
+
+def test_to_dict_includes_window_alias():
+    tracker = ForesightTracker(window=7)
+    data = tracker.to_dict()
+    assert data["max_cycles"] == 7
+    assert data["window"] == 7
+
+
+def test_from_dict_reads_legacy_keys():
+    data_n = {"N": 2, "history": {"wf": [{"m": 1.0}, {"m": 2.0}]}}
+    tracker_n = ForesightTracker.from_dict(data_n)
+    assert tracker_n.max_cycles == 2
+    assert [e["m"] for e in tracker_n.history["wf"]] == [1.0, 2.0]
+
+    data_w = {"window": 3, "history": {"wf": [{"m": 1.0}, {"m": 2.0}, {"m": 3.0}]}}
+    tracker_w = ForesightTracker.from_dict(data_w)
+    assert tracker_w.max_cycles == 3
+    assert [e["m"] for e in tracker_w.history["wf"]] == [1.0, 2.0, 3.0]
