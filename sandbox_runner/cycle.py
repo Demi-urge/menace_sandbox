@@ -1175,6 +1175,32 @@ def _sandbox_cycle_runner(
         )
         if entropy_ceiling:
             ctx.meta_log.ceiling(tracker.tolerance)
+
+        roi_delta = 0.0
+        if len(tracker.roi_history) >= 2:
+            roi_delta = tracker.roi_history[-1] - tracker.roi_history[-2]
+        elif tracker.roi_history:
+            roi_delta = tracker.roi_history[-1]
+
+        raroi_delta = 0.0
+        if len(tracker.raroi_history) >= 2:
+            raroi_delta = tracker.raroi_history[-1] - tracker.raroi_history[-2]
+        elif tracker.raroi_history:
+            raroi_delta = tracker.raroi_history[-1]
+
+        wf_id = getattr(ctx, "workflow_id", "_global")
+        conf_val = tracker.workflow_confidence(wf_id)
+        ctx.foresight_tracker.record_cycle_metrics(
+            wf_id,
+            {
+                "roi_deltas": roi_delta,
+                "raroi_deltas": raroi_delta,
+                "confidence": conf_val,
+                "resilience": resilience,
+                "scenario_degradation": metrics.get("scenario_degradation", 0.0),
+            },
+        )
+        ctx.workflow_stable = ctx.foresight_tracker.is_stable(wf_id)
         last_metrics = metrics
         feat_vec = [
             roi,

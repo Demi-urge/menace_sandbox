@@ -147,6 +147,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 if TYPE_CHECKING:  # pragma: no cover
     from menace.roi_tracker import ROITracker
+    from foresight_tracker import ForesightTracker
 
 __path__ = [os.path.join(os.path.dirname(__file__), "sandbox_runner")]
 logger = get_logger(__name__)
@@ -560,6 +561,7 @@ class SandboxContext:
     sandbox: Any
     tester: SelfTestService
     tracker: "ROITracker"
+    foresight_tracker: "ForesightTracker"
     meta_log: _SandboxMetaLogger
     backups: Dict[str, Any]
     env: Dict[str, str]
@@ -844,6 +846,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         ),
     )
     from menace.roi_tracker import ROITracker
+    from foresight_tracker import ForesightTracker
 
     try:
         from menace.resources_bot import ROIHistoryDB
@@ -906,6 +909,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         cluster_map=improver.module_clusters,
         entropy_threshold=entropy_threshold,
     )
+    foresight_tracker = ForesightTracker()
     roi_history_file = data_dir / "roi_history.json"
     try:
         tracker.load_history(str(roi_history_file))
@@ -1041,6 +1045,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         sandbox=sandbox,
         tester=tester,
         tracker=tracker,
+        foresight_tracker=foresight_tracker,
         meta_log=meta_log,
         backups=backups,
         env=env,
