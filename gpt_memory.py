@@ -134,7 +134,12 @@ class GPTMemoryManager(GPTMemoryInterface):
         self.embedder = embedder
         self.event_bus = event_bus
         self.graph = knowledge_graph
-        self.vector_service = vector_service or SharedVectorService(embedder)
+        # ``vector_service`` takes precedence when supplied.  Otherwise we lazily
+        # construct a service only if an ``embedder`` is provided, avoiding
+        # initialising a service that cannot embed text.
+        self.vector_service = vector_service
+        if self.vector_service is None and embedder is not None:
+            self.vector_service = SharedVectorService(embedder)
         self._ensure_schema()
 
     # ------------------------------------------------------------------ utils
