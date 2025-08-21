@@ -11,15 +11,13 @@ class ForesightTracker:
 
     def __init__(
         self,
-        max_cycles: int | None = None,
+        N: int = 10,
+        *,
         volatility_threshold: float = 1.0,
-        N: int | None = None,
     ) -> None:
-        if max_cycles is None:
-            max_cycles = 10
-        if N is not None:
-            max_cycles = N
-        self.max_cycles = max_cycles
+        """Create a tracker storing up to ``N`` cycle snapshots per workflow."""
+
+        self.max_cycles = N
         self.volatility_threshold = volatility_threshold
         self.history: Dict[str, Deque[Dict[str, float]]] = {}
 
@@ -66,37 +64,44 @@ class ForesightTracker:
     def from_dict(
         cls,
         data: Dict[str, Iterable[Dict[str, float]]],
-        max_cycles: int = 10,
+        N: int = 10,
+        *,
         volatility_threshold: float = 1.0,
     ) -> "ForesightTracker":
         """Create a :class:`ForesightTracker` from serialized ``data``."""
 
-        tracker = cls(max_cycles=max_cycles, volatility_threshold=volatility_threshold)
+        tracker = cls(N=N, volatility_threshold=volatility_threshold)
         for wid, entries in data.items():
-            tracker.history[wid] = deque(entries, maxlen=max_cycles)
+            tracker.history[wid] = deque(entries, maxlen=N)
         return tracker
 
     # ------------------------------------------------------------------
-    def get_trend_curve(self, workflow_id: str) -> Tuple[float, float, float]:
-        """Return slope, second derivative and rolling stability for ROI delta."""
+    def get_trend_curve(self, workflow_id: str) -> Tuple[float, float, float, float]:
+        """Return slope, second derivative, volatility and stability for ROI delta."""
 
         data = self.history.get(workflow_id)
         if not data or len(data) < 2:
-            return 0.0, 0.0, 0.0
+            # No meaningful trend information
+            return 0.0, 0.0, 0.0, 1.0
 
         roi = np.array([entry["roi_delta"] for entry in data], dtype=float)
         x = np.arange(len(roi))
 
         # First derivative: slope from linear regression
-        slope = float(np.polyfit(x, roi, 1)[0]) if roi.size > 1 else 0.0
+        slope = float(np.polyfit(x, roi, 1)[0])
 
-        # Second derivative: mean of second finite differences
-        second_diff = np.diff(roi, n=2)
-        second_derivative = float(second_diff.mean()) if second_diff.size else 0.0
+        # Second derivative: curvature from quadratic fit
+        if roi.size >= 3:
+            a = float(np.polyfit(x, roi, 2)[0])
+            second_derivative = 2.0 * a
+        else:
+            second_derivative = 0.0
 
-        # Rolling volatility/stability
-        volatility = float(np.std(roi, ddof=1)) if roi.size > 1 else 0.0
-        return slope, second_derivative, volatility
+        # Rolling volatility/stability over a window of last 5 points (or fewer)
+        window = min(5, roi.size)
+        volatility = float(np.std(roi[-window:], ddof=1)) if window > 1 else 0.0
+        stability = 1.0 / (1.0 + volatility)
+        return slope, second_derivative, volatility, stability
 
     # ------------------------------------------------------------------
     def is_stable(self, workflow_id: str, threshold: float | None = None) -> bool:
@@ -113,7 +118,7 @@ class ForesightTracker:
         if not data or len(data) < 2:
             return False
 
-        slope, _, volatility = self.get_trend_curve(workflow_id)
+        slope, _, volatility, _ = self.get_trend_curve(workflow_id)
         limit = self.volatility_threshold if threshold is None else threshold
         return slope > 0 and volatility < limit
 

@@ -13,7 +13,7 @@ def _metrics(val):
 
 
 def test_history_limit_and_serialization():
-    tracker = ForesightTracker(max_cycles=3)
+    tracker = ForesightTracker(N=3)
     for i in range(5):
         tracker.record_cycle_metrics("wf", _metrics(i))
     history = tracker.get_history("wf")
@@ -21,7 +21,7 @@ def test_history_limit_and_serialization():
     assert history[0]["roi_delta"] == 2
 
     data = tracker.to_dict()
-    restored = ForesightTracker.from_dict(data, max_cycles=3)
+    restored = ForesightTracker.from_dict(data, N=3)
     assert restored.get_history("wf") == history
 
 
@@ -30,10 +30,11 @@ def test_trend_curve_and_stability():
     values = [0, 1, 2, 3]
     for v in values:
         tracker.record_cycle_metrics("wf", _metrics(v))
-    slope, second_derivative, volatility = tracker.get_trend_curve("wf")
+    slope, second_derivative, volatility, stability = tracker.get_trend_curve("wf")
     assert slope > 0
     assert np.isclose(second_derivative, 0.0)
     assert np.isclose(volatility, np.std(values, ddof=1))
+    assert np.isclose(stability, 1 / (1 + volatility))
     assert tracker.is_stable("wf")
 
     # Introduce volatility
