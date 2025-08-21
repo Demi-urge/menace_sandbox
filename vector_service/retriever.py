@@ -446,6 +446,29 @@ class Retriever:
         except Exception:
             return 0.0
 
+    # ------------------------------------------------------------------
+    def search_bots(self, query: str, *, top_k: int | None = None) -> List[Dict[str, Any]] | FallbackResult:
+        """Convenience wrapper to search only bot definitions."""
+
+        return self.search(query, top_k=top_k, dbs=["bot"])
+
+    def search_workflows(self, query: str, *, top_k: int | None = None) -> List[Dict[str, Any]] | FallbackResult:
+        """Convenience wrapper to search only workflow specifications."""
+
+        return self.search(query, top_k=top_k, dbs=["workflow"])
+
+    def search_enhancements(
+        self, query: str, *, top_k: int | None = None
+    ) -> List[Dict[str, Any]] | FallbackResult:
+        """Search only enhancement records."""
+
+        return self.search(query, top_k=top_k, dbs=["enhancement"])
+
+    def search_errors(self, query: str, *, top_k: int | None = None) -> List[Dict[str, Any]] | FallbackResult:
+        """Search only error telemetry entries."""
+
+        return self.search(query, top_k=top_k, dbs=["error"])
+
 
 def fts_search(
     query: str,
