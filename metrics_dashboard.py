@@ -5,12 +5,13 @@ from __future__ import annotations
 import logging
 import sqlite3
 from pathlib import Path
-from typing import List
+from typing import List, Dict
 import json
 from io import BytesIO
 import queue
+import statistics
 
-from flask import Flask, jsonify, send_file
+from flask import Flask, jsonify, send_file, request
 
 import sys
 from types import ModuleType
@@ -89,6 +90,11 @@ class MetricsDashboard:
         self.app.add_url_rule("/refresh", "refresh", self.refresh)
         self.app.add_url_rule(
             "/refresh/stream", "refresh_stream", self.refresh_stream
+        )
+        self.app.add_url_rule(
+            "/scenario_deltas/<workflow_id>",
+            "scenario_deltas_chart",
+            self.scenario_deltas_chart,
         )
 
     # ------------------------------------------------------------------
@@ -486,6 +492,65 @@ class MetricsDashboard:
 </html>
         """
         return html, 200
+
+    # ------------------------------------------------------------------
+    def scenario_deltas_chart(self, workflow_id: str) -> tuple[str, int]:
+        """Return ROI/RAROI deltas per scenario with trends and confidence."""
+
+        tb = TelemetryBackend()
+        scenario_name = request.args.get("scenario")
+        start = request.args.get("start")
+        end = request.args.get("end")
+        history = tb.fetch_history(
+            workflow_id,
+            scenario=scenario_name,
+            start_ts=start,
+            end_ts=end,
+        )
+
+        labels: List[str] = []
+        scenarios: Dict[str, Dict[str, List[float]]] = {}
+        for h in history:
+            labels.append(h.get("ts"))
+            deltas = h.get("scenario_deltas", {})
+            for name, delta in deltas.items():
+                d = scenarios.setdefault(
+                    name,
+                    {"roi": [], "raroi": [], "trend": [], "ci_low": [], "ci_high": []},
+                )
+                try:
+                    val = float(delta)
+                except Exception:
+                    val = 0.0
+                d["roi"].append(val)
+                d["raroi"].append(val)
+
+        for data in scenarios.values():
+            roi_vals = data["roi"]
+            if not roi_vals:
+                continue
+            cumulative: List[float] = []
+            total = 0.0
+            for i, v in enumerate(roi_vals, 1):
+                total += v
+                cumulative.append(total / i)
+            data["trend"] = cumulative
+            if len(roi_vals) > 1:
+                mean_val = statistics.mean(roi_vals)
+                try:
+                    stdev = statistics.stdev(roi_vals)
+                except statistics.StatisticsError:
+                    stdev = 0.0
+                margin = 1.96 * stdev / (len(roi_vals) ** 0.5)
+                low = mean_val - margin
+                high = mean_val + margin
+                data["ci_low"] = [low] * len(roi_vals)
+                data["ci_high"] = [high] * len(roi_vals)
+            else:
+                data["ci_low"] = roi_vals[:]
+                data["ci_high"] = roi_vals[:]
+
+        return jsonify({"labels": labels, "scenarios": scenarios}), 200
 
     def plot_predictions(self) -> tuple[bytes, int, dict[str, str]]:
         """Return a PNG plot showing predicted vs. actual values."""
