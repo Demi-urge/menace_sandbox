@@ -140,7 +140,7 @@ class PatchLogger:
 
         start = time.time()
         status = "success" if result else "failure"
-        roi_metrics: dict[str, dict[str, float]] = {}
+        roi_metrics: dict[str, dict[str, Any]] = {}
         try:
             detailed = self._parse_vectors(vector_ids)
             detailed.sort(key=lambda t: t[2], reverse=True)
@@ -268,7 +268,7 @@ class PatchLogger:
                             UnifiedEventBus().publish("retrieval:feedback", payload)
                         except Exception:
                             pass
-                roi_metrics: dict[str, dict[str, float]] = {}
+                roi_metrics: dict[str, dict[str, Any]] = {}
                 if origin_totals:
                     for origin, roi in origin_totals.items():
                         metrics = {
