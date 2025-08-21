@@ -3,30 +3,45 @@ import numpy as np
 from menace_sandbox.foresight_tracker import ForesightTracker
 
 
-def test_history_limit():
-    tracker = ForesightTracker(window=3, volatility_threshold=1.0)
+def test_records_truncated_to_window():
+    tracker = ForesightTracker(window=3)
     for i in range(5):
         tracker.record_cycle_metrics("wf", {"m": float(i)})
 
     history = tracker.history["wf"]
     assert len(history) == 3
-    assert list(history)[0]["m"] == 2.0
+    assert [entry["m"] for entry in history] == [2.0, 3.0, 4.0]
 
 
-def test_trend_curve_and_stability():
-    tracker = ForesightTracker(volatility_threshold=2.0)
-    values = [0.0, 1.0, 2.0, 3.0]
-    for v in values:
-        tracker.record_cycle_metrics("wf", {"m": v})
+def test_get_trend_curve_expected_values():
+    tracker = ForesightTracker()
 
-    slope, second_derivative, stability = tracker.get_trend_curve("wf")
-    assert slope > 0
+    # Linear series: slope of 1 and zero curvature
+    for v in [0.0, 1.0, 2.0, 3.0]:
+        tracker.record_cycle_metrics("linear", {"m": v})
+    slope, second_derivative, _ = tracker.get_trend_curve("linear")
+    assert np.isclose(slope, 1.0)
     assert np.isclose(second_derivative, 0.0)
-    expected_std = np.std(values, ddof=1)
-    expected_stability = 1 / (1 + expected_std)
-    assert np.isclose(stability, expected_stability)
-    assert tracker.is_stable("wf")
 
-    tracker.record_cycle_metrics("wf", {"m": 10.0})
-    assert not tracker.is_stable("wf")
+    # Quadratic series: slope 3 and second derivative 2
+    for v in [0.0, 1.0, 4.0, 9.0]:
+        tracker.record_cycle_metrics("quadratic", {"m": v})
+    slope_q, second_derivative_q, _ = tracker.get_trend_curve("quadratic")
+    assert np.isclose(slope_q, 3.0)
+    assert np.isclose(second_derivative_q, 2.0)
 
+
+def test_is_stable_considers_trend_and_volatility():
+    tracker = ForesightTracker(volatility_threshold=5.0)
+
+    for v in [0.0, 1.0, 2.0, 3.0]:
+        tracker.record_cycle_metrics("pos", {"m": v})
+    assert tracker.is_stable("pos")
+
+    for v in [3.0, 2.0, 1.0, 0.0]:
+        tracker.record_cycle_metrics("neg", {"m": v})
+    assert not tracker.is_stable("neg")
+
+    for v in [0.0, 10.0, 0.0, 10.0]:
+        tracker.record_cycle_metrics("vol", {"m": v})
+    assert not tracker.is_stable("vol")
