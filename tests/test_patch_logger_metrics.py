@@ -194,6 +194,31 @@ def test_track_contributors_forwards_roi_feedback_failure(monkeypatch):
     assert rt.metrics["db1"]["regret_rate"] == pytest.approx(1.0)
 
 
+def test_track_contributors_emits_safety_metrics(monkeypatch):
+    _, _, _, _, _, _, _ = patch_metrics(monkeypatch)
+    events = []
+
+    class Bus:
+        def publish(self, topic, payload):
+            if topic == "patch_logger:outcome":
+                events.append(payload)
+
+    pl = PatchLogger(event_bus=Bus())
+    meta = {
+        "db1:v1": {
+            "alignment_severity": 2.0,
+            "semantic_alerts": ["a1", "a2"],
+        }
+    }
+    pl.track_contributors(["db1:v1"], True, session_id="s", retrieval_metadata=meta)
+    assert events
+    ev = events[0]
+    assert ev["alignment_severity"] == pytest.approx(2.0)
+    assert ev["semantic_alerts"] == ["a1", "a2"]
+    assert ev["roi_metrics"]["db1"]["alignment_severity"] == pytest.approx(2.0)
+    assert ev["roi_metrics"]["db1"]["semantic_alerts"] == ["a1", "a2"]
+
+
 # ---------------------------------------------------------------------------
 # EmbeddingBackfill.run retry/skip behavior
 # ---------------------------------------------------------------------------
