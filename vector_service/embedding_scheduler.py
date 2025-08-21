@@ -173,4 +173,12 @@ __all__ = ["EmbeddingScheduler", "start_scheduler_from_env", "run_backfill_from_
 
 
 if __name__ == "__main__":  # pragma: no cover - convenience for cron
-    run_backfill_from_env()
+    scheduler = start_scheduler_from_env()
+    if scheduler is None:
+        run_backfill_from_env()
+    else:
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            scheduler.stop()
