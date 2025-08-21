@@ -163,7 +163,7 @@ def test_refresh_endpoint(tmp_path, monkeypatch):
     hist = tmp_path / "hist.json"
     _make_history(hist)
     tb = md.TelemetryBackend(str(tmp_path / "tel.db"))
-    tb.log_prediction("wf1", 0.5, 0.4, None, None, False, 0.9)
+    tb.log_prediction("wf1", 0.5, 0.4, None, None, False, 0.9, None)
     monkeypatch.setattr(md, "TelemetryBackend", lambda: tb)
     dash = MetricsDashboard(hist)
     client = dash.app.test_client()
@@ -172,3 +172,57 @@ def test_refresh_endpoint(tmp_path, monkeypatch):
     data = resp.get_json()
     assert data["readiness"]["wf1"] == 0.9
     assert data["telemetry"][0]["workflow_id"] == "wf1"
+
+
+def test_scenario_deltas_chart(tmp_path, monkeypatch):
+    hist = tmp_path / "hist.json"
+    _make_history(hist)
+    tb = md.TelemetryBackend(str(tmp_path / "tel.db"))
+    tb.log_prediction(
+        "wf1",
+        0.5,
+        0.4,
+        None,
+        {"scenA": 1.0},
+        False,
+        0.9,
+        "scenA",
+        "2020-01-01",
+    )
+    tb.log_prediction(
+        "wf1",
+        0.6,
+        0.5,
+        None,
+        {"scenA": 2.0},
+        False,
+        0.9,
+        "scenA",
+        "2020-01-02",
+    )
+    tb.log_prediction(
+        "wf1",
+        0.7,
+        0.6,
+        None,
+        {"scenB": 3.0},
+        False,
+        0.9,
+        "scenB",
+        "2020-01-03",
+    )
+    monkeypatch.setattr(md, "TelemetryBackend", lambda: tb)
+    dash = MetricsDashboard(hist)
+    client = dash.app.test_client()
+    resp = client.get("/scenario_deltas/wf1")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["scenarios"]["scenA"]["roi"] == [1.0, 2.0]
+    assert data["scenarios"]["scenB"]["roi"] == [3.0]
+
+    resp = client.get(
+        "/scenario_deltas/wf1?scenario=scenA&start=2020-01-02&end=2020-01-04"
+    )
+    data = resp.get_json()
+    assert list(data["scenarios"].keys()) == ["scenA"]
+    assert data["scenarios"]["scenA"]["roi"] == [2.0]
