@@ -8,6 +8,8 @@ import asyncio
 import time
 
 from .decorators import log_and_measure
+from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
+from .patch_safety import check_patch_safety
 
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me  # type: ignore
@@ -29,6 +31,8 @@ _VECTOR_RISK = _me.Gauge(
     "Vectors processed by PatchLogger grouped by risk level",
     labelnames=["risk"],
 )
+
+_DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 
 try:  # pragma: no cover - optional dependencies
     from vector_metrics_db import VectorMetricsDB  # type: ignore
@@ -87,6 +91,9 @@ class PatchLogger:
         event_bus: "UnifiedEventBus" | None = None,
         info_db: InfoDB | None = None,
         enhancement_db: EnhancementDB | None = None,
+        max_alert_severity: float = 1.0,
+        max_alerts: int = 5,
+        license_denylist: set[str] | None = None,
     ) -> None:
         self.patch_db = patch_db or (PatchHistoryDB() if PatchHistoryDB is not None else None)
         self.vector_metrics = vector_metrics or (
@@ -97,6 +104,9 @@ class PatchLogger:
         self.event_bus = event_bus
         self.info_db = info_db
         self.enhancement_db = enhancement_db
+        self.max_alert_severity = max_alert_severity
+        self.max_alerts = max_alerts
+        self.license_denylist = set(license_denylist or _DEFAULT_LICENSE_DENYLIST)
 
     # ------------------------------------------------------------------
     def _parse_vectors(
@@ -151,11 +161,20 @@ class PatchLogger:
             vm_vectors = []
             risky = 0
             safe = 0
+            filtered = 0
             origin_alerts: dict[str, set[str]] = {}
             origin_sev: dict[str, float] = {}
             for o, vid, score in detailed:
                 key = f"{o}:{vid}" if o else vid
                 m = meta.get(key, {})
+                if not check_patch_safety(
+                    m,
+                    max_alert_severity=self.max_alert_severity,
+                    max_alerts=self.max_alerts,
+                    license_denylist=self.license_denylist,
+                ):
+                    filtered += 1
+                    continue
                 lic = m.get("license")
                 fp = m.get("license_fingerprint")
                 alerts = m.get("semantic_alerts")
@@ -184,6 +203,8 @@ class PatchLogger:
 
             _VECTOR_RISK.labels("risky").inc(risky)
             _VECTOR_RISK.labels("safe").inc(safe)
+            if filtered:
+                _VECTOR_RISK.labels("filtered").inc(filtered)
 
             if self.metrics_db is not None:
                 try:  # pragma: no cover - legacy path

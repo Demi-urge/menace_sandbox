@@ -1,6 +1,7 @@
 import pytest
 
 from vector_service import Retriever
+from vector_service.patch_safety import _VIOLATIONS
 
 
 class DummyHit:
@@ -31,18 +32,21 @@ class DummyRetriever:
 
 def test_search_filters_license_hit():
     hits = [
-        DummyHit("This program is licensed under the GNU General Public License", "1"),
+        DummyHit("text", "1"),
         DummyHit("regular text", "2"),
     ]
-    r = Retriever(retriever=DummyRetriever(hits))
+    hits[0].metadata["license"] = "GPL-3.0"
+    r = Retriever(retriever=DummyRetriever(hits), cache=None)
+    start = _VIOLATIONS.labels("license")._value.get()
     res = r.search("q")
     assert len(res) == 1
     assert res[0]["record_id"] == "2"
+    assert _VIOLATIONS.labels("license")._value.get() == start + 1
 
 
 def test_search_attaches_semantic_alerts():
     hits = [DummyHit("eval('data')", "1")]
-    r = Retriever(retriever=DummyRetriever(hits))
+    r = Retriever(retriever=DummyRetriever(hits), cache=None)
     res = r.search("q")
     alerts = res[0]["metadata"].get("semantic_alerts")
     assert alerts and any("eval" in alert[1] for alert in alerts)

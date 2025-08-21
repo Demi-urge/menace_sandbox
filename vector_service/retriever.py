@@ -24,6 +24,7 @@ except Exception:  # pragma: no cover - fallback when running as script
     import metrics_exporter as _me  # type: ignore
 
 from .patch_logger import _VECTOR_RISK  # type: ignore
+from .patch_safety import check_patch_safety
 
 _DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 from .decorators import log_and_measure
@@ -129,26 +130,12 @@ class Retriever:
                 }
             # Pre-filter based on metadata-only safety signals so all
             # modalities are subject to the same limits.
-            sev = meta.get("alignment_severity")
-            if sev is not None:
-                try:
-                    if float(sev) > max_alert_severity:
-                        filtered += 1
-                        continue
-                except Exception:
-                    pass
-            alerts = meta.get("semantic_alerts")
-            if alerts is not None:
-                try:
-                    if (len(alerts) if isinstance(alerts, (list, tuple, set)) else 1) > alert_limit:
-                        filtered += 1
-                        continue
-                except Exception:
-                    pass
-            lic = meta.get("license")
-            fp_meta = meta.get("license_fingerprint")
-            lic_meta = _LICENSE_DENYLIST.get(fp_meta)
-            if lic in denylist or lic_meta in denylist:
+            if not check_patch_safety(
+                meta,
+                max_alert_severity=max_alert_severity,
+                max_alerts=alert_limit,
+                license_denylist=denylist,
+            ):
                 filtered += 1
                 continue
             text = str(item.get("text") or "")
@@ -159,24 +146,19 @@ class Retriever:
                 filtered += 1
                 continue
             meta, reason = governed
-            lic = meta.get("license")
-            fp = meta.get("license_fingerprint")
-            lic_detected = _LICENSE_DENYLIST.get(fp)
-            if lic in denylist or lic_detected in denylist:
+            if not check_patch_safety(
+                meta,
+                max_alert_severity=max_alert_severity,
+                max_alerts=alert_limit,
+                license_denylist=denylist,
+            ):
                 filtered += 1
                 continue
-            alerts = meta.get("semantic_alerts")
-            if alerts is not None:
-                try:
-                    if (len(alerts) if isinstance(alerts, (list, tuple, set)) else 1) > alert_limit:
-                        filtered += 1
-                        continue
-                except Exception:
-                    pass
             item["metadata"] = meta
             if reason is not None:
                 item["reason"] = reason
-            item["license"] = lic
+            item["license"] = meta.get("license")
+            fp = meta.get("license_fingerprint")
             item["license_fingerprint"] = fp
             item["semantic_alerts"] = meta.get("semantic_alerts")
             item["alignment_severity"] = meta.get("alignment_severity")
@@ -234,19 +216,17 @@ class Retriever:
                 filtered += 1
                 continue
             meta, reason = governed
-            alerts = meta.get("semantic_alerts")
-            if alerts is not None:
-                try:
-                    if (len(alerts) if isinstance(alerts, (list, tuple, set)) else 1) > alert_limit:
-                        filtered += 1
-                        continue
-                except Exception:
-                    pass
-            fp = meta.get("license_fingerprint")
-            lic = meta.get("license")
-            if lic in denylist or _LICENSE_DENYLIST.get(fp) in denylist:
+            if not check_patch_safety(
+                meta,
+                max_alert_severity=max_alert_severity,
+                max_alerts=alert_limit,
+                license_denylist=denylist,
+            ):
                 filtered += 1
                 continue
+            fp = meta.get("license_fingerprint")
+            lic = meta.get("license")
+            alerts = meta.get("semantic_alerts")
             item = {
                 "origin_db": row.get("origin_db", "code"),
                 "record_id": row.get("id") or row.get("record_id"),
