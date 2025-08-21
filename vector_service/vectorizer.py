@@ -16,7 +16,9 @@ from action_vectorizer import ActionVectorizer
 from error_vectorizer import ErrorVectorizer
 from workflow_vectorizer import WorkflowVectorizer
 from enhancement_vectorizer import EnhancementVectorizer
+from bot_vectorizer import BotVectorizer
 from vector_utils import persist_embedding
+from governed_embeddings import governed_embed
 
 try:  # pragma: no cover - optional dependency used for text embeddings
     from sentence_transformers import SentenceTransformer  # type: ignore
@@ -33,11 +35,14 @@ class SharedVectorService:
     _error: ErrorVectorizer = field(default_factory=ErrorVectorizer)
     _workflow: WorkflowVectorizer = field(default_factory=WorkflowVectorizer)
     _enhancement: EnhancementVectorizer = field(default_factory=EnhancementVectorizer)
+    _bot: BotVectorizer = field(default_factory=BotVectorizer)
 
     def _encode_text(self, text: str) -> List[float]:
         if self.text_embedder is None:
             raise RuntimeError("text embedder unavailable")
-        vec = self.text_embedder.encode(text)
+        vec = governed_embed(text, self.text_embedder)
+        if vec is None:
+            raise RuntimeError("embedding failed")
         return [float(x) for x in vec]
 
     def vectorise(self, kind: str, record: Dict[str, Any]) -> List[float]:
@@ -51,6 +56,8 @@ class SharedVectorService:
             return self._workflow.transform(record)
         if kind == "enhancement":
             return self._enhancement.transform(record)
+        if kind == "bot":
+            return self._bot.transform(record)
         if kind in {"text", "prompt"}:
             return self._encode_text(str(record.get("text", "")))
         raise ValueError(f"unknown record type: {kind}")
@@ -64,7 +71,10 @@ class SharedVectorService:
         """
 
         vec = self.vectorise(kind, record)
-        persist_embedding(kind, record_id, vec)
+        if kind == "bot":
+            persist_embedding("bot", record_id, vec)
+        else:
+            persist_embedding(kind, record_id, vec)
         return vec
 
 
