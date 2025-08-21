@@ -45,6 +45,7 @@ from threading import Thread
 from menace.metrics_dashboard import MetricsDashboard
 from logging_utils import get_logger, setup_logging
 
+from foresight_tracker import ForesightTracker
 from .environment import SANDBOX_ENV_PRESETS, simulate_full_environment
 
 try:  # optional import for tests
@@ -245,6 +246,55 @@ def synergy_metrics(file: str, *, window: int = 5, plot: bool = False) -> None:
                 ma,
                 extra={"metric": name, "last": last, "ema": ma},
             )
+
+
+def foresight_trend(file: str, workflow_id: str) -> None:
+    """Print slope, second derivative and volatility for ``workflow_id``.
+
+    The ``file`` argument should point to a JSON list of metric dictionaries as
+    recorded by :class:`ForesightTracker.record_cycle_metrics`.
+    """
+
+    tracker = ForesightTracker()
+    try:
+        with open(file) as fh:
+            history = json.load(fh)
+    except Exception:
+        logger.exception("failed to load history %s", file)
+        return
+
+    for metrics in history:
+        tracker.record_cycle_metrics(workflow_id, metrics)
+
+    slope, second_derivative, volatility = tracker.get_trend_curve(workflow_id)
+    print(
+        json.dumps(
+            {
+                "slope": slope,
+                "second_derivative": second_derivative,
+                "volatility": volatility,
+            },
+            indent=2,
+        )
+    )
+
+
+def foresight_stability(file: str, workflow_id: str) -> None:
+    """Print whether the ROI trend for ``workflow_id`` is stable."""
+
+    tracker = ForesightTracker()
+    try:
+        with open(file) as fh:
+            history = json.load(fh)
+    except Exception:
+        logger.exception("failed to load history %s", file)
+        return
+
+    for metrics in history:
+        tracker.record_cycle_metrics(workflow_id, metrics)
+
+    stable = tracker.is_stable(workflow_id)
+    print(json.dumps({"stable": stable}, indent=2))
 
 
 def _capture_run(preset: dict[str, str], args: argparse.Namespace):
@@ -1298,6 +1348,20 @@ def main(argv: List[str] | None = None) -> None:
     )
     p_metrics.add_argument("--plot", action="store_true", help="show matplotlib plot")
 
+    p_trend = sub.add_parser(
+        "foresight-trend", help="show ROI trend metrics from history"
+    )
+    p_trend.add_argument("--file", required=True, help="path to metrics history")
+    p_trend.add_argument("--workflow-id", default="wf", help="workflow identifier")
+
+    p_stable = sub.add_parser(
+        "foresight-stable", help="check workflow stability from history"
+    )
+    p_stable.add_argument("--file", required=True, help="path to metrics history")
+    p_stable.add_argument(
+        "--workflow-id", default="wf", help="workflow identifier"
+    )
+
     sub.add_parser(
         "relevancy-report",
         help="print modules flagged by relevancy radar",
@@ -1614,6 +1678,14 @@ def main(argv: List[str] | None = None) -> None:
 
     if getattr(args, "cmd", None) == "synergy-metrics":
         synergy_metrics(args.file, window=args.window, plot=getattr(args, "plot", False))
+        return
+
+    if getattr(args, "cmd", None) == "foresight-trend":
+        foresight_trend(args.file, args.workflow_id)
+        return
+
+    if getattr(args, "cmd", None) == "foresight-stable":
+        foresight_stability(args.file, args.workflow_id)
         return
 
     if getattr(args, "cmd", None) == "relevancy-report":
