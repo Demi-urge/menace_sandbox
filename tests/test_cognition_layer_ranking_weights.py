@@ -1,5 +1,7 @@
 import pytest
 
+from unittest.mock import MagicMock
+
 from vector_metrics_db import VectorMetricsDB
 import menace_sandbox.roi_tracker as rt
 from vector_service.context_builder import ContextBuilder
@@ -120,3 +122,33 @@ def test_high_risk_vectors_penalize_weights(tmp_path):
     weights = vec_db.get_db_weights()
     assert weights["bot"] == pytest.approx(0.0)
     assert weights["workflow"] == pytest.approx(1.0)
+
+
+def test_update_ranker_applies_roi_and_risk_penalties(tmp_path, monkeypatch):
+    layer, vec_db, _ = _make_layer(tmp_path, with_tracker=False)
+    vectors = [("bot", "b1", 0.0), ("workflow", "w1", 0.0)]
+    roi_deltas = {"bot": 1.0, "workflow": 1.0}
+    risk_scores = {"bot": 0.2, "workflow": 1.5}
+
+    original = vec_db.update_db_weight
+    spy = MagicMock(side_effect=original)
+    monkeypatch.setattr(vec_db, "update_db_weight", spy)
+
+    updates = layer.update_ranker(
+        vectors, True, roi_deltas=roi_deltas, risk_scores=risk_scores
+    )
+
+    calls = {c.args[0]: c.args[1] for c in spy.call_args_list}
+    assert calls["bot"] == pytest.approx(0.8)
+    assert calls["workflow"] == pytest.approx(-0.5)
+    assert updates["bot"] == pytest.approx(0.8)
+    assert updates["workflow"] == pytest.approx(-0.5)
+
+    weights = vec_db.get_db_weights()
+    assert weights["bot"] == pytest.approx(0.8)
+    assert weights["workflow"] == pytest.approx(-0.5)
+    assert layer.context_builder.db_weights["bot"] == pytest.approx(0.8)
+    assert layer.context_builder.db_weights["workflow"] == pytest.approx(-0.5)
+
+    # risk penalties can outweigh positive ROI deltas
+    assert weights["workflow"] < 0
