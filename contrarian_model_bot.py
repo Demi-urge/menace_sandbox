@@ -39,10 +39,14 @@ class Workflow:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Workflow:
+        """Reconstruct a :class:`Workflow` from :meth:`to_dict` output."""
+
         steps = [WorkflowStep(**s) for s in data.get("steps", [])]
         return cls(name=data.get("name", ""), steps=steps, tags=data.get("tags", []))
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return a JSON‑serialisable representation of the workflow."""
+
         return {
             "name": self.name,
             "steps": [s.__dict__ for s in self.steps],
