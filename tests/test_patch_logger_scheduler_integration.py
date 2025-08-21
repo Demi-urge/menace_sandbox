@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import json
 
 import menace.ranking_model_scheduler as rms
 from menace.unified_event_bus import UnifiedEventBus
@@ -55,7 +56,9 @@ def test_patch_logger_triggers_scheduler_on_roi(tmp_path, monkeypatch):
     pl = PatchLogger(event_bus=bus)
     pl.track_contributors(["db:v1"], True, contribution=0.6)
 
-    assert svc.model_path == tmp_path / "model.json"
+    cfg = json.loads((tmp_path / "model.json").read_text())
+    current = Path(cfg["current"])
+    assert svc.model_path == current
     assert svc.reliability_reloaded
     assert tracker.metrics and "db" in tracker.metrics[0]
     assert captured and captured[0]["roi_metrics"]["db"]["roi"] == pytest.approx(0.6)
