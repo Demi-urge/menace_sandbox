@@ -239,3 +239,42 @@ def test_query_with_no_vectors():
         "SELECT 1 FROM vector_metrics WHERE event_type='retrieval'"
     ).fetchall()
     assert rows == []
+
+
+def test_session_persistence_and_cleanup(tmp_path):
+    db_file = tmp_path / "metrics.db"
+    metrics1 = VectorMetricsDB(db_file)
+    retriever = DummyRetriever([("db1", "v1", 0.5)])
+    ranker = DummyRankingModel()
+    tracker = DummyROITracker()
+    builder = DummyContextBuilder(retriever, ranking_model=ranker)
+    logger1 = DummyPatchLogger(metrics1, tracker)
+    layer1 = CognitionLayer(
+        context_builder=builder,
+        patch_logger=logger1,
+        vector_metrics=metrics1,
+        roi_tracker=tracker,
+    )
+    _ctx, sid = layer1.query("hello")
+    rows = metrics1.conn.execute(
+        "SELECT session_id FROM pending_sessions",
+    ).fetchall()
+    assert rows == [(sid,)]
+    metrics1.conn.close()
+
+    metrics2 = VectorMetricsDB(db_file)
+    tracker2 = DummyROITracker()
+    logger2 = DummyPatchLogger(metrics2, tracker2)
+    builder2 = DummyContextBuilder(retriever, ranking_model=ranker)
+    layer2 = CognitionLayer(
+        context_builder=builder2,
+        patch_logger=logger2,
+        vector_metrics=metrics2,
+        roi_tracker=tracker2,
+    )
+    assert sid in layer2._session_vectors
+    layer2.record_patch_outcome(sid, True, contribution=1.0)
+    rows = metrics2.conn.execute(
+        "SELECT session_id FROM pending_sessions",
+    ).fetchall()
+    assert rows == []

@@ -104,6 +104,14 @@ class CognitionLayer:
         # Keep track of vectors by session so outcomes can be recorded later
         self._session_vectors: Dict[str, List[Tuple[str, str, float]]] = {}
         self._retrieval_meta: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        if self.vector_metrics is not None:
+            try:
+                pending = self.vector_metrics.load_sessions()
+                for sid, (vecs, meta) in pending.items():
+                    self._session_vectors[sid] = vecs
+                    self._retrieval_meta[sid] = meta
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     def reload_ranker_model(self, model_path: str | "Path") -> None:
@@ -347,6 +355,11 @@ class CognitionLayer:
                 except Exception:
                     pass
         self._retrieval_meta[sid] = meta_map
+        if self.vector_metrics is not None:
+            try:
+                self.vector_metrics.save_session(sid, vectors, meta_map)
+            except Exception:
+                pass
         return context, sid
 
     # ------------------------------------------------------------------
@@ -450,6 +463,11 @@ class CognitionLayer:
                 except Exception:
                     pass
         self._retrieval_meta[sid] = meta_map
+        if self.vector_metrics is not None:
+            try:
+                self.vector_metrics.save_session(sid, vectors, meta_map)
+            except Exception:
+                pass
         return context, sid
 
     # ------------------------------------------------------------------
@@ -473,6 +491,14 @@ class CognitionLayer:
 
         vectors = self._session_vectors.pop(session_id, [])
         meta = self._retrieval_meta.pop(session_id, None)
+        if (not vectors or meta is None) and self.vector_metrics is not None:
+            try:
+                pending = self.vector_metrics.load_sessions()
+                stored = pending.get(session_id)
+                if stored:
+                    vectors, meta = stored
+            except Exception:
+                pass
         if not vectors:
             return
         vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
@@ -585,6 +611,11 @@ class CognitionLayer:
                         bus.publish("retrieval:feedback", payload)
                     except Exception:
                         pass
+        if self.vector_metrics is not None:
+            try:
+                self.vector_metrics.delete_session(session_id)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     async def record_patch_outcome_async(
@@ -599,6 +630,14 @@ class CognitionLayer:
 
         vectors = self._session_vectors.pop(session_id, [])
         meta = self._retrieval_meta.pop(session_id, None)
+        if (not vectors or meta is None) and self.vector_metrics is not None:
+            try:
+                pending = self.vector_metrics.load_sessions()
+                stored = pending.get(session_id)
+                if stored:
+                    vectors, meta = stored
+            except Exception:
+                pass
         if not vectors:
             return
         vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
@@ -709,6 +748,11 @@ class CognitionLayer:
                         bus.publish("retrieval:feedback", payload)
                     except Exception:
                         pass
+        if self.vector_metrics is not None:
+            try:
+                self.vector_metrics.delete_session(session_id)
+            except Exception:
+                pass
 
 
 __all__ = ["CognitionLayer"]

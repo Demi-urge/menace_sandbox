@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Tuple
 import json
 import sqlite3
 
@@ -115,6 +116,17 @@ class VectorMetricsDB:
             )
             """
         )
+        # Persist session vector data so retrievals can be reconciled after
+        # restarts.  Stored as JSON blobs keyed by ``session_id``.
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pending_sessions(
+                session_id TEXT PRIMARY KEY,
+                vectors TEXT,
+                metadata TEXT
+            )
+            """
+        )
         self.conn.commit()
         cols = [r[1] for r in self.conn.execute("PRAGMA table_info(vector_metrics)").fetchall()]
         migrations = {
@@ -166,6 +178,57 @@ class VectorMetricsDB:
         )
         self.conn.commit()
         return weight
+
+    # ------------------------------------------------------------------
+    def save_session(
+        self,
+        session_id: str,
+        vectors: List[Tuple[str, str, float]],
+        metadata: Dict[str, Dict[str, Any]],
+    ) -> None:
+        """Persist session retrieval data for later reconciliation."""
+
+        self.conn.execute(
+            "REPLACE INTO pending_sessions(session_id, vectors, metadata) VALUES(?,?,?)",
+            (session_id, json.dumps(vectors), json.dumps(metadata)),
+        )
+        self.conn.commit()
+
+    # ------------------------------------------------------------------
+    def load_sessions(
+        self,
+        ) -> Dict[str, Tuple[List[Tuple[str, str, float]], Dict[str, Dict[str, Any]]]]:
+        """Return mapping of session_id to stored vectors and metadata."""
+
+        cur = self.conn.execute(
+            "SELECT session_id, vectors, metadata FROM pending_sessions"
+        )
+        sessions: Dict[str, Tuple[List[Tuple[str, str, float]], Dict[str, Dict[str, Any]]]] = {}
+        for sid, vec_json, meta_json in cur.fetchall():
+            try:
+                raw_vecs = json.loads(vec_json or "[]")
+                vecs = [
+                    (str(o), str(v), float(s))
+                    for o, v, s in raw_vecs
+                ]
+            except Exception:
+                vecs = []
+            try:
+                meta = json.loads(meta_json or "{}")
+            except Exception:
+                meta = {}
+            sessions[str(sid)] = (vecs, meta)
+        return sessions
+
+    # ------------------------------------------------------------------
+    def delete_session(self, session_id: str) -> None:
+        """Remove persisted session data once outcome recorded."""
+
+        self.conn.execute(
+            "DELETE FROM pending_sessions WHERE session_id=?",
+            (session_id,),
+        )
+        self.conn.commit()
 
     # ------------------------------------------------------------------
     def add(self, rec: VectorMetric) -> None:
