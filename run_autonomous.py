@@ -674,7 +674,8 @@ def execute_iteration(
 
     recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
     sandbox_runner._sandbox_main = recovery.run
-    foresight_tracker = ForesightTracker()
+    volatility_threshold = float(os.getenv("SANDBOX_VOLATILITY_THRESHOLD", "1.0"))
+    foresight_tracker = ForesightTracker(window=10, volatility_threshold=volatility_threshold)
     setattr(args, "foresight_tracker", foresight_tracker)
     try:
         full_autonomous_run(
@@ -1919,19 +1920,17 @@ def main(argv: List[str] | None = None) -> None:
 
         if foresight_tracker is not None:
             try:
-                slope, curve, volatility, stability = foresight_tracker.get_trend_curve("_global")
+                slope, second_derivative, avg_stability = foresight_tracker.get_trend_curve("_global")
                 logger.info(
-                    "foresight trend: slope=%.3f curve=%.3f volatility=%.3f stability=%.3f",
+                    "foresight trend: slope=%.3f curve=%.3f avg_stability=%.3f",
                     slope,
-                    curve,
-                    volatility,
-                    stability,
+                    second_derivative,
+                    avg_stability,
                     extra=log_record(
                         run=run_idx,
                         foresight_slope=slope,
-                        foresight_curve=curve,
-                        foresight_volatility=volatility,
-                        foresight_stability=stability,
+                        foresight_curve=second_derivative,
+                        foresight_avg_stability=avg_stability,
                     ),
                 )
             except Exception:
