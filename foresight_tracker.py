@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Deque, Dict, Tuple
-import statistics
+from typing import Deque, Dict, Iterable, List, Tuple
+
+import numpy as np
 
 
 class ForesightTracker:
     """Track workflow foresight metrics and evaluate stability."""
 
-    def __init__(self, max_cycles: int = 10) -> None:
+    def __init__(self, max_cycles: int = 10, volatility_threshold: float = 1.0) -> None:
         self.max_cycles = max_cycles
+        self.volatility_threshold = volatility_threshold
         self.history: Dict[str, Deque[Dict[str, float]]] = {}
 
     # ------------------------------------------------------------------
@@ -39,6 +41,33 @@ class ForesightTracker:
         q.append(entry)
 
     # ------------------------------------------------------------------
+    def get_history(self, workflow_id: str) -> List[Dict[str, float]]:
+        """Return a copy of the stored history for ``workflow_id``."""
+
+        return list(self.history.get(workflow_id, []))
+
+    # ------------------------------------------------------------------
+    def to_dict(self) -> Dict[str, List[Dict[str, float]]]:
+        """Serialize all histories to a dictionary."""
+
+        return {wid: list(deq) for wid, deq in self.history.items()}
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Iterable[Dict[str, float]]],
+        max_cycles: int = 10,
+        volatility_threshold: float = 1.0,
+    ) -> "ForesightTracker":
+        """Create a :class:`ForesightTracker` from serialized ``data``."""
+
+        tracker = cls(max_cycles=max_cycles, volatility_threshold=volatility_threshold)
+        for wid, entries in data.items():
+            tracker.history[wid] = deque(entries, maxlen=max_cycles)
+        return tracker
+
+    # ------------------------------------------------------------------
     def get_trend_curve(self, workflow_id: str) -> Tuple[float, float, float]:
         """Return slope, second derivative and rolling stability for ROI delta."""
 
@@ -46,32 +75,29 @@ class ForesightTracker:
         if not data or len(data) < 2:
             return 0.0, 0.0, 0.0
 
-        roi = [entry["roi_delta"] for entry in data]
-        n = len(roi)
-        x = list(range(n))
-        mean_x = statistics.mean(x)
-        mean_y = statistics.mean(roi)
-        denom = sum((xi - mean_x) ** 2 for xi in x)
-        slope = (
-            sum((xi - mean_x) * (yi - mean_y) for xi, yi in zip(x, roi)) / denom
-            if denom
-            else 0.0
-        )
+        roi = np.array([entry["roi_delta"] for entry in data], dtype=float)
+        x = np.arange(len(roi))
 
-        first_diff = [roi[i + 1] - roi[i] for i in range(n - 1)]
-        second_diff = [first_diff[i + 1] - first_diff[i] for i in range(len(first_diff) - 1)]
-        second_derivative = statistics.mean(second_diff) if second_diff else 0.0
-        rolling_stability = statistics.stdev(roi) if len(roi) > 1 else 0.0
-        return slope, second_derivative, rolling_stability
+        # First derivative: slope from linear regression
+        slope = float(np.polyfit(x, roi, 1)[0]) if roi.size > 1 else 0.0
+
+        # Second derivative: mean of second finite differences
+        second_diff = np.diff(roi, n=2)
+        second_derivative = float(second_diff.mean()) if second_diff.size else 0.0
+
+        # Rolling volatility/stability
+        volatility = float(np.std(roi, ddof=1)) if roi.size > 1 else 0.0
+        return slope, second_derivative, volatility
 
     # ------------------------------------------------------------------
-    def is_stable(self, workflow_id: str) -> bool:
+    def is_stable(self, workflow_id: str, threshold: float | None = None) -> bool:
         """Evaluate the latest trend's slope and volatility.
 
         A workflow is considered stable when the most recent ROI trend is
-        non-negative and its volatility stays below ``1.0``.  The method relies
-        on :meth:`get_trend_curve` to obtain the current slope and rolling
-        standard deviation (treated as volatility).
+        positive and its volatility stays below a configurable ``threshold``.
+        If ``threshold`` is omitted, the value provided during initialization is
+        used.  The method relies on :meth:`get_trend_curve` to obtain the
+        current slope and rolling standard deviation (treated as volatility).
         """
 
         data = self.history.get(workflow_id)
@@ -79,7 +105,8 @@ class ForesightTracker:
             return False
 
         slope, _, volatility = self.get_trend_curve(workflow_id)
-        return slope >= 0 and volatility <= 1.0
+        limit = self.volatility_threshold if threshold is None else threshold
+        return slope > 0 and volatility < limit
 
 
 __all__ = ["ForesightTracker"]
