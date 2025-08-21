@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections import deque
+from pathlib import Path
 from typing import Deque, Dict, Mapping, Tuple
 
 import numpy as np
+import yaml
 
 
 class ForesightTracker:
@@ -17,6 +19,7 @@ class ForesightTracker:
         volatility_threshold: float = 1.0,
         window: int | None = None,
         N: int | None = None,
+        template_config_path: str | Path = "configs/foresight_templates.yaml",
     ) -> None:
         """Create a new tracker.
 
@@ -37,6 +40,8 @@ class ForesightTracker:
         self.max_cycles = max_cycles
         self.volatility_threshold = volatility_threshold
         self.history: Dict[str, Deque[Dict[str, float]]] = {}
+        self.template_config_path = Path(template_config_path)
+        self.templates: Dict[str, list[float]] | None = None
 
     # ------------------------------------------------------------------
     @property
@@ -81,15 +86,38 @@ class ForesightTracker:
 
         try:
             roi_hist = getattr(tracker, "roi_history", [])
-            roi_delta = float(roi_hist[-1]) if roi_hist else 0.0
-
-            raroi_hist = getattr(tracker, "raroi_history", [])
-            if len(raroi_hist) >= 2:
-                raroi_delta = float(raroi_hist[-1] - raroi_hist[-2])
-            elif raroi_hist:
-                raroi_delta = float(raroi_hist[-1])
+            history = self.history.get(workflow_id)
+            profile_map = getattr(self, "workflow_profiles", None)
+            if not isinstance(profile_map, Mapping):
+                profile_map = getattr(self, "profile_map", {})
+            profile = profile_map.get(workflow_id, workflow_id)
+            real_roi = float(roi_hist[-1]) if roi_hist else 0.0
+            if self.is_cold_start(workflow_id):
+                cycles = len(history) if history else 0
+                template_val = self._get_template_curve(profile, cycles)
+                if self.templates and profile in self.templates:
+                    alpha = min(cycles / 5.0, 1.0)
+                    effective_roi = alpha * real_roi + (1.0 - alpha) * template_val
+                    roi_delta = effective_roi
+                    raroi_delta = effective_roi
+                else:
+                    roi_delta = real_roi
+                    raroi_hist = getattr(tracker, "raroi_history", [])
+                    if len(raroi_hist) >= 2:
+                        raroi_delta = float(raroi_hist[-1] - raroi_hist[-2])
+                    elif raroi_hist:
+                        raroi_delta = float(raroi_hist[-1])
+                    else:
+                        raroi_delta = 0.0
             else:
-                raroi_delta = 0.0
+                roi_delta = real_roi
+                raroi_hist = getattr(tracker, "raroi_history", [])
+                if len(raroi_hist) >= 2:
+                    raroi_delta = float(raroi_hist[-1] - raroi_hist[-2])
+                elif raroi_hist:
+                    raroi_delta = float(raroi_hist[-1])
+                else:
+                    raroi_delta = 0.0
 
             conf_hist = getattr(tracker, "confidence_history", [])
             confidence = float(conf_hist[-1]) if conf_hist else 0.0
@@ -121,6 +149,34 @@ class ForesightTracker:
             # best effort; failing to record foresight metrics shouldn't break
             # the calling workflow
             pass
+
+    # ------------------------------------------------------------------
+    def is_cold_start(self, workflow_id: str) -> bool:
+        """Return ``True`` when insufficient ROI history exists."""
+
+        history = self.history.get(workflow_id)
+        if not history or len(history) < 3:
+            return True
+        if not any("roi_delta" in entry for entry in history):
+            return True
+        return False
+
+    # ------------------------------------------------------------------
+    def _get_template_curve(self, profile: str, cycle_index: int) -> float:
+        """Return synthetic ROI for ``profile`` at ``cycle_index``."""
+
+        if self.templates is None:
+            try:
+                with self.template_config_path.open("r", encoding="utf8") as fh:
+                    self.templates = yaml.safe_load(fh) or {}
+            except Exception:
+                self.templates = {}
+        curve = self.templates.get(profile, []) if self.templates else []
+        if cycle_index < 0:
+            cycle_index = 0
+        if cycle_index < len(curve):
+            return float(curve[cycle_index])
+        return float(curve[-1]) if curve else 0.0
 
     # ------------------------------------------------------------------
     def get_trend_curve(self, workflow_id: str) -> Tuple[float, float, float]:
