@@ -50,7 +50,6 @@ class SharedVectorService:
             "error": self._error.transform,
             "workflow": self._workflow.transform,
             "enhancement": self._enhancement.transform,
-            "bot": self._bot.transform,
             "information": self._information.transform,
             "code": self._code.transform,
             "discrepancy": self._discrepancy.transform,
@@ -67,6 +66,8 @@ class SharedVectorService:
     def vectorise(self, kind: str, record: Dict[str, Any]) -> List[float]:
         """Return an embedding for ``record`` of type ``kind``."""
         kind = kind.lower()
+        if kind == "bot":
+            return self._bot.transform(record)
         handler = self._handlers.get(kind)
         if handler:
             return handler(record)
@@ -84,7 +85,10 @@ class SharedVectorService:
 
         vec = self.vectorise(kind, record)
         kind = kind.lower()
-        persist_embedding("bot" if kind == "bot" else kind, record_id, vec)
+        if kind == "bot":
+            persist_embedding("bot", record_id, vec)
+        else:
+            persist_embedding(kind, record_id, vec)
         return vec
 
 
