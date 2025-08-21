@@ -91,6 +91,7 @@ class ContextBuilder:
         regret_penalty: float = getattr(ContextBuilderConfig(), "regret_penalty", 1.0),
         alignment_penalty: float = getattr(ContextBuilderConfig(), "alignment_penalty", 1.0),
         alert_penalty: float = getattr(ContextBuilderConfig(), "alert_penalty", 1.0),
+        risk_penalty: float = getattr(ContextBuilderConfig(), "risk_penalty", 1.0),
         max_alignment_severity: float = getattr(
             ContextBuilderConfig(), "max_alignment_severity", 1.0
         ),
@@ -134,12 +135,18 @@ class ContextBuilder:
         self.regret_penalty = regret_penalty
         self.alignment_penalty = alignment_penalty
         self.alert_penalty = alert_penalty
+        self.risk_penalty = risk_penalty
         self.max_alignment_severity = max_alignment_severity
         self.max_alerts = max_alerts
         self.license_denylist = set(license_denylist or ())
         self.memory = memory_manager
         self._cache: Dict[Tuple[str, int], str] = {}
         self.db_weights = db_weights or {}
+        if not self.db_weights:
+            try:
+                self.refresh_db_weights()
+            except Exception:
+                pass
         self.max_tokens = max_tokens
         self.precise_token_count = precise_token_count
 
@@ -388,6 +395,10 @@ class ContextBuilder:
             pass
         lic = bundle.get("license") or meta.get("license")
         fp = bundle.get("license_fingerprint") or meta.get("license_fingerprint")
+        if lic in self.license_denylist or _LICENSE_DENYLIST.get(fp) in self.license_denylist:
+            if _VECTOR_RISK is not None:
+                _VECTOR_RISK.labels("filtered").inc()
+            return "", _ScoredEntry({}, 0.0, origin, vec_id, {})
         entry: Dict[str, Any] = {"id": bundle.get("record_id")}
 
         if origin == "error":
@@ -444,6 +455,30 @@ class ContextBuilder:
         if metric is not None:
             entry["metric"] = metric
 
+        roi_val = meta.get("roi") if isinstance(meta, dict) else None
+        if roi_val is None:
+            roi_val = bundle.get("roi")
+        if roi_val is not None:
+            try:
+                entry["roi"] = float(roi_val)
+            except Exception:
+                pass
+
+        risk_val = None
+        for key in ("risk_score", "final_risk_score", "risk"):
+            if isinstance(meta, dict) and meta.get(key) is not None:
+                risk_val = meta.get(key)
+                break
+            if bundle.get(key) is not None:
+                risk_val = bundle.get(key)
+                break
+        if risk_val is not None:
+            try:
+                risk_val = float(risk_val)
+                entry["risk_score"] = risk_val
+            except Exception:
+                risk_val = None
+
         # Surface patch safety metrics when available
         win_rate = meta.get("win_rate")
         regret_rate = meta.get("regret_rate")
@@ -493,6 +528,11 @@ class ContextBuilder:
         if severity is not None:
             try:
                 penalty += float(severity) * self.alignment_penalty
+            except Exception:
+                pass
+        if risk_val is not None:
+            try:
+                penalty += float(risk_val) * self.risk_penalty
             except Exception:
                 pass
         if alerts:
@@ -569,6 +609,11 @@ class ContextBuilder:
 
         if not isinstance(query, str) or not query.strip():
             raise MalformedPromptError("query must be a non-empty string")
+
+        try:
+            self.refresh_db_weights()
+        except Exception:
+            pass
 
         prompt_tokens = len(query.split())
         query = redact_text(query)
