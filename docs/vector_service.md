@@ -127,9 +127,27 @@ entry maps a short name to the module and class implementing
 ```
 
 `EmbeddingBackfill` loads this registry at runtime so new sources can be added
-simply by editing the file—no code changes are required. Additional databases
-for bots, workflows, enhancements, errors and more can be integrated by adding a
-new entry with the appropriate module and class name.
+simply by editing the file—no code changes are required.  The JSON object uses
+the following format where each key is the canonical name for a database
+category and the value specifies the import path and class name of the
+`EmbeddableDBMixin` implementation:
+
+```json
+{
+  "<name>": {"module": "<python module>", "class": "<class name>"}
+}
+```
+
+To register a new source:
+
+1. Implement a class inheriting from `EmbeddableDBMixin` with an appropriate
+   `backfill_embeddings` method.
+2. Add an entry to `embedding_registry.json` using the database's short name as
+   the key and the module and class where it lives.
+
+Once listed in the registry, the backfill job can process bots, workflows,
+enhancements, errors and any future database simply by running the backfill
+command.
 
 Metrics emitted by `EmbeddingBackfill.run`:
 
