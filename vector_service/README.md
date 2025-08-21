@@ -4,10 +4,15 @@
 
 `vectorizer.py` turns raw records into embeddings. `retriever.py` searches
 existing vectors, and `context_builder.py` assembles a JSON context from the
-top hits. `cognition_layer.py` orchestrates this flow, storing session metadata
-so `patch_logger.py` can later record the outcome of a patch. If
-`roi_tracker.py` is available it accumulates ROI deltas per database and feeds
-them back into the ranking model.
+top hits. `cognition_layer.py` orchestrates this flow:
+
+1. `vectorizer.py` encodes new records and stores their vectors.
+2. `retriever.py` ranks the stored vectors for a query.
+3. `context_builder.py` builds a JSON payload and notes each origin database.
+4. `cognition_layer.py` keeps session state and hands it off to `patch_logger.py`.
+5. `patch_logger.py` records whether the patch worked, updating metrics.
+6. `roi_tracker.py` (optional) aggregates ROI deltas per origin and pushes them
+   back into the ranker so future retrievals favour high‑ROI sources.
 
 ### Example
 
@@ -21,6 +26,7 @@ layer = CognitionLayer(roi_tracker=tracker)
 ctx, session_id = layer.query("How can I fix latency?")
 # ...apply patch based on ctx...
 layer.record_patch_outcome(session_id, True, contribution=1.0)
+# ranking weights now reflect ROI feedback
 ```
 
 The final call updates ROI metrics and adjusts ranking weights.
