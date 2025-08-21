@@ -159,22 +159,30 @@ class CognitionLayer:
         if self.vector_metrics is None:
             return {}
 
+        origins = {origin or "" for origin, _vec_id, _score in vectors}
+
         per_db: Dict[str, float] = roi_deltas.copy() if roi_deltas else {}
-        if not per_db and self.roi_tracker is not None:
+
+        # Always consult ROITracker for per-origin deltas so adaptive weights
+        # incorporate the latest ROI information.  Tracker-derived deltas only
+        # supplement explicit ``roi_deltas`` to avoid double counting.
+        if self.roi_tracker is not None:
             try:
-                deltas = getattr(self.roi_tracker, "origin_db_deltas", {})
-                for origin, _vec_id, _score in vectors:
-                    key = origin or ""
-                    vals = deltas.get(key)
+                raw = getattr(self.roi_tracker, "origin_db_deltas", {})
+                raw = raw() if callable(raw) else raw
+                for origin in origins:
+                    if origin in per_db:
+                        continue
+                    vals = raw.get(origin)
                     if vals:
-                        per_db[key] = vals[-1]
+                        per_db[origin] = float(vals[-1])
             except Exception:
-                per_db = {}
+                pass
+
         if not per_db:
             delta = 0.1 if success else -0.1
-            for origin, _vec_id, _score in vectors:
-                key = origin or ""
-                per_db[key] = per_db.get(key, 0.0) + delta
+            for origin in origins:
+                per_db[origin] = per_db.get(origin, 0.0) + delta
 
         if risk_scores:
             for origin, sev in risk_scores.items():
@@ -188,15 +196,25 @@ class CognitionLayer:
                 updates[origin] = self.vector_metrics.update_db_weight(origin, change)
             except Exception:
                 pass
+
         if updates:
             try:
+                all_weights = self.vector_metrics.get_db_weights()
+            except Exception:
+                all_weights = updates
+            try:
                 if hasattr(self.context_builder, "refresh_db_weights"):
-                    self.context_builder.refresh_db_weights(updates)  # type: ignore[attr-defined]
+                    self.context_builder.refresh_db_weights(all_weights)  # type: ignore[attr-defined]
                 elif hasattr(self.context_builder, "db_weights"):
-                    self.context_builder.db_weights.update(updates)  # type: ignore[attr-defined]
+                    try:
+                        self.context_builder.db_weights.clear()  # type: ignore[attr-defined]
+                        self.context_builder.db_weights.update(all_weights)  # type: ignore[attr-defined]
+                    except Exception:
+                        self.context_builder.db_weights = dict(all_weights)  # type: ignore[attr-defined]
             except Exception:
                 pass
-            # Persist updates so external services can reload weights after
+
+            # Persist full weight mapping so external services can reload after
             # restarts.  We merge into ``retrieval_ranker.json`` which already
             # tracks the current ranking model path.
             try:
@@ -212,7 +230,7 @@ class CognitionLayer:
                 weights = data.get("weights") or {}
                 if not isinstance(weights, dict):
                     weights = {}
-                for db, wt in updates.items():
+                for db, wt in all_weights.items():
                     try:
                         weights[str(db)] = float(wt)
                     except Exception:

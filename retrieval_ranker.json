@@ -1,5 +1,1 @@
-{
-  "current": "",
-  "history": [],
-  "weights": {}
-}
+{"weights": {"A": 0.5, "B": -0.25, "error": 1.0, "bot": 0.0, "workflow": 1.0, "enhancement": 1.0}, "current": "", "history": []}
