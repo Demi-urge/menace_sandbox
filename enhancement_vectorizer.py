@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+"""Vectoriser for enhancement records."""
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List
+
+_DEFAULT_BOUNDS = {
+    "score": 100.0,
+    "cost_estimate": 1_000_000.0,
+    "num_tags": 20.0,
+}
+
+def _one_hot(idx: int, length: int) -> List[float]:
+    vec = [0.0] * length
+    if 0 <= idx < length:
+        vec[idx] = 1.0
+    return vec
+
+def _get_index(value: Any, mapping: Dict[str, int], max_size: int) -> int:
+    val = str(value).lower().strip() or "other"
+    if val in mapping:
+        return mapping[val]
+    if len(mapping) < max_size:
+        mapping[val] = len(mapping)
+        return mapping[val]
+    return mapping["other"]
+
+def _scale(value: Any, bound: float) -> float:
+    try:
+        f = float(value)
+    except Exception:
+        return 0.0
+    f = max(-bound, min(bound, f))
+    return f / bound if bound else 0.0
+
+@dataclass
+class EnhancementVectorizer:
+    """Simple vectoriser for entries from ``chatgpt_enhancement_bot``."""
+
+    max_types: int = 20
+    max_categories: int = 20
+    type_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
+    category_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
+
+    def fit(self, enhancements: Iterable[Dict[str, Any]]) -> "EnhancementVectorizer":
+        for enh in enhancements:
+            _get_index(enh.get("type") or enh.get("type_"), self.type_index, self.max_types)
+            _get_index(enh.get("category"), self.category_index, self.max_categories)
+        return self
+
+    @property
+    def dim(self) -> int:
+        return self.max_types + self.max_categories + 3
+
+    def transform(self, enh: Dict[str, Any]) -> List[float]:
+        t_idx = _get_index(enh.get("type") or enh.get("type_"), self.type_index, self.max_types)
+        c_idx = _get_index(enh.get("category"), self.category_index, self.max_categories)
+        tags = enh.get("tags") or []
+        vec: List[float] = []
+        vec.extend(_one_hot(t_idx, self.max_types))
+        vec.extend(_one_hot(c_idx, self.max_categories))
+        vec.append(_scale(enh.get("score", 0.0), _DEFAULT_BOUNDS["score"]))
+        vec.append(_scale(enh.get("cost_estimate", 0.0), _DEFAULT_BOUNDS["cost_estimate"]))
+        vec.append(_scale(len(tags), _DEFAULT_BOUNDS["num_tags"]))
+        return vec
+
+__all__ = ["EnhancementVectorizer"]
