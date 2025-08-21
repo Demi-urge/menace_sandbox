@@ -56,6 +56,21 @@ except Exception:  # pragma: no cover
 # to a ``module`` and ``class`` implementing :class:`EmbeddableDBMixin`.
 _REGISTRY_FILE = Path(__file__).with_name("embedding_registry.json")
 
+# Minimum set of database kinds expected to support embeddings. These are
+# used by :func:`_verify_registry` and other modules to recognise valid
+# backfill targets.
+KNOWN_DB_KINDS = {
+    "bot",
+    "workflow",
+    "enhancement",
+    "error",
+    "information",
+    "code",
+    "discrepancy",
+    "failure",
+    "research",
+}
+
 
 def _load_registry(path: Path | None = None) -> dict[str, tuple[str, str]]:
     """Return mapping of source name to (module, class) tuples.
@@ -164,17 +179,6 @@ class EmbeddingBackfill:
     def _verify_registry(self, names: List[str] | None = None) -> None:
         """Ensure registry entries expose the expected EmbeddableDB interface."""
 
-        default_required = {
-            "bot",
-            "workflow",
-            "enhancement",
-            "error",
-            "information",
-            "code",
-            "discrepancy",
-            "failure",
-            "research",
-        }
         registry = _load_registry()
         problems: list[str] = []
         pkg_root_path = Path(__file__).resolve().parents[1]
@@ -210,7 +214,7 @@ class EmbeddingBackfill:
             if missing:
                 problems.append(f"{name}: missing {', '.join(missing)}")
         if names is None and _REGISTRY_FILE == Path(__file__).with_name("embedding_registry.json"):
-            for name in sorted(default_required - registry.keys()):
+            for name in sorted(KNOWN_DB_KINDS - registry.keys()):
                 problems.append(f"{name}: not registered")
         if problems:
             raise TypeError("invalid EmbeddableDB registrations: " + "; ".join(problems))
@@ -341,5 +345,5 @@ async def schedule_backfill(
     await asyncio.gather(*[_run(cls) for cls in subclasses])
 
 
-__all__ = ["EmbeddingBackfill", "EmbeddableDBMixin", "schedule_backfill"]
+__all__ = ["EmbeddingBackfill", "EmbeddableDBMixin", "schedule_backfill", "KNOWN_DB_KINDS"]
 

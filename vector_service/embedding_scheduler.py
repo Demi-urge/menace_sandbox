@@ -11,7 +11,7 @@ from typing import Optional
 
 from unified_event_bus import UnifiedEventBus
 
-from .embedding_backfill import EmbeddingBackfill
+from .embedding_backfill import EmbeddingBackfill, KNOWN_DB_KINDS
 
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me  # type: ignore
@@ -27,6 +27,9 @@ _SCHED_DURATION = _me.Gauge(
     "embedding_scheduler_run_duration_seconds",
     "Duration of scheduled EmbeddingBackfill runs",
 )
+
+# Database kinds recognised for on-demand backfill events.
+_SUPPORTED_SOURCES = set(KNOWN_DB_KINDS)
 
 
 class EmbeddingScheduler:
@@ -71,7 +74,7 @@ class EmbeddingScheduler:
             source = payload.get("source")
         else:
             source = getattr(payload, "source", None)
-        if not source:
+        if not source or source not in _SUPPORTED_SOURCES:
             return
         self._event_counts[source] += 1
         now = time.time()
