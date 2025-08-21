@@ -957,12 +957,10 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         try:
             with foresight_history_file.open("r", encoding="utf-8") as fh:
                 data = json.load(fh)
-            loaded = ForesightTracker.from_dict(
+            foresight_tracker = ForesightTracker.from_dict(
                 data,
-                window=foresight_tracker.max_cycles,
                 volatility_threshold=volatility_threshold,
             )
-            foresight_tracker.history = loaded.history
         except Exception:
             logger.exception("failed to load foresight history")
     meta_log.module_deltas.update(tracker.module_deltas)

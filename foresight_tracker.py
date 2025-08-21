@@ -120,7 +120,10 @@ class ForesightTracker:
             "window": self.max_cycles,  # legacy key for backwards compatibility
             "volatility_threshold": self.volatility_threshold,
             "history": {
-                wf_id: list(entries)
+                wf_id: [
+                    {k: float(v) for k, v in entry.items()}
+                    for entry in list(entries)
+                ]
                 for wf_id, entries in self.history.items()
             },
         }
