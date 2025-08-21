@@ -209,3 +209,67 @@ def backfill_embeddings(req: BackfillRequest) -> Any:
 
 
 __all__ = ["app"]
+
+
+# ---------------------------------------------------------------------------
+def evaluate_ranker(
+    vector_db: str | os.PathLike[str] = "vector_metrics.db",
+    patch_db: str | os.PathLike[str] = "metrics.db",
+    strategy: str = "roi_weighted_cosine",
+) -> dict[str, float]:
+    """Evaluate ranking effectiveness on historical data.
+
+    The helper loads training data from the vector and patch metrics databases
+    and computes simple accuracy/AUC metrics using either the model-based
+    ranker or a registered strategy from :mod:`retrieval_ranker`.
+    """
+
+    import numpy as np
+    import retrieval_ranker as rr
+
+    df = rr.load_training_data(vector_db=vector_db, patch_db=patch_db)
+    if strategy == "model":
+        _tm, metrics = rr.train(df)
+        return metrics
+    scores = rr.rank_candidates(df, strategy)
+    y = df.get("label", 0).astype(int)
+    acc = float(np.mean((scores >= 0.5) == y))
+    auc = 0.0
+    if rr.roc_auc_score is not None and y.nunique() > 1:
+        try:
+            auc = float(rr.roc_auc_score(y, scores))
+        except Exception:
+            auc = 0.0
+    return {"accuracy": acc, "auc": auc}
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point for administrative utilities."""
+
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description="Vector service utilities")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    ev = sub.add_parser("evaluate", help="Evaluate ranking effectiveness")
+    ev.add_argument("--vector-db", default="vector_metrics.db")
+    ev.add_argument("--patch-db", default="metrics.db")
+    ev.add_argument(
+        "--strategy",
+        default="roi_weighted_cosine",
+        help="Ranking strategy name or 'model' to train logistic model",
+    )
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    if args.cmd == "evaluate":
+        metrics = evaluate_ranker(
+            vector_db=args.vector_db, patch_db=args.patch_db, strategy=args.strategy
+        )
+        print(json.dumps(metrics))
+        return 0
+
+    return 1
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

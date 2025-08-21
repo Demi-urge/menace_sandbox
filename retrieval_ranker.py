@@ -30,7 +30,7 @@ from pathlib import Path
 import argparse
 import json
 import logging
-from typing import Iterable, Sequence, Tuple
+from typing import Iterable, Sequence, Tuple, Callable, Dict, Protocol
 
 import numpy as np
 import pandas as pd
@@ -59,6 +59,59 @@ class TrainedModel:
 
     model: object
     feature_names: list[str]
+
+
+# ---------------------------------------------------------------------------
+class RankingStrategy(Protocol):
+    """Callable scoring strategy operating on a DataFrame.
+
+    The strategy receives a :class:`pandas.DataFrame` with at least the
+    ``similarity`` and ``roi`` columns and returns a 1-D array-like of scores
+    aligned with the input frame.  Higher scores indicate higher ranking.
+    """
+
+    def __call__(self, df: pd.DataFrame) -> Iterable[float]:  # pragma: no cover - protocol
+        ...
+
+
+_STRATEGIES: Dict[str, RankingStrategy] = {}
+
+
+def register_strategy(name: str, func: RankingStrategy) -> None:
+    """Register *func* under *name* for use with :func:`rank_candidates`."""
+
+    _STRATEGIES[name] = func
+
+
+def rank_candidates(df: pd.DataFrame, strategy: str) -> pd.Series:
+    """Return ranking scores for ``df`` using registered *strategy*.
+
+    Strategies are simple callables accepting the dataframe and returning
+    scores.  The helper converts the result to a :class:`pandas.Series` to make
+    downstream processing easier.
+    """
+
+    func = _STRATEGIES.get(strategy)
+    if func is None:
+        raise KeyError(f"unknown ranking strategy: {strategy}")
+    scores = list(func(df))
+    return pd.Series(scores, index=df.index)
+
+
+def _roi_weighted_cosine(df: pd.DataFrame) -> Iterable[float]:
+    """Simple ROI-weighted cosine similarity strategy.
+
+    The score is computed as ``similarity * (1 + roi)`` where ``roi`` defaults
+    to zero if missing.  This provides a lightweight alternative to model-based
+    ranking when only vector similarity and ROI feedback are available.
+    """
+
+    sim = df.get("similarity", 0.0).astype(float)
+    roi = df.get("roi", 0.0).astype(float)
+    return sim * (1.0 + roi)
+
+
+register_strategy("roi_weighted_cosine", _roi_weighted_cosine)
 
 
 # ---------------------------------------------------------------------------

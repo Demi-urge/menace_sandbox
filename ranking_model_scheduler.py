@@ -109,6 +109,11 @@ class RankingModelScheduler:
         # cumulative deltas can trigger immediate retrains.
         self._tracker_roi_totals: dict[str, float] = {}
         self._vector_db_roi_totals: dict[str, float] = {}
+        # Baseline of cumulative vector similarity per origin database.  This
+        # allows the scheduler to react not only to ROI changes but also to
+        # shifts in vector similarity scores which may indicate embedding
+        # drift or search behaviour changes.
+        self._vector_db_similarity_totals: dict[str, float] = {}
         self.event_bus = event_bus
         if self.event_bus is None and UnifiedEventBus is not None:
             try:
@@ -325,16 +330,27 @@ class RankingModelScheduler:
             db = VectorMetricsDB(self.vector_db)
             try:
                 cur = db.conn.execute(
-                    "SELECT db, COALESCE(SUM(contribution),0) FROM vector_metrics GROUP BY db"
+                    """
+                    SELECT db,
+                           COALESCE(SUM(contribution),0) AS contrib,
+                           COALESCE(SUM(similarity),0) AS sim
+                      FROM vector_metrics
+                     GROUP BY db
+                    """
                 )
                 rows = cur.fetchall()
             finally:
                 db.conn.close()
             self._vector_db_roi_totals = {
-                str(origin): float(total or 0.0) for origin, total in rows
+                str(origin): float(contrib or 0.0)
+                for origin, contrib, _ in rows
+            }
+            self._vector_db_similarity_totals = {
+                str(origin): float(sim or 0.0) for origin, _, sim in rows
             }
         except Exception:
             self._vector_db_roi_totals = {}
+            self._vector_db_similarity_totals = {}
 
     # ------------------------------------------------------------------
     def _loop(self) -> None:
@@ -368,16 +384,27 @@ class RankingModelScheduler:
                             db = VectorMetricsDB(self.vector_db)
                             try:
                                 cur = db.conn.execute(
-                                    "SELECT db, COALESCE(SUM(contribution),0) FROM vector_metrics GROUP BY db"
+                                    """
+                                    SELECT db,
+                                           COALESCE(SUM(contribution),0) AS contrib,
+                                           COALESCE(SUM(similarity),0) AS sim
+                                      FROM vector_metrics
+                                     GROUP BY db
+                                    """
                                 )
                                 rows = cur.fetchall()
                             finally:
                                 db.conn.close()
-                            for origin, total in rows:
+                            for origin, contrib, sim in rows:
                                 origin = str(origin)
-                                total = float(total or 0.0)
-                                last = self._vector_db_roi_totals.get(origin, 0.0)
-                                if abs(total - last) >= self.roi_signal_threshold:
+                                contrib = float(contrib or 0.0)
+                                sim = float(sim or 0.0)
+                                last_contrib = self._vector_db_roi_totals.get(origin, 0.0)
+                                last_sim = self._vector_db_similarity_totals.get(origin, 0.0)
+                                if (
+                                    abs(contrib - last_contrib) >= self.roi_signal_threshold
+                                    or abs(sim - last_sim) >= self.roi_signal_threshold
+                                ):
                                     triggered = True
                                     break
                         except Exception:
