@@ -41,6 +41,9 @@ sys.modules.setdefault("menace.logging_utils", _log_utils)
 _alert_dispatcher = importlib.import_module(__name__ + ".alert_dispatcher")
 sys.modules.setdefault("alert_dispatcher", _alert_dispatcher)
 sys.modules.setdefault("menace.alert_dispatcher", _alert_dispatcher)
+_readiness_index = importlib.import_module(__name__ + ".readiness_index")
+sys.modules.setdefault("readiness_index", _readiness_index)
+sys.modules.setdefault("menace.readiness_index", _readiness_index)
 
 _pkg_dir = os.path.dirname(__file__)
 _sk_dir = os.path.join(_pkg_dir, "sklearn")
@@ -259,4 +262,5 @@ __all__ = [
     "synergy_auto_trainer",
     "variant_manager",
 ]
+__all__.append("readiness_index")
 __version__ = "0.1.0"
