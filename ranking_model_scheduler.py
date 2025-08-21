@@ -105,7 +105,10 @@ class RankingModelScheduler:
         self.win_rate_threshold = win_rate_threshold
         self.running = False
         self._thread: Optional[threading.Thread] = None
-        self._db_roi_counts: dict[str, int] = {}
+        # Track baseline ROI totals for ROITracker and VectorMetricsDB so that
+        # cumulative deltas can trigger immediate retrains.
+        self._tracker_roi_totals: dict[str, float] = {}
+        self._vector_db_roi_totals: dict[str, float] = {}
         self.event_bus = event_bus
         if self.event_bus is None and UnifiedEventBus is not None:
             try:
@@ -297,6 +300,41 @@ class RankingModelScheduler:
                 self.event_bus.publish("reload_reliability_scores", {})
             except Exception:
                 pass
+            # Notify listeners that the ranker has been updated so they can
+            # reload models promptly.
+            try:
+                self.event_bus.publish(
+                    "retrieval:ranker_updated", {"path": str(model_file)}
+                )
+            except Exception:
+                pass
+
+        # Snapshot ROI baselines after retraining so subsequent deltas are
+        # measured relative to the freshly trained model.
+        if self.roi_tracker is not None:
+            try:
+                self._tracker_roi_totals = {
+                    origin: sum(float(d) for d in deltas)
+                    for origin, deltas in getattr(
+                        self.roi_tracker, "origin_db_deltas", {}
+                    ).items()
+                }
+            except Exception:
+                self._tracker_roi_totals = {}
+        try:
+            db = VectorMetricsDB(self.vector_db)
+            try:
+                cur = db.conn.execute(
+                    "SELECT db, COALESCE(SUM(contribution),0) FROM vector_metrics GROUP BY db"
+                )
+                rows = cur.fetchall()
+            finally:
+                db.conn.close()
+            self._vector_db_roi_totals = {
+                str(origin): float(total or 0.0) for origin, total in rows
+            }
+        except Exception:
+            self._vector_db_roi_totals = {}
 
     # ------------------------------------------------------------------
     def _loop(self) -> None:
@@ -315,16 +353,36 @@ class RankingModelScheduler:
                 break
             while self.running:
                 triggered = False
-                if (
-                    self.roi_tracker is not None
-                    and self.roi_signal_threshold is not None
-                ):
-                    for origin, deltas in getattr(self.roi_tracker, "origin_db_deltas", {}).items():
-                        last = self._db_roi_counts.get(origin, 0)
-                        if len(deltas) > last:
-                            self._db_roi_counts[origin] = len(deltas)
-                            if abs(deltas[-1]) >= self.roi_signal_threshold:
+                if self.roi_signal_threshold is not None:
+                    # Watch ROITracker for cumulative ROI deltas
+                    if self.roi_tracker is not None:
+                        for origin, deltas in getattr(
+                            self.roi_tracker, "origin_db_deltas", {}
+                        ).items():
+                            total = sum(float(d) for d in deltas)
+                            last = self._tracker_roi_totals.get(origin, 0.0)
+                            if abs(total - last) >= self.roi_signal_threshold:
                                 triggered = True
+                            self._tracker_roi_totals[origin] = total
+                    # Watch VectorMetricsDB for cumulative ROI deltas
+                    try:
+                        db = VectorMetricsDB(self.vector_db)
+                        try:
+                            cur = db.conn.execute(
+                                "SELECT db, COALESCE(SUM(contribution),0) FROM vector_metrics GROUP BY db"
+                            )
+                            rows = cur.fetchall()
+                        finally:
+                            db.conn.close()
+                        for origin, total in rows:
+                            origin = str(origin)
+                            total = float(total or 0.0)
+                            last = self._vector_db_roi_totals.get(origin, 0.0)
+                            if abs(total - last) >= self.roi_signal_threshold:
+                                triggered = True
+                            self._vector_db_roi_totals[origin] = total
+                    except Exception:
+                        pass
                     if triggered:
                         break
                 if time.time() - start >= base_interval:
