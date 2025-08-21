@@ -38,9 +38,11 @@ class ForesightTracker:
     def get_trend_curve(self, workflow_id: str) -> Tuple[float, float, float]:
         """Return slope, second derivative and average window stability.
 
-        The trend is computed from the mean of the metric values for each
-        recorded cycle. ``avg_window_stability`` equals ``1 / (1 + std)``
-        where ``std`` is the standard deviation over the retained window.
+        This is part of the public API so callers can inspect the raw trend
+        information used by :meth:`is_stable`. The trend is computed from the
+        mean of the metric values for each recorded cycle.
+        ``avg_window_stability`` equals ``1 / (1 + std)`` where ``std`` is the
+        standard deviation over the retained window.
         """
 
         data = self.history.get(workflow_id)
@@ -66,7 +68,12 @@ class ForesightTracker:
 
     # ------------------------------------------------------------------
     def is_stable(self, workflow_id: str) -> bool:
-        """Return ``True`` when slope is positive and volatility is low."""
+        """Return ``True`` when slope is positive and volatility is low.
+
+        This public helper combines :meth:`get_trend_curve` with a volatility
+        check to determine whether ``workflow_id`` is operating within the
+        allowed threshold.
+        """
 
         data = self.history.get(workflow_id)
         if not data or len(data) < 2:
