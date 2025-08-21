@@ -418,7 +418,7 @@ class ContextBuilder:
             text = text or meta.get("summary") or meta.get("code") or ""
 
         text = redact_text(str(text))
-        entry["desc"] = self._summarise(text)
+        entry["desc"] = text
         metric = self._metric(origin, meta, query, text, vec_id)
         if metric is not None:
             entry["metric"] = metric
@@ -658,6 +658,8 @@ class ContextBuilder:
                 desc = cand["summary"].get("desc", "")
                 if not cand["summarised"]:
                     cand["summary"]["desc"] = self._summarise(desc)
+                    cand["meta"]["desc"] = cand["summary"]["desc"]
+                    cand["meta"]["truncated"] = True
                     cand["summarised"] = True
                     new_tokens = self._count_tokens(
                         json.dumps(cand["summary"], separators=(",", ":"))
@@ -666,16 +668,28 @@ class ContextBuilder:
                     cand["tokens"] = new_tokens
                     total_tokens = sum_tokens + overhead
                 else:
-                    sum_tokens -= cand["tokens"]
-                    candidates.pop(idx)
-                    if candidates:
-                        sum_tokens = sum(c["tokens"] for c in candidates)
-                        overhead = estimate_tokens(candidates) - sum_tokens
-                        total_tokens = sum_tokens + overhead
+                    truncated = desc.rsplit(" ", 1)[0] if " " in desc else ""
+                    if not truncated or truncated == desc:
+                        sum_tokens -= cand["tokens"]
+                        candidates.pop(idx)
+                        if candidates:
+                            sum_tokens = sum(c["tokens"] for c in candidates)
+                            overhead = estimate_tokens(candidates) - sum_tokens
+                            total_tokens = sum_tokens + overhead
+                        else:
+                            total_tokens = 0
+                            sum_tokens = 0
+                            overhead = 0
                     else:
-                        total_tokens = 0
-                        sum_tokens = 0
-                        overhead = 0
+                        cand["summary"]["desc"] = truncated + "..."
+                        cand["meta"]["desc"] = cand["summary"]["desc"]
+                        cand["meta"]["truncated"] = True
+                        new_tokens = self._count_tokens(
+                            json.dumps(cand["summary"], separators=(",", ":"))
+                        )
+                        sum_tokens += new_tokens - cand["tokens"]
+                        cand["tokens"] = new_tokens
+                        total_tokens = sum_tokens + overhead
 
         result: Dict[str, List[Dict[str, Any]]] = {}
         meta: Dict[str, List[Dict[str, Any]]] = {}

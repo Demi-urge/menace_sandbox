@@ -567,3 +567,25 @@ def test_prioritise_roi_trimming(monkeypatch):
     ctx = builder.build_context("q", top_k=2, prioritise="roi")
     data = json.loads(ctx)
     assert data["errors"][0]["id"] == 2
+
+
+def test_oversized_dataset_respects_token_limit(monkeypatch):
+    long_text = "word " * 200
+
+    class DummyRetriever:
+        def search(self, q, top_k=5, **_):
+            return [
+                {
+                    "origin_db": "error",
+                    "record_id": i,
+                    "score": 0.0,
+                    "text": long_text,
+                    "metadata": {},
+                }
+                for i in range(2)
+            ]
+
+    builder = ContextBuilder(retriever=DummyRetriever(), max_tokens=50)
+    ctx, meta = builder.build_context("q", top_k=2, return_metadata=True)
+    assert builder._count_tokens(ctx) <= 50
+    assert any(m.get("truncated") for m in meta["errors"])
