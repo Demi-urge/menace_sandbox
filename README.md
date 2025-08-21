@@ -1496,10 +1496,14 @@ additionally inspects Terraform directories and host lists to set
 `Autoscaler` integrates with `PredictiveResourceAllocator` for dynamic scaling, while `SelfHealingOrchestrator` redeploys crashed bots and triggers automatic rollbacks when failures persist.
 
 ### Monitoring dashboard
-`MetricsDashboard` exposes Prometheus metrics via a Flask endpoint for easy visualization.
+`MetricsDashboard` exposes Prometheus metrics via a Flask endpoint for easy
+visualization. A `/refresh` route pulls the latest telemetry and readiness stats
+and pushes a notification to `/refresh/stream` so open dashboards can reload
+charts automatically.
 
-Run `start_metrics_server(8001)` before executing `benchmark_registered_workflows()`
-to publish metrics that Grafana can chart in real time. The dashboard examples in
+Run `start_metrics_server(8001)` before executing
+`benchmark_registered_workflows()` to publish metrics that Grafana can chart in
+real time. The dashboard examples in
 [docs/metrics_dashboard.md](docs/metrics_dashboard.md) show how to track ROI,
 resource usage and latency statistics like the new median latency gauge over
 time.

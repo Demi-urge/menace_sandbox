@@ -30,6 +30,20 @@ spec_md.loader.exec_module(md)
 
 pkg.metrics_exporter = me
 pkg.metrics_dashboard = md
+class _Gauge:
+    def __init__(self):
+        self.value = 0
+        self._value = types.SimpleNamespace(get=lambda: self.value)
+
+    def set(self, v):
+        self.value = v
+
+sat_stub = types.SimpleNamespace(
+    synergy_trainer_iterations=_Gauge(),
+    synergy_trainer_failures_total=_Gauge(),
+)
+sys.modules["menace.synergy_auto_trainer"] = sat_stub
+pkg.synergy_auto_trainer = sat_stub
 MetricsDashboard = md.MetricsDashboard
 metrics_exporter = me
 
@@ -143,3 +157,18 @@ def test_roi_and_metric_routes(tmp_path):
     assert all_metrics["synergy_weight_update_failures_total"] == 4
     assert all_metrics["synergy_trainer_iterations"] == 5
     assert all_metrics["synergy_trainer_failures_total"] == 2
+
+
+def test_refresh_endpoint(tmp_path, monkeypatch):
+    hist = tmp_path / "hist.json"
+    _make_history(hist)
+    tb = md.TelemetryBackend(str(tmp_path / "tel.db"))
+    tb.log_prediction("wf1", 0.5, 0.4, None, None, False, 0.9)
+    monkeypatch.setattr(md, "TelemetryBackend", lambda: tb)
+    dash = MetricsDashboard(hist)
+    client = dash.app.test_client()
+    resp = client.get("/refresh")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["readiness"]["wf1"] == 0.9
+    assert data["telemetry"][0]["workflow_id"] == "wf1"

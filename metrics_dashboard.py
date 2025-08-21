@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List
 import json
 from io import BytesIO
+import queue
 
 from flask import Flask, jsonify, send_file
 
@@ -83,6 +84,11 @@ class MetricsDashboard:
         )
         self.app.add_url_rule(
             "/heatmaps/<metric>/<period>.png", "agg_heatmap", self.agg_heatmap
+        )
+        self._refresh_queue: queue.Queue[str] = queue.Queue()
+        self.app.add_url_rule("/refresh", "refresh", self.refresh)
+        self.app.add_url_rule(
+            "/refresh/stream", "refresh_stream", self.refresh_stream
         )
 
     # ------------------------------------------------------------------
@@ -231,6 +237,30 @@ class MetricsDashboard:
         except Exception:
             data = []
         return jsonify(data), 200
+
+    def refresh(self) -> tuple[str, int]:
+        """Pull latest telemetry and readiness stats and notify listeners."""
+        try:
+            tb = TelemetryBackend()
+            history = tb.fetch_history()
+        except Exception:
+            history = []
+        readiness: dict[str, float] = {}
+        for h in history:
+            wf = h.get("workflow_id")
+            ready = h.get("readiness")
+            if wf is not None and ready is not None:
+                readiness[str(wf)] = float(ready)
+        self._refresh_queue.put("refresh")
+        return jsonify({"telemetry": history, "readiness": readiness}), 200
+
+    def refresh_stream(self):
+        def _gen():
+            while True:
+                self._refresh_queue.get()
+                yield "data: refresh\n\n"
+
+        return self.app.response_class(_gen(), mimetype="text/event-stream")
 
     # ------------------------------------------------------------------
     def aggregates(self, metric: str, period: str) -> tuple[str, int]:
