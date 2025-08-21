@@ -17,6 +17,9 @@ from error_vectorizer import ErrorVectorizer
 from workflow_vectorizer import WorkflowVectorizer
 from enhancement_vectorizer import EnhancementVectorizer
 from bot_vectorizer import BotVectorizer
+from information_vectorizer import InformationVectorizer
+from code_vectorizer import CodeVectorizer
+from discrepancy_vectorizer import DiscrepancyVectorizer
 from vector_utils import persist_embedding
 from governed_embeddings import governed_embed
 
@@ -36,6 +39,9 @@ class SharedVectorService:
     _workflow: WorkflowVectorizer = field(default_factory=WorkflowVectorizer)
     _enhancement: EnhancementVectorizer = field(default_factory=EnhancementVectorizer)
     _bot: BotVectorizer = field(default_factory=BotVectorizer)
+    _information: InformationVectorizer = field(default_factory=InformationVectorizer)
+    _code: CodeVectorizer = field(default_factory=CodeVectorizer)
+    _discrepancy: DiscrepancyVectorizer = field(default_factory=DiscrepancyVectorizer)
 
     def _encode_text(self, text: str) -> List[float]:
         if self.text_embedder is None:
@@ -58,6 +64,12 @@ class SharedVectorService:
             return self._enhancement.transform(record)
         if kind == "bot":
             return self._bot.transform(record)
+        if kind == "information":
+            return self._information.transform(record)
+        if kind == "code":
+            return self._code.transform(record)
+        if kind == "discrepancy":
+            return self._discrepancy.transform(record)
         if kind in {"text", "prompt"}:
             return self._encode_text(str(record.get("text", "")))
         raise ValueError(f"unknown record type: {kind}")
