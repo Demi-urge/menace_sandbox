@@ -143,11 +143,13 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
             volatility_threshold: float = 1.0,
             N: int | None = None,
         ) -> None:  # pragma: no cover - stub
-            pass
+            if N is not None:
+                window = N
+            self.max_cycles = window
 
         @property
-        def max_cycles(self) -> int:  # pragma: no cover - stub
-            return 0
+        def window(self) -> int:  # pragma: no cover - stub
+            return getattr(self, "max_cycles", 0)
 
         def to_dict(self) -> dict:  # pragma: no cover - stub
             return {}
@@ -160,7 +162,7 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
             volatility_threshold: float | None = None,
             N: int | None = None,
         ) -> "ForesightTracker":  # pragma: no cover - stub
-            return cls()
+            return cls(window=window or N or 10)
 else:  # pragma: no cover - import when not in light mode
     from foresight_tracker import ForesightTracker
 from relevancy_metrics_db import RelevancyMetricsDB
@@ -942,7 +944,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     foresight_tracker = getattr(args, "foresight_tracker", None)
     if foresight_tracker is None:
         foresight_tracker = ForesightTracker(
-            N=10,
+            window=10,
             volatility_threshold=volatility_threshold,
         )
     roi_history_file = data_dir / "roi_history.json"
@@ -957,7 +959,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                 data = json.load(fh)
             loaded = ForesightTracker.from_dict(
                 data,
-                N=foresight_tracker.max_cycles,
+                window=foresight_tracker.max_cycles,
                 volatility_threshold=volatility_threshold,
             )
             foresight_tracker.history = loaded.history
