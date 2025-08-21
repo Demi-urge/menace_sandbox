@@ -1192,15 +1192,7 @@ def _sandbox_cycle_runner(
             tracker, "scenario_degradation", lambda: 0.0
         )()
         wf_id = getattr(ctx, "workflow_id", "_global")
-        conf_val = tracker.workflow_confidence(wf_id)
-        foresight_metrics = {
-            "roi_delta": roi - ctx.prev_roi,
-            "raroi_delta": raroi,
-            "confidence": conf_val,
-            "resilience": resilience,
-            "scenario_degradation": metrics_dict.get("scenario_degradation", 0.0),
-        }
-        foresight_tracker.record_cycle_metrics(wf_id, foresight_metrics)
+        foresight_tracker.capture_from_roi(tracker, wf_id)
         ctx.workflow_stable = foresight_tracker.is_stable(wf_id)
         last_metrics = metrics_dict
         feat_vec = [

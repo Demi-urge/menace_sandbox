@@ -5737,32 +5737,8 @@ class SelfImprovementEngine:
                 workflow_id = getattr(ctx_obj, "workflow_id", workflow_id)
             except Exception:
                 pass
-            confidence = 0.0
-            resilience = 0.0
-            scenario_deg = 0.0
-            if tracker is not None:
-                try:
-                    if getattr(tracker, "confidence_history", []):
-                        confidence = float(tracker.confidence_history[-1])
-                    res_hist = tracker.metrics_history.get("synergy_resilience", [])
-                    if res_hist:
-                        resilience = float(res_hist[-1])
-                    scenario_deg = float(
-                        getattr(tracker, "scenario_degradation", lambda: 0.0)()
-                    )
-                except Exception:
-                    pass
             try:
-                self.foresight_tracker.record_cycle_metrics(
-                    workflow_id,
-                    {
-                        "roi_delta": float(delta),
-                        "raroi_delta": float(raroi_delta),
-                        "confidence": float(confidence),
-                        "resilience": float(resilience),
-                        "scenario_degradation": float(scenario_deg),
-                    },
-                )
+                self.foresight_tracker.capture_from_roi(tracker, workflow_id)
             except Exception:
                 self.logger.exception("foresight tracker record failed")
             self.roi_history.append(delta)
