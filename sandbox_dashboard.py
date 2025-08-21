@@ -13,6 +13,7 @@ from .metrics_dashboard import MetricsDashboard
 from .roi_tracker import ROITracker
 from . import synergy_weight_cli
 from .alignment_dashboard import load_alignment_flag_records
+from .readiness_index import military_grade_readiness
 
 
 _TEMPLATE = """
@@ -26,6 +27,7 @@ _TEMPLATE = """
 {% if error %}<p style="color:red">{{ error }}</p>{% endif %}
 <canvas id="roi" width="400" height="200"></canvas>
 <canvas id="security" width="400" height="200"></canvas>
+<canvas id="readiness" width="400" height="200"></canvas>
 <canvas id="weights" width="400" height="200"></canvas>
 <canvas id="scenarios" width="400" height="200"></canvas>
 <canvas id="relevancy" width="400" height="200"></canvas>
@@ -39,6 +41,9 @@ async function load() {
   new Chart(document.getElementById('roi'), {type:'line',data:{labels:data.labels,datasets:[{label:'ROI delta',data:data.roi}]}});
   if (data.security.length) {
     new Chart(document.getElementById('security'), {type:'line',data:{labels:data.labels.slice(0,data.security.length),datasets:[{label:'Security score',data:data.security}]}});
+  }
+  if (data.readiness.length) {
+    new Chart(document.getElementById('readiness'), {type:'line',data:{labels:data.labels.slice(0,data.readiness.length),datasets:[{label:'Readiness',data:data.readiness}]}});
   }
   const wdata = await fetch('/weights').then(r => r.json());
   const ds = [];
@@ -128,6 +133,21 @@ class SandboxDashboard(MetricsDashboard):
             return jsonify({'error': self.load_error}), 500
         labels = list(range(len(tracker.roi_history)))
         security = tracker.metrics_history.get('security_score', [])
+        rel_hist = tracker.metrics_history.get('synergy_reliability', [])
+        safety_hist = tracker.metrics_history.get('synergy_safety_rating', [])
+        res_hist = tracker.metrics_history.get('synergy_resilience', [])
+        conf_hist = getattr(tracker, 'confidence_history', [])
+        readiness: list[float] = []
+        for i in labels:
+            raroi = tracker.raroi_history[i] if i < len(tracker.raroi_history) else 0.0
+            reliability = rel_hist[i] if i < len(rel_hist) else 1.0
+            if i < len(conf_hist):
+                reliability *= conf_hist[i]
+            safety = safety_hist[i] if i < len(safety_hist) else 1.0
+            resilience = res_hist[i] if i < len(res_hist) else 1.0
+            readiness.append(
+                military_grade_readiness(raroi, reliability, safety, resilience)
+            )
         warnings = ["" for _ in labels]
         records = load_alignment_flag_records(self.alignment_flags_file)
         for idx, rec in enumerate(records):
@@ -157,6 +177,7 @@ class SandboxDashboard(MetricsDashboard):
             'labels': labels,
             'roi': tracker.roi_history,
             'security': security,
+            'readiness': readiness,
             'category_counts': tracker.category_summary(),
             'warnings': warnings,
             'truth_adapter': ta_status,
