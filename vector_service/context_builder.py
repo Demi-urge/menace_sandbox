@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 import logging
@@ -61,6 +62,7 @@ class _ScoredEntry:
     score: float
     origin: str
     vector_id: str
+    metadata: Dict[str, Any]
 
 
 class ContextBuilder:
@@ -129,6 +131,12 @@ class ContextBuilder:
         self.db_weights = db_weights or {}
         self.max_tokens = max_tokens
 
+        # Attempt to use tokenizer from retriever or embedder if provided.
+        tok = getattr(self.retriever, "tokenizer", None)
+        if tok is None:
+            tok = getattr(getattr(self.retriever, "embedder", None), "tokenizer", None)
+        self._tokenizer = tok
+
         # propagate thresholds to retriever when possible
         try:
             self.retriever.max_alert_severity = max_alignment_severity
@@ -180,6 +188,24 @@ class ContextBuilder:
             except Exception:  # pragma: no cover - fallback
                 pass
         return _summarise_text(text)
+
+    # ------------------------------------------------------------------
+    def _count_tokens(self, text: str) -> int:
+        """Return an estimate of tokens for ``text``.
+
+        The method prefers a tokenizer supplied by the retriever or its
+        embedder.  When unavailable it falls back to a lightweight regex based
+        approximation which counts contiguous word characters.  The goal here is
+        not perfect parity with any model but a consistent budget estimate for
+        trimming.
+        """
+
+        if self._tokenizer is not None:
+            try:  # pragma: no cover - defensive against tokeniser failures
+                return len(self._tokenizer.encode(text))
+            except Exception:
+                pass
+        return len(re.findall(r"\w+", text))
 
     # ------------------------------------------------------------------
     def _metric(
@@ -483,7 +509,7 @@ class ContextBuilder:
             "code": "code",
             "discrepancy": "discrepancies",
         }
-        return key_map.get(origin, ""), _ScoredEntry(entry, score, origin, vec_id)
+        return key_map.get(origin, ""), _ScoredEntry(entry, score, origin, vec_id, meta)
 
     # ------------------------------------------------------------------
     @log_and_measure
@@ -496,6 +522,7 @@ class ContextBuilder:
         return_metadata: bool = False,
         session_id: str | None = None,
         return_stats: bool = False,
+        prioritise: str | None = None,
         **_: Any,
     ) -> Any:
         """Return a compact JSON context for ``query``.
@@ -559,28 +586,84 @@ class ContextBuilder:
             if bucket:
                 buckets[bucket].append(scored)
 
-        result: Dict[str, List[Dict[str, Any]]] = {}
-        meta: Dict[str, List[Dict[str, Any]]] = {}
-        vectors: List[Tuple[str, str, float]] = []
-        for key, items in buckets.items():
+        # Flatten scored entries and compute token estimates so we can trim
+        # globally across buckets.
+        bucket_order = list(buckets.keys())
+        candidates: List[Dict[str, Any]] = []
+        for key in bucket_order:
+            items = buckets[key]
             if not items:
                 continue
             items.sort(key=lambda e: e.score, reverse=True)
-            chosen = items[:top_k]
-            summaries: List[Dict[str, Any]] = []
-            for e in chosen:
+            for e in items[:top_k]:
                 full = e.entry
-                if return_metadata:
-                    meta.setdefault(key, []).append(full)
-                summaries.append({k: v for k, v in full.items() if k not in {"win_rate", "regret_rate", "flags"}})
-            result[key] = summaries
-            vectors.extend([(e.origin, e.vector_id, e.score) for e in chosen])
+                summary = {
+                    k: v for k, v in full.items() if k not in {"win_rate", "regret_rate", "flags"}
+                }
+                candidates.append(
+                    {
+                        "bucket": key,
+                        "summary": summary,
+                        "meta": full,
+                        "raw": e.metadata,
+                        "score": e.score,
+                        "origin": e.origin,
+                        "vector_id": e.vector_id,
+                        "summarised": False,
+                    }
+                )
+
+        def estimate_tokens(cands: List[Dict[str, Any]]) -> int:
+            ctx: Dict[str, List[Dict[str, Any]]] = {}
+            for c in cands:
+                ctx.setdefault(c["bucket"], []).append(c["summary"])
+            return self._count_tokens(json.dumps(ctx, separators=(",", ":")))
+
+        total_tokens = estimate_tokens(candidates)
+        if total_tokens > self.max_tokens and candidates:
+            if prioritise == "newest":
+                candidates.sort(
+                    key=lambda c: (
+                        c["score"],
+                        c["raw"].get("timestamp")
+                        or c["raw"].get("ts")
+                        or c["raw"].get("created_at")
+                        or c["raw"].get("id", 0),
+                    )
+                )
+            elif prioritise == "roi":
+                candidates.sort(key=lambda c: (c["score"], c["raw"].get("roi", 0)))
+            else:
+                candidates.sort(key=lambda c: c["score"])
+
+            idx = 0
+            while total_tokens > self.max_tokens and candidates:
+                cand = candidates[idx]
+                desc = cand["summary"].get("desc", "")
+                if not cand["summarised"]:
+                    cand["summary"]["desc"] = self._summarise(desc)
+                    cand["summarised"] = True
+                    total_tokens = estimate_tokens(candidates)
+                else:
+                    candidates.pop(idx)
+                    total_tokens = estimate_tokens(candidates)
+
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        meta: Dict[str, List[Dict[str, Any]]] = {}
+        vectors: List[Tuple[str, str, float]] = []
+        for key in bucket_order:
+            for c in candidates:
+                if c["bucket"] == key:
+                    result.setdefault(key, []).append(c["summary"])
+                    if return_metadata:
+                        meta.setdefault(key, []).append(c["meta"])
+                    vectors.append((c["origin"], c["vector_id"], c["score"]))
 
         context = json.dumps(result, separators=(",", ":"))
         if not include_vectors and not return_metadata:
             self._cache[cache_key] = context
         stats = {
-            "tokens": len(context.split()),
+            "tokens": total_tokens,
             "wall_time_ms": elapsed_ms,
             "prompt_tokens": prompt_tokens,
         }
