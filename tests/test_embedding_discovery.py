@@ -32,5 +32,5 @@ def test_backfill_discovers_new_db(tmp_path, monkeypatch):
     monkeypatch.setattr(EmbeddingBackfill, "_process_db", fake_process)
 
     backfill = EmbeddingBackfill(batch_size=5)
-    backfill.run()
+    backfill.run(dbs=["temp"])
     assert "TempDB" in processed

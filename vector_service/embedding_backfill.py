@@ -90,50 +90,38 @@ class EmbeddingBackfill:
 
         subclasses: List[type] = []
 
-        if names and all(n.lower().rstrip("s") in _TABLE_CLASS_MAP for n in names):
-            # Fast path – only import requested sources from the mapping
-            for n in names:
-                mod_name, cls_name = _TABLE_CLASS_MAP[n.lower().rstrip("s")]
-                try:
-                    mod = importlib.import_module(mod_name)
-                    cls = getattr(mod, cls_name)
-                    if issubclass(cls, EmbeddableDBMixin) and hasattr(cls, "backfill_embeddings"):
-                        subclasses.append(cls)
-                except Exception:
-                    continue
-        else:
-            root = Path(__file__).resolve().parents[1]
-            for mod in pkgutil.walk_packages([str(root)]):  # pragma: no cover - best effort
-                name = mod.name
-                if any(part in {"tests", "scripts", "docs"} for part in name.split(".")):
-                    continue
-                try:
-                    spec = importlib.util.find_spec(name)
-                    if not spec or not spec.origin or not spec.origin.endswith(".py"):
-                        continue
-                    path = Path(spec.origin)
-                    if "EmbeddableDBMixin" not in path.read_text(encoding="utf-8"):
-                        continue
-                    importlib.import_module(name)
-                except Exception:
-                    continue
+        root = Path(__file__).resolve().parents[1]
+        for mod in pkgutil.walk_packages([str(root)]):  # pragma: no cover - best effort
+            name = mod.name
+            if any(part in {"tests", "scripts", "docs"} for part in name.split(".")):
+                continue
             try:
-                subclasses = [
-                    cls
-                    for cls in EmbeddableDBMixin.__subclasses__()
-                    if hasattr(cls, "backfill_embeddings")
-                ]
-            except Exception:  # pragma: no cover - defensive
-                subclasses = []
-            # Ensure explicit modules are present even if discovery misses them
-            for mod_name, cls_name in _TABLE_CLASS_MAP.values():
-                try:
-                    mod = importlib.import_module(mod_name)
-                    cls = getattr(mod, cls_name)
-                    if issubclass(cls, EmbeddableDBMixin) and hasattr(cls, "backfill_embeddings"):
-                        subclasses.append(cls)
-                except Exception:
+                spec = importlib.util.find_spec(name)
+                if not spec or not spec.origin or not spec.origin.endswith(".py"):
                     continue
+                path = Path(spec.origin)
+                if "EmbeddableDBMixin" not in path.read_text(encoding="utf-8"):
+                    continue
+                importlib.import_module(name)
+            except Exception:
+                continue
+
+        # Ensure explicit modules are present even if discovery misses them
+        for mod_name, cls_name in _TABLE_CLASS_MAP.values():
+            try:
+                mod = importlib.import_module(mod_name)
+                getattr(mod, cls_name)
+            except Exception:
+                continue
+
+        try:
+            subclasses = [
+                cls
+                for cls in EmbeddableDBMixin.__subclasses__()
+                if hasattr(cls, "backfill_embeddings")
+            ]
+        except Exception:  # pragma: no cover - defensive
+            subclasses = []
 
         # Deduplicate while preserving order
         seen: set[type] = set()
