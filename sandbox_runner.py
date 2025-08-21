@@ -203,7 +203,7 @@ from sandbox_runner.cli import _run_sandbox, rank_scenarios, main
 
 
 # ----------------------------------------------------------------------
-def run_scenarios(workflow, tracker=None, presets=None):
+def run_scenarios(workflow, tracker=None, foresight_tracker=None, presets=None):
     """Proxy to :func:`sandbox_runner.environment.run_scenarios`.
 
     Exposes the scenario runner at the top-level ``sandbox_runner`` module so
@@ -212,7 +212,9 @@ def run_scenarios(workflow, tracker=None, presets=None):
     :func:`sandbox_runner.environment.run_scenarios`.
     """
 
-    return _env_run_scenarios(workflow, tracker=tracker, presets=presets)
+    return _env_run_scenarios(
+        workflow, tracker=tracker, foresight_tracker=foresight_tracker, presets=presets
+    )
 
 
 # ----------------------------------------------------------------------
@@ -1551,6 +1553,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                 getattr(args, "workflow_db", "workflows.db"),
                 SANDBOX_ENV_PRESETS,
                 tracker=ctx.tracker,
+                foresight_tracker=ctx.foresight_tracker,
                 dynamic_workflows=getattr(args, "dynamic_workflows", False),
                 module_algorithm=getattr(args, "module_algorithm", "greedy"),
                 module_threshold=float(getattr(args, "module_threshold", 0.1)),

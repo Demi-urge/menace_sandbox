@@ -39,8 +39,18 @@ from .config_loader import (
     get_impact_severity,
     impact_severity_map as load_impact_severity_map,
 )
-from .telemetry_backend import TelemetryBackend
-from . import telemetry_backend as tb
+try:  # pragma: no cover - telemetry optional during tests
+    from .telemetry_backend import TelemetryBackend
+    from . import telemetry_backend as tb
+except Exception:  # pragma: no cover - provide stub when unavailable
+    class TelemetryBackend:  # type: ignore
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def record(self, *a: Any, **k: Any) -> None:
+            pass
+
+    tb = None  # type: ignore
 from .borderline_bucket import BorderlineBucket
 from .truth_adapter import TruthAdapter
 from .roi_calculator import ROICalculator, propose_fix
@@ -2700,6 +2710,13 @@ class ROITracker:
         """Alias for :meth:`biggest_drop` for backward compatibility."""
 
         return self.biggest_drop()
+
+    # ------------------------------------------------------------------
+    def scenario_degradation(self) -> float:
+        """Return ROI delta of the worst recorded scenario."""
+
+        _, delta = self.biggest_drop()
+        return float(delta)
 
     # ------------------------------------------------------------------
     def get_scenario_roi_delta(self, name: str) -> float:

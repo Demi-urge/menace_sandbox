@@ -206,6 +206,7 @@ def run_workflow_scenarios(
     workflow_db: str | Path,
     data_dir: str | Path = "sandbox_data",
     tracker: "ROITracker" | None = None,
+    foresight_tracker: "ForesightTracker" | None = None,
 ) -> Dict[str, Dict[str, float]]:
     """Execute :func:`run_scenarios` for every workflow in ``workflow_db``.
 
@@ -217,6 +218,8 @@ def run_workflow_scenarios(
         Directory where the aggregated ROI-delta report will be written.
     tracker:
         Optional :class:`ROITracker` reused across scenario runs.
+    foresight_tracker:
+        Optional :class:`ForesightTracker` forwarded to scenario runs.
 
     Returns
     -------
@@ -231,7 +234,9 @@ def run_workflow_scenarios(
     report: Dict[str, Dict[str, float]] = {}
 
     for wf in workflows:
-        tracker, _, summary = run_scenarios(wf, tracker=tracker)
+        tracker, _, summary = run_scenarios(
+            wf, tracker=tracker, foresight_tracker=foresight_tracker
+        )
         deltas = {
             scen: info.get("roi_delta", 0.0)
             for scen, info in summary.get("scenarios", {}).items()
@@ -1192,6 +1197,9 @@ def _sandbox_cycle_runner(
         elif tracker.raroi_history:
             raroi_delta = tracker.raroi_history[-1]
 
+        metrics["scenario_degradation"] = getattr(
+            tracker, "scenario_degradation", lambda: 0.0
+        )()
         wf_id = getattr(ctx, "workflow_id", "_global")
         conf_val = tracker.workflow_confidence(wf_id)
         ctx.foresight_tracker.record_cycle_metrics(
