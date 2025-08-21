@@ -58,3 +58,30 @@ def test_to_from_dict_preserves_order_and_window():
     restored = ForesightTracker.from_dict(data, window=2, volatility_threshold=1.0)
     history = restored.history["wf"]
     assert [entry["m"] for entry in history] == [2.0, 3.0]
+
+
+def test_to_dict_from_dict_roundtrip_history_equal():
+    tracker = ForesightTracker(window=4)
+    for v in [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]:
+        tracker.record_cycle_metrics("wf", {"m": v})
+
+    restored = ForesightTracker.from_dict(
+        tracker.to_dict(), window=4, volatility_threshold=1.0
+    )
+
+    original_history = {k: list(v) for k, v in tracker.history.items()}
+    restored_history = {k: list(v) for k, v in restored.history.items()}
+    assert restored_history == original_history
+    assert [entry["m"] for entry in restored.history["wf"]] == [2.0, 3.0, 4.0, 5.0]
+
+
+def test_from_dict_restores_most_recent_window_only():
+    tracker = ForesightTracker(window=7)
+    for v in range(9):
+        tracker.record_cycle_metrics("wf", {"m": float(v)})
+
+    data = tracker.to_dict()
+    restored = ForesightTracker.from_dict(data, window=3, volatility_threshold=1.0)
+    history = restored.history["wf"]
+    assert [entry["m"] for entry in history] == [6.0, 7.0, 8.0]
+    assert len(history) == 3
