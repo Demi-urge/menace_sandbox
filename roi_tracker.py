@@ -657,16 +657,26 @@ class ROITracker:
             except Exception:
                 logger.exception("truth adapter predict failed")
 
-        # persist prediction for primary workflow and global history
-        self.record_roi_prediction(
-            pred_seq,
-            act_seq,
-            predicted_class,
-            actual_class,
-            confidence,
-            workflow_id,
-            final_score=final_score,
-        )
+        # update primary workflow and global history before drift checks
+        pred_val = float(pred_seq[0]) if pred_seq else None
+        act_val = float(act_seq[0]) if act_seq else None
+        if pred_val is not None:
+            self.predicted_roi.append(pred_val)
+            self.last_predicted_roi = pred_val
+            if workflow_id is not None:
+                wf = str(workflow_id)
+                self.workflow_predicted_roi[wf].append(pred_val)
+                self.workflow_predicted_roi[wf] = self.workflow_predicted_roi[wf][
+                    -self.workflow_window:
+                ]
+        if act_val is not None:
+            self.actual_roi.append(act_val)
+            if workflow_id is not None:
+                wf = str(workflow_id)
+                self.workflow_actual_roi[wf].append(act_val)
+                self.workflow_actual_roi[wf] = self.workflow_actual_roi[wf][
+                    -self.workflow_window:
+                ]
         workflows: List[str] = []
         if modules:
             workflows.extend(str(m) for m in modules)
@@ -832,6 +842,27 @@ class ROITracker:
             except Exception:
                 logger.exception("failed to log telemetry event")
 
+        # persist prediction event with additional telemetry
+        scen_id: str | None = None
+        scen_delta: float | None = None
+        if self.scenario_roi_deltas:
+            scen_id, scen_delta = self.biggest_drop()
+        drift_score = self.drift_scores[-1] if self.drift_scores else None
+        self.record_roi_prediction(
+            pred_seq,
+            act_seq,
+            predicted_class,
+            actual_class,
+            self.last_confidence,
+            workflow_id,
+            final_score=final_score,
+            scenario_id=scen_id,
+            scenario_roi_delta=scen_delta,
+            drift_score=drift_score,
+            drift_flag=drift,
+            skip_history=True,
+        )
+
     def record_roi_prediction(
         self,
         predicted: Sequence[float],
@@ -841,27 +872,35 @@ class ROITracker:
         confidence: float | None = None,
         workflow_id: str | None = None,
         final_score: float | None = None,
+        *,
+        scenario_id: str | None = None,
+        scenario_roi_delta: float | None = None,
+        drift_score: float | None = None,
+        drift_flag: bool | None = None,
+        skip_history: bool = False,
     ) -> None:
         """Persist an ROI prediction event to ``roi_events.db``."""
-        pred_val = float(predicted[0]) if predicted else None
-        act_val = float(actual[0]) if actual else None
-        if pred_val is not None:
-            self.predicted_roi.append(pred_val)
-            self.last_predicted_roi = pred_val
-            if workflow_id is not None:
-                wf = str(workflow_id)
-                self.workflow_predicted_roi[wf].append(pred_val)
-                self.workflow_predicted_roi[wf] = self.workflow_predicted_roi[wf][
-                    -self.workflow_window:
-                ]
-        if act_val is not None:
-            self.actual_roi.append(act_val)
-            if workflow_id is not None:
-                wf = str(workflow_id)
-                self.workflow_actual_roi[wf].append(act_val)
-                self.workflow_actual_roi[wf] = self.workflow_actual_roi[wf][
-                    -self.workflow_window:
-                ]
+
+        if not skip_history:
+            pred_val = float(predicted[0]) if predicted else None
+            act_val = float(actual[0]) if actual else None
+            if pred_val is not None:
+                self.predicted_roi.append(pred_val)
+                self.last_predicted_roi = pred_val
+                if workflow_id is not None:
+                    wf = str(workflow_id)
+                    self.workflow_predicted_roi[wf].append(pred_val)
+                    self.workflow_predicted_roi[wf] = self.workflow_predicted_roi[wf][
+                        -self.workflow_window:
+                    ]
+            if act_val is not None:
+                self.actual_roi.append(act_val)
+                if workflow_id is not None:
+                    wf = str(workflow_id)
+                    self.workflow_actual_roi[wf].append(act_val)
+                    self.workflow_actual_roi[wf] = self.workflow_actual_roi[wf][
+                        -self.workflow_window:
+                    ]
         try:
             conn = sqlite3.connect("roi_events.db")
             with conn:
@@ -882,10 +921,24 @@ class ROITracker:
                         actual_categories TEXT,
                         workflow_id TEXT,
                         workflow TEXT,
+                        scenario_id TEXT,
+                        scenario_roi_delta REAL,
+                        drift_score REAL,
+                        drift_flag INTEGER,
                         ts DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                     """
                 )
+                for stmt in (
+                    "ALTER TABLE roi_prediction_events ADD COLUMN scenario_id TEXT",
+                    "ALTER TABLE roi_prediction_events ADD COLUMN scenario_roi_delta REAL",
+                    "ALTER TABLE roi_prediction_events ADD COLUMN drift_score REAL",
+                    "ALTER TABLE roi_prediction_events ADD COLUMN drift_flag INTEGER",
+                ):
+                    try:
+                        conn.execute(stmt)
+                    except sqlite3.OperationalError:
+                        pass
                 mae_val = (
                     self.workflow_mae(workflow_id)
                     if workflow_id is not None
@@ -898,7 +951,7 @@ class ROITracker:
                 )
                 conf_val = None if confidence is None else float(confidence)
                 conn.execute(
-                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, mae, variance, final_score, predicted_horizons, actual_horizons, predicted_categories, actual_categories, workflow_id, workflow) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, mae, variance, final_score, predicted_horizons, actual_horizons, predicted_categories, actual_categories, workflow_id, workflow, scenario_id, scenario_roi_delta, drift_score, drift_flag) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         float(predicted[0]) if predicted else None,
                         float(actual[0]) if actual else None,
@@ -914,6 +967,10 @@ class ROITracker:
                         json.dumps([actual_class] if actual_class is not None else []),
                         workflow_id,
                         workflow_id,
+                        scenario_id,
+                        None if scenario_roi_delta is None else float(scenario_roi_delta),
+                        None if drift_score is None else float(drift_score),
+                        None if drift_flag is None else int(bool(drift_flag)),
                     ),
                 )
         except Exception:
@@ -967,6 +1024,102 @@ class ROITracker:
                     ]
             if conf is not None and wf_id is not None:
                 self.workflow_confidence_history[wf_id].append(float(conf))
+
+    # ------------------------------------------------------------------
+    def fetch_prediction_events(
+        self,
+        workflow_id: str | None = None,
+        *,
+        scenario_id: str | None = None,
+        start_ts: str | None = None,
+        end_ts: str | None = None,
+        limit: int | None = None,
+        path: str = "roi_events.db",
+    ) -> List[Dict[str, Any]]:
+        """Return persisted prediction events with telemetry details."""
+
+        conn = sqlite3.connect(path)
+        try:
+            cur = conn.cursor()
+            base = (
+                "SELECT workflow_id, predicted_roi, actual_roi, confidence, "
+                "scenario_id, scenario_roi_delta, drift_score, drift_flag, ts "
+                "FROM roi_prediction_events"
+            )
+            clauses: List[str] = []
+            params: List[Any] = []
+            if workflow_id is not None:
+                clauses.append("workflow_id = ?")
+                params.append(workflow_id)
+            if scenario_id is not None:
+                clauses.append("scenario_id = ?")
+                params.append(scenario_id)
+            if start_ts is not None:
+                clauses.append("ts >= ?")
+                params.append(start_ts)
+            if end_ts is not None:
+                clauses.append("ts <= ?")
+                params.append(end_ts)
+            if clauses:
+                base += " WHERE " + " AND ".join(clauses)
+            base += " ORDER BY ts"
+            if limit is not None:
+                base += " LIMIT ?"
+                params.append(int(limit))
+            cur.execute(base, params)
+            rows = cur.fetchall()
+            events: List[Dict[str, Any]] = []
+            for wf, pred, act, conf, scen, delta, score, flag, ts in rows:
+                events.append(
+                    {
+                        "workflow_id": wf,
+                        "predicted_roi": pred,
+                        "actual_roi": act,
+                        "confidence": conf,
+                        "scenario_id": scen,
+                        "scenario_roi_delta": delta,
+                        "drift_score": score,
+                        "drift_flag": bool(flag) if flag is not None else None,
+                        "ts": ts,
+                    }
+                )
+            return events
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    def fetch_drift_history(
+        self,
+        workflow_id: str | None = None,
+        *,
+        limit: int | None = None,
+        path: str = "roi_events.db",
+    ) -> List[Dict[str, Any]]:
+        """Return drift scores and flags for dashboards."""
+
+        conn = sqlite3.connect(path)
+        try:
+            cur = conn.cursor()
+            base = "SELECT drift_score, drift_flag, ts FROM roi_prediction_events"
+            params: List[Any] = []
+            clauses: List[str] = []
+            if workflow_id is not None:
+                clauses.append("workflow_id = ?")
+                params.append(workflow_id)
+            if clauses:
+                base += " WHERE " + " AND ".join(clauses)
+            base += " ORDER BY ts"
+            if limit is not None:
+                base += " LIMIT ?"
+                params.append(int(limit))
+            cur.execute(base, params)
+            rows = cur.fetchall()
+            return [
+                {"drift_score": s, "drift_flag": bool(f), "ts": ts}
+                for s, f, ts in rows
+            ]
+        finally:
+            conn.close()
 
     # ------------------------------------------------------------------
     def evaluate_model(
