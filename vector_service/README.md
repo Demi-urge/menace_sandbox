@@ -29,3 +29,17 @@ python -m analytics.retrain_vector_ranker --service myapp.layer:svc
 ```
 
 Use `--interval 3600` to keep retraining hourly.
+
+## Ranker scheduler
+
+`analytics/ranker_scheduler.py` can run the retrainer on a timer. Set
+environment variables and invoke the module to enable it:
+
+```bash
+export RANKER_SCHEDULER_INTERVAL=3600  # seconds between retrains (0 disables)
+export RANKER_SCHEDULER_ROI_THRESHOLD=5  # optional ROI delta for immediate retrain
+python -m analytics.ranker_scheduler
+```
+
+`RANKER_SCHEDULER_SERVICES` may list comma‑separated `module:attr` paths for
+services exposing `reload_ranker_model`.
