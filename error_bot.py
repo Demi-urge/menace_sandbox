@@ -153,9 +153,10 @@ class ErrorDB(EmbeddableDBMixin):
                 patch_id INTEGER,
                 deploy_id INTEGER,
                 frequency INTEGER,
-                fix_suggestions TEXT
+                fix_suggestions TEXT,
+                bottlenecks TEXT
             )
-            """
+        """
         )
         cols = [r[1] for r in self.conn.execute("PRAGMA table_info(telemetry)").fetchall()]
         if "patch_id" not in cols:
@@ -176,6 +177,8 @@ class ErrorDB(EmbeddableDBMixin):
             self.conn.execute("ALTER TABLE telemetry ADD COLUMN frequency INTEGER")
         if "fix_suggestions" not in cols:
             self.conn.execute("ALTER TABLE telemetry ADD COLUMN fix_suggestions TEXT")
+        if "bottlenecks" not in cols:
+            self.conn.execute("ALTER TABLE telemetry ADD COLUMN bottlenecks TEXT")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS error_stats(
@@ -499,9 +502,10 @@ class ErrorDB(EmbeddableDBMixin):
                 patch_id,
                 deploy_id,
                 frequency,
-                fix_suggestions
+                fix_suggestions,
+                bottlenecks
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event.task_id,
@@ -520,6 +524,7 @@ class ErrorDB(EmbeddableDBMixin):
                 event.deploy_id,
                 freq,
                 json.dumps(getattr(event, "fix_suggestions", []) or []),
+                json.dumps(getattr(event, "bottlenecks", []) or []),
             ),
         )
         for mod, count in mods.items():
