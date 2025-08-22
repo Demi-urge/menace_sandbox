@@ -60,3 +60,43 @@ def test_build_graph_and_wave(tmp_path, monkeypatch):
     assert result[b]["synergy"] == pytest.approx(0.1)
     assert result[c]["synergy"] == pytest.approx(0.1)
     assert result[d]["synergy"] == pytest.approx(0.05)
+
+
+def test_update_workflow_refreshes_downstream_edges(tmp_path, monkeypatch):
+    g = wg.WorkflowGraph(path=str(tmp_path / "graph.json"))
+    for wid in ("A", "B", "C"):
+        g.add_workflow(wid)
+
+    mapping: dict[tuple[str, str], tuple[float, str]] = {
+        ("A", "B"): (0.1, "t1"),
+        ("B", "C"): (0.3, "t2"),
+    }
+
+    def fake_strength(src: str, dst: str) -> tuple[float, str]:
+        return mapping.get((str(src), str(dst)), (0.0, "none"))
+
+    monkeypatch.setattr(wg, "estimate_impact_strength", fake_strength)
+
+    g.update_dependencies("A")
+    g.update_dependencies("B")
+
+    if g._backend == "networkx":
+        assert g.graph["A"]["B"]["impact_weight"] == pytest.approx(0.1)
+        assert g.graph["B"]["C"]["impact_weight"] == pytest.approx(0.3)
+    else:
+        edges = g.graph["edges"]
+        assert edges["A"]["B"]["impact_weight"] == pytest.approx(0.1)
+        assert edges["B"]["C"]["impact_weight"] == pytest.approx(0.3)
+
+    mapping[("A", "B")] = (0.5, "t1")
+    mapping[("B", "C")] = (0.7, "t2")
+
+    g.update_workflow("A")
+
+    if g._backend == "networkx":
+        assert g.graph["A"]["B"]["impact_weight"] == pytest.approx(0.5)
+        assert g.graph["B"]["C"]["impact_weight"] == pytest.approx(0.7)
+    else:
+        edges = g.graph["edges"]
+        assert edges["A"]["B"]["impact_weight"] == pytest.approx(0.5)
+        assert edges["B"]["C"]["impact_weight"] == pytest.approx(0.7)
