@@ -32,36 +32,32 @@ except Exception:  # pragma: no cover - executed when networkx missing
 _HAS_NX = False
 
 
-def estimate_edge_weight(from_id: str, to_id: str) -> float:
-    """Estimate a dependency weight between two workflows.
+def estimate_impact_strength(from_id: str, to_id: str) -> tuple[float, str]:
+    """Estimate how strongly ``from_id`` impacts ``to_id``.
 
-    The heuristic looks for three primary indicators of coupling:
+    The score is derived from three heuristics:
 
-    * **Resource overlap** – workflows that are handled by the same bots or
-      queues are more likely to influence one another.  This information is
-      retrieved from :class:`task_handoff_bot.WorkflowDB` when available.
-    * **API/module similarity** – overlap in ``action_chains`` (or the workflow
-      steps themselves) is treated as evidence of shared modules.  When the
-      optional :mod:`workflow_vectorizer` is available we augment this with a
-      lightweight cosine similarity between the two workflow vectors.
-    * **Output coupling** – if the output of ``from_id`` appears to be consumed
-      by ``to_id`` (for example the last step of ``from_id`` appearing in the
-      argument list of ``to_id``) we slightly increase the weight.
+    * **Output coupling** – whether the outputs or queues of ``from_id`` feed
+      into ``to_id``.
+    * **API/service usage** – overlap in action chains or workflow steps.
+    * **Resource contention** – competing for the same bots or other shared
+      resources.
 
-    The return value is normalised to the range ``[0, 1]``.  When any of the
-    supporting modules are unavailable or the workflows cannot be located the
-    function falls back to ``1.0``.
+    The function returns a normalised weight in ``[0, 1]`` along with a label
+    describing which heuristic contributed the most.  When the required
+    workflow information is unavailable a default ``(1.0, "unknown")`` is
+    returned.
     """
 
     try:  # Local imports are used to avoid heavy start-up costs when optional
         from task_handoff_bot import WorkflowDB  # type: ignore
     except Exception:  # pragma: no cover - WorkflowDB unavailable
-        return 1.0
+        return 1.0, "unknown"
 
     try:
         db = WorkflowDB()
     except Exception:  # pragma: no cover - database could not be opened
-        return 1.0
+        return 1.0, "unknown"
 
     def _fetch(wid: Any):
         """Retrieve a :class:`WorkflowRecord` for ``wid``."""
@@ -77,7 +73,7 @@ def estimate_edge_weight(from_id: str, to_id: str) -> float:
     a = _fetch(from_id)
     b = _fetch(to_id)
     if not a or not b:
-        return 1.0
+        return 1.0, "unknown"
 
     def _jaccard(seq1: Any, seq2: Any) -> float:
         s1, s2 = set(seq1 or []), set(seq2 or [])
@@ -87,11 +83,11 @@ def estimate_edge_weight(from_id: str, to_id: str) -> float:
         union = len(s1 | s2)
         return inter / union if union else 0.0
 
-    # Resource overlap via shared bots/queues
-    resource_overlap = _jaccard(a.assigned_bots, b.assigned_bots)
+    # Resource contention via shared bots/queues or other resources
+    resource_contention = _jaccard(a.assigned_bots, b.assigned_bots)
 
-    # API/module overlap from action chains or workflow steps
-    module_overlap = _jaccard(a.action_chains or a.workflow, b.action_chains or b.workflow)
+    # API/service overlap from action chains or workflow steps
+    api_coupling = _jaccard(a.action_chains or a.workflow, b.action_chains or b.workflow)
 
     # Optional vector similarity using workflow_vectorizer for a softer signal
     try:  # pragma: no cover - optional dependency
@@ -103,11 +99,11 @@ def estimate_edge_weight(from_id: str, to_id: str) -> float:
         dot = sum(x * y for x, y in zip(v1, v2))
         norm = math.sqrt(sum(x * x for x in v1)) * math.sqrt(sum(y * y for y in v2))
         if norm:
-            module_overlap = max(module_overlap, dot / norm)
+            api_coupling = max(api_coupling, dot / norm)
     except Exception:
         pass
 
-    # Output coupling heuristic – check if the last step of ``a`` feeds ``b``
+    # Output coupling – check if the last step of ``a`` feeds ``b``
     output_coupling = 0.0
     try:
         last_step = (a.workflow or a.task_sequence or [None])[-1]
@@ -119,8 +115,22 @@ def estimate_edge_weight(from_id: str, to_id: str) -> float:
     except Exception:
         pass
 
-    weight = (resource_overlap + module_overlap + output_coupling) / 3.0
-    return max(0.0, min(1.0, weight))
+    # Aggregate scores
+    scores = {
+        "resource": resource_contention,
+        "api": api_coupling,
+        "output": output_coupling,
+    }
+    weight = sum(scores.values()) / 3.0
+    dep_type = max(scores, key=scores.get) if any(scores.values()) else "none"
+    return max(0.0, min(1.0, weight)), dep_type
+
+
+def estimate_edge_weight(from_id: str, to_id: str) -> float:
+    """Backward compatible wrapper returning only the weight."""
+
+    weight, _dep = estimate_impact_strength(from_id, to_id)
+    return weight
 
 
 class WorkflowGraph:
@@ -318,7 +328,7 @@ class WorkflowGraph:
         dst: str,
         *,
         impact_weight: Optional[float] = None,
-        dependency_type: str = "default",
+        dependency_type: Optional[str] = None,
         **attrs: Any,
     ) -> None:
         """Add a dependency edge between workflows.
@@ -328,15 +338,23 @@ class WorkflowGraph:
         src, dst:
             Source and destination workflow ids.
         impact_weight:
-            Optional explicit edge weight.  When ``None`` a heuristic weight is
-            calculated via :func:`estimate_edge_weight`.
+            Optional explicit edge weight.  When ``None`` heuristics from
+            :func:`estimate_impact_strength` are used.
         dependency_type:
-            Label describing the dependency category.
+            Label describing the dependency category. When omitted the value
+            returned from :func:`estimate_impact_strength` is stored.
         attrs:
             Additional edge attributes to persist on the graph.
         """
         if impact_weight is None:
             impact_weight = estimate_edge_weight(src, dst)
+            if dependency_type is None:
+                _, dependency_type = estimate_impact_strength(src, dst)
+        else:
+            # Mark edges with manual weights so refresh routines skip them
+            attrs.setdefault("manual_weight", True)
+            if dependency_type is None:
+                dependency_type = "manual"
         data: Dict[str, Any] = {
             "impact_weight": impact_weight,
             "dependency_type": dependency_type,
@@ -439,39 +457,39 @@ class WorkflowGraph:
             for node in nodes:
                 if node == workflow_id:
                     continue
-                w = estimate_edge_weight(workflow_id, node)
+                w, dep = estimate_impact_strength(workflow_id, node)
                 if w > 0:
                     if _HAS_NX:
                         self.graph.add_edge(
                             workflow_id,
                             node,
                             impact_weight=w,
-                            dependency_type="derived",
+                            dependency_type=dep,
                         )
                         if self._graph_has_cycle():
                             self.graph.remove_edge(workflow_id, node)
                     else:
                         edges.setdefault(workflow_id, {})[node] = {
                             "impact_weight": w,
-                            "dependency_type": "derived",
+                            "dependency_type": dep,
                         }
                         if self._graph_has_cycle():
                             edges[workflow_id].pop(node, None)
-                w = estimate_edge_weight(node, workflow_id)
+                w, dep = estimate_impact_strength(node, workflow_id)
                 if w > 0:
                     if _HAS_NX:
                         self.graph.add_edge(
                             node,
                             workflow_id,
                             impact_weight=w,
-                            dependency_type="derived",
+                            dependency_type=dep,
                         )
                         if self._graph_has_cycle():
                             self.graph.remove_edge(node, workflow_id)
                     else:
                         edges.setdefault(node, {})[workflow_id] = {
                             "impact_weight": w,
-                            "dependency_type": "derived",
+                            "dependency_type": dep,
                         }
                         if self._graph_has_cycle():
                             edges[node].pop(workflow_id, None)
@@ -605,15 +623,21 @@ class WorkflowGraph:
         """Recalculate impact weights for all dependency edges."""
         with self._lock:
             if _HAS_NX:
-                for src, dst in list(self.graph.edges()):
-                    self.graph[src][dst]["impact_weight"] = estimate_edge_weight(
-                        src, dst
-                    )
+                for src, dst, data in list(self.graph.edges(data=True)):
+                    if data.get("manual_weight"):
+                        continue
+                    w, dep = estimate_impact_strength(src, dst)
+                    self.graph[src][dst]["impact_weight"] = w
+                    self.graph[src][dst]["dependency_type"] = dep
             else:
                 edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.get("edges", {})
                 for src, targets in edges.items():
-                    for dst in list(targets.keys()):
-                        targets[dst]["impact_weight"] = estimate_edge_weight(src, dst)
+                    for dst, data in list(targets.items()):
+                        if data.get("manual_weight"):
+                            continue
+                        w, dep = estimate_impact_strength(src, dst)
+                        data["impact_weight"] = w
+                        data["dependency_type"] = dep
             self._save_unlocked()
 
     # ------------------------------------------------------------------
@@ -680,4 +704,4 @@ class WorkflowGraph:
                 pickle.dump(self.graph, fh)
 
 
-__all__ = ["WorkflowGraph", "estimate_edge_weight"]
+__all__ = ["WorkflowGraph", "estimate_edge_weight", "estimate_impact_strength"]
