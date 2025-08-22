@@ -114,6 +114,12 @@ class RankingModelScheduler:
         # shifts in vector similarity scores which may indicate embedding
         # drift or search behaviour changes.
         self._vector_db_similarity_totals: dict[str, float] = {}
+        # Accumulators for retrieval feedback events so short term ROI swings
+        # or win-rate drops can trigger rapid retraining without waiting for
+        # the periodic loop.
+        self._roi_feedback_total: float = 0.0
+        self._feedback_events: int = 0
+        self._feedback_wins: int = 0
         self.event_bus = event_bus
         if self.event_bus is None and UnifiedEventBus is not None:
             try:
@@ -169,22 +175,46 @@ class RankingModelScheduler:
     def _handle_retrieval_feedback(self, topic: str, event: object) -> None:
         """Handle retrieval feedback events and trigger retrain when needed."""
 
-        if self.win_rate_threshold is None:
+        if not isinstance(event, dict):
             return
 
         try:
-            db = VectorMetricsDB(self.vector_db)
-            try:
-                win_rate = db.retriever_win_rate()
-            finally:
-                try:
-                    db.conn.close()
-                except Exception:
-                    pass
+            roi = float(event.get("roi", 0.0))
+        except Exception:
+            roi = 0.0
+        win = bool(event.get("win"))
+
+        self._roi_feedback_total += roi
+        self._feedback_events += 1
+        if win:
+            self._feedback_wins += 1
+
+        triggered = False
+        if self.roi_signal_threshold is not None:
+            if abs(self._roi_feedback_total) >= self.roi_signal_threshold:
+                triggered = True
+        if (
+            not triggered
+            and self.win_rate_threshold is not None
+            and self._feedback_events
+        ):
+            win_rate = self._feedback_wins / self._feedback_events
             if win_rate <= self.win_rate_threshold:
+                triggered = True
+
+        if not triggered:
+            return
+
+        threshold = self.win_rate_threshold if self.win_rate_threshold is not None else 0.5
+        try:
+            if needs_retrain(self.vector_db, threshold):
                 self.retrain_and_reload()
         except Exception:
             logging.exception("ranking model retrain failed")
+        finally:
+            self._roi_feedback_total = 0.0
+            self._feedback_events = 0
+            self._feedback_wins = 0
 
     # ------------------------------------------------------------------
     def _persist_model_path(self, new_path: Path, *, keep: int = 3) -> None:
