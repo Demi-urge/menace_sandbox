@@ -395,3 +395,112 @@ def test_build_context_and_feedback_updates_weights(monkeypatch):
     weights_failure = metrics.get_db_weights()
     assert any(weights_failure[db] < weights_success[db] for db in weights_success)
     assert set(calls.get("dbs") or []) == {"workflow", "enhancement", "resource"}
+
+
+def test_wrapper_build_and_feedback(monkeypatch):
+    import sys
+    import types
+    from vector_service.cognition_layer import CognitionLayer
+    from vector_metrics_db import VectorMetricsDB
+
+    class DummyTracker:
+        def __init__(self):
+            self.metrics = None
+
+        def update_db_metrics(self, metrics):
+            self.metrics = metrics
+
+        def update(self, *a, **k):
+            pass
+
+        def origin_db_deltas(self):
+            return {}
+
+    sys.modules.setdefault("roi_tracker", types.SimpleNamespace(ROITracker=DummyTracker))
+    import cognition_layer as cl
+
+    index = {
+        "workflow": {"w1": [0.1, 0.2]},
+        "enhancement": {"e1": [0.3, 0.4]},
+        "resource": {"r1": [0.5, 0.6]},
+    }
+
+    class DummyContextBuilder:
+        def __init__(self, index):
+            self.index = index
+
+        def build_context(
+            self,
+            prompt,
+            *,
+            top_k=5,
+            include_vectors=False,
+            session_id="",
+            return_stats=False,
+            return_metadata=False,
+        ):
+            vectors = [
+                ("workflow", "w1", 0.9),
+                ("enhancement", "e1", 0.8),
+                ("resource", "r1", 0.7),
+            ]
+            sid = session_id or "sid"
+            stats = {"tokens": 1, "wall_time_ms": 1.0, "prompt_tokens": len(prompt.split())}
+            meta = {
+                "misc": [
+                    {
+                        "origin_db": o,
+                        "vector_id": v,
+                        "metadata": {"risk_score": rs},
+                    }
+                    for (o, v, _), rs in zip(vectors, [0.2, 0.1, 0.3])
+                ]
+            }
+            if include_vectors:
+                if return_metadata:
+                    if return_stats:
+                        return "context", sid, vectors, meta, stats
+                    return "context", sid, vectors, meta
+                if return_stats:
+                    return "context", sid, vectors, stats
+                return "context", sid, vectors
+            if return_metadata:
+                return "context", meta
+            if return_stats:
+                return "context", stats
+            return "context"
+
+    tracker = DummyTracker()
+    metrics = VectorMetricsDB(":memory:")
+    builder = DummyContextBuilder(index)
+    layer = CognitionLayer(
+        context_builder=builder,
+        vector_metrics=metrics,
+        roi_tracker=tracker,
+    )
+    monkeypatch.setattr(cl, "_layer", layer)
+
+    ctx, sid = cl.build_cognitive_context("hello world")
+    assert ctx and sid
+
+    cl.log_feedback(sid, True, patch_id="p1")
+    weights_success = metrics.get_db_weights()
+    assert set(weights_success) == {"workflow", "enhancement", "resource"}
+    assert all(w > 0 for w in weights_success.values())
+
+    calls: dict[str, object] = {}
+
+    async def fake_schedule_backfill(*, dbs=None, **_):
+        calls["dbs"] = dbs
+
+    monkeypatch.setattr(
+        "vector_service.cognition_layer.schedule_backfill", fake_schedule_backfill
+    )
+
+    ctx2, sid2 = cl.build_cognitive_context("again")
+    assert ctx2 and sid2
+    cl.log_feedback(sid2, False, patch_id="p2")
+
+    weights_failure = metrics.get_db_weights()
+    assert all(weights_failure[db] == 0.0 for db in weights_failure)
+    assert set(calls.get("dbs") or []) == {"workflow", "enhancement", "resource"}
