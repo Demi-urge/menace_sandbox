@@ -68,17 +68,29 @@ asyncio.run(schedule_backfill(dbs=["code"]))
 ## Session ROI analytics
 
 `analytics/session_roi.py` correlates retrieval sessions stored in
-`VectorMetricsDB` with their patch outcomes. It reports per-origin success
-rates and average ROI deltas:
+`VectorMetricsDB` with their patch outcomes. It can group ROI metrics by
+origin type for **bots**, **workflows**, **enhancements** and **errors**:
 
 ```bash
-python -m analytics.session_roi --db vector_metrics.db --json origin_stats.json
+python -m analytics.session_roi --db vector_metrics.db --by-type
 ```
 
-The produced mapping highlights which databases yield successful patches and
-how much value they contribute. The same summary is accessible via
-`VectorMetricsAggregator.origin_stats`, which also writes
-`vector_origin_stats.json` when run.
+Sample output::
+
+```json
+{
+  "bots": {"bots": {"success_rate": 1.0, "roi_delta": 0.5}},
+  "workflows": {},
+  "enhancements": {},
+  "errors": {}
+}
+```
+
+The mapping highlights which databases yield successful patches and how much
+value they contribute. The same summary is accessible via
+`VectorMetricsAggregator.origin_stats`, and programmatically through
+`CognitionLayer.roi_stats()` for external dashboards. Running the aggregator
+also writes `vector_origin_stats.json`.
 
 ## Failure embeddings and risk penalties
 

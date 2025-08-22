@@ -1,5 +1,5 @@
 import vector_metrics_db as vdb
-from analytics.session_roi import per_origin_stats
+from analytics.session_roi import origin_roi, per_origin_stats
 from vector_metrics_aggregator import VectorMetricsAggregator
 
 
@@ -18,3 +18,15 @@ def test_per_origin_stats(tmp_path):
 
     agg = VectorMetricsAggregator(tmp_path / "v.db")
     assert agg.origin_stats() == stats
+
+
+def test_origin_roi(tmp_path):
+    db = vdb.VectorMetricsDB(tmp_path / "v.db")
+    db.log_retrieval("bots", tokens=0, wall_time_ms=0.0, hit=True, rank=1, session_id="b", vector_id="vb")
+    db.log_retrieval("errors", tokens=0, wall_time_ms=0.0, hit=True, rank=1, session_id="e", vector_id="ve")
+    db.update_outcome("b", [("bots", "vb")], contribution=0.3, win=True)
+    db.update_outcome("e", [("errors", "ve")], contribution=-0.2, win=False)
+
+    stats = origin_roi(db)
+    assert stats["bots"]["bots"]["roi_delta"] == 0.3
+    assert stats["errors"]["errors"]["success_rate"] == 0.0
