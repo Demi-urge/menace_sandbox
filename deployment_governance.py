@@ -484,8 +484,10 @@ def evaluate(
     metrics: Mapping[str, Any] | None,
     policy: Mapping[str, Any] | None = None,
     *,
+    patch: Iterable[str] | str | None = None,
     foresight_tracker: ForesightTracker | None = None,
     workflow_id: str | None = None,
+    borderline_bucket: BorderlineBucket | None = None,
 ) -> Dict[str, Any]:
     """Evaluate deployment readiness based on *scorecard* and *metrics*.
 
@@ -521,6 +523,38 @@ def evaluate(
     )
 
     def _finish(verdict: str) -> Dict[str, Any]:
+        forecast_info: dict[str, Any] | None = None
+        if (
+            verdict == "promote"
+            and patch is not None
+            and foresight_tracker is not None
+            and workflow_id is not None
+        ):
+            try:
+                forecaster = UpgradeForecaster(foresight_tracker)
+                graph = WorkflowGraph()
+                ok, fs_reasons, forecast = is_foresight_safe_to_promote(
+                    workflow_id,
+                    patch,
+                    forecaster=forecaster,
+                    tracker=foresight_tracker,
+                    graph=graph,
+                )
+                forecast_info = {
+                    "forecast": {
+                        "projections": [p.__dict__ for p in forecast.projections],
+                        "confidence": forecast.confidence,
+                        "upgrade_id": forecast.upgrade_id,
+                    },
+                    "reason_codes": list(fs_reasons),
+                }
+                if not ok:
+                    reasons.extend(fs_reasons)
+                    verdict = (
+                        "borderline" if borderline_bucket is not None else "pilot"
+                    )
+            except Exception:
+                logger.exception("foresight promotion gate failed")
         if (
             verdict == "promote"
             and foresight_tracker is not None
@@ -549,7 +583,12 @@ def evaluate(
                     verdict = forced
                     if "manual_override" not in reasons:
                         reasons.append("manual_override")
-        return {"verdict": verdict, "reasons": reasons, "overridable": overridable}
+        return {
+            "verdict": verdict,
+            "reasons": reasons,
+            "overridable": overridable,
+            "foresight": forecast_info,
+        }
 
     # ------------------------------------------------------------------ vetoes
     veto_card = {

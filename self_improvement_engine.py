@@ -5433,14 +5433,17 @@ class SelfImprovementEngine:
                     gov_result = deployment_evaluate(
                         scorecard,
                         metrics,
+                        patch=str(patch_id) if patch_id is not None else None,
                         foresight_tracker=self.foresight_tracker,
                         workflow_id=workflow_id,
+                        borderline_bucket=self.borderline_bucket,
                     )
                 except Exception:
                     self.logger.exception("deployment evaluation failed")
                 if gov_result:
                     verdict = str(gov_result.get("verdict"))
                     reasons = list(gov_result.get("reasons", []))
+                    forecast_info = gov_result.get("foresight")
                     risk: dict[str, object] | None = None
                     try:
                         if self.foresight_tracker and workflow_id:
@@ -5484,7 +5487,12 @@ class SelfImprovementEngine:
                             self.logger.exception("risk queue enqueue failed")
                     try:
                         audit_log_event(
-                            "deployment_verdict", {"verdict": verdict, "reasons": reasons}
+                            "deployment_verdict",
+                            {
+                                "verdict": verdict,
+                                "reasons": reasons,
+                                "forecast": forecast_info,
+                            },
                         )
                     except Exception:
                         self.logger.exception("audit log failed")
@@ -5492,7 +5500,11 @@ class SelfImprovementEngine:
                         try:
                             self.event_bus.publish(
                                 "deployment_verdict",
-                                {"verdict": verdict, "reasons": reasons},
+                                {
+                                    "verdict": verdict,
+                                    "reasons": reasons,
+                                    "forecast": forecast_info,
+                                },
                             )
                         except Exception:
                             self.logger.exception("event bus publish failed")
@@ -5500,7 +5512,9 @@ class SelfImprovementEngine:
                         self.logger.info(
                             "deployment verdict",
                             extra=log_record(
-                                verdict=verdict, reasons=";".join(reasons)
+                                verdict=verdict,
+                                reasons=";".join(reasons),
+                                forecast=forecast_info,
                             ),
                         )
                     except Exception:
@@ -5521,7 +5535,7 @@ class SelfImprovementEngine:
                                 scorecard["decision"] = "rollback"
                             except Exception:
                                 self.logger.exception("patch rollback failed")
-                    elif verdict == "micro_pilot":
+                    elif verdict in {"micro_pilot", "borderline", "pilot"}:
                         try:
                             self.borderline_bucket.add_candidate(
                                 self.bot_name,
@@ -5548,6 +5562,7 @@ class SelfImprovementEngine:
                                     pass
                         except Exception:
                             self.logger.exception("borderline enqueue failed")
+                        self.workflow_ready = False
                     else:
                         self.workflow_ready = False
                 vetoes: List[str] = []
