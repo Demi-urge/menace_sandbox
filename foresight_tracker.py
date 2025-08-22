@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from pathlib import Path
 from typing import Deque, Dict, List, Mapping, Tuple
+from numbers import Number
 
 import numpy as np
 import yaml
@@ -47,7 +48,7 @@ class ForesightTracker:
 
         self.max_cycles = max_cycles
         self.volatility_threshold = volatility_threshold
-        self.history: Dict[str, Deque[Dict[str, float]]] = {}
+        self.history: Dict[str, Deque[Dict[str, float | str]]] = {}
         if template_config_path is not None:
             templates_path = template_config_path
         cfg_path = Path(templates_path)
@@ -80,7 +81,7 @@ class ForesightTracker:
         metrics: Mapping[str, float],
         *,
         compute_stability: bool = False,
-        **extra_metrics: float,
+        **extra_metrics: float | str,
     ) -> None:
         """Append ``metrics`` for ``workflow_id`` and cap history length.
 
@@ -97,13 +98,14 @@ class ForesightTracker:
             resulting value under the ``"stability"`` key in the appended
             history entry.
         **extra_metrics:
-            Additional numeric fields, such as ``stage`` or ``degradation``,
-            which are merged into the stored entry.
+            Additional fields, such as ``stage`` or ``degradation``, which are
+            merged into the stored entry.  Non‑numeric values are stored as is
+            and excluded from trend calculations.
         """
 
         entry = {k: float(v) for k, v in metrics.items()}
         for key, value in extra_metrics.items():
-            entry[key] = float(value)
+            entry[key] = float(value) if isinstance(value, Number) else value
         queue = self.history.setdefault(workflow_id, deque(maxlen=self.max_cycles))
         queue.append(entry)
         if compute_stability:
@@ -116,6 +118,8 @@ class ForesightTracker:
         tracker: "ROITracker" | None,
         workflow_id: str,
         profile: str | None = None,
+        stage: str | None = None,
+        compute_stability: bool = False,
     ) -> None:
         """Record metrics extracted from an :class:`ROITracker` instance.
 
@@ -132,6 +136,12 @@ class ForesightTracker:
             it registers ``workflow_id`` under that profile. When omitted, the
             existing mapping is used or the ``workflow_id`` itself if no
             profile has been registered.
+        stage:
+            Optional label describing the workflow stage for which the metrics
+            are being captured.  Forwarded to :meth:`record_cycle_metrics`.
+        compute_stability:
+            When ``True`` the stability of the resulting entry is computed
+            immediately via :meth:`record_cycle_metrics`.
 
         The helper pulls the latest ROI delta, RAROI delta, resilience,
         confidence and scenario degradation metrics from ``tracker`` and
@@ -196,6 +206,8 @@ class ForesightTracker:
                     "scenario_degradation": scenario_deg,
                     "raw_roi_delta": real_roi,
                 },
+                compute_stability=compute_stability,
+                stage=stage,
             )
         except Exception:
             # best effort; failing to record foresight metrics shouldn't break
@@ -301,9 +313,13 @@ class ForesightTracker:
         if not data or len(data) < 2:
             return 0.0, 0.0, 0.0
 
-        averages = np.array(
-            [np.mean(list(entry.values())) for entry in data], dtype=float
-        )
+        averages = []
+        for entry in data:
+            numeric_vals = [
+                float(v) for v in entry.values() if isinstance(v, Number)
+            ]
+            averages.append(float(np.mean(numeric_vals)) if numeric_vals else 0.0)
+        averages = np.array(averages, dtype=float)
         x = np.arange(len(averages))
         slope = float(np.polyfit(x, averages, 1)[0])
 
@@ -332,7 +348,15 @@ class ForesightTracker:
             return False
 
         slope, _, _ = self.get_trend_curve(workflow_id)
-        all_values = np.array([v for entry in data for v in entry.values()], dtype=float)
+        all_values = np.array(
+            [
+                float(v)
+                for entry in data
+                for v in entry.values()
+                if isinstance(v, Number)
+            ],
+            dtype=float,
+        )
         std = float(np.std(all_values, ddof=1)) if all_values.size > 1 else 0.0
         return slope > 0 and std < self.volatility_threshold
 
@@ -359,7 +383,10 @@ class ForesightTracker:
             "volatility_threshold": self.volatility_threshold,
             "history": {
                 wf_id: [
-                    {k: float(v) for k, v in entry.items()}
+                    {
+                        k: (float(v) if isinstance(v, Number) else v)
+                        for k, v in entry.items()
+                    }
                     for entry in list(entries)
                 ]
                 for wf_id, entries in self.history.items()
@@ -404,7 +431,12 @@ class ForesightTracker:
         for wf_id, entries in raw_history.items():
             queue: Deque[Dict[str, float]] = deque(maxlen=tracker.max_cycles)
             for entry in list(entries)[-tracker.max_cycles:]:
-                queue.append({k: float(v) for k, v in entry.items()})
+                queue.append(
+                    {
+                        k: (float(v) if isinstance(v, Number) else v)
+                        for k, v in entry.items()
+                    }
+                )
             tracker.history[wf_id] = queue
 
         return tracker
