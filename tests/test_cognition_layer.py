@@ -4,6 +4,8 @@ import time
 
 from vector_service.cognition_layer import CognitionLayer
 from vector_metrics_db import VectorMetricsDB
+from vector_service.patch_logger import PatchLogger
+from patch_safety import PatchSafety
 
 
 class DummyRetriever:
@@ -182,6 +184,23 @@ def _make_layer(results):
     return layer, retriever, ranker, tracker, metrics, logger
 
 
+def _make_layer_with_patch_safety(results):
+    retriever = DummyRetriever(results)
+    ranker = DummyRankingModel()
+    tracker = DummyROITracker()
+    metrics = VectorMetricsDB(":memory:")
+    builder = DummyContextBuilder(retriever, ranking_model=ranker)
+    ps = PatchSafety()
+    logger = PatchLogger(vector_metrics=metrics, roi_tracker=tracker, patch_safety=ps)
+    layer = CognitionLayer(
+        context_builder=builder,
+        patch_logger=logger,
+        vector_metrics=metrics,
+        roi_tracker=tracker,
+    )
+    return layer, retriever, ranker, tracker, metrics, logger
+
+
 def test_query_and_record_patch_outcome_updates_metrics_and_ranking():
     results = [("db2", "v2", 0.2), ("db1", "v1", 0.9)]
     layer, retriever, ranker, tracker, metrics, logger = _make_layer(results)
@@ -279,3 +298,16 @@ def test_session_persistence_and_cleanup(tmp_path):
         "SELECT session_id FROM pending_sessions",
     ).fetchall()
     assert rows == []
+
+
+def test_failed_sessions_record_failure():
+    results = [("error", "1", 0.9)]
+    layer, retriever, ranker, tracker, metrics, logger = _make_layer_with_patch_safety(results)
+    ctx, sid = layer.query("boom")
+    key = "error:1"
+    layer._retrieval_meta[sid][key] = {"category": "fail", "module": "m"}
+    ps = logger.patch_safety
+    before = len(ps._records)
+    layer.record_patch_outcome(sid, False)
+    after = len(ps._records)
+    assert after > before

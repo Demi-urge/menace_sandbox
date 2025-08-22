@@ -526,7 +526,7 @@ class CognitionLayer:
             return
         vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
         if async_mode:
-            risk_scores = await self.patch_logger.track_contributors_async(
+            result = await self.patch_logger.track_contributors_async(
                 vec_ids,
                 success,
                 patch_id=patch_id,
@@ -535,7 +535,7 @@ class CognitionLayer:
                 retrieval_metadata=meta,
             )
         else:
-            risk_scores = self.patch_logger.track_contributors(
+            result = self.patch_logger.track_contributors(
                 vec_ids,
                 success,
                 patch_id=patch_id,
@@ -544,7 +544,18 @@ class CognitionLayer:
                 retrieval_metadata=meta,
             )
 
-        risk_scores = risk_scores or {}
+        risk_scores = dict(result or {})
+
+        if not success:
+            errors = getattr(result, "errors", []) if result else []
+            if errors:
+                ps = getattr(self.patch_logger, "patch_safety", None)
+                if ps is not None:
+                    for err in errors:
+                        try:
+                            ps.record_failure(dict(err))
+                        except Exception:
+                            logger.exception("Failed to record failure metadata")
 
         roi_contribs: Dict[str, float] = {}
         used_tracker_deltas = False
