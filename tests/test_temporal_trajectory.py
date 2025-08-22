@@ -29,6 +29,9 @@ SCENARIOS = [
     "chaotic_failure",
 ]
 
+# record the order in which scenarios are executed
+stage_calls: list[str] = []
+
 
 class _DummyTracker:
     def __init__(self) -> None:
@@ -39,6 +42,7 @@ def _fake_run_scenarios(workflow, tracker=None, presets=None, foresight_tracker=
     if tracker is None:
         tracker = _DummyTracker()
     name = presets[0]["SCENARIO_NAME"]
+    stage_calls.append(name)
     idx = SCENARIOS.index(name)
     roi = float(idx)
     tracker.roi_history.append(roi)
@@ -50,7 +54,8 @@ def _fake_presets():
     return [{"SCENARIO_NAME": name} for name in SCENARIOS]
 
 
-def test_simulate_temporal_trajectory_updates_history(monkeypatch):
+def test_simulate_temporal_trajectory_order_and_history(monkeypatch):
+    stage_calls.clear()
     monkeypatch.setattr(
         "sandbox_runner.environment.run_scenarios", _fake_run_scenarios
     )
@@ -70,10 +75,17 @@ def test_simulate_temporal_trajectory_updates_history(monkeypatch):
     stub_db_mod = types.ModuleType("menace.task_handoff_bot")
     stub_db_mod.WorkflowDB = _FakeWorkflowDB  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "menace.task_handoff_bot", stub_db_mod)
+
     ft = ForesightTracker()
     simulate_temporal_trajectory(0, foresight_tracker=ft)
+
+    # stages should execute in the expected order
+    assert stage_calls == SCENARIOS
+
     history = list(ft.history["0"])
     assert len(history) == 5
     expected_keys = {"roi_delta", "resilience", "stability", "scenario_degradation"}
     assert all(expected_keys <= set(entry) for entry in history)
     assert [entry["roi_delta"] for entry in history] == [0.0, 1.0, 2.0, 3.0, 4.0]
+    assert [entry["resilience"] for entry in history] == [0.0, 1.0, 2.0, 3.0, 4.0]
+    assert [entry["scenario_degradation"] for entry in history] == [0.0, -1.0, -2.0, -3.0, -4.0]
