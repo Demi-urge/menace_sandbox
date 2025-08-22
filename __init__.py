@@ -12,6 +12,7 @@ import sys
 from .roi_calculator import ROICalculator
 from .truth_adapter import TruthAdapter
 from .foresight_tracker import ForesightTracker
+from .upgrade_forecaster import UpgradeForecaster
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -102,6 +103,8 @@ __all__ = [
     "truth_adapter",
     "ForesightTracker",
     "foresight_tracker",
+    "UpgradeForecaster",
+    "upgrade_forecaster",
     "newsreader_bot",
     "preliminary_research_bot",
     "passive_discovery_bot",
