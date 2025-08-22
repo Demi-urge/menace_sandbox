@@ -86,38 +86,38 @@ class ForesightTracker:
 
         try:
             roi_hist = getattr(tracker, "roi_history", [])
+            raroi_hist = getattr(tracker, "raroi_history", [])
             history = self.history.get(workflow_id)
             profile_map = getattr(self, "workflow_profiles", None)
             if not isinstance(profile_map, Mapping):
                 profile_map = getattr(self, "profile_map", {})
             profile = profile_map.get(workflow_id, workflow_id)
+
             real_roi = float(roi_hist[-1]) if roi_hist else 0.0
+            if len(raroi_hist) >= 2:
+                real_raroi = float(raroi_hist[-1] - raroi_hist[-2])
+            elif raroi_hist:
+                real_raroi = float(raroi_hist[-1])
+            else:
+                real_raroi = real_roi
+
             if self.is_cold_start(workflow_id):
                 cycles = len(history) if history else 0
-                template_val = self._get_template_curve(profile, cycles)
-                if self.templates and profile in self.templates:
-                    alpha = min(cycles / 5.0, 1.0)
-                    effective_roi = alpha * real_roi + (1.0 - alpha) * template_val
-                    roi_delta = effective_roi
-                    raroi_delta = effective_roi
-                else:
+                template_curve = self.get_template_curve(profile)
+                if not template_curve:
                     roi_delta = real_roi
-                    raroi_hist = getattr(tracker, "raroi_history", [])
-                    if len(raroi_hist) >= 2:
-                        raroi_delta = float(raroi_hist[-1] - raroi_hist[-2])
-                    elif raroi_hist:
-                        raroi_delta = float(raroi_hist[-1])
+                    raroi_delta = real_raroi
+                else:
+                    if cycles < len(template_curve):
+                        template_val = float(template_curve[cycles])
                     else:
-                        raroi_delta = 0.0
+                        template_val = float(template_curve[-1])
+                    alpha = min(cycles / 5.0, 1.0)
+                    roi_delta = alpha * real_roi + (1.0 - alpha) * template_val
+                    raroi_delta = alpha * real_raroi + (1.0 - alpha) * template_val
             else:
                 roi_delta = real_roi
-                raroi_hist = getattr(tracker, "raroi_history", [])
-                if len(raroi_hist) >= 2:
-                    raroi_delta = float(raroi_hist[-1] - raroi_hist[-2])
-                elif raroi_hist:
-                    raroi_delta = float(raroi_hist[-1])
-                else:
-                    raroi_delta = 0.0
+                raroi_delta = real_raroi
 
             conf_hist = getattr(tracker, "confidence_history", [])
             confidence = float(conf_hist[-1]) if conf_hist else 0.0
@@ -162,21 +162,28 @@ class ForesightTracker:
         return False
 
     # ------------------------------------------------------------------
-    def _get_template_curve(self, profile: str, cycle_index: int) -> float:
-        """Return synthetic ROI for ``profile`` at ``cycle_index``."""
+    def _load_templates(self) -> None:
+        """Load template curves from disk if not already done."""
 
-        if self.templates is None:
-            try:
-                with self.template_config_path.open("r", encoding="utf8") as fh:
-                    self.templates = yaml.safe_load(fh) or {}
-            except Exception:
-                self.templates = {}
+        if self.templates is not None:
+            return
+        try:
+            with self.template_config_path.open("r", encoding="utf8") as fh:
+                self.templates = yaml.safe_load(fh) or {}
+        except Exception:
+            self.templates = {}
+
+    # ------------------------------------------------------------------
+    def get_template_curve(self, profile: str) -> list[float]:
+        """Return the ROI template curve for ``profile``.
+
+        The templates are loaded lazily on first access.  An empty list is
+        returned when no curve is defined for ``profile``.
+        """
+
+        self._load_templates()
         curve = self.templates.get(profile, []) if self.templates else []
-        if cycle_index < 0:
-            cycle_index = 0
-        if cycle_index < len(curve):
-            return float(curve[cycle_index])
-        return float(curve[-1]) if curve else 0.0
+        return [float(v) for v in curve]
 
     # ------------------------------------------------------------------
     def get_trend_curve(self, workflow_id: str) -> Tuple[float, float, float]:
