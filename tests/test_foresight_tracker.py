@@ -463,3 +463,54 @@ def test_predict_roi_collapse_scenarios(
     else:
         assert result["collapse_in"] == pytest.approx(expected_cycles)
     assert result["brittle"] is brittle
+
+
+def _make_tracker(tmp_path, ent_curve):
+    cfg = tmp_path / "entropy_templates.yaml"
+    cfg.write_text(
+        "entropy_profiles:\n  wf: base\nentropy_trajectories:\n  base:\n" +
+        "".join(f"    - {v}\n" for v in ent_curve),
+        encoding="utf8",
+    )
+    return ForesightTracker(templates_path=cfg)
+
+
+@pytest.mark.parametrize(
+    "roi_values,degradations,template,risk,collapse,brittle",
+    [
+        ([1.0, 1.1, 1.2, 1.3], [0.05] * 4, [0.05] * 5, "Stable", None, False),
+        ([1.0, 0.95, 0.9, 0.85], [0.05] * 4, [0.05] * 5, "Slow decay", None, False),
+        ([1.0, 3.0, 1.0, 3.0, 1.0], [0.05] * 5, [0.05] * 5, "Volatile", None, False),
+        (
+            [1.0, 0.5, -0.5],
+            [0.05, 0.1, 0.3],
+            [0.05, 0.1, 0.15],
+            "Immediate collapse risk",
+            0.0,
+            False,
+        ),
+        (
+            [1.0, 0.9, 0.6],
+            [0.10, 0.10, 0.12],
+            [0.10, 0.10, 0.11],
+            "Slow decay",
+            None,
+            True,
+        ),
+    ],
+)
+def test_predict_roi_collapse_with_entropy_templates(
+    tmp_path, roi_values, degradations, template, risk, collapse, brittle
+):
+    tracker = _make_tracker(tmp_path, template)
+    for roi, deg in zip(roi_values, degradations):
+        tracker.record_cycle_metrics(
+            "wf", {"roi_delta": roi, "scenario_degradation": deg}
+        )
+    result = tracker.predict_roi_collapse("wf")
+    assert result["risk"] == risk
+    assert result["brittle"] is brittle
+    if collapse is None:
+        assert result["collapse_in"] is None
+    else:
+        assert result["collapse_in"] == pytest.approx(collapse)
