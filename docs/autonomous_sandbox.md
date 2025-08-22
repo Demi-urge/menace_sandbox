@@ -637,7 +637,7 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
    If the previous run terminated unexpectedly you can append `--recover` to reload the last recorded ROI and synergy histories.
    Use `--preset-debug` to enable verbose logging of preset adaptation. Combine it with `--debug-log-file <path>` to write these logs to a file for later inspection.
    Use `--forecast-log <path>` to store ROI forecasts and threshold values for each run.
-   The optional [ForesightTracker](foresight_tracker.md) captures these cycle metrics and checks short‑term trend stability.
+   The optional [ForesightTracker](foresight_tracker.md) captures these cycle metrics and checks short‑term trend stability. Cold start templates live in `configs/foresight_templates.yaml`.
    Use `--dynamic-workflows` to build temporary workflows from module groups when the workflow database is empty. Control the clustering with `--module-algorithm`, `--module-threshold` and `--module-semantic` which mirror the options of `discover_module_groups`.
 
    Example:

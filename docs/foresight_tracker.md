@@ -36,11 +36,13 @@ The tracker stores only the recent `max_cycles` cycles per workflow, keeping mem
 ## Cold starts and template curves
 
 Workflows with fewer than three recorded cycles are treated as cold starts.
-The `is_cold_start(workflow_id)` helper returns ``True`` in this situation or
-when no ROI metric has been captured yet. During this phase the tracker can
-fall back to synthetic ROI templates defined in `configs/foresight_templates.yaml`.
-The YAML maps workflow identifiers to template names under `profiles` and
-provides ROI curves under `templates`:
+The `is_cold_start(workflow_id)` helper detects this warm‑up period and also
+returns `True` when no ROI metric has been captured yet. During this phase the
+tracker can fall back to synthetic ROI templates defined in
+`configs/foresight_templates.yaml`.
+
+That YAML file contains two sections: `profiles` map workflow identifiers to
+template names and `templates` provide the ROI curves used for bootstrapping:
 
 ```yaml
 profiles:
@@ -50,6 +52,10 @@ templates:
   slow_riser:      [0.05, 0.1, 0.2, 0.35, 0.5]
   early_volatile:  [0.4, -0.15, 0.5, -0.1, 0.45]
 ```
+
+In the example above `scraper_bot` uses the `slow_riser` profile while
+`trading_bot` follows `early_volatile`. Additional profiles can be configured by
+editing `configs/foresight_templates.yaml`.
 
 When capturing metrics, the first five cycles blend real observations with the
 template curve using:
