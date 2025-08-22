@@ -5658,7 +5658,12 @@ def simulate_temporal_trajectory(
         degradation = tracker.scenario_degradation()
 
         if foresight_tracker is not None:
-            foresight_tracker.capture_from_roi(tracker, str(workflow_id))
+            foresight_tracker.capture_from_roi(
+                tracker,
+                str(workflow_id),
+                stage=name,
+                compute_stability=True,
+            )
             _, _, stability = foresight_tracker.get_trend_curve(str(workflow_id))
             logging.info(
                 "temporal stage %s: roi=%.3f resilience=%.3f stability=%.3f degradation=%.3f",
