@@ -71,11 +71,28 @@ class EnhancementVectorizer:
 _DEFAULT_VECTORIZER = EnhancementVectorizer()
 
 
-def vectorize_and_store(record_id: str, enhancement: Dict[str, Any], *, path: str = "embeddings.jsonl") -> List[float]:
+def vectorize_and_store(
+    record_id: str,
+    enhancement: Dict[str, Any],
+    *,
+    path: str = "embeddings.jsonl",
+    origin_db: str = "enhancement",
+    metadata: Dict[str, Any] | None = None,
+) -> List[float]:
     """Vectorise ``enhancement`` and persist the embedding."""
 
     vec = _DEFAULT_VECTORIZER.transform(enhancement)
-    persist_embedding("enhancement", record_id, vec, path=path)
+    try:
+        persist_embedding(
+            "enhancement",
+            record_id,
+            vec,
+            path=path,
+            origin_db=origin_db,
+            metadata=metadata or {},
+        )
+    except TypeError:  # pragma: no cover - compatibility with older signatures
+        persist_embedding("enhancement", record_id, vec, path=path)
     return vec
 
 

@@ -65,11 +65,28 @@ class ErrorVectorizer:
 _DEFAULT_VECTORIZER = ErrorVectorizer()
 
 
-def vectorize_and_store(record_id: str, error: Dict[str, Any], *, path: str = "embeddings.jsonl") -> List[float]:
+def vectorize_and_store(
+    record_id: str,
+    error: Dict[str, Any],
+    *,
+    path: str = "embeddings.jsonl",
+    origin_db: str = "error",
+    metadata: Dict[str, Any] | None = None,
+) -> List[float]:
     """Vectorise ``error`` and persist the embedding."""
 
     vec = _DEFAULT_VECTORIZER.transform(error)
-    persist_embedding("error", record_id, vec, path=path)
+    try:
+        persist_embedding(
+            "error",
+            record_id,
+            vec,
+            path=path,
+            origin_db=origin_db,
+            metadata=metadata or {},
+        )
+    except TypeError:  # pragma: no cover - compatibility with older signatures
+        persist_embedding("error", record_id, vec, path=path)
     return vec
 
 

@@ -318,21 +318,28 @@ def compare_vectors(v1: List[float], v2: List[float]) -> float:
     return float(np.dot(a, b) / denom)
 
 
-def vectorize_and_store(record_id: str, action_log: Dict, *, path: str = "embeddings.jsonl") -> List[float]:
-    """Vectorise ``action_log`` and persist the embedding.
-
-    Parameters
-    ----------
-    record_id:
-        Identifier associated with ``action_log``.
-    action_log:
-        Record describing the action.
-    path:
-        Optional path for the shared embedding store.
-    """
+def vectorize_and_store(
+    record_id: str,
+    action_log: Dict,
+    *,
+    path: str = "embeddings.jsonl",
+    origin_db: str = "action",
+    metadata: Dict[str, Any] | None = None,
+) -> List[float]:
+    """Vectorise ``action_log`` and persist the embedding."""
 
     vec = _DEFAULT_VECTORIZER.transform(action_log)
-    persist_embedding("action", record_id, vec, path=path)
+    try:
+        persist_embedding(
+            "action",
+            record_id,
+            vec,
+            path=path,
+            origin_db=origin_db,
+            metadata=metadata or {},
+        )
+    except TypeError:  # pragma: no cover - compatibility with older signatures
+        persist_embedding("action", record_id, vec, path=path)
     return vec
 
 
