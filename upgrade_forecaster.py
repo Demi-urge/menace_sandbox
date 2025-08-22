@@ -174,8 +174,10 @@ class UpgradeForecaster:
                         decay=float(decay),
                     )
                 )
-
-            forecast_confidence = samples / (samples + 1.0)
+            
+            roi_vals = [p.roi for p in projections]
+            variance = float(np.var(roi_vals)) if roi_vals else 0.0
+            forecast_confidence = (samples / (samples + 1.0)) * (1.0 / (1.0 + variance))
         else:
             slope, intercept, stability = self.tracker.get_trend_curve(wf_id)
 
