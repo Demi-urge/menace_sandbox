@@ -96,6 +96,12 @@ def get_cached_chain(query, dbs):
     return None
 def set_cached_chain(query, dbs, results):
     pass
+def clear_cache():
+    pass
+def show_cache():
+    return {}
+def cache_stats():
+    return {}
 """,
         "scripts/new_db_template.py": """
 import os, sys
@@ -141,10 +147,10 @@ def test_retrieve_failure(cli_env):
         env,
         "retrieve",
         "query",
-        extra_env={"RETRIEVER_IMPORT_ERROR": "1", "UNIVERSAL_IMPORT_ERROR": "1"},
+        extra_env={"RETRIEVER_IMPORT_ERROR": "1"},
     )
     assert res.returncode == 1
-    assert "universal retriever unavailable" in res.stderr
+    assert "vector retriever unavailable" in res.stderr
 
 
 def test_patch_success(cli_env):
