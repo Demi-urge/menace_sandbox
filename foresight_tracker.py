@@ -491,67 +491,61 @@ class ForesightTracker:
         return slope > 0 and std < self.volatility_threshold
 
     # ------------------------------------------------------------------
-    def predict_roi_collapse(self, workflow_id: str) -> Dict[str, object]:
-        """Estimate when the ROI trajectory for ``workflow_id`` will fail.
+    def predict_roi_collapse(self, workflow_id: str, horizon: int = 5) -> Dict[str, object]:
+        """Project the ROI trajectory and classify collapse risk.
 
-        The method inspects the recent history of ``workflow_id`` and projects
-        a simple collapse curve assuming the current linear trend continues.
-        Entropy degradation is incorporated by comparing the latest recorded
-        ``scenario_degradation`` against the expected entropy trajectory from
-        :meth:`get_entropy_template_curve`.  Higher than expected degradation
-        accelerates the projected decline.
+        The function inspects recent ``roi_delta`` history for ``workflow_id``
+        and extrapolates the current trend ``horizon`` cycles into the future.
+        ``get_trend_curve`` supplies the slope and second derivative of the
+        averaged metrics while volatility is measured as the standard deviation
+        of recent ``roi_delta`` values.  Higher than expected
+        ``scenario_degradation`` compared against the entropy template reduces
+        the projected slope.  If small degradation increases lead to large ROI
+        drops the workflow is marked as brittle.
 
-        Outcomes are classified into four buckets based on the projected slope
-        and observed volatility:
+        Risk labels follow these guidelines:
 
-        ``"Stable"``
-            Positive slope and volatility below ``volatility_threshold``.
-        ``"Slow decay"``
-            Negative slope with low volatility and collapse projected several
-            cycles out.
-        ``"Volatile"``
-            High volatility regardless of slope.
-        ``"Immediate collapse risk"``
-            Negative slope with imminent collapse within the next couple of
-            cycles.
-
-        The helper also checks for *brittleness* where small entropy
-        degradations produce disproportionately large ROI drops.  In such
-        scenarios the returned mapping includes ``"brittle": True``.
+        ``Stable``
+            slope ≥ 0 and volatility below ``volatility_threshold``.
+        ``Slow decay``
+            mildly negative slope with low volatility.
+        ``Volatile``
+            volatility ≥ ``volatility_threshold`` regardless of slope.
+        ``Immediate collapse risk``
+            steep negative slope or projected failure within a few cycles.
 
         Parameters
         ----------
         workflow_id:
             Identifier of the workflow to analyse.
+        horizon:
+            Number of future cycles to project. Defaults to ``5``.
 
         Returns
         -------
         dict
-            Mapping with the following keys:
-
-            ``risk_class``
-                One of the four outcome classes described above.
-            ``cycles_to_collapse``
-                Estimated number of cycles until ROI falls below zero or
-                ``None`` when no collapse is projected.
-            ``brittle``
-                ``True`` when brittleness is detected.
-            ``collapse_curve``
-                List of projected ROI values for future cycles until collapse
-                or the projection horizon is reached.
+            Mapping with ``projection`` of future ROI values, estimated
+            ``cycles_to_collapse`` (or ``None``), the risk label under
+            ``risk`` and a ``brittle`` flag.
         """
 
         history = self.history.get(workflow_id)
         if not history:
             return {
-                "risk_class": "Stable",
+                "projection": [],
                 "cycles_to_collapse": None,
+                "risk": "Stable",
                 "brittle": False,
-                "collapse_curve": [],
             }
 
-        slope, _, avg_stability = self.get_trend_curve(workflow_id)
-        volatility = (1.0 / avg_stability - 1.0) if avg_stability else float("inf")
+        slope, second_derivative, _ = self.get_trend_curve(workflow_id)
+
+        roi_values = [float(e.get("roi_delta", 0.0)) for e in history]
+        if len(roi_values) > 1:
+            window = min(len(roi_values), self.max_cycles)
+            volatility = float(np.std(roi_values[-window:], ddof=1))
+        else:
+            volatility = 0.0
 
         last_entry = history[-1]
         last_roi = float(last_entry.get("roi_delta", 0.0))
@@ -559,47 +553,46 @@ class ForesightTracker:
         cycle_index = len(history) - 1
 
         ent_curve = self.get_entropy_template_curve(workflow_id)
-        template_ent = ent_curve[cycle_index] if cycle_index < len(ent_curve) else 0.0
-        entropy_degradation = last_deg - template_ent
+        if ent_curve:
+            template_ent = ent_curve[cycle_index] if cycle_index < len(ent_curve) else ent_curve[-1]
+        else:
+            template_ent = 0.0
+        entropy_deviation = last_deg - template_ent
+        effective_slope = slope - entropy_deviation
 
-        effective_slope = slope - entropy_degradation
-
-        collapse_curve: List[float] = []
+        projection: List[float] = []
         proj_roi = last_roi
-        cycles = 0
-        max_horizon = max(self.max_cycles, 10)
-        while cycles < max_horizon and proj_roi > 0:
+        cycles_to_collapse: float | None = 0 if proj_roi <= 0 else None
+        for i in range(1, horizon + 1):
             proj_roi += effective_slope
-            collapse_curve.append(proj_roi)
-            cycles += 1
+            projection.append(proj_roi)
+            if cycles_to_collapse is None and proj_roi <= 0:
+                cycles_to_collapse = float(i)
 
-        cycles_to_collapse = cycles if proj_roi <= 0 else None
-
-        # Brittleness: large ROI drop despite minimal entropy change
         brittle = False
         if len(history) >= 2:
             prev = history[-2]
             roi_drop = float(prev.get("roi_delta", 0.0)) - last_roi
             deg_diff = last_deg - float(prev.get("scenario_degradation", 0.0))
-            if deg_diff > 0 and deg_diff < 0.05:
-                if roi_drop / (deg_diff + 1e-6) > 10.0:
-                    brittle = True
+            if 0 < deg_diff < 0.05 and roi_drop / (deg_diff + 1e-6) > 10.0:
+                brittle = True
 
         if volatility >= self.volatility_threshold:
             risk = "Volatile"
         elif slope >= 0:
             risk = "Stable"
         else:
-            if cycles_to_collapse is not None and cycles_to_collapse <= 2:
+            steep = slope < -1.0 or second_derivative < -0.1
+            if (cycles_to_collapse is not None and cycles_to_collapse <= 2) or steep:
                 risk = "Immediate collapse risk"
             else:
                 risk = "Slow decay"
 
         return {
-            "risk_class": risk,
+            "projection": projection,
             "cycles_to_collapse": cycles_to_collapse,
+            "risk": risk,
             "brittle": brittle,
-            "collapse_curve": collapse_curve,
         }
 
     # ------------------------------------------------------------------

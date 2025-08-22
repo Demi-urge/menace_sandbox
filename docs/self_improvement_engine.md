@@ -85,8 +85,8 @@ ROI improve. Clearing the variable disables the baseline comparison.
 ## Promotion gating via collapse prediction
 
 Before a workflow's new version is promoted, the engine consults
-``ForesightTracker.predict_roi_collapse``. Promotions proceed only when
-``risk_class`` resolves to ``Stable`` or ``Slow decay``. Workflows flagged as
+``ForesightTracker.predict_roi_collapse``. Promotions proceed only when the
+returned ``risk`` resolves to ``Stable`` or ``Slow decay``. Workflows flagged as
 ``Volatile`` or ``Immediate collapse risk`` remain in evaluation until their
 metrics stabilise, preventing short‑lived spikes from being deployed.
 

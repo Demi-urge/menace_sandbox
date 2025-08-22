@@ -449,11 +449,12 @@ def test_predict_roi_collapse_classifications(roi_values, threshold, expected):
     for val in roi_values:
         tracker.record_cycle_metrics("wf", {"roi_delta": val}, scenario_degradation=0.0)
     result = tracker.predict_roi_collapse("wf")
-    assert result["risk_class"] == expected
+    assert result["risk"] == expected
     if expected == "Stable":
         assert result["cycles_to_collapse"] is None
     elif expected == "Slow decay":
-        assert result["cycles_to_collapse"] and result["cycles_to_collapse"] > 2
+        if result["cycles_to_collapse"] is not None:
+            assert result["cycles_to_collapse"] > 2
     elif expected == "Immediate collapse risk":
         assert result["cycles_to_collapse"] is not None
         assert result["cycles_to_collapse"] <= 2
