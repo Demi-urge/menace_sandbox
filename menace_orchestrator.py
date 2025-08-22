@@ -47,6 +47,7 @@ from .identity_seeder import seed_identity
 from .session_vault import SessionVault
 import requests
 from vector_service.cognition_layer import CognitionLayer
+from roi_tracker import ROITracker
 
 
 class _RemoteVisualAgent:
@@ -260,7 +261,8 @@ class MenaceOrchestrator:
         self.discrepancy_detector = DiscrepancyDetectionBot()
         self.bottleneck_detector = EfficiencyBot()
         self.visual_client = visual_agent_client or _RemoteVisualAgent()
-        self.cognition_layer = CognitionLayer()
+        self.roi_tracker = ROITracker()
+        self.cognition_layer = CognitionLayer(roi_tracker=self.roi_tracker)
 
     # ------------------------------------------------------------------
     def status_summary(self) -> Dict[str, object]:

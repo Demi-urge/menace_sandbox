@@ -69,6 +69,8 @@ except Exception:  # pragma: no cover - defensive fallback
 
         pass
 
+from roi_tracker import ROITracker
+
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
     from .data_bot import DataBot
@@ -149,13 +151,26 @@ class SelfCodingEngine:
         self.logger = logging.getLogger("SelfCodingEngine")
         self.event_bus = event_bus
         self.patch_suggestion_db = patch_suggestion_db
+        tracker = ROITracker()
+        if patch_logger is not None and getattr(patch_logger, "roi_tracker", None) is None:
+            try:
+                patch_logger.roi_tracker = tracker  # type: ignore[attr-defined]
+            except Exception:
+                pass
         if cognition_layer is None:
             try:
-                cognition_layer = CognitionLayer(patch_logger=patch_logger)
+                cognition_layer = CognitionLayer(patch_logger=patch_logger, roi_tracker=tracker)
             except Exception:
                 cognition_layer = None
+        else:
+            if getattr(cognition_layer, "roi_tracker", None) is None:
+                try:
+                    cognition_layer.roi_tracker = tracker  # type: ignore[attr-defined]
+                except Exception:
+                    pass
         self.cognition_layer = cognition_layer
         self.patch_logger = patch_logger
+        self.roi_tracker = tracker
         self.knowledge_service = knowledge_service
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
