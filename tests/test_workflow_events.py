@@ -3,9 +3,9 @@ from menace.unified_event_bus import UnifiedEventBus
 
 def test_workflow_events(tmp_path):
     bus = UnifiedEventBus()
-    events = {"new": [], "updated": [], "deleted": []}
+    events = {"new": [], "update": [], "deleted": []}
     bus.subscribe("workflows:new", lambda t, e: events["new"].append(e))
-    bus.subscribe("workflows:updated", lambda t, e: events["updated"].append(e))
+    bus.subscribe("workflows:update", lambda t, e: events["update"].append(e))
     bus.subscribe("workflows:deleted", lambda t, e: events["deleted"].append(e))
 
     db = thb.WorkflowDB(tmp_path / "wf.db", event_bus=bus)
@@ -14,7 +14,7 @@ def test_workflow_events(tmp_path):
     assert events["new"] and events["new"][0]["wid"] == wid
 
     db.update_statuses([wid], "active")
-    assert events["updated"] and events["updated"][0] == {"workflow_id": wid, "status": "active"}
+    assert events["update"] and events["update"][0] == {"workflow_id": wid, "status": "active"}
 
     db.remove(wid)
     assert events["deleted"] and events["deleted"][0] == {"workflow_id": wid}

@@ -60,7 +60,7 @@ Other components should emit workflow lifecycle events on a shared
 `graph.attach_event_bus(bus)`, the graph listens for the following topics:
 
 * `workflows:new` – payload contains `workflow_id` of a new workflow.
-* `workflows:updated` – payload may include `workflow_id`, `roi`,
+* `workflows:update` – payload may include `workflow_id`, `roi`,
   `synergy_scores`, and optional `roi_delta` or `synergy_delta` values.
 * `workflows:deleted` / `workflows:refactor` – remove a workflow from the DAG.
 

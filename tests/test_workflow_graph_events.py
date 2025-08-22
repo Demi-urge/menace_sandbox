@@ -18,7 +18,7 @@ def test_workflow_graph_event_sync(tmp_path):
         assert "1" in g.graph["nodes"]
 
     bus.publish(
-        "workflows:updated",
+        "workflows:update",
         {"workflow_id": 1, "roi": 2.0, "roi_delta": 0.5},
     )
     if g._backend == "networkx":
