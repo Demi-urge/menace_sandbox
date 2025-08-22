@@ -119,8 +119,24 @@ class CognitionLayer:
                 logger.exception("Failed to load pending sessions from metrics DB")
 
     # ------------------------------------------------------------------
-    def reload_ranker_model(self, model_path: str | "Path") -> None:
-        """Reload ranking model on retriever and context builder."""
+    def reload_ranker_model(self, model_path: str | "Path" | None = None) -> None:
+        """Reload ranking model on retriever and context builder.
+
+        When ``model_path`` is ``None`` the method attempts to read the path
+        from ``retrieval_ranker.json`` so services can simply call this method
+        after a scheduler-triggered retrain.
+        """
+
+        if not model_path:
+            try:
+                cfg = json.loads(Path("retrieval_ranker.json").read_text())
+                if isinstance(cfg, dict):
+                    model_path = cfg.get("current")
+            except Exception:
+                model_path = None
+        if not model_path:
+            logger.warning("No ranking model path available to reload")
+            return
 
         try:
             self.retriever.reload_ranker_model(model_path)  # type: ignore[arg-type]
