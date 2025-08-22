@@ -10,12 +10,7 @@ import time
 
 from .decorators import log_and_measure
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
-from .patch_safety import check_patch_safety
-
-try:  # pragma: no cover - optional dependency for similarity risk
-    from patch_safety import PatchSafety  # type: ignore
-except Exception:  # pragma: no cover
-    PatchSafety = None  # type: ignore
+from patch_safety import PatchSafety
 
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me  # type: ignore
@@ -117,7 +112,10 @@ class PatchLogger:
         self.max_alert_severity = max_alert_severity
         self.max_alerts = max_alerts
         self.license_denylist = set(license_denylist or _DEFAULT_LICENSE_DENYLIST)
-        self.patch_safety = patch_safety or (PatchSafety() if PatchSafety is not None else None)
+        self.patch_safety = patch_safety or PatchSafety()
+        self.patch_safety.max_alert_severity = max_alert_severity
+        self.patch_safety.max_alerts = max_alerts
+        self.patch_safety.license_denylist = self.license_denylist
 
     # ------------------------------------------------------------------
     def _parse_vectors(
@@ -184,25 +182,11 @@ class PatchLogger:
             for o, vid, score in detailed:
                 key = f"{o}:{vid}" if o else vid
                 m = meta.get(key, {})
-                if not check_patch_safety(
-                    m,
-                    max_alert_severity=self.max_alert_severity,
-                    max_alerts=self.max_alerts,
-                    license_denylist=self.license_denylist,
-                ):
-                    filtered += 1
-                    continue
-                lic = m.get("license")
-                fp = m.get("license_fingerprint")
-                alerts = m.get("semantic_alerts")
-                sev = m.get("alignment_severity")
-                risk = 0.0
-                if self.patch_safety is not None:
-                    try:
-                        risk = float(self.patch_safety.score(m))
-                    except Exception:
-                        risk = 0.0
-                if self.patch_safety is not None and risk >= getattr(self.patch_safety, "threshold", 1.0):
+                self.patch_safety.max_alert_severity = self.max_alert_severity
+                self.patch_safety.max_alerts = self.max_alerts
+                self.patch_safety.license_denylist = self.license_denylist
+                passed, risk = self.patch_safety.evaluate(m, m)
+                if risk >= self.patch_safety.threshold:
                     payload = {"vector": key, "score": risk, "threshold": self.patch_safety.threshold}
                     bus = self.event_bus
                     if bus is None and UnifiedEventBus is not None:
@@ -216,6 +200,13 @@ class PatchLogger:
                             bus.publish("patch:risk_alert", payload)
                         except Exception:
                             logger.exception("Failed to publish patch risk alert")
+                if not passed:
+                    filtered += 1
+                    continue
+                lic = m.get("license")
+                fp = m.get("license_fingerprint")
+                alerts = m.get("semantic_alerts")
+                sev = m.get("alignment_severity")
                 if fp is not None:
                     detailed_meta.append((o, vid, score, lic, fp, alerts))
                     provenance_meta.append((o, vid, score, lic, fp, alerts, sev))
@@ -230,7 +221,7 @@ class PatchLogger:
                         origin_sev[ok] = max(origin_sev.get(ok, 0.0), float(sev))
                     except Exception:
                         origin_sev[ok] = max(origin_sev.get(ok, 0.0), 1.0)
-                if self.patch_safety is not None and risk >= getattr(self.patch_safety, "threshold", 1.0):
+                if risk >= self.patch_safety.threshold:
                     risky += 1
                 else:
                     safe += 1
