@@ -14,7 +14,7 @@ import hashlib
 import pkgutil
 import queue
 
-from .registry import get_db_registry
+from . import registry as _registry
 
 from .vectorizer import SharedVectorService
 
@@ -86,16 +86,18 @@ KNOWN_DB_KINDS = {
 
 
 def _load_registry(path: Path | None = None) -> dict[str, tuple[str, str]]:
-    """Return mapping of source name to (module, class) tuples.
+    """Return mapping of source name to ``(module, class)`` tuples.
 
-    Registrations are primarily sourced from :mod:`vector_service.registry`
-    so newly registered vectorisers are automatically available for backfills.
+    The mapping starts with entries discovered via
+    :mod:`vector_service.registry`, which now scans for ``*Vectorizer`` classes
+    automatically.  This means new modalities become available for backfills by
+    simply adding a new vectoriser module; no source code changes are required.
     ``path`` is retained for backwards compatibility with the original JSON
     based registry and, when provided, entries from that file are merged over
     the dynamic registrations.
     """
 
-    mapping = get_db_registry()
+    mapping = dict(_registry.get_db_registry())
 
     reg_path = path or _REGISTRY_FILE
     if reg_path.exists():  # merge any legacy JSON entries

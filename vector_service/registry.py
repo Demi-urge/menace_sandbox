@@ -11,6 +11,8 @@ provided so :mod:`embedding_backfill` discovers the appropriate
 
 from typing import Callable, Dict, Tuple, Optional
 import importlib
+import pkgutil
+import inspect
 
 # Registry mapping kind -> (vectoriser module, vectoriser class,
 #                           db module, db class)
@@ -53,6 +55,51 @@ def get_db_registry() -> Dict[str, Tuple[str, str]]:
         if mod and cls:
             mapping[kind] = (mod, cls)
     return mapping
+
+
+# ---------------------------------------------------------------------------
+def _discover_vectorizers() -> None:
+    """Automatically register vectorizers within :mod:`vector_service`.
+
+    Any submodule whose name ends with ``"vectorizer"`` is imported and
+    inspected for classes whose names end with ``"Vectorizer"``.  These are
+    registered using the class name prefix (lower‑cased) as the registry key.
+    ``DB_MODULE`` and ``DB_CLASS`` attributes, either on the module or the
+    class, are used when present to also register the corresponding database
+    implementation.  Existing registrations take precedence and are not
+    overridden.
+    """
+
+    pkg_name = __name__.rsplit(".", 1)[0]
+    try:
+        pkg = importlib.import_module(pkg_name)
+    except Exception:  # pragma: no cover - defensive
+        return
+
+    for modinfo in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + "."):
+        # Only consider modules that look like vectorizers to avoid importing
+        # heavy dependencies unnecessarily.
+        if not modinfo.name.endswith("vectorizer"):
+            continue
+        try:
+            mod = importlib.import_module(modinfo.name)
+        except Exception:  # pragma: no cover - best effort
+            continue
+        for attr, obj in inspect.getmembers(mod, inspect.isclass):
+            if not attr.endswith("Vectorizer"):
+                continue
+            kind = attr[:-10].lower()
+            if kind in _VECTOR_REGISTRY:
+                continue
+            db_module = getattr(obj, "DB_MODULE", getattr(mod, "DB_MODULE", None))
+            db_class = getattr(obj, "DB_CLASS", getattr(mod, "DB_CLASS", None))
+            register_vectorizer(
+                kind,
+                modinfo.name,
+                attr,
+                db_module=db_module,
+                db_class=db_class,
+            )
 
 
 # Register built-in vectorisers and their database counterparts.
@@ -127,3 +174,6 @@ register_vectorizer(
     db_module="resources_bot",
     db_class="ROIHistoryDB",
 )
+
+# Discover any additional vectorisers packaged under vector_service.*
+_discover_vectorizers()
