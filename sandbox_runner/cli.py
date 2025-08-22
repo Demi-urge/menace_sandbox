@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Mapping
 import tempfile
 import shutil
 import math
@@ -1729,18 +1729,35 @@ def main(argv: List[str] | None = None) -> None:
 
     if args.simulate_temporal_trajectory is not None:
         from sandbox_runner.environment import simulate_temporal_trajectory
+        from task_handoff_bot import WorkflowDB
+
+        wf_db = WorkflowDB(Path(args.workflow_db))
+        row = wf_db.conn.execute(
+            "SELECT workflow, task_sequence FROM workflows WHERE id=?",
+            (args.simulate_temporal_trajectory,),
+        ).fetchone()
+        if not row:
+            print(f"workflow {args.simulate_temporal_trajectory} not found")
+            return
+        steps_raw = row["workflow"] if isinstance(row, Mapping) else row[0]
+        if not steps_raw:
+            steps_raw = row["task_sequence"] if isinstance(row, Mapping) else row[1]
+        workflow_steps = [s for s in str(steps_raw).split(",") if s]
 
         ft = ForesightTracker()
-        _, summary = simulate_temporal_trajectory(
-            args.simulate_temporal_trajectory, foresight_tracker=ft
+        simulate_temporal_trajectory(
+            str(args.simulate_temporal_trajectory),
+            workflow_steps,
+            foresight_tracker=ft,
         )
         path = (
             Path("sandbox_data")
             / f"temporal_trajectory_{args.simulate_temporal_trajectory}.json"
         )
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(summary, indent=2))
-        print(json.dumps(summary, indent=2))
+        data = ft.to_dict()
+        path.write_text(json.dumps(data, indent=2))
+        print(json.dumps(data, indent=2))
         return
 
     if args.run_scenarios is not None:
