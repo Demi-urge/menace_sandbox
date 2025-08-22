@@ -158,6 +158,24 @@ Metrics emitted by `EmbeddingBackfill.run`:
 - `embedding_backfill_skipped_total{db,license}` – records dropped due to
   license restrictions.
 
+### Continuous backfills
+
+`EmbeddingBackfill` can run as a long‑lived daemon that watches all registered
+`EmbeddableDBMixin` databases for new or updated records:
+
+```bash
+python -m vector_service.embedding_backfill --watch --interval 300
+```
+
+The example above scans every five minutes.  Alternatively, trigger periodic
+backfills with cron:
+
+```
+*/30 * * * * python -m vector_service.embedding_backfill >> /var/log/embedding_backfill.log 2>&1
+```
+
+Both approaches keep embeddings fresh without manual intervention.
+
 ## HTTP API configuration
 
 The accompanying `vector_service_api` module exposes these helpers through a
