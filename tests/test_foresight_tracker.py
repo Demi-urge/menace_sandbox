@@ -15,6 +15,19 @@ def test_records_truncated_to_max_cycles():
     assert [entry["m"] for entry in history] == [2.0, 3.0, 4.0]
 
 
+def test_record_cycle_metrics_computes_stability_when_requested():
+    tracker = ForesightTracker()
+    tracker.record_cycle_metrics("wf", {"m": 1.0}, compute_stability=True)
+    first = tracker.history["wf"][0]
+    assert first["stability"] == 0.0
+
+    tracker.record_cycle_metrics("wf", {"m": 2.0}, compute_stability=True)
+    stabilities = [e["stability"] for e in tracker.history["wf"]]
+    expected_std = np.std([0.5, 2.0], ddof=1)
+    expected = 1.0 / (1.0 + expected_std)
+    assert stabilities[-1] == pytest.approx(expected)
+
+
 def test_get_trend_curve_expected_values():
     tracker = ForesightTracker()
 
