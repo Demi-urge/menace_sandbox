@@ -82,6 +82,7 @@ class Retriever:
         default_factory=lambda: set(_DEFAULT_LICENSE_DENYLIST)
     )
     patch_safety: PatchSafety = field(default_factory=PatchSafety)
+    risk_penalty: float = 1.0
 
     # ------------------------------------------------------------------
     def _get_retriever(self) -> UniversalRetriever:
@@ -135,7 +136,7 @@ class Retriever:
                 }
             # Pre-filter based on metadata-only safety signals so all
             # modalities are subject to the same limits.
-            passed, _ = ps.evaluate(meta)
+            passed, _, _ = ps.evaluate(meta)
             if not passed:
                 filtered += 1
                 continue
@@ -147,7 +148,8 @@ class Retriever:
                 filtered += 1
                 continue
             meta, reason = governed
-            passed, _ = ps.evaluate(meta)
+            origin = item.get("origin_db") or meta.get("origin") or ""
+            passed, risk_score, _ = ps.evaluate(meta, meta, origin=origin)
             if not passed:
                 filtered += 1
                 continue
@@ -159,6 +161,9 @@ class Retriever:
             item["license_fingerprint"] = fp
             item["semantic_alerts"] = meta.get("semantic_alerts")
             item["alignment_severity"] = meta.get("alignment_severity")
+            if isinstance(meta, dict):
+                meta["risk_score"] = risk_score
+            item["risk_score"] = risk_score
             item = redact_dict(pii_redact_dict(item))
             if fp is not None:
                 item["license_fingerprint"] = fp
@@ -174,7 +179,8 @@ class Retriever:
             lic = meta.get("license")
             if lic in denylist or _LICENSE_DENYLIST.get(fp) in denylist:
                 penalty += 1.0
-            item["score"] = max(float(item.get("score", 0.0)) - penalty, 0.0)
+            total_penalty = penalty + risk_score * self.risk_penalty
+            item["score"] = max(float(item.get("score", 0.0)) - total_penalty, 0.0)
             results.append(item)
         if filtered:
             try:
