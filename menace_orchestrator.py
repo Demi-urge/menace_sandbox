@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Callable
+from typing import Any, Dict, Iterable, List, Optional, Callable
 import logging
 import os
 import time
@@ -46,7 +46,7 @@ from .trend_predictor import TrendPredictor
 from .identity_seeder import seed_identity
 from .session_vault import SessionVault
 import requests
-from .cognition_layer import build_cognitive_context, log_feedback
+from .cognition_layer import build_cognitive_context, log_feedback, _patch_safety
 
 
 class _RemoteVisualAgent:
@@ -330,6 +330,38 @@ class MenaceOrchestrator:
         self.bot_status[name] = False
         return self.check_health(name)
 
+    def handle_feedback(
+        self,
+        session_id: str,
+        success: bool,
+        *,
+        patch_id: str = "",
+        contribution: float | None = None,
+        errors: Iterable[Dict[str, Any]] | None = None,
+    ) -> None:
+        """Record patch outcome and forward failures to :class:`PatchSafety`.
+
+        ``session_id`` identifies the retrieval session, ``success`` indicates
+        whether the patch ultimately succeeded and ``contribution`` captures the
+        outcome score or ROI contribution.  When ``errors`` are supplied and the
+        patch failed, each entry is forwarded to
+        :func:`PatchSafety.record_failure` so the ``failure_vectorizer`` can
+        learn from the example.
+        """
+
+        log_feedback(
+            session_id,
+            success,
+            patch_id=patch_id,
+            contribution=contribution,
+        )
+        if not success and errors:
+            for err in errors:
+                try:
+                    _patch_safety.record_failure(dict(err))
+                except Exception:
+                    self.logger.exception("failed to record failure metadata")
+
     def update_confidence_metrics(self, results: Dict[str, bool]) -> None:
         """Update workflow confidence scores based on replay results."""
         for wf, ok in results.items():
@@ -382,14 +414,14 @@ class MenaceOrchestrator:
                 )
                 results[node] = (pid, reverted)
                 success = pid is not None and not reverted
-                log_feedback(
+                self.handle_feedback(
                     session_id,
                     success,
                     patch_id=str(pid) if pid is not None else "",
                     contribution=1.0 if success else 0.0,
                 )
             except Exception:
-                log_feedback(session_id, False, contribution=0.0)
+                self.handle_feedback(session_id, False, contribution=0.0)
                 raise
             if pid is not None and not reverted and self.rollback_mgr:
                 self.rollback_mgr.register_patch(str(pid), node)
