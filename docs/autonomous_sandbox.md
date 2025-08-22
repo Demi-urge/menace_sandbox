@@ -38,6 +38,15 @@ else:
 
 This check prevents unstable trajectories from reaching production.
 
+Possible risk labels returned by `predict_roi_collapse` are:
+
+- **Stable** – non-negative slope with volatility below the configured threshold.
+- **Slow decay** – gently negative slope while volatility remains low.
+- **Volatile** – volatility above the threshold regardless of slope.
+- **Immediate collapse risk** – steep negative slope or a projected drop below zero in the next cycles.
+
+The result also includes a `brittle` flag when small entropy changes cause outsized ROI drops.
+
 ## GPT Interaction Tags
 
 All GPT interactions are recorded with a standard tag so that feedback and

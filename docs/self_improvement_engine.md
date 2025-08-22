@@ -85,10 +85,20 @@ ROI improve. Clearing the variable disables the baseline comparison.
 ## Promotion gating via collapse prediction
 
 Before a workflow's new version is promoted, the engine consults
-``ForesightTracker.predict_roi_collapse``. Promotions proceed only when the
-returned ``risk`` resolves to ``Stable`` or ``Slow decay``. Workflows flagged as
-``Volatile`` or ``Immediate collapse risk`` remain in evaluation until their
-metrics stabilise, preventing short‑lived spikes from being deployed.
+``ForesightTracker.predict_roi_collapse``. The forecast labels trajectories as
+**Stable**, **Slow decay**, **Volatile** or **Immediate collapse risk** and
+adds a ``brittle`` flag when minor entropy changes cause large ROI drops.
+Promotions proceed only when the returned ``risk`` resolves to ``Stable`` or
+``Slow decay`` and no brittleness is detected. Workflows flagged as
+``Volatile``, ``Immediate collapse risk`` or ``brittle`` remain in evaluation
+until their metrics stabilise, preventing short‑lived spikes from being deployed.
+
+```python
+risk = engine.foresight_tracker.predict_roi_collapse(wf)
+if risk["risk"] in {"Immediate collapse risk", "Volatile"} or risk["brittle"]:
+    return  # promotion blocked
+deploy(wf)
+```
 
 ## Adaptive ROI Prediction
 

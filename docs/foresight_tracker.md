@@ -1,6 +1,6 @@
 # ForesightTracker
 
-`ForesightTracker` maintains a rolling window of `max_cycles` cycle metrics for each workflow and derives basic trend curves. The `max_cycles` parameter controls this retention and the deprecated aliases `window` and `N` are still accepted. It acts as a light-weight temporal forecaster that lets the sandbox spot deteriorating behaviour early.
+`ForesightTracker` maintains a rolling window of `max_cycles` cycle metrics for each workflow and derives basic trend curves. The `max_cycles` parameter controls this retention and the deprecated aliases `window` and `N` are still accepted. It acts as a light-weight temporal forecaster that lets the sandbox spot deteriorating behaviour early.  In addition to stability scores the tracker can project future ROI with `predict_roi_collapse`, labelling trajectories as **Stable**, **Slow decay**, **Volatile** or **Immediate collapse risk** and flagging *brittle* workflows that crash after small entropy shifts.
 
 ``record_cycle_metrics`` now exposes a ``compute_stability`` flag. When set
 to ``True`` the tracker evaluates the current window immediately and appends a
@@ -187,8 +187,10 @@ amount, the ``brittle`` field is set to ``True``.
 ```python
 tracker = ForesightTracker(max_cycles=5)
 risk = tracker.predict_roi_collapse("workflow-1")
-if risk["risk"] != "Stable":
-    print("workflow-1 needs attention:", risk)
+if risk["risk"] in {"Immediate collapse risk", "Volatile"} or risk["brittle"]:
+    print("promotion blocked")
+else:
+    print("workflow is safe to promote")
 ```
 
 ## Persisting state
