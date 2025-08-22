@@ -3,6 +3,21 @@ profiles:
   trading_bot: early_volatile
   planner: late_collapse
 trajectories:
-  slow_riser: [0.05, 0.1, 0.15, 0.2, 0.25]
-  early_volatile: [0.2, -0.05, 0.15, 0.05, 0.1]
-  late_collapse: [0.3, 0.35, 0.4, 0.2, -0.1]
+  slow_riser:
+    - 0.05
+    - 0.1
+    - 0.15
+    - 0.2
+    - 0.25
+  early_volatile:
+    - 0.2
+    - -0.05
+    - 0.15
+    - 0.05
+    - 0.1
+  late_collapse:
+    - 0.3
+    - 0.35
+    - 0.4
+    - 0.2
+    - -0.1
