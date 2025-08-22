@@ -3,8 +3,8 @@ from __future__ import annotations
 """Periodic scheduler for retraining the vector ranker.
 
 The scheduler invokes :func:`analytics.retrain_vector_ranker.retrain` on a
-timer and listens to ``UnifiedEventBus`` for ``retrieval:feedback``
-notifications so that heavy ROI changes can trigger an immediate retrain.
+timer and listens to ``UnifiedEventBus`` for ROI and risk notifications so that
+heavy metric swings can trigger an immediate retrain.
 """
 
 from importlib import import_module
@@ -14,8 +14,9 @@ import threading
 import time
 from typing import Any, Sequence
 
-# Topic emitted by ``UnifiedEventBus`` when ROI feedback is recorded.
-FEEDBACK_TOPIC = "retrieval:feedback"
+# Topics emitted by ``UnifiedEventBus`` when ROI or risk feedback is recorded.
+ROI_TOPIC = "roi:update"
+RISK_TOPIC = "risk:update"
 
 try:  # pragma: no cover - optional dependency
     from unified_event_bus import UnifiedEventBus
@@ -60,7 +61,11 @@ class RankerScheduler:
                 self.event_bus = None
         if self.event_bus is not None:
             try:
-                self.event_bus.subscribe(FEEDBACK_TOPIC, self._handle_feedback)
+                self.event_bus.subscribe(ROI_TOPIC, self._handle_feedback)
+            except Exception:
+                pass
+            try:
+                self.event_bus.subscribe(RISK_TOPIC, self._handle_feedback)
             except Exception:
                 pass
 
@@ -75,13 +80,13 @@ class RankerScheduler:
             except Exception:
                 roi = 0.0
             try:
-                risk = float(event.get("risk", 0.0))
+                risk = float(event.get("risk", event.get("risk_score", 0.0)))
             except Exception:
                 risk = 0.0
             origin = str(event.get("db") or event.get("origin") or "")
         else:
             roi = float(getattr(event, "roi", 0.0) or 0.0)
-            risk = float(getattr(event, "risk", 0.0) or 0.0)
+            risk = float(getattr(event, "risk", getattr(event, "risk_score", 0.0)) or 0.0)
             origin = str(getattr(event, "db", getattr(event, "origin", "")) or "")
 
         if self.roi_threshold is not None:
@@ -143,7 +148,21 @@ def _import_obj(path: str) -> Any:
 
 
 def start_scheduler_from_env(services: Sequence[Any] | None = None) -> RankerScheduler | None:
-    """Start :class:`RankerScheduler` based on environment variables."""
+    """Start :class:`RankerScheduler` based on environment variables.
+
+    The following environment variables control the scheduler:
+
+    - ``RANKER_SCHEDULER_INTERVAL`` – seconds between retrains (``0`` disables)
+    - ``RANKER_SCHEDULER_ROI_THRESHOLD`` – cumulative per-origin ROI delta that
+      triggers an immediate retrain
+    - ``RANKER_SCHEDULER_RISK_THRESHOLD`` – cumulative per-origin risk delta
+      that triggers an immediate retrain
+    - ``RANKER_SCHEDULER_VECTOR_DB`` / ``RANKER_SCHEDULER_PATCH_DB`` – database
+      locations for metrics and ROI
+    - ``RANKER_SCHEDULER_MODEL_DIR`` – directory for newly trained models
+    - ``RANKER_SCHEDULER_SERVICES`` – comma-separated ``module:attr`` paths
+      referencing service instances
+    """
     interval = float(os.getenv("RANKER_SCHEDULER_INTERVAL", "0"))
     if interval <= 0:
         return None
