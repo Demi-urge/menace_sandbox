@@ -170,6 +170,16 @@ class PatchLogger:
             detailed.sort(key=lambda t: t[2], reverse=True)
             pairs = [(o, vid) for o, vid, _ in detailed]
             meta = retrieval_metadata or {}
+            failure_meta: Mapping[str, Any] | None = None
+            if not result and meta:
+                failure_meta = meta.get("error")
+                if failure_meta is None:
+                    for o, vid, _ in detailed:
+                        if o == "error":
+                            key = f"{o}:{vid}" if o else vid
+                            failure_meta = meta.get(key)
+                            if failure_meta:
+                                break
             detailed_meta = []
             provenance_meta = []
             vm_vectors = []
@@ -433,6 +443,11 @@ class PatchLogger:
                                 self.info_db.add(item)
                         except Exception:
                             logger.exception("Failed to store lesson metadata")
+                if not result and failure_meta:
+                    try:
+                        self.patch_safety.record_failure(dict(failure_meta))
+                    except Exception:
+                        logger.exception("Failed to record failure metadata")
         except Exception:
             _TRACK_OUTCOME.labels("error").inc()
             _TRACK_DURATION.set(time.time() - start)
