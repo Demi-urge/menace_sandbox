@@ -19,19 +19,10 @@ import tempfile
 import torch
 from transformers import AutoModel, AutoTokenizer
 
-from action_vectorizer import ActionVectorizer
-from error_vectorizer import ErrorVectorizer
-from workflow_vectorizer import WorkflowVectorizer
-from enhancement_vectorizer import EnhancementVectorizer
-from bot_vectorizer import BotVectorizer
-from information_vectorizer import InformationVectorizer
-from code_vectorizer import CodeVectorizer
-from discrepancy_vectorizer import DiscrepancyVectorizer
-from failure_vectorizer import FailureVectorizer
-from research_vectorizer import ResearchVectorizer
 from vector_utils import persist_embedding
 from governed_embeddings import governed_embed
 from .download_model import ensure_model
+from .registry import load_handlers
 
 try:  # pragma: no cover - optional dependency used for text embeddings
     from sentence_transformers import SentenceTransformer  # type: ignore
@@ -77,30 +68,12 @@ class SharedVectorService:
     """Facade exposing a unified ``vectorise`` API."""
 
     text_embedder: SentenceTransformer | None = None
-    _action: ActionVectorizer = field(default_factory=ActionVectorizer)
-    _error: ErrorVectorizer = field(default_factory=ErrorVectorizer)
-    _workflow: WorkflowVectorizer = field(default_factory=WorkflowVectorizer)
-    _enhancement: EnhancementVectorizer = field(default_factory=EnhancementVectorizer)
-    _bot: BotVectorizer = field(default_factory=BotVectorizer)
-    _information: InformationVectorizer = field(default_factory=InformationVectorizer)
-    _code: CodeVectorizer = field(default_factory=CodeVectorizer)
-    _discrepancy: DiscrepancyVectorizer = field(default_factory=DiscrepancyVectorizer)
-    _failure: FailureVectorizer = field(default_factory=FailureVectorizer)
-    _research: ResearchVectorizer = field(default_factory=ResearchVectorizer)
     _handlers: Dict[str, Callable[[Dict[str, Any]], List[float]]] = field(init=False)
 
     def __post_init__(self) -> None:
-        self._handlers = {
-            "action": self._action.transform,
-            "error": self._error.transform,
-            "workflow": self._workflow.transform,
-            "enhancement": self._enhancement.transform,
-            "information": self._information.transform,
-            "code": self._code.transform,
-            "discrepancy": self._discrepancy.transform,
-            "failure": self._failure.transform,
-            "research": self._research.transform,
-        }
+        # Handlers are populated dynamically from the registry so newly
+        # registered vectorisers are picked up automatically.
+        self._handlers = load_handlers()
 
     def _encode_text(self, text: str) -> List[float]:
         if self.text_embedder is not None:
@@ -116,8 +89,6 @@ class SharedVectorService:
     def vectorise(self, kind: str, record: Dict[str, Any]) -> List[float]:
         """Return an embedding for ``record`` of type ``kind``."""
         kind = kind.lower()
-        if kind == "bot":
-            return self._bot.transform(record)
         handler = self._handlers.get(kind)
         if handler:
             return handler(record)
@@ -134,11 +105,7 @@ class SharedVectorService:
         """
 
         vec = self.vectorise(kind, record)
-        kind = kind.lower()
-        if kind == "bot":
-            persist_embedding("bot", record_id, vec)
-        else:
-            persist_embedding(kind, record_id, vec)
+        persist_embedding(kind.lower(), record_id, vec)
         return vec
 
 

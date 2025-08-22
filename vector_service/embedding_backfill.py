@@ -13,6 +13,8 @@ import sys
 import hashlib
 import pkgutil
 
+from .registry import get_db_registry
+
 from .vectorizer import SharedVectorService
 
 from .decorators import log_and_measure
@@ -78,21 +80,26 @@ KNOWN_DB_KINDS = {
 def _load_registry(path: Path | None = None) -> dict[str, tuple[str, str]]:
     """Return mapping of source name to (module, class) tuples.
 
-    The registry is stored as JSON so additional databases can be added without
-    modifying code.  Invalid or missing entries are ignored.
+    Registrations are primarily sourced from :mod:`vector_service.registry`
+    so newly registered vectorisers are automatically available for backfills.
+    ``path`` is retained for backwards compatibility with the original JSON
+    based registry and, when provided, entries from that file are merged over
+    the dynamic registrations.
     """
 
+    mapping = get_db_registry()
+
     reg_path = path or _REGISTRY_FILE
-    try:
-        data = json.loads(reg_path.read_text())
-    except Exception:  # pragma: no cover - best effort
-        return {}
-    mapping: dict[str, tuple[str, str]] = {}
-    for key, value in data.items():
-        mod = value.get("module")
-        cls = value.get("class")
-        if isinstance(mod, str) and isinstance(cls, str):
-            mapping[key] = (mod, cls)
+    if reg_path.exists():  # merge any legacy JSON entries
+        try:  # pragma: no cover - best effort
+            data = json.loads(reg_path.read_text())
+        except Exception:
+            data = {}
+        for key, value in data.items():
+            mod = value.get("module")
+            cls = value.get("class")
+            if isinstance(mod, str) and isinstance(cls, str):
+                mapping.setdefault(key, (mod, cls))
     return mapping
 
 
