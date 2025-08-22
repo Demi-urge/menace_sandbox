@@ -36,7 +36,16 @@ def _scale(value: Any, bound: float) -> float:
 
 @dataclass
 class WorkflowVectorizer:
-    """Lightweight vectoriser for records from ``workflows.db``."""
+    """Lightweight vectoriser for records from ``workflows.db``.
+
+    The vector uses fixed one-hot slots for categories and statuses. Unknown
+    values extend the internal mappings until ``max_categories`` or
+    ``max_status`` slots are filled. Additional unseen values fall back to the
+    ``"other"`` slot at index 0. To support more distinct categories or
+    statuses, increase the corresponding ``max_*`` parameter and recompute any
+    stored embeddings so that downstream components see the new vector
+    dimensionality.
+    """
 
     max_categories: int = 20
     max_status: int = 10
