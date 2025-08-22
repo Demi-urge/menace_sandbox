@@ -466,7 +466,7 @@ def test_predict_roi_collapse_scenarios(
 
 
 def _make_tracker(tmp_path, ent_curve):
-    cfg = tmp_path / "entropy_templates.yaml"
+    cfg = tmp_path / "foresight_templates.yaml"
     cfg.write_text(
         "entropy_profiles:\n  wf: base\nentropy_trajectories:\n  base:\n" +
         "".join(f"    - {v}\n" for v in ent_curve),
