@@ -9,6 +9,12 @@ from numbers import Number
 
 import numpy as np
 import yaml
+import os
+
+try:  # pragma: no cover - optional dependency
+    import requests  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    requests = None  # type: ignore
 
 
 class ForesightTracker:
@@ -26,6 +32,7 @@ class ForesightTracker:
         N: int | None = None,
         templates_path: str | Path = "configs/foresight_templates.yaml",
         template_config_path: str | Path | None = None,
+        cssm_client: object | None = None,
     ) -> None:
         """Create a new tracker.
 
@@ -66,6 +73,8 @@ class ForesightTracker:
         self.profile_map = self.workflow_profiles
         self.entropy_profile_map = self.entropy_profiles
         self.risk_profile_map = self.risk_profiles
+        self.cssm_client = cssm_client
+        self._cssm_template_cache: Dict[str, Dict[str, List[float]]] = {}
         self._load_templates()
 
     # ------------------------------------------------------------------
@@ -357,6 +366,51 @@ class ForesightTracker:
             self.risk_templates.get(profile, []) if self.risk_templates else []
         )
         return [float(v) for v in curve]
+
+    # ------------------------------------------------------------------
+    def fetch_cssm_templates(self, workflow_id: str) -> Dict[str, List[float]]:
+        """Retrieve ROI, entropy and risk templates from CSSM.
+
+        Results are cached per ``workflow_id``. When ``cssm_client`` is
+        provided it is invoked with ``workflow_id`` and should return a mapping
+        with ``roi``, ``entropy`` and ``risk`` lists. Otherwise an HTTP
+        request is performed against ``CSSM_URL``.
+        """
+
+        cache = self._cssm_template_cache
+        if workflow_id in cache:
+            return cache[workflow_id]
+
+        data: Mapping[str, List[float]] | None = None
+        client = getattr(self, "cssm_client", None)
+        if callable(client):
+            try:
+                data = client(workflow_id)
+            except Exception:
+                data = None
+
+        if data is None and requests:
+            url = os.getenv("CSSM_URL")
+            if url:
+                try:
+                    resp = requests.get(f"{url.rstrip('/')}/{workflow_id}", timeout=5)
+                    if resp.status_code == 200:
+                        payload = resp.json()
+                        if isinstance(payload, Mapping):
+                            data = payload
+                except Exception:  # pragma: no cover - best effort
+                    data = None
+
+        if not data:
+            data = {}
+
+        templates = {
+            "roi": [float(v) for v in data.get("roi", [])],
+            "entropy": [float(v) for v in data.get("entropy", [])],
+            "risk": [float(v) for v in data.get("risk", [])],
+        }
+        cache[workflow_id] = templates
+        return templates
 
     # ------------------------------------------------------------------
     def get_template_value(self, workflow_id: str, cycle_index: int) -> float | None:

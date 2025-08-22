@@ -463,3 +463,66 @@ def test_delete_record(monkeypatch, tmp_path):
 
     delete_record("wf", records_base=tmp_path)
     assert list_records(tmp_path) == []
+
+
+def test_cssm_templates_used_when_local_missing(monkeypatch, tmp_path):
+    def fake_load(self):
+        self.templates = {}
+        self.workflow_profiles = {}
+        self.entropy_templates = {}
+        self.entropy_profiles = {}
+        self.risk_templates = {}
+        self.risk_profiles = {}
+
+    monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
+    calls = []
+
+    def fake_cssm(wf_id):
+        calls.append(wf_id)
+        return {
+            "roi": [0.1, 0.2, 0.3],
+            "entropy": [0.4, 0.5, 0.6],
+            "risk": [0.7, 0.8, 0.9],
+        }
+
+    tracker = ForesightTracker(cssm_client=fake_cssm)
+    forecaster = UpgradeForecaster(tracker, records_base=tmp_path)
+    result = forecaster.forecast("wf", patch=[], cycles=3)
+
+    assert calls == ["wf"]
+    assert [p.roi for p in result.projections] == [
+        pytest.approx(0.1),
+        pytest.approx(0.2),
+        pytest.approx(0.3),
+    ]
+    assert [p.decay for p in result.projections] == [
+        pytest.approx(0.04),
+        pytest.approx(0.10),
+        pytest.approx(0.18),
+    ]
+    assert [p.risk for p in result.projections] == [
+        pytest.approx(0.7),
+        pytest.approx(0.8),
+        pytest.approx(0.9),
+    ]
+
+
+def test_cssm_templates_cached(monkeypatch, tmp_path):
+    def fake_load(self):
+        self.templates = {}
+        self.workflow_profiles = {}
+
+    monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
+    calls = []
+
+    def fake_cssm(wf_id):
+        calls.append(wf_id)
+        return {"roi": [0.1], "entropy": [0.0], "risk": [0.5]}
+
+    tracker = ForesightTracker(cssm_client=fake_cssm)
+    forecaster = UpgradeForecaster(tracker, records_base=tmp_path, horizon=1)
+
+    forecaster.forecast("wf", patch=[], cycles=1)
+    forecaster.forecast("wf", patch=[], cycles=1)
+
+    assert calls == ["wf"]
