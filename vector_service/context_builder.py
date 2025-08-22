@@ -379,6 +379,13 @@ class ContextBuilder:
             except Exception:
                 pass
 
+        if metric is not None and self.roi_tracker is not None:
+            try:
+                _base, raroi, _ = self.roi_tracker.calculate_raroi(float(metric))
+                metric = float(raroi)
+            except Exception:
+                pass
+
         return metric
 
     # ------------------------------------------------------------------
@@ -488,12 +495,19 @@ class ContextBuilder:
         metric = self._metric(origin, meta, query, text, vec_id)
         if metric is not None:
             entry["metric"] = metric
+            entry["roi"] = metric
 
         roi_val = meta.get("roi") if isinstance(meta, dict) else None
         if roi_val is None:
             roi_val = bundle.get("roi")
         if roi_val is not None:
             try:
+                roi_val = float(roi_val)
+                if self.roi_tracker is not None:
+                    try:
+                        _b, roi_val, _ = self.roi_tracker.calculate_raroi(roi_val)
+                    except Exception:
+                        pass
                 entry["roi"] = float(roi_val)
             except Exception:
                 pass
@@ -588,8 +602,28 @@ class ContextBuilder:
             except Exception:
                 roi_bias = self.roi_weight
 
-        score = similarity * rank_prob * roi_bias + (metric or 0.0) - penalty
+        roi_score = entry.get("roi")
+        base = similarity * rank_prob * roi_bias
+        if roi_score is not None:
+            try:
+                base *= 1.0 + float(roi_score) * self.roi_weight
+            except Exception:
+                pass
+        score = base - penalty
         score *= self.db_weights.get(origin, 1.0)
+
+        if self.roi_tracker is not None and roi_score is not None:
+            try:
+                self.roi_tracker.update_db_metrics(
+                    {origin: {"roi": float(roi_score)}},
+                    sqlite_path="db_roi_metrics.db",
+                )
+                try:
+                    self.roi_tracker.save_history("roi_history.db")
+                except Exception:
+                    pass
+            except Exception:
+                logger.exception("roi tracker logging failed")
 
         key_map = {
             "error": "errors",

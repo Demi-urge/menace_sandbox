@@ -96,6 +96,7 @@ class RankingModelScheduler:
         roi_signal_threshold: float | None = None,
         event_bus: "UnifiedEventBus" | None = None,
         win_rate_threshold: float | None = None,
+        roi_history_path: Path | str = "roi_history.db",
     ) -> None:
         self.services = list(services)
         self.vector_db = Path(vector_db)
@@ -105,6 +106,7 @@ class RankingModelScheduler:
         self.roi_tracker = roi_tracker
         self.roi_signal_threshold = roi_signal_threshold
         self.win_rate_threshold = win_rate_threshold
+        self.roi_history_path = Path(roi_history_path)
         self.running = False
         self._thread: Optional[threading.Thread] = None
         # Track baseline ROI totals for ROITracker and VectorMetricsDB so that
@@ -132,6 +134,12 @@ class RankingModelScheduler:
             try:
                 self.event_bus.subscribe("patch_logger:outcome", self._handle_patch_outcome)
                 self.event_bus.subscribe("retrieval:feedback", self._handle_retrieval_feedback)
+            except Exception:
+                pass
+
+        if self.roi_tracker is not None:
+            try:
+                self.roi_tracker.load_history(str(self.roi_history_path))
             except Exception:
                 pass
 
