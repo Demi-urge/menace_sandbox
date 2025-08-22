@@ -185,6 +185,11 @@ class EmbeddingBackfill:
             if not issubclass(cls, EmbeddableDBMixin):
                 problems.append(f"{name}: not EmbeddableDBMixin")
                 continue
+            if not callable(getattr(cls, "backfill_embeddings", None)):
+                logging.getLogger(__name__).warning(
+                    "%s: missing backfill_embeddings", name
+                )
+                continue
             missing = [m for m in ("iter_records", "vector") if not callable(getattr(cls, m, None))]
             if missing:
                 problems.append(f"{name}: missing {', '.join(missing)}")
@@ -374,18 +379,31 @@ async def schedule_backfill(
 __all__ = ["EmbeddingBackfill", "EmbeddableDBMixin", "schedule_backfill", "KNOWN_DB_KINDS"]
 
 
-if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
+def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover - CLI entrypoint
     import argparse
 
     parser = argparse.ArgumentParser(description="Embedding backfill utility")
     parser.add_argument("--watch", action="store_true", help="run in daemon mode")
-    parser.add_argument("--interval", type=float, default=60.0, help="polling interval in seconds")
-    parser.add_argument("--db", dest="dbs", action="append", help="database name to process; can repeat")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--interval", type=float, default=60.0, help="polling interval in seconds"
+    )
+    parser.add_argument(
+        "--db", dest="dbs", action="append", help="database name to process; can repeat"
+    )
+    parser.add_argument(
+        "--verify", action="store_true", help="validate registry and exit"
+    )
+    args = parser.parse_args(argv)
 
     eb = EmbeddingBackfill()
-    if args.watch:
+    if args.verify:
+        eb._verify_registry(args.dbs)
+    elif args.watch:
         eb.watch(interval=args.interval, dbs=args.dbs)
     else:
         eb.run(dbs=args.dbs)
+
+
+if __name__ == "__main__":
+    main()
 
