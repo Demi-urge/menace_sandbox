@@ -58,15 +58,14 @@ from menace_sandbox.foresight_tracker import ForesightTracker
 from menace_sandbox.roi_tracker import ROITracker
 
 tracker = ForesightTracker()
-tracker.workflow_profiles = {"analyst_bot": "steady_growth"}
 roi_tracker = ROITracker()
 
 # For the first few cycles the ROI deltas follow the `steady_growth` template.
 for _ in range(5):
-    tracker.capture_from_roi(roi_tracker, "analyst_bot")
+    tracker.capture_from_roi(roi_tracker, "analyst_bot", "steady_growth")
 
 # Once real ROI history exists, templates are no longer used.
-tracker.capture_from_roi(roi_tracker, "analyst_bot")
+tracker.capture_from_roi(roi_tracker, "analyst_bot", "steady_growth")
 ```
 
 ## Persisting state

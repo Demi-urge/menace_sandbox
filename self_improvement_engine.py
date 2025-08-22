@@ -58,6 +58,7 @@ import shutil
 import ast
 import yaml
 from pathlib import Path
+from typing import Mapping
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
 try:
@@ -5738,7 +5739,11 @@ class SelfImprovementEngine:
             except Exception:
                 pass
             try:
-                self.foresight_tracker.capture_from_roi(tracker, workflow_id)
+                profile_map = getattr(self.foresight_tracker, "workflow_profiles", None)
+                if not isinstance(profile_map, Mapping):
+                    profile_map = getattr(self.foresight_tracker, "profile_map", {})
+                profile = profile_map.get(workflow_id, workflow_id)
+                self.foresight_tracker.capture_from_roi(tracker, workflow_id, profile)
             except Exception:
                 self.logger.exception("foresight tracker record failed")
             self.roi_history.append(delta)

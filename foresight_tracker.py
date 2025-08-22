@@ -67,7 +67,12 @@ class ForesightTracker:
         queue.append(entry)
 
     # ------------------------------------------------------------------
-    def capture_from_roi(self, tracker: "ROITracker" | None, workflow_id: str) -> None:
+    def capture_from_roi(
+        self,
+        tracker: "ROITracker" | None,
+        workflow_id: str,
+        profile: str | None = None,
+    ) -> None:
         """Record metrics extracted from an :class:`ROITracker` instance.
 
         Parameters
@@ -78,6 +83,10 @@ class ForesightTracker:
         workflow_id:
             Identifier of the workflow for which the metrics should be
             recorded.
+        profile:
+            Optional profile name used to select ROI templates. When omitted,
+            the profile is looked up from ``self.workflow_profiles`` or
+            defaults to ``workflow_id``.
 
         The helper pulls the latest ROI delta, RAROI delta, resilience,
         confidence and scenario degradation metrics from ``tracker`` and
@@ -91,10 +100,11 @@ class ForesightTracker:
             roi_hist = getattr(tracker, "roi_history", [])
             raroi_hist = getattr(tracker, "raroi_history", [])
             history = self.history.get(workflow_id)
-            profile_map = getattr(self, "workflow_profiles", None)
-            if not isinstance(profile_map, Mapping):
-                profile_map = getattr(self, "profile_map", {})
-            profile = profile_map.get(workflow_id, workflow_id)
+            if profile is None:
+                profile_map = getattr(self, "workflow_profiles", None)
+                if not isinstance(profile_map, Mapping):
+                    profile_map = getattr(self, "profile_map", {})
+                profile = profile_map.get(workflow_id, workflow_id)
 
             real_roi = float(roi_hist[-1]) if roi_hist else 0.0
             if len(raroi_hist) >= 2:
