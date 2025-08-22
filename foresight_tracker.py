@@ -57,12 +57,15 @@ class ForesightTracker:
         self.template_config_path = cfg_path
         self.templates: Dict[str, list[float]] | None = None
         self.entropy_templates: Dict[str, list[float]] | None = None
+        self.risk_templates: Dict[str, list[float]] | None = None
         # map workflow identifiers to their template profile
         self.workflow_profiles: Dict[str, str] = {}
         self.entropy_profiles: Dict[str, str] = {}
+        self.risk_profiles: Dict[str, str] = {}
         # backward compatibility for callers expecting ``profile_map``
         self.profile_map = self.workflow_profiles
         self.entropy_profile_map = self.entropy_profiles
+        self.risk_profile_map = self.risk_profiles
         self._load_templates()
 
     # ------------------------------------------------------------------
@@ -262,15 +265,23 @@ class ForesightTracker:
             ent_traj = data.get("entropy_trajectories") or data.get(
                 "entropy_templates"
             )
+            risk_profiles = data.get("risk_profiles")
+            risk_traj = data.get("risk_trajectories") or data.get(
+                "risk_templates"
+            )
 
             merged: Dict[str, list[float]] = {}
             merged_entropy: Dict[str, list[float]] = {}
+            merged_risk: Dict[str, list[float]] = {}
             if isinstance(trajectories, Mapping):
                 for name, curve in trajectories.items():
                     merged[str(name)] = [float(v) for v in curve]
             if isinstance(ent_traj, Mapping):
                 for name, curve in ent_traj.items():
                     merged_entropy[str(name)] = [float(v) for v in curve]
+            if isinstance(risk_traj, Mapping):
+                for name, curve in risk_traj.items():
+                    merged_risk[str(name)] = [float(v) for v in curve]
 
             if isinstance(profiles, Mapping):
                 for wf_id, prof in profiles.items():
@@ -280,12 +291,17 @@ class ForesightTracker:
             if isinstance(ent_profiles, Mapping):
                 for wf_id, prof in ent_profiles.items():
                     self.entropy_profiles[str(wf_id)] = str(prof)
+            if isinstance(risk_profiles, Mapping):
+                for wf_id, prof in risk_profiles.items():
+                    self.risk_profiles[str(wf_id)] = str(prof)
 
             self.templates = merged
             self.entropy_templates = merged_entropy
+            self.risk_templates = merged_risk
         except Exception:
             self.templates = {}
             self.entropy_templates = {}
+            self.risk_templates = {}
 
     # ------------------------------------------------------------------
     def get_template_curve(self, workflow_id: str) -> list[float]:
@@ -321,6 +337,24 @@ class ForesightTracker:
             self.entropy_templates.get(profile, [])
             if self.entropy_templates
             else []
+        )
+        return [float(v) for v in curve]
+
+    # ------------------------------------------------------------------
+    def get_risk_template_curve(self, workflow_id: str) -> list[float]:
+        """Return the risk template curve for ``workflow_id``.
+
+        Risk templates mirror the structure of ROI templates but represent the
+        anticipated ``synergy_risk_index`` trajectory.  When no dedicated risk
+        profile or trajectory exists, an empty list is returned.
+        """
+
+        self._load_templates()
+        profile = self.risk_profiles.get(
+            workflow_id, self.workflow_profiles.get(workflow_id, workflow_id)
+        )
+        curve = (
+            self.risk_templates.get(profile, []) if self.risk_templates else []
         )
         return [float(v) for v in curve]
 

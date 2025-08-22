@@ -31,9 +31,37 @@ metrics_stub = types.ModuleType("menace.metrics_dashboard")
 metrics_stub.MetricsDashboard = lambda *a, **k: object()
 menace_stub.metrics_dashboard = metrics_stub
 menace_stub.__path__ = [str(ROOT)]
+
+# Provide a lightweight sandbox_runner stub to avoid dependency checks
+sandbox_env = types.ModuleType("sandbox_runner.environment")
+sandbox_env.simulate_temporal_trajectory = lambda *a, **k: None
+sandbox_pkg = types.ModuleType("sandbox_runner")
+sandbox_pkg.environment = sandbox_env
+sandbox_pkg.__path__ = []  # mark as package
+sys.modules["sandbox_runner"] = sandbox_pkg
+sys.modules["sandbox_runner.environment"] = sandbox_env
+
+# Stub run_autonomous to bypass dependency checks if imported
+run_auto_stub = types.ModuleType("run_autonomous")
+run_auto_stub._verify_required_dependencies = lambda: None
+sys.modules.setdefault("run_autonomous", run_auto_stub)
+sys.modules.setdefault("menace.run_autonomous", run_auto_stub)
+
+# Load the real menace package if possible but tolerate missing system deps
 spec = importlib.util.spec_from_file_location("menace", ROOT / "__init__.py")
 real_mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(real_mod)
+try:  # pragma: no cover - defensive against SystemExit
+    spec.loader.exec_module(real_mod)  # type: ignore[attr-defined]
+except SystemExit:
+    real_mod = types.ModuleType("menace")
+
+if not hasattr(real_mod, "ForesightTracker"):
+    from foresight_tracker import ForesightTracker as _FT
+    real_mod.ForesightTracker = _FT
+if not hasattr(real_mod, "UpgradeForecaster"):
+    from upgrade_forecaster import UpgradeForecaster as _UF
+    real_mod.UpgradeForecaster = _UF
+
 for _name in dir(real_mod):
     if not _name.startswith("__"):
         setattr(menace_stub, _name, getattr(real_mod, _name))

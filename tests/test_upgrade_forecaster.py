@@ -29,6 +29,8 @@ def test_forecast_uses_template_on_cold_start(monkeypatch, tmp_path):
     def fake_load(self):
         self.templates = {"wf": [0.1, 0.2, 0.3]}
         self.workflow_profiles["wf"] = "wf"
+        self.risk_templates = {"wf": [0.7, 0.8, 0.9]}
+        self.risk_profiles = {"wf": "wf"}
 
     monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
     tracker = ForesightTracker()
@@ -37,8 +39,13 @@ def test_forecast_uses_template_on_cold_start(monkeypatch, tmp_path):
     result = forecaster.forecast("wf", patch=[], cycles=3)
     assert isinstance(result, ForecastResult)
     rois = [p.roi for p in result.projections]
+    risks = [p.risk for p in result.projections]
     assert rois == [pytest.approx(0.1), pytest.approx(0.2), pytest.approx(0.3)]
-    assert result.projections[0].risk == pytest.approx(0.9)
+    assert risks == [
+        pytest.approx(0.7),
+        pytest.approx(0.8),
+        pytest.approx(0.9),
+    ]
     assert result.projections[0].decay == pytest.approx(0.0)
     assert result.confidence == pytest.approx(0.0)
 
@@ -68,6 +75,8 @@ def test_cold_start_blends_template(monkeypatch, tmp_path):
         self.workflow_profiles["wf"] = "wf"
         self.entropy_templates = {"wf": [0.4, 0.4, 0.4]}
         self.entropy_profiles = {"wf": "wf"}
+        self.risk_templates = {"wf": [0.6, 0.4, 0.2]}
+        self.risk_profiles = {"wf": "wf"}
 
     monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
     tracker = ForesightTracker()
@@ -77,7 +86,10 @@ def test_cold_start_blends_template(monkeypatch, tmp_path):
     def fake_sim(*a, **k):
         return types.SimpleNamespace(
             roi_history=[0.4, 0.5, 0.6],
-            metrics_history={"synergy_shannon_entropy": []},
+            metrics_history={
+                "synergy_shannon_entropy": [],
+                "synergy_risk_index": [0.2, 0.4, 0.6],
+            },
         )
 
     monkeypatch.setattr(
@@ -87,10 +99,16 @@ def test_cold_start_blends_template(monkeypatch, tmp_path):
     result = forecaster.forecast("wf", patch=[], cycles=3)
 
     rois = [p.roi for p in result.projections]
+    risks = [p.risk for p in result.projections]
     assert rois == [
         pytest.approx(0.22),
         pytest.approx(0.26),
         pytest.approx(0.30),
+    ]
+    assert risks == [
+        pytest.approx(0.44),
+        pytest.approx(0.40),
+        pytest.approx(0.36),
     ]
     assert [p.decay for p in result.projections] == [
         pytest.approx(0.024),
