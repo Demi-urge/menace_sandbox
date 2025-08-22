@@ -28,6 +28,7 @@ import json
 import math
 import atexit
 import threading
+from datetime import datetime
 from collections import defaultdict, deque
 from typing import Any, Dict, Optional, TYPE_CHECKING
 import logging
@@ -834,11 +835,19 @@ class WorkflowGraph:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         if _HAS_NX and json_graph:
             data = json_graph.node_link_data(self.graph, edges="edges")
-            with open(self.path, "w", encoding="utf-8") as fh:
-                json.dump(data, fh)
         else:
-            with open(self.path, "w", encoding="utf-8") as fh:
-                json.dump(self.graph, fh)
+            data = self.graph
+        with open(self.path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+
+        ts = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+        base, _ = os.path.splitext(self.path)
+        snap_path = f"{base}.{ts}.json"
+        try:
+            with open(snap_path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
+        except Exception:
+            pass
 
 
 def build_graph(db_path: Optional[str] = None, path: Optional[str] = None):
