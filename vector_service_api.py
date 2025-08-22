@@ -174,7 +174,7 @@ def track_contributors(req: TrackRequest) -> Any:
     """Record contributor outcomes via :class:`vector_service.PatchLogger`."""
     start = time.time()
     try:
-        _patch_logger.track_contributors(
+        scores = _patch_logger.track_contributors(
             req.vector_ids,
             req.result,
             patch_id=req.patch_id or "",
@@ -183,7 +183,12 @@ def track_contributors(req: TrackRequest) -> Any:
     except VectorServiceError as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail=str(exc))
     duration = time.time() - start
-    return {"status": "ok", "metrics": {"duration": duration}}
+    payload = {"status": "ok", "metrics": {"duration": duration}}
+    try:
+        payload["risk_scores"] = dict(scores or {})
+    except Exception:
+        payload["risk_scores"] = {}
+    return payload
 
 
 class BackfillRequest(BaseModel):

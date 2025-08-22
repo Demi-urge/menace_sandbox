@@ -79,7 +79,7 @@ logger = logging.getLogger(__name__)
 
 
 class TrackResult(dict):
-    """Mapping of origin risk scores with attached error metadata."""
+    """Mapping of origin similarity scores with attached error metadata."""
 
     def __init__(self, mapping: Mapping[str, float] | None = None, *, errors=None) -> None:
         super().__init__(mapping or {})
@@ -165,9 +165,11 @@ class PatchLogger:
     ) -> dict[str, float]:
         """Log patch outcome for vectors contributing to a patch.
 
-        Returns a mapping of origin database to the maximum risk score
+        Returns a mapping of origin database to the maximum similarity score
         calculated by :class:`patch_safety.PatchSafety` for the vectors that
-        contributed to the patch.
+        contributed to the patch.  Higher scores indicate a closer match to
+        previously recorded failures and can be used by callers to penalise
+        risky origins.
         """
 
         start = time.time()
@@ -191,16 +193,16 @@ class PatchLogger:
             filtered = 0
             origin_alerts: dict[str, set[str]] = {}
             origin_sev: dict[str, float] = {}
-            origin_risk: dict[str, float] = {}
+            origin_similarity: dict[str, float] = {}
             for o, vid, score in detailed:
                 key = f"{o}:{vid}" if o else vid
                 m = meta.get(key, {})
                 self.patch_safety.max_alert_severity = self.max_alert_severity
                 self.patch_safety.max_alerts = self.max_alerts
                 self.patch_safety.license_denylist = self.license_denylist
-                passed, risk = self.patch_safety.evaluate(m, m)
-                if risk >= self.patch_safety.threshold:
-                    payload = {"vector": key, "score": risk, "threshold": self.patch_safety.threshold}
+                passed, similarity = self.patch_safety.evaluate(m, m)
+                if similarity >= self.patch_safety.threshold:
+                    payload = {"vector": key, "score": similarity, "threshold": self.patch_safety.threshold}
                     bus = self.event_bus
                     if bus is None and UnifiedEventBus is not None:
                         try:
@@ -226,15 +228,15 @@ class PatchLogger:
                 else:
                     detailed_meta.append((o, vid, score, lic, alerts))
                     provenance_meta.append((o, vid, score, lic, alerts, sev))
-                vm_vectors.append((vid, score, lic, alerts, sev, risk))
+                vm_vectors.append((vid, score, lic, alerts, sev, similarity))
                 ok = o or ""
-                origin_risk[ok] = max(origin_risk.get(ok, 0.0), risk)
+                origin_similarity[ok] = max(origin_similarity.get(ok, 0.0), similarity)
                 if sev:
                     try:
                         origin_sev[ok] = max(origin_sev.get(ok, 0.0), float(sev))
                     except Exception:
                         origin_sev[ok] = max(origin_sev.get(ok, 0.0), 1.0)
-                if risk >= self.patch_safety.threshold:
+                if similarity >= self.patch_safety.threshold:
                     risky += 1
                 else:
                     safe += 1
@@ -357,7 +359,7 @@ class PatchLogger:
                         "regret_rate": 0.0 if result else 1.0,
                         "alignment_severity": origin_sev.get(origin, 0.0),
                         "semantic_alerts": sorted(origin_alerts.get(origin, [])),
-                        "risk_score": origin_risk.get(origin, 0.0),
+                        "risk_score": origin_similarity.get(origin, 0.0),
                     }
                     roi_metrics[origin] = metrics
                 if self.roi_tracker is not None:
@@ -477,7 +479,7 @@ class PatchLogger:
         if origin_alerts:
             all_alerts = sorted({a for s in origin_alerts.values() for a in s})
         max_sev = max(origin_sev.values(), default=0.0)
-        max_risk = max(origin_risk.values(), default=0.0)
+        max_risk = max(origin_similarity.values(), default=0.0)
         payload = {
             "result": result,
             "roi_metrics": roi_metrics,
@@ -505,7 +507,7 @@ class PatchLogger:
                     "UnifiedEventBus patch_logger outcome publish failed"
                 )
 
-        return TrackResult(origin_risk, errors=errors)
+        return TrackResult(origin_similarity, errors=errors)
 
     # ------------------------------------------------------------------
     @log_and_measure
