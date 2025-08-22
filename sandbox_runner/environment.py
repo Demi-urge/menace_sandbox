@@ -5259,6 +5259,18 @@ def temporal_trajectory_presets() -> List[Dict[str, Any]]:
     ]
 
 
+def temporal_presets() -> List[Dict[str, Any]]:
+    """Return ordered temporal scenario presets with explicit stages."""
+
+    return [
+        {"SCENARIO_NAME": "baseline"},
+        {"SCENARIO_NAME": "latency", "NETWORK_LATENCY_MS": 500},
+        {"SCENARIO_NAME": "strain", "CPU_LIMIT": 0.5, "DISK_IO_THROTTLE": 100},
+        {"SCENARIO_NAME": "drift", "SCHEMA_DRIFT": True, "UNEXPECTED_INPUT": True},
+        {"SCENARIO_NAME": "chaos", "BROKEN_AUTH": True, "CORRUPT_PAYLOAD": True},
+    ]
+
+
 # ----------------------------------------------------------------------
 
 
