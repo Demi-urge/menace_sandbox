@@ -217,6 +217,17 @@ class WorkflowDB(EmbeddableDBMixin):
                 logger.exception(
                     "embedding hook failed for %s: %s", workflow_id, exc
                 )
+        if self.event_bus:
+            try:
+                payload = {"workflow_id": workflow_id, "status": status}
+                self.event_bus.publish("workflows:updated", payload)
+            except Exception as exc:
+                logger.warning(
+                    "failed to publish workflow status %s for %s: %s",
+                    status,
+                    workflow_id,
+                    exc,
+                )
         if self.graph:
             try:
                 self.graph.update_dependencies(str(workflow_id))
@@ -252,7 +263,7 @@ class WorkflowDB(EmbeddableDBMixin):
             try:
                 for wid in ids:
                     payload = {"workflow_id": wid, "status": status}
-                    self.event_bus.publish("workflows:update", payload)
+                    self.event_bus.publish("workflows:updated", payload)
             except Exception as exc:
                 logger.warning(
                     "failed to publish workflow status %s for %s: %s",
@@ -327,7 +338,7 @@ class WorkflowDB(EmbeddableDBMixin):
         if self.event_bus:
             try:
                 self.event_bus.publish(
-                    "workflows:delete", {"workflow_id": workflow_id}
+                    "workflows:deleted", {"workflow_id": workflow_id}
                 )
             except Exception as exc:
                 logger.warning(
