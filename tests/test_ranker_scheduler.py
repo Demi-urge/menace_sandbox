@@ -24,20 +24,32 @@ class DummyBus:
             cb(topic, event)
 
 
-def test_event_triggers_retrain(monkeypatch):
-    calls: list[int] = []
+class DummyService:
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+
+    def reload_ranker_model(self):
+        self.calls.append(1)
+
+
+def test_feedback_event_triggers_retrain(monkeypatch):
+    retrain_calls: list[tuple] = []
     bus = DummyBus()
-    sched = rs.RankerScheduler([], event_bus=bus, interval=1000, roi_threshold=0.5)
-    monkeypatch.setattr(rs.rvr, "retrain_and_reload", lambda *a, **k: calls.append(1))
-    bus.publish("retrieval:feedback", {"roi": 1.0})
-    assert calls == [1]
+    svc = DummyService()
+    sched = rs.RankerScheduler([svc], event_bus=bus, interval=1000, roi_threshold=0.5)
+    monkeypatch.setattr(rs.rvr, "retrain", lambda *a, **k: retrain_calls.append(a))
+    bus.publish("retrieval:feedback", {"roi": 1.0, "db": "x"})
+    assert retrain_calls == [(["x"],)]
+    assert svc.calls == [1]
 
 
 def test_scheduler_runs_interval(monkeypatch):
     calls: list[int] = []
-    sched = rs.RankerScheduler([], interval=0)
-    monkeypatch.setattr(rs.rvr, "retrain_and_reload", lambda *a, **k: calls.append(1))
+    svc = DummyService()
+    sched = rs.RankerScheduler([svc], interval=0)
+    monkeypatch.setattr(rs.rvr, "retrain", lambda *a, **k: calls.append(1))
     sched.start()
     sched._thread.join(timeout=0.1)
     sched.stop()
     assert calls == [1]
+    assert svc.calls == [1]
