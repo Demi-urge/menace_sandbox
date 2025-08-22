@@ -100,6 +100,15 @@ class UpgradeForecaster:
                     template_entropy = list(get_entropy_template(wf_id) or [])
                 except Exception:
                     template_entropy = []
+            get_risk_template = getattr(
+                self.tracker, "get_risk_template_curve", None
+            )
+            template_risk: List[float] = []
+            if callable(get_risk_template):
+                try:
+                    template_risk = list(get_risk_template(wf_id) or [])
+                except Exception:
+                    template_risk = []
 
             alpha = min(1.0, samples / 5.0)
             for i in range(1, cycles + 1):
@@ -124,8 +133,26 @@ class UpgradeForecaster:
                     else (template_entropy[-1] if template_entropy else 0.0)
                 )
                 entropy = alpha * sim_entropy + (1.0 - alpha) * templ_entropy
-
-                risk = max(0.0, min(1.0, 1.0 - roi))
+                sim_risk = (
+                    risk_hist[i - 1]
+                    if i - 1 < len(risk_hist)
+                    else (
+                        risk_hist[-1]
+                        if risk_hist
+                        else max(0.0, min(1.0, 1.0 - sim_roi))
+                    )
+                )
+                templ_risk = (
+                    template_risk[i - 1]
+                    if i - 1 < len(template_risk)
+                    else (
+                        template_risk[-1]
+                        if template_risk
+                        else max(0.0, min(1.0, 1.0 - templ_roi))
+                    )
+                )
+                risk = alpha * sim_risk + (1.0 - alpha) * templ_risk
+                risk = max(0.0, min(1.0, risk))
                 confidence = samples / (samples + 1.0)
                 decay = entropy * 0.1 * i
 
