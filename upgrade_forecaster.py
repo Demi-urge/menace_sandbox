@@ -39,6 +39,7 @@ class ForecastResult:
 
     projections: List[CycleProjection]
     confidence: float
+    upgrade_id: str
 
 
 class UpgradeForecaster:
@@ -80,6 +81,14 @@ class UpgradeForecaster:
 
         cycles = self.horizon if cycles is None else max(3, min(5, int(cycles)))
         wf_id = str(workflow_id)
+
+        patch_repr = list(patch) if not isinstance(patch, str) else patch
+        try:
+            upgrade_id = hashlib.sha1(
+                json.dumps(patch_repr, sort_keys=True).encode("utf8")
+            ).hexdigest()
+        except Exception:
+            upgrade_id = hashlib.sha1(str(time.time()).encode("utf8")).hexdigest()
 
         # Simulate the patched workflow to obtain prospective metrics
         roi_tracker = simulate_temporal_trajectory(
@@ -227,23 +236,19 @@ class UpgradeForecaster:
             variance = float(np.var(roi_hist)) if roi_hist else 0.0
             forecast_confidence = (samples / (samples + 1.0)) * (1.0 / (1.0 + variance))
 
-        result = ForecastResult(projections, float(forecast_confidence))
+        result = ForecastResult(projections, float(forecast_confidence), upgrade_id)
 
         # Persist record to disk and optionally log
         try:
-            patch_repr = list(patch) if not isinstance(patch, str) else patch
-            patch_id = hashlib.sha1(
-                json.dumps(patch_repr, sort_keys=True).encode("utf8")
-            ).hexdigest()
             record = {
                 "workflow_id": wf_id,
                 "patch": patch_repr,
-                "patch_id": patch_id,
+                "upgrade_id": upgrade_id,
                 "projections": [p.__dict__ for p in projections],
                 "confidence": result.confidence,
                 "timestamp": int(time.time()),
             }
-            out_path = self.records_base / f"{wf_id}_{patch_id}.json"
+            out_path = self.records_base / f"{wf_id}_{upgrade_id}.json"
             with out_path.open("w", encoding="utf8") as fh:
                 json.dump(record, fh)
             if self.logger is not None:
@@ -259,7 +264,7 @@ class UpgradeForecaster:
 
 def load_record(
     workflow_id: str,
-    patch_id: str | None = None,
+    upgrade_id: str | None = None,
     records_base: str | Path = "forecast_records",
 ) -> ForecastResult:
     """Load a persisted forecast record.
@@ -268,8 +273,8 @@ def load_record(
     ----------
     workflow_id:
         Identifier of the workflow whose record should be loaded.
-    patch_id:
-        Identifier of the patch. When omitted, the most recent record for the
+    upgrade_id:
+        Identifier of the upgrade. When omitted, the most recent record for the
         workflow is returned.
     records_base:
         Directory containing forecast records. Defaults to ``"forecast_records"``.
@@ -282,7 +287,7 @@ def load_record(
 
     wf_id = str(workflow_id)
     base = Path(records_base)
-    if patch_id is None:
+    if upgrade_id is None:
         latest: tuple[int, float] | None = None
         latest_data: dict | None = None
         for path in base.glob(f"{wf_id}_*.json"):
@@ -300,13 +305,14 @@ def load_record(
             raise FileNotFoundError(f"No record found for workflow {wf_id}")
         data = latest_data
     else:
-        path = base / f"{wf_id}_{patch_id}.json"
+        path = base / f"{wf_id}_{upgrade_id}.json"
         with path.open("r", encoding="utf8") as fh:
             data = json.load(fh)
 
     projections = [CycleProjection(**p) for p in data.get("projections", [])]
     confidence = float(data.get("confidence", 0.0))
-    return ForecastResult(projections, confidence)
+    rec_upgrade_id = str(data.get("upgrade_id", ""))
+    return ForecastResult(projections, confidence, rec_upgrade_id)
 
 
 def list_records(records_base: str | Path) -> List[str]:
@@ -331,7 +337,7 @@ def list_records(records_base: str | Path) -> List[str]:
 
 def delete_record(
     workflow_id: str,
-    patch_id: str | None = None,
+    upgrade_id: str | None = None,
     records_base: str | Path = "forecast_records",
 ) -> None:
     """Delete a forecast record.
@@ -340,8 +346,8 @@ def delete_record(
     ----------
     workflow_id:
         Identifier of the workflow whose record should be removed.
-    patch_id:
-        Identifier of the patch. When omitted, the most recent record for the
+    upgrade_id:
+        Identifier of the upgrade. When omitted, the most recent record for the
         workflow is deleted.
     records_base:
         Directory containing forecast records. Defaults to ``"forecast_records"``.
@@ -350,7 +356,7 @@ def delete_record(
     wf_id = str(workflow_id)
     base = Path(records_base)
 
-    if patch_id is None:
+    if upgrade_id is None:
         latest: tuple[int, float] | None = None
         latest_path: Path | None = None
         for path in base.glob(f"{wf_id}_*.json"):
@@ -368,7 +374,7 @@ def delete_record(
             raise FileNotFoundError(f"No record found for workflow {wf_id}")
         latest_path.unlink()
     else:
-        path = base / f"{wf_id}_{patch_id}.json"
+        path = base / f"{wf_id}_{upgrade_id}.json"
         path.unlink()
 
 
