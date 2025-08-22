@@ -85,14 +85,15 @@ def test_forecast_writes_record(monkeypatch, tmp_path):
     tracker = ForesightTracker()
     forecaster = UpgradeForecaster(tracker, records_base=tmp_path)
 
-    forecaster.forecast("wf", patch="patch123", cycles=3)
+    result = forecaster.forecast("wf", patch="patch123", cycles=3)
     files = list(tmp_path.glob("wf_*.json"))
     assert files, "forecast record not created"
     data = json.loads(files[0].read_text())
-    patch_id = files[0].stem.split("_", 1)[1]
+    upgrade_id = files[0].stem.split("_", 1)[1]
     assert data["workflow_id"] == "wf"
     assert data["patch"] == "patch123"
-    assert data["patch_id"] == patch_id
+    assert data["upgrade_id"] == upgrade_id
+    assert result.upgrade_id == upgrade_id
     assert len(data["projections"]) == 3
     assert isinstance(data["confidence"], float)
     assert isinstance(data.get("timestamp"), (int, float))
@@ -296,21 +297,23 @@ def test_multiple_forecasts_coexist(monkeypatch, tmp_path):
     tracker = DummyTracker()
     forecaster = UpgradeForecaster(tracker, records_base=tmp_path, horizon=1)
 
-    forecaster.forecast("wf", patch=["p1"], cycles=1)
+    r1 = forecaster.forecast("wf", patch=["p1"], cycles=1)
     files = list(tmp_path.glob("wf_*.json"))
-    patch1_id = files[0].stem.split("_", 1)[1]
+    upgrade1_id = files[0].stem.split("_", 1)[1]
+    assert r1.upgrade_id == upgrade1_id
 
     time.sleep(1)
-    forecaster.forecast("wf", patch=["p2"], cycles=1)
+    r2 = forecaster.forecast("wf", patch=["p2"], cycles=1)
     files = list(tmp_path.glob("wf_*.json"))
     assert len(files) == 2
-    patch_ids = {f.stem.split("_", 1)[1] for f in files}
-    assert patch1_id in patch_ids
+    upgrade_ids = {f.stem.split("_", 1)[1] for f in files}
+    assert upgrade1_id in upgrade_ids
 
-    patch2_id = (patch_ids - {patch1_id}).pop()
+    upgrade2_id = (upgrade_ids - {upgrade1_id}).pop()
+    assert r2.upgrade_id == upgrade2_id
 
-    first = load_record("wf", patch_id=patch1_id, records_base=tmp_path)
-    second = load_record("wf", patch_id=patch2_id, records_base=tmp_path)
+    first = load_record("wf", upgrade_id=upgrade1_id, records_base=tmp_path)
+    second = load_record("wf", upgrade_id=upgrade2_id, records_base=tmp_path)
     latest = load_record("wf", records_base=tmp_path)
 
     assert first.projections[0].roi == pytest.approx(0.1)
@@ -341,7 +344,7 @@ def test_delete_record(monkeypatch, tmp_path):
     time.sleep(1)
     forecaster.forecast("wf", patch="p2", cycles=1)
 
-    delete_record("wf", patch_id=first_id, records_base=tmp_path)
+    delete_record("wf", upgrade_id=first_id, records_base=tmp_path)
     remaining = list_records(tmp_path)
     assert len(remaining) == 1
     assert first_id not in remaining[0]
