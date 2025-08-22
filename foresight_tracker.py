@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
-from typing import Deque, Dict, Mapping, Tuple
+from typing import Deque, Dict, List, Mapping, Tuple
 
 import numpy as np
 import yaml
 
 
 class ForesightTracker:
-    """Maintain recent cycle metrics for workflows and evaluate stability."""
+    """Maintain recent cycle or stage metrics for workflows and evaluate stability.
+
+    Entries in :attr:`history` may represent sequential temporal trajectory
+    stages rather than strictly live cycles.
+    """
 
     def __init__(
         self,
@@ -76,6 +80,7 @@ class ForesightTracker:
         metrics: Mapping[str, float],
         *,
         compute_stability: bool = False,
+        **extra_metrics: float,
     ) -> None:
         """Append ``metrics`` for ``workflow_id`` and cap history length.
 
@@ -84,15 +89,21 @@ class ForesightTracker:
         workflow_id:
             Identifier of the workflow whose metrics are being recorded.
         metrics:
-            Mapping of metric names to numeric values for the current cycle.
+            Mapping of metric names to numeric values for the current cycle or
+            stage.
         compute_stability:
             When ``True``, the helper immediately evaluates the current
             stability by calling :meth:`get_trend_curve` and stores the
             resulting value under the ``"stability"`` key in the appended
             history entry.
+        **extra_metrics:
+            Additional numeric fields, such as ``stage`` or ``degradation``,
+            which are merged into the stored entry.
         """
 
         entry = {k: float(v) for k, v in metrics.items()}
+        for key, value in extra_metrics.items():
+            entry[key] = float(value)
         queue = self.history.setdefault(workflow_id, deque(maxlen=self.max_cycles))
         queue.append(entry)
         if compute_stability:
@@ -324,6 +335,15 @@ class ForesightTracker:
         all_values = np.array([v for entry in data for v in entry.values()], dtype=float)
         std = float(np.std(all_values, ddof=1)) if all_values.size > 1 else 0.0
         return slope > 0 and std < self.volatility_threshold
+
+    # ------------------------------------------------------------------
+    def get_temporal_profile(self, workflow_id: str) -> List[Dict[str, float]]:
+        """Return stored metric entries for ``workflow_id`` in chronological order."""
+
+        history = self.history.get(workflow_id)
+        if not history:
+            return []
+        return [dict(entry) for entry in history]
 
     # ------------------------------------------------------------------
     def to_dict(self) -> dict:
