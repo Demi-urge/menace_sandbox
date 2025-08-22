@@ -4,6 +4,8 @@ from unittest.mock import Mock
 import pytest
 
 from vector_service.cognition_layer import CognitionLayer
+from patch_safety import PatchSafety
+from vector_service.patch_logger import PatchLogger
 
 
 def test_init_logs_failures(caplog):
@@ -65,3 +67,20 @@ def test_query_logs_metric_failures(caplog):
     assert "log retrieval metrics" in caplog.text
     assert "save retrieval session" in caplog.text
 
+
+def test_failure_embedding_and_rejection(tmp_path):
+    store = tmp_path / "failures.jsonl"
+    ps = PatchSafety(threshold=0.5, storage_path=str(store))
+    err_meta = {"category": "fail", "module": "m"}
+
+    ok, score = ps.evaluate({}, err_meta)
+    assert ok and score < ps.threshold
+
+    pl = PatchLogger(patch_safety=ps)
+    pl.track_contributors(["error:1"], False, retrieval_metadata={"error:1": err_meta})
+    assert len(ps._failures) == 1
+    assert ps._failures[0] == ps.vectorizer.transform(err_meta)
+
+    ok2, score2 = ps.evaluate({}, err_meta)
+    assert not ok2
+    assert score2 >= ps.threshold
