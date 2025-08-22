@@ -5202,6 +5202,38 @@ def _preset_flaky_upstream() -> Dict[str, Any]:
     }
 
 
+def _preset_high_latency() -> Dict[str, Any]:
+    """Preset introducing artificial response delays."""
+
+    return {
+        "SCENARIO_NAME": "latency_spike",
+        "FAILURE_MODES": "latency_spike",
+        "API_LATENCY_MS": 500,
+    }
+
+
+def _preset_io_cpu_strain() -> Dict[str, Any]:
+    """Preset throttling I/O bandwidth and CPU quota."""
+
+    return {
+        "SCENARIO_NAME": "io_cpu_strain",
+        "FAILURE_MODES": "io_cpu_strain",
+        "BANDWIDTH_LIMIT": "1mbps",
+        "CPU_LIMIT": "0.5",
+    }
+
+
+def _preset_chaotic_failure() -> Dict[str, Any]:
+    """Preset representing broken auth and corrupt payload injection."""
+
+    return {
+        "SCENARIO_NAME": "chaotic_failure",
+        "FAILURE_MODES": "chaotic_failure",
+        "BROKEN_AUTH": True,
+        "CORRUPT_PAYLOADS": True,
+    }
+
+
 def default_scenario_presets() -> List[Dict[str, Any]]:
     """Return the standard set of scenario presets used by ``run_scenarios``."""
 
@@ -5211,6 +5243,9 @@ def default_scenario_presets() -> List[Dict[str, Any]]:
         _preset_hostile_input(),
         _preset_schema_drift(),
         _preset_flaky_upstream(),
+        _preset_high_latency(),
+        _preset_io_cpu_strain(),
+        _preset_chaotic_failure(),
     ]
 
 
@@ -5225,22 +5260,10 @@ def temporal_trajectory_presets() -> List[Dict[str, Any]]:
 
     return [
         {"SCENARIO_NAME": "baseline"},
-        {"SCENARIO_NAME": "latency_spike", "API_LATENCY_MS": 500},
-        {
-            "SCENARIO_NAME": "io_cpu_strain",
-            "CPU_LIMIT": "0.5",
-            "IO_ERRORS": 5,
-        },
-        {
-            "SCENARIO_NAME": "schema_drift",
-            "SCHEMA_MISMATCHES": 5,
-            "HOSTILE_INPUT": True,
-        },
-        {
-            "SCENARIO_NAME": "chaotic_failure",
-            "BROKEN_AUTH": True,
-            "CORRUPT_PAYLOADS": True,
-        },
+        _preset_high_latency(),
+        _preset_io_cpu_strain(),
+        _preset_schema_drift(),
+        _preset_chaotic_failure(),
     ]
 
 
