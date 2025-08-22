@@ -6,6 +6,6 @@
   "information": {"module": "information_db", "class": "InformationDB"},
   "code": {"module": "code_database", "class": "CodeDB"},
   "discrepancy": {"module": "discrepancy_db", "class": "DiscrepancyDB"},
-  "failure": {"module": "failure_learning_system", "class": "DiscrepancyDB"},
+  "failure": {"module": "failure_learning_system", "class": "FailureDB"},
   "research": {"module": "research_aggregator_bot", "class": "InfoDB"}
 }

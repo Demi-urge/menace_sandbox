@@ -240,6 +240,23 @@ class DiscrepancyDB(EmbeddableDBMixin):
         return results
 
 
+class FailureDB(DiscrepancyDB):
+    """Expose failure embeddings for the vector service."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        # provide mapping access for ``dict(row)`` calls
+        self.conn.row_factory = sqlite3.Row
+
+    def iter_records(self) -> Iterator[tuple[str, dict[str, Any], str]]:
+        """Yield only failure rows for embedding backfill."""
+        cur = self.conn.execute("SELECT rowid, * FROM failures")
+        for row in cur.fetchall():
+            data = dict(row)
+            rid = str(data.pop("rowid"))
+            yield rid, data, "failure"
+
+
 class FailureLearningSystem:
     """Record failures and derive planning and funding insights."""
 
@@ -277,4 +294,4 @@ class FailureLearningSystem:
         return self.failure_score(model_id)
 
 
-__all__ = ["FailureRecord", "DiscrepancyDB", "FailureLearningSystem"]
+__all__ = ["FailureRecord", "DiscrepancyDB", "FailureDB", "FailureLearningSystem"]
