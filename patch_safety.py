@@ -88,6 +88,7 @@ class PatchSafety:
     failure_vectorizer: FailureVectorizer | None = None
     _failures: List[List[float]] = field(default_factory=list)
     _records: List[Dict[str, Any]] = field(default_factory=list)
+    _origins: List[str] = field(default_factory=list)
     _failure_vectors: List[List[float]] = field(default_factory=list)
     _failures_by_origin: Dict[str, List[List[float]]] = field(default_factory=dict)
     _failure_vectors_by_origin: Dict[str, List[List[float]]] = field(default_factory=dict)
@@ -113,6 +114,7 @@ class PatchSafety:
         vec = self.vectorizer.transform(err)
         self._failures.append(vec)
         self._records.append(err)
+        self._origins.append(origin)
         if origin:
             self._failures_by_origin.setdefault(origin, []).append(vec)
         if self.failure_vectorizer is not None:
@@ -166,7 +168,10 @@ class PatchSafety:
             return
         self._failures.clear()
         self._records.clear()
+        self._origins.clear()
         self._failure_vectors.clear()
+        self._failures_by_origin.clear()
+        self._failure_vectors_by_origin.clear()
         if pth:
             p = Path(pth)
             if p.exists():
@@ -180,20 +185,34 @@ class PatchSafety:
                             if isinstance(data, dict):
                                 err = data.get("err", {})
                                 vec = data.get("vector")
+                                origin = data.get("origin", "")
                             else:
                                 err = {}
                                 vec = data
+                                origin = ""
                             if err:
                                 try:
                                     self.vectorizer.fit([err])
                                 except Exception:
                                     pass
                                 self._records.append(err)
+                                self._origins.append(origin)
                                 if vec is None:
                                     try:
                                         vec = self.vectorizer.transform(err)
                                     except Exception:
                                         vec = []
+                                if origin and isinstance(vec, list):
+                                    self._failures_by_origin.setdefault(origin, []).append(vec)
+                                if self.failure_vectorizer is not None:
+                                    try:
+                                        self.failure_vectorizer.fit([err])
+                                        fvec = self.failure_vectorizer.transform(err)
+                                    except Exception:
+                                        fvec = []
+                                    self._failure_vectors.append(fvec)
+                                    if origin:
+                                        self._failure_vectors_by_origin.setdefault(origin, []).append(fvec)
                             if isinstance(vec, list):
                                 self._failures.append(vec)
                 except Exception:  # pragma: no cover - best effort
@@ -245,7 +264,14 @@ class PatchSafety:
         p = Path(pth)
         try:  # pragma: no cover - simple IO
             with p.open("a", encoding="utf-8") as fh:
-                json.dump({"err": self._records[-1], "vector": self._failures[-1]}, fh)
+                json.dump(
+                    {
+                        "err": self._records[-1],
+                        "vector": self._failures[-1],
+                        "origin": self._origins[-1],
+                    },
+                    fh,
+                )
                 fh.write("\n")
         except Exception:
             pass
