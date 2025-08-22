@@ -87,12 +87,12 @@ class ContextBuilder:
         db_weights: Dict[str, float] | None = None,
         ranking_weight: float = ContextBuilderConfig().ranking_weight,
         roi_weight: float = ContextBuilderConfig().roi_weight,
-        safety_weight: float = getattr(ContextBuilderConfig(), "safety_weight", 1.0),
+        safety_weight: float = ContextBuilderConfig().safety_weight,
         max_tokens: int = ContextBuilderConfig().max_tokens,
-        regret_penalty: float = getattr(ContextBuilderConfig(), "regret_penalty", 1.0),
-        alignment_penalty: float = getattr(ContextBuilderConfig(), "alignment_penalty", 1.0),
-        alert_penalty: float = getattr(ContextBuilderConfig(), "alert_penalty", 1.0),
-        risk_penalty: float = getattr(ContextBuilderConfig(), "risk_penalty", 1.0),
+        regret_penalty: float = ContextBuilderConfig().regret_penalty,
+        alignment_penalty: float = ContextBuilderConfig().alignment_penalty,
+        alert_penalty: float = ContextBuilderConfig().alert_penalty,
+        risk_penalty: float = ContextBuilderConfig().risk_penalty,
         max_alignment_severity: float = getattr(
             ContextBuilderConfig(), "max_alignment_severity", 1.0
         ),
@@ -580,11 +580,6 @@ class ContextBuilder:
                 penalty += float(severity) * self.alignment_penalty
             except Exception:
                 pass
-        if risk_val is not None:
-            try:
-                penalty += float(risk_val) * self.risk_penalty
-            except Exception:
-                pass
         if alerts:
             penalty += (
                 len(alerts) if isinstance(alerts, (list, tuple, set)) else 1.0
@@ -609,6 +604,17 @@ class ContextBuilder:
         if roi_score is not None:
             try:
                 base *= 1.0 + float(roi_score) * self.roi_weight
+            except Exception:
+                pass
+        if risk_val is not None:
+            try:
+                penalty += (
+                    float(risk_val)
+                    * self.risk_penalty
+                    * rank_prob
+                    * roi_bias
+                    * self.safety_weight
+                )
             except Exception:
                 pass
         score = base - penalty
