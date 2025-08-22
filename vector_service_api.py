@@ -20,12 +20,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from vector_service import (
-    ContextBuilder,
+    CognitionLayer,
     EmbeddingBackfill,
     PatchLogger,
     Retriever,
     VectorServiceError,
-    FallbackResult,
 )
 
 try:  # pragma: no cover - optional dependency
@@ -41,7 +40,7 @@ app = FastAPI()
 # Service instances are kept globally for simplicity.  They are lightweight and
 # expose stateless interfaces which makes them safe to reuse across requests.
 _retriever = Retriever()
-_context_builder = ContextBuilder()
+_cognition_layer = CognitionLayer()
 _patch_logger = PatchLogger()
 _backfill = EmbeddingBackfill()
 
@@ -139,27 +138,46 @@ class ContextRequest(BaseModel):
     extras: dict[str, Any] | None = None
 
 
-@app.post("/build-context")
-def build_context(req: ContextRequest) -> Any:
-    """Construct a context string using :class:`vector_service.ContextBuilder`."""
+@app.post("/query")
+def query(req: ContextRequest) -> Any:
+    """Retrieve context via :class:`vector_service.CognitionLayer`."""
     start = time.time()
     try:
-        result = _context_builder.build(
+        ctx, sid = _cognition_layer.query(
             req.task_description, **(req.extras or {})
         )
     except VectorServiceError as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail=str(exc))
     duration = time.time() - start
-    if isinstance(result, ErrorResult):
-        raise HTTPException(status_code=500, detail=str(result))
-    if isinstance(result, FallbackResult):
-        result = ""
-    length = len(result) if isinstance(result, str) else 0
+    length = len(ctx)
     return {
         "status": "ok",
-        "data": result,
+        "data": ctx,
+        "session_id": sid,
         "metrics": {"duration": duration, "result_size": length},
     }
+
+
+class OutcomeRequest(BaseModel):
+    session_id: str
+    success: bool
+    patch_id: str | None = None
+    contribution: float | None = None
+
+
+@app.post("/record-outcome")
+def record_outcome(req: OutcomeRequest) -> Any:
+    """Forward patch outcome to :class:`CognitionLayer`."""
+    try:
+        _cognition_layer.record_patch_outcome(
+            req.session_id,
+            req.success,
+            patch_id=req.patch_id or "",
+            contribution=req.contribution,
+        )
+    except VectorServiceError as exc:  # pragma: no cover - defensive
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"status": "ok"}
 
 
 class TrackRequest(BaseModel):

@@ -20,6 +20,7 @@ from governed_embeddings import get_embedder
 
 from gpt_memory import GPTMemoryManager
 from gpt_knowledge_service import GPTKnowledgeService
+from vector_service import CognitionLayer
 try:  # pragma: no cover - allow flat imports
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -51,9 +52,11 @@ class LocalKnowledgeModule:
         manager: GPTMemoryManager | None = None,
         service: GPTKnowledgeService | None = None,
         embedder: "SentenceTransformer | None" = None,
+        cognition_layer: CognitionLayer | None = None,
     ) -> None:
         self.memory = manager or GPTMemoryManager(db_path, embedder=embedder)
         self.knowledge = service or GPTKnowledgeService(self.memory)
+        self.cognition_layer = cognition_layer
 
     # ------------------------------------------------------------------ facade
     def log(
@@ -88,7 +91,18 @@ class LocalKnowledgeModule:
         return f"### {title}\n{body}"
 
     def build_context(self, key: str, limit: int = 5) -> str:
-        """Return formatted context for ``key`` combining raw entries and insights."""
+        """Return formatted context for ``key`` using :class:`CognitionLayer`.
+
+        Falls back to the legacy memory aggregation when no
+        :class:`CognitionLayer` instance is available.
+        """
+
+        if self.cognition_layer is not None:
+            try:
+                ctx, _ = self.cognition_layer.query(key, top_k=limit)
+                return ctx
+            except Exception:
+                return ""
 
         sections: list[str] = []
         try:

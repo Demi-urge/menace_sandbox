@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from .auto_escalation_manager import AutoEscalationManager
-from vector_service import ContextBuilder, FallbackResult, ErrorResult
+from vector_service import CognitionLayer
 
 
 class AutomatedReviewer:
@@ -30,6 +30,10 @@ class AutomatedReviewer:
             escalation_manager = AutoEscalationManager()
         self.escalation_manager = escalation_manager
         self.logger = logging.getLogger(self.__class__.__name__)
+        try:
+            self.cognition_layer = CognitionLayer()
+        except Exception:  # pragma: no cover - optional dependency missing
+            self.cognition_layer = None
 
     # ------------------------------------------------------------------
     def handle(self, event: object) -> None:
@@ -47,14 +51,15 @@ class AutomatedReviewer:
                 self.bot_db.update_bot(int(bot_id), status="disabled")
             except Exception:
                 self.logger.exception("failed disabling bot %s", bot_id)
-            try:
-                builder = ContextBuilder()
-                ctx = builder.build_context(
-                    json.dumps({"bot_id": bot_id, "severity": severity})
-                )
-                if isinstance(ctx, (ErrorResult, FallbackResult)):
-                    self.logger.error("context build failed: %s", ctx)
+            ctx = ""
+            if self.cognition_layer is not None:
+                try:
+                    ctx, _sid = self.cognition_layer.query(
+                        json.dumps({"bot_id": bot_id, "severity": severity})
+                    )
+                except Exception:
                     ctx = ""
+            try:
                 self.escalation_manager.handle(
                     f"review for bot {bot_id}", attachments=[ctx]
                 )

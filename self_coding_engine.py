@@ -59,29 +59,13 @@ from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
 from typing import TYPE_CHECKING
 
 try:  # pragma: no cover - optional dependency
-    from vector_service import (
-        ContextBuilder,
-        ErrorResult,
-        PatchLogger,
-        VectorServiceError,
-        FallbackResult,
-    )
+    from vector_service import CognitionLayer, PatchLogger, VectorServiceError
 except Exception:  # pragma: no cover - defensive fallback
-    ContextBuilder = None  # type: ignore
+    CognitionLayer = None  # type: ignore
     PatchLogger = object  # type: ignore
-
-    class ErrorResult(Exception):
-        """Fallback ErrorResult when vector service is unavailable."""
-
-        pass
 
     class VectorServiceError(Exception):
         """Fallback VectorServiceError when vector service is unavailable."""
-
-        pass
-
-    class FallbackResult(list):
-        """Fallback FallbackResult when vector service is unavailable."""
 
         pass
 
@@ -114,12 +98,12 @@ class SelfCodingEngine:
         formal_verifier: Optional[FormalVerifier] = None,
         patch_suggestion_db: "PatchSuggestionDB" | None = None,
         patch_logger: PatchLogger | None = None,
+        cognition_layer: CognitionLayer | None = None,
         bot_roles: Optional[Dict[str, str]] = None,
         audit_trail_path: str | None = None,
         audit_privkey: bytes | None = None,
         event_bus: UnifiedEventBus | None = None,
         gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
-        context_builder: ContextBuilder | None = None,
         knowledge_service: GPTKnowledgeService | None = None,
         **kwargs: Any,
     ) -> None:
@@ -165,16 +149,13 @@ class SelfCodingEngine:
         self.logger = logging.getLogger("SelfCodingEngine")
         self.event_bus = event_bus
         self.patch_suggestion_db = patch_suggestion_db
-        if patch_logger is None:
+        if cognition_layer is None:
             try:
-                patch_logger = PatchLogger(patch_db=self.patch_db)
+                cognition_layer = CognitionLayer(patch_logger=patch_logger)
             except Exception:
-                patch_logger = None
+                cognition_layer = None
+        self.cognition_layer = cognition_layer
         self.patch_logger = patch_logger
-        # Optional contextual information builder for prompts; may be ``None``
-        # when the dependency is unavailable.  No automatic initialisation is
-        # attempted to keep operations fully offline.
-        self.context_builder = context_builder
         self.knowledge_service = knowledge_service
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
@@ -223,35 +204,9 @@ class SelfCodingEngine:
         except Exception:
             self.logger.exception("memory logging failed")
 
-    def _track_contributors(
-        self,
-        session_id: str,
-        vectors: List[Tuple[str, str]] | List[Tuple[str, str, float]],
-        result: bool,
-        patch_id: int | None = None,
-        retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
-    ) -> None:
-        if not self.patch_logger:
-            return
-        detailed: List[Tuple[str, str, float]] = []
-        for item in vectors:
-            if len(item) == 3:
-                o, v, s = item  # type: ignore[misc]
-            else:
-                o, v = item  # type: ignore[misc]
-                s = 0.0
-            detailed.append((o, v, float(s)))
-        ids = {f"{o}:{v}": s for o, v, s in detailed}
-        try:
-            self.patch_logger.track_contributors(
-                ids,
-                result,
-                patch_id=str(patch_id or ""),
-                session_id=session_id,
-                retrieval_metadata=retrieval_metadata,
-            )
-        except VectorServiceError:
-            self.logger.debug("patch logging failed", exc_info=True)
+    def _track_contributors(self, *args: object, **kwargs: object) -> None:
+        """Deprecated helper retained for backward compatibility."""
+        return
 
     # --------------------------------------------------------------
     def suggest_snippets(self, description: str, limit: int = 3) -> Iterable[CodeRecord]:
@@ -435,17 +390,9 @@ class SelfCodingEngine:
         if not self.llm_client:
             return _fallback()
         repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
-        builder = self.context_builder
         retrieval_context = ""
-        if builder is not None:
-            try:
-                retrieval_context = builder.build_context(description)
-                if isinstance(retrieval_context, (ErrorResult, FallbackResult)):
-                    retrieval_context = ""
-                elif not isinstance(retrieval_context, str):
-                    retrieval_context = json.dumps(retrieval_context)
-            except Exception:
-                retrieval_context = ""
+        if metadata:
+            retrieval_context = str(metadata.get("retrieval_context", ""))
         prompt = self.build_visual_agent_prompt(
             str(path) if path else None,
             description,
@@ -695,71 +642,35 @@ class SelfCodingEngine:
             except Exception as exc:
                 self.logger.error("complexity query failed: %s", exc)
                 before_complexity = 0.0
+        if context_meta is None and self.cognition_layer is not None:
+            try:
+                ctx, sid = self.cognition_layer.query(description)
+                context_meta = {
+                    "retrieval_context": ctx,
+                    "retrieval_session_id": sid,
+                }
+            except Exception:
+                context_meta = {
+                    "retrieval_context": "",
+                    "retrieval_session_id": "",
+                }
         original = path.read_text(encoding="utf-8")
         generated_code = self.patch_file(path, description, context_meta=context_meta)
-        vectors: List[Tuple[str, str, float]] = []
         session_id = ""
-        retrieval_metadata: Dict[str, Dict[str, Any]] = {}
         if context_meta:
-            raw_vecs = context_meta.get("retrieval_vectors") or []
             session_id = context_meta.get("retrieval_session_id", "")
-            for item in raw_vecs:
-                if isinstance(item, dict):
-                    origin = item.get("origin_db") or item.get("origin")
-                    vid = item.get("vector_id") or item.get("id")
-                    score = item.get("score") or item.get("similarity")
-                    lic = item.get("license")
-                    fp = item.get("license_fingerprint")
-                    alerts = item.get("semantic_alerts")
-                    sev = item.get("alignment_severity")
-                else:
-                    if len(item) == 3:
-                        origin, vid, score = item
-                    elif len(item) == 2:
-                        origin, vid = item
-                        score = 0.0
-                    else:
-                        continue
-                    lic = None
-                    fp = None
-                    alerts = None
-                    sev = None
-                if origin is not None and vid is not None:
-                    vectors.append((str(origin), str(vid), float(score or 0.0)))
-                    retrieval_metadata[f"{origin}:{vid}"] = {
-                        "license": lic,
-                        "license_fingerprint": fp,
-                        "semantic_alerts": alerts,
-                        "alignment_severity": sev,
-                    }
+        vectors: List[Tuple[str, str, float]] = []
+        retrieval_metadata: Dict[str, Dict[str, Any]] = {}
         if not generated_code.strip():
             self.logger.info("no code generated; skipping enhancement")
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
             self._store_patch_memory(path, description, generated_code, False, 0.0)
-            if self.patch_db and session_id and vectors:
+            if self.cognition_layer and session_id:
                 try:
-                    self.patch_db.record_vector_metrics(
-                        session_id,
-                        [(o, v) for o, v, _ in vectors],
-                        patch_id=0,
-                        contribution=0.0,
-                        win=False,
-                        regret=True,
-                    )
+                    self.cognition_layer.record_patch_outcome(session_id, False)
                 except Exception:
-                    self.logger.exception("failed to log patch outcome")
-            if self.data_bot:
-                try:
-                    self.data_bot.db.log_patch_outcome(
-                        description,
-                        False,
-                        [(o, v) for o, v, _ in vectors],
-                        session_id=session_id,
-                    )
-                except Exception:
-                    self.logger.exception("failed to log patch outcome")
-            self._track_contributors(session_id, vectors, False, retrieval_metadata=retrieval_metadata)
+                    self.logger.exception("failed to record patch outcome")
             return None, False, 0.0
         if self.formal_verifier and not self.formal_verifier.verify(path):
             path.write_text(original, encoding="utf-8")
@@ -1052,6 +963,16 @@ class SelfCodingEngine:
                 )
         except Exception:
             self.logger.exception("failed to log patch outcome")
+        if self.cognition_layer and session_id:
+            try:
+                self.cognition_layer.record_patch_outcome(
+                    session_id,
+                    not reverted,
+                    patch_id=str(patch_id or ""),
+                    contribution=roi_delta,
+                )
+            except Exception:
+                self.logger.exception("failed to record patch outcome")
         self._track_contributors(session_id, vectors, bool(patch_id) and not reverted, patch_id, retrieval_metadata)
         return patch_id, reverted, roi_delta
 
