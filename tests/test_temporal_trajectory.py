@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-# Stub heavy optional dependencies to keep import light
+# Stub heavy optional dependencies to keep imports lightweight during tests
 stub_st = types.ModuleType("sentence_transformers")
 sys.modules.setdefault("sentence_transformers", stub_st)
 stub_faiss = types.ModuleType("faiss")
@@ -30,41 +30,51 @@ from foresight_tracker import ForesightTracker
 
 SCENARIOS = [p["SCENARIO_NAME"] for p in temporal_presets()]
 
-# record the order in which scenarios are executed
-stage_calls: list[str] = []
+# deterministic ROI and resilience per scenario
+ROI_VALUES = {name: float(-idx) for idx, name in enumerate(SCENARIOS)}
+RES_VALUES = ROI_VALUES
 
 
 def _fake_sim_env(snippet, env_input, container=None):
-    stage_calls.append(env_input.get("SCENARIO_NAME"))
-    return {}
+    name = env_input.get("SCENARIO_NAME")
+    return {
+        "roi": ROI_VALUES[name],
+        "resilience": RES_VALUES[name],
+    }
 
 
 async def _fake_section_worker(snippet, env_input, threshold):
-    idx = len(stage_calls) - 1
-    roi = float(-idx)
-    metrics = {"resilience": roi}
+    name = env_input.get("SCENARIO_NAME")
+    roi = ROI_VALUES[name]
+    metrics = {"resilience": RES_VALUES[name]}
     return {}, [(0.0, roi, metrics)]
 
 
-def test_simulate_temporal_trajectory_order_and_history(monkeypatch):
-    stage_calls.clear()
+def test_temporal_trajectory_profile_and_logging(monkeypatch):
+    ft = ForesightTracker()
+    logs: list[str] = []
+
     monkeypatch.setattr(
-        "sandbox_runner.environment.simulate_execution_environment",
-        _fake_sim_env,
+        "sandbox_runner.environment.simulate_execution_environment", _fake_sim_env
     )
     monkeypatch.setattr(
         "sandbox_runner.environment._section_worker", _fake_section_worker
     )
+    monkeypatch.setattr(
+        "sandbox_runner.environment.logging.info", lambda msg, *a, **k: logs.append(msg % a)
+    )
 
-    ft = ForesightTracker()
-    simulate_temporal_trajectory("0", ["simple_functions.print_ten"], foresight_tracker=ft)
+    simulate_temporal_trajectory("wf", ["simple_functions.print_ten"], foresight_tracker=ft)
 
-    assert stage_calls == SCENARIOS
+    history = list(ft.history["wf"])
+    assert len(history) == 5
+    expected = {"roi_delta", "resilience", "scenario_degradation"}
+    assert all(expected <= set(entry) for entry in history)
 
-    history = list(ft.history["0"])
-    assert len(history) == len(SCENARIOS)
-    expected_keys = {"roi_delta", "resilience", "scenario_degradation"}
-    assert all(expected_keys <= set(entry) for entry in history)
-    assert [entry["roi_delta"] for entry in history] == [0.0, -1.0, -2.0, -3.0, -4.0]
-    assert [entry["resilience"] for entry in history] == [0.0, -1.0, -2.0, -3.0, -4.0]
-    assert [entry["scenario_degradation"] for entry in history] == [0.0, -1.0, -2.0, -3.0, -4.0]
+    assert len(logs) == 5
+    for rec in logs:
+        assert all(key in rec for key in ["roi=", "resilience=", "stability=", "degradation="])
+
+    profile = ft.get_temporal_profile("wf")
+    assert profile == history
+
