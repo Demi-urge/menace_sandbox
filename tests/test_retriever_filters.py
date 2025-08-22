@@ -1,7 +1,7 @@
 import pytest
 
 from vector_service import Retriever
-from vector_service.patch_safety import _VIOLATIONS
+from patch_safety import _VIOLATIONS
 
 
 class DummyHit:

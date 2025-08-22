@@ -24,7 +24,7 @@ except Exception:  # pragma: no cover - fallback when running as script
     import metrics_exporter as _me  # type: ignore
 
 from .patch_logger import _VECTOR_RISK  # type: ignore
-from .patch_safety import check_patch_safety
+from patch_safety import PatchSafety
 
 _DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 from .decorators import log_and_measure
@@ -81,6 +81,7 @@ class Retriever:
     license_denylist: set[str] = field(
         default_factory=lambda: set(_DEFAULT_LICENSE_DENYLIST)
     )
+    patch_safety: PatchSafety = field(default_factory=PatchSafety)
 
     # ------------------------------------------------------------------
     def _get_retriever(self) -> UniversalRetriever:
@@ -112,6 +113,10 @@ class Retriever:
         filtered = 0
         denylist = license_denylist or self.license_denylist
         alert_limit = max_alerts if max_alerts is not None else self.max_alerts
+        ps = self.patch_safety
+        ps.max_alert_severity = max_alert_severity
+        ps.max_alerts = alert_limit
+        ps.license_denylist = denylist
         for h in hits:
             meta = getattr(h, "metadata", {})
             if not isinstance(meta, dict) or not meta.get("redacted"):
@@ -130,12 +135,8 @@ class Retriever:
                 }
             # Pre-filter based on metadata-only safety signals so all
             # modalities are subject to the same limits.
-            if not check_patch_safety(
-                meta,
-                max_alert_severity=max_alert_severity,
-                max_alerts=alert_limit,
-                license_denylist=denylist,
-            ):
+            passed, _ = ps.evaluate(meta)
+            if not passed:
                 filtered += 1
                 continue
             text = str(item.get("text") or "")
@@ -146,12 +147,8 @@ class Retriever:
                 filtered += 1
                 continue
             meta, reason = governed
-            if not check_patch_safety(
-                meta,
-                max_alert_severity=max_alert_severity,
-                max_alerts=alert_limit,
-                license_denylist=denylist,
-            ):
+            passed, _ = ps.evaluate(meta)
+            if not passed:
                 filtered += 1
                 continue
             item["metadata"] = meta
@@ -209,6 +206,10 @@ class Retriever:
         filtered = 0
         denylist = license_denylist or self.license_denylist
         alert_limit = max_alerts if max_alerts is not None else self.max_alerts
+        ps = self.patch_safety
+        ps.max_alert_severity = max_alert_severity
+        ps.max_alerts = alert_limit
+        ps.license_denylist = denylist
         for row in rows:
             text = str(row.get("code") or row.get("summary") or "")
             governed = govern_retrieval(text, max_alert_severity=max_alert_severity)
@@ -216,12 +217,8 @@ class Retriever:
                 filtered += 1
                 continue
             meta, reason = governed
-            if not check_patch_safety(
-                meta,
-                max_alert_severity=max_alert_severity,
-                max_alerts=alert_limit,
-                license_denylist=denylist,
-            ):
+            passed, _ = ps.evaluate(meta)
+            if not passed:
                 filtered += 1
                 continue
             fp = meta.get("license_fingerprint")
