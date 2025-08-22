@@ -89,6 +89,8 @@ class PatchSafety:
     _failures: List[List[float]] = field(default_factory=list)
     _records: List[Dict[str, Any]] = field(default_factory=list)
     _failure_vectors: List[List[float]] = field(default_factory=list)
+    _failures_by_origin: Dict[str, List[List[float]]] = field(default_factory=dict)
+    _failure_vectors_by_origin: Dict[str, List[List[float]]] = field(default_factory=dict)
     refresh_interval: float = 3600.0
     _last_refresh: float = 0.0
     _jsonl_mtime: float = 0.0
@@ -99,17 +101,27 @@ class PatchSafety:
         self.load_failures()
 
     # ------------------------------------------------------------------
-    def record_failure(self, err: Dict[str, Any]) -> None:
-        """Add a failure example represented by ``err`` and persist it."""
+    def record_failure(self, err: Dict[str, Any], origin: str = "") -> None:
+        """Add a failure example represented by ``err`` and persist it.
+
+        ``origin`` allows tracking failure embeddings on a per-origin basis so
+        future evaluations of vectors from the same source can be penalised
+        more heavily.
+        """
+
         self.vectorizer.fit([err])
         vec = self.vectorizer.transform(err)
         self._failures.append(vec)
         self._records.append(err)
+        if origin:
+            self._failures_by_origin.setdefault(origin, []).append(vec)
         if self.failure_vectorizer is not None:
             try:
                 self.failure_vectorizer.fit([err])
                 fvec = self.failure_vectorizer.transform(err)
                 self._failure_vectors.append(fvec)
+                if origin:
+                    self._failure_vectors_by_origin.setdefault(origin, []).append(fvec)
             except Exception:  # pragma: no cover - best effort
                 pass
         # best-effort persistence
@@ -290,7 +302,11 @@ class PatchSafety:
 
     # ------------------------------------------------------------------
     def evaluate(
-        self, meta: Mapping[str, Any], err: Dict[str, Any] | None = None
+        self,
+        meta: Mapping[str, Any],
+        err: Dict[str, Any] | None = None,
+        *,
+        origin: str = "",
     ) -> Tuple[bool, float]:
         """Return ``(passed, score)`` for ``meta`` and optional ``err``.
 
@@ -305,6 +321,41 @@ class PatchSafety:
         if err is not None:
             try:
                 score = float(self.score(err))
+                if origin:
+                    penalty = 0.0
+                    try:
+                        vec = self.vectorizer.transform(err)
+                        penalty = max(
+                            penalty,
+                            max(
+                                _cosine(vec, f)
+                                for f in self._failures_by_origin.get(origin, [])
+                            )
+                            if self._failures_by_origin.get(origin)
+                            else 0.0,
+                        )
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                    if (
+                        self.failure_vectorizer is not None
+                        and origin in self._failure_vectors_by_origin
+                    ):
+                        try:
+                            vec2 = self.failure_vectorizer.transform(err)
+                            penalty = max(
+                                penalty,
+                                max(
+                                    _cosine(vec2, f)
+                                    for f in self._failure_vectors_by_origin.get(
+                                        origin, []
+                                    )
+                                )
+                                if self._failure_vectors_by_origin.get(origin)
+                                else 0.0,
+                            )
+                        except Exception:  # pragma: no cover - defensive
+                            pass
+                    score += penalty
             except Exception:  # pragma: no cover - defensive
                 score = 0.0
         passed = score < self.threshold
