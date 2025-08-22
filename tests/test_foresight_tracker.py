@@ -229,6 +229,25 @@ def test_capture_from_roi_records_latest_metrics():
     assert entry["raw_roi_delta"] == 0.1
 
 
+def test_capture_from_roi_records_entropy():
+    ft = ForesightTracker()
+
+    class DummyROITracker:
+        def __init__(self):
+            self.roi_history = [0.1]
+            self.raroi_history = [0.1]
+            self.metrics_history = {"synergy_shannon_entropy": [0.42]}
+
+        def scenario_degradation(self):
+            return 0.0
+
+    dummy = DummyROITracker()
+    ft.capture_from_roi(dummy, "wf")
+
+    entry = ft.history["wf"][0]
+    assert entry["synergy_shannon_entropy"] == 0.42
+
+
 def test_capture_from_roi_accepts_stage_and_compute_stability():
     ft = ForesightTracker()
 
