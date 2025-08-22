@@ -299,7 +299,9 @@ class RankingModelScheduler:
                 ),
             )
 
-        # Train model from latest vector metrics
+        # Train model from the latest metrics.  This mirrors running
+        # ``python retrieval_ranker.py train`` and therefore uses the same
+        # helper functions as the command line interface.
         df = rr.load_training_data(vector_db=self.vector_db, patch_db=self.metrics_db)
         trained = rr.train(df)
         tm = trained[0] if isinstance(trained, tuple) else trained
