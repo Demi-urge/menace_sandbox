@@ -22,6 +22,7 @@ from jsonschema import ValidationError, validate
 
 from .override_validator import validate_override_file
 from .governance import Rule as GovRule, check_veto
+from .foresight_tracker import ForesightTracker
 
 
 logger = logging.getLogger(__name__)
@@ -371,6 +372,9 @@ class DeploymentGovernor:
 def evaluate_workflow(
     scorecard: Mapping[str, Any] | None,
     policy: Mapping[str, Any] | None,
+    *,
+    foresight_tracker: ForesightTracker | None = None,
+    workflow_id: str | None = None,
 ) -> Dict[str, Any]:
     """Return deployment verdict and reasoning for *scorecard*.
 
@@ -447,10 +451,26 @@ def evaluate_workflow(
             result["reasons"].append("manual_override")
 
     combined_override = {**overrides, **result.get("override", {})}
-
+    verdict = result.get("verdict", "no_go")
+    reason_codes = list(result.get("reasons", []))
+    if (
+        verdict == "promote"
+        and foresight_tracker is not None
+        and workflow_id is not None
+    ):
+        try:
+            risk = foresight_tracker.predict_roi_collapse(workflow_id)
+            if risk.get("risk_class") == "Immediate collapse risk" or bool(
+                risk.get("brittle")
+            ):
+                verdict = "no_go"
+                if "roi_collapse_risk" not in reason_codes:
+                    reason_codes.append("roi_collapse_risk")
+        except Exception:
+            logger.exception("foresight risk evaluation failed")
     return {
-        "verdict": result.get("verdict", "no_go"),
-        "reason_codes": result.get("reasons", []),
+        "verdict": verdict,
+        "reason_codes": reason_codes,
         "overrides": combined_override,
     }
 
@@ -459,6 +479,9 @@ def evaluate(
     scorecard: Mapping[str, Any] | None,
     metrics: Mapping[str, Any] | None,
     policy: Mapping[str, Any] | None = None,
+    *,
+    foresight_tracker: ForesightTracker | None = None,
+    workflow_id: str | None = None,
 ) -> Dict[str, Any]:
     """Evaluate deployment readiness based on *scorecard* and *metrics*.
 
@@ -494,6 +517,21 @@ def evaluate(
     )
 
     def _finish(verdict: str) -> Dict[str, Any]:
+        if (
+            verdict == "promote"
+            and foresight_tracker is not None
+            and workflow_id is not None
+        ):
+            try:
+                risk = foresight_tracker.predict_roi_collapse(workflow_id)
+                if risk.get("risk_class") == "Immediate collapse risk" or bool(
+                    risk.get("brittle")
+                ):
+                    verdict = "no_go"
+                    if "roi_collapse_risk" not in reasons:
+                        reasons.append("roi_collapse_risk")
+            except Exception:
+                logger.exception("foresight risk evaluation failed")
         if override_path and public_key:
             valid, data = validate_override_file(str(override_path), str(public_key))
             if valid:
@@ -682,7 +720,13 @@ class RuleEvaluator:
     def __init__(self, rules: Iterable[EvalRule] | None = None) -> None:
         self.rules = list(rules) if rules else list(_EVAL_RULES)
 
-    def evaluate(self, scorecard: Mapping[str, Any] | None) -> Dict[str, Any]:
+    def evaluate(
+        self,
+        scorecard: Mapping[str, Any] | None,
+        *,
+        foresight_tracker: ForesightTracker | None = None,
+        workflow_id: str | None = None,
+    ) -> Dict[str, Any]:
         scorecard = scorecard or {}
         alignment = str(
             scorecard.get("alignment_status")
@@ -746,11 +790,27 @@ class RuleEvaluator:
                 try:
                     if bool(_safe_eval(rule.condition, local_vars)):
                         reasons = [rule.reason_code] if rule.reason_code else []
-                        return {
+                        result = {
                             "decision": decision,
                             "reason_codes": reasons,
                             "override_allowed": True,
                         }
+                        if (
+                            decision == "promote"
+                            and foresight_tracker is not None
+                            and workflow_id is not None
+                        ):
+                            try:
+                                risk = foresight_tracker.predict_roi_collapse(workflow_id)
+                                if risk.get("risk_class") == "Immediate collapse risk" or bool(
+                                    risk.get("brittle")
+                                ):
+                                    result["decision"] = "demote"
+                                    if "roi_collapse_risk" not in result["reason_codes"]:
+                                        result["reason_codes"].append("roi_collapse_risk")
+                            except Exception:
+                                logger.exception("foresight risk evaluation failed")
+                        return result
                 except Exception:
                     continue
 
@@ -764,10 +824,15 @@ class RuleEvaluator:
 def evaluate_scorecard(
     scorecard: Mapping[str, Any] | None,
     rules: Iterable[EvalRule] | None = None,
+    *,
+    foresight_tracker: ForesightTracker | None = None,
+    workflow_id: str | None = None,
 ) -> Dict[str, Any]:
     """Convenience wrapper around :class:`RuleEvaluator`."""
 
-    return RuleEvaluator(rules).evaluate(scorecard)
+    return RuleEvaluator(rules).evaluate(
+        scorecard, foresight_tracker=foresight_tracker, workflow_id=workflow_id
+    )
 
 
 __all__ = [

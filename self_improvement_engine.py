@@ -5413,15 +5413,27 @@ class SelfImprovementEngine:
                         else None
                     ),
                 }
+                workflow_id = "self_improvement"
                 gov_result: Dict[str, Any] | None = None
                 try:
+                    wf_ctx = getattr(environment, "current_context", None)
+                    try:
+                        ctx_obj = wf_ctx() if callable(wf_ctx) else wf_ctx
+                        workflow_id = getattr(ctx_obj, "workflow_id", workflow_id)
+                    except Exception:
+                        pass
                     metrics = {
                         "raroi": scorecard.get("raroi"),
                         "confidence": scorecard.get("confidence"),
                         "sandbox_roi": roi_realish,
                         "adapter_roi": pred_realish,
                     }
-                    gov_result = deployment_evaluate(scorecard, metrics)
+                    gov_result = deployment_evaluate(
+                        scorecard,
+                        metrics,
+                        foresight_tracker=self.foresight_tracker,
+                        workflow_id=workflow_id,
+                    )
                 except Exception:
                     self.logger.exception("deployment evaluation failed")
                 if gov_result:
@@ -5452,7 +5464,40 @@ class SelfImprovementEngine:
                         self.logger.exception("deployment verdict logging failed")
                     scorecard["deployment_verdict"] = verdict
                     if verdict == "promote":
-                        self.workflow_ready = True
+                        workflow_id = "self_improvement"
+                        wf_ctx = getattr(environment, "current_context", None)
+                        try:
+                            ctx_obj = wf_ctx() if callable(wf_ctx) else wf_ctx
+                            workflow_id = getattr(ctx_obj, "workflow_id", workflow_id)
+                        except Exception:
+                            pass
+                        risk: dict[str, object] | None = None
+                        try:
+                            if self.foresight_tracker:
+                                risk = self.foresight_tracker.predict_roi_collapse(workflow_id)
+                        except Exception:
+                            self.logger.exception("foresight risk check failed")
+                        if risk and (
+                            risk.get("risk_class") == "Immediate collapse risk"
+                            or bool(risk.get("brittle"))
+                        ):
+                            try:
+                                self.logger.warning(
+                                    "promotion blocked due to ROI collapse risk",
+                                    extra=log_record(
+                                        workflow_id=workflow_id,
+                                        risk=risk.get("risk_class"),
+                                        brittle=risk.get("brittle"),
+                                    ),
+                                )
+                            except Exception:
+                                self.logger.exception("risk logging failed")
+                            try:
+                                self.enqueue_preventative_fixes([workflow_id])
+                            except Exception:
+                                self.logger.exception("risk queue enqueue failed")
+                        else:
+                            self.workflow_ready = True
                     elif verdict == "demote":
                         self.workflow_ready = False
                         if (
