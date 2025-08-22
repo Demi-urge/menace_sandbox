@@ -23,6 +23,9 @@ from jsonschema import ValidationError, validate
 from .override_validator import validate_override_file
 from .governance import Rule as GovRule, check_veto
 from .foresight_tracker import ForesightTracker
+from .upgrade_forecaster import ForecastResult, UpgradeForecaster
+from .workflow_graph import WorkflowGraph
+from .forecast_logger import ForecastLogger
 
 
 logger = logging.getLogger(__name__)
@@ -835,6 +838,99 @@ def evaluate_scorecard(
     )
 
 
+def is_foresight_safe_to_promote(
+    workflow_id: str,
+    patch: Iterable[str] | str,
+    *,
+    forecaster: UpgradeForecaster,
+    tracker: ForesightTracker,
+    graph: WorkflowGraph,
+    roi_threshold: float = 0.0,
+) -> tuple[bool, list[str], ForecastResult]:
+    """Assess whether ``workflow_id`` can be promoted based on foresight data.
+
+    Parameters
+    ----------
+    workflow_id:
+        Identifier of the workflow under evaluation.
+    patch:
+        Patch representation forwarded to :class:`UpgradeForecaster`.
+    forecaster:
+        Instance used to generate ROI projections.
+    tracker:
+        :class:`ForesightTracker` providing collapse risk assessment.
+    graph:
+        :class:`WorkflowGraph` used to simulate wider ROI impact.
+    roi_threshold:
+        Minimum acceptable projected ROI for any cycle.
+    """
+
+    forecast = forecaster.forecast(workflow_id, patch)
+    reasons: list[str] = []
+
+    if any(p.roi < roi_threshold for p in forecast.projections):
+        reasons.append("projected_roi_below_threshold")
+
+    if forecast.confidence < 0.6:
+        reasons.append("low_confidence")
+
+    try:
+        collapse = tracker.predict_roi_collapse(workflow_id)
+        if collapse.get("risk") == "Immediate collapse risk" or bool(
+            collapse.get("brittle")
+        ):
+            reasons.append("roi_collapse_risk")
+    except Exception:
+        logger.exception("foresight risk evaluation failed")
+
+    try:
+        delta = forecast.projections[0].roi if forecast.projections else 0.0
+        impacts = graph.simulate_impact_wave(workflow_id, float(delta), 0.0)
+        net_roi = sum(v.get("roi", 0.0) for v in impacts.values())
+        if net_roi < 0:
+            reasons.append("negative_impact_wave")
+    except Exception:
+        logger.exception("impact wave simulation failed")
+
+    decision_ok = not reasons
+
+    patch_repr = patch if isinstance(patch, str) else list(patch)
+    data = {
+        "event": "foresight_promotion_check",
+        "workflow_id": workflow_id,
+        "patch": patch_repr,
+        "forecast": {
+            "projections": [p.__dict__ for p in forecast.projections],
+            "confidence": forecast.confidence,
+            "upgrade_id": forecast.upgrade_id,
+        },
+        "decision_ok": decision_ok,
+        "reason_codes": reasons,
+        "roi_threshold": roi_threshold,
+    }
+
+    logger_obj = getattr(forecaster, "logger", None)
+    fallback: ForecastLogger | None = None
+    if not isinstance(logger_obj, ForecastLogger):
+        try:
+            fallback = ForecastLogger("forecast_records/foresight.log")
+            logger_obj = fallback
+        except Exception:
+            logger.exception("failed to create ForecastLogger")
+            logger_obj = None
+
+    if logger_obj is not None:
+        try:
+            logger_obj.log(data)
+        except Exception:
+            logger.exception("forecast logging failed")
+        finally:
+            if fallback is not None:
+                fallback.close()
+
+    return decision_ok, reasons, forecast
+
+
 __all__ = [
     "Rule",
     "DeploymentGovernor",
@@ -843,4 +939,5 @@ __all__ = [
     "EvalRule",
     "RuleEvaluator",
     "evaluate_scorecard",
+    "is_foresight_safe_to_promote",
 ]
