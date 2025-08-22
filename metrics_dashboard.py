@@ -343,6 +343,15 @@ class MetricsDashboard:
             data["risk_penalty"] = [
                 r - rr for r, rr in zip(tracker.roi_history, tracker.raroi_history)
             ]
+        # Expose per-database ROI deltas so dashboards can chart contribution
+        # trends for each origin database over time.
+        try:
+            data["origin_db_deltas"] = {
+                db: list(vals)
+                for db, vals in tracker.origin_db_delta_history.items()
+            }
+        except Exception:
+            data["origin_db_deltas"] = {}
         # Include latest per-database contribution and outcome rates.
         try:
             data["db_metrics"] = tracker.db_roi_report()
