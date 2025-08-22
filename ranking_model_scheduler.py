@@ -400,9 +400,7 @@ class RankingModelScheduler:
             try:
                 self._tracker_roi_totals = {
                     origin: sum(float(d) for d in deltas)
-                    for origin, deltas in getattr(
-                        self.roi_tracker, "origin_db_deltas", {}
-                    ).items()
+                    for origin, deltas in self.roi_tracker.origin_db_delta_history.items()
                 }
             except Exception:
                 self._tracker_roi_totals = {}
@@ -451,9 +449,7 @@ class RankingModelScheduler:
                 triggered = False
                 if self.roi_signal_threshold is not None:
                     if self.roi_tracker is not None:
-                        for origin, deltas in getattr(
-                            self.roi_tracker, "origin_db_deltas", {}
-                        ).items():
+                        for origin, deltas in self.roi_tracker.origin_db_delta_history.items():
                             total = sum(float(d) for d in deltas)
                             last = self._tracker_roi_totals.get(origin, 0.0)
                             if abs(total - last) >= self.roi_signal_threshold:

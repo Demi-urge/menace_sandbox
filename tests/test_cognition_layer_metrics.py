@@ -37,7 +37,7 @@ def _make_layer(tmp_path, tracker):
 
 
 def test_update_ranker_applies_tracker_deltas(tmp_path):
-    tracker = DummyTracker({"A": [0.5], "B": [-0.25]})
+    tracker = DummyTracker({"A": 0.5, "B": -0.25})
     layer, db, builder = _make_layer(tmp_path, tracker)
     vectors = [("A", "v1", 0.0), ("B", "v2", 0.0)]
     layer.update_ranker(vectors, True)
@@ -50,11 +50,11 @@ def test_update_ranker_applies_tracker_deltas(tmp_path):
 
 
 def test_update_ranker_aggregates_subsequent_deltas(tmp_path):
-    tracker = DummyTracker({"A": [0.3]})
+    tracker = DummyTracker({"A": 0.3})
     layer, db, builder = _make_layer(tmp_path, tracker)
     vectors = [("A", "v1", 0.0)]
     layer.update_ranker(vectors, True)
-    tracker._deltas = {"A": [0.2]}
+    tracker._deltas = {"A": 0.2}
     layer.update_ranker(vectors, True)
     weights = db.get_db_weights()
     assert tracker.calls == 2

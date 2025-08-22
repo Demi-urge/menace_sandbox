@@ -13,7 +13,7 @@ def test_update_db_metrics_and_report(tmp_path):
     tracker.update_db_metrics(metrics, sqlite_path=str(db_path))
 
     # ensure origin_db_deltas and stored metrics
-    assert tracker.origin_db_deltas["A"] == [3.0]
+    assert tracker.origin_db_delta_history["A"] == [3.0]
     assert tracker.db_roi_metrics["B"]["win_rate"] == 0.8
 
     # report should sort by win-rate desc then regret-rate asc
@@ -36,4 +36,4 @@ def test_update_db_metrics_and_report(tmp_path):
 def test_update_db_metrics_zero_roi():
     tracker = ROITracker()
     tracker.update_db_metrics({"Z": {"roi": 0.0, "win_rate": 0.5, "regret_rate": 0.5}})
-    assert tracker.origin_db_deltas["Z"] == [0.0]
+    assert tracker.origin_db_delta_history["Z"] == [0.0]

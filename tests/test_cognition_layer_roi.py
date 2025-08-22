@@ -136,11 +136,18 @@ def test_failure_triggers_backfill_and_reliability(monkeypatch):
 
 
 class DropTracker(DummyTracker):
-    origin_db_deltas: Dict[str, List[float]] = {}
+    origin_db_delta_history: Dict[str, List[float]] = {}
+
+    def origin_db_deltas(self):
+        return {
+            db: vals[-1]
+            for db, vals in self.origin_db_delta_history.items()
+            if vals
+        }
 
     def update(self, *a, **k):
         super().update(*a, **k)
-        self.origin_db_deltas = {"db1": [-0.5], "db2": [0.1]}
+        self.origin_db_delta_history = {"db1": [-0.5], "db2": [0.1]}
 
 
 def test_roi_drop_triggers_backfill_and_reliability(monkeypatch):

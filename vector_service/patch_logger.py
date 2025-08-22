@@ -33,6 +33,33 @@ _VECTOR_RISK = _me.Gauge(
     labelnames=["risk"],
 )
 
+# Per-database metrics captured for Prometheus dashboards.  Gauges are
+# defined lazily to avoid duplicate registration when modules are reloaded.
+try:  # pragma: no cover - metrics optional
+    _DB_RISK = _me.Gauge(
+        "patch_logger_db_risk_score",
+        "Risk score per origin database from the latest patch",
+        ["origin_db"],
+    )
+    _DB_ROI_DELTA = _me.Gauge(
+        "patch_logger_db_roi_delta",
+        "ROI delta per origin database from the latest patch",
+        ["origin_db"],
+    )
+except Exception:  # pragma: no cover - gauges may already exist
+    try:
+        from prometheus_client import REGISTRY  # type: ignore
+
+        _DB_RISK = REGISTRY._names_to_collectors.get(  # type: ignore[attr-defined]
+            "patch_logger_db_risk_score"
+        )
+        _DB_ROI_DELTA = REGISTRY._names_to_collectors.get(
+            "patch_logger_db_roi_delta"
+        )
+    except Exception:  # pragma: no cover - metrics unavailable
+        _DB_RISK = None
+        _DB_ROI_DELTA = None
+
 _DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 
 try:  # pragma: no cover - optional dependencies
@@ -366,6 +393,18 @@ class PatchLogger:
                         "semantic_alerts": sorted(origin_alerts.get(origin, [])),
                         "risk_score": origin_similarity.get(origin, 0.0),
                     }
+                    if _DB_RISK is not None:
+                        try:
+                            _DB_RISK.labels(origin_db=origin).set(
+                                float(metrics["risk_score"])
+                            )
+                        except Exception:
+                            pass
+                    if _DB_ROI_DELTA is not None:
+                        try:
+                            _DB_ROI_DELTA.labels(origin_db=origin).set(float(roi))
+                        except Exception:
+                            pass
                     roi_metrics[origin] = metrics
                 if self.roi_tracker is not None:
                     for origin, stats in roi_metrics.items():

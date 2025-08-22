@@ -199,14 +199,13 @@ class CognitionLayer:
         # supplement explicit ``roi_deltas`` to avoid double counting.
         if self.roi_tracker is not None:
             try:
-                raw = getattr(self.roi_tracker, "origin_db_deltas", {})
-                raw = raw() if callable(raw) else raw
+                raw = self.roi_tracker.origin_db_deltas()
                 for origin in origins:
                     if origin in per_db:
                         continue
-                    vals = raw.get(origin)
-                    if vals:
-                        per_db[origin] = float(vals[-1])
+                    val = raw.get(origin)
+                    if val is not None:
+                        per_db[origin] = float(val)
             except Exception:
                 logger.exception("Failed to fetch ROI tracker origin deltas")
 
@@ -683,12 +682,12 @@ class CognitionLayer:
                     roi_after,
                     retrieval_metrics=retrieval_metrics,
                 )
-                deltas = getattr(self.roi_tracker, "origin_db_deltas", {})
+                deltas = self.roi_tracker.origin_db_deltas()
                 for origin, _vid, _score in vectors:
                     key = origin or ""
-                    vals = deltas.get(key)
-                    if vals:
-                        val = float(vals[-1])
+                    val = deltas.get(key)
+                    if val is not None:
+                        val = float(val)
                         roi_actuals[key] = val
                         roi_contribs[key] = abs(val)
                         roi_drop = roi_drop or val < 0
