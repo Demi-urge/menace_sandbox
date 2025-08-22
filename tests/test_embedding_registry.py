@@ -4,7 +4,6 @@ import sys
 
 from vector_service.embedding_backfill import EmbeddingBackfill
 import vector_service.embedding_backfill as eb
-from vector_service import EmbeddableDBMixin
 
 
 def test_backfill_loads_from_registry(tmp_path, monkeypatch):
@@ -31,3 +30,28 @@ def test_backfill_loads_from_registry(tmp_path, monkeypatch):
 
     EmbeddingBackfill().run(dbs=["temp"])
     assert processed == ["TempDB"]
+
+
+def test_verify_registry_warns_without_backfill(monkeypatch, tmp_path, caplog):
+    module = types.ModuleType("nbdb")
+    monkeypatch.setattr(eb, "EmbeddableDBMixin", type("Base", (), {}))
+
+    class NBDB(eb.EmbeddableDBMixin):
+        def iter_records(self):
+            return []
+
+        def vector(self, *a, **k):
+            return None
+
+    module.NBDB = NBDB
+    sys.modules["nbdb"] = module
+
+    reg = tmp_path / "registry.json"
+    reg.write_text(json.dumps({"nb": {"module": "nbdb", "class": "NBDB"}}))
+    monkeypatch.setattr(eb, "_REGISTRY_FILE", reg)
+
+    caplog.set_level("WARNING", logger="vector_service.embedding_backfill")
+    EmbeddingBackfill()._verify_registry(["nb"])
+    assert any(
+        "missing backfill_embeddings" in r.getMessage() for r in caplog.records
+    )
