@@ -39,6 +39,7 @@ class MiniSelfImprovementEngine:
                 "resilience": float(resilience),
                 "scenario_degradation": float(scenario_deg),
             },
+            compute_stability=True,
         )
 
 
@@ -51,6 +52,7 @@ def test_run_cycle_records_and_stability():
         eng.run_cycle()
     # initial positive trend
     assert ft.is_stable("wf")
+    assert all("stability" in entry for entry in ft.history["wf"])
 
     eng.run_cycle()  # negative slope but low volatility
     history = ft.history["wf"]

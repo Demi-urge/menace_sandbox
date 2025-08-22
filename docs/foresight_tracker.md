@@ -4,7 +4,7 @@
 
 ## Required metrics
 
-Each cycle should call `record_cycle_metrics(workflow_id, metrics)` with a mapping of metric names to numbers. The tracker aggregates these values and evaluates slope and volatility across the retained window. When used with `SelfImprovementEngine` the following metrics are expected:
+Each cycle should call `record_cycle_metrics(workflow_id, metrics)` with a mapping of metric names to numbers.  When `compute_stability=True` the call also stores the current window stability under the `"stability"` key for that cycle.  The tracker aggregates these values and evaluates slope and volatility across the retained window. When used with `SelfImprovementEngine` the following metrics are expected:
 
 - `roi_delta` – ROI change from the last cycle.
 - `raroi_delta` – Risk-adjusted ROI delta.

@@ -5596,12 +5596,9 @@ def simulate_temporal_trajectory(
             metrics[f"{name}_roi"] = roi
             metrics[f"{name}_resilience"] = resilience
             metrics[f"{name}_degradation"] = degradation
-        try:
-            foresight_tracker.record_cycle_metrics(
-                wf_id, metrics, compute_stability=True
-            )
-        except TypeError:  # pragma: no cover - compatibility
-            foresight_tracker.record_cycle_metrics(wf_id, metrics)
+        foresight_tracker.record_cycle_metrics(
+            wf_id, metrics, compute_stability=True
+        )
 
     return tracker, scorecards, summary
 

@@ -70,12 +70,34 @@ class ForesightTracker:
         return self.max_cycles
 
     # ------------------------------------------------------------------
-    def record_cycle_metrics(self, workflow_id: str, metrics: Mapping[str, float]) -> None:
-        """Append ``metrics`` for ``workflow_id`` and cap history length."""
+    def record_cycle_metrics(
+        self,
+        workflow_id: str,
+        metrics: Mapping[str, float],
+        *,
+        compute_stability: bool = False,
+    ) -> None:
+        """Append ``metrics`` for ``workflow_id`` and cap history length.
+
+        Parameters
+        ----------
+        workflow_id:
+            Identifier of the workflow whose metrics are being recorded.
+        metrics:
+            Mapping of metric names to numeric values for the current cycle.
+        compute_stability:
+            When ``True``, the helper immediately evaluates the current
+            stability by calling :meth:`get_trend_curve` and stores the
+            resulting value under the ``"stability"`` key in the appended
+            history entry.
+        """
 
         entry = {k: float(v) for k, v in metrics.items()}
         queue = self.history.setdefault(workflow_id, deque(maxlen=self.max_cycles))
         queue.append(entry)
+        if compute_stability:
+            _, _, stability = self.get_trend_curve(workflow_id)
+            entry["stability"] = stability
 
     # ------------------------------------------------------------------
     def capture_from_roi(
