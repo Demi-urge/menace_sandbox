@@ -187,8 +187,8 @@ class ForesightTracker:
             immediately via :meth:`record_cycle_metrics`.
 
         The helper pulls the latest ROI delta, RAROI delta, resilience,
-        confidence and scenario degradation metrics from ``tracker`` and
-        forwards them to :meth:`record_cycle_metrics`.
+        confidence, entropy and scenario degradation metrics from ``tracker``
+        and forwards them to :meth:`record_cycle_metrics`.
         """
 
         if tracker is None:
@@ -232,6 +232,14 @@ class ForesightTracker:
             )
             resilience = float(res_hist[-1]) if res_hist else 0.0
 
+            ent_hist = (
+                metrics_hist.get("synergy_shannon_entropy")
+                or metrics_hist.get("shannon_entropy")
+                or metrics_hist.get("entropy")
+                or []
+            )
+            entropy = float(ent_hist[-1]) if ent_hist else 0.0
+
             try:
                 scenario_deg = float(
                     getattr(tracker, "scenario_degradation", lambda: 0.0)()
@@ -246,6 +254,7 @@ class ForesightTracker:
                     "raroi_delta": raroi_delta,
                     "confidence": confidence,
                     "resilience": resilience,
+                    "synergy_shannon_entropy": entropy,
                     "scenario_degradation": scenario_deg,
                     "raw_roi_delta": real_roi,
                 },
