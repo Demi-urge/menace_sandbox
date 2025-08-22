@@ -1,3 +1,4 @@
+import logging
 import pytest
 from typing import Any
 from vector_service import EmbeddingBackfill, EmbeddableDBMixin, PatchLogger
@@ -297,3 +298,30 @@ def test_embedding_backfill_license_skip_metric(monkeypatch):
     EmbeddingBackfill().run()
     assert added == []
     assert ("inc", ("LicenseDB", "GPL"), 1.0) in gauge.calls
+
+
+def test_track_contributors_patch_db_failure_logs_and_raises(monkeypatch, caplog):
+    patch_metrics(monkeypatch)
+
+    class FailPatchDB:
+        def record_vector_metrics(self, *a, **k):
+            raise RuntimeError("boom")
+
+    pl = PatchLogger(patch_db=FailPatchDB())
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError):
+            pl.track_contributors(["v"], True, patch_id="1", session_id="s")
+    assert "record_vector_metrics" in caplog.text
+
+
+def test_track_contributors_event_bus_failure_logs(monkeypatch, caplog):
+    patch_metrics(monkeypatch)
+
+    class FailBus:
+        def publish(self, *a, **k):
+            raise RuntimeError("bus down")
+
+    pl = PatchLogger(event_bus=FailBus())
+    with caplog.at_level(logging.ERROR):
+        pl.track_contributors(["v"], True, session_id="s")
+    assert "patch_logger outcome publish failed" in caplog.text
