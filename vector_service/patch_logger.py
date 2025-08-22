@@ -6,6 +6,7 @@ from typing import Any, Callable, Iterable, List, Mapping, Sequence, Tuple, Unio
 
 import asyncio
 import logging
+import sqlite3
 import time
 
 from .decorators import log_and_measure
@@ -240,7 +241,7 @@ class PatchLogger:
                 self.patch_safety.max_alert_severity = self.max_alert_severity
                 self.patch_safety.max_alerts = self.max_alerts
                 self.patch_safety.license_denylist = self.license_denylist
-                passed, similarity = self.patch_safety.evaluate(m, m, origin=o)
+                passed, similarity, risks = self.patch_safety.evaluate(m, m, origin=o)
                 if not result:
                     try:
                         self.patch_safety.record_failure(m, origin=o)
@@ -261,7 +262,8 @@ class PatchLogger:
                         except Exception:
                             logger.exception("Failed to publish patch risk alert")
                 ok = o or ""
-                origin_similarity[ok] = max(origin_similarity.get(ok, 0.0), similarity)
+                vector_risk = max(risks.get(ok, 0.0), similarity)
+                origin_similarity[ok] = max(origin_similarity.get(ok, 0.0), vector_risk)
                 if not passed:
                     lic = m.get("license")
                     alerts = m.get("semantic_alerts")
@@ -291,7 +293,7 @@ class PatchLogger:
                 else:
                     detailed_meta.append((o, vid, score, lic, alerts))
                     provenance_meta.append((o, vid, score, lic, alerts, sev))
-                vm_vectors.append((vid, score, lic, alerts, sev, similarity))
+                vm_vectors.append((vid, score, lic, alerts, sev, vector_risk))
                 if sev:
                     try:
                         origin_sev[ok] = max(origin_sev.get(ok, 0.0), float(sev))
@@ -575,9 +577,28 @@ class PatchLogger:
             "alignment_severity": max_sev,
             "semantic_alerts": all_alerts,
             "risk_score": max_risk,
+            "risk_scores": dict(origin_similarity),
         }
         if patch_id:
             payload["patch_id"] = patch_id
+
+        # Persist risk summaries for audit
+        try:
+            db_path = self.patch_safety.failure_db_path or "failures.db"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS risk_summaries(ts REAL, patch_id TEXT, origin TEXT, risk REAL)"
+            )
+            ts = time.time()
+            for origin, risk in origin_similarity.items():
+                conn.execute(
+                    "INSERT INTO risk_summaries(ts, patch_id, origin, risk) VALUES(?,?,?,?)",
+                    (ts, str(patch_id), origin, float(risk)),
+                )
+            conn.commit()
+            conn.close()
+        except Exception:
+            logger.exception("Failed to persist risk summaries")
 
         if self.event_bus is not None:
             try:

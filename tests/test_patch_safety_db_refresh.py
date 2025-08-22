@@ -25,7 +25,7 @@ def test_failure_db_refresh(tmp_path):
         "cac": 3.0,
         "roi": 4.0,
     }
-    ok, _ = ps.evaluate({}, example)
+    ok, _, _ = ps.evaluate({}, example)
     assert ok
     conn = sqlite3.connect(str(db))
     conn.execute(
@@ -42,10 +42,10 @@ def test_failure_db_refresh(tmp_path):
     conn.commit()
     conn.close()
     ps.load_failures()
-    ok, _ = ps.evaluate({}, example)
+    ok, _, _ = ps.evaluate({}, example)
     assert ok
     time.sleep(0.25)
     ps.load_failures()
-    ok, score = ps.evaluate({}, example)
+    ok, score, _ = ps.evaluate({}, example)
     assert not ok
     assert score >= ps.threshold

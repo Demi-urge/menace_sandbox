@@ -26,9 +26,9 @@ def test_failures_refresh_evaluation(tmp_path):
     sid = "s1"
     layer._session_vectors[sid] = [("error", "1", 0.1)]
     layer._retrieval_meta[sid] = {"error:1": err_meta}
-    ok1, _ = ps_builder.evaluate({}, err_meta, origin="error")
+    ok1, _, _ = ps_builder.evaluate({}, err_meta, origin="error")
     assert ok1
     layer.record_patch_outcome(sid, False)
-    ok2, score2 = ps_builder.evaluate({}, err_meta, origin="error")
+    ok2, score2, _ = ps_builder.evaluate({}, err_meta, origin="error")
     assert not ok2
     assert score2 >= ps_builder.threshold

@@ -345,59 +345,67 @@ class PatchSafety:
         err: Dict[str, Any] | None = None,
         *,
         origin: str = "",
-    ) -> Tuple[bool, float]:
-        """Return ``(passed, score)`` for ``meta`` and optional ``err``.
+    ) -> Tuple[bool, float, Dict[str, float]]:
+        """Return ``(passed, score, risks)`` for ``meta`` and optional ``err``.
 
         ``passed`` is ``False`` when the metadata violates any denylist or when
-        the similarity ``score`` exceeds the ``threshold``.
+        the similarity ``score`` exceeds the ``threshold``.  ``risks`` maps each
+        origin to the similarity score against failures originating from that
+        source.  The aggregate ``score`` incorporates these per-origin values
+        and the global similarity across all recorded failures.
         """
 
         if not self._check_meta(meta):
-            return False, 0.0
+            return False, 0.0, {}
 
+        risks: Dict[str, float] = {}
         score = 0.0
         if err is not None:
             try:
-                score = float(self.score(err))
-                if origin:
-                    penalty = 0.0
-                    try:
-                        vec = self.vectorizer.transform(err)
-                        penalty = max(
-                            penalty,
-                            max(
-                                _cosine(vec, f)
-                                for f in self._failures_by_origin.get(origin, [])
-                            )
-                            if self._failures_by_origin.get(origin)
-                            else 0.0,
-                        )
-                    except Exception:  # pragma: no cover - defensive
-                        pass
-                    if (
-                        self.failure_vectorizer is not None
-                        and origin in self._failure_vectors_by_origin
-                    ):
-                        try:
-                            vec2 = self.failure_vectorizer.transform(err)
-                            penalty = max(
-                                penalty,
-                                max(
-                                    _cosine(vec2, f)
-                                    for f in self._failure_vectors_by_origin.get(
-                                        origin, []
-                                    )
-                                )
-                                if self._failure_vectors_by_origin.get(origin)
-                                else 0.0,
-                            )
-                        except Exception:  # pragma: no cover - defensive
-                            pass
-                    score += penalty
+                vec = self.vectorizer.transform(err)
             except Exception:  # pragma: no cover - defensive
-                score = 0.0
+                vec = []
+            try:
+                vec2 = (
+                    self.failure_vectorizer.transform(err)
+                    if self.failure_vectorizer is not None
+                    else []
+                )
+            except Exception:  # pragma: no cover - defensive
+                vec2 = []
+
+            # Base similarity across all failures regardless of origin
+            if self._failures:
+                try:
+                    score = max(_cosine(vec, f) for f in self._failures)
+                except Exception:  # pragma: no cover - defensive
+                    score = 0.0
+            if self._failure_vectors and vec2:
+                try:
+                    score = max(score, max(_cosine(vec2, f) for f in self._failure_vectors))
+                except Exception:  # pragma: no cover - defensive
+                    pass
+
+            # Per-origin risk mapping
+            for o, failures in self._failures_by_origin.items():
+                try:
+                    risks[o] = max(_cosine(vec, f) for f in failures)
+                except Exception:  # pragma: no cover - defensive
+                    risks[o] = 0.0
+            if vec2:
+                for o, failures in self._failure_vectors_by_origin.items():
+                    try:
+                        risks[o] = max(risks.get(o, 0.0), max(_cosine(vec2, f) for f in failures))
+                    except Exception:  # pragma: no cover - defensive
+                        risks[o] = max(risks.get(o, 0.0), 0.0)
+
+            if origin:
+                score += risks.get(origin, 0.0)
+            elif risks:
+                score = max(score, max(risks.values()))
+
         passed = score < self.threshold
-        return passed, score
+        return passed, score, risks
 
 
 def check_patch_safety(
