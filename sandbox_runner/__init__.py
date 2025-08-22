@@ -4,6 +4,7 @@ import importlib
 
 
 _LIGHT_IMPORTS = bool(os.getenv("MENACE_LIGHT_IMPORTS"))
+_env_simulate_temporal_trajectory = None
 
 if not _LIGHT_IMPORTS:
     from .environment import (
@@ -12,7 +13,7 @@ if not _LIGHT_IMPORTS:
         run_repo_section_simulations,
         run_workflow_simulations,
         run_scenarios,
-        simulate_temporal_trajectory,
+        simulate_temporal_trajectory as _env_simulate_temporal_trajectory,
         temporal_trajectory_presets,
         auto_include_modules,
         simulate_full_environment,
@@ -31,7 +32,7 @@ else:  # defer heavy imports until needed
     _env_mod = None
 
     def _load_env() -> None:
-        global _env_mod
+        global _env_mod, _env_simulate_temporal_trajectory
         if _env_mod is None:
             _env_mod = importlib.import_module(".environment", __name__)
             for name in (
@@ -40,7 +41,6 @@ else:  # defer heavy imports until needed
                 "run_repo_section_simulations",
                 "run_workflow_simulations",
                 "run_scenarios",
-                "simulate_temporal_trajectory",
                 "temporal_trajectory_presets",
                 "auto_include_modules",
                 "simulate_full_environment",
@@ -55,6 +55,9 @@ else:  # defer heavy imports until needed
                 "_preset_chaotic_failure",
             ):
                 globals()[name] = getattr(_env_mod, name)
+            _env_simulate_temporal_trajectory = getattr(
+                _env_mod, "simulate_temporal_trajectory"
+            )
 
     def __getattr__(name: str):  # type: ignore[override]
         if name in {
@@ -63,7 +66,6 @@ else:  # defer heavy imports until needed
             "run_repo_section_simulations",
             "run_workflow_simulations",
             "run_scenarios",
-            "simulate_temporal_trajectory",
             "temporal_trajectory_presets",
             "auto_include_modules",
             "simulate_full_environment",
@@ -90,6 +92,19 @@ else:  # defer heavy imports until needed
                 return cyc
             return globals()[name]
         raise AttributeError(name)
+
+
+def simulate_temporal_trajectory(
+    workflow_id, tracker=None, foresight_tracker=None
+):
+    if _env_simulate_temporal_trajectory is None:
+        loader = globals().get("_load_env")
+        if loader:
+            loader()
+    return _env_simulate_temporal_trajectory(
+        workflow_id, tracker=tracker, foresight_tracker=foresight_tracker
+    )
+
 
 if not _LIGHT_IMPORTS:
     from .cycle import _sandbox_cycle_runner
