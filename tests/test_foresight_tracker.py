@@ -229,6 +229,39 @@ def test_capture_from_roi_records_latest_metrics():
     assert entry["raw_roi_delta"] == 0.1
 
 
+def test_capture_from_roi_accepts_stage_and_compute_stability():
+    ft = ForesightTracker()
+
+    class DummyROITracker:
+        def __init__(self):
+            self.roi_history: list[float] = []
+            self.raroi_history: list[float] = []
+            self.confidence_history: list[float] = []
+            self.metrics_history = {"synergy_resilience": []}
+
+        def scenario_degradation(self) -> float:
+            return 0.0
+
+    dummy = DummyROITracker()
+
+    dummy.roi_history.append(1.0)
+    dummy.raroi_history.append(1.0)
+    dummy.confidence_history.append(0.9)
+    dummy.metrics_history["synergy_resilience"].append(0.8)
+    ft.capture_from_roi(dummy, "wf", stage="alpha", compute_stability=True)
+
+    dummy.roi_history.append(2.0)
+    dummy.raroi_history.append(2.0)
+    dummy.confidence_history.append(0.9)
+    dummy.metrics_history["synergy_resilience"].append(0.8)
+    ft.capture_from_roi(dummy, "wf", stage="beta", compute_stability=True)
+
+    entry = ft.history["wf"][-1]
+    assert entry["stage"] == "beta"
+    assert isinstance(entry["stability"], float)
+    assert entry["stability"] > 0
+
+
 def test_capture_from_roi_blends_template_and_real_roi(monkeypatch):
     def fake_load(self):
         self.templates = {"wf": [0.5, 0.5, 0.5, 0.5, 0.5]}
