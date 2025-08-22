@@ -2,8 +2,8 @@ from __future__ import annotations
 
 """Periodic scheduler for retraining the vector ranker.
 
-The scheduler invokes :func:`analytics.retrain_vector_ranker.retrain_and_reload`
-on a timer and listens to ``UnifiedEventBus`` for ``retrieval:feedback``
+The scheduler invokes :func:`analytics.retrain_vector_ranker.retrain` on a
+timer and listens to ``UnifiedEventBus`` for ``retrieval:feedback``
 notifications so that heavy ROI changes can trigger an immediate retrain.
 """
 
@@ -48,7 +48,7 @@ class RankerScheduler:
         self.event_bus = event_bus
         self.running = False
         self._thread: threading.Thread | None = None
-        self._roi_total = 0.0
+        self._roi_totals: dict[str, float] = {}
 
         if self.event_bus is None and UnifiedEventBus is not None:
             try:
@@ -62,30 +62,40 @@ class RankerScheduler:
                 pass
 
     def _handle_feedback(self, _topic: str, event: object) -> None:
-        """Trigger retrain when cumulative ROI exceeds ``roi_threshold``."""
+        """Trigger retrain when cumulative ROI delta per origin crosses threshold."""
         if self.roi_threshold is None:
             return
         roi = 0.0
+        origin = ""
         if isinstance(event, dict):
             try:
                 roi = float(event.get("roi", 0.0))
             except Exception:
                 roi = 0.0
+            origin = str(event.get("db") or event.get("origin") or "")
         else:
             roi = float(getattr(event, "roi", 0.0) or 0.0)
-        self._roi_total += roi
-        if abs(self._roi_total) >= self.roi_threshold:
-            self.retrain()
-            self._roi_total = 0.0
+            origin = str(getattr(event, "db", getattr(event, "origin", "")) or "")
+        total = self._roi_totals.get(origin, 0.0) + roi
+        self._roi_totals[origin] = total
+        if abs(total) >= self.roi_threshold:
+            self.retrain([origin])
+            self._roi_totals[origin] = 0.0
 
-    def retrain(self) -> None:
-        """Invoke :func:`retrain_vector_ranker.retrain_and_reload`."""
-        rvr.retrain_and_reload(
-            self.services,
+    def retrain(self, origins: Sequence[str] | None = None) -> None:
+        """Retrain the ranker and reload services."""
+        rvr.retrain(
+            list(origins or []),
             vector_db=self.vector_db,
             patch_db=self.patch_db,
             model_dir=self.model_dir,
         )
+        for svc in self.services:
+            try:
+                if hasattr(svc, "reload_ranker_model"):
+                    svc.reload_ranker_model()
+            except Exception:
+                continue
 
     def _loop(self) -> None:
         while self.running:
