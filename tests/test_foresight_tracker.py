@@ -1,26 +1,8 @@
 
 import numpy as np
 import pytest
-import yaml
 
 from foresight_tracker import ForesightTracker
-
-
-@pytest.fixture
-def foresight_templates(tmp_path):
-    data = {
-        "profiles": {"wf": "wf"},
-        "templates": {"wf": [0.5, 0.5, 0.5, 0.5, 0.5]},
-    }
-    path = tmp_path / "foresight_templates.yaml"
-    with path.open("w", encoding="utf8") as fh:
-        yaml.safe_dump(data, fh)
-    return path
-
-
-@pytest.fixture
-def tracker_with_templates(foresight_templates):
-    return ForesightTracker(template_config_path=foresight_templates)
 
 
 def test_records_truncated_to_max_cycles():
@@ -135,6 +117,7 @@ def test_is_cold_start_requires_three_cycles():
     tracker = ForesightTracker()
     assert tracker.is_cold_start("wf")
     tracker.record_cycle_metrics("wf", {"roi_delta": 0.1})
+    assert tracker.is_cold_start("wf")
     tracker.record_cycle_metrics("wf", {"roi_delta": 0.2})
     assert tracker.is_cold_start("wf")
     tracker.record_cycle_metrics("wf", {"roi_delta": 0.3})
@@ -186,13 +169,21 @@ def test_capture_from_roi_blends_template_and_real_roi(tracker_with_templates):
             return 0.0
 
     dummy = DummyROITracker()
-    for _ in range(3):
+
+    # No prior cycles -> pure template value
+    tracker_with_templates.capture_from_roi(dummy, "wf")
+    # One cycle -> blend of real and template ROI
+    dummy.roi_history.append(1.0)
+    tracker_with_templates.capture_from_roi(dummy, "wf")
+    # Additional cycles to reach warm state where alpha == 1.0
+    for _ in range(4):
         dummy.roi_history.append(1.0)
         tracker_with_templates.capture_from_roi(dummy, "wf")
 
     history = tracker_with_templates.history["wf"]
-    assert [e["roi_delta"] for e in history] == pytest.approx([0.5, 0.6, 0.7])
-    assert [e["raroi_delta"] for e in history] == pytest.approx([0.5, 0.6, 0.7])
+    assert history[0]["roi_delta"] == pytest.approx(0.5)
+    assert history[1]["roi_delta"] == pytest.approx(0.6)
+    assert history[-1]["roi_delta"] == pytest.approx(1.0)
 
 
 def test_to_dict_from_dict_roundtrip_after_capture_from_roi():

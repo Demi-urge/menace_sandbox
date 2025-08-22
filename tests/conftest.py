@@ -210,3 +210,23 @@ def tracker_factory():
         return _TrackerMock(roi, metrics, preds)
 
     return _make
+import yaml
+from foresight_tracker import ForesightTracker
+
+
+@pytest.fixture
+def foresight_templates(tmp_path):
+    data = {
+        "profiles": {"wf": "wf"},
+        "templates": {"wf": [0.5, 0.5, 0.5, 0.5, 0.5]},
+    }
+    path = tmp_path / "foresight_templates.yaml"
+    with path.open("w", encoding="utf8") as fh:
+        yaml.safe_dump(data, fh)
+    return path
+
+
+@pytest.fixture
+def tracker_with_templates(foresight_templates):
+    return ForesightTracker(template_config_path=foresight_templates)
+
