@@ -110,10 +110,11 @@ EmbeddingBackfill().run(session_id="bulk")
 EmbeddingBackfill().run(session_id="bulk", db="workflows")
 ```
 
-`EmbeddingBackfill` discovers every `EmbeddableDBMixin` subclass and invokes
-`backfill_embeddings` on each, logging progress for visibility. When a `db`
-argument is supplied the run is restricted to matching subclasses. Records
-flagged by the lightweight license detector are skipped and logged.
+`EmbeddingBackfill` loads every registered `EmbeddableDBMixin` implementation
+from `embedding_registry.json` and invokes `backfill_embeddings` on each,
+logging progress for visibility. When a `db` argument is supplied the run is
+restricted to matching subclasses. Records flagged by the lightweight license
+detector are skipped and logged.
 
 Known databases are listed in `vector_service/embedding_registry.json`. Each
 entry maps a short name to the module and class implementing
