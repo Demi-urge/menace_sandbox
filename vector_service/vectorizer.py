@@ -20,6 +20,8 @@ from bot_vectorizer import BotVectorizer
 from information_vectorizer import InformationVectorizer
 from code_vectorizer import CodeVectorizer
 from discrepancy_vectorizer import DiscrepancyVectorizer
+from failure_vectorizer import FailureVectorizer
+from research_vectorizer import ResearchVectorizer
 from vector_utils import persist_embedding
 from governed_embeddings import governed_embed
 
@@ -42,6 +44,8 @@ class SharedVectorService:
     _information: InformationVectorizer = field(default_factory=InformationVectorizer)
     _code: CodeVectorizer = field(default_factory=CodeVectorizer)
     _discrepancy: DiscrepancyVectorizer = field(default_factory=DiscrepancyVectorizer)
+    _failure: FailureVectorizer = field(default_factory=FailureVectorizer)
+    _research: ResearchVectorizer = field(default_factory=ResearchVectorizer)
     _handlers: Dict[str, Callable[[Dict[str, Any]], List[float]]] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -53,6 +57,8 @@ class SharedVectorService:
             "information": self._information.transform,
             "code": self._code.transform,
             "discrepancy": self._discrepancy.transform,
+            "failure": self._failure.transform,
+            "research": self._research.transform,
         }
 
     def _encode_text(self, text: str) -> List[float]:

@@ -56,7 +56,8 @@ _REGISTRY_FILE = Path(__file__).with_name("embedding_registry.json")
 
 # Minimum set of database kinds expected to support embeddings. These are
 # used by :func:`_verify_registry` and other modules to recognise valid
-# backfill targets.
+# backfill targets. New kinds such as ``failure`` and ``research`` are
+# explicitly listed here so historical records can be backfilled.
 KNOWN_DB_KINDS = {
     "bot",
     "workflow",
