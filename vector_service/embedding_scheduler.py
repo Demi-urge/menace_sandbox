@@ -95,6 +95,12 @@ class EmbeddingScheduler:
         self._last_event_run[source] = now
         try:
             EmbeddingBackfill().run(dbs=[source])
+            try:
+                self.patch_safety.load_failures(force=True)
+            except Exception:  # pragma: no cover - best effort
+                logging.getLogger(__name__).exception(
+                    "patch safety refresh failed"
+                )
         except Exception:  # pragma: no cover - best effort
             logging.getLogger(__name__).exception("on-demand embedding backfill failed")
 
@@ -115,7 +121,7 @@ class EmbeddingScheduler:
                     dbs=self.sources,
                 )
                 try:
-                    self.patch_safety.load_failures()
+                    self.patch_safety.load_failures(force=True)
                 except Exception:  # pragma: no cover - best effort
                     logging.getLogger(__name__).exception(
                         "patch safety refresh failed"
