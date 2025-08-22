@@ -1,7 +1,5 @@
 import sys
 import types
-import sys
-import types
 import json
 import pytest
 from foresight_tracker import ForesightTracker
@@ -22,7 +20,7 @@ pkg.environment = env_mod
 sys.modules.setdefault("sandbox_runner", pkg)
 sys.modules.setdefault("sandbox_runner.environment", env_mod)
 
-from upgrade_forecaster import ForecastResult, UpgradeForecaster
+from upgrade_forecaster import ForecastResult, UpgradeForecaster, load_record
 
 
 def test_forecast_uses_template_on_cold_start(monkeypatch, tmp_path):
@@ -67,6 +65,23 @@ def test_forecast_writes_record(monkeypatch, tmp_path):
     assert data["patch"] == "patch123"
     assert len(data["projections"]) == 3
     assert isinstance(data["confidence"], float)
+    assert isinstance(data.get("timestamp"), (int, float))
+
+
+def test_load_record_roundtrip(monkeypatch, tmp_path):
+    def fake_load(self):
+        self.templates = {"wf": [0.1, 0.2, 0.3]}
+        self.workflow_profiles["wf"] = "wf"
+
+    monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
+    tracker = ForesightTracker()
+    forecaster = UpgradeForecaster(tracker, records_base=tmp_path)
+
+    original = forecaster.forecast("wf", patch=[], cycles=3)
+    loaded = load_record("wf", records_base=tmp_path)
+
+    assert isinstance(loaded, ForecastResult)
+    assert loaded == original
 
 
 def test_cold_start_blends_template(monkeypatch, tmp_path):
