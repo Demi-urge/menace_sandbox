@@ -120,3 +120,10 @@ register_vectorizer(
     db_module="research_aggregator_bot",
     db_class="InfoDB",
 )
+register_vectorizer(
+    "resource",
+    "resource_vectorizer",
+    "ResourceVectorizer",
+    db_module="resources_bot",
+    db_class="ROIHistoryDB",
+)
