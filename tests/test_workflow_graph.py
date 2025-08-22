@@ -1,6 +1,14 @@
+"""Integration tests for :mod:`workflow_graph`.
+
+These tests exercise a tiny in-memory workflow database to ensure the
+graph construction logic works without touching the heavy real database.
+"""
+
+from dataclasses import dataclass
+from pathlib import Path
+
 import pytest
 import workflow_graph as wg
-from dataclasses import dataclass
 
 
 @dataclass
@@ -12,7 +20,11 @@ class WorkflowRecord:
 
 
 class MiniWorkflowDB:
-    """Very small in-memory stand-in for the real WorkflowDB."""
+    """Very small in-memory stand-in for :class:`WorkflowDB`.
+
+    Only the ``add`` operation is implemented which assigns a new
+    workflow id to each record.
+    """
 
     def __init__(self) -> None:
         self._next = 1
@@ -25,12 +37,12 @@ class MiniWorkflowDB:
 
 @pytest.fixture
 def mini_graph(tmp_path, monkeypatch):
-    """Return a small workflow graph populated with a few dependencies."""
+    """Return a workflow graph populated with a tiny dependency DAG."""
 
     # Avoid expensive database bootstrap from existing files.
     monkeypatch.setattr(wg.WorkflowGraph, "populate_from_db", lambda self, db_path=None: None)
 
-    graph_path = tmp_path / "graph.json"
+    graph_path: Path = tmp_path / "graph.json"
     g = wg.WorkflowGraph(path=str(graph_path))
 
     db = MiniWorkflowDB()
@@ -47,7 +59,7 @@ def mini_graph(tmp_path, monkeypatch):
 
     monkeypatch.setattr(wg, "estimate_edge_weight", fake_weight)
 
-    # A influences B and C, B influences D – a simple DAG.
+    # Build A -> {B, C} and B -> D : a simple DAG.
     g.add_dependency(wids[0], wids[1])
     g.add_dependency(wids[0], wids[2])
     g.add_dependency(wids[1], wids[3])
@@ -56,6 +68,7 @@ def mini_graph(tmp_path, monkeypatch):
 
 
 def test_graph_round_trip_and_wave(mini_graph, monkeypatch):
+    """Ensure DAG construction, persistence and impact propagation."""
     g, wids, calls, graph_path = mini_graph
     a, b, c, d = wids
 
