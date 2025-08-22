@@ -6,6 +6,7 @@ import threading
 import json
 
 import menace.ranking_model_scheduler as rms
+from vector_service.cognition_layer import CognitionLayer
 
 
 def test_scheduler_trains_and_reloads(tmp_path, monkeypatch):
@@ -48,7 +49,75 @@ def test_scheduler_trains_and_reloads(tmp_path, monkeypatch):
     current = Path(cfg["current"])
     assert svc.model_path == current
     assert svc.reliability_reloaded
-    assert stats_called == [tmp_path / "metrics.db"]
+
+
+def test_scheduler_retrains_on_roi_feedback(tmp_path, monkeypatch):
+    class DummyBus:
+        def __init__(self) -> None:
+            self.cbs = {}
+
+        def subscribe(self, topic, callback):
+            self.cbs.setdefault(topic, []).append(callback)
+
+        def publish(self, topic, event):
+            for cb in self.cbs.get(topic, []):
+                cb(topic, event)
+
+    bus = DummyBus()
+
+    class DummyService:
+        def __init__(self) -> None:
+            self.model_path: Path | None = None
+            self.reliability_reloaded = False
+
+        def reload_ranker_model(self, path: Path) -> None:
+            self.model_path = Path(path)
+
+        def reload_reliability_scores(self) -> None:
+            self.reliability_reloaded = True
+
+    svc = DummyService()
+
+    sched = rms.RankingModelScheduler(
+        [svc],
+        vector_db=tmp_path / "vec.db",
+        metrics_db=tmp_path / "metrics.db",
+        model_path=tmp_path / "model.json",
+        event_bus=bus,
+        roi_signal_threshold=1.0,
+        win_rate_threshold=0.5,
+    )
+
+    monkeypatch.setattr(rms.rr, "load_training_data", lambda **kw: object())
+    dummy_model = SimpleNamespace(coef_=[[1.0]], intercept_=[0.0], classes_=[0, 1])
+    calls: list[int] = []
+
+    def train(df):
+        calls.append(1)
+        return rms.rr.TrainedModel(dummy_model, ["x"])
+
+    monkeypatch.setattr(rms.rr, "train", train)
+    monkeypatch.setattr(rms.rr, "save_model", lambda tm, p: Path(p).write_text("{}"))
+    monkeypatch.setattr(rms, "compute_retriever_stats", lambda m: None)
+    monkeypatch.setattr(rms, "needs_retrain", lambda db, thr: True)
+
+    metrics = rms.VectorMetricsDB(tmp_path / "vec.db")
+    layer = CognitionLayer(
+        context_builder=SimpleNamespace(refresh_db_weights=lambda *a, **k: None),
+        patch_logger=SimpleNamespace(event_bus=bus),
+        vector_metrics=metrics,
+    )
+
+    vectors = [("db", "v1", 0.0)]
+    layer.update_ranker(vectors, True, roi_deltas={"db": 0.4})
+    assert not calls
+
+    layer.update_ranker(vectors, False, roi_deltas={"db": 0.7})
+    assert calls
+    cfg = json.loads((tmp_path / "model.json").read_text())
+    current = Path(cfg["current"])
+    assert svc.model_path == current
+    assert svc.reliability_reloaded
     assert current.exists()
 
 

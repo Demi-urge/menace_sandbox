@@ -252,6 +252,23 @@ class CognitionLayer:
                 cfg.write_text(json.dumps(data))
             except Exception:
                 logger.exception("Failed to persist retrieval ranker weights")
+
+        if per_db:
+            bus = getattr(self.patch_logger, "event_bus", None)
+            if bus is None and UnifiedEventBus is not None:
+                try:
+                    bus = UnifiedEventBus()
+                except Exception:
+                    bus = None
+            if bus is not None:
+                for origin, delta in per_db.items():
+                    payload = {"db": origin, "roi": delta, "win": success}
+                    if origin in updates:
+                        payload["weight"] = updates[origin]
+                    try:
+                        bus.publish("retrieval:feedback", payload)
+                    except Exception:
+                        logger.exception("Failed to publish retrieval feedback")
         return updates
 
     # ------------------------------------------------------------------
@@ -588,22 +605,6 @@ class CognitionLayer:
             vectors, success, roi_deltas=roi_deltas, risk_scores=risk_scores
         )
 
-        if roi_contribs:
-            bus = getattr(self.patch_logger, "event_bus", None)
-            if bus is None and UnifiedEventBus is not None:
-                try:
-                    bus = UnifiedEventBus()
-                except Exception:
-                    bus = None
-            if bus is not None:
-                for origin, roi in roi_contribs.items():
-                    payload = {"db": origin, "roi": roi, "win": success}
-                    if origin in updates:
-                        payload["weight"] = updates[origin]
-                    try:
-                        bus.publish("retrieval:feedback", payload)
-                    except Exception:
-                        logger.exception("Failed to publish retrieval feedback")
         if self.vector_metrics is not None:
             try:
                 self.vector_metrics.delete_session(session_id)
