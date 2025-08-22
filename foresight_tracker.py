@@ -45,6 +45,10 @@ class ForesightTracker:
             cfg_path = Path(__file__).resolve().parent / cfg_path
         self.template_config_path = cfg_path
         self.templates: Dict[str, list[float]] | None = None
+        # map workflow identifiers to their template profile
+        self.workflow_profiles: Dict[str, str] = {}
+        # backward compatibility for callers expecting ``profile_map``
+        self.profile_map = self.workflow_profiles
 
     # ------------------------------------------------------------------
     @property
@@ -84,9 +88,10 @@ class ForesightTracker:
             Identifier of the workflow for which the metrics should be
             recorded.
         profile:
-            Optional profile name used to select ROI templates. When omitted,
-            the profile is looked up from ``self.workflow_profiles`` or
-            defaults to ``workflow_id``.
+            Optional profile name used to select ROI templates. When provided,
+            it registers ``workflow_id`` under that profile. When omitted, the
+            existing mapping is used or the ``workflow_id`` itself if no
+            profile has been registered.
 
         The helper pulls the latest ROI delta, RAROI delta, resilience,
         confidence and scenario degradation metrics from ``tracker`` and
@@ -100,11 +105,9 @@ class ForesightTracker:
             roi_hist = getattr(tracker, "roi_history", [])
             raroi_hist = getattr(tracker, "raroi_history", [])
             history = self.history.get(workflow_id)
-            if profile is None:
-                profile_map = getattr(self, "workflow_profiles", None)
-                if not isinstance(profile_map, Mapping):
-                    profile_map = getattr(self, "profile_map", {})
-                profile = profile_map.get(workflow_id, workflow_id)
+            self._load_templates()
+            if profile is not None:
+                self.workflow_profiles[workflow_id] = profile
 
             real_roi = float(roi_hist[-1]) if roi_hist else 0.0
             if len(raroi_hist) >= 2:
@@ -116,18 +119,16 @@ class ForesightTracker:
 
             if self.is_cold_start(workflow_id):
                 cycles = len(history) if history else 0
-                template_curve = self.get_template_curve(profile)
-                if not template_curve:
-                    roi_delta = real_roi
-                    raroi_delta = real_raroi
-                else:
-                    if cycles < len(template_curve):
-                        template_val = float(template_curve[cycles])
-                    else:
-                        template_val = float(template_curve[-1])
-                    alpha = min(cycles / 5.0, 1.0)
+                template_curve = self.get_template_curve(workflow_id)
+                if template_curve:
+                    idx = cycles if cycles < len(template_curve) else -1
+                    template_val = float(template_curve[idx])
+                    alpha = min(1.0, cycles / 5.0)
                     roi_delta = alpha * real_roi + (1.0 - alpha) * template_val
                     raroi_delta = alpha * real_raroi + (1.0 - alpha) * template_val
+                else:
+                    roi_delta = real_roi
+                    raroi_delta = real_raroi
             else:
                 roi_delta = real_roi
                 raroi_delta = real_raroi
@@ -203,33 +204,31 @@ class ForesightTracker:
                 data = yaml.safe_load(fh) or {}
 
             profiles = data.get("profiles")
-            templates = data.get("templates")
+            trajectories = data.get("trajectories") or data.get("templates")
             merged: Dict[str, list[float]] = {}
-            if isinstance(profiles, Mapping) and isinstance(templates, Mapping):
-                for name, curve in templates.items():
-                    merged[name] = [float(v) for v in curve]
-                for profile, template_name in profiles.items():
-                    curve = templates.get(template_name, [])
-                    merged[profile] = [float(v) for v in curve]
-            else:
-                merged = {
-                    str(name): [float(v) for v in curve]
-                    for name, curve in data.items()
-                }
+            if isinstance(trajectories, Mapping):
+                for name, curve in trajectories.items():
+                    merged[str(name)] = [float(v) for v in curve]
+            if isinstance(profiles, Mapping):
+                for wf_id, prof in profiles.items():
+                    self.workflow_profiles[str(wf_id)] = str(prof)
 
             self.templates = merged
         except Exception:
             self.templates = {}
 
     # ------------------------------------------------------------------
-    def get_template_curve(self, profile: str) -> list[float]:
-        """Return the ROI template curve for ``profile``.
+    def get_template_curve(self, workflow_id: str) -> list[float]:
+        """Return the ROI template curve for ``workflow_id``.
 
-        The templates are loaded lazily on first access.  An empty list is
-        returned when no curve is defined for ``profile``.
+        The templates are loaded lazily on first access.  The workflow's
+        registered profile determines which trajectory is returned. If the
+        workflow has no registered profile, its own identifier is used. An
+        empty list is returned when no matching trajectory exists.
         """
 
         self._load_templates()
+        profile = self.workflow_profiles.get(workflow_id, workflow_id)
         curve = self.templates.get(profile, []) if self.templates else []
         return [float(v) for v in curve]
 
