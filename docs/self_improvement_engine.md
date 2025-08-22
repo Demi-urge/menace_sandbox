@@ -42,6 +42,24 @@ sandbox to reuse scenario presets.
 5. consult `_SandboxMetaLogger` to flag modules that hit entropy ceilings or
    exhibit diminishing returns.
 
+## Systemic foresight
+
+Improvement cycles can consult :mod:`workflow_graph` to anticipate how changes
+propagate through dependant workflows.  Calling
+:meth:`workflow_graph.WorkflowGraph.simulate_impact_wave` before a cycle yields
+projected ROI and synergy deltas which can steer scheduling:
+
+```python
+from workflow_graph import WorkflowGraph
+
+graph = WorkflowGraph()
+
+def run_with_projection(engine, target_wid: str) -> None:
+    projection = graph.simulate_impact_wave(target_wid)
+    # ...use `projection` to prioritise follow-up actions...
+    engine.run_cycle()
+```
+
 ## Alignment flagger integration
 
 After applying a commit the engine invokes `HumanAlignmentFlagger` on the latest
