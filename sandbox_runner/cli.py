@@ -1173,6 +1173,12 @@ def main(argv: List[str] | None = None) -> None:
         help="execute predefined scenario simulations for the given workflow and exit",
     )
     parser.add_argument(
+        "--simulate-temporal-trajectory",
+        type=int,
+        metavar="WORKFLOW_ID",
+        help="simulate temporal trajectory for the given workflow and exit",
+    )
+    parser.add_argument(
         "--alignment-warnings",
         action="store_true",
         help="display recent alignment warnings and exit",
@@ -1719,6 +1725,22 @@ def main(argv: List[str] | None = None) -> None:
 
     if getattr(args, "cmd", None) == "run-complete":
         run_complete(args)
+        return
+
+    if args.simulate_temporal_trajectory is not None:
+        from sandbox_runner.environment import simulate_temporal_trajectory
+
+        ft = ForesightTracker()
+        _, summary = simulate_temporal_trajectory(
+            args.simulate_temporal_trajectory, foresight_tracker=ft
+        )
+        path = (
+            Path("sandbox_data")
+            / f"temporal_trajectory_{args.simulate_temporal_trajectory}.json"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(summary, indent=2))
+        print(json.dumps(summary, indent=2))
         return
 
     if args.run_scenarios is not None:
