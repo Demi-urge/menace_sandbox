@@ -56,3 +56,14 @@ python -m menace_sandbox.ranking_model_scheduler \
 In this example `mymodule:layer` refers to a variable holding a
 `CognitionLayer` instance.  The scheduler retrains the model every hour and
 triggers a hot reload on that layer and any dependent services.
+
+Environment variables can control its behaviour:
+
+* `RANKER_SCHEDULER_ROI_THRESHOLD` – cumulative per-origin ROI delta that
+  triggers an immediate retrain when crossed.
+* `RANKER_SCHEDULER_EVENT_LOG` – optional SQLite file for persisting
+  `UnifiedEventBus` events.
+* `RANKER_SCHEDULER_RABBITMQ_HOST` – RabbitMQ host for mirroring bus events.
+
+When a threshold is provided the scheduler listens on `retrieval:feedback` and
+accumulates ROI deltas per origin.

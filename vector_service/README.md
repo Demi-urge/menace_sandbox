@@ -187,6 +187,8 @@ environment variables and invoke the module to enable it or rely on
 ```bash
 export RANKER_SCHEDULER_INTERVAL=3600  # seconds between retrains (0 disables)
 export RANKER_SCHEDULER_ROI_THRESHOLD=5  # optional ROI delta for immediate retrain
+export RANKER_SCHEDULER_EVENT_LOG=events.db  # optional SQLite log for bus events
+export RANKER_SCHEDULER_RABBITMQ_HOST=localhost  # optional RabbitMQ host
 python -m analytics.ranker_scheduler
 ```
 
@@ -201,10 +203,12 @@ Additional knobs:
   metric and ROI database locations.
 * `RANKER_SCHEDULER_MODEL_DIR` – destination directory for newly retrained
   ranker models.
+* `RANKER_SCHEDULER_EVENT_LOG` – persist `UnifiedEventBus` events to this SQLite file.
+* `RANKER_SCHEDULER_RABBITMQ_HOST` – mirror bus events to RabbitMQ at this host.
 
-When `RANKER_SCHEDULER_ROI_THRESHOLD` is set, the scheduler also subscribes to
-`UnifiedEventBus` on topic `retrieval:feedback` so large ROI swings trigger an
-immediate retrain.
+When `RANKER_SCHEDULER_ROI_THRESHOLD` is set, the scheduler subscribes to
+`UnifiedEventBus` on topic `retrieval:feedback` and accumulates ROI deltas per
+origin so large swings trigger an immediate retrain.
 
 ## Embedding backfill daemon
 
