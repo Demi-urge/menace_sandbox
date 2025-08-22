@@ -148,6 +148,20 @@ class UpgradeForecaster:
                 except Exception:
                     template_risk = []
 
+            if not template_roi or not template_entropy or not template_risk:
+                fetch_cssm = getattr(self.tracker, "fetch_cssm_templates", None)
+                if callable(fetch_cssm):
+                    try:
+                        cssm_templates = fetch_cssm(wf_id) or {}
+                    except Exception:
+                        cssm_templates = {}
+                    if not template_roi:
+                        template_roi = list(cssm_templates.get("roi") or [])
+                    if not template_entropy:
+                        template_entropy = list(cssm_templates.get("entropy") or [])
+                    if not template_risk:
+                        template_risk = list(cssm_templates.get("risk") or [])
+
             alpha = min(1.0, samples / 5.0)
             for i in range(1, cycles + 1):
                 sim_roi = roi_hist[i - 1] if i - 1 < len(roi_hist) else (
