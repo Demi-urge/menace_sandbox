@@ -34,19 +34,18 @@ stage_calls: list[str] = []
 
 
 class _DummyTracker:
-    def __init__(self) -> None:
-        self.roi_history = []
+    pass
 
 
 def _fake_run_scenarios(workflow, tracker=None, presets=None, foresight_tracker=None):
     if tracker is None:
         tracker = _DummyTracker()
-    name = presets[0]["SCENARIO_NAME"]
-    stage_calls.append(name)
-    idx = SCENARIOS.index(name)
-    roi = float(idx)
-    tracker.roi_history.append(roi)
-    summary = {"scenarios": {name: {"roi": roi, "metrics": {"resilience": roi}}}}
+    names = [p["SCENARIO_NAME"] for p in presets]
+    stage_calls.extend(names)
+    summary = {"scenarios": {}}
+    for idx, name in enumerate(names):
+        roi = float(idx)
+        summary["scenarios"][name] = {"roi": roi, "metrics": {"resilience": roi}}
     return tracker, {}, summary
 
 
@@ -89,3 +88,4 @@ def test_simulate_temporal_trajectory_order_and_history(monkeypatch):
     assert [entry["roi_delta"] for entry in history] == [0.0, 1.0, 2.0, 3.0, 4.0]
     assert [entry["resilience"] for entry in history] == [0.0, 1.0, 2.0, 3.0, 4.0]
     assert [entry["scenario_degradation"] for entry in history] == [0.0, -1.0, -2.0, -3.0, -4.0]
+    assert [entry["stability"] for entry in history] == [0.0, 0.0, 1.0, 0.0, 0.0]
