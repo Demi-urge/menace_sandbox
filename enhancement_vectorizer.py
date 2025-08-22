@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List
 
+from vector_utils import persist_embedding
+
 _DEFAULT_BOUNDS = {
     "score": 100.0,
     "cost_estimate": 1_000_000.0,
@@ -65,4 +67,16 @@ class EnhancementVectorizer:
         vec.append(_scale(len(tags), _DEFAULT_BOUNDS["num_tags"]))
         return vec
 
-__all__ = ["EnhancementVectorizer"]
+
+_DEFAULT_VECTORIZER = EnhancementVectorizer()
+
+
+def vectorize_and_store(record_id: str, enhancement: Dict[str, Any], *, path: str = "embeddings.jsonl") -> List[float]:
+    """Vectorise ``enhancement`` and persist the embedding."""
+
+    vec = _DEFAULT_VECTORIZER.transform(enhancement)
+    persist_embedding("enhancement", record_id, vec, path=path)
+    return vec
+
+
+__all__ = ["EnhancementVectorizer", "vectorize_and_store"]

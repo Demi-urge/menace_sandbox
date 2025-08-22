@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List
 
+from vector_utils import persist_embedding
+
 _DEFAULT_BOUNDS = {"stack_len": 200.0}
 
 def _one_hot(idx: int, length: int) -> List[float]:
@@ -59,4 +61,16 @@ class ErrorVectorizer:
         vec.append(_scale(len(str(stack).splitlines()), _DEFAULT_BOUNDS["stack_len"]))
         return vec
 
-__all__ = ["ErrorVectorizer"]
+
+_DEFAULT_VECTORIZER = ErrorVectorizer()
+
+
+def vectorize_and_store(record_id: str, error: Dict[str, Any], *, path: str = "embeddings.jsonl") -> List[float]:
+    """Vectorise ``error`` and persist the embedding."""
+
+    vec = _DEFAULT_VECTORIZER.transform(error)
+    persist_embedding("error", record_id, vec, path=path)
+    return vec
+
+
+__all__ = ["ErrorVectorizer", "vectorize_and_store"]
