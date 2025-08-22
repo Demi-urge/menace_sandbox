@@ -41,9 +41,11 @@ except Exception:  # pragma: no cover - fallback
 try:  # pragma: no cover - package-relative import
     from . import retrieval_ranker as rr
     from .metrics_aggregator import compute_retriever_stats
+    from .retrieval_training_dataset import build_dataset
 except Exception:  # pragma: no cover - fallback when executed directly
     import retrieval_ranker as rr  # type: ignore
     from metrics_aggregator import compute_retriever_stats  # type: ignore
+    from retrieval_training_dataset import build_dataset  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from .vector_metrics_db import VectorMetricsDB
@@ -299,10 +301,10 @@ class RankingModelScheduler:
                 ),
             )
 
-        # Train model from the latest metrics.  This mirrors running
-        # ``python retrieval_ranker.py train`` and therefore uses the same
-        # helper functions as the command line interface.
-        df = rr.load_training_data(vector_db=self.vector_db, patch_db=self.metrics_db)
+        # Build the training dataframe directly from the metrics databases and
+        # invoke ``retrieval_ranker`` to fit a new model.  This mirrors running
+        # ``python retrieval_ranker.py train`` but avoids spawning a subprocess.
+        df = build_dataset(vector_db=self.vector_db, patch_db=self.metrics_db)
         trained = rr.train(df)
         tm = trained[0] if isinstance(trained, tuple) else trained
         model_dir = self.model_path.parent
