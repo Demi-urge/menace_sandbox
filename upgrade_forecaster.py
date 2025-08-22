@@ -309,5 +309,75 @@ def load_record(
     return ForecastResult(projections, confidence)
 
 
-__all__ = ["CycleProjection", "ForecastResult", "UpgradeForecaster", "load_record"]
+def list_records(records_base: str | Path) -> List[str]:
+    """Return all forecast record file names.
+
+    Parameters
+    ----------
+    records_base:
+        Directory containing forecast record JSON files.
+
+    Returns
+    -------
+    List[str]
+        Sorted list of record file names. Non-JSON files are ignored.
+    """
+
+    base = Path(records_base)
+    if not base.exists():
+        return []
+    return sorted(p.name for p in base.glob("*.json") if p.is_file())
+
+
+def delete_record(
+    workflow_id: str,
+    patch_id: str | None = None,
+    records_base: str | Path = "forecast_records",
+) -> None:
+    """Delete a forecast record.
+
+    Parameters
+    ----------
+    workflow_id:
+        Identifier of the workflow whose record should be removed.
+    patch_id:
+        Identifier of the patch. When omitted, the most recent record for the
+        workflow is deleted.
+    records_base:
+        Directory containing forecast records. Defaults to ``"forecast_records"``.
+    """
+
+    wf_id = str(workflow_id)
+    base = Path(records_base)
+
+    if patch_id is None:
+        latest: tuple[int, float] | None = None
+        latest_path: Path | None = None
+        for path in base.glob(f"{wf_id}_*.json"):
+            try:
+                with path.open("r", encoding="utf8") as fh:
+                    data = json.load(fh)
+                ts = int(data.get("timestamp", 0))
+                key = (ts, path.stat().st_mtime)
+            except Exception:
+                continue
+            if latest is None or key >= latest:
+                latest = key
+                latest_path = path
+        if latest_path is None:
+            raise FileNotFoundError(f"No record found for workflow {wf_id}")
+        latest_path.unlink()
+    else:
+        path = base / f"{wf_id}_{patch_id}.json"
+        path.unlink()
+
+
+__all__ = [
+    "CycleProjection",
+    "ForecastResult",
+    "UpgradeForecaster",
+    "load_record",
+    "list_records",
+    "delete_record",
+]
 
