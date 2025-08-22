@@ -260,7 +260,14 @@ class ForesightTracker:
 
     # ------------------------------------------------------------------
     def _load_templates(self) -> None:
-        """Load template curves from disk if not already done."""
+        """Load ROI, entropy, and risk template curves from disk.
+
+        The configuration may define ``profiles`` and ``trajectories`` (or
+        ``templates``) for ROI. Optional ``entropy_profiles`` and
+        ``entropy_trajectories`` provide sample entropy degradation curves,
+        while ``risk_profiles`` and ``risk_trajectories`` allow basic risk
+        comparisons. All sections are loaded lazily on first access.
+        """
 
         if self.templates is not None and self.entropy_templates is not None:
             return
@@ -268,12 +275,17 @@ class ForesightTracker:
             with self.template_config_path.open("r", encoding="utf8") as fh:
                 data = yaml.safe_load(fh) or {}
 
+            # ROI templates -------------------------------------------------
             profiles = data.get("profiles")
             trajectories = data.get("trajectories") or data.get("templates")
+
+            # Optional entropy templates for degradation analysis ---------
             ent_profiles = data.get("entropy_profiles")
             ent_traj = data.get("entropy_trajectories") or data.get(
                 "entropy_templates"
             )
+
+            # Optional risk templates -------------------------------------
             risk_profiles = data.get("risk_profiles")
             risk_traj = data.get("risk_trajectories") or data.get(
                 "risk_templates"
