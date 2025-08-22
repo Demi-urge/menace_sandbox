@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import pickle
 import math
+import atexit
+import threading
 from collections import defaultdict, deque
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
@@ -134,7 +136,15 @@ class WorkflowGraph:
     def __init__(self, path: Optional[str] = None) -> None:
         self.path = path or os.path.join("sandbox_data", "workflow_graph.gpickle")
         self._backend = "networkx" if _HAS_NX else "adjlist"
+        self._lock = threading.Lock()
         self.graph = self.load()
+        atexit.register(self._shutdown_save)
+
+    def _shutdown_save(self) -> None:  # pragma: no cover - best effort
+        try:
+            self.save()
+        except Exception:
+            pass
 
     def attach_event_bus(self, bus: "UnifiedEventBus") -> None:
         """Subscribe to workflow-related events on ``bus``."""
@@ -181,30 +191,34 @@ class WorkflowGraph:
     def add_workflow(self, workflow_id: str, *, roi: float = 0.0,
                      synergy_scores: Optional[Any] = None) -> None:
         """Add a workflow node to the graph."""
-        if _HAS_NX:
-            self.graph.add_node(workflow_id, roi=roi, synergy_scores=synergy_scores)
-        else:
-            nodes: Dict[str, Dict[str, Any]] = self.graph.setdefault("nodes", {})
-            edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.setdefault(
-                "edges", {}
-            )
-            nodes[workflow_id] = {"roi": roi, "synergy_scores": synergy_scores}
-            edges.setdefault(workflow_id, {})
-        self.save()
+        with self._lock:
+            if _HAS_NX:
+                self.graph.add_node(
+                    workflow_id, roi=roi, synergy_scores=synergy_scores
+                )
+            else:
+                nodes: Dict[str, Dict[str, Any]] = self.graph.setdefault("nodes", {})
+                edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.setdefault(
+                    "edges", {}
+                )
+                nodes[workflow_id] = {"roi": roi, "synergy_scores": synergy_scores}
+                edges.setdefault(workflow_id, {})
+            self._save_unlocked()
 
     def remove_workflow(self, workflow_id: str) -> None:
         """Remove a workflow and its edges."""
-        if _HAS_NX:
-            if self.graph.has_node(workflow_id):
-                self.graph.remove_node(workflow_id)
-        else:
-            nodes: Dict[str, Dict[str, Any]] = self.graph.get("nodes", {})
-            edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.get("edges", {})
-            nodes.pop(workflow_id, None)
-            edges.pop(workflow_id, None)
-            for deps in edges.values():
-                deps.pop(workflow_id, None)
-        self.save()
+        with self._lock:
+            if _HAS_NX:
+                if self.graph.has_node(workflow_id):
+                    self.graph.remove_node(workflow_id)
+            else:
+                nodes: Dict[str, Dict[str, Any]] = self.graph.get("nodes", {})
+                edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.get("edges", {})
+                nodes.pop(workflow_id, None)
+                edges.pop(workflow_id, None)
+                for deps in edges.values():
+                    deps.pop(workflow_id, None)
+            self._save_unlocked()
 
     def add_dependency(
         self,
@@ -221,19 +235,23 @@ class WorkflowGraph:
         """
         if impact_weight is None:
             impact_weight = estimate_edge_weight(src, dst)
-        if _HAS_NX:
-            self.graph.add_edge(
-                src, dst, impact_weight=impact_weight, dependency_type=dependency_type
-            )
-        else:
-            edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.setdefault(
-                "edges", {}
-            )
-            edges.setdefault(src, {})[dst] = {
-                "impact_weight": impact_weight,
-                "dependency_type": dependency_type,
-            }
-        self.save()
+        with self._lock:
+            if _HAS_NX:
+                self.graph.add_edge(
+                    src,
+                    dst,
+                    impact_weight=impact_weight,
+                    dependency_type=dependency_type,
+                )
+            else:
+                edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.setdefault(
+                    "edges", {}
+                )
+                edges.setdefault(src, {})[dst] = {
+                    "impact_weight": impact_weight,
+                    "dependency_type": dependency_type,
+                }
+            self._save_unlocked()
 
     def update_workflow(
         self,
@@ -243,21 +261,22 @@ class WorkflowGraph:
         synergy_scores: Optional[Any] = None,
     ) -> None:
         """Update workflow node attributes."""
-        if _HAS_NX:
-            if not self.graph.has_node(workflow_id):
-                self.graph.add_node(workflow_id)
-            if roi is not None:
-                self.graph.nodes[workflow_id]["roi"] = roi
-            if synergy_scores is not None:
-                self.graph.nodes[workflow_id]["synergy_scores"] = synergy_scores
-        else:
-            nodes: Dict[str, Dict[str, Any]] = self.graph.setdefault("nodes", {})
-            node = nodes.setdefault(workflow_id, {})
-            if roi is not None:
-                node["roi"] = roi
-            if synergy_scores is not None:
-                node["synergy_scores"] = synergy_scores
-        self.save()
+        with self._lock:
+            if _HAS_NX:
+                if not self.graph.has_node(workflow_id):
+                    self.graph.add_node(workflow_id)
+                if roi is not None:
+                    self.graph.nodes[workflow_id]["roi"] = roi
+                if synergy_scores is not None:
+                    self.graph.nodes[workflow_id]["synergy_scores"] = synergy_scores
+            else:
+                nodes: Dict[str, Dict[str, Any]] = self.graph.setdefault("nodes", {})
+                node = nodes.setdefault(workflow_id, {})
+                if roi is not None:
+                    node["roi"] = roi
+                if synergy_scores is not None:
+                    node["synergy_scores"] = synergy_scores
+            self._save_unlocked()
 
     def simulate_impact_wave(
         self,
@@ -349,15 +368,18 @@ class WorkflowGraph:
 
     def refresh_edges(self) -> None:
         """Recalculate impact weights for all dependency edges."""
-        if _HAS_NX:
-            for src, dst in list(self.graph.edges()):
-                self.graph[src][dst]["impact_weight"] = estimate_edge_weight(src, dst)
-        else:
-            edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.get("edges", {})
-            for src, targets in edges.items():
-                for dst in list(targets.keys()):
-                    targets[dst]["impact_weight"] = estimate_edge_weight(src, dst)
-        self.save()
+        with self._lock:
+            if _HAS_NX:
+                for src, dst in list(self.graph.edges()):
+                    self.graph[src][dst]["impact_weight"] = estimate_edge_weight(
+                        src, dst
+                    )
+            else:
+                edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.get("edges", {})
+                for src, targets in edges.items():
+                    for dst in list(targets.keys()):
+                        targets[dst]["impact_weight"] = estimate_edge_weight(src, dst)
+            self._save_unlocked()
 
     # ------------------------------------------------------------------
     # Persistence helpers
@@ -396,6 +418,10 @@ class WorkflowGraph:
 
     def save(self) -> None:
         """Persist current graph state to :attr:`path`."""
+        with self._lock:
+            self._save_unlocked()
+
+    def _save_unlocked(self) -> None:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         if _HAS_NX and write_gpickle:
             write_gpickle(self.graph, self.path)
