@@ -398,6 +398,11 @@ class ContextBuilder:
         text = bundle.get("text") or ""
         vec_id = str(bundle.get("record_id", ""))
 
+        supplied_risk = any(
+            (isinstance(meta, dict) and meta.get(k) is not None) or bundle.get(k) is not None
+            for k in ("risk_score", "final_risk_score", "risk")
+        )
+
         # Evaluate patch safety before any scoring so risky vectors can be
         # dropped early and their similarity scores propagated downstream.
         self.patch_safety.max_alert_severity = self.max_alignment_severity
@@ -424,6 +429,11 @@ class ContextBuilder:
         try:
             if isinstance(meta, dict):
                 meta["risk_score"] = risk_score
+                if not supplied_risk:
+                    meta["risk_score_defaulted"] = True
+                    logger.warning(
+                        "risk_score missing for %s; defaulting to 0.0", vec_id
+                    )
         except Exception:
             pass
 
@@ -522,12 +532,18 @@ class ContextBuilder:
             if bundle.get(key) is not None:
                 risk_val = bundle.get(key)
                 break
-        if risk_val is not None:
+        if risk_val is None:
+            risk_val = 0.0
+            entry["risk_score"] = 0.0
+        else:
             try:
                 risk_val = float(risk_val)
                 entry["risk_score"] = risk_val
             except Exception:
-                risk_val = None
+                risk_val = 0.0
+                entry["risk_score"] = 0.0
+        if meta.get("risk_score_defaulted"):
+            entry["risk_score_defaulted"] = True
 
         # Surface patch safety metrics when available
         win_rate = meta.get("win_rate")
@@ -606,17 +622,16 @@ class ContextBuilder:
                 base *= 1.0 + float(roi_score) * self.roi_weight
             except Exception:
                 pass
-        if risk_val is not None:
-            try:
-                penalty += (
-                    float(risk_val)
-                    * self.risk_penalty
-                    * rank_prob
-                    * roi_bias
-                    * self.safety_weight
-                )
-            except Exception:
-                pass
+        try:
+            penalty += (
+                float(risk_val)
+                * self.risk_penalty
+                * rank_prob
+                * roi_bias
+                * self.safety_weight
+            )
+        except Exception:
+            pass
         score = base - penalty
         score *= self.db_weights.get(origin, 1.0)
 
