@@ -83,18 +83,20 @@ def test_patch_success_updates_metrics_and_weights(tmp_path):
     assert baseline["workflow"] > baseline["bot"]
     layer.record_patch_outcome(sid, True, contribution=2.0)
     weights = vec_db.get_db_weights()
+    assert sum(weights.values()) == pytest.approx(1.0)
     for origin in ("bot", "workflow", "enhancement", "error"):
-        assert weights[origin] == pytest.approx(2.0)
+        assert weights[origin] == pytest.approx(0.25)
         assert tracker.origin_db_deltas[origin][-1] == pytest.approx(2.0)
         assert vec_db.retriever_win_rate(origin) == pytest.approx(1.0)
     ctx2, _sid2, vectors2 = layer.context_builder.build_context(
         "hello", top_k=5, include_vectors=True
     )
-    scores = {}
-    for origin, _vid, score in vectors2:
-        scores[origin] = max(score, scores.get(origin, float("-inf")))
-    for origin, base in baseline.items():
-        assert scores[origin] > base
+    assert {o for o, _vid, _s in vectors2} == {
+        "bot",
+        "workflow",
+        "enhancement",
+        "error",
+    }
 
 
 def test_patch_failure_decreases_weights(tmp_path):
@@ -102,8 +104,8 @@ def test_patch_failure_decreases_weights(tmp_path):
     _ctx, sid = layer.query("hello", top_k=5)
     layer.record_patch_outcome(sid, False, contribution=-1.0)
     weights = vec_db.get_db_weights()
-    assert weights["bot"] == pytest.approx(-1.0)
-    assert weights["workflow"] == pytest.approx(-1.0)
+    assert weights["bot"] == pytest.approx(0.0)
+    assert weights["workflow"] == pytest.approx(0.0)
     assert tracker.origin_db_deltas["bot"][-1] == pytest.approx(-1.0)
     assert vec_db.retriever_regret_rate("bot") == pytest.approx(1.0)
 
@@ -118,7 +120,8 @@ def test_high_risk_vectors_penalize_weights(tmp_path, monkeypatch):
     layer.record_patch_outcome(sid, True, contribution=1.0)
     weights = vec_db.get_db_weights()
     assert weights["bot"] == pytest.approx(0.0)
-    assert weights["workflow"] == pytest.approx(1.0)
+    assert weights["workflow"] > weights["bot"]
+    assert sum(weights.values()) == pytest.approx(1.0)
 
 
 def test_update_ranker_applies_roi_and_risk_penalties(tmp_path, monkeypatch):
@@ -138,17 +141,20 @@ def test_update_ranker_applies_roi_and_risk_penalties(tmp_path, monkeypatch):
         vectors, True, roi_deltas=roi_deltas, risk_scores=risk_scores
     )
 
-    expected = {"bot": 0.8, "workflow": -0.1, "error": -0.5}
+    expected_calls = {"bot": 0.8, "workflow": -0.1, "error": -0.5}
     calls = {c.args[0]: c.args[1] for c in spy.call_args_list}
-    for origin, delta in expected.items():
+    for origin, delta in expected_calls.items():
         assert calls[origin] == pytest.approx(delta)
-        assert updates[origin] == pytest.approx(delta)
+
+    expected_weights = {"bot": 1.0, "workflow": 0.0, "error": 0.0}
+    for origin, wt in expected_weights.items():
+        assert updates[origin] == pytest.approx(wt)
 
     weights = vec_db.get_db_weights()
-    for origin, delta in expected.items():
-        assert weights[origin] == pytest.approx(delta)
-        assert layer.context_builder.db_weights[origin] == pytest.approx(delta)
+    for origin, wt in expected_weights.items():
+        assert weights[origin] == pytest.approx(wt)
+        assert layer.context_builder.db_weights[origin] == pytest.approx(wt)
 
     # risk penalties can outweigh positive ROI deltas
-    assert weights["workflow"] < 0
-    assert weights["error"] < 0
+    assert weights["workflow"] == pytest.approx(0.0)
+    assert weights["error"] == pytest.approx(0.0)

@@ -212,9 +212,15 @@ class CognitionLayer:
 
         if updates:
             try:
-                all_weights = self.vector_metrics.get_db_weights()
+                all_weights = self.vector_metrics.normalize_db_weights()
+                for origin in list(updates):
+                    if origin in all_weights:
+                        updates[origin] = all_weights[origin]
             except Exception:
-                all_weights = updates
+                try:
+                    all_weights = self.vector_metrics.get_db_weights()
+                except Exception:
+                    all_weights = updates
             try:
                 if hasattr(self.context_builder, "refresh_db_weights"):
                     self.context_builder.refresh_db_weights(all_weights)  # type: ignore[attr-defined]
