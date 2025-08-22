@@ -56,3 +56,110 @@ def test_forecast_writes_record(monkeypatch, tmp_path):
     assert len(data["projections"]) == 3
     assert isinstance(data["confidence"], float)
 
+
+def test_forecast_roi_risk_decay(monkeypatch, tmp_path):
+    class DummyTracker:
+        def __init__(self) -> None:
+            self.history = {
+                "wf": [
+                    {
+                        "roi_delta": 0.0,
+                        "confidence": 1.0,
+                        "resilience": 0.5,
+                        "scenario_degradation": 0.0,
+                    }
+                    for _ in range(3)
+                ]
+            }
+
+        def is_cold_start(self, _wf: str) -> bool:
+            return False
+
+        def get_trend_curve(self, _wf: str):
+            return 0.0, 0.0, 1.0
+
+        def get_temporal_profile(self, _wf: str):
+            return list(self.history["wf"])
+
+        def get_template_curve(self, _wf: str):
+            return []
+
+    def fake_sim(*a, **k):
+        return types.SimpleNamespace(
+            roi_history=[0.3, 0.3, 0.3],
+            metrics_history={"synergy_shannon_entropy": [0.0]},
+        )
+
+    monkeypatch.setattr(
+        "upgrade_forecaster.simulate_temporal_trajectory", fake_sim
+    )
+    tracker = DummyTracker()
+    forecaster = UpgradeForecaster(tracker, records_base=tmp_path)
+    result = forecaster.forecast("wf", patch=[], cycles=3)
+
+    rois = [p.roi for p in result.projections]
+    assert rois == [pytest.approx(0.1), pytest.approx(0.2), pytest.approx(0.3)]
+    assert all(p.risk == pytest.approx(0.5) for p in result.projections)
+    assert all(p.decay == pytest.approx(0.0) for p in result.projections)
+    assert result.confidence == pytest.approx(0.75)
+
+
+def test_forecast_confidence_sample_variance(monkeypatch, tmp_path):
+    def make_tracker(samples: int):
+        class DummyTracker:
+            def __init__(self) -> None:
+                self.history = {
+                    "wf": [
+                        {
+                            "roi_delta": 0.0,
+                            "confidence": 1.0,
+                            "resilience": 0.5,
+                            "scenario_degradation": 0.0,
+                        }
+                        for _ in range(samples)
+                    ]
+                }
+
+            def is_cold_start(self, _wf: str) -> bool:
+                return False
+
+            def get_trend_curve(self, _wf: str):
+                return 0.0, 0.0, 1.0
+
+            def get_temporal_profile(self, _wf: str):
+                return list(self.history["wf"])
+
+        return DummyTracker()
+
+    def make_sim(roi_hist):
+        return lambda *a, **k: types.SimpleNamespace(
+            roi_history=roi_hist,
+            metrics_history={"synergy_shannon_entropy": [0.0]},
+        )
+
+    monkeypatch.setattr(
+        "upgrade_forecaster.simulate_temporal_trajectory", make_sim([0.2, 0.2, 0.2])
+    )
+    small = UpgradeForecaster(make_tracker(1), records_base=tmp_path)
+    conf_small = small.forecast("wf", patch=[], cycles=3).confidence
+
+    large = UpgradeForecaster(make_tracker(5), records_base=tmp_path)
+    conf_large = large.forecast("wf", patch=[], cycles=3).confidence
+    assert conf_large > conf_small
+
+    tracker = make_tracker(3)
+    monkeypatch.setattr(
+        "upgrade_forecaster.simulate_temporal_trajectory", make_sim([0.2, 0.2, 0.2])
+    )
+    low_var = UpgradeForecaster(tracker, records_base=tmp_path).forecast(
+        "wf", patch=[], cycles=3
+    ).confidence
+
+    monkeypatch.setattr(
+        "upgrade_forecaster.simulate_temporal_trajectory", make_sim([0.0, 1.0, -1.0])
+    )
+    high_var = UpgradeForecaster(tracker, records_base=tmp_path).forecast(
+        "wf", patch=[], cycles=3
+    ).confidence
+    assert low_var > high_var
+
