@@ -100,15 +100,27 @@ class SharedVectorService:
         raise ValueError(f"unknown record type: {kind}")
 
     def vectorise_and_store(
-        self, kind: str, record_id: str, record: Dict[str, Any]
+        self,
+        kind: str,
+        record_id: str,
+        record: Dict[str, Any],
+        *,
+        origin_db: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> List[float]:
-        """Vectorise ``record`` and persist the embedding.
-
-        The embedding is written using :func:`vector_utils.persist_embedding`.
-        """
+        """Vectorise ``record`` and persist the embedding."""
 
         vec = self.vectorise(kind, record)
-        persist_embedding(kind.lower(), record_id, vec)
+        try:
+            persist_embedding(
+                kind.lower(),
+                record_id,
+                vec,
+                origin_db=origin_db or kind,
+                metadata=metadata or {},
+            )
+        except TypeError:  # pragma: no cover - compatibility with older signatures
+            persist_embedding(kind.lower(), record_id, vec)
         return vec
 
 

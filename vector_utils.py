@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, Mapping, Any
 
 
 def cosine_similarity(a: Iterable[float], b: Iterable[float]) -> float:
@@ -24,6 +24,8 @@ def persist_embedding(
     embedding: Sequence[float],
     *,
     path: str | Path = "embeddings.jsonl",
+    origin_db: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
 ) -> None:
     """Append ``embedding`` to ``path`` with minimal metadata.
 
@@ -38,5 +40,9 @@ def persist_embedding(
         "id": record_id,
         "vector": [float(x) for x in embedding],
     }
+    if origin_db is not None:
+        payload["origin_db"] = origin_db
+    if metadata:
+        payload["metadata"] = dict(metadata)
     with file_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload) + "\n")
