@@ -1,172 +1,63 @@
 # Vectorized Cognition
 
-This guide walks through the vector pipeline used across the project.  It
-covers embedding backfills, semantic retrieval, context assembly, patch logging,
-ROI feedback and ranking.  Each step builds on the previous one so LLM driven
-modules can reason about code history and prioritise improvements.
+This document explains how vector-based context flows through the system and how feedback updates influence future retrieval.
 
-## Embedding backfill
+## Data Flow
 
-````python
-from vector_service import EmbeddingBackfill
+```
+vectorizers → EmbeddingBackfill / EmbeddingScheduler → Retriever / ContextBuilder → PatchLogger / ROITracker → ranking model updates
+```
 
-# discover all EmbeddableDBMixin subclasses and populate their vector stores
-EmbeddingBackfill().run(session_id="bootstrap")
-````
+1. **Vectorizers** turn records of each modality into embedding vectors.
+2. **EmbeddingBackfill** populates vector stores for new records.  **EmbeddingScheduler** periodically refreshes them.
+3. **Retriever** searches the stores and **ContextBuilder** assembles a cognitive context from the top results.
+4. **PatchLogger** and **ROITracker** capture which vectors affected a patch and the resulting return on investment (ROI).
+5. The accumulated metrics drive **ranking model updates**, favouring high‑ROI sources on subsequent queries.
 
-`EmbeddingBackfill` iterates over every database that implements
-`EmbeddableDBMixin` and calls `backfill_embeddings`.  Records flagged by the
-lightweight license check are skipped and logged.  Backfills can be restricted to
-specific databases via the `db`/`dbs` arguments.
+## Building Context and Logging Feedback
 
-## Retrieval
+```python
+from cognition_layer import build_cognitive_context, log_feedback
 
-````python
-from vector_service import Retriever
+# Build a context for a natural‑language request
+context, session_id = build_cognitive_context("optimise cache eviction", top_k=5)
 
-retriever = Retriever()
-results = retriever.search("upload failed", session_id="abc123")
-````
+# ...apply patch based on the context...
 
-`Retriever` normalises results from `universal_retriever`, applies license and
-alignment filtering and returns plain dictionaries.  A fallback to heuristic
-full‑text search is used when the semantic lookup yields no confident hits.
+# Record whether the change succeeded
+log_feedback(session_id, True, patch_id="cache-fix-42")
+```
 
-## Context building
+`build_cognitive_context` wraps the vector service to return a JSON context blob and a session id.  `log_feedback` forwards patch outcomes so metrics and ROI histories can be updated.
 
-````python
-from vector_service import ContextBuilder
+## Registering New Modalities
 
-builder = ContextBuilder()
-context = builder.build("fix failing tests", session_id="abc123")
-````
+New record types are registered in `vector_service/registry.py` via `register_vectorizer`:
 
-`ContextBuilder` summarises related bots, workflows, errors and code records,
-applying ranking, ROI and safety weights when available.  Win/regret rates and
-alignment severity are pulled from `VectorMetricsDB` and normalised so risky
-vectors are down‑ranked.  The compact JSON blob is ready for prompt injection or
-further processing.
+```python
+from vector_service.registry import register_vectorizer
 
-## Patch logging
+register_vectorizer(
+    "sentiment",
+    "sentiment_vectorizer",
+    "SentimentVectorizer",
+    db_module="sentiment_db",
+    db_class="SentimentDB",
+)
+```
 
-````python
-from vector_service import PatchLogger
+The registry maps the `kind` to both the vectorizer and, optionally, its database.  `EmbeddingBackfill` and the scheduler use this mapping to discover new modalities automatically.
 
-logger = PatchLogger()
-logger.track_contributors(["bot:7", "workflow:2"], True,
-                          patch_id="42", session_id="abc123")
-````
+## ROI Feedback and Database Weights
 
-`PatchLogger` records which vectors influenced a patch.  Outcomes are persisted
-in `PatchHistoryDB`/`VectorMetricsDB` and optional ROI trackers, providing
-training data for later ranking and ROI analysis.
+`ROITracker` aggregates feedback with the originating database.  Calling `retrieval_bias()` converts ROI deltas into multiplicative weights used by `ContextBuilder`, so databases with higher ROI are ranked earlier.
 
-## ROI feedback
-
-````python
+```python
 from roi_tracker import ROITracker
 
 tracker = ROITracker()
-tracker.update(0.15, retrieval_metrics=[{"origin_db": "bot", "hit": True}])
-````
+tracker.update(0.10, 0.25, retrieval_metrics=[{"origin_db": "bot", "hit": True, "tokens": 12}])
+weights = tracker.retrieval_bias()  # e.g. {"bot": 1.2}
+```
 
-`ROITracker` maintains ROI and risk‑adjusted ROI (RAROI) histories.  Retrieval
-metrics allow it to attribute ROI changes to specific databases which later
-influence ranking.
-
-## Ranking
-
-````python
-from ranking_model_scheduler import RankingModelScheduler
-
-sched = RankingModelScheduler([], roi_tracker=tracker)
-# retrain the model and notify any dependent services
-sched.retrain_and_reload()
-````
-
-`RankingModelScheduler` periodically rebuilds the retrieval ranking model and
-refreshes reliability KPIs.  When an `ROITracker` is supplied, strong ROI signals
-can trigger an earlier retrain.
-
-## CognitionLayer
-
-````python
-from roi_tracker import ROITracker
-from vector_service import CognitionLayer
-from ranking_model_scheduler import RankingModelScheduler
-
-tracker = ROITracker()
-layer = CognitionLayer(roi_tracker=tracker)
-
-ctx, sid = layer.query("optimise database indexes", session_id="abc123")
-# ... apply patch ...
-layer.record_patch_outcome(sid, True)
-
-# metrics now feed ranking updates
-sched = RankingModelScheduler([], roi_tracker=tracker)
-sched.retrain_and_reload()
-````
-
-`CognitionLayer` bundles retrieval, context assembly, ranking and patch logging
-behind two calls.  Each `query` logs token, rank and hit metrics to
-`VectorMetricsDB`; these records train the ranking model the next time
-`RankingModelScheduler` retrains.  When `record_patch_outcome` is invoked the
-same vectors are forwarded to `PatchLogger` and `ROITracker`, updating success
-rates and per‑database ROI.  Subsequent queries will surface higher ROI vectors
-earlier as both the ranker and ROI weights adapt to the accumulated metrics.
-
-## Scheduling and retraining
-
-### Embedding scheduler
-
-The scheduler runs `EmbeddingBackfill` on a timer over all
-`EmbeddableDBMixin` subclasses. Environment variables control the interval,
-batch size, backend and optional database filters:
-
-````bash
-export EMBEDDING_SCHEDULER_INTERVAL=3600   # run every hour
-export EMBEDDING_SCHEDULER_BATCH_SIZE=50   # override batch size
-export EMBEDDING_SCHEDULER_BACKEND=hnsw    # choose vector backend
-export EMBEDDING_SCHEDULER_DBS="bots,errors"  # optional filter
-python - <<'PY'
-from vector_service.embedding_scheduler import start_scheduler_from_env
-start_scheduler_from_env()
-PY
-````
-
-### Ranking model retrainer
-
-Use the CLI to keep the ranking model up to date:
-
-````bash
-python -m menace_sandbox.ranking_model_scheduler \
-    --vector-db vector_metrics.db \
-    --metrics-db metrics.db \
-    --model-path retrieval_ranker.json \
-    --interval 86400
-````
-
-The scheduler can also be embedded in code:
-
-````python
-from ranking_model_scheduler import RankingModelScheduler
-
-sched = RankingModelScheduler([service], interval=86400)
-sched.start()
-````
-
-Stop the scheduler with `sched.stop()` when shutting down.
-
-## End-to-end autonomous run
-
-The full pipeline can be exercised inside the sandbox using
-`run_autonomous.py`.  This command wires together embedding backfills,
-context assembly, patch logging and ROI feedback for a single cycle:
-
-````bash
-python run_autonomous.py --runs 1 --preset-file presets.json
-````
-
-The run generates embeddings, builds retrieval context for each task and
-records patch outcomes.  Subsequent executions reuse the accumulated metrics
-so higher ROI vectors surface earlier in the context.
+These weights adapt ranking as feedback accumulates, gradually biasing retrieval toward databases that historically produce better outcomes.
