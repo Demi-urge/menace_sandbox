@@ -12,6 +12,7 @@ import logging
 
 import sqlite3
 from .unified_event_bus import UnifiedEventBus
+from .workflow_graph import WorkflowGraph
 from vector_service import EmbeddableDBMixin
 try:
     import requests  # type: ignore
@@ -85,12 +86,14 @@ class WorkflowDB(EmbeddableDBMixin):
         path: Path | str = Path("workflows.db"),
         *,
         event_bus: Optional[UnifiedEventBus] = None,
+        workflow_graph: Optional[WorkflowGraph] = None,
         vector_backend: str = "annoy",
         vector_index_path: Path | str = "workflow_embeddings.index",
         embedding_version: int = 1,
     ) -> None:
         self.path = path
         self.event_bus = event_bus
+        self.graph = workflow_graph
         self.vector_backend = vector_backend  # kept for compatibility
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
@@ -214,6 +217,11 @@ class WorkflowDB(EmbeddableDBMixin):
                 logger.exception(
                     "embedding hook failed for %s: %s", workflow_id, exc
                 )
+        if self.graph:
+            try:
+                self.graph.update_dependencies(str(workflow_id))
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.warning("failed to update workflow graph for %s: %s", workflow_id, exc)
 
     def update_statuses(self, workflow_ids: Iterable[int], status: str) -> None:
         """Bulk update workflow status and refresh embeddings."""
@@ -235,6 +243,11 @@ class WorkflowDB(EmbeddableDBMixin):
                     self.add_embedding(wid, rec, "workflow", source_id=str(wid))
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.exception("embedding hook failed for %s: %s", wid, exc)
+                if self.graph:
+                    try:
+                        self.graph.update_dependencies(str(wid))
+                    except Exception as exc:  # pragma: no cover - best effort
+                        logger.warning("failed to update workflow graph for %s: %s", wid, exc)
         if self.event_bus:
             try:
                 for wid in ids:
@@ -299,6 +312,12 @@ class WorkflowDB(EmbeddableDBMixin):
                     wf.wid,
                     exc,
                 )
+        if self.graph:
+            try:
+                self.graph.add_workflow(str(wf.wid))
+                self.graph.update_dependencies(str(wf.wid))
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.warning("failed to update workflow graph for %s: %s", wf.wid, exc)
         return wf.wid
 
     def remove(self, workflow_id: int) -> None:
@@ -313,6 +332,13 @@ class WorkflowDB(EmbeddableDBMixin):
             except Exception as exc:
                 logger.warning(
                     "failed to publish workflow deletion %s: %s", workflow_id, exc
+                )
+        if self.graph:
+            try:
+                self.graph.remove_workflow(str(workflow_id))
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.warning(
+                    "failed to update workflow graph for deletion %s: %s", workflow_id, exc
                 )
 
     def replace(self, workflow_id: int, wf: WorkflowRecord) -> int:

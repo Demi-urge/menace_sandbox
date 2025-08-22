@@ -356,6 +356,95 @@ class WorkflowGraph:
                     node["synergy_scores"] = synergy_scores
             self._save_unlocked()
 
+    def _graph_has_cycle(self) -> bool:
+        if _HAS_NX:
+            try:
+                return not nx.is_directed_acyclic_graph(self.graph)
+            except Exception:
+                return False
+        edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.get("edges", {})
+        nodes: Dict[str, Dict[str, Any]] = self.graph.get("nodes", {})
+        visited: set[str] = set()
+        stack: set[str] = set()
+
+        def visit(node: str) -> bool:
+            if node in stack:
+                return True
+            if node in visited:
+                return False
+            visited.add(node)
+            stack.add(node)
+            for nbr in edges.get(node, {}):
+                if visit(nbr):
+                    return True
+            stack.remove(node)
+            return False
+
+        for n in nodes:
+            if visit(n):
+                return True
+        return False
+
+    def update_dependencies(self, workflow_id: str) -> None:
+        """Recompute edges touching ``workflow_id`` while preserving DAG."""
+        with self._lock:
+            if _HAS_NX:
+                if not self.graph.has_node(workflow_id):
+                    self.graph.add_node(workflow_id)
+                self.graph.remove_edges_from(list(self.graph.in_edges(workflow_id)))
+                self.graph.remove_edges_from(list(self.graph.out_edges(workflow_id)))
+                nodes = list(self.graph.nodes())
+            else:
+                nodes = list(self.graph.setdefault("nodes", {}).keys())
+                edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.setdefault(
+                    "edges", {}
+                )
+                edges.setdefault(workflow_id, {})
+                for src in list(edges.keys()):
+                    edges[src].pop(workflow_id, None)
+                edges[workflow_id] = {}
+
+            for node in nodes:
+                if node == workflow_id:
+                    continue
+                w = estimate_edge_weight(workflow_id, node)
+                if w > 0:
+                    if _HAS_NX:
+                        self.graph.add_edge(
+                            workflow_id,
+                            node,
+                            impact_weight=w,
+                            dependency_type="derived",
+                        )
+                        if self._graph_has_cycle():
+                            self.graph.remove_edge(workflow_id, node)
+                    else:
+                        edges.setdefault(workflow_id, {})[node] = {
+                            "impact_weight": w,
+                            "dependency_type": "derived",
+                        }
+                        if self._graph_has_cycle():
+                            edges[workflow_id].pop(node, None)
+                w = estimate_edge_weight(node, workflow_id)
+                if w > 0:
+                    if _HAS_NX:
+                        self.graph.add_edge(
+                            node,
+                            workflow_id,
+                            impact_weight=w,
+                            dependency_type="derived",
+                        )
+                        if self._graph_has_cycle():
+                            self.graph.remove_edge(node, workflow_id)
+                    else:
+                        edges.setdefault(node, {})[workflow_id] = {
+                            "impact_weight": w,
+                            "dependency_type": "derived",
+                        }
+                        if self._graph_has_cycle():
+                            edges[node].pop(workflow_id, None)
+            self._save_unlocked()
+
     def simulate_impact_wave(
         self,
         starting_workflow_id: str,
