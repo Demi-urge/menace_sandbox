@@ -219,6 +219,8 @@ def foresight_templates(tmp_path):
     data = {
         "profiles": {"wf": "wf"},
         "templates": {"wf": [0.5, 0.5, 0.5, 0.5, 0.5]},
+        "entropy_profiles": {"wf": "wf"},
+        "entropy_templates": {"wf": [0.2, 0.2, 0.2, 0.2, 0.2]},
     }
     path = tmp_path / "foresight_templates.yaml"
     with path.open("w", encoding="utf8") as fh:

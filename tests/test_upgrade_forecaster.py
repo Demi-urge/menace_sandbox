@@ -66,6 +66,8 @@ def test_cold_start_blends_template(monkeypatch, tmp_path):
     def fake_load(self):
         self.templates = {"wf": [0.1, 0.1, 0.1]}
         self.workflow_profiles["wf"] = "wf"
+        self.entropy_templates = {"wf": [0.4, 0.4, 0.4]}
+        self.entropy_profiles = {"wf": "wf"}
 
     monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
     tracker = ForesightTracker()
@@ -75,7 +77,7 @@ def test_cold_start_blends_template(monkeypatch, tmp_path):
     def fake_sim(*a, **k):
         return types.SimpleNamespace(
             roi_history=[0.4, 0.5, 0.6],
-            metrics_history={"synergy_shannon_entropy": [0.5, 0.5, 0.5]},
+            metrics_history={"synergy_shannon_entropy": []},
         )
 
     monkeypatch.setattr(
@@ -90,7 +92,11 @@ def test_cold_start_blends_template(monkeypatch, tmp_path):
         pytest.approx(0.26),
         pytest.approx(0.30),
     ]
-    assert result.projections[0].decay == pytest.approx(0.02)
+    assert [p.decay for p in result.projections] == [
+        pytest.approx(0.024),
+        pytest.approx(0.048),
+        pytest.approx(0.072),
+    ]
     assert result.confidence == pytest.approx(2 / 3)
 
 

@@ -56,10 +56,13 @@ class ForesightTracker:
             cfg_path = Path(__file__).resolve().parent / cfg_path
         self.template_config_path = cfg_path
         self.templates: Dict[str, list[float]] | None = None
+        self.entropy_templates: Dict[str, list[float]] | None = None
         # map workflow identifiers to their template profile
         self.workflow_profiles: Dict[str, str] = {}
+        self.entropy_profiles: Dict[str, str] = {}
         # backward compatibility for callers expecting ``profile_map``
         self.profile_map = self.workflow_profiles
+        self.entropy_profile_map = self.entropy_profiles
         self._load_templates()
 
     # ------------------------------------------------------------------
@@ -247,7 +250,7 @@ class ForesightTracker:
     def _load_templates(self) -> None:
         """Load template curves from disk if not already done."""
 
-        if self.templates is not None:
+        if self.templates is not None and self.entropy_templates is not None:
             return
         try:
             with self.template_config_path.open("r", encoding="utf8") as fh:
@@ -255,17 +258,34 @@ class ForesightTracker:
 
             profiles = data.get("profiles")
             trajectories = data.get("trajectories") or data.get("templates")
+            ent_profiles = data.get("entropy_profiles")
+            ent_traj = data.get("entropy_trajectories") or data.get(
+                "entropy_templates"
+            )
+
             merged: Dict[str, list[float]] = {}
+            merged_entropy: Dict[str, list[float]] = {}
             if isinstance(trajectories, Mapping):
                 for name, curve in trajectories.items():
                     merged[str(name)] = [float(v) for v in curve]
+            if isinstance(ent_traj, Mapping):
+                for name, curve in ent_traj.items():
+                    merged_entropy[str(name)] = [float(v) for v in curve]
+
             if isinstance(profiles, Mapping):
                 for wf_id, prof in profiles.items():
                     self.workflow_profiles[str(wf_id)] = str(prof)
+                    if ent_profiles is None:
+                        self.entropy_profiles.setdefault(str(wf_id), str(prof))
+            if isinstance(ent_profiles, Mapping):
+                for wf_id, prof in ent_profiles.items():
+                    self.entropy_profiles[str(wf_id)] = str(prof)
 
             self.templates = merged
+            self.entropy_templates = merged_entropy
         except Exception:
             self.templates = {}
+            self.entropy_templates = {}
 
     # ------------------------------------------------------------------
     def get_template_curve(self, workflow_id: str) -> list[float]:
@@ -280,6 +300,28 @@ class ForesightTracker:
         self._load_templates()
         profile = self.workflow_profiles.get(workflow_id, workflow_id)
         curve = self.templates.get(profile, []) if self.templates else []
+        return [float(v) for v in curve]
+
+    # ------------------------------------------------------------------
+    def get_entropy_template_curve(self, workflow_id: str) -> list[float]:
+        """Return the entropy template curve for ``workflow_id``.
+
+        This mirrors :meth:`get_template_curve` but looks up the trajectory for
+        the ``synergy_shannon_entropy`` metric.  When no matching curve exists,
+        an empty list is returned.  Profile mappings fall back to the ROI
+        mappings when dedicated entropy profiles are absent.
+        """
+
+        self._load_templates()
+        profile = self.entropy_profiles.get(
+            workflow_id,
+            self.workflow_profiles.get(workflow_id, workflow_id),
+        )
+        curve = (
+            self.entropy_templates.get(profile, [])
+            if self.entropy_templates
+            else []
+        )
         return [float(v) for v in curve]
 
     # ------------------------------------------------------------------
