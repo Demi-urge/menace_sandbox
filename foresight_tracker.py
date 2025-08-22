@@ -573,15 +573,19 @@ class ForesightTracker:
         Returns
         -------
         dict
-            Mapping with the projected ROI ``curve``, estimated ``collapse_in``
-            cycles (or ``None``), the risk label under ``risk`` and a
-            ``brittle`` flag.
+            Mapping with the projected ROI ``curve`` and diagnostic fields.
+            The key ``cycles_to_collapse`` reports the projected time until ROI
+            reaches zero (or ``None`` if no collapse is foreseen).  The
+            ``risk`` field holds the textual risk category and ``brittle``
+            indicates high sensitivity to entropy.  A backward compatible
+            ``collapse_in`` alias is also included.
         """
 
         history = self.history.get(workflow_id)
         if not history:
             return {
                 "curve": [],
+                "cycles_to_collapse": None,
                 "collapse_in": None,
                 "risk": "Stable",
                 "brittle": False,
@@ -614,12 +618,12 @@ class ForesightTracker:
 
         projection: List[float] = []
         proj_roi = last_roi
-        collapse_in: float | None = 0 if proj_roi <= 0 else None
+        cycles_to_collapse: float | None = 0 if proj_roi <= 0 else None
         for i in range(1, horizon + 1):
             proj_roi += effective_slope
             projection.append(proj_roi)
-            if collapse_in is None and proj_roi <= 0:
-                collapse_in = float(i)
+            if cycles_to_collapse is None and proj_roi <= 0:
+                cycles_to_collapse = float(i)
 
         brittle = False
         if len(history) >= 2:
@@ -635,14 +639,16 @@ class ForesightTracker:
             risk = "Stable"
         else:
             steep = slope < -1.0 or second_derivative < -0.1
-            if (collapse_in is not None and collapse_in <= 2) or steep:
+            if (cycles_to_collapse is not None and cycles_to_collapse <= 2) or steep:
                 risk = "Immediate collapse risk"
             else:
                 risk = "Slow decay"
 
         return {
             "curve": projection,
-            "collapse_in": collapse_in,
+            "cycles_to_collapse": cycles_to_collapse,
+            # backward compatible alias
+            "collapse_in": cycles_to_collapse,
             "risk": risk,
             "brittle": brittle,
         }
