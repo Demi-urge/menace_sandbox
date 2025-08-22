@@ -394,7 +394,7 @@ class ContextBuilder:
         self.patch_safety.max_alert_severity = self.max_alignment_severity
         self.patch_safety.max_alerts = self.max_alerts
         self.patch_safety.license_denylist = self.license_denylist
-        passed, similarity = self.patch_safety.evaluate(meta, meta)
+        passed, similarity = self.patch_safety.evaluate(meta, meta, origin=origin)
         if not passed:
             if _VECTOR_RISK is not None:
                 try:

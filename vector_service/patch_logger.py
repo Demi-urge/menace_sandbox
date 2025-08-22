@@ -200,10 +200,10 @@ class PatchLogger:
                 self.patch_safety.max_alert_severity = self.max_alert_severity
                 self.patch_safety.max_alerts = self.max_alerts
                 self.patch_safety.license_denylist = self.license_denylist
-                passed, similarity = self.patch_safety.evaluate(m, m)
+                passed, similarity = self.patch_safety.evaluate(m, m, origin=o)
                 if not result:
                     try:
-                        self.patch_safety.record_failure(m)
+                        self.patch_safety.record_failure(m, origin=o)
                     except Exception:
                         logger.exception("Failed to record failure metadata")
                 if similarity >= self.patch_safety.threshold:
