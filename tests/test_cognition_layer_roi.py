@@ -1,5 +1,6 @@
 import sys
 import types
+from typing import Dict, List
 
 import pytest
 import time
@@ -107,3 +108,61 @@ def test_patch_outcome_updates_roi_tracker_failure():
     }
     assert tracker.update_args["roi_after"] == pytest.approx(3.0)
     assert len(tracker.update_args["retrieval_metrics"]) == 3
+
+
+def test_failure_triggers_backfill_and_reliability(monkeypatch):
+    tracker = DummyTracker()
+    layer = _make_layer(tracker)
+    _, sid = layer.query("hello")
+
+    calls: Dict[str, object] = {}
+
+    async def fake_schedule_backfill(*, dbs=None, **_):
+        calls["backfill"] = dbs
+
+    monkeypatch.setattr(
+        "vector_service.cognition_layer.schedule_backfill", fake_schedule_backfill
+    )
+
+    def fake_reload() -> None:
+        calls["reload"] = True
+
+    monkeypatch.setattr(layer, "reload_reliability_scores", fake_reload)
+
+    layer.record_patch_outcome(sid, False, contribution=1.0)
+
+    assert set(calls.get("backfill") or []) == {"db1", "db2"}
+    assert calls.get("reload") is True
+
+
+class DropTracker(DummyTracker):
+    origin_db_deltas: Dict[str, List[float]] = {}
+
+    def update(self, *a, **k):
+        super().update(*a, **k)
+        self.origin_db_deltas = {"db1": [-0.5], "db2": [0.1]}
+
+
+def test_roi_drop_triggers_backfill_and_reliability(monkeypatch):
+    tracker = DropTracker()
+    layer = _make_layer(tracker)
+    _, sid = layer.query("hello")
+
+    calls: Dict[str, object] = {}
+
+    async def fake_schedule_backfill(*, dbs=None, **_):
+        calls["backfill"] = dbs
+
+    monkeypatch.setattr(
+        "vector_service.cognition_layer.schedule_backfill", fake_schedule_backfill
+    )
+
+    def fake_reload() -> None:
+        calls["reload"] = True
+
+    monkeypatch.setattr(layer, "reload_reliability_scores", fake_reload)
+
+    layer.record_patch_outcome(sid, True, contribution=1.0)
+
+    assert set(calls.get("backfill") or []) == {"db1", "db2"}
+    assert calls.get("reload") is True

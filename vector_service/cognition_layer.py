@@ -39,6 +39,7 @@ from .context_builder import ContextBuilder
 from .patch_logger import PatchLogger
 from vector_metrics_db import VectorMetricsDB
 from .decorators import log_and_measure
+from .embedding_backfill import schedule_backfill
 
 
 logger = logging.getLogger(__name__)
@@ -648,7 +649,9 @@ class CognitionLayer:
                             logger.exception("Failed to record failure metadata")
 
         roi_contribs: Dict[str, float] = {}
+        roi_actuals: Dict[str, float] = {}
         used_tracker_deltas = False
+        roi_drop = False
         if self.roi_tracker is not None:
             try:  # pragma: no cover - best effort
                 cur = self.vector_metrics.conn.execute(
@@ -679,7 +682,10 @@ class CognitionLayer:
                     key = origin or ""
                     vals = deltas.get(key)
                     if vals:
-                        roi_contribs[key] = abs(vals[-1])
+                        val = float(vals[-1])
+                        roi_actuals[key] = val
+                        roi_contribs[key] = abs(val)
+                        roi_drop = roi_drop or val < 0
                         used_tracker_deltas = True
             except Exception:
                 logger.exception("Failed to update ROI tracker with retrieval metrics")
@@ -689,6 +695,7 @@ class CognitionLayer:
             for origin, _vid, score in vectors:
                 roi = base if contribution is not None else score
                 key = origin or ""
+                roi_actuals[key] = roi
                 roi_contribs[key] = roi_contribs.get(key, 0.0) + abs(roi)
 
         if self.roi_tracker is not None and roi_contribs and not used_tracker_deltas:
@@ -705,12 +712,25 @@ class CognitionLayer:
             except Exception:
                 logger.exception("Failed to update ROI tracker DB metrics")
 
-        roi_deltas = {
-            origin: (roi if success else -roi) for origin, roi in roi_contribs.items()
-        }
+        roi_deltas: Dict[str, float] = {}
+        for origin, roi in roi_actuals.items():
+            delta = roi if success else -abs(roi)
+            roi_deltas[origin] = delta
+            if delta < 0:
+                roi_drop = True
         updates = self.update_ranker(
             vectors, success, roi_deltas=roi_deltas, risk_scores=risk_scores
         )
+
+        if not success or roi_drop:
+            try:
+                await schedule_backfill(dbs=list(roi_deltas.keys()))
+            except Exception:
+                logger.exception("Failed to schedule embedding backfill")
+            try:
+                self.reload_reliability_scores()
+            except Exception:
+                logger.exception("Failed to reload retriever reliability scores")
 
         if self.vector_metrics is not None:
             try:
