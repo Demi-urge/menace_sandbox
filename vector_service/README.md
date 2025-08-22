@@ -138,3 +138,20 @@ Additional knobs:
 When `RANKER_SCHEDULER_ROI_THRESHOLD` is set, the scheduler also subscribes to
 `UnifiedEventBus` on topic `retrieval:feedback` so large ROI swings trigger an
 immediate retrain.
+
+## Embedding backfill daemon
+
+`EmbeddingBackfill` now exposes a lightweight daemon that watches registered
+databases for new or modified records.  Invoke it as a module with the
+`--watch` flag to keep embeddings synchronised:
+
+```bash
+python -m vector_service.embedding_backfill --watch --interval 30
+```
+
+The daemon polls every `--interval` seconds (default 60) and uses
+`SharedVectorService.vectorise_and_store` to persist embeddings for any unseen
+records.  Provide `--db NAME` multiple times to restrict the watch list.
+
+A systemd unit file [`systemd/embedding_backfill_watcher.service`](../systemd/embedding_backfill_watcher.service)
+runs the daemon in the background on production hosts.

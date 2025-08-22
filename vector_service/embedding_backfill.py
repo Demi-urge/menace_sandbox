@@ -10,6 +10,10 @@ import asyncio
 from pathlib import Path
 import json
 import sys
+import hashlib
+import pkgutil
+
+from .vectorizer import SharedVectorService
 
 from .decorators import log_and_measure
 from compliance.license_fingerprint import (
@@ -165,16 +169,18 @@ class EmbeddingBackfill:
             mod_name, cls_name = mod_cls
             try:
                 mod = importlib.import_module(mod_name)
-            except Exception:
+            except BaseException:
                 try:
                     mod = importlib.import_module(f"{pkg_root}.{mod_name}")
-                except Exception as exc:  # pragma: no cover - defensive
-                    problems.append(f"{name}: import failed ({exc})")
+                except BaseException as exc:  # pragma: no cover - defensive
+                    if names is not None:
+                        problems.append(f"{name}: import failed ({exc})")
                     continue
             try:
                 cls = getattr(mod, cls_name)
-            except Exception as exc:  # pragma: no cover - defensive
-                problems.append(f"{name}: import failed ({exc})")
+            except BaseException as exc:  # pragma: no cover - defensive
+                if names is not None:
+                    problems.append(f"{name}: import failed ({exc})")
                 continue
             if not issubclass(cls, EmbeddableDBMixin):
                 problems.append(f"{name}: not EmbeddableDBMixin")
@@ -285,6 +291,57 @@ class EmbeddingBackfill:
         _RUN_OUTCOME.labels(status).inc()
         _RUN_DURATION.set(time.time() - start)
 
+    # ------------------------------------------------------------------
+    def watch(
+        self,
+        *,
+        interval: float = 60.0,
+        dbs: List[str] | None = None,
+    ) -> None:
+        """Continuously monitor databases for new or modified records.
+
+        Every ``interval`` seconds each registered database is scanned using
+        its :meth:`iter_records` implementation. Records whose content has not
+        been seen before are vectorised via
+        :meth:`SharedVectorService.vectorise_and_store`.
+
+        This simple polling loop keeps embeddings up to date without requiring
+        explicit backfill runs. State is held in memory so restarting the
+        process triggers a full scan again.
+        """
+
+        svc = SharedVectorService()
+        seen: dict[str, dict[str, str]] = {}
+        while True:
+            subclasses = self._load_known_dbs(names=dbs)
+            for cls in subclasses:
+                try:
+                    db = cls(vector_backend=self.backend)  # type: ignore[call-arg]
+                except Exception:
+                    try:
+                        db = cls()  # type: ignore[call-arg]
+                    except Exception:  # pragma: no cover - best effort
+                        continue
+                key = cls.__name__
+                cache = seen.setdefault(key, {})
+                for record_id, record, kind in getattr(db, "iter_records", lambda: [])():
+                    rid = str(record_id)
+                    try:
+                        raw = json.dumps(record, sort_keys=True, default=str)
+                    except Exception:
+                        raw = str(record)
+                    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+                    if cache.get(rid) == digest:
+                        continue
+                    try:
+                        svc.vectorise_and_store(kind, rid, record)
+                        cache[rid] = digest
+                    except Exception:  # pragma: no cover - best effort
+                        logging.getLogger(__name__).exception(
+                            "failed to vectorise record %s from %s", rid, key
+                        )
+            time.sleep(interval)
+
 
 async def schedule_backfill(
     *,
@@ -315,4 +372,20 @@ async def schedule_backfill(
 
 
 __all__ = ["EmbeddingBackfill", "EmbeddableDBMixin", "schedule_backfill", "KNOWN_DB_KINDS"]
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Embedding backfill utility")
+    parser.add_argument("--watch", action="store_true", help="run in daemon mode")
+    parser.add_argument("--interval", type=float, default=60.0, help="polling interval in seconds")
+    parser.add_argument("--db", dest="dbs", action="append", help="database name to process; can repeat")
+    args = parser.parse_args()
+
+    eb = EmbeddingBackfill()
+    if args.watch:
+        eb.watch(interval=args.interval, dbs=args.dbs)
+    else:
+        eb.run(dbs=args.dbs)
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Embedding Backfill Watcher
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/menace
+ExecStart=/usr/bin/python -m vector_service.embedding_backfill --watch
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
