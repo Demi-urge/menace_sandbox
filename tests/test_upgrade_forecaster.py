@@ -16,7 +16,7 @@ sys.modules.setdefault(
     "sandbox_runner.environment", types.SimpleNamespace(simulate_temporal_trajectory=_dummy_simulate)
 )
 
-from upgrade_forecaster import UpgradeForecaster
+from upgrade_forecaster import ForecastResult, UpgradeForecaster
 
 
 def test_forecast_uses_template_on_cold_start(monkeypatch):
@@ -28,9 +28,11 @@ def test_forecast_uses_template_on_cold_start(monkeypatch):
     tracker = ForesightTracker()
     forecaster = UpgradeForecaster(tracker)
 
-    projections = forecaster.forecast("wf", patch=[], cycles=3)
-    rois = [p.roi for p in projections]
+    result = forecaster.forecast("wf", patch=[], cycles=3)
+    assert isinstance(result, ForecastResult)
+    rois = [p.roi for p in result.projections]
     assert rois == [pytest.approx(0.1), pytest.approx(0.2), pytest.approx(0.3)]
-    assert projections[0].risk == pytest.approx(0.9)
-    assert projections[0].decay == pytest.approx(0.0)
+    assert result.projections[0].risk == pytest.approx(0.9)
+    assert result.projections[0].decay == pytest.approx(0.0)
+    assert result.confidence == pytest.approx(0.0)
 

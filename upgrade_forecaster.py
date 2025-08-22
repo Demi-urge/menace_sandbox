@@ -31,6 +31,14 @@ class CycleProjection:
     decay: float
 
 
+@dataclass
+class ForecastResult:
+    """Collection of projected cycles and an overall confidence score."""
+
+    projections: List[CycleProjection]
+    confidence: float
+
+
 class UpgradeForecaster:
     """Combine historic trends with sandbox simulations to forecast upgrades."""
 
@@ -49,8 +57,8 @@ class UpgradeForecaster:
         return [float(entry.get(key, 0.0)) for entry in profile]
 
     # ------------------------------------------------------------------
-    def forecast(self, workflow_id: str, patch: Iterable[str] | str, cycles: int = 5) -> List[CycleProjection]:
-        """Return projections for the next ``cycles`` (3–5 typical).
+    def forecast(self, workflow_id: str, patch: Iterable[str] | str, cycles: int = 5) -> ForecastResult:
+        """Return projections and an overall confidence score for ``cycles`` ahead.
 
         Parameters
         ----------
@@ -80,7 +88,9 @@ class UpgradeForecaster:
                 risk = max(0.0, min(1.0, 1.0 - roi))
                 decay = max(0.0, -roi)
                 projections.append(CycleProjection(i, roi, risk, 0.0, decay))
-            return projections
+            samples = len(self.tracker.history.get(str(workflow_id), []))
+            confidence = samples / (samples + 1.0)
+            return ForecastResult(projections, confidence)
 
         # Pull historical metrics and compute trend characteristics
         slope, _, stability = self.tracker.get_trend_curve(str(workflow_id))
@@ -102,6 +112,7 @@ class UpgradeForecaster:
         )
         roi_hist = getattr(roi_tracker, "roi_history", [])
         sim_roi = float(roi_hist[-1]) if roi_hist else base_roi
+        sim_variance = float(np.var(roi_hist)) if roi_hist else 0.0
         metrics_hist = getattr(roi_tracker, "metrics_history", {})
         ent_hist = metrics_hist.get("synergy_shannon_entropy", [])
         entropy = float(ent_hist[-1]) if ent_hist else 0.0
@@ -122,4 +133,7 @@ class UpgradeForecaster:
             out_path.write_text(json.dumps([p.__dict__ for p in projections], indent=2))
         except Exception:
             pass
-        return projections
+
+        samples = len(self.tracker.history.get(str(workflow_id), []))
+        confidence = (samples / (samples + 1.0)) * (1.0 / (1.0 + sim_variance))
+        return ForecastResult(projections, confidence)
