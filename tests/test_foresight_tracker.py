@@ -154,6 +154,43 @@ def test_is_cold_start_for_insufficient_cycles_or_zero_roi():
     assert tracker_zero.is_cold_start("wf")  # zero ROI across cycles
 
 
+def test_template_blending_and_cold_start(tmp_path):
+    cfg = tmp_path / "foresight_templates.yaml"
+    cfg.write_text(
+        "profiles:\n  wf: basic\ntrajectories:\n  basic: [0.5, 0.5, 0.5, 0.5, 0.5]\n",
+        encoding="utf8",
+    )
+
+    tracker = ForesightTracker(templates_path=cfg)
+
+    class DummyROITracker:
+        def __init__(self):
+            self.roi_history = []
+            self.raroi_history = []
+            self.confidence_history = []
+            self.metrics_history = {"synergy_resilience": []}
+
+        def scenario_degradation(self):
+            return 0.0
+
+    dummy = DummyROITracker()
+
+    dummy.roi_history.append(1.0)
+    tracker.capture_from_roi(dummy, "wf")
+    assert tracker.is_cold_start("wf")
+    assert tracker.history["wf"][0]["roi_delta"] == pytest.approx(0.5)
+
+    dummy.roi_history.append(1.0)
+    tracker.capture_from_roi(dummy, "wf")
+    assert tracker.is_cold_start("wf")
+    assert tracker.history["wf"][1]["roi_delta"] == pytest.approx(0.6)
+
+    dummy.roi_history.append(1.0)
+    tracker.capture_from_roi(dummy, "wf")
+    assert not tracker.is_cold_start("wf")
+    assert tracker.history["wf"][2]["roi_delta"] == pytest.approx(0.7)
+
+
 def test_capture_from_roi_records_latest_metrics():
     ft = ForesightTracker()
 
