@@ -46,8 +46,7 @@ from .trend_predictor import TrendPredictor
 from .identity_seeder import seed_identity
 from .session_vault import SessionVault
 import requests
-from vector_service.cognition_layer import CognitionLayer
-from roi_tracker import ROITracker
+from .cognition_layer import build_cognitive_context, log_feedback
 
 
 class _RemoteVisualAgent:
@@ -261,8 +260,6 @@ class MenaceOrchestrator:
         self.discrepancy_detector = DiscrepancyDetectionBot()
         self.bottleneck_detector = EfficiencyBot()
         self.visual_client = visual_agent_client or _RemoteVisualAgent()
-        self.roi_tracker = ROITracker()
-        self.cognition_layer = CognitionLayer(roi_tracker=self.roi_tracker)
 
     # ------------------------------------------------------------------
     def status_summary(self) -> Dict[str, object]:
@@ -372,7 +369,7 @@ class MenaceOrchestrator:
             eng = self.engines.get(node)
             if not eng:
                 continue
-            _ctx, session_id = self.cognition_layer.query(
+            _ctx, session_id = build_cognitive_context(
                 f"apply patch {description} on {node}"
             )
             try:
@@ -385,14 +382,14 @@ class MenaceOrchestrator:
                 )
                 results[node] = (pid, reverted)
                 success = pid is not None and not reverted
-                self.cognition_layer.record_patch_outcome(
+                log_feedback(
                     session_id,
                     success,
                     patch_id=str(pid) if pid is not None else "",
                     contribution=1.0 if success else 0.0,
                 )
             except Exception:
-                self.cognition_layer.record_patch_outcome(session_id, False, contribution=0.0)
+                log_feedback(session_id, False, contribution=0.0)
                 raise
             if pid is not None and not reverted and self.rollback_mgr:
                 self.rollback_mgr.register_patch(str(pid), node)

@@ -267,6 +267,7 @@ __all__ = [
     "synergy_history_db",
     "synergy_auto_trainer",
     "variant_manager",
+    "cognition_layer",
 ]
 __all__.append("readiness_index")
 __version__ = "0.1.0"
