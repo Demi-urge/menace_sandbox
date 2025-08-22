@@ -10,3 +10,6 @@ bot:
 api_keys:
   openai: prod-openai-key
   serp: prod-serp-key
+# Ranker scheduler environment variables:
+# - RANKER_SCHEDULER_INTERVAL: seconds between retrains (0 disables)
+# - RANKER_SCHEDULER_ROI_THRESHOLD: ROI delta triggering immediate retrain

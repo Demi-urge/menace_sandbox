@@ -26,6 +26,8 @@ from vector_service import (
     Retriever,
     VectorServiceError,
 )
+from roi_tracker import ROITracker
+from ranking_model_scheduler import RankingModelScheduler
 
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
@@ -40,9 +42,21 @@ app = FastAPI()
 # Service instances are kept globally for simplicity.  They are lightweight and
 # expose stateless interfaces which makes them safe to reuse across requests.
 _retriever = Retriever()
-_cognition_layer = CognitionLayer()
-_patch_logger = PatchLogger()
+_roi_tracker = ROITracker()
+_cognition_layer = CognitionLayer(roi_tracker=_roi_tracker)
+_patch_logger = PatchLogger(roi_tracker=_roi_tracker)
 _backfill = EmbeddingBackfill()
+_ranker_scheduler = None
+_interval = float(os.getenv("RANKER_SCHEDULER_INTERVAL", "0"))
+if _interval > 0:
+    _roi_thresh = os.getenv("RANKER_SCHEDULER_ROI_THRESHOLD")
+    _ranker_scheduler = RankingModelScheduler(
+        [_cognition_layer],
+        interval=int(_interval),
+        roi_tracker=_roi_tracker,
+        roi_signal_threshold=float(_roi_thresh) if _roi_thresh else None,
+    )
+    _ranker_scheduler.start()
 
 logger = logging.getLogger(__name__)
 

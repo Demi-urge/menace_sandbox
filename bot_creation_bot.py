@@ -34,6 +34,7 @@ from .admin_bot_base import AdminBotBase
 from datetime import datetime
 from .database_manager import DB_PATH, update_model
 from vector_service.cognition_layer import CognitionLayer
+from roi_tracker import ROITracker
 
 
 @dataclass
@@ -99,7 +100,8 @@ class BotCreationBot(AdminBotBase):
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("BotCreationBot")
         self._creation_times: Deque[float] = deque()
-        self.cognition_layer = CognitionLayer()
+        self.roi_tracker = ROITracker()
+        self.cognition_layer = CognitionLayer(roi_tracker=self.roi_tracker)
 
     def prime(self) -> None:
         """Prime the bot for upcoming creation tasks."""
