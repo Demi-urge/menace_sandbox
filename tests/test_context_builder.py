@@ -521,7 +521,7 @@ def test_refresh_db_weights(tmp_path):
     assert builder.db_weights["db1"] == pytest.approx(0.5)
 
     builder.refresh_db_weights(vector_metrics=db)
-    assert builder.db_weights["db1"] == pytest.approx(1.2)
+    assert builder.db_weights["db1"] == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize("bad_query", ["", None, 123])

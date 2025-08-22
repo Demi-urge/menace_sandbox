@@ -43,10 +43,10 @@ def test_update_ranker_applies_tracker_deltas(tmp_path):
     layer.update_ranker(vectors, True)
     weights = db.get_db_weights()
     assert tracker.calls == 1
-    assert weights["A"] == pytest.approx(0.5)
-    assert weights["B"] == pytest.approx(-0.25)
-    assert builder.db_weights["A"] == pytest.approx(0.5)
-    assert builder.db_weights["B"] == pytest.approx(-0.25)
+    assert weights["A"] == pytest.approx(1.0)
+    assert weights["B"] == pytest.approx(0.0)
+    assert builder.db_weights["A"] == pytest.approx(1.0)
+    assert builder.db_weights["B"] == pytest.approx(0.0)
 
 
 def test_update_ranker_aggregates_subsequent_deltas(tmp_path):
@@ -58,8 +58,8 @@ def test_update_ranker_aggregates_subsequent_deltas(tmp_path):
     layer.update_ranker(vectors, True)
     weights = db.get_db_weights()
     assert tracker.calls == 2
-    assert weights["A"] == pytest.approx(0.5)
-    assert builder.db_weights["A"] == pytest.approx(0.5)
+    assert weights["A"] == pytest.approx(1.0)
+    assert builder.db_weights["A"] == pytest.approx(1.0)
 
 
 def test_track_contributors_applies_safety_thresholds(tmp_path):

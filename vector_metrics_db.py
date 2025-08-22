@@ -167,22 +167,48 @@ class VectorMetricsDB:
         return {str(db): float(weight) for db, weight in rows}
 
     # ------------------------------------------------------------------
-    def update_db_weight(self, db: str, delta: float) -> float:
+    def update_db_weight(self, db: str, delta: float, *, normalize: bool = False) -> float:
         """Adjust ranking weight for *db* by ``delta`` and persist it.
 
-        Returns the new weight value."""
+        Weights are clamped to the inclusive range ``[0, 1]`` so repeated
+        positive or negative feedback cannot push them outside sensible
+        bounds.  When ``normalize`` is ``True`` all weights are also
+        renormalised so their sum equals 1.0.  The new weight for ``db`` is
+        returned (after optional normalisation)."""
 
         cur = self.conn.execute(
             "SELECT weight FROM ranking_weights WHERE db=?", (db,)
         )
         row = cur.fetchone()
         weight = float(row[0]) if row and row[0] is not None else 0.0
-        weight += delta
+        weight = max(0.0, min(1.0, weight + delta))
         self.conn.execute(
             "REPLACE INTO ranking_weights(db, weight) VALUES(?, ?)", (db, weight)
         )
         self.conn.commit()
+        if normalize:
+            return self.normalize_db_weights().get(db, weight)
         return weight
+
+    # ------------------------------------------------------------------
+    def normalize_db_weights(self) -> dict[str, float]:
+        """Scale all weights so they sum to 1.0.
+
+        Returns the normalised weight mapping."""
+
+        cur = self.conn.execute("SELECT db, weight FROM ranking_weights")
+        rows = [(str(db), float(w)) for db, w in cur.fetchall()]
+        total = sum(w for _db, w in rows)
+        if total > 0:
+            for db, w in rows:
+                norm = w / total
+                self.conn.execute(
+                    "REPLACE INTO ranking_weights(db, weight) VALUES(?, ?)",
+                    (db, norm),
+                )
+            self.conn.commit()
+            return {db: w / total for db, w in rows}
+        return {db: w for db, w in rows}
 
     # ------------------------------------------------------------------
     def save_session(
