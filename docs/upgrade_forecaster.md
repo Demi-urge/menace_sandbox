@@ -66,5 +66,6 @@ Each ``projection`` entry contains the projected cycle number together with esti
 ## Record retrieval
 
 Persisted forecasts live under ``forecast_records/``. Use :func:`load_record` to reload the most
-recent result for a workflow. The JSON record includes the top‑level ``timestamp`` field shown
-above in addition to ``projections`` and overall ``confidence``.
+recent result for a workflow. :func:`list_records` returns a summary of all available records with
+their workflow identifiers, upgrade hashes and timestamps. The JSON record includes the top‑level
+``timestamp`` field shown above in addition to ``projections`` and overall ``confidence``.
