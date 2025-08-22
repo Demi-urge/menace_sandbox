@@ -589,6 +589,28 @@ class CognitionLayer:
                 logger.exception("Failed to load vectors for session %s", session_id)
         if not vectors:
             return
+        # Extract any pre-computed risk scores from retrieval metadata so they
+        # can influence ranking weights even if the patch logger cannot
+        # reproduce them (for example when failure embeddings are unavailable).
+        risk_scores: Dict[str, float] = {}
+        if meta:
+            for origin, vid, _ in vectors:
+                key = f"{origin}:{vid}" if origin else vid
+                info = meta.get(key, {}) if isinstance(meta, dict) else {}
+                rs = None
+                if isinstance(info, dict):
+                    rs = info.get("risk_score")
+                    if rs is None:
+                        inner = info.get("metadata")
+                        if isinstance(inner, dict):
+                            rs = inner.get("risk_score")
+                if rs is not None:
+                    try:
+                        ok = origin or ""
+                        risk_scores[ok] = max(risk_scores.get(ok, 0.0), float(rs))
+                    except Exception:
+                        pass
+
         vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
         if async_mode:
             result = await self.patch_logger.track_contributors_async(
@@ -609,7 +631,10 @@ class CognitionLayer:
                 retrieval_metadata=meta,
             )
 
-        risk_scores = dict(result or {})
+        result_scores = dict(result or {})
+        for origin, score in result_scores.items():
+            key = origin or ""
+            risk_scores[key] = max(risk_scores.get(key, 0.0), score)
 
         if not success:
             errors = getattr(result, "errors", []) if result else []
