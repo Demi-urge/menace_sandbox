@@ -13,6 +13,7 @@ from pathlib import Path
 import threading
 import time
 from typing import Iterable, Sequence, Any, Optional
+import pandas as pd
 import logging
 import json
 
@@ -273,6 +274,18 @@ class RankingModelScheduler:
         # Update reliability KPIs before training so latest values are joined
         compute_retriever_stats(self.metrics_db)
 
+        # Recalculate ranking weights from accumulated metrics so training
+        # reflects the latest ROI and safety signals.
+        new_weights: dict[str, float] = {}
+        try:
+            db = VectorMetricsDB(self.vector_db)
+            try:
+                new_weights = db.recalc_ranking_weights()
+            finally:
+                db.conn.close()
+        except Exception:
+            logging.exception("ranking weight update failed")
+
         if self.roi_tracker is not None:
             try:
                 base_roi = (
@@ -312,7 +325,11 @@ class RankingModelScheduler:
         # Build the training dataframe directly from the metrics databases and
         # invoke ``retrieval_ranker`` to fit a new model.  This mirrors running
         # ``python retrieval_ranker.py train`` but avoids spawning a subprocess.
-        df = build_dataset(vector_db=self.vector_db, patch_db=self.metrics_db)
+        try:
+            df = build_dataset(vector_db=self.vector_db, patch_db=self.metrics_db)
+        except Exception:
+            logging.exception("failed to build training dataset")
+            df = pd.DataFrame()
         trained = rr.train(df)
         tm = trained[0] if isinstance(trained, tuple) else trained
         model_dir = self.model_path.parent
@@ -324,15 +341,16 @@ class RankingModelScheduler:
         # Load any persisted ranking weights so services can refresh their
         # ContextBuilder instances.  ``update_ranker`` stores these weights
         # under the ``weights`` key in ``retrieval_ranker.json``.
-        weights: dict[str, float] = {}
-        try:
-            cfg = json.loads(self.model_path.read_text())
-            if isinstance(cfg, dict):
-                w = cfg.get("weights")
-                if isinstance(w, dict):
-                    weights = {str(k): float(v) for k, v in w.items()}
-        except Exception:
-            pass
+        weights: dict[str, float] = new_weights or {}
+        if not weights:
+            try:
+                cfg = json.loads(self.model_path.read_text())
+                if isinstance(cfg, dict):
+                    w = cfg.get("weights")
+                    if isinstance(w, dict):
+                        weights = {str(k): float(v) for k, v in w.items()}
+            except Exception:
+                pass
 
         # Reload model, reliability scores and ranking weights in running services
         def _reload_all(svc: Any) -> None:
@@ -490,7 +508,20 @@ class RankingModelScheduler:
         self.running = False
         if self._thread is not None:
             self._thread.join(timeout=0)
-            self._thread = None
+        self._thread = None
+
+
+def schedule_ranking_model_retrain(
+    services: Sequence[Any],
+    *,
+    interval: int = 86400,
+    **kwargs: Any,
+) -> RankingModelScheduler:
+    """Start a background job that periodically retrains the ranking model."""
+
+    sched = RankingModelScheduler(services, interval=interval, **kwargs)
+    sched.start()
+    return sched
 
 
 def main(argv: Iterable[str] | None = None) -> int:

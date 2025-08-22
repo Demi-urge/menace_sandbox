@@ -223,6 +223,36 @@ class VectorMetricsDB:
         self.conn.commit()
 
     # ------------------------------------------------------------------
+    def recalc_ranking_weights(self) -> Dict[str, float]:
+        """Recalculate ranking weights from cumulative ROI and safety data."""
+
+        cur = self.conn.execute(
+            """
+            SELECT db,
+                   COALESCE(SUM(contribution),0) AS roi,
+                   COALESCE(AVG(win),0) AS win_rate,
+                   COALESCE(AVG(regret),0) AS regret_rate
+              FROM vector_metrics
+             WHERE event_type='retrieval'
+             GROUP BY db
+            """
+        )
+        weights: Dict[str, float] = {}
+        for db, roi, win_rate, regret_rate in cur.fetchall():
+            roi = float(roi or 0.0)
+            win = float(win_rate or 0.0)
+            regret = float(regret_rate or 0.0)
+            score = roi * max(win, 0.01) * (1.0 - regret)
+            if score < 0:
+                score = 0.0
+            weights[str(db)] = score
+        total = sum(weights.values())
+        if total > 0:
+            weights = {db: w / total for db, w in weights.items()}
+        self.set_db_weights(weights)
+        return weights
+
+    # ------------------------------------------------------------------
     def save_session(
         self,
         session_id: str,
