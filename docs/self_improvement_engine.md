@@ -82,6 +82,14 @@ drop in recorded `tests` or a rise in overall `complexity` will raise
 maintainability warnings even when performance indicators such as accuracy or
 ROI improve. Clearing the variable disables the baseline comparison.
 
+## Promotion gating via collapse prediction
+
+Before a workflow's new version is promoted, the engine consults
+``ForesightTracker.predict_roi_collapse``. Promotions proceed only when
+``risk_class`` resolves to ``Stable`` or ``Slow decay``. Workflows flagged as
+``Volatile`` or ``Immediate collapse risk`` remain in evaluation until their
+metrics stabilise, preventing short‑lived spikes from being deployed.
+
 ## Adaptive ROI Prediction
 
 `SelfImprovementEngine` can call the `AdaptiveROIPredictor` to estimate the
