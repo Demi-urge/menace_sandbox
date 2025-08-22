@@ -31,12 +31,16 @@ import time
 import asyncio
 import json
 from pathlib import Path
+import logging
 
 from .retriever import Retriever
 from .context_builder import ContextBuilder
 from .patch_logger import PatchLogger
 from vector_metrics_db import VectorMetricsDB
 from .decorators import log_and_measure
+
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - optional dependency
     from roi_tracker import ROITracker  # type: ignore
@@ -95,7 +99,7 @@ class CognitionLayer:
                 elif hasattr(self.context_builder, "db_weights"):
                     self.context_builder.db_weights.update(db_weights)  # type: ignore[attr-defined]
             except Exception:
-                pass
+                logger.exception("Failed to refresh context builder db weights")
         self.patch_logger = patch_logger or PatchLogger(
             vector_metrics=self.vector_metrics,
             roi_tracker=self.roi_tracker,
@@ -112,7 +116,7 @@ class CognitionLayer:
                     self._session_vectors[sid] = vecs
                     self._retrieval_meta[sid] = meta
             except Exception:
-                pass
+                logger.exception("Failed to load pending sessions from metrics DB")
 
     # ------------------------------------------------------------------
     def reload_ranker_model(self, model_path: str | "Path") -> None:
@@ -121,7 +125,7 @@ class CognitionLayer:
         try:
             self.retriever.reload_ranker_model(model_path)  # type: ignore[arg-type]
         except Exception:
-            pass
+            logger.exception("Failed to reload ranker model on retriever")
         try:
             from pathlib import Path
 
@@ -132,7 +136,7 @@ class CognitionLayer:
 
             self.context_builder.ranking_model = _rr.load_model(Path(model_path))
         except Exception:
-            pass
+            logger.exception("Failed to load ranking model from %s", model_path)
 
     # ------------------------------------------------------------------
     def reload_reliability_scores(self) -> None:
@@ -141,7 +145,7 @@ class CognitionLayer:
         try:
             self.retriever.reload_reliability_scores()  # type: ignore[attr-defined]
         except Exception:
-            pass
+            logger.exception("Failed to reload retriever reliability scores")
 
     # ------------------------------------------------------------------
     def update_ranker(
@@ -186,7 +190,7 @@ class CognitionLayer:
                     if vals:
                         per_db[origin] = float(vals[-1])
             except Exception:
-                pass
+                logger.exception("Failed to fetch ROI tracker origin deltas")
 
         if not per_db:
             delta = 0.1 if success else -0.1
@@ -204,7 +208,7 @@ class CognitionLayer:
             try:
                 updates[origin] = self.vector_metrics.update_db_weight(origin, change)
             except Exception:
-                pass
+                logger.exception("Failed to update db weight for %s", origin)
 
         if updates:
             try:
@@ -221,7 +225,7 @@ class CognitionLayer:
                     except Exception:
                         self.context_builder.db_weights = dict(all_weights)  # type: ignore[attr-defined]
             except Exception:
-                pass
+                logger.exception("Failed to apply updated db weights to context builder")
 
             # Persist full weight mapping so external services can reload after
             # restarts.  We merge into ``retrieval_ranker.json`` which already
@@ -235,7 +239,7 @@ class CognitionLayer:
                         if isinstance(loaded, dict):
                             data.update(loaded)
                     except Exception:
-                        pass
+                        logger.exception("Failed to read retrieval_ranker.json")
                 weights = data.get("weights") or {}
                 if not isinstance(weights, dict):
                     weights = {}
@@ -247,7 +251,7 @@ class CognitionLayer:
                 data["weights"] = weights
                 cfg.write_text(json.dumps(data))
             except Exception:
-                pass
+                logger.exception("Failed to persist retrieval ranker weights")
         return updates
 
     # ------------------------------------------------------------------
@@ -354,13 +358,13 @@ class CognitionLayer:
                         age=age,
                     )
                 except Exception:
-                    pass
+                    logger.exception("Failed to log retrieval metrics")
         self._retrieval_meta[sid] = meta_map
         if self.vector_metrics is not None:
             try:
                 self.vector_metrics.save_session(sid, vectors, meta_map)
             except Exception:
-                pass
+                logger.exception("Failed to save retrieval session")
         return context, sid
 
     # ------------------------------------------------------------------
@@ -462,13 +466,13 @@ class CognitionLayer:
                         age=age,
                     )
                 except Exception:
-                    pass
+                    logger.exception("Failed to log retrieval metrics")
         self._retrieval_meta[sid] = meta_map
         if self.vector_metrics is not None:
             try:
                 self.vector_metrics.save_session(sid, vectors, meta_map)
             except Exception:
-                pass
+                logger.exception("Failed to save retrieval session")
         return context, sid
 
     # ------------------------------------------------------------------
@@ -494,7 +498,7 @@ class CognitionLayer:
                 if stored:
                     vectors, meta = stored
             except Exception:
-                pass
+                logger.exception("Failed to load vectors for session %s", session_id)
         if not vectors:
             return
         vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
@@ -554,7 +558,7 @@ class CognitionLayer:
                         roi_contribs[key] = abs(vals[-1])
                         used_tracker_deltas = True
             except Exception:
-                pass
+                logger.exception("Failed to update ROI tracker with retrieval metrics")
 
         if not roi_contribs:
             base = 0.0 if contribution is None else contribution
@@ -575,7 +579,7 @@ class CognitionLayer:
             try:
                 self.roi_tracker.update_db_metrics(metrics)
             except Exception:
-                pass
+                logger.exception("Failed to update ROI tracker DB metrics")
 
         roi_deltas = {
             origin: (roi if success else -roi) for origin, roi in roi_contribs.items()
@@ -599,12 +603,12 @@ class CognitionLayer:
                     try:
                         bus.publish("retrieval:feedback", payload)
                     except Exception:
-                        pass
+                        logger.exception("Failed to publish retrieval feedback")
         if self.vector_metrics is not None:
             try:
                 self.vector_metrics.delete_session(session_id)
             except Exception:
-                pass
+                logger.exception("Failed to delete session %s", session_id)
 
     # ------------------------------------------------------------------
     def record_patch_outcome(
