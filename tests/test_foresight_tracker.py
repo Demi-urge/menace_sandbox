@@ -8,7 +8,10 @@ from foresight_tracker import ForesightTracker
 
 @pytest.fixture
 def foresight_templates(tmp_path):
-    data = {"wf": [0.5, 0.5, 0.5, 0.5, 0.5]}
+    data = {
+        "profiles": {"wf": "wf"},
+        "templates": {"wf": [0.5, 0.5, 0.5, 0.5, 0.5]},
+    }
     path = tmp_path / "foresight_templates.yaml"
     with path.open("w", encoding="utf8") as fh:
         yaml.safe_dump(data, fh)

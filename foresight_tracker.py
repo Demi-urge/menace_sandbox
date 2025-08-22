@@ -40,7 +40,10 @@ class ForesightTracker:
         self.max_cycles = max_cycles
         self.volatility_threshold = volatility_threshold
         self.history: Dict[str, Deque[Dict[str, float]]] = {}
-        self.template_config_path = Path(template_config_path)
+        cfg_path = Path(template_config_path)
+        if not cfg_path.is_absolute():
+            cfg_path = Path(__file__).resolve().parent / cfg_path
+        self.template_config_path = cfg_path
         self.templates: Dict[str, list[float]] | None = None
 
     # ------------------------------------------------------------------
@@ -169,7 +172,24 @@ class ForesightTracker:
             return
         try:
             with self.template_config_path.open("r", encoding="utf8") as fh:
-                self.templates = yaml.safe_load(fh) or {}
+                data = yaml.safe_load(fh) or {}
+
+            profiles = data.get("profiles")
+            templates = data.get("templates")
+            merged: Dict[str, list[float]] = {}
+            if isinstance(profiles, Mapping) and isinstance(templates, Mapping):
+                for name, curve in templates.items():
+                    merged[name] = [float(v) for v in curve]
+                for profile, template_name in profiles.items():
+                    curve = templates.get(template_name, [])
+                    merged[profile] = [float(v) for v in curve]
+            else:
+                merged = {
+                    str(name): [float(v) for v in curve]
+                    for name, curve in data.items()
+                }
+
+            self.templates = merged
         except Exception:
             self.templates = {}
 
