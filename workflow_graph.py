@@ -201,6 +201,20 @@ class WorkflowGraph:
             )
             self.save()
 
+            # Propagate the change through the dependency graph so
+            # downstream modules can react to the updated workflow.
+            try:
+                roi_delta = float(event.get("roi_delta", 0.0) or 0.0)
+                synergy_delta = float(event.get("synergy_delta", 0.0) or 0.0)
+                impacts = self.simulate_impact_wave(wid, roi_delta, synergy_delta)
+                logger.info("Impact wave from %s: %s", wid, impacts)
+                bus.publish(
+                    "workflows:impact_wave",
+                    {"start_id": wid, "impact_map": impacts},
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.warning("failed to simulate impact wave for %s: %s", wid, exc)
+
         def _on_remove(_topic: str, event: object) -> None:
             wid = _get_id(event)
             if wid is None:
