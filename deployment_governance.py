@@ -460,7 +460,7 @@ def evaluate_workflow(
     ):
         try:
             risk = foresight_tracker.predict_roi_collapse(workflow_id)
-            if risk.get("risk_class") == "Immediate collapse risk" or bool(
+            if risk.get("risk") == "Immediate collapse risk" or bool(
                 risk.get("brittle")
             ):
                 verdict = "no_go"
@@ -524,7 +524,7 @@ def evaluate(
         ):
             try:
                 risk = foresight_tracker.predict_roi_collapse(workflow_id)
-                if risk.get("risk_class") == "Immediate collapse risk" or bool(
+                if risk.get("risk") == "Immediate collapse risk" or bool(
                     risk.get("brittle")
                 ):
                     verdict = "no_go"
@@ -802,7 +802,7 @@ class RuleEvaluator:
                         ):
                             try:
                                 risk = foresight_tracker.predict_roi_collapse(workflow_id)
-                                if risk.get("risk_class") == "Immediate collapse risk" or bool(
+                                if risk.get("risk") == "Immediate collapse risk" or bool(
                                     risk.get("brittle")
                                 ):
                                     result["decision"] = "demote"

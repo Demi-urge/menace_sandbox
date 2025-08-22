@@ -45,7 +45,7 @@ class MiniSelfImprovementEngine:
 
     def attempt_promotion(self, workflow_id="wf"):
         risk = self.foresight_tracker.predict_roi_collapse(workflow_id)
-        if risk.get("risk_class") == "Immediate collapse risk" or risk.get(
+        if risk.get("risk") == "Immediate collapse risk" or risk.get(
             "brittle"
         ):
             self.workflow_ready = False
@@ -112,13 +112,13 @@ def test_promotion_blocked_by_risk_or_brittleness():
 
     # Immediate collapse risk should block promotion
     ft.predict_roi_collapse = lambda wf: {
-        "risk_class": "Immediate collapse risk",
+        "risk": "Immediate collapse risk",
         "brittle": False,
     }
     eng.attempt_promotion()
     assert not eng.workflow_ready
 
     # Brittleness alone should also block promotion
-    ft.predict_roi_collapse = lambda wf: {"risk_class": "Stable", "brittle": True}
+    ft.predict_roi_collapse = lambda wf: {"risk": "Stable", "brittle": True}
     eng.attempt_promotion()
     assert not eng.workflow_ready

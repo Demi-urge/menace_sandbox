@@ -141,20 +141,20 @@ from :func:`get_entropy_template_curve`.
 
 ### Returned fields
 
-- ``risk_class`` – one of ``Stable``, ``Slow decay``, ``Volatile`` or
+- ``risk`` – one of ``Stable``, ``Slow decay``, ``Volatile`` or
   ``Immediate collapse risk``.
 - ``cycles_to_collapse`` – estimated cycles remaining before ROI becomes
   negative, or ``None`` if no collapse is predicted.
 - ``brittle`` – ``True`` when small entropy changes produce large ROI drops.
-- ``collapse_curve`` – projected ROI values for future cycles until collapse
-  or the horizon limit.
+- ``projection`` – projected ROI values for future cycles up to the horizon or
+  until collapse.
 
 ### Example
 
 ```python
 tracker = ForesightTracker(max_cycles=5)
 risk = tracker.predict_roi_collapse("workflow-1")
-if risk["risk_class"] != "Stable":
+if risk["risk"] != "Stable":
     print("workflow-1 needs attention:", risk)
 ```
 

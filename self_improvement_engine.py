@@ -5478,7 +5478,7 @@ class SelfImprovementEngine:
                         except Exception:
                             self.logger.exception("foresight risk check failed")
                         if risk and (
-                            risk.get("risk_class") == "Immediate collapse risk"
+                            risk.get("risk") == "Immediate collapse risk"
                             or bool(risk.get("brittle"))
                         ):
                             try:
@@ -5486,7 +5486,7 @@ class SelfImprovementEngine:
                                     "promotion blocked due to ROI collapse risk",
                                     extra=log_record(
                                         workflow_id=workflow_id,
-                                        risk=risk.get("risk_class"),
+                                        risk=risk.get("risk"),
                                         brittle=risk.get("brittle"),
                                     ),
                                 )
