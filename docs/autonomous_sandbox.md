@@ -12,6 +12,10 @@ concurrency options, see the sections on [Predefined Profiles](sandbox_runner.md
 [Concurrency Settings](environment_generator.md#concurrency-settings) in
 `environment_generator.md`.
 
+## Upgrade forecasting
+
+See [UpgradeForecaster](upgrade_forecaster.md) for projecting ROI and risk across upcoming improvement cycles.
+
 ## GPT Interaction Tags
 
 All GPT interactions are recorded with a standard tag so that feedback and
