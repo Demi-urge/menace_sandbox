@@ -161,9 +161,9 @@ class CognitionLayer:
         retrievals can prioritise sources that historically produced
         successful patches.  ROI deltas from ``roi_tracker`` or the provided
         ``roi_deltas`` mapping directly influence the weight adjustments.
-        When ``risk_scores`` are supplied, origins that emitted vectors with
-        high alignment severity or semantic alerts receive a negative penalty
-        proportional to the score so risky databases are down-weighted.
+        When ``risk_scores`` are supplied, origins whose vectors closely
+        resemble past failures receive a negative penalty proportional to the
+        similarity score so risky databases are down-weighted.
 
         Weights are persisted in :class:`VectorMetricsDB` so the behaviour
         survives restarts.  The new weights are returned as a mapping.
@@ -198,9 +198,9 @@ class CognitionLayer:
                 per_db[origin] = per_db.get(origin, 0.0) + delta
 
         if risk_scores:
-            for origin, sev in risk_scores.items():
+            for origin, score in risk_scores.items():
                 key = origin or ""
-                penalty = abs(sev)
+                penalty = abs(score)
                 per_db[key] = per_db.get(key, 0.0) - penalty
 
         updates: Dict[str, float] = {}
