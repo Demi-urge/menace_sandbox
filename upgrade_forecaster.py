@@ -84,11 +84,11 @@ class UpgradeForecaster:
 
         patch_repr = list(patch) if not isinstance(patch, str) else patch
         try:
-            upgrade_id = hashlib.sha1(
-                json.dumps(patch_repr, sort_keys=True).encode("utf8")
-            ).hexdigest()
+            patch_serial = json.dumps(patch_repr, sort_keys=True)
         except Exception:
-            upgrade_id = hashlib.sha1(str(time.time()).encode("utf8")).hexdigest()
+            patch_serial = repr(patch_repr)
+        patch_hash = hashlib.sha256(patch_serial.encode("utf8")).hexdigest()
+        upgrade_id = patch_hash
 
         # Simulate the patched workflow to obtain prospective metrics
         roi_tracker = simulate_temporal_trajectory(
@@ -248,7 +248,7 @@ class UpgradeForecaster:
                 "confidence": result.confidence,
                 "timestamp": int(time.time()),
             }
-            out_path = self.records_base / f"{wf_id}_{upgrade_id}.json"
+            out_path = self.records_base / f"{wf_id}_{patch_hash}.json"
             with out_path.open("w", encoding="utf8") as fh:
                 json.dump(record, fh)
             if self.logger is not None:
@@ -265,6 +265,7 @@ class UpgradeForecaster:
 def load_record(
     workflow_id: str,
     upgrade_id: str | None = None,
+    patch: Iterable[str] | str | None = None,
     records_base: str | Path = "forecast_records",
 ) -> ForecastResult:
     """Load a persisted forecast record.
@@ -275,7 +276,10 @@ def load_record(
         Identifier of the workflow whose record should be loaded.
     upgrade_id:
         Identifier of the upgrade. When omitted, the most recent record for the
-        workflow is returned.
+        workflow is returned. If ``patch`` is provided, this value is ignored.
+    patch:
+        Patch content used to derive the deterministic record hash. When given,
+        the hash of this patch is used to locate the record.
     records_base:
         Directory containing forecast records. Defaults to ``"forecast_records"``.
 
@@ -287,6 +291,14 @@ def load_record(
 
     wf_id = str(workflow_id)
     base = Path(records_base)
+    if patch is not None:
+        patch_repr = list(patch) if not isinstance(patch, str) else patch
+        try:
+            patch_serial = json.dumps(patch_repr, sort_keys=True)
+        except Exception:
+            patch_serial = repr(patch_repr)
+        upgrade_id = hashlib.sha256(patch_serial.encode("utf8")).hexdigest()
+
     if upgrade_id is None:
         latest: tuple[int, float] | None = None
         latest_data: dict | None = None
