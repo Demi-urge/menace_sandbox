@@ -21,7 +21,6 @@ from transformers import AutoModel, AutoTokenizer
 
 from vector_utils import persist_embedding
 from governed_embeddings import governed_embed
-from .download_model import ensure_model
 from .registry import load_handlers
 
 try:  # pragma: no cover - optional dependency used for text embeddings
@@ -42,7 +41,11 @@ def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
 
     global _LOCAL_TOKENIZER, _LOCAL_MODEL
     if _LOCAL_TOKENIZER is None or _LOCAL_MODEL is None:
-        ensure_model(_BUNDLED_MODEL)
+        if not _BUNDLED_MODEL.exists():
+            raise FileNotFoundError(
+                f"bundled model archive missing at {_BUNDLED_MODEL} "
+                "- run `python -m vector_service.download_model` to fetch it"
+            )
         with tempfile.TemporaryDirectory() as tmpdir:
             with tarfile.open(_BUNDLED_MODEL) as tar:
                 tar.extractall(tmpdir)
