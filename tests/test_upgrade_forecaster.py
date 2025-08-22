@@ -432,12 +432,14 @@ def test_multiple_forecasts_coexist(monkeypatch, tmp_path):
 
 
 def test_list_records(tmp_path):
-    (tmp_path / "wf_a.json").write_text("{}")
-    (tmp_path / "wf_b.json").write_text("{}")
+    r1 = {"workflow_id": "wf", "upgrade_id": "a", "timestamp": 1}
+    r2 = {"workflow_id": "wf", "upgrade_id": "b", "timestamp": 2}
+    (tmp_path / "wf_a.json").write_text(json.dumps(r1))
+    (tmp_path / "wf_b.json").write_text(json.dumps(r2))
     (tmp_path / "ignore.txt").write_text("not json")
 
-    files = list_records(tmp_path)
-    assert files == ["wf_a.json", "wf_b.json"]
+    records = list_records(tmp_path)
+    assert records == [r1, r2]
 
 
 def test_delete_record(monkeypatch, tmp_path):
@@ -457,7 +459,7 @@ def test_delete_record(monkeypatch, tmp_path):
     delete_record("wf", upgrade_id=first_id, records_base=tmp_path)
     remaining = list_records(tmp_path)
     assert len(remaining) == 1
-    assert first_id not in remaining[0]
+    assert first_id not in {r["upgrade_id"] for r in remaining}
 
     delete_record("wf", records_base=tmp_path)
     assert list_records(tmp_path) == []

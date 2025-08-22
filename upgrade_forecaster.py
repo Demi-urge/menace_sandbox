@@ -370,8 +370,8 @@ def load_record(
     return ForecastResult(projections, confidence, rec_upgrade_id)
 
 
-def list_records(records_base: str | Path) -> List[str]:
-    """Return all forecast record file names.
+def list_records(records_base: str | Path) -> List[dict]:
+    """Return metadata for all forecast records.
 
     Parameters
     ----------
@@ -380,14 +380,33 @@ def list_records(records_base: str | Path) -> List[str]:
 
     Returns
     -------
-    List[str]
-        Sorted list of record file names. Non-JSON files are ignored.
+    List[dict]
+        Each element contains ``workflow_id``, ``upgrade_id`` and ``timestamp``
+        keys describing a persisted forecast record. Invalid files are ignored
+        and the result is sorted by workflow and timestamp.
     """
 
     base = Path(records_base)
     if not base.exists():
         return []
-    return sorted(p.name for p in base.glob("*.json") if p.is_file())
+
+    records: List[dict] = []
+    for path in base.glob("*.json"):
+        if not path.is_file():
+            continue
+        try:
+            with path.open("r", encoding="utf8") as fh:
+                data = json.load(fh)
+            record = {
+                "workflow_id": str(data.get("workflow_id", "")),
+                "upgrade_id": str(data.get("upgrade_id", "")),
+                "timestamp": int(data.get("timestamp", 0)),
+            }
+        except Exception:
+            continue
+        records.append(record)
+
+    return sorted(records, key=lambda r: (r["workflow_id"], r["timestamp"]))
 
 
 def delete_record(
