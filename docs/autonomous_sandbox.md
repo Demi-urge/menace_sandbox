@@ -16,6 +16,28 @@ concurrency options, see the sections on [Predefined Profiles](sandbox_runner.md
 
 See [UpgradeForecaster](upgrade_forecaster.md) for projecting ROI and risk across upcoming improvement cycles.
 
+## Stability gating
+
+The sandbox's `SelfImprovementEngine` queries
+`ForesightTracker.predict_roi_collapse` before promoting a workflow. Promotions
+are blocked when the forecast reports a high risk or brittleness:
+
+```python
+from menace_sandbox.foresight_tracker import ForesightTracker
+from menace_sandbox.self_improvement_engine import SelfImprovementEngine
+
+engine = SelfImprovementEngine(foresight_tracker=ForesightTracker())
+wf = "workflow-1"
+risk = engine.foresight_tracker.predict_roi_collapse(wf)
+if risk["risk"] in {"Immediate collapse risk", "Volatile"} or risk["brittle"]:
+    engine.enqueue_preventative_fixes([wf])
+    print("promotion blocked")
+else:
+    print("workflow is safe to promote")
+```
+
+This check prevents unstable trajectories from reaching production.
+
 ## GPT Interaction Tags
 
 All GPT interactions are recorded with a standard tag so that feedback and

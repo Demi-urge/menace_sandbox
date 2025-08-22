@@ -133,16 +133,33 @@ The helper :func:`predict_roi_collapse` examines recent ROI and
 falls below zero. It adjusts the projection using the expected entropy curve
 from :func:`get_entropy_template_curve`.
 
+### Risk categories
+
+Risk is classified by combining the ROI trend with observed volatility:
+
+- **Stable** – non‑negative slope and volatility below ``volatility_threshold``.
+- **Slow decay** – gently negative slope while volatility stays low.
+- **Volatile** – volatility exceeding the threshold regardless of slope.
+- **Immediate collapse risk** – steep negative slope or a projected drop below
+  zero within the next couple of cycles.
+
+### Brittle detection
+
+The tracker flags a workflow as *brittle* when small entropy changes trigger
+sharp ROI declines. If ``scenario_degradation`` rises by less than ``0.05``
+between the last two cycles but ``roi_delta`` drops by more than ten times that
+amount, the ``brittle`` field is set to ``True``.
+
 ### Inputs
 
 - ``workflow_id`` – identifier of the workflow to analyse. Requires the
   workflow to have recorded ``roi_delta`` entries and optionally
-  ``scenario_degradation`` metrics.
+``scenario_degradation`` metrics.
 
 ### Returned fields
 
 - ``risk`` – one of ``Stable``, ``Slow decay``, ``Volatile`` or
-  ``Immediate collapse risk``.
+  ``Immediate collapse risk`` (see risk categories above).
 - ``cycles_to_collapse`` – estimated cycles remaining before ROI becomes
   negative, or ``None`` if no collapse is predicted.
 - ``brittle`` – ``True`` when small entropy changes produce large ROI drops.
