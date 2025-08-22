@@ -740,6 +740,8 @@ class SelfImprovementEngine:
         settings = SandboxSettings()
         self.borderline_bucket = BorderlineBucket()
         self.workflow_ready = False
+        self.workflow_high_risk = False
+        self.workflow_risk: dict[str, object] | None = None
         self.borderline_raroi_threshold = getattr(
             settings, "borderline_raroi_threshold", 0.0
         )
@@ -5477,17 +5479,24 @@ class SelfImprovementEngine:
                                 risk = self.foresight_tracker.predict_roi_collapse(workflow_id)
                         except Exception:
                             self.logger.exception("foresight risk check failed")
-                        if risk and (
-                            risk.get("risk") == "Immediate collapse risk"
-                            or bool(risk.get("brittle"))
-                        ):
+                        self.workflow_risk = risk
+                        high = bool(
+                            risk
+                            and (
+                                risk.get("risk") in {"Immediate collapse risk", "Volatile"}
+                                or bool(risk.get("brittle"))
+                            )
+                        )
+                        self.workflow_high_risk = high
+                        if high:
+                            self.workflow_ready = False
                             try:
                                 self.logger.warning(
                                     "promotion blocked due to ROI collapse risk",
                                     extra=log_record(
                                         workflow_id=workflow_id,
-                                        risk=risk.get("risk"),
-                                        brittle=risk.get("brittle"),
+                                        risk=risk.get("risk") if risk else None,
+                                        brittle=risk.get("brittle") if risk else None,
                                     ),
                                 )
                             except Exception:
@@ -5791,6 +5800,35 @@ class SelfImprovementEngine:
                 self.foresight_tracker.capture_from_roi(tracker, workflow_id, profile)
             except Exception:
                 self.logger.exception("foresight tracker record failed")
+            risk_info: dict[str, object] | None = None
+            try:
+                if self.foresight_tracker:
+                    risk_info = self.foresight_tracker.predict_roi_collapse(workflow_id)
+            except Exception:
+                self.logger.exception("foresight risk check failed")
+            prior_high = self.workflow_high_risk
+            self.workflow_risk = risk_info
+            high_risk = bool(
+                risk_info
+                and (
+                    risk_info.get("risk") in {"Immediate collapse risk", "Volatile"}
+                    or bool(risk_info.get("brittle"))
+                )
+            )
+            self.workflow_high_risk = high_risk
+            if high_risk:
+                self.workflow_ready = False
+                if not prior_high:
+                    try:
+                        self.enqueue_preventative_fixes([workflow_id])
+                    except Exception:
+                        self.logger.exception("risk queue enqueue failed")
+            if result.warnings is None:
+                result.warnings = {}
+            result.warnings.setdefault("foresight_risk", [])
+            if risk_info:
+                result.warnings["foresight_risk"].append(risk_info)
+            result.warnings["workflow_high_risk"] = [{"value": high_risk}]
             self.roi_history.append(delta)
             self.raroi_history.append(raroi_delta)
             self._save_state()
@@ -5869,6 +5907,42 @@ class SelfImprovementEngine:
                     self._handle_relevancy_flags(flags)
             except Exception:
                 self.logger.exception("relevancy radar scan failed")
+            if self.foresight_tracker and self.workflow_risk is None:
+                workflow_id = "self_improvement"
+                wf_ctx = getattr(environment, "current_context", None)
+                try:
+                    ctx_obj = wf_ctx() if callable(wf_ctx) else wf_ctx
+                    workflow_id = getattr(ctx_obj, "workflow_id", workflow_id)
+                except Exception:
+                    pass
+                risk_info: dict[str, object] | None = None
+                try:
+                    risk_info = self.foresight_tracker.predict_roi_collapse(workflow_id)
+                except Exception:
+                    self.logger.exception("foresight risk check failed")
+                prior_high = self.workflow_high_risk
+                self.workflow_risk = risk_info
+                high_risk = bool(
+                    risk_info
+                    and (
+                        risk_info.get("risk") in {"Immediate collapse risk", "Volatile"}
+                        or bool(risk_info.get("brittle"))
+                    )
+                )
+                self.workflow_high_risk = high_risk
+                if high_risk:
+                    self.workflow_ready = False
+                    if not prior_high:
+                        try:
+                            self.enqueue_preventative_fixes([workflow_id])
+                        except Exception:
+                            self.logger.exception("risk queue enqueue failed")
+                if result.warnings is None:
+                    result.warnings = {}
+                result.warnings.setdefault("foresight_risk", [])
+                if risk_info:
+                    result.warnings["foresight_risk"].append(risk_info)
+                result.warnings["workflow_high_risk"] = [{"value": high_risk}]
             self.logger.info(
                 "cycle complete",
                 extra=log_record(roi=roi_realish, predicted_roi=pred_realish),
@@ -5968,6 +6042,14 @@ class SelfImprovementEngine:
                 self.logger.info("schedule task finished")
             finally:
                 self._schedule_task = None
+
+    def status(self) -> dict[str, object]:
+        """Expose the latest workflow risk evaluation."""
+        return {
+            "workflow_ready": self.workflow_ready,
+            "workflow_high_risk": self.workflow_high_risk,
+            "workflow_risk": self.workflow_risk,
+        }
 
 
 from typing import Any, Callable, Optional, Type, Iterable, Sequence, Dict
