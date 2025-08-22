@@ -644,14 +644,24 @@ class CognitionLayer:
 
         if not success:
             errors = getattr(result, "errors", []) if result else []
-            if errors:
-                ps = getattr(self.patch_logger, "patch_safety", None)
-                if ps is not None:
-                    for err in errors:
-                        try:
-                            ps.record_failure(dict(err))
-                        except Exception:
-                            logger.exception("Failed to record failure metadata")
+            ps = getattr(self.patch_logger, "patch_safety", None)
+            if errors and ps is not None:
+                for err in errors:
+                    try:
+                        ps.record_failure(dict(err))
+                    except Exception:
+                        logger.exception("Failed to record failure metadata")
+            if ps is not None:
+                try:
+                    ps.load_failures(force=True)
+                except Exception:
+                    logger.exception("Failed to reload failure vectors")
+            builder_ps = getattr(self.context_builder, "patch_safety", None)
+            if builder_ps is not None and builder_ps is not ps:
+                try:
+                    builder_ps.load_failures(force=True)
+                except Exception:
+                    logger.exception("Failed to reload failure vectors")
 
         roi_contribs: Dict[str, float] = {}
         roi_actuals: Dict[str, float] = {}
