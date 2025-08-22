@@ -44,7 +44,7 @@ def _patch_prediction_modules(monkeypatch: pytest.MonkeyPatch, start_id: str) ->
 def populated_graph(tmp_path, monkeypatch):
     """Return a graph with three interconnected workflows."""
     bus = UnifiedEventBus()
-    g = wg.WorkflowGraph(path=str(tmp_path / "graph.gpickle"))
+    g = wg.WorkflowGraph(path=str(tmp_path / "graph.json"))
     g.attach_event_bus(bus)
 
     monkeypatch.setattr(thb.WorkflowDB, "_embed", lambda self, text: [])

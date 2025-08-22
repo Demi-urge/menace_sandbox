@@ -8,7 +8,7 @@ simple adjacency lists when NetworkX isn't available.
 from __future__ import annotations
 
 import os
-import pickle
+import json
 import math
 import atexit
 import threading
@@ -20,16 +20,12 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 try:  # pragma: no cover - exercised indirectly
     import networkx as nx  # type: ignore
-    try:  # networkx <3 provides helpers at top level, >=3 in submodule
-        from networkx.readwrite.gpickle import read_gpickle, write_gpickle  # type: ignore
-    except Exception:  # pragma: no cover
-        read_gpickle = getattr(nx, "read_gpickle", None)
-        write_gpickle = getattr(nx, "write_gpickle", None)
+    from networkx.readwrite import json_graph  # type: ignore
     _HAS_NX = True
 except Exception:  # pragma: no cover - executed when networkx missing
     nx = None  # type: ignore
-    read_gpickle = write_gpickle = None
-_HAS_NX = False
+    json_graph = None  # type: ignore
+    _HAS_NX = False
 
 
 def estimate_impact_strength(from_id: str, to_id: str) -> tuple[float, str]:
@@ -150,11 +146,11 @@ class WorkflowGraph:
     ----------
     path:
         Location on disk where the graph is persisted. If omitted a default of
-        ``sandbox_data/workflow_graph.gpickle`` is used.
+        ``sandbox_data/workflow_graph.json`` is used.
     """
 
     def __init__(self, path: Optional[str] = None, *, db_path: Optional[str] = None) -> None:
-        self.path = path or os.path.join("sandbox_data", "workflow_graph.gpickle")
+        self.path = path or os.path.join("sandbox_data", "workflow_graph.json")
         # ``_backend`` retained for compatibility with existing tests although
         # this implementation now always relies on ``networkx``.
         self._backend = "networkx" if _HAS_NX else "adjlist"
@@ -187,6 +183,7 @@ class WorkflowGraph:
             wid = _get_id(event)
             if wid is not None:
                 self.add_workflow(wid)
+                self.save()
 
         def _on_update(_topic: str, event: object) -> None:
             if not isinstance(event, dict):
@@ -199,6 +196,7 @@ class WorkflowGraph:
                 roi=event.get("roi"),
                 synergy_scores=event.get("synergy_scores"),
             )
+            self.save()
 
         def _on_remove(_topic: str, event: object) -> None:
             wid = _get_id(event)
@@ -206,10 +204,11 @@ class WorkflowGraph:
                 return
             self.remove_workflow(wid)
             self.refresh_edges()
+            self.save()
 
         bus.subscribe("workflows:new", _on_new)
-        bus.subscribe("workflows:update", _on_update)
-        bus.subscribe("workflows:delete", _on_remove)
+        bus.subscribe("workflows:updated", _on_update)
+        bus.subscribe("workflows:deleted", _on_remove)
         bus.subscribe("workflows:refactor", _on_remove)
 
     # ------------------------------------------------------------------
@@ -659,23 +658,19 @@ class WorkflowGraph:
 
         path = path or self.path
         if os.path.exists(path):
-            if _HAS_NX:
-                if read_gpickle:
-                    try:
-                        return read_gpickle(path)
-                    except Exception:
-                        pass
+            if _HAS_NX and json_graph:
                 try:
-                    with open(path, "rb") as fh:
-                        return pickle.load(fh)
+                    with open(path, "r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    return json_graph.node_link_graph(data, directed=True, edges="edges")
                 except Exception:
                     pass
             else:
-                with open(path, "rb") as fh:
-                    try:
-                        return pickle.load(fh)
-                    except Exception:
-                        pass
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        return json.load(fh)
+                except Exception:
+                    pass
         # Default empty graph
         if _HAS_NX:
             return nx.DiGraph()
@@ -697,11 +692,13 @@ class WorkflowGraph:
 
     def _save_unlocked(self) -> None:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        if _HAS_NX and write_gpickle:
-            write_gpickle(self.graph, self.path)
+        if _HAS_NX and json_graph:
+            data = json_graph.node_link_data(self.graph, edges="edges")
+            with open(self.path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
         else:
-            with open(self.path, "wb") as fh:
-                pickle.dump(self.graph, fh)
+            with open(self.path, "w", encoding="utf-8") as fh:
+                json.dump(self.graph, fh)
 
 
 __all__ = ["WorkflowGraph", "estimate_edge_weight", "estimate_impact_strength"]

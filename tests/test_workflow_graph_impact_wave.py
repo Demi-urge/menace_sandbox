@@ -44,7 +44,7 @@ def _patch_modules(monkeypatch):
 
 
 def test_simulate_impact_wave(tmp_path):
-    path = tmp_path / "graph.gpickle"
+    path = tmp_path / "graph.json"
     g = WorkflowGraph(path=str(path))
     g.add_workflow("A", roi=0.0)
     g.add_workflow("B", roi=0.0)
