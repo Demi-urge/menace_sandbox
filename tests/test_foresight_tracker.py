@@ -384,3 +384,19 @@ def test_capture_from_roi_self_improvement_cycle_affects_stability():
         volatile.metrics_history["synergy_resilience"].append(0.8)
         ft.capture_from_roi(volatile, "volatile")
     assert not ft.is_stable("volatile")
+
+
+def test_record_cycle_metrics_accepts_extra_numeric_fields():
+    tracker = ForesightTracker()
+    tracker.record_cycle_metrics("wf", {"m": 1.0}, stage=1, degradation=-0.2)
+    entry = tracker.history["wf"][0]
+    assert entry["stage"] == 1.0
+    assert entry["degradation"] == -0.2
+
+
+def test_get_temporal_profile_returns_chronological_entries():
+    tracker = ForesightTracker(max_cycles=3)
+    tracker.record_cycle_metrics("wf", {"m": 1.0}, stage=0)
+    tracker.record_cycle_metrics("wf", {"m": 2.0}, stage=1)
+    profile = tracker.get_temporal_profile("wf")
+    assert profile == [{"m": 1.0, "stage": 0.0}, {"m": 2.0, "stage": 1.0}]
