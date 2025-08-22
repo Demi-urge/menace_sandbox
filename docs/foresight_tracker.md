@@ -40,7 +40,16 @@ The `is_cold_start(workflow_id)` helper returns ``True`` in this situation or
 when no ROI metric has been captured yet. During this phase the tracker can
 fall back to synthetic ROI templates defined in `configs/foresight_templates.yaml`.
 The YAML maps workflow identifiers to template names under `profiles` and
-provides ROI curves under `templates`.
+provides ROI curves under `templates`:
+
+```yaml
+profiles:
+  scraper_bot: slow_riser
+  trading_bot: early_volatile
+templates:
+  slow_riser:      [0.05, 0.1, 0.2, 0.35, 0.5]
+  early_volatile:  [0.4, -0.15, 0.5, -0.1, 0.45]
+```
 
 When capturing metrics, the first five cycles blend real observations with the
 template curve using:
@@ -60,12 +69,9 @@ from menace_sandbox.roi_tracker import ROITracker
 tracker = ForesightTracker()
 roi_tracker = ROITracker()
 
-# For the first few cycles the ROI deltas follow the `steady_growth` template.
-for _ in range(5):
-    tracker.capture_from_roi(roi_tracker, "analyst_bot", "steady_growth")
-
-# Once real ROI history exists, templates are no longer used.
-tracker.capture_from_roi(roi_tracker, "analyst_bot", "steady_growth")
+# Early cycles blend real ROI with the `early_volatile` template.
+if tracker.is_cold_start("trading_bot"):
+    tracker.capture_from_roi(roi_tracker, "trading_bot", "early_volatile")
 ```
 
 ## Persisting state
