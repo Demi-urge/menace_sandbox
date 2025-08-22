@@ -30,14 +30,20 @@ SCENARIOS = [
 ]
 
 
+class _DummyTracker:
+    def __init__(self) -> None:
+        self.roi_history = []
+
+
 def _fake_run_scenarios(workflow, tracker=None, presets=None, foresight_tracker=None):
-    summary = {
-        "scenarios": {
-            name: {"roi": float(i), "metrics": {"resilience": float(i)}}
-            for i, name in enumerate(SCENARIOS)
-        }
-    }
-    return object(), {}, summary
+    if tracker is None:
+        tracker = _DummyTracker()
+    name = presets[0]["SCENARIO_NAME"]
+    idx = SCENARIOS.index(name)
+    roi = float(idx)
+    tracker.roi_history.append(roi)
+    summary = {"scenarios": {name: {"roi": roi, "metrics": {"resilience": roi}}}}
+    return tracker, {}, summary
 
 
 def _fake_presets():
@@ -51,8 +57,21 @@ def test_simulate_temporal_trajectory_updates_history(monkeypatch):
     monkeypatch.setattr(
         "sandbox_runner.environment.temporal_trajectory_presets", _fake_presets
     )
+    class _FakeWorkflowDB:
+        def __init__(self, *a, **k):
+            self.conn = self
+
+        def execute(self, *a, **k):
+            return self
+
+        def fetchone(self):
+            return {"workflow": "simple_functions.print_ten", "task_sequence": ""}
+
+    stub_db_mod = types.ModuleType("menace.task_handoff_bot")
+    stub_db_mod.WorkflowDB = _FakeWorkflowDB  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "menace.task_handoff_bot", stub_db_mod)
     ft = ForesightTracker()
-    simulate_temporal_trajectory(["simple_functions.print_ten"], foresight_tracker=ft)
+    simulate_temporal_trajectory(0, foresight_tracker=ft)
     history = list(ft.history["0"])
     assert len(history) == 5
     expected_keys = {"roi_delta", "resilience", "stability", "scenario_degradation"}

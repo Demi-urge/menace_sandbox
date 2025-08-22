@@ -32,6 +32,7 @@ import threading
 import signal
 import weakref
 import traceback
+import statistics
 from datetime import datetime
 from pathlib import Path
 from typing import (
@@ -5253,16 +5254,24 @@ def temporal_trajectory_presets() -> List[Dict[str, Any]]:
     """Return canonical presets for temporal trajectory simulations.
 
     The presets progress through increasingly adverse stages:
-    ``baseline``, ``latency_spike``, ``io_cpu_strain``, ``schema_drift`` and
-    ``chaotic_failure``. Each stage defines scenario specific environment
-    variables to emulate the desired conditions.
+    ``baseline``, ``latency_spike``, ``io_cpu_strain``,
+    ``schema_drift``/``unexpected_input`` and ``chaotic_failure``. Each
+    stage defines scenario specific environment variables to emulate the
+    desired conditions.
     """
+
+    schema_stage = _preset_schema_drift()
+    try:
+        schema_stage.update(_preset_hostile_input())
+    except Exception:
+        schema_stage = {**schema_stage, **_preset_hostile_input()}
+    schema_stage["SCENARIO_NAME"] = "schema_drift"
 
     return [
         {"SCENARIO_NAME": "baseline"},
         _preset_high_latency(),
         _preset_io_cpu_strain(),
-        _preset_schema_drift(),
+        schema_stage,
         _preset_chaotic_failure(),
     ]
 
@@ -5584,39 +5593,71 @@ def generate_scorecard(
 
 # ----------------------------------------------------------------------
 def simulate_temporal_trajectory(
-    workflow: Sequence[str] | str,
+    workflow_id: int | str,
     *,
-    tracker: "ROITracker" | None = None,
     foresight_tracker: "ForesightTracker" | None = None,
-) -> tuple["ROITracker", Dict[str, Scorecard], Dict[str, Any]]:
-    """Execute ``workflow`` across temporal trajectory presets.
+) -> tuple["ROITracker", Dict[str, Dict[str, float]]]:
+    """Simulate a workflow through escalating temporal presets.
 
-    The workflow is stressed sequentially through the stages returned by
-    :func:`temporal_trajectory_presets`. Aggregated ROI, resilience and
-    scenario degradation metrics are forwarded to ``foresight_tracker`` when
-    provided.
+    Parameters
+    ----------
+    workflow_id:
+        Identifier of the workflow stored in ``WorkflowDB``.
+    foresight_tracker:
+        Optional tracker to which per‑stage metrics are recorded.
+
+    Returns
+    -------
+    tuple[ROITracker, Dict[str, Dict[str, float]]]
+        Updated ROI tracker and mapping of stage name to recorded metrics.
     """
 
-    presets = temporal_trajectory_presets()
-    tracker, scorecards, summary = run_scenarios(
-        workflow,
-        tracker=tracker,
-        presets=presets,
-        foresight_tracker=foresight_tracker,
-    )
+    from menace.task_handoff_bot import WorkflowDB
 
-    if foresight_tracker is not None:
-        wf_id = str(getattr(workflow, "wid", getattr(workflow, "id", "0")))
-        scenarios = summary.get("scenarios", {})
-        baseline_roi = float(scenarios.get("baseline", {}).get("roi", 0.0))
-        for preset in presets:
-            name = str(preset.get("SCENARIO_NAME", ""))
-            info = scenarios.get(name, {})
-            roi = float(info.get("roi", 0.0))
-            resilience = float(info.get("metrics", {}).get("resilience", 0.0))
-            degradation = baseline_roi - roi
+    wf_db = WorkflowDB()
+    wid = int(workflow_id)
+    row = wf_db.conn.execute(
+        "SELECT workflow, task_sequence FROM workflows WHERE id=?", (wid,)
+    ).fetchone()
+    if not row:
+        raise ValueError(f"workflow {workflow_id} not found")
+    steps_raw = row["workflow"] if isinstance(row, Mapping) else row[0]
+    if not steps_raw:
+        steps_raw = row["task_sequence"] if isinstance(row, Mapping) else row[1]
+    workflow_steps = [s for s in str(steps_raw).split(",") if s]
+
+    presets = temporal_trajectory_presets()
+    tracker: "ROITracker" | None = None
+    baseline_roi: float | None = None
+    stage_metrics: Dict[str, Dict[str, float]] = {}
+
+    for preset in presets:
+        name = str(preset.get("SCENARIO_NAME", ""))
+        tracker, _, summary = run_scenarios(
+            workflow_steps,
+            tracker=tracker,
+            presets=[preset],
+        )
+        scen = summary.get("scenarios", {}).get(name, {})
+        roi = float(scen.get("roi", 0.0))
+        resilience = float(scen.get("metrics", {}).get("resilience", 0.0))
+        if baseline_roi is None:
+            baseline_roi = roi
+        degradation = float(baseline_roi - roi)
+        recent = getattr(tracker, "roi_history", [])[-5:]
+        stability = (
+            statistics.pvariance(recent) if isinstance(recent, list) and len(recent) > 1 else 0.0
+        )
+        metrics = {
+            "roi_delta": roi,
+            "resilience": resilience,
+            "stability": stability,
+            "scenario_degradation": degradation,
+        }
+        stage_metrics[name] = metrics
+        if foresight_tracker is not None:
             foresight_tracker.record_cycle_metrics(
-                wf_id,
+                str(workflow_id),
                 {
                     "roi_delta": roi,
                     "resilience": resilience,
@@ -5625,7 +5666,7 @@ def simulate_temporal_trajectory(
                 compute_stability=True,
             )
 
-    return tracker, scorecards, summary
+    return tracker, stage_metrics
 
 
 # ----------------------------------------------------------------------
