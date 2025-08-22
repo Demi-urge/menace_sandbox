@@ -122,3 +122,18 @@ def test_promotion_blocked_by_risk_or_brittleness():
     ft.predict_roi_collapse = lambda wf: {"risk": "Stable", "brittle": True}
     eng.attempt_promotion()
     assert not eng.workflow_ready
+
+
+def test_risky_workflow_not_promoted():
+    ft = ForesightTracker()
+    tracker = DummyROITracker([1.0, 0.0, -2.0])
+    eng = MiniSelfImprovementEngine(tracker, ft)
+
+    for _ in range(3):
+        eng.run_cycle()
+
+    info = ft.predict_roi_collapse("wf")
+    assert info["risk"] == "Immediate collapse risk"
+
+    eng.attempt_promotion()
+    assert not eng.workflow_ready
