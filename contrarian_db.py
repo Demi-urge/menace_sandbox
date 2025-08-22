@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Any, Dict, Iterator, List, Optional
+
+from vector_service import EmbeddableDBMixin
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -26,11 +31,18 @@ class ContrarianRecord:
     contrarian_id: Optional[int] = None
 
 
-class ContrarianDB:
-    """SQLite-backed storage for contrarian experiment history."""
+class ContrarianDB(EmbeddableDBMixin):
+    """SQLite-backed storage for contrarian experiment history with embeddings."""
 
-    def __init__(self, path: Path | str = "contrarian.db") -> None:
-        self.conn = sqlite3.connect(path)
+    def __init__(
+        self,
+        path: Path | str = "contrarian.db",
+        *,
+        vector_index_path: str | Path | None = None,
+        embedding_version: int = 1,
+        vector_backend: str = "annoy",
+    ) -> None:
+        self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS contrarian_experiments(
@@ -63,6 +75,56 @@ class ContrarianDB:
             "CREATE TABLE IF NOT EXISTS contrarian_discrepancies(contrarian_id INTEGER, discrepancy_id INTEGER)"
         )
         self.conn.commit()
+
+        index_path = (
+            Path(vector_index_path)
+            if vector_index_path is not None
+            else Path(path).with_suffix(".index")
+        )
+        meta_path = Path(index_path).with_suffix(".json")
+        EmbeddableDBMixin.__init__(
+            self,
+            index_path=index_path,
+            metadata_path=meta_path,
+            embedding_version=embedding_version,
+            backend=vector_backend,
+        )
+
+    # ------------------------------------------------------------------
+    def _embed_text(self, rec: ContrarianRecord | Dict[str, Any]) -> str:
+        if isinstance(rec, ContrarianRecord):
+            data = {
+                "innovation_name": rec.innovation_name,
+                "innovation_type": rec.innovation_type,
+                "activation_trigger": rec.activation_trigger,
+                "status": rec.status,
+            }
+        else:
+            data = {
+                "innovation_name": rec.get("innovation_name", ""),
+                "innovation_type": rec.get("innovation_type", ""),
+                "activation_trigger": rec.get("activation_trigger", ""),
+                "status": rec.get("status", ""),
+            }
+        parts = [f"{k}={v}" for k, v in data.items() if v]
+        return " ".join(parts)
+
+    def license_text(self, rec: Any) -> str | None:
+        if isinstance(rec, (ContrarianRecord, dict)):
+            return self._embed_text(rec)
+        return None
+
+    def vector(self, rec: Any) -> List[float] | None:
+        if isinstance(rec, (ContrarianRecord, dict)):
+            text = self._embed_text(rec)
+            return self.encode_text(text)
+        return None
+
+    def _embed_record_on_write(self, rec_id: int, rec: ContrarianRecord) -> None:
+        try:
+            self.add_embedding(rec_id, rec, "contrarian", source_id=str(rec_id))
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("embedding hook failed for %s", rec_id)
 
     def get(self, contrarian_id: int) -> Optional[ContrarianRecord]:
         """Retrieve a single contrarian record by id."""
@@ -125,6 +187,7 @@ class ContrarianDB:
         )
         contrarian_id = int(cur.lastrowid)
         self.conn.commit()
+        self._embed_record_on_write(contrarian_id, rec)
         return contrarian_id
 
     def link_model(self, contrarian_id: int, model_id: int) -> None:
@@ -228,6 +291,38 @@ class ContrarianDB:
                 )
             )
         return results
+
+    # ------------------------------------------------------------------
+    def iter_records(self) -> Iterator[tuple[int, Dict[str, Any], str]]:
+        cur = self.conn.execute(
+            "SELECT contrarian_id, innovation_name, innovation_type, activation_trigger, status FROM contrarian_experiments"
+        )
+        for row in cur.fetchall():
+            data = {
+                "innovation_name": row[1],
+                "innovation_type": row[2],
+                "activation_trigger": row[3],
+                "status": row[4],
+            }
+            yield row[0], data, "contrarian"
+
+    def to_vector_dict(self, rec: ContrarianRecord | Dict[str, Any]) -> Dict[str, Any]:
+        if isinstance(rec, ContrarianRecord):
+            return {
+                "innovation_name": rec.innovation_name,
+                "innovation_type": rec.innovation_type,
+                "activation_trigger": rec.activation_trigger,
+                "status": rec.status,
+            }
+        return {
+            "innovation_name": rec.get("innovation_name", ""),
+            "innovation_type": rec.get("innovation_type", ""),
+            "activation_trigger": rec.get("activation_trigger", ""),
+            "status": rec.get("status", ""),
+        }
+
+    def backfill_embeddings(self, batch_size: int = 100) -> None:
+        EmbeddableDBMixin.backfill_embeddings(self)
 
 
 __all__ = [

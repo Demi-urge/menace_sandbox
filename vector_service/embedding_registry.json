@@ -7,5 +7,7 @@
   "code": {"module": "code_database", "class": "CodeDB"},
   "discrepancy": {"module": "discrepancy_db", "class": "DiscrepancyDB"},
   "failure": {"module": "failure_learning_system", "class": "FailureDB"},
-  "research": {"module": "research_aggregator_bot", "class": "InfoDB"}
+  "research": {"module": "research_aggregator_bot", "class": "InfoDB"},
+  "contrarian": {"module": "contrarian_db", "class": "ContrarianDB"},
+  "patch_suggestion": {"module": "patch_suggestion_db", "class": "PatchSuggestionDB"}
 }
