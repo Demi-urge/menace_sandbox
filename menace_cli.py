@@ -135,34 +135,22 @@ def handle_retrieve(args: argparse.Namespace) -> int:
     """Handle ``retrieve`` command."""
     try:
         from vector_service.retriever import Retriever, FallbackResult, fts_search
-        retriever = Retriever(cache=None if args.no_cache else _get_cache())
-        search_fn = lambda q, k, dbs: retriever.search(q, top_k=k, dbs=dbs)
-        fallback_cls = FallbackResult
     except Exception:
-        try:  # pragma: no cover - optional dependency
-            from universal_retriever import UniversalRetriever
-        except Exception:  # pragma: no cover - graceful fallback
-            print("universal retriever unavailable", file=sys.stderr)
-            return 1
-        retriever = UniversalRetriever()
-        try:
-            from vector_service.retriever import fts_search
-        except Exception:  # pragma: no cover - fallback when module missing
-            fts_search = lambda q, dbs=None, limit=None: []  # type: ignore
-        search_fn = lambda q, k, dbs: retriever.retrieve(q, top_k=k, dbs=dbs)[0]
-        fallback_cls = tuple()  # type: ignore
+        print("vector retriever unavailable", file=sys.stderr)
+        return 1
+
+    retriever = Retriever(cache=None if args.no_cache else _get_cache())
 
     if not args.no_cache and not args.rebuild_cache:
         cached = get_cached_chain(args.query, args.dbs)
         if cached is not None:
             print(json.dumps(cached))
             return 0
-
     try:
-        hits = search_fn(args.query, args.top_k, args.dbs)
+        hits = retriever.search(args.query, top_k=args.top_k, dbs=args.dbs)
     except Exception:
         hits = []
-    if fallback_cls and isinstance(hits, fallback_cls):
+    if isinstance(hits, FallbackResult):
         hits = list(hits)
     results = _normalise_hits(hits)
     if not results:
