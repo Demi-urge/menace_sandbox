@@ -18,11 +18,17 @@ failures.
 from dataclasses import dataclass, field
 import json
 import math
+import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Tuple
 
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from error_vectorizer import ErrorVectorizer
+
+try:  # pragma: no cover - optional failure embeddings
+    from failure_vectorizer import FailureVectorizer  # type: ignore
+except Exception:  # pragma: no cover - fallback when unavailable
+    FailureVectorizer = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency for metrics
     from vector_service import metrics_exporter as _me  # type: ignore
@@ -77,8 +83,11 @@ class PatchSafety:
     )
     vectorizer: ErrorVectorizer = field(default_factory=ErrorVectorizer)
     storage_path: str | None = None
+    failure_db_path: str | None = "failures.db"
+    failure_vectorizer: FailureVectorizer | None = None
     _failures: List[List[float]] = field(default_factory=list)
     _records: List[Dict[str, Any]] = field(default_factory=list)
+    _failure_vectors: List[List[float]] = field(default_factory=list)
 
     # ------------------------------------------------------------------
     def __post_init__(self) -> None:  # pragma: no cover - simple IO
@@ -91,6 +100,13 @@ class PatchSafety:
         vec = self.vectorizer.transform(err)
         self._failures.append(vec)
         self._records.append(err)
+        if self.failure_vectorizer is not None:
+            try:
+                self.failure_vectorizer.fit([err])
+                fvec = self.failure_vectorizer.transform(err)
+                self._failure_vectors.append(fvec)
+            except Exception:  # pragma: no cover - best effort
+                pass
         # best-effort persistence
         try:  # pragma: no cover - simple IO
             self.save_failures()
@@ -99,41 +115,76 @@ class PatchSafety:
 
     # ------------------------------------------------------------------
     def load_failures(self, path: str | None = None) -> None:
-        """Populate ``_failures`` and vectoriser state from ``path``."""
+        """Populate failure vectors from JSONL store and ``failures.db``."""
         pth = path or self.storage_path
-        if not pth:
+        if pth:
+            p = Path(pth)
+            if p.exists():
+                try:  # pragma: no cover - simple IO
+                    with p.open("r", encoding="utf-8") as fh:
+                        for line in fh:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            data = json.loads(line)
+                            if isinstance(data, dict):
+                                err = data.get("err", {})
+                                vec = data.get("vector")
+                            else:
+                                err = {}
+                                vec = data
+                            if err:
+                                try:
+                                    self.vectorizer.fit([err])
+                                except Exception:
+                                    pass
+                                self._records.append(err)
+                                if vec is None:
+                                    try:
+                                        vec = self.vectorizer.transform(err)
+                                    except Exception:
+                                        vec = []
+                            if isinstance(vec, list):
+                                self._failures.append(vec)
+                except Exception:  # pragma: no cover - best effort
+                    pass
+
+        db_path = self.failure_db_path
+        if not db_path or FailureVectorizer is None:
             return
-        p = Path(pth)
-        if not p.exists():
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.execute(
+                "SELECT cause, demographics, profitability, retention, cac, roi FROM failures"
+            )
+            rows = cur.fetchall()
+            conn.close()
+        except Exception:  # pragma: no cover - missing DB or table
             return
-        try:  # pragma: no cover - simple IO
-            with p.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    data = json.loads(line)
-                    if isinstance(data, dict):
-                        err = data.get("err", {})
-                        vec = data.get("vector")
-                    else:
-                        err = {}
-                        vec = data
-                    if err:
-                        try:
-                            self.vectorizer.fit([err])
-                        except Exception:
-                            pass
-                        self._records.append(err)
-                        if vec is None:
-                            try:
-                                vec = self.vectorizer.transform(err)
-                            except Exception:
-                                vec = []
-                    if isinstance(vec, list):
-                        self._failures.append(vec)
-        except Exception:
+        if not rows:
+            return
+        records = [
+            {
+                "cause": r[0],
+                "demographics": r[1],
+                "profitability": r[2],
+                "retention": r[3],
+                "cac": r[4],
+                "roi": r[5],
+            }
+            for r in rows
+        ]
+        fv = self.failure_vectorizer or FailureVectorizer()
+        try:
+            fv.fit(records)
+        except Exception:  # pragma: no cover - best effort
             pass
+        self.failure_vectorizer = fv
+        for rec in records:
+            try:
+                self._failure_vectors.append(fv.transform(rec))
+            except Exception:  # pragma: no cover - best effort
+                self._failure_vectors.append([])
 
     # ------------------------------------------------------------------
     def save_failures(self, path: str | None = None) -> None:
@@ -153,11 +204,21 @@ class PatchSafety:
 
     # ------------------------------------------------------------------
     def score(self, err: Dict[str, Any]) -> float:
-        """Return the maximum similarity between ``err`` and recorded failures."""
-        if not self._failures:
-            return 0.0
-        vec = self.vectorizer.transform(err)
-        return max(_cosine(vec, f) for f in self._failures)
+        """Return the maximum similarity between ``err`` and known failures."""
+        scores: List[float] = []
+        if self._failures:
+            try:
+                vec = self.vectorizer.transform(err)
+                scores.append(max(_cosine(vec, f) for f in self._failures))
+            except Exception:  # pragma: no cover - defensive
+                pass
+        if self._failure_vectors and self.failure_vectorizer is not None:
+            try:
+                vec2 = self.failure_vectorizer.transform(err)
+                scores.append(max(_cosine(vec2, f) for f in self._failure_vectors))
+            except Exception:  # pragma: no cover - defensive
+                pass
+        return max(scores) if scores else 0.0
 
     # ------------------------------------------------------------------
     def _check_meta(self, meta: Mapping[str, Any]) -> bool:

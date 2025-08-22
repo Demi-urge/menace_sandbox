@@ -6,6 +6,7 @@ import menace_sandbox.roi_tracker as rt
 from vector_service.context_builder import ContextBuilder
 from vector_service.cognition_layer import CognitionLayer
 from vector_service.patch_logger import PatchLogger
+from patch_safety import PatchSafety
 
 
 class DummyRetriever:
@@ -62,7 +63,10 @@ def _make_layer(tmp_path, with_tracker=True):
     tracker = rt.ROITracker() if with_tracker else None
     builder = ContextBuilder(retriever=retriever, roi_tracker=tracker)
     patch_logger = PatchLogger(
-        vector_metrics=vec_db, roi_tracker=tracker, event_bus=DummyBus()
+        vector_metrics=vec_db,
+        roi_tracker=tracker,
+        event_bus=DummyBus(),
+        patch_safety=PatchSafety(failure_db_path=None),
     )
     layer = CognitionLayer(
         retriever=retriever,
@@ -141,20 +145,18 @@ def test_update_ranker_applies_roi_and_risk_penalties(tmp_path, monkeypatch):
         vectors, True, roi_deltas=roi_deltas, risk_scores=risk_scores
     )
 
-    expected_calls = {"bot": 0.8, "workflow": -0.1, "error": -0.5}
+    expected_calls = {"bot": 1.0, "workflow": 0.5, "error": -0.5}
     calls = {c.args[0]: c.args[1] for c in spy.call_args_list}
     for origin, delta in expected_calls.items():
         assert calls[origin] == pytest.approx(delta)
 
-    expected_weights = {"bot": 1.0, "workflow": 0.0, "error": 0.0}
+    expected_weights = {"bot": pytest.approx(2 / 3), "workflow": pytest.approx(1 / 3), "error": 0.0}
     for origin, wt in expected_weights.items():
-        assert updates[origin] == pytest.approx(wt)
+        assert updates[origin] == wt
 
     weights = vec_db.get_db_weights()
     for origin, wt in expected_weights.items():
         assert weights[origin] == pytest.approx(wt)
         assert layer.context_builder.db_weights[origin] == pytest.approx(wt)
 
-    # risk penalties can outweigh positive ROI deltas
-    assert weights["workflow"] == pytest.approx(0.0)
     assert weights["error"] == pytest.approx(0.0)

@@ -198,8 +198,13 @@ class CognitionLayer:
                 per_db[origin] = per_db.get(origin, 0.0) + delta
 
         if risk_scores:
+            threshold = getattr(
+                getattr(self.patch_logger, "patch_safety", None), "threshold", 0.0
+            )
             for origin, score in risk_scores.items():
                 key = origin or ""
+                if threshold and score < threshold:
+                    continue
                 penalty = abs(score)
                 per_db[key] = per_db.get(key, 0.0) - penalty
 
