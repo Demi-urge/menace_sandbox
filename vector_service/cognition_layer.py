@@ -88,6 +88,7 @@ class CognitionLayer:
                 db_weights = self.vector_metrics.get_db_weights()
             except Exception:  # pragma: no cover - best effort
                 db_weights = None
+        self._db_weights: Dict[str, float] = dict(db_weights or {})
         self.context_builder = context_builder or ContextBuilder(
             retriever=self.retriever,
             ranking_model=ranking_model,
@@ -246,11 +247,18 @@ class CognitionLayer:
         similarity score so risky databases are down-weighted.
 
         Weights are persisted in :class:`VectorMetricsDB` so the behaviour
-        survives restarts.  The new weights are returned as a mapping.
+        survives restarts.  If the metrics database is unavailable the
+        weights are stored only in memory for the lifetime of this instance.
+        Setting the ``RANKER_REQUIRE_PERSISTENCE`` environment variable to a
+        truthy value will instead raise ``RuntimeError`` when persistence is
+        missing.  The new weights are returned as a mapping.
         """
 
-        if self.vector_metrics is None:
-            return {}
+        require_persist = (
+            os.getenv("RANKER_REQUIRE_PERSISTENCE", "").lower() in {"1", "true", "yes"}
+        )
+        if self.vector_metrics is None and require_persist:
+            raise RuntimeError("VectorMetricsDB is required for ranker updates")
 
         origins = {origin or "" for origin, _vec_id, _score in vectors}
 
@@ -291,81 +299,104 @@ class CognitionLayer:
         max_delta = max(abs(d) for d in per_db.values()) if per_db else 0.0
 
         updates: Dict[str, float] = {}
-        for origin, change in per_db.items():
-            try:
-                new_wt = self.vector_metrics.update_db_weight(origin, change)
+        if self.vector_metrics is not None:
+            for origin, change in per_db.items():
+                try:
+                    new_wt = self.vector_metrics.update_db_weight(origin, change)
+                    updates[origin] = new_wt
+                    try:
+                        self.vector_metrics.log_ranker_update(
+                            origin, delta=change, weight=new_wt
+                        )
+                    except Exception:
+                        logger.exception("Failed to log ranker update for %s", origin)
+                except Exception:
+                    logger.exception("Failed to update db weight for %s", origin)
+
+            if updates:
+                try:
+                    all_weights = self.vector_metrics.normalize_db_weights()
+                    for origin in list(updates):
+                        if origin in all_weights:
+                            updates[origin] = all_weights[origin]
+                except Exception:
+                    try:
+                        all_weights = self.vector_metrics.get_db_weights()
+                    except Exception:
+                        all_weights = updates
+                try:
+                    if hasattr(self.context_builder, "refresh_db_weights"):
+                        self.context_builder.refresh_db_weights(all_weights)  # type: ignore[attr-defined]
+                    elif hasattr(self.context_builder, "db_weights"):
+                        try:
+                            self.context_builder.db_weights.clear()  # type: ignore[attr-defined]
+                            self.context_builder.db_weights.update(all_weights)  # type: ignore[attr-defined]
+                        except Exception:
+                            self.context_builder.db_weights = dict(all_weights)  # type: ignore[attr-defined]
+                except Exception:
+                    logger.exception("Failed to apply updated db weights to context builder")
+
+                try:
+                    self.vector_metrics.set_db_weights(all_weights)
+                except Exception:
+                    logger.exception("Failed to persist updated db weights")
+
+                # Persist full weight mapping so external services can reload after
+                # restarts.  We merge into ``retrieval_ranker.json`` which already
+                # tracks the current ranking model path.
+                try:
+                    cfg = Path("retrieval_ranker.json")
+                    data = {"weights": {}}
+                    if cfg.exists():
+                        try:
+                            loaded = json.loads(cfg.read_text())
+                            if isinstance(loaded, dict):
+                                data.update(loaded)
+                        except Exception:
+                            logger.exception("Failed to read retrieval_ranker.json")
+                    weights = data.get("weights") or {}
+                    if not isinstance(weights, dict):
+                        weights = {}
+                    for db, wt in all_weights.items():
+                        try:
+                            weights[str(db)] = float(wt)
+                        except Exception:
+                            continue
+                    data["weights"] = weights
+                    tmp = cfg.with_suffix(".tmp")
+                    tmp.write_text(json.dumps(data))
+                    tmp.replace(cfg)
+                except Exception:
+                    logger.exception("Failed to persist retrieval ranker weights")
+            else:  # ensure context builder picks up any external changes
+                try:
+                    self.context_builder.refresh_db_weights(
+                        vector_metrics=self.vector_metrics
+                    )  # type: ignore[attr-defined]
+                except Exception:
+                    logger.exception("Failed to refresh db weights on context builder")
+        else:
+            store = getattr(self, "_db_weights", {})
+            for origin, change in per_db.items():
+                new_wt = store.get(origin, 0.0) + change
+                store[origin] = new_wt
                 updates[origin] = new_wt
+            if updates:
+                total = sum(abs(w) for w in store.values()) or 1.0
+                all_weights = {k: v / total for k, v in store.items()}
+                updates = {k: all_weights[k] for k in updates}
+                self._db_weights = all_weights
                 try:
-                    self.vector_metrics.log_ranker_update(
-                        origin, delta=change, weight=new_wt
-                    )
+                    if hasattr(self.context_builder, "refresh_db_weights"):
+                        self.context_builder.refresh_db_weights(all_weights)  # type: ignore[attr-defined]
+                    elif hasattr(self.context_builder, "db_weights"):
+                        try:
+                            self.context_builder.db_weights.clear()  # type: ignore[attr-defined]
+                            self.context_builder.db_weights.update(all_weights)  # type: ignore[attr-defined]
+                        except Exception:
+                            self.context_builder.db_weights = dict(all_weights)  # type: ignore[attr-defined]
                 except Exception:
-                    logger.exception("Failed to log ranker update for %s", origin)
-            except Exception:
-                logger.exception("Failed to update db weight for %s", origin)
-
-        if updates:
-            try:
-                all_weights = self.vector_metrics.normalize_db_weights()
-                for origin in list(updates):
-                    if origin in all_weights:
-                        updates[origin] = all_weights[origin]
-            except Exception:
-                try:
-                    all_weights = self.vector_metrics.get_db_weights()
-                except Exception:
-                    all_weights = updates
-            try:
-                if hasattr(self.context_builder, "refresh_db_weights"):
-                    self.context_builder.refresh_db_weights(all_weights)  # type: ignore[attr-defined]
-                elif hasattr(self.context_builder, "db_weights"):
-                    try:
-                        self.context_builder.db_weights.clear()  # type: ignore[attr-defined]
-                        self.context_builder.db_weights.update(all_weights)  # type: ignore[attr-defined]
-                    except Exception:
-                        self.context_builder.db_weights = dict(all_weights)  # type: ignore[attr-defined]
-            except Exception:
-                logger.exception("Failed to apply updated db weights to context builder")
-
-            try:
-                self.vector_metrics.set_db_weights(all_weights)
-            except Exception:
-                logger.exception("Failed to persist updated db weights")
-
-            # Persist full weight mapping so external services can reload after
-            # restarts.  We merge into ``retrieval_ranker.json`` which already
-            # tracks the current ranking model path.
-            try:
-                cfg = Path("retrieval_ranker.json")
-                data = {"weights": {}}
-                if cfg.exists():
-                    try:
-                        loaded = json.loads(cfg.read_text())
-                        if isinstance(loaded, dict):
-                            data.update(loaded)
-                    except Exception:
-                        logger.exception("Failed to read retrieval_ranker.json")
-                weights = data.get("weights") or {}
-                if not isinstance(weights, dict):
-                    weights = {}
-                for db, wt in all_weights.items():
-                    try:
-                        weights[str(db)] = float(wt)
-                    except Exception:
-                        continue
-                data["weights"] = weights
-                tmp = cfg.with_suffix(".tmp")
-                tmp.write_text(json.dumps(data))
-                tmp.replace(cfg)
-            except Exception:
-                logger.exception("Failed to persist retrieval ranker weights")
-        else:  # ensure context builder picks up any external changes
-            try:
-                self.context_builder.refresh_db_weights(
-                    vector_metrics=self.vector_metrics
-                )  # type: ignore[attr-defined]
-            except Exception:
-                logger.exception("Failed to refresh db weights on context builder")
+                    logger.exception("Failed to apply updated db weights to context builder")
 
         if per_db:
             bus = getattr(self.patch_logger, "event_bus", None)
