@@ -211,7 +211,14 @@ class CognitionLayer:
         updates: Dict[str, float] = {}
         for origin, change in per_db.items():
             try:
-                updates[origin] = self.vector_metrics.update_db_weight(origin, change)
+                new_wt = self.vector_metrics.update_db_weight(origin, change)
+                updates[origin] = new_wt
+                try:
+                    self.vector_metrics.log_ranker_update(
+                        origin, delta=change, weight=new_wt
+                    )
+                except Exception:
+                    logger.exception("Failed to log ranker update for %s", origin)
             except Exception:
                 logger.exception("Failed to update db weight for %s", origin)
 
@@ -263,6 +270,13 @@ class CognitionLayer:
                 cfg.write_text(json.dumps(data))
             except Exception:
                 logger.exception("Failed to persist retrieval ranker weights")
+        else:  # ensure context builder picks up any external changes
+            try:
+                self.context_builder.refresh_db_weights(
+                    vector_metrics=self.vector_metrics
+                )  # type: ignore[attr-defined]
+            except Exception:
+                logger.exception("Failed to refresh db weights on context builder")
 
         if per_db:
             bus = getattr(self.patch_logger, "event_bus", None)

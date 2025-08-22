@@ -197,7 +197,11 @@ class ContextBuilder:
                 return
         if not isinstance(weights, dict):  # pragma: no cover - defensive
             return
+        # Replace existing mapping so each refresh reflects the latest weights
+        # from the metrics database.  This avoids stale entries lingering after
+        # patches adjust the ranking model.
         try:
+            self.db_weights.clear()
             self.db_weights.update(weights)
         except Exception:  # pragma: no cover - best effort
             self.db_weights = dict(weights)
