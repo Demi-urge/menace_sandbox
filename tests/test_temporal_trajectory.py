@@ -68,8 +68,15 @@ def test_temporal_trajectory_profile_and_logging(monkeypatch):
 
     history = list(ft.history["wf"])
     assert len(history) == 5
-    expected = {"roi_delta", "resilience", "scenario_degradation"}
+    expected = {
+        "roi_delta",
+        "resilience",
+        "scenario_degradation",
+        "stage",
+        "stability",
+    }
     assert all(expected <= set(entry) for entry in history)
+    assert [entry["stage"] for entry in history] == SCENARIOS
 
     assert len(logs) == 5
     for rec in logs:
