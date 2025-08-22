@@ -169,13 +169,17 @@ Use `--interval 3600` to keep retraining hourly.
 ## Ranker scheduler
 
 `analytics/ranker_scheduler.py` can run the retrainer on a timer. Set
-environment variables and invoke the module to enable it:
+environment variables and invoke the module to enable it or rely on
+`vector_service_api.py` which calls `start_scheduler_from_env` during startup.
 
 ```bash
 export RANKER_SCHEDULER_INTERVAL=3600  # seconds between retrains (0 disables)
 export RANKER_SCHEDULER_ROI_THRESHOLD=5  # optional ROI delta for immediate retrain
 python -m analytics.ranker_scheduler
 ```
+
+With these variables present the FastAPI app automatically enables the scheduler
+and listens for ROI feedback so large swings trigger immediate retrains.
 
 Additional knobs:
 

@@ -27,7 +27,7 @@ from vector_service import (
     VectorServiceError,
 )
 from roi_tracker import ROITracker
-from ranking_model_scheduler import RankingModelScheduler
+from analytics.ranker_scheduler import start_scheduler_from_env
 
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
@@ -46,17 +46,7 @@ _roi_tracker = ROITracker()
 _cognition_layer = CognitionLayer(roi_tracker=_roi_tracker)
 _patch_logger = PatchLogger(roi_tracker=_roi_tracker)
 _backfill = EmbeddingBackfill()
-_ranker_scheduler = None
-_interval = float(os.getenv("RANKER_SCHEDULER_INTERVAL", "0"))
-if _interval > 0:
-    _roi_thresh = os.getenv("RANKER_SCHEDULER_ROI_THRESHOLD")
-    _ranker_scheduler = RankingModelScheduler(
-        [_cognition_layer],
-        interval=int(_interval),
-        roi_tracker=_roi_tracker,
-        roi_signal_threshold=float(_roi_thresh) if _roi_thresh else None,
-    )
-    _ranker_scheduler.start()
+_ranker_scheduler = start_scheduler_from_env([_cognition_layer])
 
 logger = logging.getLogger(__name__)
 
