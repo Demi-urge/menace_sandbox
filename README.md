@@ -1570,6 +1570,25 @@ review.
 - `ComplianceAuditService` runs continuous security and compliance audits.
 - `MutationLogger` records code changes and `MutationLineage` reconstructs trees and clones branches for A/B tests (see [docs/mutation_lineage.md](docs/mutation_lineage.md)).
 
+### Workflow impact analysis
+
+`WorkflowGraph` maintains a DAG of workflow dependencies and keeps it current by seeding from `WorkflowDB` and listening to workflow events on `UnifiedEventBus`. Self-improvement routines can build the graph and simulate how ROI or synergy changes ripple through downstream modules:
+
+```python
+from unified_event_bus import UnifiedEventBus
+from workflow_graph import WorkflowGraph
+
+bus = UnifiedEventBus()
+graph = WorkflowGraph()
+graph.attach_event_bus(bus)
+
+impacts = graph.simulate_impact_wave("42", 0.5, 0.0)
+for wid, delta in impacts.items():
+    print(wid, delta["roi"], delta["synergy"])
+```
+
+- Use the returned mapping to prioritise follow-up improvement cycles.
+
 ### TruthAdapter calibration
 
 `TruthAdapter` calibrates ROI predictions and flags feature drift. Instantiate
