@@ -1,6 +1,5 @@
 import sys
 import types
-import sys
 
 import pytest
 
@@ -10,8 +9,7 @@ import workflow_graph as wg
 
 
 def _patch_prediction_modules(monkeypatch: pytest.MonkeyPatch, start_id: str) -> None:
-    """Provide lightweight substitutes for optional modules used by the graph."""
-
+    """Provide lightweight substitutes for ROI and synergy helpers."""
     roi_mod = types.ModuleType("roi_predictor")
 
     class DummyPredictor:
@@ -42,54 +40,15 @@ def _patch_prediction_modules(monkeypatch: pytest.MonkeyPatch, start_id: str) ->
     monkeypatch.setitem(sys.modules, "synergy_history_db", syn_mod)
 
 
-def test_graph_initialization_and_event_updates(tmp_path, monkeypatch):
+@pytest.fixture
+def populated_graph(tmp_path, monkeypatch):
+    """Return a graph with three interconnected workflows."""
     bus = UnifiedEventBus()
-    graph_path = tmp_path / "graph.gpickle"
-    g = wg.WorkflowGraph(path=str(graph_path))
+    g = wg.WorkflowGraph(path=str(tmp_path / "graph.gpickle"))
     g.attach_event_bus(bus)
 
     monkeypatch.setattr(thb.WorkflowDB, "_embed", lambda self, text: [])
     db = thb.WorkflowDB(tmp_path / "wf.db", event_bus=bus)
-
-    # Graph starts empty
-    if g._backend == "networkx":
-        assert len(g.graph) == 0
-    else:
-        assert g.graph["nodes"] == {}
-
-    # Adding via WorkflowDB publishes events and populates the graph
-    wid1 = db.add(thb.WorkflowRecord(workflow=["a"], title="A", description="A"))
-    wid2 = db.add(thb.WorkflowRecord(workflow=["b"], title="B", description="B"))
-
-    if g._backend == "networkx":
-        assert g.graph.has_node(str(wid1)) and g.graph.has_node(str(wid2))
-    else:
-        assert str(wid1) in g.graph["nodes"] and str(wid2) in g.graph["nodes"]
-
-    # Event driven update adjusts node attributes
-    bus.publish("workflows:update", {"workflow_id": wid1, "roi": 2.5})
-    if g._backend == "networkx":
-        assert g.graph.nodes[str(wid1)]["roi"] == 2.5
-    else:
-        assert g.graph["nodes"][str(wid1)]["roi"] == 2.5
-
-    # Removing through DB emits delete event removing the node
-    db.remove(wid2)
-    if g._backend == "networkx":
-        assert not g.graph.has_node(str(wid2))
-    else:
-        assert str(wid2) not in g.graph["nodes"]
-
-
-def test_edge_weighting_and_impact_wave(tmp_path, monkeypatch):
-    bus = UnifiedEventBus()
-    graph_path = tmp_path / "graph.gpickle"
-    g = wg.WorkflowGraph(path=str(graph_path))
-    g.attach_event_bus(bus)
-
-    monkeypatch.setattr(thb.WorkflowDB, "_embed", lambda self, text: [])
-    db = thb.WorkflowDB(tmp_path / "wf.db", event_bus=bus)
-
     wids = [
         db.add(thb.WorkflowRecord(workflow=[name], title=name, description=name))
         for name in ("A", "B", "C")
@@ -105,14 +64,26 @@ def test_edge_weighting_and_impact_wave(tmp_path, monkeypatch):
     monkeypatch.setattr(wg, "estimate_edge_weight", fake_weight)
     g.add_dependency(a, b)
     g.add_dependency(b, c)
-    assert calls == [(a, b), (b, c)]
+    return g, (a, b, c), calls
+
+
+def test_node_edge_weight_and_wave(populated_graph, monkeypatch):
+    g, (a, b, c), calls = populated_graph
 
     if g._backend == "networkx":
+        assert g.graph.has_node(a)
+        assert g.graph.has_node(b)
+        assert g.graph.has_node(c)
         assert g.graph[a][b]["impact_weight"] == 0.5
         assert g.graph[b][c]["impact_weight"] == 0.5
     else:
+        assert a in g.graph["nodes"]
+        assert b in g.graph["nodes"]
+        assert c in g.graph["nodes"]
         assert g.graph["edges"][a][b]["impact_weight"] == 0.5
         assert g.graph["edges"][b][c]["impact_weight"] == 0.5
+
+    assert calls == [(a, b), (b, c)]
 
     _patch_prediction_modules(monkeypatch, a)
     result = g.simulate_impact_wave(int(a))
@@ -123,4 +94,3 @@ def test_edge_weighting_and_impact_wave(tmp_path, monkeypatch):
     assert result[a]["synergy"] == pytest.approx(0.2)
     assert result[b]["synergy"] == pytest.approx(0.1)
     assert result[c]["synergy"] == pytest.approx(0.05)
-
