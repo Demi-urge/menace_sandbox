@@ -21,11 +21,14 @@ g = WorkflowGraph()
 g.add_workflow("A", roi=0.5)
 g.add_workflow("B", roi=0.3)
 g.add_dependency("A", "B", impact_weight=0.6)
-projection = g.simulate_impact_wave("A", roi_delta=0.1, synergy_delta=0.2)
-print(projection["B"])
+projection = g.simulate_impact_wave("A")
+print(projection["B"])  # {'roi': 0.06, 'synergy': 0.0}
 ```
 
-Running the above propagates ROI and synergy deltas from workflow `A` to dependent workflows using the stored `impact_weight` values, returning projected metrics for each affected node.
+Running the above propagates projected ROI and synergy *deltas* from workflow `A`
+to its dependants using the stored `impact_weight` values.  The result maps each
+affected workflow to the simulated change in metrics which downstream
+self‑improvement modules can consume.
 
 ## Dependencies and Fallback
 

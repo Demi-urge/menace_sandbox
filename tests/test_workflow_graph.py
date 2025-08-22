@@ -1,5 +1,6 @@
 import sys
 import types
+import sys
 
 import pytest
 
@@ -8,27 +9,21 @@ from menace.unified_event_bus import UnifiedEventBus
 import workflow_graph as wg
 
 
-def _patch_prediction_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+def _patch_prediction_modules(monkeypatch: pytest.MonkeyPatch, start_id: str) -> None:
     """Provide lightweight substitutes for optional modules used by the graph."""
 
-    pred_mod = types.ModuleType("adaptive_roi_predictor")
+    roi_mod = types.ModuleType("roi_predictor")
 
     class DummyPredictor:
-        def __init__(self, *a, **k) -> None:  # pragma: no cover - trivial
-            pass
+        def forecast(self, history, exog=None):  # pragma: no cover - trivial
+            base = float(history[-1]) if history else 0.0
+            return base + 1.0, (0.0, 0.0)
 
-        def predict(
-            self,
-            feats,
-            horizon=None,
-            tracker=None,
-            actual_roi=None,
-            actual_class=None,
-        ):
-            return [[0.0]], "linear", [], None
+    roi_mod.ROIPredictor = DummyPredictor
+    monkeypatch.setitem(sys.modules, "roi_predictor", roi_mod)
 
-    pred_mod.AdaptiveROIPredictor = DummyPredictor
-    monkeypatch.setitem(sys.modules, "adaptive_roi_predictor", pred_mod)
+    syn_tools = types.ModuleType("synergy_tools")
+    monkeypatch.setitem(sys.modules, "synergy_tools", syn_tools)
 
     syn_mod = types.ModuleType("synergy_history_db")
 
@@ -40,7 +35,7 @@ def _patch_prediction_modules(monkeypatch: pytest.MonkeyPatch) -> None:
         return _Conn()
 
     def fetch_latest(_conn):
-        return {}
+        return {start_id: 0.2}
 
     syn_mod.connect = connect
     syn_mod.fetch_latest = fetch_latest
@@ -119,8 +114,8 @@ def test_edge_weighting_and_impact_wave(tmp_path, monkeypatch):
         assert g.graph["edges"][a][b]["impact_weight"] == 0.5
         assert g.graph["edges"][b][c]["impact_weight"] == 0.5
 
-    _patch_prediction_modules(monkeypatch)
-    result = g.simulate_impact_wave(a, roi_delta=1.0, synergy_delta=0.2)
+    _patch_prediction_modules(monkeypatch, a)
+    result = g.simulate_impact_wave(int(a))
 
     assert result[a]["roi"] == pytest.approx(1.0)
     assert result[b]["roi"] == pytest.approx(0.5)

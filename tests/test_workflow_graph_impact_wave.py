@@ -1,5 +1,6 @@
 import sys
 import types
+import sys
 
 import pytest
 
@@ -7,17 +8,18 @@ from workflow_graph import WorkflowGraph
 
 
 class DummyPredictor:
-    def __init__(self, *a, **k):
-        pass
-
-    def predict(self, feats, horizon=None, tracker=None, actual_roi=None, actual_class=None):
-        return [[10.0]], "linear", [], None
+    def forecast(self, history, exog=None):  # pragma: no cover - trivial
+        base = float(history[-1]) if history else 0.0
+        return base + 10.0, (0.0, 0.0)
 
 
 def _setup_modules(monkeypatch):
-    pred_mod = types.ModuleType("adaptive_roi_predictor")
-    pred_mod.AdaptiveROIPredictor = DummyPredictor
-    monkeypatch.setitem(sys.modules, "adaptive_roi_predictor", pred_mod)
+    roi_mod = types.ModuleType("roi_predictor")
+    roi_mod.ROIPredictor = DummyPredictor
+    monkeypatch.setitem(sys.modules, "roi_predictor", roi_mod)
+
+    syn_tools = types.ModuleType("synergy_tools")
+    monkeypatch.setitem(sys.modules, "synergy_tools", syn_tools)
 
     syn_mod = types.ModuleType("synergy_history_db")
 
@@ -29,7 +31,7 @@ def _setup_modules(monkeypatch):
         return _Conn()
 
     def fetch_latest(_conn):
-        return {"A": 1.0, "B": 0.5}
+        return {"A": 1.0}
 
     syn_mod.connect = connect
     syn_mod.fetch_latest = fetch_latest
@@ -50,10 +52,10 @@ def test_simulate_impact_wave(tmp_path):
     g.add_dependency("A", "B", impact_weight=0.5)
     g.add_dependency("B", "C", impact_weight=0.5)
 
-    result = g.simulate_impact_wave("A", roi_delta=0.1, synergy_delta=0.2)
-    assert result["A"]["roi"] == pytest.approx(10.1)
-    assert result["B"]["roi"] == pytest.approx(10.05)
-    assert result["C"]["roi"] == pytest.approx(10.025)
-    assert result["A"]["synergy"] == pytest.approx(1.2)
-    assert result["B"]["synergy"] == pytest.approx(0.6)
-    assert result["C"]["synergy"] == pytest.approx(0.05)
+    result = g.simulate_impact_wave("A")
+    assert result["A"]["roi"] == pytest.approx(10.0)
+    assert result["B"]["roi"] == pytest.approx(5.0)
+    assert result["C"]["roi"] == pytest.approx(2.5)
+    assert result["A"]["synergy"] == pytest.approx(1.0)
+    assert result["B"]["synergy"] == pytest.approx(0.5)
+    assert result["C"]["synergy"] == pytest.approx(0.25)
