@@ -9,6 +9,12 @@
 - Adaptive energy score guiding resource allocation ([docs/energy_score.md](docs/energy_score.md))
 - Central Menace orchestrator coordinating all stages and hierarchical oversight
 - Self improvement engine automatically runs the workflow on the Menace model when metrics degrade
+- ROI foresight with `ForesightTracker.predict_roi_collapse`, projecting trends,
+  classifying risk (Stable, Slow decay, Volatile, Immediate collapse risk) and
+  flagging brittle workflows. Baseline curves live in
+  `configs/foresight_templates.yaml` with keys `profiles`, `trajectories`,
+  `entropy_profiles`, `risk_profiles`, `entropy_trajectories` and
+  `risk_trajectories`
 - Self-coding manager applies patches then deploys via the automation pipeline
 - Command-line interface for setup, retrieval and scaffolding (see
   [docs/cli.md](docs/cli.md)). Semantic search falls back to full-text
