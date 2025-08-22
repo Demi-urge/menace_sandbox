@@ -48,6 +48,8 @@ register_vectorizer(
 
 The registry maps each `kind` to its vectorizer and optional database so `EmbeddingBackfill` and the scheduler discover it automatically.
 
+For a full walkthrough including database integration see [modality_registration.md](modality_registration.md).
+
 ## ROI Feedback and Database Weights
 
 `ROITracker` aggregates feedback with the originating database. Calling `retrieval_bias()` converts ROI deltas into multiplicative weights that influence ranking:
