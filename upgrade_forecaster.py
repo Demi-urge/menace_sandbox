@@ -87,7 +87,7 @@ class UpgradeForecaster:
             patch_serial = json.dumps(patch_repr, sort_keys=True)
         except Exception:
             patch_serial = repr(patch_repr)
-        patch_hash = hashlib.sha256(patch_serial.encode("utf8")).hexdigest()
+        patch_hash = hashlib.sha1(patch_serial.encode("utf8")).hexdigest()
         upgrade_id = patch_hash
 
         # Simulate the patched workflow to obtain prospective metrics
@@ -294,6 +294,15 @@ class UpgradeForecaster:
             out_path = self.records_base / f"{wf_id}_{patch_hash}.json"
             with out_path.open("w", encoding="utf8") as fh:
                 json.dump(record, fh)
+
+            # remove legacy single-file record if present
+            legacy_path = self.records_base / f"{wf_id}.json"
+            if legacy_path.exists():
+                try:
+                    legacy_path.unlink()
+                except Exception:
+                    pass
+
             if self.logger is not None:
                 try:
                     self.logger.log(record)
@@ -340,7 +349,7 @@ def load_record(
             patch_serial = json.dumps(patch_repr, sort_keys=True)
         except Exception:
             patch_serial = repr(patch_repr)
-        upgrade_id = hashlib.sha256(patch_serial.encode("utf8")).hexdigest()
+        upgrade_id = hashlib.sha1(patch_serial.encode("utf8")).hexdigest()
 
     if upgrade_id is None:
         latest: tuple[int, float] | None = None
@@ -357,8 +366,13 @@ def load_record(
                 latest = key
                 latest_data = data
         if latest_data is None:
-            raise FileNotFoundError(f"No record found for workflow {wf_id}")
-        data = latest_data
+            legacy = base / f"{wf_id}.json"
+            if not legacy.exists():
+                raise FileNotFoundError(f"No record found for workflow {wf_id}")
+            with legacy.open("r", encoding="utf8") as fh:
+                data = json.load(fh)
+        else:
+            data = latest_data
     else:
         path = base / f"{wf_id}_{upgrade_id}.json"
         with path.open("r", encoding="utf8") as fh:
@@ -445,8 +459,12 @@ def delete_record(
                 latest = key
                 latest_path = path
         if latest_path is None:
-            raise FileNotFoundError(f"No record found for workflow {wf_id}")
-        latest_path.unlink()
+            legacy = base / f"{wf_id}.json"
+            if not legacy.exists():
+                raise FileNotFoundError(f"No record found for workflow {wf_id}")
+            legacy.unlink()
+        else:
+            latest_path.unlink()
     else:
         path = base / f"{wf_id}_{upgrade_id}.json"
         path.unlink()
