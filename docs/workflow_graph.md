@@ -1,0 +1,34 @@
+# Workflow Graph
+
+The workflow graph models the project's workflows as a directed acyclic graph. Each node represents a workflow and edges capture dependency relationships that let the system analyse how changes ripple through the network and persist this information on disk.
+
+## Edge Weights
+
+Dependency edges carry an `impact_weight` reflecting how strongly one workflow influences another. The weight is derived by [`estimate_edge_weight`](../workflow_graph.py) which blends three heuristics:
+
+1. **Resource overlap** – shared bots or queues.
+2. **API/module similarity** – common steps or `action_chains`, optionally enhanced with vector similarities.
+3. **Output coupling** – the output of one workflow feeding into another.
+
+The final weight is normalised to the range `[0, 1]` and falls back to `1.0` when required supporting data or modules are unavailable.
+
+## Example: `simulate_impact_wave`
+
+```python
+from workflow_graph import WorkflowGraph
+
+g = WorkflowGraph()
+g.add_workflow("A", roi=0.5)
+g.add_workflow("B", roi=0.3)
+g.add_dependency("A", "B", impact_weight=0.6)
+projection = g.simulate_impact_wave("A", roi_delta=0.1, synergy_delta=0.2)
+print(projection["B"])
+```
+
+Running the above propagates ROI and synergy deltas from workflow `A` to dependent workflows using the stored `impact_weight` values, returning projected metrics for each affected node.
+
+## Dependencies and Fallback
+
+[`workflow_graph.py`](../workflow_graph.py) uses [`NetworkX`](https://networkx.org) when available for graph management. If the library is missing the module transparently falls back to a lightweight adjacency-list implementation so basic functionality remains available.
+
+The `simulate_impact_wave` method also downgrades gracefully when optional predictors or history databases can't be imported, using baseline ROI and synergy values instead.
