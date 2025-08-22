@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Helper for recording patch outcomes for contributing vectors."""
 
-from typing import Any, Iterable, List, Mapping, Sequence, Tuple, Union
+from typing import Any, Callable, Iterable, List, Mapping, Sequence, Tuple, Union
 
 import asyncio
 import logging
@@ -189,6 +189,7 @@ class PatchLogger:
         session_id: str = "",
         contribution: float | None = None,
         retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
+        risk_callback: "Callable[[Mapping[str, float]], Any]" | None = None,
     ) -> dict[str, float]:
         """Log patch outcome for vectors contributing to a patch.
 
@@ -544,6 +545,12 @@ class PatchLogger:
                     "UnifiedEventBus patch_logger outcome publish failed"
                 )
 
+        if risk_callback is not None:
+            try:
+                risk_callback(origin_similarity)
+            except Exception:
+                logger.exception("risk callback failed")
+
         return TrackResult(origin_similarity, errors=errors)
 
     # ------------------------------------------------------------------
@@ -557,6 +564,7 @@ class PatchLogger:
         session_id: str = "",
         contribution: float | None = None,
         retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
+        risk_callback: "Callable[[Mapping[str, float]], Any]" | None = None,
     ) -> dict[str, float]:
         """Asynchronous wrapper for :meth:`track_contributors`."""
 
@@ -569,6 +577,7 @@ class PatchLogger:
             session_id=session_id,
             contribution=contribution,
             retrieval_metadata=retrieval_metadata,
+            risk_callback=risk_callback,
         )
 
 

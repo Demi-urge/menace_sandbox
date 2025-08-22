@@ -26,7 +26,7 @@ retrieval ranker used by the context builder.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Mapping, Tuple
 import time
 import asyncio
 import json
@@ -680,27 +680,49 @@ class CognitionLayer:
                         pass
 
         vec_ids = [(f"{o}:{vid}", score) for o, vid, score in vectors]
+        callback_scores: Dict[str, float] = {}
+
+        def _cb(scores: Mapping[str, float]) -> None:
+            for o, val in scores.items():
+                key = o or ""
+                try:
+                    callback_scores[key] = max(callback_scores.get(key, 0.0), float(val))
+                except Exception:
+                    callback_scores[key] = max(callback_scores.get(key, 0.0), 0.0)
+
+        kwargs = {
+            "patch_id": patch_id,
+            "session_id": session_id,
+            "contribution": contribution,
+            "retrieval_metadata": meta,
+        }
+        import inspect
+
+        try:
+            sig = inspect.signature(self.patch_logger.track_contributors)
+            if "risk_callback" in sig.parameters:
+                kwargs["risk_callback"] = _cb
+        except Exception:
+            pass
+
         if async_mode:
             result = await self.patch_logger.track_contributors_async(
                 vec_ids,
                 success,
-                patch_id=patch_id,
-                session_id=session_id,
-                contribution=contribution,
-                retrieval_metadata=meta,
+                **kwargs,
             )
         else:
             result = self.patch_logger.track_contributors(
                 vec_ids,
                 success,
-                patch_id=patch_id,
-                session_id=session_id,
-                contribution=contribution,
-                retrieval_metadata=meta,
+                **kwargs,
             )
 
         result_scores = dict(result or {})
         for origin, score in result_scores.items():
+            key = origin or ""
+            risk_scores[key] = max(risk_scores.get(key, 0.0), score)
+        for origin, score in callback_scores.items():
             key = origin or ""
             risk_scores[key] = max(risk_scores.get(key, 0.0), score)
 
@@ -819,6 +841,11 @@ class CognitionLayer:
         updates = self.update_ranker(
             vectors, success, roi_deltas=roi_deltas, risk_scores=risk_scores
         )
+        if updates and hasattr(self.context_builder, "refresh_db_weights"):
+            try:
+                self.context_builder.refresh_db_weights()
+            except Exception:
+                logger.exception("Failed to refresh context builder weights")
 
         if not success or roi_drop:
             try:

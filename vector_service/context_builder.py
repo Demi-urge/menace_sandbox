@@ -215,6 +215,8 @@ class ContextBuilder:
         except Exception:  # pragma: no cover - best effort
             self.db_weights = dict(weights)
 
+        return dict(self.db_weights)
+
     # ------------------------------------------------------------------
     def _summarise(self, text: str) -> str:
         if self.memory and hasattr(self.memory, "_summarise_text"):
