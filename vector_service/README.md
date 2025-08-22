@@ -87,9 +87,10 @@ service continues with reduced functionality.
 
 ### Bundled embedding model
 
-Text embeddings fall back to a tiny DistilRoBERTa encoder stored locally at
-`vector_service/minilm/tiny-distilroberta-base.tar.xz`.  The archive is
-downloaded from Hugging Face on first use.
+Text embeddings fall back to a tiny DistilRoBERTa encoder stored at
+`vector_service/minilm/tiny-distilroberta-base.tar.xz`.  The archive is not
+committed to the repository; it is downloaded from Hugging Face on first use so
+deployments can remain fully offline thereafter.
 
 Pre‑fetch or refresh the archive with:
 
@@ -97,7 +98,8 @@ Pre‑fetch or refresh the archive with:
 python -m vector_service.download_model
 ```
 
-This fetches the model from Hugging Face and rewrites the bundled archive.
+This fetches the model from Hugging Face and rewrites the bundled archive,
+allowing operators to pre‑download or update the fallback model as needed.
 
 ## Safety filtering
 
