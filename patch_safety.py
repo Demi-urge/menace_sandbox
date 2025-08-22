@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 import json
 import math
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Tuple
 
@@ -88,6 +89,10 @@ class PatchSafety:
     _failures: List[List[float]] = field(default_factory=list)
     _records: List[Dict[str, Any]] = field(default_factory=list)
     _failure_vectors: List[List[float]] = field(default_factory=list)
+    refresh_interval: float = 3600.0
+    _last_refresh: float = 0.0
+    _jsonl_mtime: float = 0.0
+    _db_mtime: float = 0.0
 
     # ------------------------------------------------------------------
     def __post_init__(self) -> None:  # pragma: no cover - simple IO
@@ -114,9 +119,42 @@ class PatchSafety:
             pass
 
     # ------------------------------------------------------------------
-    def load_failures(self, path: str | None = None) -> None:
+    def load_failures(self, path: str | None = None, *, force: bool = False) -> None:
         """Populate failure vectors from JSONL store and ``failures.db``."""
+        now = time.time()
+        if (
+            not force
+            and self.refresh_interval > 0
+            and now - self._last_refresh < self.refresh_interval
+        ):
+            return
+        self._last_refresh = now
         pth = path or self.storage_path
+        reload_needed = force
+        if pth:
+            p = Path(pth)
+            if p.exists():
+                try:
+                    mtime = p.stat().st_mtime
+                except Exception:  # pragma: no cover - best effort
+                    mtime = 0.0
+                if mtime > self._jsonl_mtime:
+                    self._jsonl_mtime = mtime
+                    reload_needed = True
+        db_path = self.failure_db_path
+        if db_path:
+            try:
+                db_mtime = Path(db_path).stat().st_mtime
+            except Exception:  # pragma: no cover - best effort
+                db_mtime = 0.0
+            if db_mtime > self._db_mtime:
+                self._db_mtime = db_mtime
+                reload_needed = True
+        if not reload_needed:
+            return
+        self._failures.clear()
+        self._records.clear()
+        self._failure_vectors.clear()
         if pth:
             p = Path(pth)
             if p.exists():
@@ -148,8 +186,6 @@ class PatchSafety:
                                 self._failures.append(vec)
                 except Exception:  # pragma: no cover - best effort
                     pass
-
-        db_path = self.failure_db_path
         if not db_path or FailureVectorizer is None:
             return
         try:

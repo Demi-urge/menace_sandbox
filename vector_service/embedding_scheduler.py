@@ -11,6 +11,7 @@ from typing import Optional
 
 from unified_event_bus import UnifiedEventBus
 
+from patch_safety import PatchSafety
 from .embedding_backfill import EmbeddingBackfill, KNOWN_DB_KINDS
 
 try:  # pragma: no cover - optional dependency for metrics
@@ -46,6 +47,7 @@ class EmbeddingScheduler:
         event_topic: str = "db:new_record",
         event_batch: int = 1,
         event_throttle: float = 0.0,
+        patch_safety: PatchSafety | None = None,
     ) -> None:
         self.interval = interval
         self.batch_size = batch_size
@@ -60,6 +62,7 @@ class EmbeddingScheduler:
         self._thread: Optional[threading.Thread] = None
         self.running = False
         self.backfill = EmbeddingBackfill()
+        self.patch_safety = patch_safety or PatchSafety()
 
         try:  # subscribe to on-demand backfill events
             self.event_bus.subscribe(self.event_topic, self._handle_event)
@@ -106,6 +109,12 @@ class EmbeddingScheduler:
                     backend=self.backend,
                     dbs=self.sources,
                 )
+                try:
+                    self.patch_safety.load_failures()
+                except Exception:  # pragma: no cover - best effort
+                    logging.getLogger(__name__).exception(
+                        "patch safety refresh failed"
+                    )
             except Exception:  # pragma: no cover - best effort
                 status = "failure"
                 logging.exception("embedding backfill run failed")
