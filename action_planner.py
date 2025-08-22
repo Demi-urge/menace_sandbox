@@ -33,7 +33,7 @@ from .growth_utils import growth_score
 from .adaptive_roi_predictor import AdaptiveROIPredictor
 from .roi_tracker import ROITracker
 from sandbox_settings import SandboxSettings
-from vector_service import ContextBuilder, FallbackResult, ErrorResult
+from vector_service import CognitionLayer
 from .governance import check_veto, load_rules
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,7 @@ class ActionPlanner:
         use_adaptive_roi: bool | None = None,
         growth_weighting: bool | None = None,
         growth_multipliers: Dict[str, float] | None = None,
-        context_builder: ContextBuilder | None = None,
+        cognition_layer: CognitionLayer | None = None,
     ) -> None:
         self.pathway_db = pathway_db
         self.roi_db = roi_db
@@ -177,12 +177,12 @@ class ActionPlanner:
                 }
         self.growth_multipliers = growth_multipliers
         self.priority_weights: Dict[str, float] = {}
-        if context_builder is None:
+        if cognition_layer is None:
             try:
-                context_builder = ContextBuilder()
+                cognition_layer = CognitionLayer()
             except Exception:  # pragma: no cover - optional dependency
-                context_builder = None
-        self.context_builder = context_builder
+                cognition_layer = None
+        self.cognition_layer = cognition_layer
         if self.event_bus:
             try:
                 self.event_bus.subscribe("pathway:new", self._on_new_pathway)
@@ -529,13 +529,10 @@ class ActionPlanner:
         state = self._state_key(state_steps)
         values = self.model.q.get(state, {})
         ctx: Dict[str, Any] = {}
-        if self.context_builder:
+        if self.cognition_layer:
             try:
-                result = self.context_builder.build_context(current)
-                if isinstance(result, (ErrorResult, FallbackResult)):
-                    ctx = {}
-                else:
-                    ctx = json.loads(result)
+                result, _sid = self.cognition_layer.query(current)
+                ctx = json.loads(result) if result else {}
             except Exception:
                 ctx = {}
         scored: list[tuple[str, float, float, str]] = []
