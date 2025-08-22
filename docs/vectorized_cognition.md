@@ -1,18 +1,18 @@
 # Vectorized Cognition
 
-This document explains how vector-based context flows through the system and how feedback updates influence future retrieval.
+This guide walks through how vector embeddings move through the cognition stack and how feedback steers future retrievals.
 
 ## Data Flow
 
 ```
-vectorizers → EmbeddingBackfill / EmbeddingScheduler → Retriever / ContextBuilder → PatchLogger / ROITracker → ranking model updates
+vectorizers → EmbeddingBackfill/EmbeddingScheduler → Retriever/ContextBuilder → PatchLogger/ROITracker → ranking model updates
 ```
 
-1. **Vectorizers** turn records of each modality into embedding vectors.
-2. **EmbeddingBackfill** populates vector stores for new records.  **EmbeddingScheduler** periodically refreshes them.
-3. **Retriever** searches the stores and **ContextBuilder** assembles a cognitive context from the top results.
-4. **PatchLogger** and **ROITracker** capture which vectors affected a patch and the resulting return on investment (ROI).
-5. The accumulated metrics drive **ranking model updates**, favouring high‑ROI sources on subsequent queries.
+1. **Vectorizers** convert raw records for each modality into dense embeddings.
+2. **EmbeddingBackfill** populates vectors for new records while **EmbeddingScheduler** keeps them fresh.
+3. **Retriever** queries the vector stores and **ContextBuilder** assembles the cognitive context.
+4. **PatchLogger** ties retrieved vectors to patches and **ROITracker** records success metrics.
+5. Aggregated metrics drive **ranking model updates**, favouring high‑ROI sources on subsequent queries.
 
 ## Building Context and Logging Feedback
 
@@ -28,11 +28,11 @@ context, session_id = build_cognitive_context("optimise cache eviction", top_k=5
 log_feedback(session_id, True, patch_id="cache-fix-42")
 ```
 
-`build_cognitive_context` wraps the vector service to return a JSON context blob and a session id.  `log_feedback` forwards patch outcomes so metrics and ROI histories can be updated.
+`build_cognitive_context` wraps `vector_service.cognition_layer.CognitionLayer.query` to return a JSON context blob and session id. `log_feedback` forwards patch outcomes so ROI histories and ranking weights can update.
 
 ## Registering New Modalities
 
-New record types are registered in `vector_service/registry.py` via `register_vectorizer`:
+Add new record types in `vector_service/registry.py` using `register_vectorizer`:
 
 ```python
 from vector_service.registry import register_vectorizer
@@ -46,11 +46,11 @@ register_vectorizer(
 )
 ```
 
-The registry maps the `kind` to both the vectorizer and, optionally, its database.  `EmbeddingBackfill` and the scheduler use this mapping to discover new modalities automatically.
+The registry maps each `kind` to its vectorizer and optional database so `EmbeddingBackfill` and the scheduler discover it automatically.
 
 ## ROI Feedback and Database Weights
 
-`ROITracker` aggregates feedback with the originating database.  Calling `retrieval_bias()` converts ROI deltas into multiplicative weights used by `ContextBuilder`, so databases with higher ROI are ranked earlier.
+`ROITracker` aggregates feedback with the originating database. Calling `retrieval_bias()` converts ROI deltas into multiplicative weights that influence ranking:
 
 ```python
 from roi_tracker import ROITracker
@@ -60,4 +60,4 @@ tracker.update(0.10, 0.25, retrieval_metrics=[{"origin_db": "bot", "hit": True, 
 weights = tracker.retrieval_bias()  # e.g. {"bot": 1.2}
 ```
 
-These weights adapt ranking as feedback accumulates, gradually biasing retrieval toward databases that historically produce better outcomes.
+As feedback accumulates, databases with higher ROI receive larger weights, biasing retrieval toward sources that historically perform better.
