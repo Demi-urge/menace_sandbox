@@ -73,11 +73,16 @@ class EmbeddingScheduler:
     def _handle_event(self, _topic: str, payload: object) -> None:
         """Handle on-demand backfill requests from the event bus."""
         source = None
+        meta = None
         if isinstance(payload, dict):
             source = payload.get("source")
+            meta = payload.get("metadata") or payload.get("meta")
         else:
             source = getattr(payload, "source", None)
+            meta = getattr(payload, "metadata", getattr(payload, "meta", None))
         if not source or source not in _SUPPORTED_SOURCES:
+            return
+        if meta is not None and not self.patch_safety.pre_embed_check(meta):
             return
         self._event_counts[source] += 1
         now = time.time()
