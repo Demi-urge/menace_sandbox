@@ -5586,19 +5586,21 @@ def simulate_temporal_trajectory(
         wf_id = str(getattr(workflow, "wid", getattr(workflow, "id", "0")))
         scenarios = summary.get("scenarios", {})
         baseline_roi = float(scenarios.get("baseline", {}).get("roi", 0.0))
-        metrics: Dict[str, float] = {}
         for preset in presets:
             name = str(preset.get("SCENARIO_NAME", ""))
             info = scenarios.get(name, {})
             roi = float(info.get("roi", 0.0))
             resilience = float(info.get("metrics", {}).get("resilience", 0.0))
             degradation = baseline_roi - roi
-            metrics[f"{name}_roi"] = roi
-            metrics[f"{name}_resilience"] = resilience
-            metrics[f"{name}_degradation"] = degradation
-        foresight_tracker.record_cycle_metrics(
-            wf_id, metrics, compute_stability=True
-        )
+            foresight_tracker.record_cycle_metrics(
+                wf_id,
+                {
+                    "roi_delta": roi,
+                    "resilience": resilience,
+                    "scenario_degradation": degradation,
+                },
+                compute_stability=True,
+            )
 
     return tracker, scorecards, summary
 
