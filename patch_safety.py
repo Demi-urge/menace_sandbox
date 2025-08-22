@@ -102,6 +102,15 @@ class PatchSafety:
         self.load_failures()
 
     # ------------------------------------------------------------------
+    def _maybe_refresh_failures(self) -> None:
+        """Reload failures when the refresh interval has elapsed."""
+        if (
+            self.refresh_interval > 0
+            and time.time() - self._last_refresh >= self.refresh_interval
+        ):
+            self.load_failures()
+
+    # ------------------------------------------------------------------
     def record_failure(self, err: Dict[str, Any], origin: str = "") -> None:
         """Add a failure example represented by ``err`` and persist it.
 
@@ -109,7 +118,7 @@ class PatchSafety:
         future evaluations of vectors from the same source can be penalised
         more heavily.
         """
-
+        self._maybe_refresh_failures()
         self.vectorizer.fit([err])
         vec = self.vectorizer.transform(err)
         self._failures.append(vec)
@@ -351,7 +360,7 @@ class PatchSafety:
         ``passed`` is ``False`` when the metadata violates any denylist or when
         the similarity ``score`` exceeds the ``threshold``.
         """
-
+        self._maybe_refresh_failures()
         if not self._check_meta(meta):
             return False, 0.0
 

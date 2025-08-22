@@ -41,11 +41,9 @@ def test_failure_db_refresh(tmp_path):
     )
     conn.commit()
     conn.close()
-    ps.load_failures()
     ok, _ = ps.evaluate({}, example)
     assert ok
     time.sleep(0.25)
-    ps.load_failures()
     ok, score = ps.evaluate({}, example)
     assert not ok
     assert score >= ps.threshold
