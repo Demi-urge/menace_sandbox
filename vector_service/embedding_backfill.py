@@ -74,6 +74,7 @@ KNOWN_DB_KINDS = {
     "discrepancy",
     "failure",
     "research",
+    "resource",
 }
 
 
