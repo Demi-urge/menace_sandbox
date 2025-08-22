@@ -74,7 +74,7 @@ def test_failure_embedding_and_rejection(tmp_path):
     ps = PatchSafety(threshold=0.5, storage_path=str(store), failure_db_path=None)
     err_meta = {"category": "fail", "module": "m"}
 
-    ok, score = ps.evaluate({}, err_meta)
+    ok, score, _ = ps.evaluate({}, err_meta)
     assert ok and score < ps.threshold
 
     pl = PatchLogger(patch_safety=ps)
@@ -82,7 +82,7 @@ def test_failure_embedding_and_rejection(tmp_path):
     assert len(ps._failures) == 1
     assert ps._failures[0] == ps.vectorizer.transform(err_meta)
 
-    ok2, score2 = ps.evaluate({}, err_meta)
+    ok2, score2, _ = ps.evaluate({}, err_meta)
     assert not ok2
     assert score2 >= ps.threshold
 
@@ -109,6 +109,6 @@ def test_failure_db_similarity(tmp_path):
         "cac": 1.0,
         "roi": 1.0,
     }
-    ok, score = ps.evaluate({}, err_meta)
+    ok, score, _ = ps.evaluate({}, err_meta)
     assert not ok
     assert score >= ps.threshold

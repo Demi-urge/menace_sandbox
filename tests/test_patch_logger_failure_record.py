@@ -9,6 +9,6 @@ def test_track_contributors_records_failure(tmp_path):
     meta = {"error:1": {"category": "fail", "module": "m"}}
     pl.track_contributors(["error:1"], False, retrieval_metadata=meta)
     ps2 = PatchSafety(storage_path=str(store))
-    ok, score = ps2.evaluate({}, {"category": "fail", "module": "m"})
+    ok, score, _ = ps2.evaluate({}, {"category": "fail", "module": "m"})
     assert not ok
     assert score >= ps.threshold

@@ -8,6 +8,6 @@ def test_persistence_roundtrip(tmp_path):
     ps.record_failure(failure)
     assert store.exists()
     ps2 = PatchSafety(storage_path=str(store))
-    ok, score = ps2.evaluate({}, failure)
+    ok, score, _ = ps2.evaluate({}, failure)
     assert not ok
     assert score >= ps.threshold
