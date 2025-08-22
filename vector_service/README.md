@@ -31,6 +31,40 @@ layer.record_patch_outcome(session_id, True, contribution=1.0)
 
 The final call updates ROI metrics and adjusts ranking weights.
 
+## Feedback cycle
+
+The service closes the loop on every patch by feeding outcomes back into the
+retrieval ranker:
+
+1. **Retrieval** – `retriever.py` selects candidate vectors.
+2. **Context build** – `context_builder.py` packs the selected vectors into a
+   JSON payload.
+3. **Patch logging** – [`cognition_layer.py`](cognition_layer.py) forwards the
+   contributors to [`patch_logger.py`](patch_logger.py), which uses
+   [`patch_safety.py`](patch_safety.py) to score risk.
+4. **ROI/risk updates** – `PatchLogger` records success, ROI deltas and risk
+   scores; `CognitionLayer` turns them into ranking‑weight adjustments.
+5. **Ranker refresh** – large changes persist to the metrics DB and retraining
+   jobs reload the ranker; failures can trigger embedding backfills.
+
+### Examples
+
+```python
+from vector_service.cognition_layer import CognitionLayer
+from vector_service.embedding_backfill import schedule_backfill
+import asyncio
+
+layer = CognitionLayer()
+ctx, sid = layer.query("Improve throughput?")
+layer.record_patch_outcome(sid, True)
+# contributors gain weight in the ranker
+
+ctx2, sid2 = layer.query("Fix failing tests?")
+layer.record_patch_outcome(sid2, False)
+asyncio.run(schedule_backfill(dbs=["code"]))
+# failure drops weight and refreshes embeddings
+```
+
 ### Optional dependencies
 
 These modules gracefully degrade when optional packages are missing:
