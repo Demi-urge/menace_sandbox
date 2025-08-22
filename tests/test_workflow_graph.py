@@ -1,46 +1,131 @@
-import os
+import sys
+import types
 
-from workflow_graph import WorkflowGraph
+import pytest
+
+import menace.task_handoff_bot as thb
+from menace.unified_event_bus import UnifiedEventBus
+import workflow_graph as wg
 
 
-def test_workflow_graph_persistence(tmp_path):
-    path = tmp_path / "graph.gpickle"
-    g = WorkflowGraph(path=str(path))
-    g.add_workflow("A", roi=1.0, synergy_scores={"s": 10})
-    g.add_workflow("B", roi=2.0, synergy_scores={"s": 5})
-    g.add_dependency("A", "B", impact_weight=0.5, dependency_type="requires")
-    g.update_workflow("A", roi=1.5)
+def _patch_prediction_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provide lightweight substitutes for optional modules used by the graph."""
 
-    g2 = WorkflowGraph(path=str(path))
-    if g2._backend == "networkx":
-        assert g2.graph.nodes["A"]["roi"] == 1.5
-        assert g2.graph["A"]["B"]["impact_weight"] == 0.5
-        assert g2.graph["A"]["B"]["dependency_type"] == "requires"
+    pred_mod = types.ModuleType("adaptive_roi_predictor")
+
+    class DummyPredictor:
+        def __init__(self, *a, **k) -> None:  # pragma: no cover - trivial
+            pass
+
+        def predict(
+            self,
+            feats,
+            horizon=None,
+            tracker=None,
+            actual_roi=None,
+            actual_class=None,
+        ):
+            return [[0.0]], "linear", [], None
+
+    pred_mod.AdaptiveROIPredictor = DummyPredictor
+    monkeypatch.setitem(sys.modules, "adaptive_roi_predictor", pred_mod)
+
+    syn_mod = types.ModuleType("synergy_history_db")
+
+    class _Conn:
+        def close(self):  # pragma: no cover - trivial
+            pass
+
+    def connect(_path):
+        return _Conn()
+
+    def fetch_latest(_conn):
+        return {}
+
+    syn_mod.connect = connect
+    syn_mod.fetch_latest = fetch_latest
+    monkeypatch.setitem(sys.modules, "synergy_history_db", syn_mod)
+
+
+def test_graph_initialization_and_event_updates(tmp_path, monkeypatch):
+    bus = UnifiedEventBus()
+    graph_path = tmp_path / "graph.gpickle"
+    g = wg.WorkflowGraph(path=str(graph_path))
+    g.attach_event_bus(bus)
+
+    monkeypatch.setattr(thb.WorkflowDB, "_embed", lambda self, text: [])
+    db = thb.WorkflowDB(tmp_path / "wf.db", event_bus=bus)
+
+    # Graph starts empty
+    if g._backend == "networkx":
+        assert len(g.graph) == 0
     else:
-        assert g2.graph["nodes"]["A"]["roi"] == 1.5
-        assert g2.graph["edges"]["A"]["B"]["impact_weight"] == 0.5
-        assert g2.graph["edges"]["A"]["B"]["dependency_type"] == "requires"
+        assert g.graph["nodes"] == {}
 
-    g2.remove_workflow("B")
-    if g2._backend == "networkx":
-        assert "B" not in g2.graph
-    else:
-        assert "B" not in g2.graph["nodes"]
-
-
-def test_add_dependency_uses_estimator(monkeypatch, tmp_path):
-    path = tmp_path / "graph.gpickle"
-    g = WorkflowGraph(path=str(path))
-    g.add_workflow("A")
-    g.add_workflow("B")
-
-    monkeypatch.setattr(
-        "workflow_graph.estimate_edge_weight", lambda _a, _b: 0.33
-    )
-
-    g.add_dependency("A", "B")
+    # Adding via WorkflowDB publishes events and populates the graph
+    wid1 = db.add(thb.WorkflowRecord(workflow=["a"], title="A", description="A"))
+    wid2 = db.add(thb.WorkflowRecord(workflow=["b"], title="B", description="B"))
 
     if g._backend == "networkx":
-        assert g.graph["A"]["B"]["impact_weight"] == 0.33
+        assert g.graph.has_node(str(wid1)) and g.graph.has_node(str(wid2))
     else:
-        assert g.graph["edges"]["A"]["B"]["impact_weight"] == 0.33
+        assert str(wid1) in g.graph["nodes"] and str(wid2) in g.graph["nodes"]
+
+    # Event driven update adjusts node attributes
+    bus.publish("workflows:update", {"workflow_id": wid1, "roi": 2.5})
+    if g._backend == "networkx":
+        assert g.graph.nodes[str(wid1)]["roi"] == 2.5
+    else:
+        assert g.graph["nodes"][str(wid1)]["roi"] == 2.5
+
+    # Removing through DB emits delete event removing the node
+    db.remove(wid2)
+    if g._backend == "networkx":
+        assert not g.graph.has_node(str(wid2))
+    else:
+        assert str(wid2) not in g.graph["nodes"]
+
+
+def test_edge_weighting_and_impact_wave(tmp_path, monkeypatch):
+    bus = UnifiedEventBus()
+    graph_path = tmp_path / "graph.gpickle"
+    g = wg.WorkflowGraph(path=str(graph_path))
+    g.attach_event_bus(bus)
+
+    monkeypatch.setattr(thb.WorkflowDB, "_embed", lambda self, text: [])
+    db = thb.WorkflowDB(tmp_path / "wf.db", event_bus=bus)
+
+    wids = [
+        db.add(thb.WorkflowRecord(workflow=[name], title=name, description=name))
+        for name in ("A", "B", "C")
+    ]
+    a, b, c = map(str, wids)
+
+    calls = []
+
+    def fake_weight(src, dst):
+        calls.append((src, dst))
+        return 0.5
+
+    monkeypatch.setattr(wg, "estimate_edge_weight", fake_weight)
+    g.add_dependency(a, b)
+    g.add_dependency(b, c)
+    assert calls == [(a, b), (b, c)]
+
+    if g._backend == "networkx":
+        assert g.graph[a][b]["impact_weight"] == 0.5
+        assert g.graph[b][c]["impact_weight"] == 0.5
+    else:
+        assert g.graph["edges"][a][b]["impact_weight"] == 0.5
+        assert g.graph["edges"][b][c]["impact_weight"] == 0.5
+
+    _patch_prediction_modules(monkeypatch)
+    result = g.simulate_impact_wave(a, roi_delta=1.0, synergy_delta=0.2)
+
+    assert result[a]["roi"] == pytest.approx(1.0)
+    assert result[b]["roi"] == pytest.approx(0.5)
+    assert result[c]["roi"] == pytest.approx(0.25)
+    assert result[a]["synergy"] == pytest.approx(0.2)
+    assert result[b]["synergy"] == pytest.approx(0.1)
+    assert result[c]["synergy"] == pytest.approx(0.05)
+
