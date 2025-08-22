@@ -50,18 +50,22 @@ except Exception:  # pragma: no cover - executed when networkx missing
 def estimate_impact_strength(from_id: str, to_id: str) -> tuple[float, str]:
     """Estimate how strongly ``from_id`` impacts ``to_id``.
 
-    The score is derived from three heuristics:
+    The score blends structural heuristics with live telemetry:
 
     * **Output coupling** – whether the outputs or queues of ``from_id`` feed
       into ``to_id``.
     * **API/service usage** – overlap in action chains or workflow steps.
     * **Resource contention** – competing for the same bots or other shared
       resources.
+    * **Runtime signals** – historical ROI correlation from
+      :mod:`roi_tracker` and queue load overlap via
+      :mod:`resource_allocation_bot` when available.
 
     The function returns a normalised weight in ``[0, 1]`` along with a label
-    describing which heuristic contributed the most.  When the required
-    workflow information is unavailable a default ``(1.0, "unknown")`` is
-    returned.
+    describing which heuristic contributed the most.  Missing runtime metrics
+    are simply ignored so the calculation falls back to the structural
+    heuristics rather than failing.  When the required workflow information is
+    unavailable a default ``(1.0, "unknown")`` is returned.
     """
 
     try:  # Local imports are used to avoid heavy start-up costs when optional
@@ -102,7 +106,9 @@ def estimate_impact_strength(from_id: str, to_id: str) -> tuple[float, str]:
     resource_contention = _jaccard(a.assigned_bots, b.assigned_bots)
 
     # API/service overlap from action chains or workflow steps
-    api_coupling = _jaccard(a.action_chains or a.workflow, b.action_chains or b.workflow)
+    api_coupling = _jaccard(
+        a.action_chains or a.workflow, b.action_chains or b.workflow
+    )
 
     # Optional vector similarity using workflow_vectorizer for a softer signal
     try:  # pragma: no cover - optional dependency
@@ -125,18 +131,76 @@ def estimate_impact_strength(from_id: str, to_id: str) -> tuple[float, str]:
         if last_step:
             if last_step in (b.argument_strings or []):
                 output_coupling = 1.0
-            elif (b.workflow or b.task_sequence or []) and last_step == (b.workflow or b.task_sequence)[0]:
+            elif (
+                b.workflow or b.task_sequence or []
+            ) and last_step == (b.workflow or b.task_sequence)[0]:
                 output_coupling = 0.5
     except Exception:
         pass
 
-    # Aggregate scores
-    scores = {
+    # ------------------------------------------------------------------
+    # Runtime data: ROI history correlation
+    roi_corr: Optional[float] = None
+    try:  # pragma: no cover - optional runtime telemetry
+        from roi_tracker import ROITracker  # type: ignore
+
+        tracker = ROITracker()
+        try:
+            tracker.load_history(os.path.join("sandbox_data", "roi_history.json"))
+        except Exception:
+            pass
+        hist_a = tracker.final_roi_history.get(str(from_id), [])
+        hist_b = tracker.final_roi_history.get(str(to_id), [])
+        if len(hist_a) > 1 and len(hist_b) > 1:
+            mean_a = sum(hist_a) / len(hist_a)
+            mean_b = sum(hist_b) / len(hist_b)
+            num = sum(
+                (x - mean_a) * (y - mean_b)
+                for x, y in zip(hist_a[-50:], hist_b[-50:])
+            )
+            den = math.sqrt(sum((x - mean_a) ** 2 for x in hist_a[-50:])) * math.sqrt(
+                sum((y - mean_b) ** 2 for y in hist_b[-50:])
+            )
+            if den:
+                roi_corr = abs(num / den)
+    except Exception:
+        roi_corr = None
+
+    # Runtime data: queue load overlap via allocation history
+    queue_overlap: Optional[float] = None
+    try:  # pragma: no cover - optional runtime telemetry
+        from resource_allocation_bot import AllocationDB  # type: ignore
+
+        adb = AllocationDB()
+
+        def _avg_active(wid: str) -> float:
+            try:
+                row = adb.conn.execute(
+                    "SELECT AVG(active) FROM allocations WHERE bot=?", (wid,)
+                ).fetchone()
+                return float(row[0] or 0.0)
+            except Exception:
+                return 0.0
+
+        load_a = _avg_active(str(from_id))
+        load_b = _avg_active(str(to_id))
+        if load_a or load_b:
+            queue_overlap = min(load_a, load_b)
+    except Exception:
+        queue_overlap = None
+
+    # Aggregate scores, ignoring unavailable metrics
+    scores: Dict[str, float] = {
         "resource": resource_contention,
         "api": api_coupling,
         "output": output_coupling,
     }
-    weight = sum(scores.values()) / 3.0
+    if roi_corr is not None:
+        scores["roi_corr"] = roi_corr
+    if queue_overlap is not None:
+        scores["queue"] = queue_overlap
+
+    weight = sum(scores.values()) / len(scores) if scores else 1.0
     dep_type = max(scores, key=scores.get) if any(scores.values()) else "none"
     return max(0.0, min(1.0, weight)), dep_type
 
