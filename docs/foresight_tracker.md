@@ -130,8 +130,8 @@ if tracker.is_cold_start("trading_bot"):
 
 The helper :func:`predict_roi_collapse` examines recent ROI and
 ``scenario_degradation`` values to forecast when a workflow's trajectory
-falls below zero. It adjusts the projection using the expected entropy curve
-from :func:`get_entropy_template_curve`.
+falls below zero. It adjusts the projection curve using the expected entropy
+reference from :func:`get_entropy_template_curve`.
 
 ### Risk categories
 
@@ -160,10 +160,10 @@ amount, the ``brittle`` field is set to ``True``.
 
 - ``risk`` – one of ``Stable``, ``Slow decay``, ``Volatile`` or
   ``Immediate collapse risk`` (see risk categories above).
-- ``cycles_to_collapse`` – estimated cycles remaining before ROI becomes
+- ``collapse_in`` – estimated cycles remaining before ROI becomes
   negative, or ``None`` if no collapse is predicted.
 - ``brittle`` – ``True`` when small entropy changes produce large ROI drops.
-- ``projection`` – projected ROI values for future cycles up to the horizon or
+- ``curve`` – projected ROI values for future cycles up to the horizon or
   until collapse.
 
 ### Example
