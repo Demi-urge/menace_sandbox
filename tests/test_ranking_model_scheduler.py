@@ -55,11 +55,13 @@ def test_scheduler_retrains_on_roi_feedback(tmp_path, monkeypatch):
     class DummyBus:
         def __init__(self) -> None:
             self.cbs = {}
+            self.events = []
 
         def subscribe(self, topic, callback):
             self.cbs.setdefault(topic, []).append(callback)
 
         def publish(self, topic, event):
+            self.events.append((topic, event))
             for cb in self.cbs.get(topic, []):
                 cb(topic, event)
 
@@ -100,6 +102,7 @@ def test_scheduler_retrains_on_roi_feedback(tmp_path, monkeypatch):
     monkeypatch.setattr(rms.rr, "save_model", lambda tm, p: Path(p).write_text("{}"))
     monkeypatch.setattr(rms, "compute_retriever_stats", lambda m: None)
     monkeypatch.setattr(rms, "needs_retrain", lambda db, thr: True)
+    monkeypatch.setattr(rms, "build_dataset", lambda **kw: object())
 
     metrics = rms.VectorMetricsDB(tmp_path / "vec.db")
     layer = CognitionLayer(
@@ -109,16 +112,78 @@ def test_scheduler_retrains_on_roi_feedback(tmp_path, monkeypatch):
     )
 
     vectors = [("db", "v1", 0.0)]
-    layer.update_ranker(vectors, True, roi_deltas={"db": 0.4})
+    layer.update_ranker(
+        vectors,
+        True,
+        roi_deltas={"db": 0.4},
+        risk_scores={"db": 0.1},
+    )
     assert not calls
+    first_events = list(bus.events)
+    assert first_events and first_events[-1][1]["risk"] == 0.1
 
-    layer.update_ranker(vectors, False, roi_deltas={"db": 0.7})
+    layer.update_ranker(
+        vectors,
+        False,
+        roi_deltas={"db": 0.7},
+        risk_scores={"db": 0.2},
+    )
     assert calls
+    new_events = [e for e in bus.events[len(first_events):] if e[0] == "retrieval:feedback"]
+    assert new_events and new_events[-1][1]["risk"] == 0.2
     cfg = json.loads((tmp_path / "model.json").read_text())
     current = Path(cfg["current"])
     assert svc.model_path == current
     assert svc.reliability_reloaded
     assert current.exists()
+
+
+def test_record_patch_outcome_feedback_triggers_retrain(tmp_path, monkeypatch):
+    class DummyBus:
+        def __init__(self) -> None:
+            self.cbs = {}
+            self.events = []
+
+        def subscribe(self, topic, callback):
+            self.cbs.setdefault(topic, []).append(callback)
+
+        def publish(self, topic, event):
+            self.events.append((topic, event))
+            for cb in self.cbs.get(topic, []):
+                cb(topic, event)
+
+    bus = DummyBus()
+    calls: list[int] = []
+    sched = rms.RankingModelScheduler(
+        [],
+        vector_db=tmp_path / "vec.db",
+        metrics_db=tmp_path / "metrics.db",
+        model_path=tmp_path / "model.json",
+        event_bus=bus,
+        roi_signal_threshold=1.5,
+    )
+    monkeypatch.setattr(rms, "needs_retrain", lambda db, thr: True)
+    sched.retrain_and_reload = lambda: calls.append(1)  # type: ignore
+
+    metrics = rms.VectorMetricsDB(tmp_path / "vec.db")
+    patch_logger = SimpleNamespace(event_bus=bus, track_contributors=lambda *a, **k: {})
+    layer = CognitionLayer(
+        context_builder=SimpleNamespace(refresh_db_weights=lambda *a, **k: None),
+        patch_logger=patch_logger,
+        vector_metrics=metrics,
+    )
+
+    sid = "s1"
+    layer._session_vectors[sid] = [("db", "v1", 0.0)]
+    layer._retrieval_meta[sid] = {"db:v1": {"risk_score": 0.3}}
+
+    layer.record_patch_outcome(sid, True, contribution=1.0)
+
+    assert len(calls) == 1
+    assert any(
+        topic == "retrieval:feedback" and event.get("risk") == 0.3
+        for topic, event in bus.events
+    )
 
 
 def test_scheduler_reloads_dependents(tmp_path, monkeypatch):
