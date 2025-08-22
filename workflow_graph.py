@@ -143,11 +143,18 @@ class WorkflowGraph:
         ``sandbox_data/workflow_graph.gpickle`` is used.
     """
 
-    def __init__(self, path: Optional[str] = None) -> None:
+    def __init__(self, path: Optional[str] = None, *, db_path: Optional[str] = None) -> None:
         self.path = path or os.path.join("sandbox_data", "workflow_graph.gpickle")
+        # ``_backend`` retained for compatibility with existing tests although
+        # this implementation now always relies on ``networkx``.
         self._backend = "networkx" if _HAS_NX else "adjlist"
         self._lock = threading.Lock()
         self.graph = self.load()
+        # Pre-populate the graph with workflows from the database if available.
+        try:
+            self.populate_from_db(db_path)
+        except Exception:
+            pass
         atexit.register(self._shutdown_save)
 
     def _shutdown_save(self) -> None:  # pragma: no cover - best effort
@@ -291,15 +298,19 @@ class WorkflowGraph:
                 if res == 0 and data == 0 and logical == 0:
                     continue
                 weight = (res + data + logical) / 3.0
-                self.add_dependency(
-                    src_id,
-                    dst_id,
-                    impact_weight=weight,
-                    dependency_type="derived",
-                    resource=res,
-                    data=data,
-                    logical=logical,
-                )
+                try:
+                    self.add_dependency(
+                        src_id,
+                        dst_id,
+                        impact_weight=weight,
+                        dependency_type="derived",
+                        resource=res,
+                        data=data,
+                        logical=logical,
+                    )
+                except ValueError:
+                    # Skip edges that would introduce cycles
+                    continue
 
     def add_dependency(
         self,
@@ -334,11 +345,17 @@ class WorkflowGraph:
         with self._lock:
             if _HAS_NX:
                 self.graph.add_edge(src, dst, **data)
+                if not nx.is_directed_acyclic_graph(self.graph):
+                    self.graph.remove_edge(src, dst)
+                    raise ValueError(f"Adding edge {src}->{dst} introduces a cycle")
             else:
                 edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.setdefault(
                     "edges", {}
                 )
                 edges.setdefault(src, {})[dst] = data
+                if self._graph_has_cycle():
+                    edges[src].pop(dst, None)
+                    raise ValueError(f"Adding edge {src}->{dst} introduces a cycle")
             self._save_unlocked()
 
     def update_workflow(
@@ -365,6 +382,11 @@ class WorkflowGraph:
                 if synergy_scores is not None:
                     node["synergy_scores"] = synergy_scores
             self._save_unlocked()
+        # Refresh dependencies based on new workflow state.
+        try:
+            self.update_dependencies(workflow_id)
+        except Exception:
+            pass
 
     def _graph_has_cycle(self) -> bool:
         if _HAS_NX:
