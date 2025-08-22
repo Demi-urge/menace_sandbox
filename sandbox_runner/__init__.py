@@ -13,6 +13,7 @@ if not _LIGHT_IMPORTS:
         run_workflow_simulations,
         run_scenarios,
         simulate_temporal_trajectory,
+        temporal_trajectory_presets,
         auto_include_modules,
         simulate_full_environment,
         generate_input_stubs,
@@ -21,6 +22,9 @@ if not _LIGHT_IMPORTS:
         SANDBOX_EXTRA_METRICS,
         SANDBOX_ENV_PRESETS,
         SANDBOX_STUB_STRATEGY,
+        _preset_high_latency,
+        _preset_resource_strain,
+        _preset_chaotic_failure,
     )
     from .meta_logger import _SandboxMetaLogger
 else:  # defer heavy imports until needed
@@ -37,6 +41,7 @@ else:  # defer heavy imports until needed
                 "run_workflow_simulations",
                 "run_scenarios",
                 "simulate_temporal_trajectory",
+                "temporal_trajectory_presets",
                 "auto_include_modules",
                 "simulate_full_environment",
                 "generate_input_stubs",
@@ -45,6 +50,9 @@ else:  # defer heavy imports until needed
                 "SANDBOX_EXTRA_METRICS",
                 "SANDBOX_ENV_PRESETS",
                 "SANDBOX_STUB_STRATEGY",
+                "_preset_high_latency",
+                "_preset_resource_strain",
+                "_preset_chaotic_failure",
             ):
                 globals()[name] = getattr(_env_mod, name)
 
@@ -56,6 +64,7 @@ else:  # defer heavy imports until needed
             "run_workflow_simulations",
             "run_scenarios",
             "simulate_temporal_trajectory",
+            "temporal_trajectory_presets",
             "auto_include_modules",
             "simulate_full_environment",
             "generate_input_stubs",
@@ -64,6 +73,9 @@ else:  # defer heavy imports until needed
             "SANDBOX_EXTRA_METRICS",
             "SANDBOX_ENV_PRESETS",
             "SANDBOX_STUB_STRATEGY",
+            "_preset_high_latency",
+            "_preset_resource_strain",
+            "_preset_chaotic_failure",
             "_sandbox_cycle_runner",
             "_SandboxMetaLogger",
         }:
@@ -113,6 +125,7 @@ __all__ = [
     "run_workflow_simulations",
     "run_scenarios",  # export scenario runner for external callers
     "simulate_temporal_trajectory",
+    "temporal_trajectory_presets",
     "auto_include_modules",
     "discover_orphan_modules",
     "discover_recursive_orphans",
@@ -123,6 +136,9 @@ __all__ = [
     "SANDBOX_EXTRA_METRICS",
     "SANDBOX_ENV_PRESETS",
     "SANDBOX_STUB_STRATEGY",
+    "_preset_high_latency",
+    "_preset_resource_strain",
+    "_preset_chaotic_failure",
     "_sandbox_cycle_runner",
     "_SandboxMetaLogger",
     "_run_sandbox",

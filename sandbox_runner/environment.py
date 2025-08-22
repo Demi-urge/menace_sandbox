@@ -5204,23 +5204,21 @@ def _preset_flaky_upstream() -> Dict[str, Any]:
 
 
 def _preset_high_latency() -> Dict[str, Any]:
-    """Preset introducing artificial response delays."""
+    """Preset introducing artificial network delays."""
 
     return {
-        "SCENARIO_NAME": "latency_spike",
-        "FAILURE_MODES": "latency_spike",
-        "API_LATENCY_MS": 500,
+        "SCENARIO_NAME": "high_latency",
+        "NETWORK_LATENCY_MS": 500,
     }
 
 
-def _preset_io_cpu_strain() -> Dict[str, Any]:
-    """Preset throttling I/O bandwidth and CPU quota."""
+def _preset_resource_strain() -> Dict[str, Any]:
+    """Preset throttling compute and disk resources."""
 
     return {
-        "SCENARIO_NAME": "io_cpu_strain",
-        "FAILURE_MODES": "io_cpu_strain",
-        "BANDWIDTH_LIMIT": "1mbps",
-        "CPU_LIMIT": "0.5",
+        "SCENARIO_NAME": "resource_strain",
+        "CPU_LIMIT": 0.5,
+        "DISK_LIMIT": "512mb",
     }
 
 
@@ -5229,9 +5227,8 @@ def _preset_chaotic_failure() -> Dict[str, Any]:
 
     return {
         "SCENARIO_NAME": "chaotic_failure",
-        "FAILURE_MODES": "chaotic_failure",
         "BROKEN_AUTH": True,
-        "CORRUPT_PAYLOADS": True,
+        "CORRUPT_PAYLOAD": True,
     }
 
 
@@ -5245,33 +5242,19 @@ def default_scenario_presets() -> List[Dict[str, Any]]:
         _preset_schema_drift(),
         _preset_flaky_upstream(),
         _preset_high_latency(),
-        _preset_io_cpu_strain(),
+        _preset_resource_strain(),
         _preset_chaotic_failure(),
     ]
 
 
 def temporal_trajectory_presets() -> List[Dict[str, Any]]:
-    """Return canonical presets for temporal trajectory simulations.
-
-    The presets progress through increasingly adverse stages:
-    ``baseline``, ``latency_spike``, ``io_cpu_strain``,
-    ``schema_drift``/``unexpected_input`` and ``chaotic_failure``. Each
-    stage defines scenario specific environment variables to emulate the
-    desired conditions.
-    """
-
-    schema_stage = _preset_schema_drift()
-    try:
-        schema_stage.update(_preset_hostile_input())
-    except Exception:
-        schema_stage = {**schema_stage, **_preset_hostile_input()}
-    schema_stage["SCENARIO_NAME"] = "schema_drift"
+    """Return canonical presets for temporal trajectory simulations."""
 
     return [
-        {"SCENARIO_NAME": "baseline"},
+        {"SCENARIO_NAME": "normal"},
         _preset_high_latency(),
-        _preset_io_cpu_strain(),
-        schema_stage,
+        _preset_resource_strain(),
+        _preset_schema_drift(),
         _preset_chaotic_failure(),
     ]
 
