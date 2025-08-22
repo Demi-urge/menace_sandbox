@@ -74,6 +74,7 @@ def _make_layer(tmp_path, with_tracker=True):
         patch_logger=patch_logger,
         vector_metrics=vec_db,
         roi_tracker=tracker,
+        event_bus=patch_logger.event_bus,
     )
     return layer, vec_db, tracker
 

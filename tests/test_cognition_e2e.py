@@ -66,6 +66,7 @@ def _setup_layer(tmp_path):
         patch_logger=patch_logger,
         vector_metrics=vec_db,
         roi_tracker=None,
+        event_bus=patch_logger.event_bus,
     )
     return layer, retriever, vec_db
 
