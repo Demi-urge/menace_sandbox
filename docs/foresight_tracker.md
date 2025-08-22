@@ -40,11 +40,12 @@ The tracker stores only the recent `max_cycles` cycles per workflow, keeping mem
 ## Logging temporal simulations
 
 Temporal simulations use :func:`simulate_temporal_trajectory` to march a
-workflow through escalating entropy stages. The helper loads the workflow steps
-via ``WorkflowDB`` and forwards ROI, resilience and degradation metrics for
-each stage to ``ForesightTracker.record_cycle_metrics`` with
-``compute_stability=True`` so the window stability is stored alongside the
-measurements:
+workflow through escalating entropy stages. The helper iterates through
+``normal``, ``high_latency``, ``resource_strain``, ``schema_drift`` and
+``chaotic_failure`` presets. It loads the workflow steps via ``WorkflowDB`` and
+forwards ROI, resilience and degradation metrics for each stage to
+``ForesightTracker.record_cycle_metrics`` with ``compute_stability=True`` so the
+window stability is stored alongside the measurements:
 
 ```python
 from sandbox_runner.environment import simulate_temporal_trajectory
@@ -55,10 +56,10 @@ simulate_temporal_trajectory(workflow_id, foresight_tracker=tracker)
 
 cycle = tracker.history[str(workflow_id)][-1]
 print(
-    cycle['latency_spike_roi'],
-    cycle['latency_spike_resilience'],
-    cycle['stability'],
-    cycle['latency_spike_degradation'],
+    cycle["roi_delta"],
+    cycle["resilience"],
+    cycle["stability"],
+    cycle["scenario_degradation"],
 )
 ```
 

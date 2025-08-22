@@ -13,21 +13,22 @@ sys.modules.setdefault("faiss", stub_faiss)
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
 try:
-    from sandbox_runner.environment import simulate_temporal_trajectory
+    from sandbox_runner.environment import (
+        simulate_temporal_trajectory,
+        temporal_trajectory_presets,
+    )
 except SystemExit:
     simulate_temporal_trajectory = None  # type: ignore
-    pytest.skip("sandbox environment requires missing system packages", allow_module_level=True)
+    temporal_trajectory_presets = None  # type: ignore
+    pytest.skip(
+        "sandbox environment requires missing system packages",
+        allow_module_level=True,
+    )
 
 from foresight_tracker import ForesightTracker
 
 
-SCENARIOS = [
-    "baseline",
-    "latency_spike",
-    "io_cpu_strain",
-    "schema_drift",
-    "chaotic_failure",
-]
+SCENARIOS = [p["SCENARIO_NAME"] for p in temporal_trajectory_presets()]
 
 # record the order in which scenarios are executed
 stage_calls: list[str] = []
@@ -49,17 +50,10 @@ def _fake_run_scenarios(workflow, tracker=None, presets=None, foresight_tracker=
     return tracker, {}, summary
 
 
-def _fake_presets():
-    return [{"SCENARIO_NAME": name} for name in SCENARIOS]
-
-
 def test_simulate_temporal_trajectory_order_and_history(monkeypatch):
     stage_calls.clear()
     monkeypatch.setattr(
         "sandbox_runner.environment.run_scenarios", _fake_run_scenarios
-    )
-    monkeypatch.setattr(
-        "sandbox_runner.environment.temporal_trajectory_presets", _fake_presets
     )
     class _FakeWorkflowDB:
         def __init__(self, *a, **k):

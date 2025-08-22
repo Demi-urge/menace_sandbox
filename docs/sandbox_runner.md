@@ -62,6 +62,39 @@ impact. Positive values indicate an improvement over the baseline, while
 negative values mean the workflow performs worse. The scenario with the most
 negative delta is reported as the worst case.
 
+### Temporal trajectory simulations
+
+Use :func:`simulate_temporal_trajectory` to gauge how a workflow behaves as
+conditions degrade. The helper runs the workflow through a deterministic set of
+presets and records ROI, resilience, degradation and stability for each stage.
+It can be invoked from the CLI or directly from Python:
+
+```bash
+python -m sandbox_runner.cli --simulate-temporal-trajectory 42
+```
+
+```python
+from sandbox_runner.environment import simulate_temporal_trajectory
+from foresight_tracker import ForesightTracker
+
+ft = ForesightTracker()
+simulate_temporal_trajectory(42, foresight_tracker=ft)
+```
+
+The stages execute in the following order:
+
+| Scenario | Description |
+| --- | --- |
+| `normal` | baseline environment |
+| `high_latency` | artificial network delay |
+| `resource_strain` | throttled CPU and disk resources |
+| `schema_drift` | mismatched or legacy schemas |
+| `chaotic_failure` | broken authentication and corrupt payloads |
+
+Metrics for each stage are returned alongside the updated tracker and, when a
+``ForesightTracker`` is supplied, appended to ``foresight.history`` for later
+analysis.
+
 ## Algorithm Overview
 
 Each cycle proceeds through a consistent set of stages:
