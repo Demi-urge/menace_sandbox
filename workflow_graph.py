@@ -220,6 +220,77 @@ class WorkflowGraph:
                     deps.pop(workflow_id, None)
             self._save_unlocked()
 
+    # ------------------------------------------------------------------
+    # Automatic population from WorkflowDB
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _derive_edge_weights(a: "WorkflowRecord", b: "WorkflowRecord") -> tuple[float, float, float]:
+        """Return resource, data and logical dependency weights between two records."""
+
+        def _jaccard(seq1: Any, seq2: Any) -> float:
+            s1, s2 = set(seq1 or []), set(seq2 or [])
+            if not s1 or not s2:
+                return 0.0
+            inter = len(s1 & s2)
+            union = len(s1 | s2)
+            return inter / union if union else 0.0
+
+        resource = _jaccard(a.assigned_bots, b.assigned_bots)
+
+        last_step = (a.task_sequence or a.workflow or [None])[-1]
+        data = 0.0
+        if last_step:
+            if last_step in (b.argument_strings or []):
+                data = 1.0
+            elif last_step in (b.task_sequence or b.workflow or []):
+                data = 0.5
+
+        logical = _jaccard(a.task_sequence or a.workflow, b.task_sequence or b.workflow)
+        return resource, data, logical
+
+    def populate_from_db(self, db_path: Optional[str] = None) -> None:
+        """Populate the graph with workflows and inferred dependencies from a database."""
+
+        try:  # Local import to avoid heavy dependency at module import time
+            from task_handoff_bot import WorkflowDB, WorkflowRecord  # type: ignore
+        except Exception:  # pragma: no cover - missing DB module
+            return
+
+        db = WorkflowDB(db_path) if db_path is not None else WorkflowDB()
+
+        records: Dict[str, WorkflowRecord] = {}
+        try:
+            rows = db.conn.execute("SELECT * FROM workflows").fetchall()
+        except Exception:
+            rows = []
+
+        for row in rows:
+            try:
+                rec = db._row_to_record(row)
+            except Exception:
+                continue
+            wid = str(rec.wid)
+            records[wid] = rec
+            self.add_workflow(wid)
+
+        for src_id, src_rec in records.items():
+            for dst_id, dst_rec in records.items():
+                if src_id == dst_id:
+                    continue
+                res, data, logical = self._derive_edge_weights(src_rec, dst_rec)
+                if res == 0 and data == 0 and logical == 0:
+                    continue
+                weight = (res + data + logical) / 3.0
+                self.add_dependency(
+                    src_id,
+                    dst_id,
+                    impact_weight=weight,
+                    dependency_type="derived",
+                    resource=res,
+                    data=data,
+                    logical=logical,
+                )
+
     def add_dependency(
         self,
         src: str,
@@ -227,30 +298,37 @@ class WorkflowGraph:
         *,
         impact_weight: Optional[float] = None,
         dependency_type: str = "default",
+        **attrs: Any,
     ) -> None:
         """Add a dependency edge between workflows.
 
-        When ``impact_weight`` is not provided it is estimated using
-        :func:`estimate_edge_weight`.
+        Parameters
+        ----------
+        src, dst:
+            Source and destination workflow ids.
+        impact_weight:
+            Optional explicit edge weight.  When ``None`` a heuristic weight is
+            calculated via :func:`estimate_edge_weight`.
+        dependency_type:
+            Label describing the dependency category.
+        attrs:
+            Additional edge attributes to persist on the graph.
         """
         if impact_weight is None:
             impact_weight = estimate_edge_weight(src, dst)
+        data: Dict[str, Any] = {
+            "impact_weight": impact_weight,
+            "dependency_type": dependency_type,
+        }
+        data.update(attrs)
         with self._lock:
             if _HAS_NX:
-                self.graph.add_edge(
-                    src,
-                    dst,
-                    impact_weight=impact_weight,
-                    dependency_type=dependency_type,
-                )
+                self.graph.add_edge(src, dst, **data)
             else:
                 edges: Dict[str, Dict[str, Dict[str, Any]]] = self.graph.setdefault(
                     "edges", {}
                 )
-                edges.setdefault(src, {})[dst] = {
-                    "impact_weight": impact_weight,
-                    "dependency_type": dependency_type,
-                }
+                edges.setdefault(src, {})[dst] = data
             self._save_unlocked()
 
     def update_workflow(
@@ -384,29 +462,35 @@ class WorkflowGraph:
     # ------------------------------------------------------------------
     # Persistence helpers
     # ------------------------------------------------------------------
-    def load(self):  # type: ignore[override]
-        """Load existing graph state from :attr:`path`.
+    def load(self, path: Optional[str] = None) -> object:  # type: ignore[override]
+        """Load existing graph state from disk.
 
+        Parameters
+        ----------
+        path:
+            Optional location of the persisted graph.  When omitted the instance
+            ``path`` attribute is used.
         Returns
         -------
         object
             Either a ``networkx.DiGraph`` or an adjacency-list dictionary.
         """
 
-        if os.path.exists(self.path):
+        path = path or self.path
+        if os.path.exists(path):
             if _HAS_NX:
                 if read_gpickle:
                     try:
-                        return read_gpickle(self.path)
+                        return read_gpickle(path)
                     except Exception:
                         pass
                 try:
-                    with open(self.path, "rb") as fh:
+                    with open(path, "rb") as fh:
                         return pickle.load(fh)
                 except Exception:
                     pass
             else:
-                with open(self.path, "rb") as fh:
+                with open(path, "rb") as fh:
                     try:
                         return pickle.load(fh)
                     except Exception:
@@ -416,8 +500,17 @@ class WorkflowGraph:
             return nx.DiGraph()
         return {"nodes": {}, "edges": {}}
 
-    def save(self) -> None:
-        """Persist current graph state to :attr:`path`."""
+    def save(self, path: Optional[str] = None) -> None:
+        """Persist current graph state to disk.
+
+        Parameters
+        ----------
+        path:
+            Optional override for the destination path.
+        """
+
+        if path is not None:
+            self.path = path
         with self._lock:
             self._save_unlocked()
 
