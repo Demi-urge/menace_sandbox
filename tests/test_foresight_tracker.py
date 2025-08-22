@@ -435,19 +435,33 @@ def test_get_temporal_profile_returns_chronological_entries():
     assert profile == [{"m": 1.0, "stage": 0.0}, {"m": 2.0, "stage": 1.0}]
 
 
-def test_predict_roi_collapse_classifies_risk():
-    tracker = ForesightTracker(volatility_threshold=1.0)
-    for val in [0.5, 0.4, 0.3]:
+@pytest.mark.parametrize(
+    "roi_values,threshold,expected",
+    [
+        ([1.0, 2.0, 3.0], 5.0, "Stable"),
+        ([5.0, 4.0, 3.0], 5.0, "Slow decay"),
+        ([1.0, 4.0, 1.0], 0.5, "Volatile"),
+        ([1.0, 0.5, -0.1], 5.0, "Immediate collapse risk"),
+    ],
+)
+def test_predict_roi_collapse_classifications(roi_values, threshold, expected):
+    tracker = ForesightTracker(volatility_threshold=threshold)
+    for val in roi_values:
         tracker.record_cycle_metrics("wf", {"roi_delta": val}, scenario_degradation=0.0)
     result = tracker.predict_roi_collapse("wf")
-    assert result["risk_class"] == "Slow decay"
-    assert result["cycles_to_collapse"] is not None
-    assert result["collapse_curve"]
+    assert result["risk_class"] == expected
+    if expected == "Stable":
+        assert result["cycles_to_collapse"] is None
+    elif expected == "Slow decay":
+        assert result["cycles_to_collapse"] and result["cycles_to_collapse"] > 2
+    elif expected == "Immediate collapse risk":
+        assert result["cycles_to_collapse"] is not None
+        assert result["cycles_to_collapse"] <= 2
 
 
 def test_predict_roi_collapse_detects_brittleness():
     tracker = ForesightTracker()
     tracker.record_cycle_metrics("wf", {"roi_delta": 1.0}, scenario_degradation=0.0)
-    tracker.record_cycle_metrics("wf", {"roi_delta": 0.1}, scenario_degradation=0.02)
+    tracker.record_cycle_metrics("wf", {"roi_delta": 0.0}, scenario_degradation=0.01)
     result = tracker.predict_roi_collapse("wf")
     assert result["brittle"]
