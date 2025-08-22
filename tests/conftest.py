@@ -228,5 +228,5 @@ def foresight_templates(tmp_path):
 
 @pytest.fixture
 def tracker_with_templates(foresight_templates):
-    return ForesightTracker(template_config_path=foresight_templates)
+    return ForesightTracker(templates_path=foresight_templates)
 

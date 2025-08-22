@@ -19,7 +19,8 @@ class ForesightTracker:
         volatility_threshold: float = 1.0,
         window: int | None = None,
         N: int | None = None,
-        template_config_path: str | Path = "configs/foresight_templates.yaml",
+        templates_path: str | Path = "configs/foresight_templates.yaml",
+        template_config_path: str | Path | None = None,
     ) -> None:
         """Create a new tracker.
 
@@ -30,6 +31,9 @@ class ForesightTracker:
             workflow.
         volatility_threshold:
             Maximum standard deviation across stored metrics considered stable.
+        templates_path:
+            Location of the ROI template configuration. ``template_config_path``
+            remains as a deprecated alias for backwards compatibility.
         """
 
         if window is not None:
@@ -40,7 +44,9 @@ class ForesightTracker:
         self.max_cycles = max_cycles
         self.volatility_threshold = volatility_threshold
         self.history: Dict[str, Deque[Dict[str, float]]] = {}
-        cfg_path = Path(template_config_path)
+        if template_config_path is not None:
+            templates_path = template_config_path
+        cfg_path = Path(templates_path)
         if not cfg_path.is_absolute():
             cfg_path = Path(__file__).resolve().parent / cfg_path
         self.template_config_path = cfg_path
@@ -49,6 +55,7 @@ class ForesightTracker:
         self.workflow_profiles: Dict[str, str] = {}
         # backward compatibility for callers expecting ``profile_map``
         self.profile_map = self.workflow_profiles
+        self._load_templates()
 
     # ------------------------------------------------------------------
     @property
@@ -105,7 +112,6 @@ class ForesightTracker:
             roi_hist = getattr(tracker, "roi_history", [])
             raroi_hist = getattr(tracker, "raroi_history", [])
             history = self.history.get(workflow_id)
-            self._load_templates()
             if profile is not None:
                 self.workflow_profiles[workflow_id] = profile
 
@@ -119,10 +125,8 @@ class ForesightTracker:
 
             if self.is_cold_start(workflow_id):
                 cycles = len(history) if history else 0
-                template_curve = self.get_template_curve(workflow_id)
-                if template_curve:
-                    idx = cycles if cycles < len(template_curve) else -1
-                    template_val = float(template_curve[idx])
+                template_val = self.get_template_value(workflow_id, cycles)
+                if template_val is not None:
                     alpha = min(1.0, cycles / 5.0)
                     roi_delta = alpha * real_roi + (1.0 - alpha) * template_val
                     raroi_delta = alpha * real_raroi + (1.0 - alpha) * template_val
@@ -157,6 +161,7 @@ class ForesightTracker:
                     "confidence": confidence,
                     "resilience": resilience,
                     "scenario_degradation": scenario_deg,
+                    "raw_roi_delta": real_roi,
                 },
             )
         except Exception:
@@ -231,6 +236,22 @@ class ForesightTracker:
         profile = self.workflow_profiles.get(workflow_id, workflow_id)
         curve = self.templates.get(profile, []) if self.templates else []
         return [float(v) for v in curve]
+
+    # ------------------------------------------------------------------
+    def get_template_value(self, workflow_id: str, cycle_index: int) -> float | None:
+        """Return the template ROI value for ``workflow_id`` at ``cycle_index``.
+
+        ``None`` is returned when the workflow has no associated template
+        trajectory.  Indices beyond the available curve fall back to the last
+        template value.
+        """
+
+        curve = self.get_template_curve(workflow_id)
+        if not curve:
+            return None
+        if 0 <= cycle_index < len(curve):
+            return float(curve[cycle_index])
+        return float(curve[-1])
 
     # ------------------------------------------------------------------
     def get_trend_curve(self, workflow_id: str) -> Tuple[float, float, float]:

@@ -176,6 +176,7 @@ def test_capture_from_roi_records_latest_metrics():
     assert entry["confidence"] == 0.9
     assert entry["resilience"] == 0.8
     assert entry["scenario_degradation"] == 0.3
+    assert entry["raw_roi_delta"] == 0.1
 
 
 def test_capture_from_roi_blends_template_and_real_roi(monkeypatch):
@@ -213,6 +214,7 @@ def test_capture_from_roi_blends_template_and_real_roi(monkeypatch):
     assert history[0]["roi_delta"] == pytest.approx(0.5)
     assert history[1]["roi_delta"] == pytest.approx(0.6)
     assert history[-1]["roi_delta"] == pytest.approx(1.0)
+    assert history[0]["raw_roi_delta"] == pytest.approx(1.0)
 
 
 def test_to_dict_from_dict_roundtrip_after_capture_from_roi():
@@ -273,6 +275,18 @@ def test_cold_start_persists_through_serialization(monkeypatch):
     dummy.roi_history.append(1.0)
     restored.capture_from_roi(dummy, "wf")
     assert restored.history["wf"][-1]["roi_delta"] == pytest.approx(0.7)
+
+
+def test_get_template_value(monkeypatch):
+    def fake_load(self):
+        self.templates = {"wf": [0.5, 0.6]}
+        self.workflow_profiles["wf"] = "wf"
+
+    monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
+    tracker = ForesightTracker()
+    assert tracker.get_template_value("wf", 0) == pytest.approx(0.5)
+    assert tracker.get_template_value("wf", 5) == pytest.approx(0.6)
+    assert tracker.get_template_value("unknown", 0) is None
 
 
 def test_capture_from_roi_self_improvement_cycle_affects_stability():
