@@ -436,33 +436,30 @@ def test_get_temporal_profile_returns_chronological_entries():
 
 
 @pytest.mark.parametrize(
-    "roi_values,threshold,expected",
+    "roi_values,degradations,threshold,risk,expected_cycles,brittle",
     [
-        ([1.0, 2.0, 3.0], 5.0, "Stable"),
-        ([5.0, 4.0, 3.0], 5.0, "Slow decay"),
-        ([1.0, 4.0, 1.0], 0.5, "Volatile"),
-        ([1.0, 0.5, -0.1], 5.0, "Immediate collapse risk"),
+        # Stable trend with positive slope and low volatility
+        ([1.0, 1.1, 1.2, 1.3], [0.0, 0.0, 0.0, 0.0], 0.5, "Stable", None, False),
+        # Slow decay that reaches zero in more than two cycles
+        ([1.0, 0.8, 0.6, 0.4], [0.0, 0.0, 0.0, 0.0], 5.0, "Slow decay", 4.0, False),
+        # High volatility regardless of overall positive slope
+        ([1.0, 4.0, 1.0, 4.0], [0.0, 0.0, 0.0, 0.0], 0.5, "Volatile", None, False),
+        # Rapid collapse predicted within two cycles
+        ([1.0, 0.2, 0.05], [0.0, 0.0, 0.0], 5.0, "Immediate collapse risk", 1.0, False),
+        # Brittle response to minimal degradation
+        ([1.0, 0.0], [0.0, 0.01], 5.0, "Immediate collapse risk", 0.0, True),
     ],
 )
-def test_predict_roi_collapse_classifications(roi_values, threshold, expected):
+def test_predict_roi_collapse_scenarios(
+    roi_values, degradations, threshold, risk, expected_cycles, brittle
+):
     tracker = ForesightTracker(volatility_threshold=threshold)
-    for val in roi_values:
-        tracker.record_cycle_metrics("wf", {"roi_delta": val}, scenario_degradation=0.0)
+    for roi, deg in zip(roi_values, degradations):
+        tracker.record_cycle_metrics("wf", {"roi_delta": roi}, scenario_degradation=deg)
     result = tracker.predict_roi_collapse("wf")
-    assert result["risk"] == expected
-    if expected == "Stable":
+    assert result["risk"] == risk
+    if expected_cycles is None:
         assert result["cycles_to_collapse"] is None
-    elif expected == "Slow decay":
-        if result["cycles_to_collapse"] is not None:
-            assert result["cycles_to_collapse"] > 2
-    elif expected == "Immediate collapse risk":
-        assert result["cycles_to_collapse"] is not None
-        assert result["cycles_to_collapse"] <= 2
-
-
-def test_predict_roi_collapse_detects_brittleness():
-    tracker = ForesightTracker()
-    tracker.record_cycle_metrics("wf", {"roi_delta": 1.0}, scenario_degradation=0.0)
-    tracker.record_cycle_metrics("wf", {"roi_delta": 0.0}, scenario_degradation=0.01)
-    result = tracker.predict_roi_collapse("wf")
-    assert result["brittle"]
+    else:
+        assert result["cycles_to_collapse"] == pytest.approx(expected_cycles)
+    assert result["brittle"] is brittle
