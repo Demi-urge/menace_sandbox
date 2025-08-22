@@ -433,3 +433,21 @@ def test_get_temporal_profile_returns_chronological_entries():
     tracker.record_cycle_metrics("wf", {"m": 2.0}, stage=1)
     profile = tracker.get_temporal_profile("wf")
     assert profile == [{"m": 1.0, "stage": 0.0}, {"m": 2.0, "stage": 1.0}]
+
+
+def test_predict_roi_collapse_classifies_risk():
+    tracker = ForesightTracker(volatility_threshold=1.0)
+    for val in [0.5, 0.4, 0.3]:
+        tracker.record_cycle_metrics("wf", {"roi_delta": val}, scenario_degradation=0.0)
+    result = tracker.predict_roi_collapse("wf")
+    assert result["risk_class"] == "Slow decay"
+    assert result["cycles_to_collapse"] is not None
+    assert result["collapse_curve"]
+
+
+def test_predict_roi_collapse_detects_brittleness():
+    tracker = ForesightTracker()
+    tracker.record_cycle_metrics("wf", {"roi_delta": 1.0}, scenario_degradation=0.0)
+    tracker.record_cycle_metrics("wf", {"roi_delta": 0.1}, scenario_degradation=0.02)
+    result = tracker.predict_roi_collapse("wf")
+    assert result["brittle"]

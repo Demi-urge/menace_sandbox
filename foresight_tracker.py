@@ -491,6 +491,118 @@ class ForesightTracker:
         return slope > 0 and std < self.volatility_threshold
 
     # ------------------------------------------------------------------
+    def predict_roi_collapse(self, workflow_id: str) -> Dict[str, object]:
+        """Estimate when the ROI trajectory for ``workflow_id`` will fail.
+
+        The method inspects the recent history of ``workflow_id`` and projects
+        a simple collapse curve assuming the current linear trend continues.
+        Entropy degradation is incorporated by comparing the latest recorded
+        ``scenario_degradation`` against the expected entropy trajectory from
+        :meth:`get_entropy_template_curve`.  Higher than expected degradation
+        accelerates the projected decline.
+
+        Outcomes are classified into four buckets based on the projected slope
+        and observed volatility:
+
+        ``"Stable"``
+            Positive slope and volatility below ``volatility_threshold``.
+        ``"Slow decay"``
+            Negative slope with low volatility and collapse projected several
+            cycles out.
+        ``"Volatile"``
+            High volatility regardless of slope.
+        ``"Immediate collapse risk"``
+            Negative slope with imminent collapse within the next couple of
+            cycles.
+
+        The helper also checks for *brittleness* where small entropy
+        degradations produce disproportionately large ROI drops.  In such
+        scenarios the returned mapping includes ``"brittle": True``.
+
+        Parameters
+        ----------
+        workflow_id:
+            Identifier of the workflow to analyse.
+
+        Returns
+        -------
+        dict
+            Mapping with the following keys:
+
+            ``risk_class``
+                One of the four outcome classes described above.
+            ``cycles_to_collapse``
+                Estimated number of cycles until ROI falls below zero or
+                ``None`` when no collapse is projected.
+            ``brittle``
+                ``True`` when brittleness is detected.
+            ``collapse_curve``
+                List of projected ROI values for future cycles until collapse
+                or the projection horizon is reached.
+        """
+
+        history = self.history.get(workflow_id)
+        if not history:
+            return {
+                "risk_class": "Stable",
+                "cycles_to_collapse": None,
+                "brittle": False,
+                "collapse_curve": [],
+            }
+
+        slope, _, avg_stability = self.get_trend_curve(workflow_id)
+        volatility = (1.0 / avg_stability - 1.0) if avg_stability else float("inf")
+
+        last_entry = history[-1]
+        last_roi = float(last_entry.get("roi_delta", 0.0))
+        last_deg = float(last_entry.get("scenario_degradation", 0.0))
+        cycle_index = len(history) - 1
+
+        ent_curve = self.get_entropy_template_curve(workflow_id)
+        template_ent = ent_curve[cycle_index] if cycle_index < len(ent_curve) else 0.0
+        entropy_degradation = last_deg - template_ent
+
+        effective_slope = slope - entropy_degradation
+
+        collapse_curve: List[float] = []
+        proj_roi = last_roi
+        cycles = 0
+        max_horizon = max(self.max_cycles, 10)
+        while cycles < max_horizon and proj_roi > 0:
+            proj_roi += effective_slope
+            collapse_curve.append(proj_roi)
+            cycles += 1
+
+        cycles_to_collapse = cycles if proj_roi <= 0 else None
+
+        # Brittleness: large ROI drop despite minimal entropy change
+        brittle = False
+        if len(history) >= 2:
+            prev = history[-2]
+            roi_drop = float(prev.get("roi_delta", 0.0)) - last_roi
+            deg_diff = last_deg - float(prev.get("scenario_degradation", 0.0))
+            if deg_diff > 0 and deg_diff < 0.05:
+                if roi_drop / (deg_diff + 1e-6) > 10.0:
+                    brittle = True
+
+        if volatility >= self.volatility_threshold:
+            risk = "Volatile"
+        elif slope >= 0:
+            risk = "Stable"
+        else:
+            if cycles_to_collapse is not None and cycles_to_collapse <= 2:
+                risk = "Immediate collapse risk"
+            else:
+                risk = "Slow decay"
+
+        return {
+            "risk_class": risk,
+            "cycles_to_collapse": cycles_to_collapse,
+            "brittle": brittle,
+            "collapse_curve": collapse_curve,
+        }
+
+    # ------------------------------------------------------------------
     def get_temporal_profile(self, workflow_id: str) -> List[Dict[str, float]]:
         """Return stored metric entries for ``workflow_id`` in chronological order."""
 
