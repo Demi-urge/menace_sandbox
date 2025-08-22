@@ -14,7 +14,7 @@ import sys
 import inspect
 import threading
 import uuid
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, Mapping, TYPE_CHECKING
 from types import SimpleNamespace
 from sandbox_settings import SandboxSettings
 from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT, ERROR_FIX
@@ -1192,7 +1192,11 @@ def _sandbox_cycle_runner(
             tracker, "scenario_degradation", lambda: 0.0
         )()
         wf_id = getattr(ctx, "workflow_id", "_global")
-        foresight_tracker.capture_from_roi(tracker, wf_id)
+        profile_map = getattr(foresight_tracker, "workflow_profiles", None)
+        if not isinstance(profile_map, Mapping):
+            profile_map = getattr(foresight_tracker, "profile_map", {})
+        profile = profile_map.get(wf_id, wf_id)
+        foresight_tracker.capture_from_roi(tracker, wf_id, profile)
         ctx.workflow_stable = foresight_tracker.is_stable(wf_id)
         last_metrics = metrics_dict
         feat_vec = [
