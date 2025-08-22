@@ -310,8 +310,14 @@ class CognitionLayer:
                 except Exception:
                     bus = None
             if bus is not None:
+                risks = risk_scores or {}
                 for origin, delta in per_db.items():
-                    payload = {"db": origin, "roi": delta, "win": success}
+                    payload = {
+                        "db": origin,
+                        "roi": delta,
+                        "win": success,
+                        "risk": float(risks.get(origin, 0.0)),
+                    }
                     if origin in updates:
                         payload["weight"] = updates[origin]
                     try:
@@ -718,6 +724,24 @@ class CognitionLayer:
             roi_deltas[origin] = delta
             if delta < 0:
                 roi_drop = True
+        bus = getattr(self.patch_logger, "event_bus", None)
+        if bus is None and UnifiedEventBus is not None:
+            try:
+                bus = UnifiedEventBus()
+            except Exception:
+                bus = None
+        if bus is not None:
+            for origin, delta in roi_deltas.items():
+                payload = {
+                    "db": origin,
+                    "roi": delta,
+                    "win": success,
+                    "risk": float(risk_scores.get(origin, 0.0)),
+                }
+                try:
+                    bus.publish("retrieval:feedback", payload)
+                except Exception:
+                    logger.exception("Failed to publish retrieval feedback")
         updates = self.update_ranker(
             vectors, success, roi_deltas=roi_deltas, risk_scores=risk_scores
         )
