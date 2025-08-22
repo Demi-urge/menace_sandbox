@@ -46,6 +46,7 @@ from .trend_predictor import TrendPredictor
 from .identity_seeder import seed_identity
 from .session_vault import SessionVault
 import requests
+from vector_service.cognition_layer import CognitionLayer
 
 
 class _RemoteVisualAgent:
@@ -259,6 +260,7 @@ class MenaceOrchestrator:
         self.discrepancy_detector = DiscrepancyDetectionBot()
         self.bottleneck_detector = EfficiencyBot()
         self.visual_client = visual_agent_client or _RemoteVisualAgent()
+        self.cognition_layer = CognitionLayer()
 
     # ------------------------------------------------------------------
     def status_summary(self) -> Dict[str, object]:
@@ -368,14 +370,28 @@ class MenaceOrchestrator:
             eng = self.engines.get(node)
             if not eng:
                 continue
-            pid, reverted, _ = eng.apply_patch(
-                path,
-                description,
-                threshold=threshold,
-                reason=description,
-                trigger="menace_orchestrator",
+            _ctx, session_id = self.cognition_layer.query(
+                f"apply patch {description} on {node}"
             )
-            results[node] = (pid, reverted)
+            try:
+                pid, reverted, _ = eng.apply_patch(
+                    path,
+                    description,
+                    threshold=threshold,
+                    reason=description,
+                    trigger="menace_orchestrator",
+                )
+                results[node] = (pid, reverted)
+                success = pid is not None and not reverted
+                self.cognition_layer.record_patch_outcome(
+                    session_id,
+                    success,
+                    patch_id=str(pid) if pid is not None else "",
+                    contribution=1.0 if success else 0.0,
+                )
+            except Exception:
+                self.cognition_layer.record_patch_outcome(session_id, False, contribution=0.0)
+                raise
             if pid is not None and not reverted and self.rollback_mgr:
                 self.rollback_mgr.register_patch(str(pid), node)
             if reverted or pid is None:

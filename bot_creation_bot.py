@@ -33,6 +33,7 @@ from .trending_scraper import TrendingScraper
 from .admin_bot_base import AdminBotBase
 from datetime import datetime
 from .database_manager import DB_PATH, update_model
+from vector_service.cognition_layer import CognitionLayer
 
 
 @dataclass
@@ -98,6 +99,7 @@ class BotCreationBot(AdminBotBase):
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("BotCreationBot")
         self._creation_times: Deque[float] = deque()
+        self.cognition_layer = CognitionLayer()
 
     def prime(self) -> None:
         """Prime the bot for upcoming creation tasks."""
@@ -382,17 +384,31 @@ class BotCreationBot(AdminBotBase):
     async def _develop_test(self, spec: BotSpec) -> Path:
         safe_name = self._sanitize_name(spec.name)
         spec.name = safe_name
+        _ctx, session_id = self.cognition_layer.query(f"build bot {spec.name}")
         try:
             file_path = self.developer.build_bot(spec)
+            self.cognition_layer.record_patch_outcome(session_id, True, contribution=1.0)
         except Exception as exc:
+            self.cognition_layer.record_patch_outcome(session_id, False, contribution=0.0)
             self._log(logging.ERROR, f"bot generation failed: {exc}")
             raise
         module_name = spec.name
-        self.tester.run_unit_tests([module_name])
+        _ctx, session_id = self.cognition_layer.query(f"run tests for {module_name}")
+        try:
+            self.tester.run_unit_tests([module_name])
+            self.cognition_layer.record_patch_outcome(session_id, True, contribution=1.0)
+        except Exception as exc:
+            self.cognition_layer.record_patch_outcome(session_id, False, contribution=0.0)
+            raise
         if self.self_coding_engine:
             try:
+                _ctx, session_id = self.cognition_layer.query(
+                    f"self coding patch for {file_path}"
+                )
                 self.self_coding_engine.patch_file(file_path, "helper")
+                self.cognition_layer.record_patch_outcome(session_id, True, contribution=1.0)
             except Exception as exc:
+                self.cognition_layer.record_patch_outcome(session_id, False, contribution=0.0)
                 self._log(logging.ERROR, f"self coding patch failed: {exc}")
         return file_path
 
