@@ -1,4 +1,5 @@
 import json
+import logging
 
 from vector_service.context_builder import ContextBuilder
 from vector_metrics_db import VectorMetricsDB, VectorMetric
@@ -155,3 +156,78 @@ def test_license_denylist_filter(monkeypatch):
     bots = data["bots"]
     assert [b["id"] for b in bots] == ["ok"]
     assert ("labels", "filtered") in gauge.calls
+
+
+class DummyPatchSafety:
+    def __init__(self) -> None:
+        self.max_alert_severity = 1.0
+        self.max_alerts = 5
+        self.license_denylist = set()
+
+    def evaluate(self, *_, **__):
+        return True, 0.0, {}
+
+    def load_failures(self, *_, **__):
+        return None
+
+
+class NoRiskRetriever:
+    def search(self, query, top_k=5, session_id="", **kwargs):
+        return [
+            {
+                "origin_db": "bot",
+                "record_id": "norisk",
+                "score": 0.5,
+                "metadata": {"name": "norisk"},
+            }
+        ]
+
+
+def test_missing_risk_logs_default(caplog):
+    builder = ContextBuilder(
+        retriever=NoRiskRetriever(),
+        patch_safety=DummyPatchSafety(),
+        risk_penalty=1.0,
+    )
+    with caplog.at_level(logging.WARNING):
+        ctx = builder.build_context("hi", top_k=1)
+    data = json.loads(ctx)
+    bots = data["bots"]
+    assert bots[0]["risk_score"] == 0.0
+    assert bots[0]["risk_score_defaulted"] is True
+    assert any("risk_score missing" in rec.message for rec in caplog.records)
+
+
+class RiskRetriever:
+    def search(self, query, top_k=5, session_id="", **kwargs):
+        return [
+            {
+                "origin_db": "bot",
+                "record_id": "low",
+                "score": 0.5,
+                "metadata": {"name": "low", "risk_score": 0.1},
+            },
+            {
+                "origin_db": "bot",
+                "record_id": "high",
+                "score": 0.5,
+                "metadata": {"name": "high", "risk_score": 0.9},
+            },
+        ]
+
+
+def test_risk_score_affects_ranking():
+    builder = ContextBuilder(
+        retriever=RiskRetriever(),
+        patch_safety=DummyPatchSafety(),
+        risk_penalty=1.0,
+        ranking_weight=1.0,
+        roi_weight=1.0,
+        safety_weight=1.0,
+    )
+    ctx = builder.build_context("hi", top_k=2)
+    data = json.loads(ctx)
+    bots = data["bots"]
+    assert [b["id"] for b in bots] == ["low", "high"]
+    assert bots[0]["risk_score"] == 0.1
+    assert bots[1]["risk_score"] == 0.9
