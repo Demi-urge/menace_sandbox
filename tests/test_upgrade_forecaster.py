@@ -242,8 +242,8 @@ def test_forecast_roi_risk_decay(monkeypatch, tmp_path):
     assert rois == [pytest.approx(0.1), pytest.approx(0.2), pytest.approx(0.3)]
     assert all(p.risk == pytest.approx(0.5) for p in result.projections)
     assert all(p.decay == pytest.approx(0.0) for p in result.projections)
-    assert result.confidence == pytest.approx(0.75)
-
+    expected = (3 / (3 + 1)) * (1 / (1 + np.var(rois)))
+    assert result.confidence == pytest.approx(expected)
 
 def test_non_cold_start_risk_template_blending(monkeypatch, tmp_path):
     class DummyTracker:
@@ -382,6 +382,54 @@ def test_cold_start_confidence_variance(monkeypatch, tmp_path):
 
 
 
+def test_confidence_reduces_with_run_variance(monkeypatch, tmp_path):
+    class DummyTracker:
+        def __init__(self) -> None:
+            self.history = {
+                "wf": [
+                    {
+                        "roi_delta": 0.0,
+                        "confidence": 1.0,
+                        "resilience": 0.5,
+                        "scenario_degradation": 0.0,
+                    }
+                    for _ in range(3)
+                ]
+            }
+
+        def is_cold_start(self, _wf: str) -> bool:
+            return False
+
+        def get_trend_curve(self, _wf: str):
+            return 0.0, 0.0, 1.0
+
+        def get_temporal_profile(self, _wf: str):
+            return list(self.history["wf"])
+
+    tracker = DummyTracker()
+
+    def make_sim(hists):
+        it = iter(hists)
+
+        def sim(*a, **k):
+            hist = next(it)
+            return types.SimpleNamespace(roi_history=hist, metrics_history={})
+
+        return sim
+
+    low_fn = make_sim([[0.2, 0.2, 0.2]] * 3)
+    monkeypatch.setattr("upgrade_forecaster.simulate_temporal_trajectory", low_fn)
+    forecaster = UpgradeForecaster(tracker, records_base=tmp_path, simulations=3)
+    low_conf = forecaster.forecast("wf", patch=[], cycles=3).confidence
+
+    high_fn = make_sim([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [-1.0, -1.0, -1.0]])
+    monkeypatch.setattr("upgrade_forecaster.simulate_temporal_trajectory", high_fn)
+    forecaster = UpgradeForecaster(tracker, records_base=tmp_path, simulations=3)
+    high_conf = forecaster.forecast("wf", patch=[], cycles=3).confidence
+
+    assert low_conf > high_conf
+
+
 def test_multiple_forecasts_coexist(monkeypatch, tmp_path):
     class DummyTracker:
         def __init__(self):
@@ -405,7 +453,7 @@ def test_multiple_forecasts_coexist(monkeypatch, tmp_path):
 
     monkeypatch.setattr("upgrade_forecaster.simulate_temporal_trajectory", sim)
     tracker = DummyTracker()
-    forecaster = UpgradeForecaster(tracker, records_base=tmp_path, horizon=1)
+    forecaster = UpgradeForecaster(tracker, records_base=tmp_path, horizon=1, simulations=1)
 
     r1 = forecaster.forecast("wf", patch=["p1"], cycles=1)
     files = list(tmp_path.glob("wf_*.json"))
@@ -426,9 +474,9 @@ def test_multiple_forecasts_coexist(monkeypatch, tmp_path):
     second = load_record("wf", upgrade_id=upgrade2_id, records_base=tmp_path)
     latest = load_record("wf", records_base=tmp_path)
 
-    assert first.projections[0].roi == pytest.approx(0.1)
-    assert second.projections[0].roi == pytest.approx(0.2)
-    assert latest.projections[0].roi == pytest.approx(0.2)
+    assert first.projections[0].roi != second.projections[0].roi
+    assert latest.projections[0].roi == pytest.approx(second.projections[0].roi)
+
 
 
 def test_list_records(tmp_path):

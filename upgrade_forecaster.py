@@ -63,12 +63,14 @@ class UpgradeForecaster:
         horizon: int = 5,
         records_base: str | Path = "forecast_records",
         logger: object | None = None,
+        simulations: int = 3,
     ) -> None:
         self.tracker = tracker
         self.horizon = max(3, min(5, int(horizon)))
         self.records_base = Path(records_base)
         self.records_base.mkdir(parents=True, exist_ok=True)
         self.logger = logger
+        self.simulations = max(3, min(5, int(simulations)))
 
     # ------------------------------------------------------------------
     def forecast(
@@ -76,10 +78,15 @@ class UpgradeForecaster:
         workflow_id: str,
         patch: Iterable[str] | str,
         cycles: int | None = None,
+        simulations: int | None = None,
     ) -> ForecastResult:
         """Return cycle projections and overall forecast confidence."""
-
         cycles = self.horizon if cycles is None else max(3, min(5, int(cycles)))
+        simulations = (
+            self.simulations
+            if simulations is None
+            else max(3, min(5, int(simulations)))
+        )
         wf_id = str(workflow_id)
 
         patch_repr = list(patch) if not isinstance(patch, str) else patch
@@ -90,17 +97,30 @@ class UpgradeForecaster:
         patch_hash = hashlib.sha1(patch_serial.encode("utf8")).hexdigest()
         upgrade_id = patch_hash
 
-        # Simulate the patched workflow to obtain prospective metrics
+        # Simulate the patched workflow multiple times to obtain prospective metrics
+        roi_runs: List[List[float]] = []
+        conf_runs: List[List[float]] = []
+        entropy_runs: List[List[float]] = []
+        risk_runs: List[List[float]] = []
         try:
-            roi_tracker = simulate_temporal_trajectory(
-                wf_id, patch, foresight_tracker=self.tracker
-            )
+            for _ in range(simulations):
+                roi_tracker = simulate_temporal_trajectory(
+                    wf_id, patch, foresight_tracker=self.tracker
+                )
+                roi_runs.append(getattr(roi_tracker, "roi_history", []) or [])
+                conf_runs.append(
+                    getattr(roi_tracker, "confidence_history", []) or []
+                )
+                metrics_hist = getattr(roi_tracker, "metrics_history", {}) or {}
+                entropy_runs.append(
+                    metrics_hist.get("synergy_shannon_entropy", []) or []
+                )
+                risk_runs.append(metrics_hist.get("synergy_risk_index", []) or [])
         except Exception as exc:  # pragma: no cover - exercised in tests
-            roi_tracker = None
-            roi_hist: List[float] = []
-            conf_hist: List[float] = []
-            entropy_hist: List[float] = []
-            risk_hist: List[float] = []
+            roi_runs = []
+            conf_runs = []
+            entropy_runs = []
+            risk_runs = []
             samples = 0
             cold_start = True
             if self.logger is not None:
@@ -116,13 +136,39 @@ class UpgradeForecaster:
                 except Exception:
                     pass
         else:
-            roi_hist = getattr(roi_tracker, "roi_history", []) or []
-            conf_hist = getattr(roi_tracker, "confidence_history", []) or []
-            metrics_hist = getattr(roi_tracker, "metrics_history", {}) or {}
-            entropy_hist = metrics_hist.get("synergy_shannon_entropy", []) or []
-            risk_hist = metrics_hist.get("synergy_risk_index", []) or []
             samples = len(self.tracker.history.get(wf_id, []))
             cold_start = self.tracker.is_cold_start(wf_id)
+
+        def _pad(runs: List[List[float]]) -> List[List[float]]:
+            return [
+                (r[:cycles] + [r[-1]] * (cycles - len(r))) if r else [0.0] * cycles
+                for r in runs
+            ]
+
+        if roi_runs:
+            roi_pad = _pad(roi_runs)
+            roi_means = list(np.mean(roi_pad, axis=0))
+            roi_vars = list(np.var(roi_pad, axis=0))
+        else:
+            roi_means = []
+            roi_vars = []
+        if conf_runs:
+            conf_pad = _pad(conf_runs)
+            conf_means = list(np.mean(conf_pad, axis=0))
+        else:
+            conf_means = []
+        if entropy_runs:
+            entropy_pad = _pad(entropy_runs)
+            entropy_means = list(np.mean(entropy_pad, axis=0))
+        else:
+            entropy_means = []
+        if risk_runs:
+            risk_pad = _pad(risk_runs)
+            risk_means = list(np.mean(risk_pad, axis=0))
+            risk_hist_present = any(r for r in risk_runs)
+        else:
+            risk_means = []
+            risk_hist_present = False
 
         projections: List[CycleProjection] = []
 
@@ -163,9 +209,12 @@ class UpgradeForecaster:
                         template_risk = list(cssm_templates.get("risk") or [])
 
             alpha = min(1.0, samples / 5.0)
+            variance_terms: List[float] = []
             for i in range(1, cycles + 1):
-                sim_roi = roi_hist[i - 1] if i - 1 < len(roi_hist) else (
-                    roi_hist[-1] if roi_hist else 0.0
+                sim_roi = (
+                    roi_means[i - 1]
+                    if i - 1 < len(roi_means)
+                    else (roi_means[-1] if roi_means else 0.0)
                 )
                 templ_roi = (
                     template_roi[i - 1]
@@ -173,11 +222,17 @@ class UpgradeForecaster:
                     else (template_roi[-1] if template_roi else 0.0)
                 )
                 roi = alpha * sim_roi + (1.0 - alpha) * templ_roi
+                sim_var = (
+                    roi_vars[i - 1]
+                    if i - 1 < len(roi_vars)
+                    else (roi_vars[-1] if roi_vars else 0.0)
+                )
+                variance_terms.append((alpha ** 2) * sim_var)
 
                 sim_entropy = (
-                    entropy_hist[i - 1]
-                    if i - 1 < len(entropy_hist)
-                    else (entropy_hist[-1] if entropy_hist else 0.0)
+                    entropy_means[i - 1]
+                    if i - 1 < len(entropy_means)
+                    else (entropy_means[-1] if entropy_means else 0.0)
                 )
                 templ_entropy = (
                     template_entropy[i - 1]
@@ -185,15 +240,14 @@ class UpgradeForecaster:
                     else (template_entropy[-1] if template_entropy else 0.0)
                 )
                 entropy = alpha * sim_entropy + (1.0 - alpha) * templ_entropy
-                sim_risk = (
-                    risk_hist[i - 1]
-                    if i - 1 < len(risk_hist)
-                    else (
-                        risk_hist[-1]
-                        if risk_hist
-                        else max(0.0, min(1.0, 1.0 - sim_roi))
+                if risk_hist_present:
+                    sim_risk = (
+                        risk_means[i - 1]
+                        if i - 1 < len(risk_means)
+                        else (risk_means[-1] if risk_means else 0.0)
                     )
-                )
+                else:
+                    sim_risk = max(0.0, min(1.0, 1.0 - sim_roi))
                 templ_risk = (
                     template_risk[i - 1]
                     if i - 1 < len(template_risk)
@@ -217,15 +271,17 @@ class UpgradeForecaster:
                         decay=float(decay),
                     )
                 )
-            
+
             roi_vals = [p.roi for p in projections]
-            variance = float(np.var(roi_vals)) if roi_vals else 0.0
+            cycle_variance = float(np.var(roi_vals)) if roi_vals else 0.0
+            sim_variance = float(np.mean(variance_terms)) if variance_terms else 0.0
+            variance = cycle_variance + sim_variance
             forecast_confidence = (samples / (samples + 1.0)) * (1.0 / (1.0 + variance))
         else:
             slope, intercept, stability = self.tracker.get_trend_curve(wf_id)
 
-            hist_len = len(roi_hist) if roi_hist else 1
-            if risk_hist:
+            hist_len = len(roi_means) if roi_means else 1
+            if risk_hist_present:
                 baseline_risk = 0.0
                 template_risk: List[float] = []
                 alpha = 0.0
@@ -245,28 +301,40 @@ class UpgradeForecaster:
                         template_risk = []
                 alpha = min(1.0, samples / 5.0)
 
+            variance_terms: List[float] = []
             for i in range(1, cycles + 1):
-                sim_roi = roi_hist[i - 1] if i - 1 < len(roi_hist) else (
-                    roi_hist[-1] if roi_hist else 0.0
+                sim_roi = (
+                    roi_means[i - 1]
+                    if i - 1 < len(roi_means)
+                    else (roi_means[-1] if roi_means else 0.0)
                 )
                 trend_roi = intercept + slope * i
                 roi = trend_roi + sim_roi * (i / hist_len)
 
-                sim_conf = conf_hist[i - 1] if i - 1 < len(conf_hist) else (
-                    conf_hist[-1] if conf_hist else 0.0
+                sim_var = (
+                    roi_vars[i - 1]
+                    if i - 1 < len(roi_vars)
+                    else (roi_vars[-1] if roi_vars else 0.0)
+                )
+                variance_terms.append(((i / hist_len) ** 2) * sim_var)
+
+                sim_conf = (
+                    conf_means[i - 1]
+                    if i - 1 < len(conf_means)
+                    else (conf_means[-1] if conf_means else 0.0)
                 )
                 confidence = max(0.0, min(1.0, sim_conf * stability))
 
                 entropy = (
-                    entropy_hist[i - 1]
-                    if i - 1 < len(entropy_hist)
-                    else (entropy_hist[-1] if entropy_hist else 0.0)
+                    entropy_means[i - 1]
+                    if i - 1 < len(entropy_means)
+                    else (entropy_means[-1] if entropy_means else 0.0)
                 )
-                if risk_hist:
+                if risk_hist_present:
                     sim_risk = (
-                        risk_hist[i - 1]
-                        if i - 1 < len(risk_hist)
-                        else (risk_hist[-1] if risk_hist else 0.0)
+                        risk_means[i - 1]
+                        if i - 1 < len(risk_means)
+                        else (risk_means[-1] if risk_means else 0.0)
                     )
                     risk = max(0.0, min(1.0, sim_risk + (1.0 - stability)))
                 else:
@@ -290,7 +358,10 @@ class UpgradeForecaster:
                     )
                 )
 
-            variance = float(np.var(roi_hist)) if roi_hist else 0.0
+            roi_vals = [p.roi for p in projections]
+            cycle_variance = float(np.var(roi_vals)) if roi_vals else 0.0
+            sim_variance = float(np.mean(variance_terms)) if variance_terms else 0.0
+            variance = cycle_variance + sim_variance
             forecast_confidence = (samples / (samples + 1.0)) * (1.0 / (1.0 + variance))
 
         result = ForecastResult(projections, float(forecast_confidence), upgrade_id)
