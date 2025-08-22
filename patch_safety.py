@@ -16,7 +16,9 @@ failures.
 """
 
 from dataclasses import dataclass, field
+import json
 import math
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Tuple
 
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
@@ -74,13 +76,80 @@ class PatchSafety:
         default_factory=lambda: set(_DEFAULT_LICENSE_DENYLIST)
     )
     vectorizer: ErrorVectorizer = field(default_factory=ErrorVectorizer)
+    storage_path: str | None = None
     _failures: List[List[float]] = field(default_factory=list)
+    _records: List[Dict[str, Any]] = field(default_factory=list)
+
+    # ------------------------------------------------------------------
+    def __post_init__(self) -> None:  # pragma: no cover - simple IO
+        self.load_failures()
 
     # ------------------------------------------------------------------
     def record_failure(self, err: Dict[str, Any]) -> None:
-        """Add a failure example represented by ``err``."""
+        """Add a failure example represented by ``err`` and persist it."""
         self.vectorizer.fit([err])
-        self._failures.append(self.vectorizer.transform(err))
+        vec = self.vectorizer.transform(err)
+        self._failures.append(vec)
+        self._records.append(err)
+        # best-effort persistence
+        try:  # pragma: no cover - simple IO
+            self.save_failures()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    def load_failures(self, path: str | None = None) -> None:
+        """Populate ``_failures`` and vectoriser state from ``path``."""
+        pth = path or self.storage_path
+        if not pth:
+            return
+        p = Path(pth)
+        if not p.exists():
+            return
+        try:  # pragma: no cover - simple IO
+            with p.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    if isinstance(data, dict):
+                        err = data.get("err", {})
+                        vec = data.get("vector")
+                    else:
+                        err = {}
+                        vec = data
+                    if err:
+                        try:
+                            self.vectorizer.fit([err])
+                        except Exception:
+                            pass
+                        self._records.append(err)
+                        if vec is None:
+                            try:
+                                vec = self.vectorizer.transform(err)
+                            except Exception:
+                                vec = []
+                    if isinstance(vec, list):
+                        self._failures.append(vec)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    def save_failures(self, path: str | None = None) -> None:
+        """Append the most recent failure to ``path``."""
+        if not self._records or not self._failures:
+            return
+        pth = path or self.storage_path
+        if not pth:
+            return
+        p = Path(pth)
+        try:  # pragma: no cover - simple IO
+            with p.open("a", encoding="utf-8") as fh:
+                json.dump({"err": self._records[-1], "vector": self._failures[-1]}, fh)
+                fh.write("\n")
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def score(self, err: Dict[str, Any]) -> float:
