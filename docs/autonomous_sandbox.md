@@ -138,6 +138,33 @@ restrict automatic completion. When a module is flagged the runner emits a
 reset their history. Flagged modules are persisted to ``*.flags`` files so later
 cycles automatically skip them.
 
+## Temporal trajectory simulations
+
+Use :func:`simulate_temporal_trajectory` to exercise a workflow through a
+series of entropy stages and measure how performance degrades. The helper
+progresses through ``baseline``, ``latency_spike``, ``io_cpu_strain``,
+``schema_drift`` and ``chaotic_failure`` presets, each introducing additional
+latency, resource pressure or data corruption. For every stage the sandbox
+records the scenario's ROI, the associated resilience score and how far the ROI
+falls from the baseline run.
+
+Supplying a :class:`ForesightTracker` records these measurements with
+``compute_stability=True`` so the tracker stores per‑stage ROI/resilience
+values, degradation and an overall stability reading:
+
+```python
+from sandbox_runner.environment import simulate_temporal_trajectory
+from foresight_tracker import ForesightTracker
+
+foresight = ForesightTracker()
+simulate_temporal_trajectory(workflow, foresight_tracker=foresight)
+```
+
+Each cycle logged in ``foresight.history`` includes keys such as
+``latency_spike_roi`` and ``schema_drift_degradation`` together with the
+computed ``stability`` score, enabling early detection of regressions under
+escalating entropy.
+
 ## Human alignment flagger
 
 Each autonomous cycle runs `HumanAlignmentFlagger` against the most recent

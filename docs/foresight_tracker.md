@@ -2,6 +2,10 @@
 
 `ForesightTracker` maintains a rolling window of `max_cycles` cycle metrics for each workflow and derives basic trend curves. The `max_cycles` parameter controls this retention and the deprecated aliases `window` and `N` are still accepted. It acts as a light-weight temporal forecaster that lets the sandbox spot deteriorating behaviour early.
 
+``record_cycle_metrics`` now exposes a ``compute_stability`` flag. When set
+to ``True`` the tracker evaluates the current window immediately and appends a
+``stability`` value to the recorded metrics.
+
 ## Required metrics
 
 Each cycle should call `record_cycle_metrics(workflow_id, metrics)` with a mapping of metric names to numbers.  When `compute_stability=True` the call also stores the current window stability under the `"stability"` key for that cycle.  The tracker aggregates these values and evaluates slope and volatility across the retained window. When used with `SelfImprovementEngine` the following metrics are expected:
@@ -32,6 +36,34 @@ if tracker.is_stable("workflow-1"):
 ```
 
 The tracker stores only the recent `max_cycles` cycles per workflow, keeping memory usage predictable.
+
+## Logging temporal simulations
+
+Temporal simulations use :func:`simulate_temporal_trajectory` to march a
+workflow through escalating entropy stages. The helper forwards ROI, resilience
+and degradation metrics for each stage to ``ForesightTracker.record_cycle_metrics``
+with ``compute_stability=True`` so the window stability is stored alongside the
+measurements:
+
+```python
+from sandbox_runner.environment import simulate_temporal_trajectory
+from menace_sandbox.foresight_tracker import ForesightTracker
+
+tracker = ForesightTracker()
+simulate_temporal_trajectory(workflow, foresight_tracker=tracker)
+
+cycle = tracker.history[workflow_id][-1]
+print(
+    cycle['latency_spike_roi'],
+    cycle['latency_spike_resilience'],
+    cycle['stability'],
+    cycle['latency_spike_degradation'],
+)
+```
+
+This captures per-stage ROI and resilience, the degradation from the baseline
+run and the computed ``stability`` score, providing a consolidated log of a
+workflow's temporal trajectory.
 
 ## Cold starts and template curves
 
