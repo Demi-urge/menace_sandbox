@@ -167,6 +167,34 @@ def test_is_cold_start_for_insufficient_cycles_or_zero_roi():
     assert tracker_zero.is_cold_start("wf")  # zero ROI across cycles
 
 
+@pytest.mark.parametrize(
+    "roi_values,threshold,expected",
+    [
+        ([0.1, 0.2, 0.3], 1.0, "Stable"),
+        ([0.5, 0.4, 0.3], 1.0, "Slow decay"),
+        ([0.0, 2.0, 0.0, 2.0], 1.0, "Volatile"),
+        ([0.5, 0.0, -0.5], 1.0, "Immediate collapse risk"),
+    ],
+)
+def test_predict_roi_collapse_risk_categories(roi_values, threshold, expected):
+    tracker = ForesightTracker(volatility_threshold=threshold)
+    for v in roi_values:
+        tracker.record_cycle_metrics("wf", {"roi_delta": v})
+    result = tracker.predict_roi_collapse("wf")
+    assert result["risk"] == expected
+    assert result["brittle"] is False
+
+
+def test_predict_roi_collapse_brittle_flag():
+    tracker = ForesightTracker()
+    tracker.record_cycle_metrics("wf", {"roi_delta": 1.0}, scenario_degradation=0.0)
+    tracker.record_cycle_metrics("wf", {"roi_delta": 1.0}, scenario_degradation=0.0)
+    tracker.record_cycle_metrics("wf", {"roi_delta": 0.0}, scenario_degradation=0.01)
+    result = tracker.predict_roi_collapse("wf")
+    assert result["brittle"] is True
+    assert result["risk"] == "Immediate collapse risk"
+
+
 def test_template_blending_and_cold_start(tmp_path):
     cfg = tmp_path / "foresight_templates.yaml"
     cfg.write_text(
