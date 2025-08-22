@@ -201,6 +201,11 @@ class PatchLogger:
                 self.patch_safety.max_alerts = self.max_alerts
                 self.patch_safety.license_denylist = self.license_denylist
                 passed, similarity = self.patch_safety.evaluate(m, m)
+                if not result:
+                    try:
+                        self.patch_safety.record_failure(m)
+                    except Exception:
+                        logger.exception("Failed to record failure metadata")
                 if similarity >= self.patch_safety.threshold:
                     payload = {"vector": key, "score": similarity, "threshold": self.patch_safety.threshold}
                     bus = self.event_bus
@@ -460,13 +465,6 @@ class PatchLogger:
                                 self.info_db.add(item)
                         except Exception:
                             logger.exception("Failed to store lesson metadata")
-                if not result and errors:
-                    # record all errors for persistence
-                    for err in errors:
-                        try:
-                            self.patch_safety.record_failure(dict(err))
-                        except Exception:
-                            logger.exception("Failed to record failure metadata")
         except Exception:
             _TRACK_OUTCOME.labels("error").inc()
             _TRACK_DURATION.set(time.time() - start)
