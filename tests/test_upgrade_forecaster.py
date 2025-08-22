@@ -57,6 +57,39 @@ def test_forecast_uses_template_on_cold_start(monkeypatch, tmp_path):
     assert result.confidence == pytest.approx(0.0)
 
 
+def test_sim_failure_falls_back_to_template(monkeypatch, tmp_path):
+    def fake_load(self):
+        self.templates = {"wf": [0.1, 0.2, 0.3]}
+        self.workflow_profiles["wf"] = "wf"
+
+    monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
+    tracker = ForesightTracker()
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("upgrade_forecaster.simulate_temporal_trajectory", boom)
+
+    logs = []
+
+    class DummyLogger:
+        def log(self, data):
+            logs.append(data)
+
+    forecaster = UpgradeForecaster(
+        tracker, records_base=tmp_path, logger=DummyLogger()
+    )
+    result = forecaster.forecast("wf", patch=[], cycles=3)
+
+    assert [p.roi for p in result.projections] == [
+        pytest.approx(0.1),
+        pytest.approx(0.2),
+        pytest.approx(0.3),
+    ]
+    assert result.confidence == pytest.approx(0.0)
+    assert logs and "error" in logs[0]
+
+
 def test_entropy_template_usage(monkeypatch, tmp_path):
     def fake_load(self):
         self.templates = {"wf": [0.0, 0.0, 0.0]}

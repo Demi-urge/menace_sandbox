@@ -91,18 +91,38 @@ class UpgradeForecaster:
         upgrade_id = patch_hash
 
         # Simulate the patched workflow to obtain prospective metrics
-        roi_tracker = simulate_temporal_trajectory(
-            wf_id, patch, foresight_tracker=self.tracker
-        )
-
-        roi_hist = getattr(roi_tracker, "roi_history", []) or []
-        conf_hist = getattr(roi_tracker, "confidence_history", []) or []
-        metrics_hist = getattr(roi_tracker, "metrics_history", {}) or {}
-        entropy_hist = metrics_hist.get("synergy_shannon_entropy", []) or []
-        risk_hist = metrics_hist.get("synergy_risk_index", []) or []
-
-        samples = len(self.tracker.history.get(wf_id, []))
-        cold_start = self.tracker.is_cold_start(wf_id)
+        try:
+            roi_tracker = simulate_temporal_trajectory(
+                wf_id, patch, foresight_tracker=self.tracker
+            )
+        except Exception as exc:  # pragma: no cover - exercised in tests
+            roi_tracker = None
+            roi_hist: List[float] = []
+            conf_hist: List[float] = []
+            entropy_hist: List[float] = []
+            risk_hist: List[float] = []
+            samples = 0
+            cold_start = True
+            if self.logger is not None:
+                try:
+                    self.logger.log(
+                        {
+                            "workflow_id": wf_id,
+                            "patch": patch_repr,
+                            "error": repr(exc),
+                            "event": "simulate_temporal_trajectory_failed",
+                        }
+                    )
+                except Exception:
+                    pass
+        else:
+            roi_hist = getattr(roi_tracker, "roi_history", []) or []
+            conf_hist = getattr(roi_tracker, "confidence_history", []) or []
+            metrics_hist = getattr(roi_tracker, "metrics_history", {}) or {}
+            entropy_hist = metrics_hist.get("synergy_shannon_entropy", []) or []
+            risk_hist = metrics_hist.get("synergy_risk_index", []) or []
+            samples = len(self.tracker.history.get(wf_id, []))
+            cold_start = self.tracker.is_cold_start(wf_id)
 
         projections: List[CycleProjection] = []
 
