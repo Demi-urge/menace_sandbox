@@ -26,6 +26,7 @@ trajectories:
 entropy_profiles:
   scraper_bot: low_entropy
   trading_bot: high_entropy
+  planner: low_entropy
 
 risk_profiles:
   scraper_bot: low_risk
