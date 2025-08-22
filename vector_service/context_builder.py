@@ -187,6 +187,7 @@ class ContextBuilder:
             The argument defaults to the module-level instance when available.
         """
 
+        global _VEC_METRICS
         if weights is None:
             vm = vector_metrics or _VEC_METRICS
             if vm is None:
@@ -195,6 +196,8 @@ class ContextBuilder:
                 weights = vm.get_db_weights()
             except Exception:
                 return
+            if vector_metrics is not None:
+                _VEC_METRICS = vector_metrics
         if not isinstance(weights, dict):  # pragma: no cover - defensive
             return
         # Replace existing mapping so each refresh reflects the latest weights
