@@ -65,6 +65,29 @@ asyncio.run(schedule_backfill(dbs=["code"]))
 # failure drops weight and refreshes embeddings
 ```
 
+## Failure embeddings and risk penalties
+
+`PatchLogger` keeps embeddings of vectors that led to failed patches. When a
+patch outcome is negative, the contributing vectors' metadata is fed into
+`PatchSafety.record_failure`. Later retrievals call `PatchSafety.evaluate`, which
+computes a similarity score against the stored failures. High similarity raises
+the risk score returned by `PatchLogger`, allowing `CognitionLayer` to demote
+those origins in the ranker.
+
+```python
+from vector_service.patch_logger import PatchLogger
+
+logger = PatchLogger()
+meta = {"error": {"message": "timeout"}}
+
+# failing patch: record its embedding
+logger.track_contributors({"code:1": 1.0}, False, retrieval_metadata={"code:1": meta})
+
+# later retrieval: similar vector receives a penalty
+scores = logger.track_contributors({"code:2": 1.0}, True, retrieval_metadata={"code:2": meta})
+print(scores["code"])  # non-zero similarity -> down-ranked
+```
+
 ### Optional dependencies
 
 These modules gracefully degrade when optional packages are missing:
