@@ -211,6 +211,18 @@ class VectorMetricsDB:
         return {db: w for db, w in rows}
 
     # ------------------------------------------------------------------
+    def set_db_weights(self, weights: Dict[str, float]) -> None:
+        """Persist full ranking weight mapping."""
+
+        rows = [
+            (str(db), max(0.0, min(1.0, float(w)))) for db, w in weights.items()
+        ]
+        self.conn.executemany(
+            "REPLACE INTO ranking_weights(db, weight) VALUES(?, ?)", rows
+        )
+        self.conn.commit()
+
+    # ------------------------------------------------------------------
     def save_session(
         self,
         session_id: str,

@@ -32,6 +32,7 @@ import asyncio
 import json
 from pathlib import Path
 import logging
+import os
 
 from .retriever import Retriever
 from .context_builder import ContextBuilder
@@ -223,6 +224,7 @@ class CognitionLayer:
                     continue
                 penalty = abs(score)
                 per_db[key] = per_db.get(key, 0.0) - penalty
+        max_delta = max(abs(d) for d in per_db.values()) if per_db else 0.0
 
         updates: Dict[str, float] = {}
         for origin, change in per_db.items():
@@ -260,6 +262,11 @@ class CognitionLayer:
                         self.context_builder.db_weights = dict(all_weights)  # type: ignore[attr-defined]
             except Exception:
                 logger.exception("Failed to apply updated db weights to context builder")
+
+            try:
+                self.vector_metrics.set_db_weights(all_weights)
+            except Exception:
+                logger.exception("Failed to persist updated db weights")
 
             # Persist full weight mapping so external services can reload after
             # restarts.  We merge into ``retrieval_ranker.json`` which already
@@ -310,6 +317,29 @@ class CognitionLayer:
                         bus.publish("retrieval:feedback", payload)
                     except Exception:
                         logger.exception("Failed to publish retrieval feedback")
+
+        roi_thresh = os.getenv("RANKER_SCHEDULER_ROI_THRESHOLD")
+        if roi_thresh:
+            try:
+                thresh = float(roi_thresh)
+            except Exception:
+                thresh = 0.0
+            if thresh > 0 and abs(max_delta) >= thresh:
+                try:
+                    from analytics import retrain_vector_ranker as rvr
+
+                    rvr.retrain([self])
+                except Exception:
+                    try:
+                        from analytics import ranker_scheduler as rs
+
+                        rs.start_scheduler_from_env([self])
+                    except Exception:
+                        logger.exception("Failed to retrain vector ranker")
+                try:
+                    self.reload_ranker_model()
+                except Exception:
+                    logger.exception("Failed to reload ranker model after retrain")
         return updates
 
     # ------------------------------------------------------------------

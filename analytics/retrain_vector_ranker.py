@@ -80,6 +80,20 @@ def retrain_and_reload(
             continue
 
 
+def retrain(
+    services: Sequence[Any] = (),
+    *,
+    vector_db: Path | str = "vector_metrics.db",
+    patch_db: Path | str = "roi.db",
+    model_dir: Path | str = MODEL_PATH.parent,
+) -> None:
+    """Backward compatible wrapper around :func:`retrain_and_reload`."""
+
+    retrain_and_reload(
+        services, vector_db=vector_db, patch_db=patch_db, model_dir=model_dir
+    )
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Retrain vector ranker and reload services")
     p.add_argument("--vector-db", default="vector_metrics.db")
