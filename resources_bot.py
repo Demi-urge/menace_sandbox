@@ -16,6 +16,8 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
+from vector_service import EmbeddableDBMixin
+from resource_vectorizer import ResourceVectorizer
 from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
 from .resource_prediction_bot import ResourceMetrics
 from .prediction_manager_bot import PredictionManager
@@ -31,11 +33,19 @@ class ROIRecord:
     ts: str = datetime.utcnow().isoformat()
 
 
-class ROIHistoryDB:
-    """Simple SQLite-backed ROI history storage."""
+class ROIHistoryDB(EmbeddableDBMixin):
+    """SQLite-backed ROI history storage with embedding support."""
 
-    def __init__(self, path: str | Path = "roi_history.db") -> None:
+    def __init__(
+        self,
+        path: str | Path = "roi_history.db",
+        *,
+        vector_index_path: str = "resource_embeddings.index",
+        embedding_version: int = 1,
+        vector_backend: str = "annoy",
+    ) -> None:
         self.conn = sqlite3.connect(path)
+        self.conn.row_factory = sqlite3.Row
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS roi(
@@ -47,6 +57,14 @@ class ROIHistoryDB:
             """
         )
         self.conn.commit()
+        meta_path = Path(vector_index_path).with_suffix(".json")
+        EmbeddableDBMixin.__init__(
+            self,
+            index_path=vector_index_path,
+            metadata_path=meta_path,
+            embedding_version=embedding_version,
+            backend=vector_backend,
+        )
 
     def add(self, rec: ROIRecord) -> int:
         cur = self.conn.execute(
@@ -60,6 +78,16 @@ class ROIHistoryDB:
         if bot:
             return pd.read_sql("SELECT bot, roi, ts FROM roi WHERE bot=?", self.conn, params=(bot,))
         return pd.read_sql("SELECT bot, roi, ts FROM roi", self.conn)
+
+    # Embedding mixin hooks -------------------------------------------------
+    def iter_records(self) -> Iterable[Tuple[int, Dict[str, float], str]]:
+        cur = self.conn.execute("SELECT id, bot, roi, ts FROM roi")
+        for row in cur.fetchall():
+            rec = {"bot": row["bot"], "roi": row["roi"], "ts": row["ts"]}
+            yield row["id"], rec, "resource"
+
+    def vector(self, rec: Dict[str, float]) -> List[float]:
+        return ResourceVectorizer().transform(rec)
 
 
 class ResourcesBot:
