@@ -31,6 +31,19 @@ layer.record_patch_outcome(session_id, True, contribution=1.0)
 
 The final call updates ROI metrics and adjusts ranking weights.
 
+## Adding new modalities
+
+The vector service dynamically discovers vectorisers.  Any module placed under
+``vector_service`` whose name ends in ``_vectorizer`` and exposes a class ending
+with ``Vectorizer`` is registered automatically.  The registry key is derived
+from the class name (``ActionVectorizer`` → ``"action"``).
+
+To enable embedding backfills for a new modality, set ``DB_MODULE`` and
+``DB_CLASS`` attributes on the module or the class to point at the corresponding
+database implementation.  Once the module is added no source code changes are
+required—the new kind becomes available to both the vectoriser and
+``embedding_backfill``.
+
 ## Feedback cycle
 
 The service closes the loop on every patch by feeding outcomes back into the
