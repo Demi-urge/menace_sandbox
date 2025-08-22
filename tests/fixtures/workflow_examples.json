@@ -1,0 +1,16 @@
+[
+  {
+    "category": "sales",
+    "status": "active",
+    "workflow": ["step1", "step2"],
+    "workflow_duration": 150,
+    "estimated_profit_per_bot": 5000
+  },
+  {
+    "category": "support",
+    "status": "inactive",
+    "workflow": ["init"],
+    "workflow_duration": 80,
+    "estimated_profit_per_bot": 2500
+  }
+]
