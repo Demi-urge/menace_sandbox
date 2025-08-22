@@ -240,7 +240,7 @@ class WorkflowGraph:
             self.save()
 
         bus.subscribe("workflows:new", _on_new)
-        bus.subscribe("workflows:updated", _on_update)
+        bus.subscribe("workflows:update", _on_update)
         bus.subscribe("workflows:deleted", _on_remove)
         bus.subscribe("workflows:refactor", _on_remove)
 
@@ -278,6 +278,39 @@ class WorkflowGraph:
                 for deps in edges.values():
                     deps.pop(workflow_id, None)
             self._save_unlocked()
+
+    def update(self, workflow_id: str, change_type: str) -> None:
+        """Apply a workflow change and persist the graph.
+
+        Parameters
+        ----------
+        workflow_id:
+            Identifier of the workflow being modified.
+        change_type:
+            Nature of the change – ``"add"``, ``"update"``, ``"remove"`` or
+            ``"refactor"``.  Synonymous variations like ``"new"`` or
+            ``"deleted"`` are also accepted.
+        """
+
+        ctype = change_type.lower()
+        if ctype in {"add", "new"}:
+            self.add_workflow(workflow_id)
+            try:
+                self.update_dependencies(workflow_id)
+            except Exception:
+                pass
+        elif ctype in {"update", "updated"}:
+            try:
+                self.update_dependencies(workflow_id)
+            except Exception:
+                pass
+        elif ctype in {"remove", "deleted", "delete", "refactor"}:
+            self.remove_workflow(workflow_id)
+            try:
+                self.refresh_edges()
+            except Exception:
+                pass
+        self.save()
 
     # ------------------------------------------------------------------
     # Automatic population from WorkflowDB

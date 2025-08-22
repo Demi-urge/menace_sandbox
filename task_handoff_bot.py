@@ -220,7 +220,7 @@ class WorkflowDB(EmbeddableDBMixin):
         if self.event_bus:
             try:
                 payload = {"workflow_id": workflow_id, "status": status}
-                self.event_bus.publish("workflows:updated", payload)
+                self.event_bus.publish("workflows:update", payload)
             except Exception as exc:
                 logger.warning(
                     "failed to publish workflow status %s for %s: %s",
@@ -230,7 +230,7 @@ class WorkflowDB(EmbeddableDBMixin):
                 )
         if self.graph:
             try:
-                self.graph.update_dependencies(str(workflow_id))
+                self.graph.update(str(workflow_id), "update")
             except Exception as exc:  # pragma: no cover - best effort
                 logger.warning("failed to update workflow graph for %s: %s", workflow_id, exc)
 
@@ -256,14 +256,14 @@ class WorkflowDB(EmbeddableDBMixin):
                     logger.exception("embedding hook failed for %s: %s", wid, exc)
                 if self.graph:
                     try:
-                        self.graph.update_dependencies(str(wid))
+                        self.graph.update(str(wid), "update")
                     except Exception as exc:  # pragma: no cover - best effort
                         logger.warning("failed to update workflow graph for %s: %s", wid, exc)
         if self.event_bus:
             try:
                 for wid in ids:
                     payload = {"workflow_id": wid, "status": status}
-                    self.event_bus.publish("workflows:updated", payload)
+                    self.event_bus.publish("workflows:update", payload)
             except Exception as exc:
                 logger.warning(
                     "failed to publish workflow status %s for %s: %s",
@@ -325,8 +325,7 @@ class WorkflowDB(EmbeddableDBMixin):
                 )
         if self.graph:
             try:
-                self.graph.add_workflow(str(wf.wid))
-                self.graph.update_dependencies(str(wf.wid))
+                self.graph.update(str(wf.wid), "add")
             except Exception as exc:  # pragma: no cover - best effort
                 logger.warning("failed to update workflow graph for %s: %s", wf.wid, exc)
         return wf.wid
@@ -346,7 +345,7 @@ class WorkflowDB(EmbeddableDBMixin):
                 )
         if self.graph:
             try:
-                self.graph.remove_workflow(str(workflow_id))
+                self.graph.update(str(workflow_id), "remove")
             except Exception as exc:  # pragma: no cover - best effort
                 logger.warning(
                     "failed to update workflow graph for deletion %s: %s", workflow_id, exc
