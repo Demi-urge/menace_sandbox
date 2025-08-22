@@ -121,13 +121,42 @@ class CognitionLayer:
                 logger.exception("Failed to load pending sessions from metrics DB")
 
     # ------------------------------------------------------------------
-    def reload_ranker_model(self, model_path: str | "Path" | None = None) -> None:
+    def reload_ranker_model(
+        self,
+        model_path: str | "Path" | None = None,
+        *,
+        roi_delta: float | None = None,
+        risk_penalty: float | None = None,
+    ) -> None:
         """Reload ranking model on retriever and context builder.
 
         When ``model_path`` is ``None`` the method attempts to read the path
         from ``retrieval_ranker.json`` so services can simply call this method
-        after a scheduler-triggered retrain.
+        after a scheduler-triggered retrain.  Passing ``roi_delta`` or
+        ``risk_penalty`` allows the method to trigger an asynchronous retrain
+        when thresholds configured via environment variables are exceeded.
         """
+
+        if roi_delta is not None or risk_penalty is not None:
+            try:
+                roi_thresh = float(os.getenv("RANKER_SCHEDULER_ROI_THRESHOLD", "0") or 0.0)
+            except Exception:
+                roi_thresh = 0.0
+            try:
+                risk_thresh = float(os.getenv("RANKER_SCHEDULER_RISK_THRESHOLD", "0") or 0.0)
+            except Exception:
+                risk_thresh = 0.0
+            if (
+                roi_delta is not None and roi_thresh and abs(roi_delta) >= roi_thresh
+            ) or (
+                risk_penalty is not None and risk_thresh and abs(risk_penalty) >= risk_thresh
+            ):
+                try:
+                    from analytics import ranker_scheduler as rs
+
+                    rs.schedule_retrain([self])
+                except Exception:
+                    logger.exception("Failed to schedule ranker retrain")
 
         if not model_path:
             try:
@@ -155,6 +184,39 @@ class CognitionLayer:
             self.context_builder.ranking_model = _rr.load_model(Path(model_path))
         except Exception:
             logger.exception("Failed to load ranking model from %s", model_path)
+
+        weights: Dict[str, float] = {}
+        if self.vector_metrics is not None:
+            try:
+                weights = self.vector_metrics.get_db_weights()
+            except Exception:
+                weights = {}
+        cfg = Path("retrieval_ranker.json")
+        try:
+            data = {"current": str(model_path), "weights": {}}
+            if cfg.exists():
+                try:
+                    loaded = json.loads(cfg.read_text())
+                    if isinstance(loaded, dict):
+                        data.update(loaded)
+                except Exception:
+                    pass
+            wmap = {str(k): float(v) for k, v in weights.items()}
+            data["current"] = str(model_path)
+            data["weights"] = wmap
+            tmp = cfg.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data))
+            tmp.replace(cfg)
+        except Exception:
+            logger.exception("Failed to persist retrieval ranker config")
+        try:
+            if weights:
+                if hasattr(self.context_builder, "refresh_db_weights"):
+                    self.context_builder.refresh_db_weights(weights)  # type: ignore[attr-defined]
+                elif hasattr(self.context_builder, "db_weights"):
+                    self.context_builder.db_weights.update(weights)  # type: ignore[attr-defined]
+        except Exception:
+            logger.exception("Failed to refresh context builder db weights after reload")
 
     # ------------------------------------------------------------------
     def reload_reliability_scores(self) -> None:
@@ -214,6 +276,7 @@ class CognitionLayer:
             for origin in origins:
                 per_db[origin] = per_db.get(origin, 0.0) + delta
 
+        max_penalty = 0.0
         if risk_scores:
             threshold = getattr(
                 getattr(self.patch_logger, "patch_safety", None), "threshold", 0.0
@@ -223,6 +286,7 @@ class CognitionLayer:
                 if threshold and score < threshold:
                     continue
                 penalty = abs(score)
+                max_penalty = max(max_penalty, penalty)
                 per_db[key] = per_db.get(key, 0.0) - penalty
         max_delta = max(abs(d) for d in per_db.values()) if per_db else 0.0
 
@@ -290,7 +354,9 @@ class CognitionLayer:
                     except Exception:
                         continue
                 data["weights"] = weights
-                cfg.write_text(json.dumps(data))
+                tmp = cfg.with_suffix(".tmp")
+                tmp.write_text(json.dumps(data))
+                tmp.replace(cfg)
             except Exception:
                 logger.exception("Failed to persist retrieval ranker weights")
         else:  # ensure context builder picks up any external changes
@@ -324,28 +390,24 @@ class CognitionLayer:
                     except Exception:
                         logger.exception("Failed to publish retrieval feedback")
 
-        roi_thresh = os.getenv("RANKER_SCHEDULER_ROI_THRESHOLD")
-        if roi_thresh:
+        try:
+            roi_thresh = float(os.getenv("RANKER_SCHEDULER_ROI_THRESHOLD", "0") or 0.0)
+        except Exception:
+            roi_thresh = 0.0
+        try:
+            risk_thresh = float(os.getenv("RANKER_SCHEDULER_RISK_THRESHOLD", "0") or 0.0)
+        except Exception:
+            risk_thresh = 0.0
+        if (
+            (roi_thresh and abs(max_delta) >= roi_thresh)
+            or (risk_thresh and max_penalty >= risk_thresh)
+        ):
             try:
-                thresh = float(roi_thresh)
+                from analytics import ranker_scheduler as rs
+
+                rs.schedule_retrain([self])
             except Exception:
-                thresh = 0.0
-            if thresh > 0 and abs(max_delta) >= thresh:
-                try:
-                    from analytics import retrain_vector_ranker as rvr
-
-                    rvr.retrain([self])
-                except Exception:
-                    try:
-                        from analytics import ranker_scheduler as rs
-
-                        rs.start_scheduler_from_env([self])
-                    except Exception:
-                        logger.exception("Failed to retrain vector ranker")
-                try:
-                    self.reload_ranker_model()
-                except Exception:
-                    logger.exception("Failed to reload ranker model after retrain")
+                logger.exception("Failed to schedule ranker retrain")
         return updates
 
     # ------------------------------------------------------------------

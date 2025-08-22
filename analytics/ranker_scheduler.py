@@ -37,6 +37,7 @@ class RankerScheduler:
         model_dir: Path | str = rvr.MODEL_PATH.parent,
         interval: float = 86400,
         roi_threshold: float | None = None,
+        risk_threshold: float | None = None,
         event_bus: "UnifiedEventBus" | None = None,
     ) -> None:
         self.services = list(services)
@@ -45,10 +46,12 @@ class RankerScheduler:
         self.model_dir = Path(model_dir)
         self.interval = max(0.0, float(interval))
         self.roi_threshold = roi_threshold
+        self.risk_threshold = risk_threshold
         self.event_bus = event_bus
         self.running = False
         self._thread: threading.Thread | None = None
         self._roi_totals: dict[str, float] = {}
+        self._risk_totals: dict[str, float] = {}
 
         if self.event_bus is None and UnifiedEventBus is not None:
             try:
@@ -62,25 +65,38 @@ class RankerScheduler:
                 pass
 
     def _handle_feedback(self, _topic: str, event: object) -> None:
-        """Trigger retrain when cumulative ROI delta per origin crosses threshold."""
-        if self.roi_threshold is None:
-            return
+        """Trigger retrain when ROI or risk crosses configured thresholds."""
         roi = 0.0
+        risk = 0.0
         origin = ""
         if isinstance(event, dict):
             try:
                 roi = float(event.get("roi", 0.0))
             except Exception:
                 roi = 0.0
+            try:
+                risk = float(event.get("risk", 0.0))
+            except Exception:
+                risk = 0.0
             origin = str(event.get("db") or event.get("origin") or "")
         else:
             roi = float(getattr(event, "roi", 0.0) or 0.0)
+            risk = float(getattr(event, "risk", 0.0) or 0.0)
             origin = str(getattr(event, "db", getattr(event, "origin", "")) or "")
-        total = self._roi_totals.get(origin, 0.0) + roi
-        self._roi_totals[origin] = total
-        if abs(total) >= self.roi_threshold:
-            self.retrain([origin])
-            self._roi_totals[origin] = 0.0
+
+        if self.roi_threshold is not None:
+            total = self._roi_totals.get(origin, 0.0) + roi
+            self._roi_totals[origin] = total
+            if abs(total) >= self.roi_threshold:
+                self.retrain([origin])
+                self._roi_totals[origin] = 0.0
+
+        if self.risk_threshold is not None and risk:
+            rtot = self._risk_totals.get(origin, 0.0) + risk
+            self._risk_totals[origin] = rtot
+            if abs(rtot) >= self.risk_threshold:
+                self.retrain([origin])
+                self._risk_totals[origin] = 0.0
 
     def retrain(self, origins: Sequence[str] | None = None) -> None:
         """Retrain the ranker and reload services."""
@@ -135,6 +151,7 @@ def start_scheduler_from_env(services: Sequence[Any] | None = None) -> RankerSch
     patch_db = os.getenv("RANKER_SCHEDULER_PATCH_DB", "roi.db")
     model_dir = os.getenv("RANKER_SCHEDULER_MODEL_DIR", str(rvr.MODEL_PATH.parent))
     roi_thresh = os.getenv("RANKER_SCHEDULER_ROI_THRESHOLD")
+    risk_thresh = os.getenv("RANKER_SCHEDULER_RISK_THRESHOLD")
     service_paths = [s.strip() for s in os.getenv("RANKER_SCHEDULER_SERVICES", "").split(",") if s.strip()]
     svc_instances: list[Any] = list(services or [])
     for path in service_paths:
@@ -149,12 +166,29 @@ def start_scheduler_from_env(services: Sequence[Any] | None = None) -> RankerSch
         model_dir=model_dir,
         interval=interval,
         roi_threshold=float(roi_thresh) if roi_thresh else None,
+        risk_threshold=float(risk_thresh) if risk_thresh else None,
     )
     sched.start()
     return sched
 
 
-__all__ = ["RankerScheduler", "start_scheduler_from_env"]
+def schedule_retrain(services: Sequence[Any], *, vector_db: Path | str = "vector_metrics.db", patch_db: Path | str = "roi.db", model_dir: Path | str = rvr.MODEL_PATH.parent) -> threading.Thread:
+    """Run retraining in a background thread and reload *services* when done."""
+
+    def _run() -> None:
+        rvr.retrain_and_reload(
+            services,
+            vector_db=vector_db,
+            patch_db=patch_db,
+            model_dir=model_dir,
+        )
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return t
+
+
+__all__ = ["RankerScheduler", "start_scheduler_from_env", "schedule_retrain"]
 
 
 if __name__ == "__main__":  # pragma: no cover - convenience for cron
