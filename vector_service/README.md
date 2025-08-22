@@ -75,8 +75,8 @@ These modules gracefully degrade when optional packages are missing:
   their absence, data is kept in memory only.
 - **MenaceMemoryManager** – summarises long texts; falls back to simple
   truncation.
-- **SentenceTransformer** – text embeddings for `SharedVectorService`; if
-  unavailable, text vectorisation raises `RuntimeError`.
+- **SentenceTransformer** – text embeddings for `SharedVectorService`. If the
+  package is missing, the service falls back to a bundled DistilRoBERTa model.
 - **tiktoken** – precise token counting for `ContextBuilder`; without it a
   rough estimate is used.
 - **UniversalRetriever** – search backend used by `Retriever`; retrieval fails
@@ -84,6 +84,20 @@ These modules gracefully degrade when optional packages are missing:
 
 To run without these dependencies simply omit them from the environment; the
 service continues with reduced functionality.
+
+### Bundled embedding model
+
+Text embeddings fall back to a tiny DistilRoBERTa encoder stored locally at
+`vector_service/minilm/tiny-distilroberta-base.tar.xz`.  The archive is
+downloaded from Hugging Face on first use.
+
+Pre‑fetch or refresh the archive with:
+
+```bash
+python -m vector_service.download_model
+```
+
+This fetches the model from Hugging Face and rewrites the bundled archive.
 
 ## Safety filtering
 

@@ -183,3 +183,6 @@ qemu_images/
 !qemu_images/.gitkeep
 evolution_history.db
 roi_events.db
+
+# Bundled embedding model archive
+vector_service/minilm/
