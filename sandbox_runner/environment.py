@@ -5214,6 +5214,36 @@ def default_scenario_presets() -> List[Dict[str, Any]]:
     ]
 
 
+def temporal_trajectory_presets() -> List[Dict[str, Any]]:
+    """Return canonical presets for temporal trajectory simulations.
+
+    The presets progress through increasingly adverse stages:
+    ``baseline``, ``latency_spike``, ``io_cpu_strain``, ``schema_drift`` and
+    ``chaotic_failure``. Each stage defines scenario specific environment
+    variables to emulate the desired conditions.
+    """
+
+    return [
+        {"SCENARIO_NAME": "baseline"},
+        {"SCENARIO_NAME": "latency_spike", "API_LATENCY_MS": 500},
+        {
+            "SCENARIO_NAME": "io_cpu_strain",
+            "CPU_LIMIT": "0.5",
+            "IO_ERRORS": 5,
+        },
+        {
+            "SCENARIO_NAME": "schema_drift",
+            "SCHEMA_MISMATCHES": 5,
+            "HOSTILE_INPUT": True,
+        },
+        {
+            "SCENARIO_NAME": "chaotic_failure",
+            "BROKEN_AUTH": True,
+            "CORRUPT_PAYLOADS": True,
+        },
+    ]
+
+
 # ----------------------------------------------------------------------
 
 
@@ -5527,6 +5557,53 @@ def generate_scorecard(
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to write workflow scorecard")
     return card
+
+
+# ----------------------------------------------------------------------
+def simulate_temporal_trajectory(
+    workflow: Sequence[str] | str,
+    *,
+    tracker: "ROITracker" | None = None,
+    foresight_tracker: "ForesightTracker" | None = None,
+) -> tuple["ROITracker", Dict[str, Scorecard], Dict[str, Any]]:
+    """Execute ``workflow`` across temporal trajectory presets.
+
+    The workflow is stressed sequentially through the stages returned by
+    :func:`temporal_trajectory_presets`. Aggregated ROI, resilience and
+    scenario degradation metrics are forwarded to ``foresight_tracker`` when
+    provided.
+    """
+
+    presets = temporal_trajectory_presets()
+    tracker, scorecards, summary = run_scenarios(
+        workflow,
+        tracker=tracker,
+        presets=presets,
+        foresight_tracker=foresight_tracker,
+    )
+
+    if foresight_tracker is not None:
+        wf_id = str(getattr(workflow, "wid", getattr(workflow, "id", "0")))
+        scenarios = summary.get("scenarios", {})
+        baseline_roi = float(scenarios.get("baseline", {}).get("roi", 0.0))
+        metrics: Dict[str, float] = {}
+        for preset in presets:
+            name = str(preset.get("SCENARIO_NAME", ""))
+            info = scenarios.get(name, {})
+            roi = float(info.get("roi", 0.0))
+            resilience = float(info.get("metrics", {}).get("resilience", 0.0))
+            degradation = baseline_roi - roi
+            metrics[f"{name}_roi"] = roi
+            metrics[f"{name}_resilience"] = resilience
+            metrics[f"{name}_degradation"] = degradation
+        try:
+            foresight_tracker.record_cycle_metrics(
+                wf_id, metrics, compute_stability=True
+            )
+        except TypeError:  # pragma: no cover - compatibility
+            foresight_tracker.record_cycle_metrics(wf_id, metrics)
+
+    return tracker, scorecards, summary
 
 
 # ----------------------------------------------------------------------
