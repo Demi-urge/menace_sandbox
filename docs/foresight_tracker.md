@@ -35,14 +35,20 @@ The tracker stores only the recent `max_cycles` cycles per workflow, keeping mem
 
 ## Cold starts and template curves
 
-Workflows with fewer than three recorded cycles are treated as cold starts.
-The `is_cold_start(workflow_id)` helper detects this warm‑up period and also
-returns `True` when no ROI metric has been captured yet. During this phase the
-tracker can fall back to synthetic ROI templates defined in
-`configs/foresight_templates.yaml`.
+Cold‑start mode keeps brand‑new workflows from triggering false volatility
+signals by seeding them with a baseline ROI curve until enough real data is
+available. Workflows with fewer than three recorded cycles are treated as cold
+starts. The `is_cold_start(workflow_id)` helper detects this warm‑up period and
+also returns `True` when no ROI metric has been captured yet. During this phase
+the tracker blends real ROI measurements with synthetic template values.
 
-That YAML file contains two sections: `profiles` map workflow identifiers to
-template names and `templates` provide the ROI curves used for bootstrapping:
+The templates live at `configs/foresight_templates.yaml` in the repository's
+`configs` directory. The file has two top‑level sections:
+
+- `profiles` – maps workflow identifiers to template names.
+- `templates` – lists the ROI sequences used for bootstrapping.
+
+For example:
 
 ```yaml
 profiles:
@@ -53,20 +59,22 @@ templates:
   early_volatile:  [0.4, -0.15, 0.5, -0.1, 0.45]
 ```
 
-In the example above `scraper_bot` uses the `slow_riser` profile while
-`trading_bot` follows `early_volatile`. Additional profiles can be configured by
-editing `configs/foresight_templates.yaml`.
+Here `scraper_bot` uses the `slow_riser` profile while `trading_bot` follows
+`early_volatile`. Additional profiles can be configured by editing
+`configs/foresight_templates.yaml`.
 
-When capturing metrics, the first five cycles blend real observations with the
-template curve using:
+When capturing metrics, the first five logged cycles blend real observations
+with the template curve using:
 
 ```python
-alpha = min(cycles / 5.0, 1.0)
+alpha = min(logged_cycles / 5.0, 1.0)
 effective_roi = alpha * real_roi + (1.0 - alpha) * template_val
 ```
 
-This weighted `effective_roi` is stored as both `roi_delta` and `raroi_delta`
-until enough history accrues, after which real ROI values take over completely.
+`alpha` grows linearly with the number of logged cycles (0.2, 0.4, …, 1.0 after
+five cycles), so the template influence fades out as history accumulates. This
+weighted `effective_roi` is stored as both `roi_delta` and `raroi_delta` until
+enough history accrues, after which real ROI values take over completely.
 
 ```python
 from menace_sandbox.foresight_tracker import ForesightTracker
