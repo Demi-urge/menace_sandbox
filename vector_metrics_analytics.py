@@ -9,10 +9,15 @@ This module exposes helpers to:
 * surface retrieval events for ranking or model training pipelines.
 """
 
+import argparse
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
-from .vector_metrics_db import VectorMetricsDB
+try:  # pragma: no cover - allow running as a script
+    from .vector_metrics_db import VectorMetricsDB
+except Exception:  # pragma: no cover - fallback when executed directly
+    from vector_metrics_db import VectorMetricsDB  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -96,8 +101,124 @@ def retrieval_training_samples(
     return samples
 
 
+# ---------------------------------------------------------------------------
+def roi_trends(
+    db: VectorMetricsDB,
+    *,
+    days: int = 7,
+    now: datetime | None = None,
+) -> dict[str, list[tuple[str, float]]]:
+    """Return ROI totals per day for each origin database.
+
+    The returned mapping contains a list of ``(date, roi)`` tuples for each
+    database.  ``days`` limits the history window while ``now`` may be supplied
+    for deterministic testing.
+    """
+
+    now = now or datetime.utcnow()
+    start = now - timedelta(days=days)
+    cur = db.conn.execute(
+        """
+        SELECT db, date(ts) AS day, COALESCE(SUM(contribution),0)
+          FROM vector_metrics
+         WHERE event_type='retrieval' AND ts >= ?
+      GROUP BY db, day
+         ORDER BY day
+        """,
+        (start.isoformat(),),
+    )
+    trends: dict[str, list[tuple[str, float]]] = {}
+    for db_name, day, roi in cur.fetchall():
+        trends.setdefault(str(db_name), []).append((str(day), float(roi or 0.0)))
+    return trends
+
+
+# ---------------------------------------------------------------------------
+def ranking_weight_changes(
+    db: VectorMetricsDB,
+    *,
+    limit: int | None = None,
+) -> dict[str, list[dict[str, float | str]]]:
+    """Return history of ranking weight adjustments grouped by origin.
+
+    Each entry in the returned mapping contains dictionaries with ``ts``,
+    ``delta`` and ``weight`` keys.  ``limit`` restricts the total number of
+    rows considered, newest first.
+    """
+
+    sql = (
+        "SELECT db, ts, contribution, COALESCE(similarity, context_score) "
+        "FROM vector_metrics WHERE event_type='ranker' ORDER BY ts DESC"
+    )
+    cur = db.conn.execute(
+        sql + (" LIMIT ?" if limit is not None else ""),
+        (limit,) if limit is not None else (),
+    )
+    changes: dict[str, list[dict[str, float | str]]] = {}
+    for db_name, ts, delta, weight in cur.fetchall():
+        changes.setdefault(str(db_name), []).append(
+            {
+                "ts": str(ts),
+                "delta": float(delta or 0.0),
+                "weight": float(weight or 0.0),
+            }
+        )
+    return changes
+
+
+# ---------------------------------------------------------------------------
+def cli(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Vector metrics analytics helpers"
+    )
+    parser.add_argument("--db", default="vector_metrics.db", help="Path to VectorMetricsDB")
+    parser.add_argument(
+        "--roi-summary",
+        action="store_true",
+        help="Print ROI trends per origin database",
+    )
+    parser.add_argument(
+        "--weight-summary",
+        action="store_true",
+        help="Print ranking weight change history per origin",
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=7,
+        help="Days of history for ROI trends",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Number of ranking weight change rows to show",
+    )
+    args = parser.parse_args(argv)
+
+    vdb = VectorMetricsDB(args.db)
+    if args.roi_summary:
+        trend = roi_trends(vdb, days=args.days)
+        print(json.dumps(trend, indent=2))
+    if args.weight_summary:
+        changes = ranking_weight_changes(vdb, limit=args.limit)
+        print(json.dumps(changes, indent=2))
+    if not (args.roi_summary or args.weight_summary):
+        parser.print_help()
+
+
+def main(argv: list[str] | None = None) -> None:
+    cli(argv)
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI
+    main()
+
+
 __all__ = [
     "stale_embedding_cost",
     "roi_by_database",
     "retrieval_training_samples",
+    "roi_trends",
+    "ranking_weight_changes",
 ]

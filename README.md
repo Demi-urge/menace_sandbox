@@ -1615,6 +1615,19 @@ python self_improvement_engine.py fit-truth-adapter live.npz shadow.npz
 See [docs/truth_adapter.md](docs/truth_adapter.md) for details and additional
 configuration options.
 
+## Vector Analytics
+
+`vector_metrics_analytics` surfaces stored vector metrics for quick
+inspection. ROI trends and ranking weight changes can be printed from the
+command line:
+
+```bash
+python -m vector_metrics_analytics --roi-summary --days 30
+python -m vector_metrics_analytics --weight-summary
+```
+
+Use `--db` to point at an alternative `vector_metrics.db` file.
+
 ## Legal Notice
 
 See [LEGAL.md](LEGAL.md) for the full legal terms. In short, this project may
