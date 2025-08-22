@@ -21,13 +21,15 @@ g.save()  # optional, mutations save automatically
 
 ## Edge Weights
 
-Dependency edges carry an `impact_weight` reflecting how strongly one workflow influences another. The weight is derived by [`estimate_edge_weight`](../workflow_graph.py) which blends three heuristics:
+Dependency edges carry an `impact_weight` reflecting how strongly one workflow influences another. The weight is derived by [`estimate_edge_weight`](../workflow_graph.py) which blends structural heuristics with live telemetry:
 
 1. **Resource overlap** – shared bots or queues.
 2. **API/module similarity** – common steps or `action_chains`, optionally enhanced with vector similarities.
 3. **Output coupling** – the output of one workflow feeding into another.
+4. **ROI correlation** – historical return‑on‑investment deltas from `roi_tracker`.
+5. **Queue load overlap** – allocation history from `resource_allocation_bot`.
 
-The final weight is normalised to the range `[0, 1]` and falls back to `1.0` when required supporting data or modules are unavailable.
+Each signal contributes a normalised value in `[0, 1]` and the average becomes the final weight. Runtime metrics are included on a best‑effort basis; if ROI logs or allocation data are missing the calculation transparently falls back to the structural heuristics.
 
 ## Running `simulate_impact_wave`
 
