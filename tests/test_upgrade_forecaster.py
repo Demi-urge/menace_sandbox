@@ -48,6 +48,25 @@ def test_forecast_uses_template_on_cold_start(monkeypatch, tmp_path):
     assert result.confidence == pytest.approx(0.0)
 
 
+def test_entropy_template_usage(monkeypatch, tmp_path):
+    def fake_load(self):
+        self.templates = {"wf": [0.0, 0.0, 0.0]}
+        self.workflow_profiles["wf"] = "wf"
+        self.entropy_templates = {"wf": [0.4, 0.5, 0.6]}
+        self.entropy_profiles = {"wf": "wf"}
+
+    monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
+    tracker = ForesightTracker()
+    forecaster = UpgradeForecaster(tracker, records_base=tmp_path)
+
+    result = forecaster.forecast("wf", patch=[], cycles=3)
+    assert [p.decay for p in result.projections] == [
+        pytest.approx(0.04),
+        pytest.approx(0.10),
+        pytest.approx(0.18),
+    ]
+
+
 def test_forecast_writes_record(monkeypatch, tmp_path):
     def fake_load(self):
         self.templates = {"wf": [0.1, 0.2, 0.3]}
@@ -84,7 +103,7 @@ def test_load_record_roundtrip(monkeypatch, tmp_path):
     assert loaded == original
 
 
-def test_cold_start_blends_template(monkeypatch, tmp_path):
+def test_risk_template_blending(monkeypatch, tmp_path):
     def fake_load(self):
         self.templates = {"wf": [0.1, 0.1, 0.1]}
         self.workflow_profiles["wf"] = "wf"

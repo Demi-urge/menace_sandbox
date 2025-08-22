@@ -30,9 +30,16 @@ Previously persisted results can be retrieved with ``load_record``.
 ## Cold‑start behaviour
 
 When ``ForesightTracker`` has fewer than three recorded cycles for a workflow, ``UpgradeForecaster`` blends template trajectories with real metrics.
-Template ROI and entropy curves from :meth:`ForesightTracker.get_template_curve` (or CSSM‑provided profiles) are mixed with simulated metrics using ``alpha = samples / 5``.
-Risk is approximated as ``1 - blended_roi`` while decay derives from the blended entropy curve.
+Template ROI curves from :meth:`ForesightTracker.get_template_curve` (or CSSM‑provided profiles) are mixed with simulated metrics using ``alpha = samples / 5``.
 Confidence is based solely on the number of collected samples, avoiding misleading projections until real metrics accumulate.
+
+## Entropy and risk templates
+
+When available, :class:`ForesightTracker` exposes baseline entropy and risk trajectories through
+``get_entropy_template_curve`` and ``get_risk_template_curve``. ``UpgradeForecaster`` blends these
+curves with the simulated metrics during a cold start using the same ``alpha`` weighting. Entropy
+influences the per‑cycle ``decay`` value while risk templates are combined with simulated risk
+indices; if no templates exist, both metrics fall back to simple ROI‑based heuristics.
 
 ## Output schema
 
@@ -54,3 +61,9 @@ Confidence is based solely on the number of collected samples, avoiding misleadi
 Each ``projection`` entry contains the projected cycle number together with estimated ``roi``, ``risk`` (0‑1),
 ``confidence`` (0‑1) and ``decay``. The top‑level ``confidence`` summarises the overall certainty of the forecast.
 ``timestamp`` stores when the record was written as a UNIX epoch value.
+
+## Record retrieval
+
+Persisted forecasts live under ``forecast_records/``. Use :func:`load_record` to reload the most
+recent result for a workflow. The JSON record includes the top‑level ``timestamp`` field shown
+above in addition to ``projections`` and overall ``confidence``.
