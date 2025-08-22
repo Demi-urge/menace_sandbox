@@ -311,3 +311,87 @@ def test_failed_sessions_record_failure():
     layer.record_patch_outcome(sid, False)
     after = len(ps._records)
     assert after > before
+
+
+def test_build_context_and_feedback_updates_weights(monkeypatch):
+    results = [
+        ("workflow", "w1", 0.9),
+        ("enhancement", "e1", 0.8),
+        ("resource", "r1", 0.7),
+    ]
+    retriever = DummyRetriever(results)
+    ranker = DummyRankingModel()
+    tracker = DummyROITracker()
+    metrics = VectorMetricsDB(":memory:")
+
+    class RiskyPatchLogger(DummyPatchLogger):
+        def track_contributors(
+            self,
+            vector_ids,
+            result,
+            *,
+            patch_id="",
+            session_id="",
+            contribution=None,
+            retrieval_metadata=None,
+        ):
+            super().track_contributors(
+                vector_ids,
+                result,
+                patch_id=patch_id,
+                session_id=session_id,
+                contribution=contribution,
+                retrieval_metadata=retrieval_metadata,
+            )
+            if not result:
+                scores = {}
+                for vid, _score in vector_ids:
+                    origin = vid.split(":", 1)[0]
+                    scores[origin] = 0.5
+                return scores
+            return {}
+
+    logger = RiskyPatchLogger(metrics, tracker)
+    builder = DummyContextBuilder(retriever, ranking_model=ranker)
+    layer = CognitionLayer(
+        context_builder=builder,
+        patch_logger=logger,
+        vector_metrics=metrics,
+        roi_tracker=tracker,
+    )
+
+    import sys, types
+
+    sys.modules.setdefault("roi_tracker", types.SimpleNamespace(ROITracker=DummyROITracker))
+
+    import cognition_layer as cl
+
+    monkeypatch.setattr(cl, "_roi_tracker", tracker)
+    monkeypatch.setattr(cl, "_context_builder", builder)
+    monkeypatch.setattr(cl, "_layer", layer)
+
+    ctx, sid = cl.build_cognitive_context("hello", top_k=3)
+    assert ctx and sid
+
+    cl.log_feedback(sid, True, patch_id="p1")
+
+    weights_success = metrics.get_db_weights()
+    assert set(weights_success) == {"workflow", "enhancement", "resource"}
+    assert all(w > 0 for w in weights_success.values())
+    assert tracker.db_metrics
+
+    calls: dict[str, object] = {}
+
+    async def fake_schedule_backfill(*, dbs=None, **_):
+        calls["dbs"] = dbs
+
+    monkeypatch.setattr(
+        "vector_service.cognition_layer.schedule_backfill", fake_schedule_backfill
+    )
+
+    ctx2, sid2 = cl.build_cognitive_context("boom", top_k=3)
+    cl.log_feedback(sid2, False, patch_id="p2")
+
+    weights_failure = metrics.get_db_weights()
+    assert any(weights_failure[db] < weights_success[db] for db in weights_success)
+    assert set(calls.get("dbs") or []) == {"workflow", "enhancement", "resource"}
