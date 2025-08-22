@@ -19,6 +19,7 @@ from .retriever import Retriever, FallbackResult
 from config import ContextBuilderConfig
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_logger import _VECTOR_RISK  # type: ignore
+from patch_safety import PatchSafety
 
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken
@@ -102,6 +103,7 @@ class ContextBuilder:
         precise_token_count: bool = getattr(
             ContextBuilderConfig(), "precise_token_count", True
         ),
+        patch_safety: PatchSafety | None = None,
     ) -> None:
         self.retriever = retriever or Retriever()
 
@@ -149,6 +151,10 @@ class ContextBuilder:
                 pass
         self.max_tokens = max_tokens
         self.precise_token_count = precise_token_count
+        self.patch_safety = patch_safety or PatchSafety()
+        self.patch_safety.max_alert_severity = max_alignment_severity
+        self.patch_safety.max_alerts = max_alerts
+        self.patch_safety.license_denylist = self.license_denylist
 
         # Attempt to use tokenizer from retriever or embedder if provided.
         tok = getattr(self.retriever, "tokenizer", None)
@@ -377,36 +383,46 @@ class ContextBuilder:
 
     # ------------------------------------------------------------------
     def _bundle_to_entry(self, bundle: Dict[str, Any], query: str) -> Tuple[str, _ScoredEntry]:
-        meta = bundle.get("metadata", {})
+        meta = bundle.get("metadata", {}) or {}
         origin = bundle.get("origin_db", "")
 
         text = bundle.get("text") or ""
         vec_id = str(bundle.get("record_id", ""))
-        alerts = bundle.get("semantic_alerts") or meta.get("semantic_alerts")
-        severity = bundle.get("alignment_severity") or meta.get("alignment_severity")
-        try:
-            if (
-                severity is not None
-                and float(severity) > self.max_alignment_severity
-            ) or (
-                alerts is not None
-                and (
-                    (len(alerts) if isinstance(alerts, (list, tuple, set)) else 1)
-                    > self.max_alerts
-                )
-            ):
-                if _VECTOR_RISK is not None:
+
+        # Evaluate patch safety before any scoring so risky vectors can be
+        # dropped early and their similarity scores propagated downstream.
+        self.patch_safety.max_alert_severity = self.max_alignment_severity
+        self.patch_safety.max_alerts = self.max_alerts
+        self.patch_safety.license_denylist = self.license_denylist
+        passed, similarity = self.patch_safety.evaluate(meta, meta)
+        if not passed:
+            if _VECTOR_RISK is not None:
+                try:
                     _VECTOR_RISK.labels("filtered").inc()
-                return "", _ScoredEntry({}, 0.0, origin, vec_id, {})
+                except Exception:
+                    pass
+            return "", _ScoredEntry({}, 0.0, origin, vec_id, {})
+
+        # Preserve any existing risk score but ensure the similarity is
+        # recorded so later stages can apply ranking penalties.
+        existing = 0.0
+        try:
+            if isinstance(meta, dict) and meta.get("risk_score") is not None:
+                existing = float(meta.get("risk_score", 0.0))
+        except Exception:
+            existing = 0.0
+        risk_score = max(existing, similarity)
+        try:
+            if isinstance(meta, dict):
+                meta["risk_score"] = risk_score
         except Exception:
             pass
+
+        entry: Dict[str, Any] = {"id": bundle.get("record_id")}
+        alerts = bundle.get("semantic_alerts") or meta.get("semantic_alerts")
+        severity = bundle.get("alignment_severity") or meta.get("alignment_severity")
         lic = bundle.get("license") or meta.get("license")
         fp = bundle.get("license_fingerprint") or meta.get("license_fingerprint")
-        if lic in self.license_denylist or _LICENSE_DENYLIST.get(fp) in self.license_denylist:
-            if _VECTOR_RISK is not None:
-                _VECTOR_RISK.labels("filtered").inc()
-            return "", _ScoredEntry({}, 0.0, origin, vec_id, {})
-        entry: Dict[str, Any] = {"id": bundle.get("record_id")}
 
         if origin == "error":
             text = text or meta.get("message") or meta.get("description") or ""
