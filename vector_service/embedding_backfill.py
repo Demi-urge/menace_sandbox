@@ -305,47 +305,61 @@ class EmbeddingBackfill:
     ) -> None:
         """Continuously monitor databases for new or modified records.
 
-        Every ``interval`` seconds each registered database is scanned using
-        its :meth:`iter_records` implementation. Records whose content has not
-        been seen before are vectorised via
-        :meth:`SharedVectorService.vectorise_and_store`.
-
-        This simple polling loop keeps embeddings up to date without requiring
-        explicit backfill runs. State is held in memory so restarting the
-        process triggers a full scan again.
+        This method is a thin wrapper around :func:`watch_databases` to retain a
+        backwards compatible API while the implementation lives at module
+        scope.  State is held in memory so restarting the process triggers a
+        full scan again.
         """
 
-        svc = SharedVectorService()
-        seen: dict[str, dict[str, str]] = {}
-        while True:
-            subclasses = self._load_known_dbs(names=dbs)
-            for cls in subclasses:
+        watch_databases(interval=interval, dbs=dbs, backend=self.backend)
+
+
+def watch_databases(
+    *,
+    interval: float = 60.0,
+    dbs: List[str] | None = None,
+    backend: str = "annoy",
+) -> None:
+    """Continuously monitor databases for new or modified records.
+
+    Every ``interval`` seconds each registered database from
+    ``embedding_registry.json`` is scanned using its :meth:`iter_records`
+    implementation. Records whose content has not been seen before are
+    vectorised via :meth:`SharedVectorService.vectorise_and_store`.
+    """
+
+    svc = SharedVectorService()
+    seen: dict[str, dict[str, str]] = {}
+    backfill = EmbeddingBackfill(backend=backend)
+    while True:
+        subclasses = backfill._load_known_dbs(names=dbs)
+        for cls in subclasses:
+            try:
+                db = cls(vector_backend=backend)  # type: ignore[call-arg]
+            except Exception:
                 try:
-                    db = cls(vector_backend=self.backend)  # type: ignore[call-arg]
+                    db = cls()  # type: ignore[call-arg]
+                except Exception:  # pragma: no cover - best effort
+                    continue
+            key = cls.__name__
+            cache = seen.setdefault(key, {})
+            for record_id, record, kind in getattr(db, "iter_records", lambda: [])():
+                rid = str(record_id)
+                try:
+                    raw = json.dumps(record, sort_keys=True, default=str)
                 except Exception:
-                    try:
-                        db = cls()  # type: ignore[call-arg]
-                    except Exception:  # pragma: no cover - best effort
-                        continue
-                key = cls.__name__
-                cache = seen.setdefault(key, {})
-                for record_id, record, kind in getattr(db, "iter_records", lambda: [])():
-                    rid = str(record_id)
-                    try:
-                        raw = json.dumps(record, sort_keys=True, default=str)
-                    except Exception:
-                        raw = str(record)
-                    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
-                    if cache.get(rid) == digest:
-                        continue
-                    try:
-                        svc.vectorise_and_store(kind, rid, record)
-                        cache[rid] = digest
-                    except Exception:  # pragma: no cover - best effort
-                        logging.getLogger(__name__).exception(
-                            "failed to vectorise record %s from %s", rid, key
-                        )
-            time.sleep(interval)
+                    raw = str(record)
+                digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+                if cache.get(rid) == digest:
+                    continue
+                try:
+                    svc.vectorise_and_store(kind, rid, record)
+                    cache[rid] = digest
+                except Exception:  # pragma: no cover - best effort
+                    logging.getLogger(__name__).exception(
+                        "failed to vectorise record %s from %s", rid, key
+                    )
+        time.sleep(interval)
 
 
 async def schedule_backfill(
@@ -376,7 +390,13 @@ async def schedule_backfill(
     await asyncio.gather(*[_run(cls) for cls in subclasses])
 
 
-__all__ = ["EmbeddingBackfill", "EmbeddableDBMixin", "schedule_backfill", "KNOWN_DB_KINDS"]
+__all__ = [
+    "EmbeddingBackfill",
+    "EmbeddableDBMixin",
+    "schedule_backfill",
+    "KNOWN_DB_KINDS",
+    "watch_databases",
+]
 
 
 def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover - CLI entrypoint
