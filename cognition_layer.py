@@ -1,10 +1,24 @@
-"""High level helpers wrapping vector retrieval and feedback logging.
+"""High level helpers wrapping vector retrieval, feedback logging and model maintenance.
 
 This module provides a small convenience API for bots and workflows that
-need to build a cognitive context for a query and later log feedback about
-the resulting patch.  Internally it wires together the vector service
+need to build a cognitive context for a query, later log feedback about the
+resulting patch, reload ranking models, refresh reliability metrics and
+inspect ROI statistics.  Internally it wires together the vector service
 :class:`ContextBuilder`, :class:`PatchSafety` and :class:`ROITracker` through
 :class:`vector_service.cognition_layer.CognitionLayer`.
+
+Example
+-------
+>>> from cognition_layer import (
+...     build_cognitive_context,
+...     log_feedback,
+...     reload_ranker_model,
+...     get_roi_stats,
+... )
+>>> context, sid = build_cognitive_context("improve error handling")
+>>> log_feedback(sid, success=True)
+>>> reload_ranker_model()
+>>> stats = get_roi_stats()
 """
 
 from __future__ import annotations
@@ -21,6 +35,9 @@ __all__ = [
     "build_cognitive_context_async",
     "log_feedback",
     "log_feedback_async",
+    "reload_ranker_model",
+    "reload_reliability_scores",
+    "get_roi_stats",
 ]
 
 # Global components shared by all calls.  They ensure every query flows
@@ -103,3 +120,39 @@ async def log_feedback_async(
         patch_id=patch_id,
         contribution=contribution,
     )
+
+
+def reload_ranker_model(
+    model_path: str | "Path" | None = None,
+    *,
+    roi_delta: float | None = None,
+    risk_penalty: float | None = None,
+) -> None:
+    """Reload the retrieval ranking model used by the cognition layer.
+
+    Parameters
+    ----------
+    model_path:
+        Optional path to the ranking model on disk. When omitted the path is
+        read from ``retrieval_ranker.json``.
+    roi_delta:
+        Optional ROI delta that can trigger an asynchronous retrain.
+    risk_penalty:
+        Optional risk penalty that can trigger an asynchronous retrain.
+    """
+
+    _layer.reload_ranker_model(
+        model_path, roi_delta=roi_delta, risk_penalty=risk_penalty
+    )
+
+
+def reload_reliability_scores() -> None:
+    """Refresh retriever reliability statistics."""
+
+    _layer.reload_reliability_scores()
+
+
+def get_roi_stats() -> dict[str, dict[str, dict[str, float]]]:
+    """Return latest ROI statistics grouped by origin type."""
+
+    return _layer.roi_stats()
