@@ -684,4 +684,43 @@ class WorkflowGraph:
                 json.dump(self.graph, fh)
 
 
-__all__ = ["WorkflowGraph", "estimate_edge_weight", "estimate_impact_strength"]
+def build_graph(db_path: Optional[str] = None, path: Optional[str] = None):
+    """Rebuild the workflow dependency graph from the database.
+
+    Parameters
+    ----------
+    db_path:
+        Optional path to the workflows database. When omitted the default
+        location used by :class:`task_handoff_bot.WorkflowDB` is consulted.
+    path:
+        Optional override for where the resulting graph should be persisted.
+
+    Returns
+    -------
+    networkx.DiGraph
+        The freshly constructed dependency graph.
+    """
+
+    wg = WorkflowGraph(path=path)
+    if _HAS_NX:
+        wg.graph = nx.DiGraph()
+    else:  # pragma: no cover - fallback when networkx missing
+        wg.graph = {"nodes": {}, "edges": {}}
+    wg.populate_from_db(db_path)
+    wg.save()
+    return wg.graph
+
+
+def load_graph(path: Optional[str] = None):
+    """Load a previously persisted workflow dependency graph."""
+
+    wg = WorkflowGraph(path=path, db_path=None)
+    return wg.graph
+
+__all__ = [
+    "WorkflowGraph",
+    "estimate_edge_weight",
+    "estimate_impact_strength",
+    "build_graph",
+    "load_graph",
+]
