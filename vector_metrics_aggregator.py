@@ -10,6 +10,9 @@ from pathlib import Path
 import sqlite3
 from typing import Iterable, Dict, Tuple, List
 
+from analytics.session_roi import per_origin_stats
+from vector_metrics_db import VectorMetricsDB
+
 
 class VectorMetricsAggregator:
     """Summarise :class:`VectorMetricsDB` records by time period."""
@@ -67,6 +70,14 @@ class VectorMetricsAggregator:
         return result
 
     # ------------------------------------------------------------------
+    def origin_stats(self) -> Dict[str, Dict[str, float]]:
+        """Return per-origin success rates and ROI deltas."""
+        if not self.db_path.exists():
+            return {}
+        db = VectorMetricsDB(self.db_path)
+        return per_origin_stats(db)
+
+    # ------------------------------------------------------------------
     def export(
         self,
         data: List[Dict[str, object]],
@@ -105,6 +116,8 @@ class VectorMetricsAggregator:
 
         data = self.aggregate(period)
         self.export(data, json_file, csv_file)
+        stats = self.origin_stats()
+        Path("vector_origin_stats.json").write_text(json.dumps(stats, indent=2))
         return data
 
 

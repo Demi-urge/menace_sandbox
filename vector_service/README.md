@@ -65,6 +65,21 @@ asyncio.run(schedule_backfill(dbs=["code"]))
 # failure drops weight and refreshes embeddings
 ```
 
+## Session ROI analytics
+
+`analytics/session_roi.py` correlates retrieval sessions stored in
+`VectorMetricsDB` with their patch outcomes. It reports per-origin success
+rates and average ROI deltas:
+
+```bash
+python -m analytics.session_roi --db vector_metrics.db --json origin_stats.json
+```
+
+The produced mapping highlights which databases yield successful patches and
+how much value they contribute. The same summary is accessible via
+`VectorMetricsAggregator.origin_stats`, which also writes
+`vector_origin_stats.json` when run.
+
 ## Failure embeddings and risk penalties
 
 `PatchLogger` keeps embeddings of vectors that led to failed patches. When a
