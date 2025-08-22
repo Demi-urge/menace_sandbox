@@ -78,6 +78,14 @@ except Exception:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 
+class TrackResult(dict):
+    """Mapping of origin risk scores with attached error metadata."""
+
+    def __init__(self, mapping: Mapping[str, float] | None = None, *, errors=None) -> None:
+        super().__init__(mapping or {})
+        self.errors = list(errors or [])
+
+
 class PatchLogger:
     """Record patch outcomes in ``PatchHistoryDB`` or ``VectorMetricsDB``.
 
@@ -170,16 +178,11 @@ class PatchLogger:
             detailed.sort(key=lambda t: t[2], reverse=True)
             pairs = [(o, vid) for o, vid, _ in detailed]
             meta = retrieval_metadata or {}
-            failure_meta: Mapping[str, Any] | None = None
+            errors: list[Mapping[str, Any]] = []
             if not result and meta:
-                failure_meta = meta.get("error")
-                if failure_meta is None:
-                    for o, vid, _ in detailed:
-                        if o == "error":
-                            key = f"{o}:{vid}" if o else vid
-                            failure_meta = meta.get(key)
-                            if failure_meta:
-                                break
+                generic_error = meta.get("error")
+                if generic_error:
+                    errors.append(generic_error)
             detailed_meta = []
             provenance_meta = []
             vm_vectors = []
@@ -240,6 +243,18 @@ class PatchLogger:
                         origin_alerts.setdefault(ok, set()).update(map(str, alerts))
                     else:
                         origin_alerts.setdefault(ok, set()).add(str(alerts))
+
+                if not result:
+                    err = None
+                    if o == "error":
+                        err = m or {}
+                    else:
+                        err = m.get("error") if isinstance(m, Mapping) else None
+                    if err:
+                        try:
+                            errors.append(dict(err))
+                        except Exception:
+                            errors.append({})
 
             _VECTOR_RISK.labels("risky").inc(risky)
             _VECTOR_RISK.labels("safe").inc(safe)
@@ -443,11 +458,13 @@ class PatchLogger:
                                 self.info_db.add(item)
                         except Exception:
                             logger.exception("Failed to store lesson metadata")
-                if not result and failure_meta:
-                    try:
-                        self.patch_safety.record_failure(dict(failure_meta))
-                    except Exception:
-                        logger.exception("Failed to record failure metadata")
+                if not result and errors:
+                    # record all errors for persistence
+                    for err in errors:
+                        try:
+                            self.patch_safety.record_failure(dict(err))
+                        except Exception:
+                            logger.exception("Failed to record failure metadata")
         except Exception:
             _TRACK_OUTCOME.labels("error").inc()
             _TRACK_DURATION.set(time.time() - start)
@@ -488,7 +505,7 @@ class PatchLogger:
                     "UnifiedEventBus patch_logger outcome publish failed"
                 )
 
-        return origin_risk
+        return TrackResult(origin_risk, errors=errors)
 
     # ------------------------------------------------------------------
     @log_and_measure
