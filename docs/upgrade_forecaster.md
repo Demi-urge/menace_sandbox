@@ -31,7 +31,8 @@ Previously persisted results can be retrieved with ``load_record``.
 
 When ``ForesightTracker`` has fewer than three recorded cycles for a workflow, ``UpgradeForecaster`` blends template trajectories with real metrics.
 Template ROI curves from :meth:`ForesightTracker.get_template_curve` (or CSSM‑provided profiles) are mixed with simulated metrics using ``alpha = samples / 5``.
-Confidence is based solely on the number of collected samples, avoiding misleading projections until real metrics accumulate.
+Variance across the blended ROI values is computed and combined with the sample‑based term to yield the overall forecast confidence: ``samples / (samples + 1)`` scaled by ``1 / (1 + variance)``.
+This guards against volatile early projections while still reflecting the limited data available.
 
 ## Entropy and risk templates
 

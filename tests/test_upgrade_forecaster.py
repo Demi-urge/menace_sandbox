@@ -1,6 +1,9 @@
-import sys
-import types
 import json
+import sys
+import time
+import types
+
+import numpy as np
 import pytest
 from foresight_tracker import ForesightTracker
 
@@ -151,7 +154,8 @@ def test_risk_template_blending(monkeypatch, tmp_path):
         pytest.approx(0.048),
         pytest.approx(0.072),
     ]
-    assert result.confidence == pytest.approx(2 / 3)
+    expected = (2 / (2 + 1)) * (1 / (1 + np.var(rois)))
+    assert result.confidence == pytest.approx(expected)
 
 
 def test_forecast_roi_risk_decay(monkeypatch, tmp_path):
@@ -290,6 +294,7 @@ def test_multiple_forecasts_coexist(monkeypatch, tmp_path):
     files = list(tmp_path.glob("wf_*.json"))
     patch1_id = files[0].stem.split("_", 1)[1]
 
+    time.sleep(1)
     forecaster.forecast("wf", patch=["p2"], cycles=1)
     files = list(tmp_path.glob("wf_*.json"))
     assert len(files) == 2
