@@ -109,6 +109,7 @@ def test_scheduler_retrains_on_roi_feedback(tmp_path, monkeypatch):
         context_builder=SimpleNamespace(refresh_db_weights=lambda *a, **k: None),
         patch_logger=SimpleNamespace(event_bus=bus),
         vector_metrics=metrics,
+        event_bus=bus,
     )
 
     vectors = [("db", "v1", 0.0)]
@@ -171,6 +172,7 @@ def test_record_patch_outcome_feedback_triggers_retrain(tmp_path, monkeypatch):
         context_builder=SimpleNamespace(refresh_db_weights=lambda *a, **k: None),
         patch_logger=patch_logger,
         vector_metrics=metrics,
+        event_bus=bus,
     )
 
     sid = "s1"

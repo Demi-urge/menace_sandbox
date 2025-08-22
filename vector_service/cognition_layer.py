@@ -76,12 +76,14 @@ class CognitionLayer:
         context_builder: ContextBuilder | None = None,
         patch_logger: PatchLogger | None = None,
         vector_metrics: VectorMetricsDB | None = None,
+        event_bus: "UnifiedEventBus" | None = None,
         roi_tracker: ROITracker | None = None,
         ranking_model: Any | None = None,
     ) -> None:
         self.retriever = retriever or Retriever()
         self.vector_metrics = vector_metrics or VectorMetricsDB()
         self.roi_tracker = roi_tracker or (ROITracker() if ROITracker is not None else None)
+        self.event_bus = event_bus or getattr(patch_logger, "event_bus", None)
         db_weights = None
         if self.vector_metrics is not None:
             try:
@@ -106,9 +108,15 @@ class CognitionLayer:
         self.patch_logger = patch_logger or PatchLogger(
             vector_metrics=self.vector_metrics,
             roi_tracker=self.roi_tracker,
+            event_bus=self.event_bus,
         )
         if getattr(self.patch_logger, "roi_tracker", None) is not self.roi_tracker:
             self.patch_logger.roi_tracker = self.roi_tracker
+        if getattr(self.patch_logger, "event_bus", None) is not self.event_bus:
+            try:
+                self.patch_logger.event_bus = self.event_bus
+            except Exception:
+                pass
         # Keep track of vectors by session so outcomes can be recorded later
         self._session_vectors: Dict[str, List[Tuple[str, str, float]]] = {}
         self._retrieval_meta: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -399,12 +407,7 @@ class CognitionLayer:
                     logger.exception("Failed to apply updated db weights to context builder")
 
         if per_db:
-            bus = getattr(self.patch_logger, "event_bus", None)
-            if bus is None and UnifiedEventBus is not None:
-                try:
-                    bus = UnifiedEventBus()
-                except Exception:
-                    bus = None
+            bus = self.event_bus
             if bus is not None:
                 risks = risk_scores or {}
                 for origin, delta in per_db.items():

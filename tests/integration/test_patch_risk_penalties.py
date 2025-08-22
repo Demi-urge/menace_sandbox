@@ -19,15 +19,22 @@ class DummyBuilder:
         self.db_weights.update(weights)
 
 
+class DummyBus:
+    def publish(self, *_, **__):
+        pass
+
+
 def test_failing_patch_increases_risk_and_penalises_ranker(tmp_path):
     ps = PatchSafety(threshold=1.1, max_alerts=1, storage_path=str(tmp_path / "failures.jsonl"))
     vm = VectorMetricsDB(tmp_path / "vec.db")
-    pl = PatchLogger(patch_safety=ps, vector_metrics=vm, max_alerts=1)
+    bus = DummyBus()
+    pl = PatchLogger(patch_safety=ps, vector_metrics=vm, max_alerts=1, event_bus=bus)
     layer = CognitionLayer(
         retriever=None,
         context_builder=DummyBuilder(),
         patch_logger=pl,
         vector_metrics=vm,
+        event_bus=bus,
     )
 
     meta_fail = {
