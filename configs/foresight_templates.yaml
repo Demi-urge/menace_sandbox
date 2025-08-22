@@ -22,6 +22,7 @@ trajectories:
     - 0.2
     - -0.1
 
+# Optional mappings for entropy comparison
 entropy_profiles:
   scraper_bot: low_entropy
   trading_bot: high_entropy
@@ -30,6 +31,7 @@ risk_profiles:
   scraper_bot: low_risk
   trading_bot: high_risk
 
+# Sample entropy trajectories to enable out-of-the-box comparisons
 entropy_trajectories:
   low_entropy:
     - 0.1
