@@ -25,17 +25,28 @@ async def _handle_event(_topic: str, payload: object) -> None:
     await schedule_backfill(dbs=[db_name] if db_name else None)
 
 
-async def main(interval: int = 60) -> None:
+async def main(interval: int = 60, dbs: list[str] | None = None) -> None:
     """Run a periodic embedding backfill job."""
 
     bus = UnifiedEventBus()
     bus.subscribe_async("embedding:backfill", _handle_event)
 
     while True:
-        await schedule_backfill()
+        await schedule_backfill(dbs=dbs)
         await asyncio.sleep(interval)
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
-    asyncio.run(main())
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Automated embedding backfill")
+    parser.add_argument(
+        "--interval", type=int, default=60, help="seconds between full sweeps"
+    )
+    parser.add_argument(
+        "--db", dest="dbs", action="append", help="database to process; can repeat"
+    )
+    args = parser.parse_args()
+
+    asyncio.run(main(interval=args.interval, dbs=args.dbs))
 

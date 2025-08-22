@@ -2,7 +2,7 @@ import json
 import types
 import sys
 
-from vector_service.embedding_backfill import EmbeddingBackfill
+from vector_service.embedding_backfill import EmbeddingBackfill, EmbeddableDBMixin
 import vector_service.embedding_backfill as eb
 
 
