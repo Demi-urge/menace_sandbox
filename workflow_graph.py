@@ -546,9 +546,32 @@ class WorkflowGraph:
                 if synergy_scores is not None:
                     node["synergy_scores"] = synergy_scores
             self._save_unlocked()
-        # Refresh dependencies based on new workflow state.
+        # Refresh dependencies based on new workflow state and propagate the
+        # refresh to downstream nodes so their edge weights remain consistent.
         try:
-            self.update_dependencies(workflow_id)
+            wid = str(workflow_id)
+            self.update_dependencies(wid)
+
+            visited: set[str] = {wid}
+            q: deque[str] = deque([wid])
+            while q:
+                current = q.popleft()
+                with self._lock:
+                    if _HAS_NX:
+                        downstream = list(self.graph.successors(current))
+                    else:
+                        downstream = list(
+                            self.graph.get("edges", {}).get(current, {}).keys()
+                        )
+                for nxt in downstream:
+                    if nxt in visited:
+                        continue
+                    visited.add(nxt)
+                    try:
+                        self.update_dependencies(nxt)
+                    except Exception:
+                        continue
+                    q.append(nxt)
         except Exception:
             pass
 
