@@ -124,7 +124,17 @@ def estimate_edge_weight(from_id: str, to_id: str) -> float:
 
 
 class WorkflowGraph:
-    """Graph of workflows with dependency edges.
+    """Persistent directed graph capturing workflow dependencies.
+
+    Each node corresponds to a workflow and stores metrics such as ``roi`` or
+    ``synergy_scores``.  A directed edge ``A -> B`` indicates that updates to
+    ``A`` may influence ``B``.  Edges carry an ``impact_weight`` in ``[0, 1]``
+    approximating how strongly ROI and synergy changes propagate along that
+    path, plus optional metadata like ``dependency_type``.
+
+    Methods like :meth:`simulate_impact_wave` traverse the graph and attenuate
+    metric deltas through these weights so self‑improvement routines can reason
+    about system‑wide ripple effects.
 
     Parameters
     ----------

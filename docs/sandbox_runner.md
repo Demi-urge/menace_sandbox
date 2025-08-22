@@ -97,6 +97,26 @@ Metrics for each stage are returned alongside the updated tracker and, when a
 ``ForesightTracker`` is supplied, appended to ``foresight.history`` with the
 associated ``stage`` and ``stability`` values for later analysis.
 
+## Systemic foresight
+
+The runner can project how a change to one workflow ripples through the rest of
+the system by consulting :mod:`workflow_graph`.  When a workflow is selected for
+improvement the dependency graph is loaded and
+:meth:`workflow_graph.WorkflowGraph.simulate_impact_wave` estimates downstream
+ROI and synergy deltas.  Self‑improvement routines can consume this projection
+to prioritise follow‑up cycles:
+
+```python
+from workflow_graph import WorkflowGraph
+from self_improvement_engine import SelfImprovementEngine
+
+graph = WorkflowGraph()
+engine = SelfImprovementEngine(...)
+
+projection = graph.simulate_impact_wave("42")
+# use `projection` to decide which dependant workflow to schedule next
+```
+
 ## Algorithm Overview
 
 Each cycle proceeds through a consistent set of stages:
