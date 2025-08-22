@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List
 
+from vector_utils import persist_embedding
+
 _DEFAULT_BOUNDS = {
     "num_steps": 20.0,
     "duration": 10_000.0,
@@ -79,4 +81,15 @@ class WorkflowVectorizer:
         )
         return vec
 
-__all__ = ["WorkflowVectorizer"]
+
+_DEFAULT_VECTORIZER = WorkflowVectorizer()
+
+
+def vectorize_and_store(record_id: str, workflow: Dict[str, Any], *, path: str = "embeddings.jsonl") -> List[float]:
+    """Vectorise ``workflow`` and persist the embedding."""
+
+    vec = _DEFAULT_VECTORIZER.transform(workflow)
+    persist_embedding("workflow", record_id, vec, path=path)
+    return vec
+
+__all__ = ["WorkflowVectorizer", "vectorize_and_store"]

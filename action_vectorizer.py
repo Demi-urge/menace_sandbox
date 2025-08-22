@@ -11,6 +11,7 @@ import hashlib
 import importlib
 
 from compliance import license_fingerprint
+from vector_utils import persist_embedding
 
 
 def _log_violation(path: str, lic: str, hash_: str) -> None:
@@ -317,9 +318,28 @@ def compare_vectors(v1: List[float], v2: List[float]) -> float:
     return float(np.dot(a, b) / denom)
 
 
+def vectorize_and_store(record_id: str, action_log: Dict, *, path: str = "embeddings.jsonl") -> List[float]:
+    """Vectorise ``action_log`` and persist the embedding.
+
+    Parameters
+    ----------
+    record_id:
+        Identifier associated with ``action_log``.
+    action_log:
+        Record describing the action.
+    path:
+        Optional path for the shared embedding store.
+    """
+
+    vec = _DEFAULT_VECTORIZER.transform(action_log)
+    persist_embedding("action", record_id, vec, path=path)
+    return vec
+
+
 __all__ = [
     "ActionVectorizer",
     "vectorize_action",
+    "vectorize_and_store",
     "vectorize_batch",
     "save_vectors",
     "compare_vectors",

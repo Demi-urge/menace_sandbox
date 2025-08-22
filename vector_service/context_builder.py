@@ -450,6 +450,17 @@ class ContextBuilder:
                 entry["lessons"] = self._summarise(
                     redact_text(str(meta["lessons"]))
                 )
+        elif origin == "action":
+            text = (
+                text
+                or meta.get("action_description")
+                or meta.get("description")
+                or ""
+            )
+            if "action_type" in meta:
+                entry["action_type"] = redact_text(str(meta["action_type"]))
+            if "target_domain" in meta:
+                entry["target_domain"] = redact_text(str(meta["target_domain"]))
         elif origin == "information":
             text = (
                 text
@@ -585,6 +596,7 @@ class ContextBuilder:
             "bot": "bots",
             "workflow": "workflows",
             "enhancement": "enhancements",
+            "action": "actions",
             "information": "information",
             "code": "code",
             "discrepancy": "discrepancies",
@@ -676,6 +688,7 @@ class ContextBuilder:
             "bots": [],
             "workflows": [],
             "enhancements": [],
+            "actions": [],
             "information": [],
             "code": [],
             "discrepancies": [],

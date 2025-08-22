@@ -696,13 +696,16 @@ class CognitionLayer:
             except Exception:
                 logger.exception("Failed to update ROI tracker with retrieval metrics")
 
-        if not roi_contribs:
-            base = 0.0 if contribution is None else contribution
-            for origin, _vid, score in vectors:
-                roi = base if contribution is not None else score
-                key = origin or ""
-                roi_actuals[key] = roi
-                roi_contribs[key] = roi_contribs.get(key, 0.0) + abs(roi)
+        base = 0.0 if contribution is None else contribution
+        for origin, _vid, score in vectors:
+            key = origin or ""
+            if key in roi_contribs:
+                continue
+            roi = base if contribution is not None else score
+            roi_actuals[key] = roi
+            roi_contribs[key] = roi_contribs.get(key, 0.0) + abs(roi)
+            if roi < 0:
+                roi_drop = True
 
         if self.roi_tracker is not None and roi_contribs and not used_tracker_deltas:
             metrics = {
