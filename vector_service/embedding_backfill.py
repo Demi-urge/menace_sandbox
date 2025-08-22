@@ -6,10 +6,8 @@ import logging
 import time
 from typing import List, Sequence
 import importlib
-import importlib.util
 import asyncio
 from pathlib import Path
-import pkgutil
 import json
 import sys
 
@@ -102,60 +100,30 @@ class EmbeddingBackfill:
 
     # ------------------------------------------------------------------
     def _load_known_dbs(self, names: List[str] | None = None) -> List[type]:
-        """Import all ``EmbeddableDBMixin`` subclasses dynamically.
+        """Load registered ``EmbeddableDBMixin`` implementations.
 
-        The repository is scanned for Python modules referencing
-        :class:`EmbeddableDBMixin`.  Any classes found to inherit from the mixin
-        are returned.  When ``names`` is provided the result is filtered to
-        include only classes whose name matches any entry. Matching is
-        case-insensitive and ignores plural forms or a trailing ``DB`` suffix.
+        The registry maps a short database name to the module and class providing
+        the implementation.  Modules are imported dynamically so new databases
+        can be added by editing the registry file.  When ``names`` is supplied
+        the returned classes are filtered to those whose class name matches any
+        entry.  Matching is case-insensitive and ignores plural forms or a
+        trailing ``DB`` suffix.
         """
 
         subclasses: List[type] = []
 
-        root = Path(__file__).resolve().parents[1]
-        for mod in pkgutil.walk_packages([str(root)]):  # pragma: no cover - best effort
-            name = mod.name
-            if any(part in {"tests", "scripts", "docs"} for part in name.split(".")):
-                continue
-            try:
-                spec = importlib.util.find_spec(name)
-                if not spec or not spec.origin or not spec.origin.endswith(".py"):
-                    continue
-                path = Path(spec.origin)
-                if "EmbeddableDBMixin" not in path.read_text(encoding="utf-8"):
-                    continue
-                importlib.import_module(name)
-            except Exception:
-                continue
-
-        # Ensure explicit modules from the registry are present even if discovery
-        # misses them.  Loading happens dynamically so the registry can be
-        # extended without code changes.
-        for mod_name, cls_name in _load_registry().values():
+        registry = _load_registry()
+        for mod_name, cls_name in registry.values():
             try:
                 mod = importlib.import_module(mod_name)
-                getattr(mod, cls_name)
+                cls = getattr(mod, cls_name)
             except Exception:
                 continue
-
-        try:
-            subclasses = [
-                cls
-                for cls in EmbeddableDBMixin.__subclasses__()
-                if hasattr(cls, "backfill_embeddings")
-            ]
-        except Exception:  # pragma: no cover - defensive
-            subclasses = []
-
-        # Deduplicate while preserving order
-        seen: set[type] = set()
-        unique: List[type] = []
-        for cls in subclasses:
-            if cls not in seen:
-                seen.add(cls)
-                unique.append(cls)
-        subclasses = unique
+            if not issubclass(cls, EmbeddableDBMixin) or not hasattr(
+                cls, "backfill_embeddings"
+            ):
+                continue
+            subclasses.append(cls)
 
         if names:
             keys = [n.lower().rstrip("s") for n in names]
@@ -168,7 +136,7 @@ class EmbeddingBackfill:
                         filtered.append(cls)
                         break
             subclasses = filtered
-        # ensure discovered classes implement the expected interface
+
         for cls in subclasses:
             for meth in ("iter_records", "vector"):
                 if not callable(getattr(cls, meth, None)):

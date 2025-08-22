@@ -20,13 +20,6 @@ def test_backfill_loads_from_registry(tmp_path, monkeypatch):
     reg = tmp_path / "registry.json"
     reg.write_text(json.dumps({"temp": {"module": "tempdb", "class": "TempDB"}}))
     monkeypatch.setattr(eb, "_REGISTRY_FILE", reg)
-    monkeypatch.setattr(eb.pkgutil, "walk_packages", lambda *a, **k: [])
-
-    monkeypatch.setattr(
-        EmbeddableDBMixin,
-        "__subclasses__",
-        lambda: [TempDB],
-    )
 
     processed = []
 
