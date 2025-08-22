@@ -759,6 +759,23 @@ class CognitionLayer:
         for origin, score in callback_scores.items():
             key = origin or ""
             risk_scores[key] = max(risk_scores.get(key, 0.0), score)
+        result_roi_deltas = getattr(result, "roi_deltas", None)
+        roi_contribs: Dict[str, float] = {}
+        roi_actuals: Dict[str, float] = {}
+        used_tracker_deltas = False
+        roi_drop = False
+        if isinstance(result_roi_deltas, Mapping):
+            for origin, val in result_roi_deltas.items():
+                key = origin or ""
+                try:
+                    val = float(val)
+                except Exception:
+                    continue
+                roi_actuals[key] = val
+                roi_contribs[key] = abs(val)
+                roi_drop = roi_drop or val < 0
+            if roi_contribs:
+                used_tracker_deltas = True
 
         if not success:
             errors = getattr(result, "errors", []) if result else []
@@ -781,10 +798,6 @@ class CognitionLayer:
                 except Exception:
                     logger.exception("Failed to reload failure vectors")
 
-        roi_contribs: Dict[str, float] = {}
-        roi_actuals: Dict[str, float] = {}
-        used_tracker_deltas = False
-        roi_drop = False
         if self.roi_tracker is not None:
             try:  # pragma: no cover - best effort
                 cur = self.vector_metrics.conn.execute(
@@ -810,15 +823,17 @@ class CognitionLayer:
                     roi_after,
                     retrieval_metrics=retrieval_metrics,
                 )
-                deltas = self.roi_tracker.origin_db_deltas()
-                for origin, _vid, _score in vectors:
-                    key = origin or ""
-                    val = deltas.get(key)
-                    if val is not None:
-                        val = float(val)
-                        roi_actuals[key] = val
-                        roi_contribs[key] = abs(val)
-                        roi_drop = roi_drop or val < 0
+                if not used_tracker_deltas:
+                    deltas = self.roi_tracker.origin_db_deltas()
+                    for origin, _vid, _score in vectors:
+                        key = origin or ""
+                        val = deltas.get(key)
+                        if val is not None:
+                            val = float(val)
+                            roi_actuals[key] = val
+                            roi_contribs[key] = abs(val)
+                            roi_drop = roi_drop or val < 0
+                    if roi_contribs:
                         used_tracker_deltas = True
             except Exception:
                 logger.exception("Failed to update ROI tracker with retrieval metrics")
