@@ -133,6 +133,15 @@ def test_is_cold_start_when_roi_delta_missing():
     assert not tracker.is_cold_start("wf")
 
 
+def test_is_cold_start_when_roi_delta_zero():
+    tracker = ForesightTracker()
+    for _ in range(3):
+        tracker.record_cycle_metrics("wf", {"roi_delta": 0.0})
+    assert tracker.is_cold_start("wf")
+    tracker.record_cycle_metrics("wf", {"roi_delta": 0.5})
+    assert not tracker.is_cold_start("wf")
+
+
 def test_capture_from_roi_records_latest_metrics():
     ft = ForesightTracker()
 

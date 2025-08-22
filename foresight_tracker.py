@@ -165,14 +165,32 @@ class ForesightTracker:
 
     # ------------------------------------------------------------------
     def is_cold_start(self, workflow_id: str) -> bool:
-        """Return ``True`` when insufficient ROI history exists."""
+        """Return ``True`` when ``workflow_id`` lacks meaningful ROI history.
+
+        A workflow is considered a *cold start* until at least three cycles
+        have been recorded **and** one of those entries contains a non‑zero
+        ``roi_delta`` value.  This guards the template blending logic in
+        :meth:`capture_from_roi` which needs genuine ROI feedback to be
+        effective.
+
+        Parameters
+        ----------
+        workflow_id:
+            Identifier whose history should be inspected.
+
+        Returns
+        -------
+        bool
+            ``True`` if fewer than three cycles exist or all ``roi_delta``
+            values are missing/zero; ``False`` otherwise.
+        """
 
         history = self.history.get(workflow_id)
         if not history or len(history) < 3:
             return True
-        if not any("roi_delta" in entry for entry in history):
-            return True
-        return False
+
+        has_signal = any(float(entry.get("roi_delta", 0.0)) != 0.0 for entry in history)
+        return not has_signal
 
     # ------------------------------------------------------------------
     def _load_templates(self) -> None:
