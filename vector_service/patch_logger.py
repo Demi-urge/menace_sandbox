@@ -108,9 +108,20 @@ logger = logging.getLogger(__name__)
 class TrackResult(dict):
     """Mapping of origin similarity scores with attached error metadata."""
 
-    def __init__(self, mapping: Mapping[str, float] | None = None, *, errors=None) -> None:
+    def __init__(
+        self,
+        mapping: Mapping[str, float] | None = None,
+        *,
+        errors=None,
+        roi_deltas: Mapping[str, float] | None = None,
+    ) -> None:
         super().__init__(mapping or {})
         self.errors = list(errors or [])
+        # ``roi_deltas`` allows callers to retrieve per-origin ROI changes
+        # computed during :meth:`track_contributors`.  It defaults to an empty
+        # mapping for backwards compatibility so existing callers treating the
+        # result as a plain ``dict`` continue to work without modification.
+        self.roi_deltas = dict(roi_deltas or {})
 
 
 class PatchLogger:
@@ -203,6 +214,7 @@ class PatchLogger:
         start = time.time()
         status = "success" if result else "failure"
         roi_metrics: dict[str, dict[str, Any]] = {}
+        roi_deltas: dict[str, float] = {}
         try:
             detailed = self._parse_vectors(vector_ids)
             detailed.sort(key=lambda t: t[2], reverse=True)
@@ -248,7 +260,25 @@ class PatchLogger:
                             bus.publish("patch:risk_alert", payload)
                         except Exception:
                             logger.exception("Failed to publish patch risk alert")
+                ok = o or ""
+                origin_similarity[ok] = max(origin_similarity.get(ok, 0.0), similarity)
                 if not passed:
+                    lic = m.get("license")
+                    alerts = m.get("semantic_alerts")
+                    fp = m.get("license_fingerprint")
+                    sev = m.get("alignment_severity")
+                    blocked = (
+                        lic in self.license_denylist
+                        or fp in self.license_denylist
+                        or alerts
+                        or (
+                            sev is not None
+                            and self.max_alert_severity is not None
+                            and float(sev) > float(self.max_alert_severity)
+                        )
+                    )
+                    if blocked:
+                        origin_similarity.pop(ok, None)
                     filtered += 1
                     continue
                 lic = m.get("license")
@@ -262,8 +292,6 @@ class PatchLogger:
                     detailed_meta.append((o, vid, score, lic, alerts))
                     provenance_meta.append((o, vid, score, lic, alerts, sev))
                 vm_vectors.append((vid, score, lic, alerts, sev, similarity))
-                ok = o or ""
-                origin_similarity[ok] = max(origin_similarity.get(ok, 0.0), similarity)
                 if sev:
                     try:
                         origin_sev[ok] = max(origin_sev.get(ok, 0.0), float(sev))
@@ -383,7 +411,8 @@ class PatchLogger:
                         logger.exception(
                             "UnifiedEventBus retrieval feedback publish failed"
                         )
-            roi_metrics: dict[str, dict[str, Any]] = {}
+            roi_metrics = {}
+            roi_deltas = {}
             if origin_totals:
                 for origin, roi in origin_totals.items():
                     metrics = {
@@ -401,11 +430,6 @@ class PatchLogger:
                             )
                         except Exception:
                             pass
-                    if _DB_ROI_DELTA is not None:
-                        try:
-                            _DB_ROI_DELTA.labels(origin_db=origin).set(float(roi))
-                        except Exception:
-                            pass
                     roi_metrics[origin] = metrics
                 if self.roi_tracker is not None:
                     for origin, stats in roi_metrics.items():
@@ -414,6 +438,25 @@ class PatchLogger:
                             self.roi_tracker.update_db_metrics({origin: stats})
                         except Exception:
                             logger.exception("ROITracker.update_db_metrics failed")
+                    try:
+                        deltas = self.roi_tracker.origin_db_deltas()
+                    except Exception:
+                        deltas = {}
+                        logger.exception("Failed to fetch ROI tracker origin deltas")
+                    for origin in origin_totals:
+                        val = deltas.get(origin)
+                        if val is None:
+                            continue
+                        try:
+                            roi_deltas[origin] = float(val)
+                            if _DB_ROI_DELTA is not None:
+                                _DB_ROI_DELTA.labels(origin_db=origin).set(float(val))
+                        except Exception:
+                            if _DB_ROI_DELTA is not None:
+                                try:
+                                    _DB_ROI_DELTA.labels(origin_db=origin).set(0.0)
+                                except Exception:
+                                    pass
                 else:
                     for origin, stats in roi_metrics.items():
                         payload = {"db": origin, **stats}
@@ -422,15 +465,21 @@ class PatchLogger:
                                 self.event_bus.publish("roi:update", payload)
                             except Exception:
                                 logger.exception(
-                                    "event bus ROI update publish failed"
+                                    "event bus ROI update publish failed",
                                 )
                         elif UnifiedEventBus is not None:
                             try:
                                 UnifiedEventBus().publish("roi:update", payload)
                             except Exception:
                                 logger.exception(
-                                    "UnifiedEventBus ROI update publish failed"
+                                    "UnifiedEventBus ROI update publish failed",
                                 )
+                    if _DB_ROI_DELTA is not None:
+                        for origin, roi in origin_totals.items():
+                            try:
+                                _DB_ROI_DELTA.labels(origin_db=origin).set(float(roi))
+                            except Exception:
+                                pass
                 unique_origins = {o for o, _, _ in detailed if o}
                 if unique_origins:
                     if self.event_bus is not None:
@@ -551,7 +600,7 @@ class PatchLogger:
             except Exception:
                 logger.exception("risk callback failed")
 
-        return TrackResult(origin_similarity, errors=errors)
+        return TrackResult(origin_similarity, errors=errors, roi_deltas=roi_deltas)
 
     # ------------------------------------------------------------------
     @log_and_measure
