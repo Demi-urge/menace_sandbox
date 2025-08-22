@@ -683,6 +683,10 @@ class ContextBuilder:
             self.refresh_db_weights()
         except Exception:
             pass
+        try:
+            self.patch_safety.load_failures()
+        except Exception:
+            pass
 
         prompt_tokens = len(query.split())
         query = redact_text(query)

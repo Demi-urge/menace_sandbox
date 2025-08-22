@@ -301,6 +301,18 @@ class PatchSafety:
         return True
 
     # ------------------------------------------------------------------
+    def pre_embed_check(self, meta: Mapping[str, Any]) -> bool:
+        """Lightweight wrapper around :meth:`_check_meta`.
+
+        Embedding pipelines may call this prior to generating embeddings so
+        obviously unsafe records are skipped early.  The check mirrors the
+        metadata validation performed by :meth:`evaluate` without incurring the
+        overhead of similarity scoring.
+        """
+
+        return self._check_meta(meta)
+
+    # ------------------------------------------------------------------
     def evaluate(
         self,
         meta: Mapping[str, Any],
@@ -385,4 +397,25 @@ def check_patch_safety(
     return passed
 
 
-__all__ = ["PatchSafety", "check_patch_safety", "_VIOLATIONS"]
+def pre_embed_check(
+    meta: Mapping[str, Any],
+    *,
+    max_alert_severity: float = 1.0,
+    max_alerts: int = 5,
+    license_denylist: set[str] | None = None,
+) -> bool:
+    """Public helper used by embedding pipelines prior to vectorisation.
+
+    This mirrors :func:`check_patch_safety` but avoids constructing failure
+    similarities; only metadata checks are performed.
+    """
+
+    ps = PatchSafety(
+        max_alert_severity=max_alert_severity,
+        max_alerts=max_alerts,
+        license_denylist=set(license_denylist or _DEFAULT_LICENSE_DENYLIST),
+    )
+    return ps.pre_embed_check(meta)
+
+
+__all__ = ["PatchSafety", "check_patch_safety", "pre_embed_check", "_VIOLATIONS"]
