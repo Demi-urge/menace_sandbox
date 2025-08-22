@@ -1,8 +1,24 @@
 """Workflow graph management with persistence support.
 
-This module provides a :class:`WorkflowGraph` that stores workflows and their
-dependencies. It prefers :mod:`networkx` for graph management but falls back to
-simple adjacency lists when NetworkX isn't available.
+The module exposes :class:`WorkflowGraph`, a lightweight manager for
+workflow relationships.  Nodes represent individual workflows and directed
+edges capture how they influence one another via an ``impact_weight`` and
+optional metadata.
+
+Key APIs
+=======
+
+``WorkflowGraph`` instances can be populated incrementally using
+``add_workflow`` and ``add_dependency`` or pre-loaded from the optional
+``task_handoff_bot.WorkflowDB``.  The graph state is persisted to
+``sandbox_data/workflow_graph.json`` using :mod:`networkx`'s node-link format
+when available and falls back to simple adjacency lists otherwise.
+
+Once built, :meth:`simulate_impact_wave` projects ROI and synergy deltas
+through the DAG so downstream systems can reason about ripple effects.
+``attach_event_bus`` hooks the graph up to a
+:class:`~unified_event_bus.UnifiedEventBus` so other components can publish
+``workflows:*`` events and keep the structure in sync.
 """
 
 from __future__ import annotations
