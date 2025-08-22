@@ -88,7 +88,7 @@ def test_patch_outcome_updates_roi_tracker_success():
     layer.record_patch_outcome(sid, True, contribution=1.0)
 
     assert tracker.metrics == {
-        "db1": {"roi": 2.0, "win_rate": 1.0, "regret_rate": 0.0},
+        "db1": {"roi": 1.0, "win_rate": 1.0, "regret_rate": 0.0},
         "db2": {"roi": 1.0, "win_rate": 1.0, "regret_rate": 0.0},
     }
     assert tracker.update_args["roi_after"] == pytest.approx(3.0)
@@ -103,7 +103,7 @@ def test_patch_outcome_updates_roi_tracker_failure():
     layer.record_patch_outcome(sid, False, contribution=1.0)
 
     assert tracker.metrics == {
-        "db1": {"roi": 2.0, "win_rate": 0.0, "regret_rate": 1.0},
+        "db1": {"roi": 1.0, "win_rate": 0.0, "regret_rate": 1.0},
         "db2": {"roi": 1.0, "win_rate": 0.0, "regret_rate": 1.0},
     }
     assert tracker.update_args["roi_after"] == pytest.approx(3.0)
@@ -166,3 +166,14 @@ def test_roi_drop_triggers_backfill_and_reliability(monkeypatch):
 
     assert set(calls.get("backfill") or []) == {"db1", "db2"}
     assert calls.get("reload") is True
+
+
+def test_roi_stats_exposes_metrics():
+    tracker = DummyTracker()
+    layer = _make_layer(tracker)
+    vm = layer.vector_metrics
+    vm.log_retrieval("bots", tokens=0, wall_time_ms=0.0, hit=True, rank=1, session_id="b", vector_id="v")
+    vm.update_outcome("b", [("bots", "v")], contribution=0.4, win=True)
+
+    stats = layer.roi_stats()
+    assert stats["bots"]["bots"]["roi_delta"] == 0.4

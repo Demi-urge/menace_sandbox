@@ -805,5 +805,24 @@ class CognitionLayer:
             async_mode=True,
         )
 
+    # ------------------------------------------------------------------
+    def roi_stats(self) -> Dict[str, Dict[str, Dict[str, float]]]:
+        """Return latest ROI statistics grouped by origin type.
+
+        The method aggregates metrics from :class:`vector_metrics_db.VectorMetricsDB`
+        using :func:`analytics.session_roi.origin_roi`.  An empty mapping is
+        returned when metrics are unavailable or aggregation fails.
+        """
+
+        if self.vector_metrics is None:
+            return {}
+        try:
+            from analytics.session_roi import origin_roi
+
+            return origin_roi(self.vector_metrics)
+        except Exception:
+            logger.exception("Failed to retrieve ROI stats")
+            return {}
+
 
 __all__ = ["CognitionLayer"]
