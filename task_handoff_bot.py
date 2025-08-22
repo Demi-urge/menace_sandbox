@@ -301,6 +301,30 @@ class WorkflowDB(EmbeddableDBMixin):
                 )
         return wf.wid
 
+    def remove(self, workflow_id: int) -> None:
+        """Delete a workflow and emit an event."""
+        self.conn.execute("DELETE FROM workflows WHERE id=?", (workflow_id,))
+        self.conn.commit()
+        if self.event_bus:
+            try:
+                self.event_bus.publish(
+                    "workflows:delete", {"workflow_id": workflow_id}
+                )
+            except Exception as exc:
+                logger.warning(
+                    "failed to publish workflow deletion %s: %s", workflow_id, exc
+                )
+
+    def replace(self, workflow_id: int, wf: WorkflowRecord) -> int:
+        """Replace an existing workflow with ``wf``.
+
+        The original workflow is removed and a new one inserted; the identifier
+        of the new workflow is returned.
+        """
+
+        self.remove(workflow_id)
+        return self.add(wf)
+
     def fetch(self, limit: int = 20) -> List[WorkflowRecord]:
         self.conn.row_factory = sqlite3.Row
         rows = self.conn.execute(

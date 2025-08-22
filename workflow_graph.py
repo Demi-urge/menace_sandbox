@@ -10,7 +10,10 @@ from __future__ import annotations
 import os
 import pickle
 import math
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from unified_event_bus import UnifiedEventBus
 
 try:  # pragma: no cover - exercised indirectly
     import networkx as nx  # type: ignore
@@ -131,6 +134,45 @@ class WorkflowGraph:
         self.path = path or os.path.join("sandbox_data", "workflow_graph.gpickle")
         self._backend = "networkx" if _HAS_NX else "adjlist"
         self.graph = self.load()
+
+    def attach_event_bus(self, bus: "UnifiedEventBus") -> None:
+        """Subscribe to workflow-related events on ``bus``."""
+
+        def _get_id(event: Any) -> Optional[str]:
+            if isinstance(event, dict):
+                val = event.get("workflow_id") or event.get("wid") or event.get("id")
+                if val is not None:
+                    return str(val)
+            return None
+
+        def _on_new(_topic: str, event: object) -> None:
+            wid = _get_id(event)
+            if wid is not None:
+                self.add_workflow(wid)
+
+        def _on_update(_topic: str, event: object) -> None:
+            if not isinstance(event, dict):
+                return
+            wid = _get_id(event)
+            if wid is None:
+                return
+            self.update_workflow(
+                wid,
+                roi=event.get("roi"),
+                synergy_scores=event.get("synergy_scores"),
+            )
+
+        def _on_remove(_topic: str, event: object) -> None:
+            wid = _get_id(event)
+            if wid is None:
+                return
+            self.remove_workflow(wid)
+            self.refresh_edges()
+
+        bus.subscribe("workflows:new", _on_new)
+        bus.subscribe("workflows:update", _on_update)
+        bus.subscribe("workflows:delete", _on_remove)
+        bus.subscribe("workflows:refactor", _on_remove)
 
     # ------------------------------------------------------------------
     # Workflow operations
