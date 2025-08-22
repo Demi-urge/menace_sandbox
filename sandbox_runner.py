@@ -224,6 +224,7 @@ from sandbox_runner.environment import (
     run_repo_section_simulations,
     run_workflow_simulations,
     run_scenarios as _env_run_scenarios,
+    simulate_temporal_trajectory as _simulate_temporal_trajectory,
     _section_worker,
     validate_preset,
 )
@@ -243,6 +244,24 @@ def run_scenarios(workflow, tracker=None, foresight_tracker=None, presets=None):
 
     return _env_run_scenarios(
         workflow, tracker=tracker, foresight_tracker=foresight_tracker, presets=presets
+    )
+
+
+# ----------------------------------------------------------------------
+def simulate_temporal_trajectory(workflow_id, workflow, tracker=None, foresight_tracker=None):
+    """Proxy to :func:`sandbox_runner.environment.simulate_temporal_trajectory`.
+
+    Exposes the temporal trajectory simulator at the top-level ``sandbox_runner``
+    module so callers can simply ``from sandbox_runner import
+    simulate_temporal_trajectory``. All arguments are forwarded to
+    :func:`sandbox_runner.environment.simulate_temporal_trajectory`.
+    """
+
+    return _simulate_temporal_trajectory(
+        workflow_id,
+        workflow,
+        tracker=tracker,
+        foresight_tracker=foresight_tracker,
     )
 
 
@@ -1646,6 +1665,7 @@ __all__ = [
     "run_repo_section_simulations",
     "run_scenarios",
     "run_workflow_simulations",
+    "simulate_temporal_trajectory",
     "_section_worker",
     "_sandbox_cycle_runner",
     "_SandboxMetaLogger",
