@@ -9,6 +9,20 @@ All entry points accept a `session_id` keyword argument which should always be
 supplied.  The identifier is propagated to logs and metrics, allowing callers to
 correlate related operations across services.
 
+## Deployment bootstrap
+
+Running the environment bootstrap prepares all assets needed for offline
+operation. The script fetches `vector_service/minilm/tiny-distilroberta-base.tar.xz`
+via `vector_service.download_model` and seeds neutral weights for both
+`VectorMetricsDB` and `ROITracker`:
+
+```bash
+python scripts/bootstrap_env.py
+```
+
+After this step the vector service can start without reaching external
+endpoints.
+
 ## Retriever
 
 ```python

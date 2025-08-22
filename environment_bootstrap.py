@@ -15,6 +15,7 @@ import importlib.util
 from pathlib import Path
 from typing import Iterable, TYPE_CHECKING
 import threading
+import json
 
 from .config_discovery import ensure_config, ConfigDiscovery
 
@@ -216,6 +217,52 @@ class EnvironmentBootstrapper:
                 self.logger.error("remote bootstrap failed for %s: %s", h, exc)
 
     # ------------------------------------------------------------------
+    def bootstrap_vector_assets(self) -> None:
+        """Download model and seed default ranking weights."""
+        try:
+            from .vector_service import download_model as _dm
+
+            dest = (
+                Path(_dm.__file__).with_name("minilm")
+                / "tiny-distilroberta-base.tar.xz"
+            )
+            if not dest.exists():
+                _dm.bundle(dest)
+        except Exception as exc:  # pragma: no cover - log only
+            self.logger.warning("embedding model download failed: %s", exc)
+
+        try:
+            reg_path = (
+                Path(__file__).resolve().parent
+                / "vector_service"
+                / "embedding_registry.json"
+            )
+            with open(reg_path, "r", encoding="utf-8") as fh:
+                names = list(json.load(fh).keys())
+        except Exception:
+            names = []
+
+        if names:
+            try:
+                from .vector_metrics_db import VectorMetricsDB
+
+                vdb = VectorMetricsDB("vector_metrics.db")
+                if not vdb.get_db_weights():
+                    vdb.set_db_weights({n: 1.0 for n in names})
+                vdb.conn.close()
+            except Exception as exc:  # pragma: no cover - log only
+                self.logger.warning("VectorMetricsDB bootstrap failed: %s", exc)
+
+            hist = Path("sandbox_data/roi_history.json")
+            if not hist.exists():
+                try:
+                    hist.parent.mkdir(parents=True, exist_ok=True)
+                    with open(hist, "w", encoding="utf-8") as fh:
+                        json.dump({"origin_db_deltas": {n: [0.0] for n in names}}, fh)
+                except Exception as exc:  # pragma: no cover - log only
+                    self.logger.warning("ROITracker bootstrap failed: %s", exc)
+
+    # ------------------------------------------------------------------
     def install_dependencies(self, requirements: Iterable[str]) -> None:
         for req in requirements:
             try:
@@ -295,6 +342,7 @@ class EnvironmentBootstrapper:
         if hosts:
             self.deploy_across_hosts(hosts)
         start_scheduler_from_env()
+        self.bootstrap_vector_assets()
 
 
 __all__ = ["EnvironmentBootstrapper"]
