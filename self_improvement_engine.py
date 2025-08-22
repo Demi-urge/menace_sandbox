@@ -5441,6 +5441,47 @@ class SelfImprovementEngine:
                 if gov_result:
                     verdict = str(gov_result.get("verdict"))
                     reasons = list(gov_result.get("reasons", []))
+                    risk: dict[str, object] | None = None
+                    try:
+                        if self.foresight_tracker and workflow_id:
+                            risk = self.foresight_tracker.predict_roi_collapse(workflow_id)
+                    except Exception:
+                        self.logger.exception("foresight risk check failed")
+                    risk_cls = risk.get("risk") if isinstance(risk, Mapping) else None
+                    brittle = bool(risk.get("brittle")) if isinstance(risk, Mapping) else False
+                    high = bool(risk and (risk_cls != "Stable" or brittle))
+                    self.workflow_risk = risk
+                    self.workflow_high_risk = high
+                    try:
+                        audit_log_event(
+                            "foresight_risk",
+                            {
+                                "workflow_id": workflow_id,
+                                "risk": risk_cls,
+                                "brittle": brittle,
+                            },
+                        )
+                    except Exception:
+                        self.logger.exception("risk audit log failed")
+                    try:
+                        self.logger.info(
+                            "foresight risk classification",
+                            extra=log_record(
+                                workflow_id=workflow_id,
+                                risk=risk_cls,
+                                brittle=brittle,
+                            ),
+                        )
+                    except Exception:
+                        self.logger.exception("risk classification logging failed")
+                    if high:
+                        verdict = "no_go"
+                        if "roi_collapse_risk" not in reasons:
+                            reasons.append("roi_collapse_risk")
+                        try:
+                            self.enqueue_preventative_fixes([workflow_id])
+                        except Exception:
+                            self.logger.exception("risk queue enqueue failed")
                     try:
                         audit_log_event(
                             "deployment_verdict", {"verdict": verdict, "reasons": reasons}
@@ -5466,47 +5507,7 @@ class SelfImprovementEngine:
                         self.logger.exception("deployment verdict logging failed")
                     scorecard["deployment_verdict"] = verdict
                     if verdict == "promote":
-                        workflow_id = "self_improvement"
-                        wf_ctx = getattr(environment, "current_context", None)
-                        try:
-                            ctx_obj = wf_ctx() if callable(wf_ctx) else wf_ctx
-                            workflow_id = getattr(ctx_obj, "workflow_id", workflow_id)
-                        except Exception:
-                            pass
-                        risk: dict[str, object] | None = None
-                        try:
-                            if self.foresight_tracker:
-                                risk = self.foresight_tracker.predict_roi_collapse(workflow_id)
-                        except Exception:
-                            self.logger.exception("foresight risk check failed")
-                        self.workflow_risk = risk
-                        high = bool(
-                            risk
-                            and (
-                                risk.get("risk") in {"Immediate collapse risk", "Volatile"}
-                                or bool(risk.get("brittle"))
-                            )
-                        )
-                        self.workflow_high_risk = high
-                        if high:
-                            self.workflow_ready = False
-                            try:
-                                self.logger.warning(
-                                    "promotion blocked due to ROI collapse risk",
-                                    extra=log_record(
-                                        workflow_id=workflow_id,
-                                        risk=risk.get("risk") if risk else None,
-                                        brittle=risk.get("brittle") if risk else None,
-                                    ),
-                                )
-                            except Exception:
-                                self.logger.exception("risk logging failed")
-                            try:
-                                self.enqueue_preventative_fixes([workflow_id])
-                            except Exception:
-                                self.logger.exception("risk queue enqueue failed")
-                        else:
-                            self.workflow_ready = True
+                        self.workflow_ready = True
                     elif verdict == "demote":
                         self.workflow_ready = False
                         if (
@@ -5547,6 +5548,8 @@ class SelfImprovementEngine:
                                     pass
                         except Exception:
                             self.logger.exception("borderline enqueue failed")
+                    else:
+                        self.workflow_ready = False
                 vetoes: List[str] = []
                 try:
                     vetoes = check_veto(scorecard, load_rules())
