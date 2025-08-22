@@ -160,3 +160,13 @@ def test_update_ranker_applies_roi_and_risk_penalties(tmp_path, monkeypatch):
         assert layer.context_builder.db_weights[origin] == pytest.approx(wt)
 
     assert weights["error"] == pytest.approx(0.0)
+
+
+def test_update_ranker_logs_weight_deltas(tmp_path):
+    layer, vec_db, _ = _make_layer(tmp_path, with_tracker=False)
+    vectors = [("A", "v1", 0.0)]
+    layer.update_ranker(vectors, True, roi_deltas={"A": 0.5})
+    rows = vec_db.conn.execute(
+        "SELECT db, contribution, similarity FROM vector_metrics WHERE event_type='ranker'"
+    ).fetchall()
+    assert rows == [("A", 0.5, 0.5)]

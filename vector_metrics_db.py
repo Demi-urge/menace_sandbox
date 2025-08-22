@@ -386,6 +386,30 @@ class VectorMetricsDB:
         self.add(rec)
 
     # ------------------------------------------------------------------
+    def log_ranker_update(
+        self, db: str, *, delta: float, weight: float | None = None
+    ) -> None:
+        """Record a ranking weight adjustment for ``db``.
+
+        The ``delta`` reflects the change applied to the weight while
+        ``weight`` captures the resulting value when available.  Entries are
+        stored in :class:`VectorMetric` with ``event_type`` set to ``"ranker"``
+        so historical adjustments can be analysed alongside other vector
+        metrics.
+        """
+
+        rec = VectorMetric(
+            event_type="ranker",
+            db=db,
+            tokens=0,
+            wall_time_ms=0.0,
+            contribution=delta,
+            similarity=weight,
+            context_score=weight,
+        )
+        self.add(rec)
+
+    # ------------------------------------------------------------------
     def embedding_tokens_total(self, db: str | None = None) -> int:
         cur = self.conn.execute(
             "SELECT COALESCE(SUM(tokens),0) FROM vector_metrics WHERE event_type='embedding'" +

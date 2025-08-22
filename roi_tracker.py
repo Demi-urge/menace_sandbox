@@ -3982,8 +3982,9 @@ class ROITracker:
             roi = float(stats.get("roi", 0.0))
             win_rate = float(stats.get("win_rate", 0.0))
             regret_rate = float(stats.get("regret_rate", 0.0))
-            if roi:
-                self.origin_db_deltas.setdefault(origin, []).append(roi)
+            # Always record deltas so neutral performance is captured and
+            # ranking weights reflect recent history even when ROI is zero.
+            self.origin_db_deltas.setdefault(origin, []).append(roi)
             self.db_roi_metrics[origin] = {
                 "win_rate": win_rate,
                 "regret_rate": regret_rate,

@@ -31,3 +31,9 @@ def test_update_db_metrics_and_report(tmp_path):
         ).fetchall()
     assert ("A", 0.9, 0.1, 3.0) in rows
     assert len(rows) == 3
+
+
+def test_update_db_metrics_zero_roi():
+    tracker = ROITracker()
+    tracker.update_db_metrics({"Z": {"roi": 0.0, "win_rate": 0.5, "regret_rate": 0.5}})
+    assert tracker.origin_db_deltas["Z"] == [0.0]
