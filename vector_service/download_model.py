@@ -18,7 +18,6 @@ import tempfile
 
 from huggingface_hub import snapshot_download
 
-
 MODEL_ID = "sshleifer/tiny-distilroberta-base"
 FILES = [
     "config.json",
@@ -45,15 +44,19 @@ def bundle(dest: Path) -> None:
 
 
 def ensure_model(dest: Path | None = None) -> Path:
-    """Ensure the bundled model archive exists at ``dest``.
+    """Return the path to the bundled model archive.
 
-    If ``dest`` is ``None``, the default location inside the package is used.
-    The model is downloaded from Hugging Face when missing.
+    The archive must already exist locally. If it is missing, a descriptive
+    :class:`FileNotFoundError` is raised instructing the operator to download
+    it manually.
     """
 
     dest = dest or Path(__file__).with_name("minilm") / "tiny-distilroberta-base.tar.xz"
     if not dest.exists():
-        bundle(dest)
+        raise FileNotFoundError(
+            f"{dest} is missing. Run `python -m vector_service.download_model` "
+            "to download it from Hugging Face."
+        )
     return dest
 
 
