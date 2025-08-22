@@ -26,3 +26,21 @@ def test_workflow_graph_persistence(tmp_path):
         assert "B" not in g2.graph
     else:
         assert "B" not in g2.graph["nodes"]
+
+
+def test_add_dependency_uses_estimator(monkeypatch, tmp_path):
+    path = tmp_path / "graph.gpickle"
+    g = WorkflowGraph(path=str(path))
+    g.add_workflow("A")
+    g.add_workflow("B")
+
+    monkeypatch.setattr(
+        "workflow_graph.estimate_edge_weight", lambda _a, _b: 0.33
+    )
+
+    g.add_dependency("A", "B")
+
+    if g._backend == "networkx":
+        assert g.graph["A"]["B"]["impact_weight"] == 0.33
+    else:
+        assert g.graph["edges"]["A"]["B"]["impact_weight"] == 0.33
