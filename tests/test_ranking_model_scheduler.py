@@ -233,7 +233,20 @@ def test_scheduler_reloads_dependents(tmp_path, monkeypatch):
 
 
 def test_scheduler_retrains_on_roi_signal(monkeypatch):
-    tracker = SimpleNamespace(origin_db_deltas={"db": []}, raroi_history=[])
+    class Tracker(SimpleNamespace):
+        def __init__(self) -> None:
+            super().__init__()
+            self.origin_db_delta_history = {"db": []}
+            self.raroi_history = []
+
+        def origin_db_deltas(self):
+            return {
+                db: vals[-1]
+                for db, vals in self.origin_db_delta_history.items()
+                if vals
+            }
+
+    tracker = Tracker()
     sched = rms.RankingModelScheduler(
         [],
         roi_tracker=tracker,
@@ -256,7 +269,7 @@ def test_scheduler_retrains_on_roi_signal(monkeypatch):
     # wait for first call
     while len(calls) == 0:
         pass
-    tracker.origin_db_deltas["db"].append(1.0)
+    tracker.origin_db_delta_history["db"].append(1.0)
     t.join(timeout=0.1)
     assert len(calls) >= 2
 

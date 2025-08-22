@@ -337,6 +337,17 @@ class MetricsDashboard:
             "actual": tracker.actual_roi,
             "category_counts": tracker.category_summary(),
         }
+        # Visualise the penalty applied by risk adjustments over time as the
+        # gap between raw ROI and risk-adjusted ROI (RAROI).
+        if tracker.raroi_history:
+            data["risk_penalty"] = [
+                r - rr for r, rr in zip(tracker.roi_history, tracker.raroi_history)
+            ]
+        # Include latest per-database contribution and outcome rates.
+        try:
+            data["db_metrics"] = tracker.db_roi_report()
+        except Exception:
+            data["db_metrics"] = []
         data["workflow_mae"] = {
             k: v for k, v in tracker.workflow_mae_history.items() if k != "_global"
         }

@@ -296,7 +296,11 @@ class ROITracker:
         self.module_deltas: Dict[str, List[float]] = {}
         self.module_raroi: Dict[str, List[float]] = {}
         self.module_entropy_deltas: Dict[str, List[float]] = {}
-        self.origin_db_deltas: Dict[str, List[float]] = {}
+        # Historical ROI deltas grouped by origin database.  The latest values
+        # are exposed via :meth:`origin_db_deltas` for external consumers while
+        # the full history remains available through
+        # :attr:`origin_db_delta_history`.
+        self._origin_db_deltas: Dict[str, List[float]] = {}
         self.db_roi_metrics: Dict[str, Dict[str, float]] = {}
         self.cluster_map: Dict[str, int] = dict(cluster_map or {})
         self.cluster_deltas: Dict[int, List[float]] = {}
@@ -564,8 +568,8 @@ class ROITracker:
             self.cluster_deltas.setdefault(name, []).extend(deltas)
         for name, deltas in getattr(other, "cluster_raroi", {}).items():
             self.cluster_raroi.setdefault(name, []).extend(deltas)
-        for db, deltas in getattr(other, "origin_db_deltas", {}).items():
-            self.origin_db_deltas.setdefault(db, []).extend(deltas)
+        for db, deltas in getattr(other, "origin_db_delta_history", {}).items():
+            self._origin_db_deltas.setdefault(db, []).extend(deltas)
 
     # ------------------------------------------------------------------
     def diminishing(self) -> float:
@@ -1874,10 +1878,10 @@ class ROITracker:
                         tokens = float(m.get("tokens", 0.0))
                         w = tokens / tot if tot else 0.0
                         contrib = adjusted * (w or 1.0 / len(hits))
-                        self.origin_db_deltas.setdefault(origin, []).append(contrib)
+                        self._origin_db_deltas.setdefault(origin, []).append(contrib)
                         if _DB_ROI_GAUGE is not None:
-                            avg = sum(self.origin_db_deltas[origin]) / len(
-                                self.origin_db_deltas[origin]
+                            avg = sum(self._origin_db_deltas[origin]) / len(
+                                self._origin_db_deltas[origin]
                             )
                             _DB_ROI_GAUGE.labels(origin_db=origin).set(avg)
             if resources:
@@ -2922,7 +2926,7 @@ class ROITracker:
                 "module_deltas": self.module_deltas,
                 "module_raroi": self.module_raroi,
                 "module_entropy_deltas": self.module_entropy_deltas,
-                "origin_db_deltas": self.origin_db_deltas,
+                "origin_db_deltas": self._origin_db_deltas,
                 "db_roi_metrics": self.db_roi_metrics,
                 "predicted_roi": self.predicted_roi,
                 "actual_roi": self.actual_roi,
@@ -3032,7 +3036,7 @@ class ROITracker:
             conn.execute("DELETE FROM db_deltas")
             db_rows = [
                 (d, float(v))
-                for d, vals in self.origin_db_deltas.items()
+                for d, vals in self._origin_db_deltas.items()
                 for v in vals
             ]
             if db_rows:
@@ -3249,7 +3253,7 @@ class ROITracker:
                     self.module_deltas = {}
                     self.module_raroi = {}
                     self.module_entropy_deltas = {}
-                    self.origin_db_deltas = {}
+                    self._origin_db_deltas = {}
                     self.db_roi_metrics = {}
                     self.predicted_roi = []
                     self.actual_roi = []
@@ -3295,7 +3299,7 @@ class ROITracker:
                         str(m): [float(v) for v in vals]
                         for m, vals in data.get("module_entropy_deltas", {}).items()
                     }
-                    self.origin_db_deltas = {
+                    self._origin_db_deltas = {
                         str(m): [float(v) for v in vals]
                         for m, vals in data.get("origin_db_deltas", {}).items()
                     }
@@ -3633,9 +3637,9 @@ class ROITracker:
         self.module_entropy_deltas = {}
         for mod, delta in ent_rows:
             self.module_entropy_deltas.setdefault(str(mod), []).append(float(delta))
-        self.origin_db_deltas = {}
+        self._origin_db_deltas = {}
         for db, delta in db_rows:
-            self.origin_db_deltas.setdefault(str(db), []).append(float(delta))
+            self._origin_db_deltas.setdefault(str(db), []).append(float(delta))
         self.db_roi_metrics = {}
         for db, win, regret, roi in roi_metric_rows:
             self.db_roi_metrics[str(db)] = {
@@ -3963,6 +3967,21 @@ class ROITracker:
         return sorted(rows, key=lambda x: x[1], reverse=True)
 
     # ------------------------------------------------------------------
+    def origin_db_deltas(self) -> Dict[str, float]:
+        """Return latest ROI delta per origin database."""
+
+        return {
+            db: vals[-1]
+            for db, vals in self._origin_db_deltas.items()
+            if vals
+        }
+
+    # Expose the raw history for internal consumers and tests.
+    @property
+    def origin_db_delta_history(self) -> Dict[str, List[float]]:
+        return self._origin_db_deltas
+
+    # ------------------------------------------------------------------
     def update_db_metrics(
         self, metrics: Dict[str, Dict[str, float]], *, sqlite_path: str | None = None
     ) -> None:
@@ -3984,15 +4003,15 @@ class ROITracker:
             regret_rate = float(stats.get("regret_rate", 0.0))
             # Always record deltas so neutral performance is captured and
             # ranking weights reflect recent history even when ROI is zero.
-            self.origin_db_deltas.setdefault(origin, []).append(roi)
+            self._origin_db_deltas.setdefault(origin, []).append(roi)
             self.db_roi_metrics[origin] = {
                 "win_rate": win_rate,
                 "regret_rate": regret_rate,
                 "roi": roi,
             }
-            if _DB_ROI_GAUGE is not None and self.origin_db_deltas.get(origin):
-                avg = sum(self.origin_db_deltas[origin]) / len(
-                    self.origin_db_deltas[origin]
+            if _DB_ROI_GAUGE is not None and self._origin_db_deltas.get(origin):
+                avg = sum(self._origin_db_deltas[origin]) / len(
+                    self._origin_db_deltas[origin]
                 )
                 _DB_ROI_GAUGE.labels(origin_db=origin).set(avg)
 
@@ -4064,7 +4083,7 @@ class ROITracker:
 
         return {
             db: (sum(vals) / len(vals))
-            for db, vals in self.origin_db_deltas.items()
+            for db, vals in self._origin_db_deltas.items()
             if vals
         }
 
@@ -4143,7 +4162,7 @@ class ROITracker:
                         row["avg_roi"],
                         row["win_rate"],
                         row["regret_rate"],
-                        len(self.origin_db_deltas.get(row["origin_db"], [])),
+                        len(self._origin_db_deltas.get(row["origin_db"], [])),
                     ]
                 )
 

@@ -90,7 +90,7 @@ def test_patch_success_updates_metrics_and_weights(tmp_path):
     assert sum(weights.values()) == pytest.approx(1.0)
     for origin in ("bot", "workflow", "enhancement", "error"):
         assert weights[origin] == pytest.approx(0.25)
-        assert tracker.origin_db_deltas[origin][-1] == pytest.approx(2.0)
+        assert tracker.origin_db_delta_history[origin][-1] == pytest.approx(2.0)
         assert vec_db.retriever_win_rate(origin) == pytest.approx(1.0)
     ctx2, _sid2, vectors2 = layer.context_builder.build_context(
         "hello", top_k=5, include_vectors=True
@@ -110,7 +110,7 @@ def test_patch_failure_decreases_weights(tmp_path):
     weights = vec_db.get_db_weights()
     assert weights["bot"] == pytest.approx(0.0)
     assert weights["workflow"] == pytest.approx(0.0)
-    assert tracker.origin_db_deltas["bot"][-1] == pytest.approx(-1.0)
+    assert tracker.origin_db_delta_history["bot"][-1] == pytest.approx(-1.0)
     assert vec_db.retriever_regret_rate("bot") == pytest.approx(1.0)
 
 
