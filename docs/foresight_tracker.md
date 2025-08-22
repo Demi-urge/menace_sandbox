@@ -126,6 +126,38 @@ if tracker.is_cold_start("trading_bot"):
     tracker.capture_from_roi(roi_tracker, "trading_bot", "early_volatile")
 ```
 
+## Predicting ROI collapse
+
+The helper :func:`predict_roi_collapse` examines recent ROI and
+``scenario_degradation`` values to forecast when a workflow's trajectory
+falls below zero. It adjusts the projection using the expected entropy curve
+from :func:`get_entropy_template_curve`.
+
+### Inputs
+
+- ``workflow_id`` – identifier of the workflow to analyse. Requires the
+  workflow to have recorded ``roi_delta`` entries and optionally
+  ``scenario_degradation`` metrics.
+
+### Returned fields
+
+- ``risk_class`` – one of ``Stable``, ``Slow decay``, ``Volatile`` or
+  ``Immediate collapse risk``.
+- ``cycles_to_collapse`` – estimated cycles remaining before ROI becomes
+  negative, or ``None`` if no collapse is predicted.
+- ``brittle`` – ``True`` when small entropy changes produce large ROI drops.
+- ``collapse_curve`` – projected ROI values for future cycles until collapse
+  or the horizon limit.
+
+### Example
+
+```python
+tracker = ForesightTracker(max_cycles=5)
+risk = tracker.predict_roi_collapse("workflow-1")
+if risk["risk_class"] != "Stable":
+    print("workflow-1 needs attention:", risk)
+```
+
 ## Persisting state
 
 `ForesightTracker` can serialise its configuration and recent history for later restoration. The :meth:`to_dict` method returns a JSON-serialisable dictionary containing the tracked `history` together with the current `max_cycles` and `volatility_threshold` settings. The companion :meth:`from_dict` classmethod rebuilds an instance from this data and accepts optional overrides for the configuration values (`window` and `N` remain supported aliases for `max_cycles`).
