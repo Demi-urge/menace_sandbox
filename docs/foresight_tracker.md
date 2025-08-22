@@ -44,8 +44,10 @@ workflow through escalating entropy stages. The helper iterates through
 ``normal``, ``high_latency``, ``resource_strain``, ``schema_drift`` and
 ``chaotic_failure`` presets. It loads the workflow steps via ``WorkflowDB`` and
 forwards ROI, resilience and degradation metrics for each stage to
-``ForesightTracker.record_cycle_metrics`` with ``compute_stability=True`` so the
-window stability is stored alongside the measurements:
+``ForesightTracker.record_cycle_metrics`` with ``compute_stability=True``.  Each
+entry is annotated with the preset name under a ``stage`` field and includes a
+``stability`` value summarising the trend over the rolling window. Together
+these fields let the sandbox model long‑term decay across scenarios:
 
 ```python
 from sandbox_runner.environment import simulate_temporal_trajectory
@@ -56,6 +58,7 @@ simulate_temporal_trajectory(workflow_id, foresight_tracker=tracker)
 
 cycle = tracker.history[str(workflow_id)][-1]
 print(
+    cycle["stage"],
     cycle["roi_delta"],
     cycle["resilience"],
     cycle["stability"],
@@ -63,9 +66,10 @@ print(
 )
 ```
 
-This captures per-stage ROI and resilience, the degradation from the baseline
-run and the computed ``stability`` score, providing a consolidated log of a
-workflow's temporal trajectory.
+This captures the stage label, per-stage ROI and resilience, the degradation
+from the baseline run and the computed ``stability`` score. Analysing how
+stability changes between stages highlights long‑term decay in the workflow's
+performance.
 
 ## Cold starts and template curves
 
