@@ -333,3 +333,28 @@ def test_embedding_backfill_run_with_dbs(monkeypatch, tmp_path):
 
     eb.run(dbs=["information", "code", "discrepancy"])
     assert called == [InformationDB, CodeDB, DiscrepancyDB]
+
+
+def test_watch_event_bus_triggers_backfill(monkeypatch):
+    from vector_service.embedding_backfill import watch_event_bus
+    from unified_event_bus import UnifiedEventBus
+    import threading
+    import time
+
+    calls: list[tuple[list[str] | None, int | None, str]] = []
+
+    def fake_run(self, *, dbs=None, batch_size=None, backend=None, session_id="", trigger="manual"):
+        calls.append((dbs, batch_size, trigger))
+
+    monkeypatch.setattr(EmbeddingBackfill, "run", fake_run)
+
+    bus = UnifiedEventBus()
+    t = threading.Thread(target=watch_event_bus, kwargs={"bus": bus, "batch_size": 1}, daemon=True)
+    t.start()
+
+    bus.publish("db:record_added", {"db": "info"})
+    time.sleep(0.1)
+
+    assert calls and calls[0][0] == ["info"]
+    assert calls[0][1] == 1
+    assert calls[0][2] == "event"
