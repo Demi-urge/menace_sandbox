@@ -14,9 +14,12 @@ import atexit
 import threading
 from collections import defaultdict, deque
 from typing import Any, Dict, Optional, TYPE_CHECKING
+import logging
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from unified_event_bus import UnifiedEventBus
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - exercised indirectly
     import networkx as nx  # type: ignore
@@ -495,97 +498,43 @@ class WorkflowGraph:
             self._save_unlocked()
 
     def simulate_impact_wave(
-        self, starting_workflow_id: int
+        self, start_id: str, roi_delta: float, synergy_delta: float
     ) -> Dict[str, Dict[str, float]]:
-        """Simulate metric deltas flowing from ``starting_workflow_id``.
+        """Propagate ROI and synergy deltas through the graph.
 
-        A change to a workflow can ripple through the dependency graph.  This
-        helper performs a topological traversal starting at ``starting_workflow_id``
-        and attenuates the predicted ROI and synergy impact along outgoing
-        edges using their ``impact_weight`` values.  The initial deltas for the
-        starting workflow are estimated via :mod:`roi_predictor` and
-        :mod:`synergy_tools` (falling back to ``0.0`` when those modules are not
-        available).  For downstream nodes the deltas are purely a product of the
-        propagated impact and edge weights.
+        Parameters
+        ----------
+        start_id:
+            Workflow identifier where the change originates.
+        roi_delta, synergy_delta:
+            Initial metric deltas for ``start_id``.
 
-        The return value maps workflow IDs to projected ``roi`` and ``synergy``
-        *deltas* which downstream self‑improvement modules can consume.
+        Returns
+        -------
+        Dict[str, Dict[str, float]]
+            Mapping of workflow ids to projected ``roi`` and ``synergy`` deltas.
         """
 
-        # ------------------------------------------------------------------
-        # Gather baseline metrics for the starting workflow using optional
-        # predictor modules.  Failures are silently ignored.
-        # ------------------------------------------------------------------
-        start_id = str(starting_workflow_id)
-
-        if _HAS_NX:
-            start_node = self.graph.nodes.get(start_id, {})
-        else:
-            start_node = self.graph.get("nodes", {}).get(start_id, {})
-
-        roi_base = float(start_node.get("roi", 0.0) or 0.0)
-        roi_delta = 0.0
-        try:  # pragma: no cover - optional dependency
-            from roi_predictor import ROIPredictor  # type: ignore
-
-            try:
-                pred, _ = ROIPredictor().forecast([roi_base])
-                roi_delta = float(pred - roi_base)
-            except Exception:
-                roi_delta = 0.0
-        except Exception:  # pragma: no cover - predictor unavailable
-            pass
-
-        synergy_base = 0.0
-        if isinstance(start_node.get("synergy_scores"), dict):
-            try:
-                synergy_base = float(next(iter(start_node["synergy_scores"].values())))
-            except Exception:
-                synergy_base = 0.0
-        elif isinstance(start_node.get("synergy_scores"), (int, float)):
-            synergy_base = float(start_node["synergy_scores"])
-
-        synergy_delta = 0.0
-        try:  # pragma: no cover - optional dependency
-            import synergy_tools  # type: ignore  # noqa: F401  (presence only)
-            from synergy_history_db import connect, fetch_latest  # type: ignore
-
-            conn = connect(os.path.join("sandbox_data", "synergy_history.db"))
-            try:
-                latest = fetch_latest(conn)
-            finally:
-                conn.close()
-            if start_id in latest:
-                synergy_delta = float(latest[start_id]) - synergy_base
-        except Exception:
-            pass
-
-        # ------------------------------------------------------------------
-        # Determine the set of reachable nodes and traverse them in topological
-        # order.  Deltas are attenuated according to ``impact_weight``.
-        # ------------------------------------------------------------------
+        start_id = str(start_id)
 
         def _outgoing(src: str):
             if _HAS_NX:
-                for dst in self.graph.successors(src):
-                    data = self.graph[src][dst]
-                    yield dst, float(data.get("impact_weight", 1.0) or 1.0)
+                for _, dst, data in self.graph.out_edges(src, data=True):
+                    yield dst, float(data.get("impact_weight", 0.0) or 0.0)
             else:
                 edges = self.graph.get("edges", {})
                 for dst, data in edges.get(src, {}).items():
-                    yield dst, float(data.get("impact_weight", 1.0) or 1.0)
+                    yield dst, float(data.get("impact_weight", 0.0) or 0.0)
 
-        # gather reachable nodes
         reachable: set[str] = {start_id}
         stack = [start_id]
         while stack:
             node = stack.pop()
-            for nbr, _w in _outgoing(node):
+            for nbr, _ in _outgoing(node):
                 if nbr not in reachable:
                     reachable.add(nbr)
                     stack.append(nbr)
 
-        # topological order of reachable subgraph
         if _HAS_NX:
             sub = self.graph.subgraph(reachable).copy()
             order = list(nx.topological_sort(sub))
@@ -607,16 +556,20 @@ class WorkflowGraph:
                         if indeg[dst] == 0:
                             q.append(dst)
 
-        impacts: Dict[str, tuple[float, float]] = {start_id: (roi_delta, synergy_delta)}
+        impacts: Dict[str, Dict[str, float]] = {
+            start_id: {"roi": roi_delta, "synergy": synergy_delta}
+        }
         for node in order:
-            r, s = impacts.get(node, (0.0, 0.0))
+            current = impacts.get(node, {"roi": 0.0, "synergy": 0.0})
             for dst, weight in _outgoing(node):
                 if dst not in reachable:
                     continue
-                cr, cs = impacts.get(dst, (0.0, 0.0))
-                impacts[dst] = (cr + r * weight, cs + s * weight)
+                dest = impacts.setdefault(dst, {"roi": 0.0, "synergy": 0.0})
+                dest["roi"] += current["roi"] * weight
+                dest["synergy"] += current["synergy"] * weight
 
-        return {wid: {"roi": r, "synergy": s} for wid, (r, s) in impacts.items()}
+        logger.debug("Impact wave from %s: %s", start_id, impacts)
+        return impacts
 
     def refresh_edges(self) -> None:
         """Recalculate impact weights for all dependency edges."""

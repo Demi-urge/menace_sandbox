@@ -113,7 +113,7 @@ from self_improvement_engine import SelfImprovementEngine
 graph = WorkflowGraph()
 engine = SelfImprovementEngine(...)
 
-projection = graph.simulate_impact_wave("42")
+projection = graph.simulate_impact_wave("42", 1.0, 0.0)
 # use `projection` to decide which dependant workflow to schedule next
 ```
 
