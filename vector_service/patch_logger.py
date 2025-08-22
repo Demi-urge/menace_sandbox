@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Iterable, List, Mapping, Sequence, Tuple, Union
 
 import asyncio
+import logging
 import time
 
 from .decorators import log_and_measure
@@ -77,6 +78,9 @@ try:  # pragma: no cover - optional enhancement database
     from chatgpt_enhancement_bot import EnhancementDB, Enhancement  # type: ignore
 except Exception:  # pragma: no cover
     EnhancementDB = Enhancement = None  # type: ignore
+
+
+logger = logging.getLogger(__name__)
 
 
 class PatchLogger:
@@ -205,12 +209,13 @@ class PatchLogger:
                         try:
                             bus = UnifiedEventBus()
                         except Exception:
+                            logger.exception("Failed to create UnifiedEventBus for risk alerts")
                             bus = None
                     if bus is not None:
                         try:
                             bus.publish("patch:risk_alert", payload)
                         except Exception:
-                            pass
+                            logger.exception("Failed to publish patch risk alert")
                 if fp is not None:
                     detailed_meta.append((o, vid, score, lic, fp, alerts))
                     provenance_meta.append((o, vid, score, lic, fp, alerts, sev))
@@ -246,7 +251,7 @@ class PatchLogger:
                         patch_id or "", result, pairs, session_id=session_id
                     )
                 except Exception:
-                    pass
+                    logger.exception("metrics_db.log_patch_outcome failed")
             else:
                 if self.patch_db is not None and patch_id:
                     try:  # pragma: no cover - best effort
@@ -259,102 +264,110 @@ class PatchLogger:
                             regret=not result,
                         )
                     except Exception:
-                        pass
+                        logger.exception("patch_db.record_vector_metrics failed")
+                        raise
                     try:
                         self.patch_db.record_provenance(int(patch_id), provenance_meta)
                     except Exception:
-                        pass
+                        logger.exception("patch_db.record_provenance failed")
                     try:
                         self.patch_db.log_ancestry(int(patch_id), detailed_meta)
                     except Exception:
-                        pass
+                        logger.exception("patch_db.log_ancestry failed")
                     try:
                         self.patch_db.log_contributors(
                             int(patch_id), detailed, session_id
                         )
                     except Exception:
-                        pass
-                roi_base = 0.0 if contribution is None else contribution
-                origin_totals: dict[str, float] = {}
-                for origin, vid, score in detailed:
-                    roi = roi_base if contribution is not None else score
-                    key = origin or ""
-                    origin_totals[key] = origin_totals.get(key, 0.0) + roi
+                        logger.exception("patch_db.log_contributors failed")
+            roi_base = 0.0 if contribution is None else contribution
+            origin_totals: dict[str, float] = {}
+            for origin, vid, score in detailed:
+                roi = roi_base if contribution is not None else score
+                key = origin or ""
+                origin_totals[key] = origin_totals.get(key, 0.0) + roi
+            if self.vector_metrics is not None:
+                try:  # pragma: no cover - best effort
+                    self.vector_metrics.update_outcome(
+                        session_id,
+                        pairs,
+                        contribution=roi_base if contribution is not None else 0.0,
+                        patch_id=patch_id,
+                        win=result,
+                        regret=not result,
+                    )
+                except Exception:
+                    logger.exception("vector_metrics.update_outcome failed")
+                    raise
+                if patch_id:
+                    try:
+                        self.vector_metrics.record_patch_ancestry(patch_id, vm_vectors)
+                    except Exception:
+                        logger.exception("vector_metrics.record_patch_ancestry failed")
+            for origin, roi in origin_totals.items():
                 if self.vector_metrics is not None:
-                    try:  # pragma: no cover - best effort
-                        self.vector_metrics.update_outcome(
-                            session_id,
-                            pairs,
-                            contribution=roi_base if contribution is not None else 0.0,
-                            patch_id=patch_id,
-                            win=result,
-                            regret=not result,
+                    try:
+                        self.vector_metrics.log_retrieval_feedback(
+                            origin, win=result, regret=not result, roi=roi
                         )
                     except Exception:
-                        pass
-                    if patch_id:
-                        try:
-                            self.vector_metrics.record_patch_ancestry(patch_id, vm_vectors)
-                        except Exception:
-                            pass
+                        logger.exception("vector_metrics.log_retrieval_feedback failed")
+                payload = {
+                    "db": origin,
+                    "win": result,
+                    "regret": not result,
+                    "roi": roi,
+                    "win_rate": 1.0 if result else 0.0,
+                    "regret_rate": 0.0 if result else 1.0,
+                }
+                if self.event_bus is not None:
+                    try:
+                        self.event_bus.publish("retrieval:feedback", payload)
+                    except Exception:
+                        logger.exception("event bus retrieval feedback publish failed")
+                elif UnifiedEventBus is not None:
+                    try:
+                        UnifiedEventBus().publish("retrieval:feedback", payload)
+                    except Exception:
+                        logger.exception(
+                            "UnifiedEventBus retrieval feedback publish failed"
+                        )
+            roi_metrics: dict[str, dict[str, Any]] = {}
+            if origin_totals:
                 for origin, roi in origin_totals.items():
-                    if self.vector_metrics is not None:
-                        try:
-                            self.vector_metrics.log_retrieval_feedback(
-                                origin, win=result, regret=not result, roi=roi
-                            )
-                        except Exception:
-                            pass
-                    payload = {
-                        "db": origin,
-                        "win": result,
-                        "regret": not result,
+                    metrics = {
                         "roi": roi,
                         "win_rate": 1.0 if result else 0.0,
                         "regret_rate": 0.0 if result else 1.0,
+                        "alignment_severity": origin_sev.get(origin, 0.0),
+                        "semantic_alerts": sorted(origin_alerts.get(origin, [])),
+                        "risk_score": origin_risk.get(origin, 0.0),
                     }
-                    if self.event_bus is not None:
+                    roi_metrics[origin] = metrics
+                if self.roi_tracker is not None:
+                    for origin, stats in roi_metrics.items():
                         try:
-                            self.event_bus.publish("retrieval:feedback", payload)
+                            # send deltas for each origin individually
+                            self.roi_tracker.update_db_metrics({origin: stats})
                         except Exception:
-                            pass
-                    elif UnifiedEventBus is not None:
-                        try:
-                            UnifiedEventBus().publish("retrieval:feedback", payload)
-                        except Exception:
-                            pass
-                roi_metrics: dict[str, dict[str, Any]] = {}
-                if origin_totals:
-                    for origin, roi in origin_totals.items():
-                        metrics = {
-                            "roi": roi,
-                            "win_rate": 1.0 if result else 0.0,
-                            "regret_rate": 0.0 if result else 1.0,
-                            "alignment_severity": origin_sev.get(origin, 0.0),
-                            "semantic_alerts": sorted(origin_alerts.get(origin, [])),
-                            "risk_score": origin_risk.get(origin, 0.0),
-                        }
-                        roi_metrics[origin] = metrics
-                    if self.roi_tracker is not None:
-                        for origin, stats in roi_metrics.items():
+                            logger.exception("ROITracker.update_db_metrics failed")
+                else:
+                    for origin, stats in roi_metrics.items():
+                        payload = {"db": origin, **stats}
+                        if self.event_bus is not None:
                             try:
-                                # send deltas for each origin individually
-                                self.roi_tracker.update_db_metrics({origin: stats})
+                                self.event_bus.publish("roi:update", payload)
                             except Exception:
-                                pass
-                    else:
-                        for origin, stats in roi_metrics.items():
-                            payload = {"db": origin, **stats}
-                            if self.event_bus is not None:
-                                try:
-                                    self.event_bus.publish("roi:update", payload)
-                                except Exception:
-                                    pass
-                            elif UnifiedEventBus is not None:
-                                try:
-                                    UnifiedEventBus().publish("roi:update", payload)
-                                except Exception:
-                                    pass
+                                logger.exception(
+                                    "event bus ROI update publish failed"
+                                )
+                        elif UnifiedEventBus is not None:
+                            try:
+                                UnifiedEventBus().publish("roi:update", payload)
+                            except Exception:
+                                logger.exception(
+                                    "UnifiedEventBus ROI update publish failed"
+                                )
                 unique_origins = {o for o, _, _ in detailed if o}
                 if unique_origins:
                     if self.event_bus is not None:
@@ -364,14 +377,18 @@ class PatchLogger:
                                     "embedding:backfill", {"db": origin}
                                 )
                             except Exception:
-                                pass
+                                logger.exception(
+                                    "event bus embedding backfill publish failed"
+                                )
                     elif UnifiedEventBus is not None:
                         bus = UnifiedEventBus()
                         for origin in unique_origins:
                             try:
                                 bus.publish("embedding:backfill", {"db": origin})
                             except Exception:
-                                pass
+                                logger.exception(
+                                    "UnifiedEventBus embedding backfill publish failed"
+                                )
                 if result and retrieval_metadata:
                     for origin, vid, _ in detailed:
                         key = f"{origin}:{vid}" if origin else vid
@@ -424,7 +441,7 @@ class PatchLogger:
                                 )
                                 self.info_db.add(item)
                         except Exception:
-                            pass
+                            logger.exception("Failed to store lesson metadata")
         except Exception:
             _TRACK_OUTCOME.labels("error").inc()
             _TRACK_DURATION.set(time.time() - start)
@@ -454,12 +471,16 @@ class PatchLogger:
             try:
                 self.event_bus.publish("patch_logger:outcome", payload)
             except Exception:
-                pass
+                logger.exception(
+                    "event bus patch_logger outcome publish failed"
+                )
         elif UnifiedEventBus is not None:
             try:
                 UnifiedEventBus().publish("patch_logger:outcome", payload)
             except Exception:
-                pass
+                logger.exception(
+                    "UnifiedEventBus patch_logger outcome publish failed"
+                )
 
         return origin_risk
 
