@@ -459,7 +459,7 @@ def test_predict_roi_collapse_scenarios(
     result = tracker.predict_roi_collapse("wf")
     assert result["risk"] == risk
     if expected_cycles is None:
-        assert result["cycles_to_collapse"] is None
+        assert result["collapse_in"] is None
     else:
-        assert result["cycles_to_collapse"] == pytest.approx(expected_cycles)
+        assert result["collapse_in"] == pytest.approx(expected_cycles)
     assert result["brittle"] is brittle

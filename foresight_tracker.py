@@ -506,14 +506,14 @@ class ForesightTracker:
     def predict_roi_collapse(self, workflow_id: str, horizon: int = 5) -> Dict[str, object]:
         """Project the ROI trajectory and classify collapse risk.
 
-        The function inspects recent ``roi_delta`` history for ``workflow_id``
-        and extrapolates the current trend ``horizon`` cycles into the future.
-        ``get_trend_curve`` supplies the slope and second derivative of the
-        averaged metrics while volatility is measured as the standard deviation
-        of recent ``roi_delta`` values.  Higher than expected
-        ``scenario_degradation`` compared against the entropy template reduces
-        the projected slope.  If small degradation increases lead to large ROI
-        drops the workflow is marked as brittle.
+        The helper inspects recent ``roi_delta`` history for ``workflow_id`` and
+        extrapolates the current trend ``horizon`` cycles into the future.  The
+        slope is obtained from :func:`get_trend_curve` while cycle‑to‑cycle
+        volatility is measured as the standard deviation of consecutive
+        ``roi_delta`` changes. Recorded ``scenario_degradation`` is compared to
+        :func:`get_entropy_template_curve` and both degradation and volatility
+        reduce the projected slope.  When small degradation increases produce
+        sharp ROI drops the workflow is flagged as brittle.
 
         Risk labels follow these guidelines:
 
@@ -536,16 +536,16 @@ class ForesightTracker:
         Returns
         -------
         dict
-            Mapping with ``projection`` of future ROI values, estimated
-            ``cycles_to_collapse`` (or ``None``), the risk label under
-            ``risk`` and a ``brittle`` flag.
+            Mapping with the projected ROI ``curve``, estimated ``collapse_in``
+            cycles (or ``None``), the risk label under ``risk`` and a
+            ``brittle`` flag.
         """
 
         history = self.history.get(workflow_id)
         if not history:
             return {
-                "projection": [],
-                "cycles_to_collapse": None,
+                "curve": [],
+                "collapse_in": None,
                 "risk": "Stable",
                 "brittle": False,
             }
@@ -554,8 +554,7 @@ class ForesightTracker:
 
         roi_values = [float(e.get("roi_delta", 0.0)) for e in history]
         if len(roi_values) > 1:
-            window = min(len(roi_values), self.max_cycles)
-            volatility = float(np.std(roi_values[-window:], ddof=1))
+            volatility = float(np.std(np.diff(roi_values), ddof=1))
         else:
             volatility = 0.0
 
@@ -566,20 +565,24 @@ class ForesightTracker:
 
         ent_curve = self.get_entropy_template_curve(workflow_id)
         if ent_curve:
-            template_ent = ent_curve[cycle_index] if cycle_index < len(ent_curve) else ent_curve[-1]
+            template_ent = (
+                ent_curve[cycle_index]
+                if cycle_index < len(ent_curve)
+                else ent_curve[-1]
+            )
         else:
             template_ent = 0.0
         entropy_deviation = last_deg - template_ent
-        effective_slope = slope - entropy_deviation
+        effective_slope = (slope - entropy_deviation) / (1.0 + volatility)
 
         projection: List[float] = []
         proj_roi = last_roi
-        cycles_to_collapse: float | None = 0 if proj_roi <= 0 else None
+        collapse_in: float | None = 0 if proj_roi <= 0 else None
         for i in range(1, horizon + 1):
             proj_roi += effective_slope
             projection.append(proj_roi)
-            if cycles_to_collapse is None and proj_roi <= 0:
-                cycles_to_collapse = float(i)
+            if collapse_in is None and proj_roi <= 0:
+                collapse_in = float(i)
 
         brittle = False
         if len(history) >= 2:
@@ -595,14 +598,14 @@ class ForesightTracker:
             risk = "Stable"
         else:
             steep = slope < -1.0 or second_derivative < -0.1
-            if (cycles_to_collapse is not None and cycles_to_collapse <= 2) or steep:
+            if (collapse_in is not None and collapse_in <= 2) or steep:
                 risk = "Immediate collapse risk"
             else:
                 risk = "Slow decay"
 
         return {
-            "projection": projection,
-            "cycles_to_collapse": cycles_to_collapse,
+            "curve": projection,
+            "collapse_in": collapse_in,
             "risk": risk,
             "brittle": brittle,
         }
