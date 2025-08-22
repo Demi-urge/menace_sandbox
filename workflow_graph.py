@@ -436,16 +436,14 @@ class WorkflowGraph:
                 res, data, logical = self._derive_edge_weights(src_rec, dst_rec)
                 if res == 0 and data == 0 and logical == 0:
                     continue
-                weight = (res + data + logical) / 3.0
                 try:
                     self.add_dependency(
                         src_id,
                         dst_id,
-                        impact_weight=weight,
                         dependency_type="derived",
-                        resource=res,
-                        data=data,
-                        logical=logical,
+                        resource_weight=res,
+                        data_weight=data,
+                        logical_weight=logical,
                     )
                 except ValueError:
                     # Skip edges that would introduce cycles
@@ -458,6 +456,9 @@ class WorkflowGraph:
         *,
         impact_weight: Optional[float] = None,
         dependency_type: Optional[str] = None,
+        resource_weight: Optional[float] = None,
+        data_weight: Optional[float] = None,
+        logical_weight: Optional[float] = None,
         **attrs: Any,
     ) -> None:
         """Add a dependency edge between workflows.
@@ -467,16 +468,28 @@ class WorkflowGraph:
         src, dst:
             Source and destination workflow ids.
         impact_weight:
-            Optional explicit edge weight.  When ``None`` heuristics from
-            :func:`estimate_impact_strength` are used.
+            Optional explicit aggregate edge weight. When omitted the value is
+            derived from the individual ``*_weight`` parameters or, if those are
+            not provided, heuristics from :func:`estimate_impact_strength` are
+            used.
         dependency_type:
             Label describing the dependency category. When omitted the value
             returned from :func:`estimate_impact_strength` is stored.
+        resource_weight, data_weight, logical_weight:
+            Optional per-type weights capturing resource contention, data flow
+            and logical dependency strengths respectively. When ``impact_weight``
+            is not supplied these are averaged to form the overall edge weight.
         attrs:
             Additional edge attributes to persist on the graph.
         """
+        weights = [
+            w for w in (resource_weight, data_weight, logical_weight) if w is not None
+        ]
         if impact_weight is None:
-            impact_weight = estimate_edge_weight(src, dst)
+            if weights:
+                impact_weight = sum(weights) / len(weights)
+            else:
+                impact_weight = estimate_edge_weight(src, dst)
             if dependency_type is None:
                 _, dependency_type = estimate_impact_strength(src, dst)
         else:
@@ -487,6 +500,9 @@ class WorkflowGraph:
         data: Dict[str, Any] = {
             "impact_weight": impact_weight,
             "dependency_type": dependency_type,
+            "resource_weight": resource_weight or 0.0,
+            "data_weight": data_weight or 0.0,
+            "logical_weight": logical_weight or 0.0,
         }
         data.update(attrs)
         with self._lock:
@@ -625,7 +641,14 @@ class WorkflowGraph:
             self._save_unlocked()
 
     def simulate_impact_wave(
-        self, start_id: str, roi_delta: float, synergy_delta: float
+        self,
+        start_id: str,
+        roi_delta: float,
+        synergy_delta: float,
+        *,
+        resource_damping: float = 1.0,
+        data_damping: float = 1.0,
+        logical_damping: float = 1.0,
     ) -> Dict[str, Dict[str, float]]:
         """Propagate ROI and synergy deltas through the graph.
 
@@ -635,6 +658,11 @@ class WorkflowGraph:
             Workflow identifier where the change originates.
         roi_delta, synergy_delta:
             Initial metric deltas for ``start_id``.
+        resource_damping, data_damping, logical_damping:
+            Damping multipliers applied to ``resource_weight``, ``data_weight`` and
+            ``logical_weight`` respectively when combining edge weights.  Values
+            below ``1`` attenuate the influence of the corresponding dependency
+            type while values above ``1`` amplify it.
 
         Returns
         -------
@@ -644,18 +672,37 @@ class WorkflowGraph:
 
         start_id = str(start_id)
 
+        def _edge_weight(data: Dict[str, Any]) -> float:
+            rw = float(data.get("resource_weight", 0.0) or 0.0)
+            dw = float(data.get("data_weight", 0.0) or 0.0)
+            lw = float(data.get("logical_weight", 0.0) or 0.0)
+            num = 0.0
+            denom = 0
+            if rw > 0:
+                num += rw * resource_damping
+                denom += 1
+            if dw > 0:
+                num += dw * data_damping
+                denom += 1
+            if lw > 0:
+                num += lw * logical_damping
+                denom += 1
+            if denom == 0:
+                return float(data.get("impact_weight", 0.0) or 0.0)
+            return num / denom
+
         def _outgoing(src: str):
             """Yield ``(dst, weight)`` pairs for positive weighted edges."""
 
             if _HAS_NX:
                 for _, dst, data in self.graph.out_edges(src, data=True):
-                    weight = float(data.get("impact_weight", 0.0) or 0.0)
+                    weight = _edge_weight(data)
                     if weight > 0.0:
                         yield dst, weight
             else:  # pragma: no cover - simple dict based fallback
                 edges = self.graph.get("edges", {})
                 for dst, data in edges.get(src, {}).items():
-                    weight = float(data.get("impact_weight", 0.0) or 0.0)
+                    weight = _edge_weight(data)
                     if weight > 0.0:
                         yield dst, weight
 
