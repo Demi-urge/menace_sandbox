@@ -16,6 +16,7 @@ from typing import Iterable, Sequence, Any, Optional
 import pandas as pd
 import logging
 import json
+import os
 
 try:  # pragma: no cover - optional dependency
     from .logging_utils import log_record
@@ -122,13 +123,25 @@ class RankingModelScheduler:
         # Accumulators for retrieval feedback events so short term ROI swings
         # or win-rate drops can trigger rapid retraining without waiting for
         # the periodic loop.
-        self._roi_feedback_total: float = 0.0
+        self._roi_feedback_totals: dict[str, float] = {}
         self._feedback_events: int = 0
         self._feedback_wins: int = 0
+        if self.roi_signal_threshold is None:
+            env_thresh = os.getenv("RANKER_SCHEDULER_ROI_THRESHOLD")
+            if env_thresh:
+                try:
+                    self.roi_signal_threshold = float(env_thresh)
+                except Exception:
+                    pass
+
         self.event_bus = event_bus
         if self.event_bus is None and UnifiedEventBus is not None:
             try:
-                self.event_bus = UnifiedEventBus()
+                persist = os.getenv("RANKER_SCHEDULER_EVENT_LOG")
+                rabbit = os.getenv("RANKER_SCHEDULER_RABBITMQ_HOST")
+                self.event_bus = UnifiedEventBus(
+                    persist_path=persist, rabbitmq_host=rabbit
+                )
             except Exception:
                 self.event_bus = None
         if self.event_bus is not None:
@@ -194,16 +207,22 @@ class RankingModelScheduler:
         except Exception:
             roi = 0.0
         win = bool(event.get("win"))
+        origin = str(event.get("db") or event.get("origin") or "")
 
-        self._roi_feedback_total += roi
         self._feedback_events += 1
         if win:
             self._feedback_wins += 1
+        if origin:
+            total = self._roi_feedback_totals.get(origin, 0.0) + roi
+            self._roi_feedback_totals[origin] = total
+        else:
+            total = roi
 
         triggered = False
-        if self.roi_signal_threshold is not None:
-            if abs(self._roi_feedback_total) >= self.roi_signal_threshold:
+        if self.roi_signal_threshold is not None and origin:
+            if abs(self._roi_feedback_totals[origin]) >= self.roi_signal_threshold:
                 triggered = True
+                self._roi_feedback_totals[origin] = 0.0
         if (
             not triggered
             and self.win_rate_threshold is not None
@@ -216,16 +235,18 @@ class RankingModelScheduler:
         if not triggered:
             return
 
-        threshold = self.win_rate_threshold if self.win_rate_threshold is not None else 0.5
+        threshold = (
+            self.win_rate_threshold if self.win_rate_threshold is not None else 0.5
+        )
         try:
             if needs_retrain(self.vector_db, threshold):
                 self.retrain_and_reload()
         except Exception:
             logging.exception("ranking model retrain failed")
         finally:
-            self._roi_feedback_total = 0.0
             self._feedback_events = 0
             self._feedback_wins = 0
+            self._roi_feedback_totals = {}
 
     # ------------------------------------------------------------------
     def _persist_model_path(self, new_path: Path, *, keep: int = 3) -> None:

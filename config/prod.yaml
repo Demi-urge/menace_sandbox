@@ -13,3 +13,5 @@ api_keys:
 # Ranker scheduler environment variables:
 # - RANKER_SCHEDULER_INTERVAL: seconds between retrains (0 disables)
 # - RANKER_SCHEDULER_ROI_THRESHOLD: ROI delta triggering immediate retrain
+# - RANKER_SCHEDULER_EVENT_LOG: path to SQLite log for UnifiedEventBus
+# - RANKER_SCHEDULER_RABBITMQ_HOST: RabbitMQ host for event mirroring
