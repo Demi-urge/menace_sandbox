@@ -548,14 +548,23 @@ class WorkflowGraph:
         start_id = str(start_id)
 
         def _outgoing(src: str):
+            """Yield ``(dst, weight)`` pairs for positive weighted edges."""
+
             if _HAS_NX:
                 for _, dst, data in self.graph.out_edges(src, data=True):
-                    yield dst, float(data.get("impact_weight", 0.0) or 0.0)
-            else:
+                    weight = float(data.get("impact_weight", 0.0) or 0.0)
+                    if weight > 0.0:
+                        yield dst, weight
+            else:  # pragma: no cover - simple dict based fallback
                 edges = self.graph.get("edges", {})
                 for dst, data in edges.get(src, {}).items():
-                    yield dst, float(data.get("impact_weight", 0.0) or 0.0)
+                    weight = float(data.get("impact_weight", 0.0) or 0.0)
+                    if weight > 0.0:
+                        yield dst, weight
 
+        # Determine all nodes reachable from ``start_id`` following weighted
+        # edges.  This restricts the subgraph considered in the simulation and
+        # keeps the topological sort small.
         reachable: set[str] = {start_id}
         stack = [start_id]
         while stack:
@@ -565,22 +574,24 @@ class WorkflowGraph:
                     reachable.add(nbr)
                     stack.append(nbr)
 
+        # Topologically order the subgraph induced by the reachable nodes so we
+        # always process predecessors before their dependants.
         if _HAS_NX:
             sub = self.graph.subgraph(reachable).copy()
             order = list(nx.topological_sort(sub))
-        else:
+        else:  # pragma: no cover - manual topo sort for fallback graph format
             edges = self.graph.get("edges", {})
             indeg: Dict[str, int] = {n: 0 for n in reachable}
             for src in reachable:
-                for dst in edges.get(src, {}):
+                for dst, _data in edges.get(src, {}).items():
                     if dst in indeg:
                         indeg[dst] += 1
-            q = deque([n for n, d in indeg.items() if d == 0])
+            q: deque[str] = deque([n for n, d in indeg.items() if d == 0])
             order: list[str] = []
             while q:
                 n = q.popleft()
                 order.append(n)
-                for dst in edges.get(n, {}):
+                for dst, _data in edges.get(n, {}).items():
                     if dst in indeg:
                         indeg[dst] -= 1
                         if indeg[dst] == 0:
@@ -589,10 +600,12 @@ class WorkflowGraph:
         impacts: Dict[str, Dict[str, float]] = {
             start_id: {"roi": roi_delta, "synergy": synergy_delta}
         }
+
         for node in order:
             current = impacts.get(node, {"roi": 0.0, "synergy": 0.0})
             for dst, weight in _outgoing(node):
                 if dst not in reachable:
+                    # Only propagate to nodes in the connected subgraph.
                     continue
                 dest = impacts.setdefault(dst, {"roi": 0.0, "synergy": 0.0})
                 dest["roi"] += current["roi"] * weight
