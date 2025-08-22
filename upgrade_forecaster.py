@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable, List
 
 import json
+import time
 import numpy as np
 
 from foresight_tracker import ForesightTracker
@@ -225,6 +226,7 @@ class UpgradeForecaster:
                 "patch": list(patch) if not isinstance(patch, str) else patch,
                 "projections": [p.__dict__ for p in projections],
                 "confidence": result.confidence,
+                "timestamp": int(time.time()),
             }
             out_path = self.records_base / f"{wf_id}.json"
             with out_path.open("w", encoding="utf8") as fh:
@@ -240,5 +242,33 @@ class UpgradeForecaster:
         return result
 
 
-__all__ = ["CycleProjection", "ForecastResult", "UpgradeForecaster"]
+def load_record(
+    workflow_id: str, records_base: str | Path = "forecast_records"
+) -> ForecastResult:
+    """Load a persisted forecast record.
+
+    Parameters
+    ----------
+    workflow_id:
+        Identifier of the workflow whose record should be loaded.
+    records_base:
+        Directory containing forecast records. Defaults to ``"forecast_records"``.
+
+    Returns
+    -------
+    ForecastResult
+        The deserialised forecast result.
+    """
+
+    wf_id = str(workflow_id)
+    path = Path(records_base) / f"{wf_id}.json"
+    with path.open("r", encoding="utf8") as fh:
+        data = json.load(fh)
+
+    projections = [CycleProjection(**p) for p in data.get("projections", [])]
+    confidence = float(data.get("confidence", 0.0))
+    return ForecastResult(projections, confidence)
+
+
+__all__ = ["CycleProjection", "ForecastResult", "UpgradeForecaster", "load_record"]
 
