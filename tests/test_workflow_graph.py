@@ -1,61 +1,105 @@
 import pytest
-import pytest
-
-import menace.task_handoff_bot as thb
-from menace.unified_event_bus import UnifiedEventBus
 import workflow_graph as wg
+from dataclasses import dataclass
+
+
+@dataclass
+class WorkflowRecord:
+    workflow: list[str]
+    title: str
+    description: str
+    wid: int = 0
+
+
+class MiniWorkflowDB:
+    """Very small in-memory stand-in for the real WorkflowDB."""
+
+    def __init__(self) -> None:
+        self._next = 1
+
+    def add(self, record: WorkflowRecord) -> int:
+        record.wid = self._next
+        self._next += 1
+        return record.wid
 
 
 @pytest.fixture
-def populated_graph(tmp_path, monkeypatch):
-    """Return a graph with three interconnected workflows."""
-    bus = UnifiedEventBus()
-    g = wg.WorkflowGraph(path=str(tmp_path / "graph.json"))
-    g.attach_event_bus(bus)
+def mini_graph(tmp_path, monkeypatch):
+    """Return a small workflow graph populated with a few dependencies."""
 
-    monkeypatch.setattr(thb.WorkflowDB, "_embed", lambda self, text: [])
-    db = thb.WorkflowDB(tmp_path / "wf.db", event_bus=bus)
-    wids = [
-        db.add(thb.WorkflowRecord(workflow=[name], title=name, description=name))
-        for name in ("A", "B", "C")
-    ]
-    a, b, c = map(str, wids)
+    # Avoid expensive database bootstrap from existing files.
+    monkeypatch.setattr(wg.WorkflowGraph, "populate_from_db", lambda self, db_path=None: None)
 
-    calls = []
+    graph_path = tmp_path / "graph.json"
+    g = wg.WorkflowGraph(path=str(graph_path))
 
-    def fake_weight(src, dst):
+    db = MiniWorkflowDB()
+    names = ["A", "B", "C", "D"]
+    wids = [str(db.add(WorkflowRecord(workflow=[n], title=n, description=n))) for n in names]
+    for wid in wids:
+        g.add_workflow(wid)
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_weight(src: str, dst: str) -> float:
         calls.append((src, dst))
         return 0.5
 
     monkeypatch.setattr(wg, "estimate_edge_weight", fake_weight)
-    g.add_dependency(a, b)
-    g.add_dependency(b, c)
-    return g, (a, b, c), calls
+
+    # A influences B and C, B influences D – a simple DAG.
+    g.add_dependency(wids[0], wids[1])
+    g.add_dependency(wids[0], wids[2])
+    g.add_dependency(wids[1], wids[3])
+
+    return g, wids, calls, graph_path
 
 
-def test_node_edge_weight_and_wave(populated_graph, monkeypatch):
-    g, (a, b, c), calls = populated_graph
+def test_graph_round_trip_and_wave(mini_graph, monkeypatch):
+    g, wids, calls, graph_path = mini_graph
+    a, b, c, d = wids
+
+    # Graph structure is a DAG and edge weights were requested for each edge.
+    assert not g._graph_has_cycle()
+    assert sorted(calls) == sorted([(a, b), (a, c), (b, d)])
 
     if g._backend == "networkx":
-        assert g.graph.has_node(a)
-        assert g.graph.has_node(b)
-        assert g.graph.has_node(c)
+        assert g.graph.has_node(a) and g.graph.has_node(b)
         assert g.graph[a][b]["impact_weight"] == 0.5
-        assert g.graph[b][c]["impact_weight"] == 0.5
+        assert g.graph[a][c]["impact_weight"] == 0.5
+        assert g.graph[b][d]["impact_weight"] == 0.5
     else:
-        assert a in g.graph["nodes"]
-        assert b in g.graph["nodes"]
-        assert c in g.graph["nodes"]
-        assert g.graph["edges"][a][b]["impact_weight"] == 0.5
-        assert g.graph["edges"][b][c]["impact_weight"] == 0.5
+        nodes = g.graph.get("nodes", {})
+        edges = g.graph.get("edges", {})
+        assert {a, b, c, d}.issubset(nodes)
+        assert edges[a][b]["impact_weight"] == 0.5
+        assert edges[a][c]["impact_weight"] == 0.5
+        assert edges[b][d]["impact_weight"] == 0.5
 
-    assert calls == [(a, b), (b, c)]
+    # Persist to disk and load into a fresh graph instance.
+    g.save()
 
-    result = g.simulate_impact_wave(a, 1.0, 0.2)
+    monkeypatch.setattr(wg.WorkflowGraph, "populate_from_db", lambda self, db_path=None: None)
+    g2 = wg.WorkflowGraph(path=str(graph_path))
+
+    if g2._backend == "networkx":
+        assert set(g2.graph.edges()) == {(a, b), (a, c), (b, d)}
+    else:
+        edges2 = g2.graph.get("edges", {})
+        assert set(edges2.get(a, {}).keys()) == {b, c}
+        assert set(edges2.get(b, {}).keys()) == {d}
+        assert edges2.get(c, {}) == {}
+        assert edges2.get(d, {}) == {}
+
+    # Impact wave propagation should respect edge weights.
+    result = g2.simulate_impact_wave(a, 1.0, 0.2)
 
     assert result[a]["roi"] == pytest.approx(1.0)
     assert result[b]["roi"] == pytest.approx(0.5)
-    assert result[c]["roi"] == pytest.approx(0.25)
+    assert result[c]["roi"] == pytest.approx(0.5)
+    assert result[d]["roi"] == pytest.approx(0.25)
     assert result[a]["synergy"] == pytest.approx(0.2)
     assert result[b]["synergy"] == pytest.approx(0.1)
-    assert result[c]["synergy"] == pytest.approx(0.05)
+    assert result[c]["synergy"] == pytest.approx(0.1)
+    assert result[d]["synergy"] == pytest.approx(0.05)
+
