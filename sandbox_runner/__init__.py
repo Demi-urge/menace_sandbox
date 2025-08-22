@@ -95,14 +95,17 @@ else:  # defer heavy imports until needed
 
 
 def simulate_temporal_trajectory(
-    workflow_id, tracker=None, foresight_tracker=None
+    workflow_id, workflow, tracker=None, foresight_tracker=None
 ):
     if _env_simulate_temporal_trajectory is None:
         loader = globals().get("_load_env")
         if loader:
             loader()
     return _env_simulate_temporal_trajectory(
-        workflow_id, tracker=tracker, foresight_tracker=foresight_tracker
+        workflow_id,
+        workflow,
+        tracker=tracker,
+        foresight_tracker=foresight_tracker,
     )
 
 

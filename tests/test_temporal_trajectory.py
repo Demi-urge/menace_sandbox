@@ -15,11 +15,11 @@ os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 try:
     from sandbox_runner.environment import (
         simulate_temporal_trajectory,
-        temporal_trajectory_presets,
+        temporal_presets,
     )
 except SystemExit:
     simulate_temporal_trajectory = None  # type: ignore
-    temporal_trajectory_presets = None  # type: ignore
+    temporal_presets = None  # type: ignore
     pytest.skip(
         "sandbox environment requires missing system packages",
         allow_module_level=True,
@@ -28,58 +28,43 @@ except SystemExit:
 from foresight_tracker import ForesightTracker
 
 
-SCENARIOS = [p["SCENARIO_NAME"] for p in temporal_trajectory_presets()]
+SCENARIOS = [p["SCENARIO_NAME"] for p in temporal_presets()]
 
 # record the order in which scenarios are executed
 stage_calls: list[str] = []
 
 
-class _DummyTracker:
-    pass
+def _fake_sim_env(snippet, env_input, container=None):
+    stage_calls.append(env_input.get("SCENARIO_NAME"))
+    return {}
 
 
-def _fake_run_scenarios(workflow, tracker=None, presets=None, foresight_tracker=None):
-    if tracker is None:
-        tracker = _DummyTracker()
-    names = [p["SCENARIO_NAME"] for p in presets]
-    stage_calls.extend(names)
-    summary = {"scenarios": {}}
-    for idx, name in enumerate(names):
-        roi = float(idx)
-        summary["scenarios"][name] = {"roi": roi, "metrics": {"resilience": roi}}
-    return tracker, {}, summary
+async def _fake_section_worker(snippet, env_input, threshold):
+    idx = len(stage_calls) - 1
+    roi = float(-idx)
+    metrics = {"resilience": roi}
+    return {}, [(0.0, roi, metrics)]
 
 
 def test_simulate_temporal_trajectory_order_and_history(monkeypatch):
     stage_calls.clear()
     monkeypatch.setattr(
-        "sandbox_runner.environment.run_scenarios", _fake_run_scenarios
+        "sandbox_runner.environment.simulate_execution_environment",
+        _fake_sim_env,
     )
-    class _FakeWorkflowDB:
-        def __init__(self, *a, **k):
-            self.conn = self
-
-        def execute(self, *a, **k):
-            return self
-
-        def fetchone(self):
-            return {"workflow": "simple_functions.print_ten", "task_sequence": ""}
-
-    stub_db_mod = types.ModuleType("menace.task_handoff_bot")
-    stub_db_mod.WorkflowDB = _FakeWorkflowDB  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "menace.task_handoff_bot", stub_db_mod)
+    monkeypatch.setattr(
+        "sandbox_runner.environment._section_worker", _fake_section_worker
+    )
 
     ft = ForesightTracker()
-    simulate_temporal_trajectory(0, foresight_tracker=ft)
+    simulate_temporal_trajectory("0", ["simple_functions.print_ten"], foresight_tracker=ft)
 
-    # stages should execute in the expected order
     assert stage_calls == SCENARIOS
 
     history = list(ft.history["0"])
-    assert len(history) == 5
-    expected_keys = {"roi_delta", "resilience", "stability", "scenario_degradation"}
+    assert len(history) == len(SCENARIOS)
+    expected_keys = {"roi_delta", "resilience", "scenario_degradation"}
     assert all(expected_keys <= set(entry) for entry in history)
-    assert [entry["roi_delta"] for entry in history] == [0.0, 1.0, 2.0, 3.0, 4.0]
-    assert [entry["resilience"] for entry in history] == [0.0, 1.0, 2.0, 3.0, 4.0]
+    assert [entry["roi_delta"] for entry in history] == [0.0, -1.0, -2.0, -3.0, -4.0]
+    assert [entry["resilience"] for entry in history] == [0.0, -1.0, -2.0, -3.0, -4.0]
     assert [entry["scenario_degradation"] for entry in history] == [0.0, -1.0, -2.0, -3.0, -4.0]
-    assert [entry["stability"] for entry in history] == [0.0, 0.0, 1.0, 0.0, 0.0]
