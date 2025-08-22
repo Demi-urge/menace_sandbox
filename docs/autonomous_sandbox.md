@@ -146,12 +146,14 @@ progresses through ``normal``, ``high_latency``, ``resource_strain``,
 ``schema_drift`` and ``chaotic_failure`` presets, each introducing additional
 network delay, resource pressure or data corruption. The function accepts a
 ``workflow_id`` and automatically loads the associated steps from
-``WorkflowDB``. For every stage the sandbox records the scenario's ROI, the
-associated resilience score and how far the ROI falls from the baseline run.
+``WorkflowDB``. For every stage the sandbox records the scenario's name under a
+``stage`` field together with the ROI, the associated resilience score and how
+far the ROI falls from the baseline run. A ``stability`` value derived from the
+rolling window summarises how rapidly performance decays across the stages.
 
 Supplying a :class:`ForesightTracker` records these measurements with
-``compute_stability=True`` so the tracker stores per‑stage ROI/resilience
-values, degradation and an overall stability reading:
+``compute_stability=True`` so the tracker stores per‑stage ROI/resilience values,
+the scenario degradation and the computed ``stability`` reading:
 
 ```python
 from sandbox_runner.environment import simulate_temporal_trajectory
@@ -161,9 +163,9 @@ foresight = ForesightTracker()
 simulate_temporal_trajectory(workflow_id, foresight_tracker=foresight)
 ```
 
-Each cycle logged in ``foresight.history`` includes ``roi_delta``,
+Each cycle logged in ``foresight.history`` includes ``stage``, ``roi_delta``,
 ``resilience``, ``scenario_degradation`` and the computed ``stability`` score,
-enabling early detection of regressions under escalating entropy.
+allowing long‑term decay to be modelled as stability drops between stages.
 
 ## Human alignment flagger
 

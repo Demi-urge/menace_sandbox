@@ -66,8 +66,10 @@ negative delta is reported as the worst case.
 
 Use :func:`simulate_temporal_trajectory` to gauge how a workflow behaves as
 conditions degrade. The helper runs the workflow through a deterministic set of
-presets and records ROI, resilience, degradation and stability for each stage.
-It can be invoked from the CLI or directly from Python:
+presets and records the stage name, ROI, resilience, degradation and a
+``stability`` score for each step. These extra fields allow the sandbox to model
+long‑term decay by tracking how stability drops as stages progress. It can be
+invoked from the CLI or directly from Python:
 
 ```bash
 python -m sandbox_runner.cli --simulate-temporal-trajectory 42
@@ -92,8 +94,8 @@ The stages execute in the following order:
 | `chaotic_failure` | broken authentication and corrupt payloads |
 
 Metrics for each stage are returned alongside the updated tracker and, when a
-``ForesightTracker`` is supplied, appended to ``foresight.history`` for later
-analysis.
+``ForesightTracker`` is supplied, appended to ``foresight.history`` with the
+associated ``stage`` and ``stability`` values for later analysis.
 
 ## Algorithm Overview
 
