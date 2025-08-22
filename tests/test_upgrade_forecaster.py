@@ -87,7 +87,38 @@ def test_sim_failure_falls_back_to_template(monkeypatch, tmp_path):
         pytest.approx(0.3),
     ]
     assert result.confidence == pytest.approx(0.0)
-    assert logs and "error" in logs[0]
+    assert logs and logs[0]["event"] == "simulate_temporal_trajectory_failed"
+    assert logs[0]["workflow_id"] == "wf"
+    assert logs[0]["patch"] == []
+    assert logs[0]["cycles"] == 3
+
+
+def test_record_write_error_logged(monkeypatch, tmp_path):
+    def fake_load(self):
+        self.templates = {"wf": [0.1, 0.2, 0.3]}
+        self.workflow_profiles["wf"] = "wf"
+
+    monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
+    tracker = ForesightTracker()
+
+    logs = []
+
+    class DummyLogger:
+        def log(self, data):
+            logs.append(data)
+
+    forecaster = UpgradeForecaster(
+        tracker, records_base=tmp_path, logger=DummyLogger()
+    )
+
+    def boom_open(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("upgrade_forecaster.Path.open", boom_open)
+
+    result = forecaster.forecast("wf", patch=[], cycles=3)
+    assert isinstance(result, ForecastResult)
+    assert any(l["event"] == "record_write_failed" for l in logs)
 
 
 def test_entropy_template_usage(monkeypatch, tmp_path):

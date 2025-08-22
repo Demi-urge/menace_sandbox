@@ -9,6 +9,7 @@ from typing import Iterable, List
 import json
 import time
 import hashlib
+import logging
 import numpy as np
 
 try:  # pragma: no cover - allow package or local imports
@@ -72,6 +73,37 @@ class UpgradeForecaster:
         self.logger = logger
         self.simulations = max(3, min(5, int(simulations)))
 
+    def _log_error(
+        self,
+        event: str,
+        wf_id: str,
+        patch_summary: object,
+        cycles: int,
+        exc: Exception,
+    ) -> None:
+        """Log an exception via the provided logger or the std logging module."""
+        record = {
+            "event": event,
+            "workflow_id": wf_id,
+            "patch": patch_summary,
+            "cycles": cycles,
+            "error": repr(exc),
+        }
+        if self.logger is not None:
+            try:
+                self.logger.log(record)
+            except Exception:  # pragma: no cover - best effort
+                logging.exception("forecast logging failed: %s", event)
+        else:
+            logging.error(
+                "%s wf=%s patch=%s cycles=%s error=%s",
+                event,
+                wf_id,
+                patch_summary if isinstance(patch_summary, str) else repr(patch_summary),
+                cycles,
+                exc,
+            )
+
     # ------------------------------------------------------------------
     def forecast(
         self,
@@ -102,8 +134,8 @@ class UpgradeForecaster:
         conf_runs: List[List[float]] = []
         entropy_runs: List[List[float]] = []
         risk_runs: List[List[float]] = []
-        try:
-            for _ in range(simulations):
+        for _ in range(simulations):
+            try:
                 roi_tracker = simulate_temporal_trajectory(
                     wf_id, patch, foresight_tracker=self.tracker
                 )
@@ -116,28 +148,17 @@ class UpgradeForecaster:
                     metrics_hist.get("synergy_shannon_entropy", []) or []
                 )
                 risk_runs.append(metrics_hist.get("synergy_risk_index", []) or [])
-        except Exception as exc:  # pragma: no cover - exercised in tests
-            roi_runs = []
-            conf_runs = []
-            entropy_runs = []
-            risk_runs = []
-            samples = 0
-            cold_start = True
-            if self.logger is not None:
-                try:
-                    self.logger.log(
-                        {
-                            "workflow_id": wf_id,
-                            "patch": patch_repr,
-                            "error": repr(exc),
-                            "event": "simulate_temporal_trajectory_failed",
-                        }
-                    )
-                except Exception:
-                    pass
-        else:
-            samples = len(self.tracker.history.get(wf_id, []))
-            cold_start = self.tracker.is_cold_start(wf_id)
+            except Exception as exc:  # pragma: no cover - exercised in tests
+                self._log_error(
+                    "simulate_temporal_trajectory_failed",
+                    wf_id,
+                    patch_repr,
+                    cycles,
+                    exc,
+                )
+
+        samples = len(self.tracker.history.get(wf_id, []))
+        cold_start = self.tracker.is_cold_start(wf_id)
 
         def _pad(runs: List[List[float]]) -> List[List[float]]:
             return [
@@ -367,34 +388,37 @@ class UpgradeForecaster:
         result = ForecastResult(projections, float(forecast_confidence), upgrade_id)
 
         # Persist record to disk and optionally log
+        record = {
+            "workflow_id": wf_id,
+            "patch": patch_repr,
+            "upgrade_id": upgrade_id,
+            "projections": [p.__dict__ for p in projections],
+            "confidence": result.confidence,
+            "timestamp": int(time.time()),
+        }
+        out_path = self.records_base / f"{wf_id}_{patch_hash}.json"
         try:
-            record = {
-                "workflow_id": wf_id,
-                "patch": patch_repr,
-                "upgrade_id": upgrade_id,
-                "projections": [p.__dict__ for p in projections],
-                "confidence": result.confidence,
-                "timestamp": int(time.time()),
-            }
-            out_path = self.records_base / f"{wf_id}_{patch_hash}.json"
             with out_path.open("w", encoding="utf8") as fh:
                 json.dump(record, fh)
-
-            # remove legacy single-file record if present
+        except Exception as exc:  # pragma: no cover - exercised in tests
+            self._log_error(
+                "record_write_failed", wf_id, patch_repr, cycles, exc
+            )
+        else:
             legacy_path = self.records_base / f"{wf_id}.json"
-            if legacy_path.exists():
-                try:
+            try:
+                if legacy_path.exists():
                     legacy_path.unlink()
-                except Exception:
-                    pass
+            except Exception as exc:  # pragma: no cover - exercised in tests
+                self._log_error(
+                    "record_cleanup_failed", wf_id, patch_repr, cycles, exc
+                )
 
-            if self.logger is not None:
-                try:
-                    self.logger.log(record)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        if self.logger is not None:
+            try:
+                self.logger.log(record)
+            except Exception as exc:  # pragma: no cover - best effort
+                self._log_error("record_log_failed", wf_id, patch_repr, cycles, exc)
 
         return result
 
