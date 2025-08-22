@@ -271,6 +271,36 @@ def test_forecast_confidence_sample_variance(monkeypatch, tmp_path):
     ).confidence
     assert low_var > high_var
 
+def test_cold_start_confidence_variance(monkeypatch, tmp_path):
+    def fake_load(self):
+        self.templates = {"wf": [0.2, 0.2, 0.2]}
+        self.workflow_profiles["wf"] = "wf"
+
+    monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
+    tracker = ForesightTracker()
+    for _ in range(3):
+        tracker.record_cycle_metrics("wf", {"roi_delta": 0.0})
+    forecaster = UpgradeForecaster(tracker, records_base=tmp_path)
+
+    def sim_low(*a, **k):
+        return types.SimpleNamespace(roi_history=[0.2, 0.2, 0.2], metrics_history={})
+
+    monkeypatch.setattr(
+        "upgrade_forecaster.simulate_temporal_trajectory", sim_low
+    )
+    low_conf = forecaster.forecast("wf", patch=[], cycles=3).confidence
+
+    def sim_high(*a, **k):
+        return types.SimpleNamespace(roi_history=[0.0, 1.0, -1.0], metrics_history={})
+
+    monkeypatch.setattr(
+        "upgrade_forecaster.simulate_temporal_trajectory", sim_high
+    )
+    high_conf = forecaster.forecast("wf", patch=[], cycles=3).confidence
+
+    assert low_conf > high_conf
+
+
 
 def test_multiple_forecasts_coexist(monkeypatch, tmp_path):
     class DummyTracker:
