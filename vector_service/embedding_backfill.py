@@ -464,12 +464,12 @@ async def schedule_backfill(
     if backend is not None:
         backfill.backend = backend
 
-    subclasses = backfill._load_known_dbs(names=list(dbs) if dbs else None)
+    names = list(dbs) if dbs else list(_registry.get_db_registry().keys())
 
-    async def _run(cls: type) -> None:
-        await asyncio.to_thread(backfill.run, db=cls.__name__)
+    async def _run(name: str) -> None:
+        await asyncio.to_thread(backfill.run, db=name)
 
-    await asyncio.gather(*[_run(cls) for cls in subclasses])
+    await asyncio.gather(*[_run(name) for name in names])
 
 
 __all__ = [
