@@ -23,6 +23,7 @@ class MiniSelfImprovementEngine:
     def __init__(self, tracker, foresight_tracker):
         self.tracker = tracker
         self.foresight_tracker = foresight_tracker
+        self.workflow_ready = False
 
     def run_cycle(self, workflow_id="wf"):
         delta = self.tracker.next_delta()
@@ -41,6 +42,15 @@ class MiniSelfImprovementEngine:
             },
             compute_stability=True,
         )
+
+    def attempt_promotion(self, workflow_id="wf"):
+        risk = self.foresight_tracker.predict_roi_collapse(workflow_id)
+        if risk.get("risk_class") == "Immediate collapse risk" or risk.get(
+            "brittle"
+        ):
+            self.workflow_ready = False
+        else:
+            self.workflow_ready = True
 
 
 def test_run_cycle_records_and_stability():
@@ -93,3 +103,22 @@ def test_metrics_persist_through_save_load(tmp_path):
     with history_file.open("r", encoding="utf-8") as fh:
         final = json.load(fh)
     assert [e["roi_delta"] for e in final["history"]["wf"]] == [1.0, 2.0]
+
+
+def test_promotion_blocked_by_risk_or_brittleness():
+    ft = ForesightTracker()
+    tracker = DummyROITracker([1.0])
+    eng = MiniSelfImprovementEngine(tracker, ft)
+
+    # Immediate collapse risk should block promotion
+    ft.predict_roi_collapse = lambda wf: {
+        "risk_class": "Immediate collapse risk",
+        "brittle": False,
+    }
+    eng.attempt_promotion()
+    assert not eng.workflow_ready
+
+    # Brittleness alone should also block promotion
+    ft.predict_roi_collapse = lambda wf: {"risk_class": "Stable", "brittle": True}
+    eng.attempt_promotion()
+    assert not eng.workflow_ready
