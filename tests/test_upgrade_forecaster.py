@@ -77,11 +77,13 @@ def test_forecast_writes_record(monkeypatch, tmp_path):
     forecaster = UpgradeForecaster(tracker, records_base=tmp_path)
 
     forecaster.forecast("wf", patch="patch123", cycles=3)
-    files = list(tmp_path.iterdir())
+    files = list(tmp_path.glob("wf_*.json"))
     assert files, "forecast record not created"
     data = json.loads(files[0].read_text())
+    patch_id = files[0].stem.split("_", 1)[1]
     assert data["workflow_id"] == "wf"
     assert data["patch"] == "patch123"
+    assert data["patch_id"] == patch_id
     assert len(data["projections"]) == 3
     assert isinstance(data["confidence"], float)
     assert isinstance(data.get("timestamp"), (int, float))
@@ -258,3 +260,48 @@ def test_forecast_confidence_sample_variance(monkeypatch, tmp_path):
     ).confidence
     assert low_var > high_var
 
+
+def test_multiple_forecasts_coexist(monkeypatch, tmp_path):
+    class DummyTracker:
+        def __init__(self):
+            self.history = {"wf": [{"roi_delta": 0.0}]}
+
+        def is_cold_start(self, _wf: str) -> bool:
+            return False
+
+        def get_trend_curve(self, _wf: str):
+            return 0.0, 0.0, 1.0
+
+        def get_temporal_profile(self, _wf: str):
+            return list(self.history["wf"])
+
+        def get_template_curve(self, _wf: str):
+            return []
+
+    def sim(_wf, patch, foresight_tracker=None):
+        val = 0.1 if patch == ["p1"] else 0.2
+        return types.SimpleNamespace(roi_history=[val], metrics_history={})
+
+    monkeypatch.setattr("upgrade_forecaster.simulate_temporal_trajectory", sim)
+    tracker = DummyTracker()
+    forecaster = UpgradeForecaster(tracker, records_base=tmp_path, horizon=1)
+
+    forecaster.forecast("wf", patch=["p1"], cycles=1)
+    files = list(tmp_path.glob("wf_*.json"))
+    patch1_id = files[0].stem.split("_", 1)[1]
+
+    forecaster.forecast("wf", patch=["p2"], cycles=1)
+    files = list(tmp_path.glob("wf_*.json"))
+    assert len(files) == 2
+    patch_ids = {f.stem.split("_", 1)[1] for f in files}
+    assert patch1_id in patch_ids
+
+    patch2_id = (patch_ids - {patch1_id}).pop()
+
+    first = load_record("wf", patch_id=patch1_id, records_base=tmp_path)
+    second = load_record("wf", patch_id=patch2_id, records_base=tmp_path)
+    latest = load_record("wf", records_base=tmp_path)
+
+    assert first.projections[0].roi == pytest.approx(0.1)
+    assert second.projections[0].roi == pytest.approx(0.2)
+    assert latest.projections[0].roi == pytest.approx(0.2)

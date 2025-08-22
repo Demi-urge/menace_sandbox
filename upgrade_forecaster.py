@@ -8,10 +8,18 @@ from typing import Iterable, List
 
 import json
 import time
+import hashlib
 import numpy as np
 
-from foresight_tracker import ForesightTracker
-from sandbox_runner.environment import simulate_temporal_trajectory
+try:  # pragma: no cover - allow package or local imports
+    from .foresight_tracker import ForesightTracker
+except Exception:  # pragma: no cover
+    from foresight_tracker import ForesightTracker  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from sandbox_runner.environment import simulate_temporal_trajectory
+except Exception:  # pragma: no cover
+    def simulate_temporal_trajectory(*args, **kwargs):  # type: ignore[override]
+        return None
 
 
 @dataclass(frozen=True)
@@ -221,14 +229,19 @@ class UpgradeForecaster:
 
         # Persist record to disk and optionally log
         try:
+            patch_repr = list(patch) if not isinstance(patch, str) else patch
+            patch_id = hashlib.sha1(
+                json.dumps(patch_repr, sort_keys=True).encode("utf8")
+            ).hexdigest()
             record = {
                 "workflow_id": wf_id,
-                "patch": list(patch) if not isinstance(patch, str) else patch,
+                "patch": patch_repr,
+                "patch_id": patch_id,
                 "projections": [p.__dict__ for p in projections],
                 "confidence": result.confidence,
                 "timestamp": int(time.time()),
             }
-            out_path = self.records_base / f"{wf_id}.json"
+            out_path = self.records_base / f"{wf_id}_{patch_id}.json"
             with out_path.open("w", encoding="utf8") as fh:
                 json.dump(record, fh)
             if self.logger is not None:
@@ -243,7 +256,9 @@ class UpgradeForecaster:
 
 
 def load_record(
-    workflow_id: str, records_base: str | Path = "forecast_records"
+    workflow_id: str,
+    patch_id: str | None = None,
+    records_base: str | Path = "forecast_records",
 ) -> ForecastResult:
     """Load a persisted forecast record.
 
@@ -251,6 +266,9 @@ def load_record(
     ----------
     workflow_id:
         Identifier of the workflow whose record should be loaded.
+    patch_id:
+        Identifier of the patch. When omitted, the most recent record for the
+        workflow is returned.
     records_base:
         Directory containing forecast records. Defaults to ``"forecast_records"``.
 
@@ -261,9 +279,28 @@ def load_record(
     """
 
     wf_id = str(workflow_id)
-    path = Path(records_base) / f"{wf_id}.json"
-    with path.open("r", encoding="utf8") as fh:
-        data = json.load(fh)
+    base = Path(records_base)
+    if patch_id is None:
+        latest: tuple[int, float] | None = None
+        latest_data: dict | None = None
+        for path in base.glob(f"{wf_id}_*.json"):
+            try:
+                with path.open("r", encoding="utf8") as fh:
+                    data = json.load(fh)
+                ts = int(data.get("timestamp", 0))
+                key = (ts, path.stat().st_mtime)
+            except Exception:
+                continue
+            if latest is None or key >= latest:
+                latest = key
+                latest_data = data
+        if latest_data is None:
+            raise FileNotFoundError(f"No record found for workflow {wf_id}")
+        data = latest_data
+    else:
+        path = base / f"{wf_id}_{patch_id}.json"
+        with path.open("r", encoding="utf8") as fh:
+            data = json.load(fh)
 
     projections = [CycleProjection(**p) for p in data.get("projections", [])]
     confidence = float(data.get("confidence", 0.0))
