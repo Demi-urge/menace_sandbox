@@ -1,158 +1,88 @@
-"""Project near-term upgrade performance.
-
-This helper exposes :class:`UpgradeForecaster` which uses historical
-metrics collected by :class:`foresight_tracker.ForesightTracker` and a
-lightweight temporal simulation to project the likely return on
-investment and stability for the next few improvement cycles.
-"""
+"""Project patch impact over forthcoming improvement cycles."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterable, List
-import json
-import math
-import time
+from typing import Iterable, List, Dict, Tuple
 
 import numpy as np
 
-from forecast_logger import ForecastLogger
 from foresight_tracker import ForesightTracker
 from sandbox_runner.environment import simulate_temporal_trajectory
 
 
-@dataclass
-class CycleProjection:
-    """Forecasted metrics for a single upcoming cycle."""
-
-    cycle: int
-    roi: float
-    risk: float
-    confidence: float
-    decay: float
-
-
-@dataclass
-class ForecastResult:
-    """Collection of projected cycles and an overall confidence score."""
-
-    projections: List[CycleProjection]
-    confidence: float
-
-
 class UpgradeForecaster:
-    """Combine historic trends with sandbox simulations to forecast upgrades."""
+    """Forecast ROI and stability for potential upgrades.
 
-    def __init__(
-        self,
-        tracker: ForesightTracker,
-        records_base: str | Path = "forecast_records",
-        logger: ForecastLogger | None = None,
-    ) -> None:
+    Parameters
+    ----------
+    tracker:
+        Instance providing historic metrics.
+    horizon:
+        Number of cycles to forecast. Clamped to the range 3–5.
+    """
+
+    def __init__(self, tracker: ForesightTracker, horizon: int = 5) -> None:
         self.tracker = tracker
-        base = Path(records_base)
-        if not base.is_absolute():
-            base = Path(__file__).resolve().parent / base
-        self.records_base = base
-        try:
-            self.records_base.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            # best effort – failures shouldn't break callers
-            pass
-        self.logger = logger
+        self.horizon = max(3, min(5, int(horizon)))
 
-    # ------------------------------------------------------------------
-    def _recent_values(self, workflow_id: str, key: str) -> List[float]:
-        profile = self.tracker.get_temporal_profile(workflow_id)
-        return [float(entry.get(key, 0.0)) for entry in profile]
+    def forecast(
+        self,
+        workflow_id: str,
+        patch: Iterable[str] | str,
+        cycles: int | None = None,
+    ) -> Tuple[List[Dict[str, float]], float]:
+        """Return cycle projections and overall forecast confidence."""
 
-    # ------------------------------------------------------------------
-    def forecast(self, workflow_id: str, patch: Iterable[str] | str, cycles: int = 5) -> ForecastResult:
-        """Return projections and an overall confidence score for ``cycles`` ahead.
+        cycles = self.horizon if cycles is None else max(3, min(5, int(cycles)))
 
-        Parameters
-        ----------
-        workflow_id:
-            Identifier of the workflow being patched.
-        patch:
-            Workflow steps or identifier executed for the temporal simulation.
-        cycles:
-            Number of future cycles to forecast. Clamped to the range 3–5.
-        """
+        # Simulate the patched workflow to obtain prospective metrics
+        roi_tracker = simulate_temporal_trajectory(
+            str(workflow_id), patch, foresight_tracker=self.tracker
+        )
 
-        cycles = max(3, min(5, int(cycles)))
+        roi_hist = getattr(roi_tracker, "roi_history", []) or []
+        conf_hist = getattr(roi_tracker, "confidence_history", []) or []
+        metrics_hist = getattr(roi_tracker, "metrics_history", {}) or {}
+        entropy_hist = metrics_hist.get("synergy_shannon_entropy", []) or []
+        risk_hist = metrics_hist.get("synergy_risk_index", []) or []
 
-        # Cold start CSSM: fall back to template trajectories until enough
-        # real samples accumulate.
-        if self.tracker.is_cold_start(str(workflow_id)):
-            template = self.tracker.get_template_curve(str(workflow_id))
-            projections: List[CycleProjection] = []
-            for i in range(1, cycles + 1):
-                tmpl = (
-                    template[i - 1]
-                    if template and i - 1 < len(template)
-                    else (template[-1] if template else 0.0)
-                )
-                roi = float(tmpl)
-                risk = max(0.0, min(1.0, 1.0 - roi))
-                decay = max(0.0, -roi)
-                projections.append(CycleProjection(i, roi, risk, 0.0, decay))
-            samples = len(self.tracker.history.get(str(workflow_id), []))
-            confidence = samples / (samples + 1.0)
-        else:
-            # Pull historical metrics and compute trend characteristics
-            slope, _, stability = self.tracker.get_trend_curve(str(workflow_id))
-            recent_roi = self._recent_values(str(workflow_id), "roi_delta")
-            variance = float(np.var(recent_roi)) if recent_roi else 0.0
-            latest = (
-                self.tracker.get_temporal_profile(str(workflow_id))[-1]
-                if recent_roi
-                else {}
+        slope, intercept, stability = self.tracker.get_trend_curve(str(workflow_id))
+
+        projections: List[Dict[str, float]] = []
+        for i in range(1, cycles + 1):
+            sim_roi = roi_hist[i - 1] if i - 1 < len(roi_hist) else (
+                roi_hist[-1] if roi_hist else 0.0
             )
-            base_roi = float(latest.get("roi_delta", 0.0))
-            base_conf = float(latest.get("confidence", 0.0))
-            resilience = float(latest.get("resilience", 0.0))
-            base_decay = float(latest.get("scenario_degradation", 0.0))
+            trend_roi = intercept + slope * i
+            roi = trend_roi + sim_roi
 
-            # Run a simulated trajectory of the patched workflow
-            roi_tracker = simulate_temporal_trajectory(
-                str(workflow_id), patch, foresight_tracker=self.tracker
+            sim_conf = conf_hist[i - 1] if i - 1 < len(conf_hist) else (
+                conf_hist[-1] if conf_hist else 0.0
             )
-            roi_hist = getattr(roi_tracker, "roi_history", [])
-            sim_roi = float(roi_hist[-1]) if roi_hist else base_roi
-            sim_variance = float(np.var(roi_hist)) if roi_hist else 0.0
-            metrics_hist = getattr(roi_tracker, "metrics_history", {})
-            ent_hist = metrics_hist.get("synergy_shannon_entropy", [])
-            entropy = float(ent_hist[-1]) if ent_hist else 0.0
+            confidence = max(0.0, min(1.0, sim_conf * stability))
 
-            projections = []
-            std = math.sqrt(variance)
-            for i in range(1, cycles + 1):
-                expected_roi = base_roi + slope * i + (sim_roi - base_roi) * (i / cycles)
-                risk = max(0.0, min(1.0, (1.0 - resilience) + std + entropy * 0.1))
-                conf = max(0.0, min(1.0, base_conf * stability * (1.0 - risk)))
-                decay = base_decay + entropy * 0.05 * i
-                projections.append(CycleProjection(i, expected_roi, risk, conf, decay))
+            entropy = entropy_hist[i - 1] if i - 1 < len(entropy_hist) else (
+                entropy_hist[-1] if entropy_hist else 0.0
+            )
+            sim_risk = risk_hist[i - 1] if i - 1 < len(risk_hist) else (
+                risk_hist[-1] if risk_hist else 0.0
+            )
+            risk = max(0.0, min(1.0, sim_risk + (1.0 - stability)))
 
-            samples = len(self.tracker.history.get(str(workflow_id), []))
-            confidence = (samples / (samples + 1.0)) * (1.0 / (1.0 + sim_variance))
+            decay = entropy * 0.1 * i
 
-        # Persist the forecast for external inspection
-        record = {
-            "workflow_id": str(workflow_id),
-            "patch": patch if isinstance(patch, str) else list(patch),
-            "projections": [p.__dict__ for p in projections],
-            "confidence": confidence,
-        }
-        out_path = self.records_base / f"{workflow_id}_{int(time.time())}.json"
-        try:
-            out_path.write_text(json.dumps(record, indent=2))
-        except Exception:
-            pass
-        if self.logger is not None:
-            try:
-                self.logger.log(record)
-            except Exception:
-                pass
-        return ForecastResult(projections, confidence)
+            projections.append(
+                {
+                    "cycle": float(i),
+                    "roi": float(roi),
+                    "risk": float(risk),
+                    "confidence": float(confidence),
+                    "decay": float(decay),
+                }
+            )
+
+        variance = float(np.var([p["roi"] for p in projections])) if projections else 0.0
+        samples = len(self.tracker.history.get(str(workflow_id), []))
+        forecast_confidence = (samples / (samples + 1.0)) * (1.0 / (1.0 + variance))
+
+        return projections, float(forecast_confidence)
