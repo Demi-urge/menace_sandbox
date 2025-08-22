@@ -142,6 +142,18 @@ def test_is_cold_start_when_roi_delta_zero():
     assert not tracker.is_cold_start("wf")
 
 
+def test_is_cold_start_for_insufficient_cycles_or_zero_roi():
+    tracker = ForesightTracker()
+    tracker.record_cycle_metrics("wf", {"roi_delta": 0.1})
+    tracker.record_cycle_metrics("wf", {"roi_delta": 0.2})
+    assert tracker.is_cold_start("wf")  # fewer than three cycles
+
+    tracker_zero = ForesightTracker()
+    for _ in range(3):
+        tracker_zero.record_cycle_metrics("wf", {"roi_delta": 0.0})
+    assert tracker_zero.is_cold_start("wf")  # zero ROI across cycles
+
+
 def test_capture_from_roi_records_latest_metrics():
     ft = ForesightTracker()
 
@@ -166,7 +178,14 @@ def test_capture_from_roi_records_latest_metrics():
     assert entry["scenario_degradation"] == 0.3
 
 
-def test_capture_from_roi_blends_template_and_real_roi(tracker_with_templates):
+def test_capture_from_roi_blends_template_and_real_roi(monkeypatch):
+    def fake_load(self):
+        self.templates = {"wf": [0.5, 0.5, 0.5, 0.5, 0.5]}
+        self.workflow_profiles["wf"] = "wf"
+
+    monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
+    tracker = ForesightTracker()
+
     class DummyROITracker:
         def __init__(self):
             self.roi_history = []
@@ -179,17 +198,18 @@ def test_capture_from_roi_blends_template_and_real_roi(tracker_with_templates):
 
     dummy = DummyROITracker()
 
-    # No prior cycles -> pure template value
-    tracker_with_templates.capture_from_roi(dummy, "wf")
-    # One cycle -> blend of real and template ROI
+    # First cycle uses template value exclusively
     dummy.roi_history.append(1.0)
-    tracker_with_templates.capture_from_roi(dummy, "wf")
+    tracker.capture_from_roi(dummy, "wf")
+    # Second cycle blends real ROI with template according to alpha
+    dummy.roi_history.append(1.0)
+    tracker.capture_from_roi(dummy, "wf")
     # Additional cycles to reach warm state where alpha == 1.0
     for _ in range(4):
         dummy.roi_history.append(1.0)
-        tracker_with_templates.capture_from_roi(dummy, "wf")
+        tracker.capture_from_roi(dummy, "wf")
 
-    history = tracker_with_templates.history["wf"]
+    history = tracker.history["wf"]
     assert history[0]["roi_delta"] == pytest.approx(0.5)
     assert history[1]["roi_delta"] == pytest.approx(0.6)
     assert history[-1]["roi_delta"] == pytest.approx(1.0)
@@ -221,9 +241,13 @@ def test_to_dict_from_dict_roundtrip_after_capture_from_roi():
     assert restored.to_dict() == data
 
 
-def test_cold_start_persists_through_serialization(
-    tracker_with_templates, foresight_templates
-):
+def test_cold_start_persists_through_serialization(monkeypatch):
+    def fake_load(self):
+        self.templates = {"wf": [0.5, 0.5, 0.5, 0.5, 0.5]}
+        self.workflow_profiles["wf"] = "wf"
+
+    monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
+
     class DummyROITracker:
         def __init__(self):
             self.roi_history: list[float] = []
@@ -235,17 +259,15 @@ def test_cold_start_persists_through_serialization(
             return 0.0
 
     dummy = DummyROITracker()
+    tracker = ForesightTracker()
     for _ in range(2):
         dummy.roi_history.append(1.0)
-        tracker_with_templates.capture_from_roi(dummy, "wf")
+        tracker.capture_from_roi(dummy, "wf")
 
-    assert tracker_with_templates.is_cold_start("wf")
+    assert tracker.is_cold_start("wf")
 
-    data = tracker_with_templates.to_dict()
+    data = tracker.to_dict()
     restored = ForesightTracker.from_dict(data)
-    restored.template_config_path = foresight_templates
-    restored.templates = None
-
     assert restored.is_cold_start("wf")
 
     dummy.roi_history.append(1.0)
