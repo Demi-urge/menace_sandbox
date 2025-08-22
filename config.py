@@ -176,6 +176,10 @@ class ContextBuilderConfig(BaseModel):
     alert_penalty: float = Field(
         1.0, description="Penalty applied per semantic alert"
     )
+    risk_penalty: float = Field(
+        1.0,
+        description="Penalty multiplier applied to risk scores from patch safety checks",
+    )
     max_alignment_severity: float = Field(
         1.0, description="Skip vectors with alignment severity above this value",
     )
