@@ -2,6 +2,7 @@ import logging
 from unittest.mock import Mock
 
 import pytest
+import sqlite3
 
 from vector_service.cognition_layer import CognitionLayer
 from patch_safety import PatchSafety
@@ -70,7 +71,7 @@ def test_query_logs_metric_failures(caplog):
 
 def test_failure_embedding_and_rejection(tmp_path):
     store = tmp_path / "failures.jsonl"
-    ps = PatchSafety(threshold=0.5, storage_path=str(store))
+    ps = PatchSafety(threshold=0.5, storage_path=str(store), failure_db_path=None)
     err_meta = {"category": "fail", "module": "m"}
 
     ok, score = ps.evaluate({}, err_meta)
@@ -84,3 +85,30 @@ def test_failure_embedding_and_rejection(tmp_path):
     ok2, score2 = ps.evaluate({}, err_meta)
     assert not ok2
     assert score2 >= ps.threshold
+
+
+def test_failure_db_similarity(tmp_path):
+    db = tmp_path / "failures.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE failures(model_id TEXT, cause TEXT, features TEXT, demographics TEXT, profitability REAL, retention REAL, cac REAL, roi REAL, ts TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO failures(model_id, cause, features, demographics, profitability, retention, cac, roi, ts) VALUES(?,?,?,?,?,?,?,?,?)",
+        ("m1", "cause", "", "demo", 1.0, 1.0, 1.0, 1.0, "t"),
+    )
+    conn.commit()
+    conn.close()
+
+    ps = PatchSafety(threshold=0.5, failure_db_path=str(db))
+    err_meta = {
+        "cause": "cause",
+        "demographics": "demo",
+        "profitability": 1.0,
+        "retention": 1.0,
+        "cac": 1.0,
+        "roi": 1.0,
+    }
+    ok, score = ps.evaluate({}, err_meta)
+    assert not ok
+    assert score >= ps.threshold
