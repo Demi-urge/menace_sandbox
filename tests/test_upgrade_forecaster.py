@@ -23,7 +23,13 @@ pkg.environment = env_mod
 sys.modules.setdefault("sandbox_runner", pkg)
 sys.modules.setdefault("sandbox_runner.environment", env_mod)
 
-from upgrade_forecaster import ForecastResult, UpgradeForecaster, load_record
+from upgrade_forecaster import (
+    ForecastResult,
+    UpgradeForecaster,
+    delete_record,
+    list_records,
+    load_record,
+)
 
 
 def test_forecast_uses_template_on_cold_start(monkeypatch, tmp_path):
@@ -310,3 +316,35 @@ def test_multiple_forecasts_coexist(monkeypatch, tmp_path):
     assert first.projections[0].roi == pytest.approx(0.1)
     assert second.projections[0].roi == pytest.approx(0.2)
     assert latest.projections[0].roi == pytest.approx(0.2)
+
+
+def test_list_records(tmp_path):
+    (tmp_path / "wf_a.json").write_text("{}")
+    (tmp_path / "wf_b.json").write_text("{}")
+    (tmp_path / "ignore.txt").write_text("not json")
+
+    files = list_records(tmp_path)
+    assert files == ["wf_a.json", "wf_b.json"]
+
+
+def test_delete_record(monkeypatch, tmp_path):
+    def fake_load(self):
+        self.templates = {"wf": [0.1]}
+        self.workflow_profiles["wf"] = "wf"
+
+    monkeypatch.setattr(ForesightTracker, "_load_templates", fake_load)
+    tracker = ForesightTracker()
+    forecaster = UpgradeForecaster(tracker, records_base=tmp_path, horizon=1)
+
+    forecaster.forecast("wf", patch="p1", cycles=1)
+    first_id = next(tmp_path.glob("wf_*.json")).stem.split("_", 1)[1]
+    time.sleep(1)
+    forecaster.forecast("wf", patch="p2", cycles=1)
+
+    delete_record("wf", patch_id=first_id, records_base=tmp_path)
+    remaining = list_records(tmp_path)
+    assert len(remaining) == 1
+    assert first_id not in remaining[0]
+
+    delete_record("wf", records_base=tmp_path)
+    assert list_records(tmp_path) == []
