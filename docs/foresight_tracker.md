@@ -71,7 +71,7 @@ from the baseline run and the computed ``stability`` score. Analysing how
 stability changes between stages highlights long‑term decay in the workflow's
 performance.
 
-## Cold starts and template curves
+## Cold starts and template trajectories
 
 Cold‑start mode keeps brand‑new workflows from triggering false volatility
 signals by seeding them with a baseline ROI curve until enough real data is
@@ -81,10 +81,14 @@ also returns `True` when no ROI metric has been captured yet. During this phase
 the tracker blends real ROI measurements with synthetic template values.
 
 The templates live at `configs/foresight_templates.yaml` in the repository's
-`configs` directory. The file has two top‑level sections:
+`configs` directory. The file recognises the following top‑level keys:
 
-- `profiles` – maps workflow identifiers to template names.
-- `templates` – lists the ROI sequences used for bootstrapping.
+- `profiles` – maps workflow identifiers to ROI template names.
+- `trajectories` – ROI sequences used for bootstrapping.
+- `entropy_profiles` / `risk_profiles` – optional mappings for baseline
+  entropy and risk curves.
+- `entropy_trajectories` / `risk_trajectories` – sample entropy and risk
+  trajectories referenced by the profile mappings.
 
 For example:
 
@@ -92,9 +96,18 @@ For example:
 profiles:
   scraper_bot: slow_riser
   trading_bot: early_volatile
-templates:
+trajectories:
   slow_riser:      [0.05, 0.1, 0.2, 0.35, 0.5]
   early_volatile:  [0.4, -0.15, 0.5, -0.1, 0.45]
+# Optional entropy and risk baselines
+entropy_profiles:
+  scraper_bot: low_entropy
+risk_profiles:
+  scraper_bot: low_risk
+entropy_trajectories:
+  low_entropy: [0.1, 0.15, 0.2, 0.25, 0.3]
+risk_trajectories:
+  low_risk: [0.1, 0.1, 0.1, 0.1, 0.1]
 ```
 
 Here `scraper_bot` uses the `slow_riser` profile while `trading_bot` follows
@@ -102,7 +115,7 @@ Here `scraper_bot` uses the `slow_riser` profile while `trading_bot` follows
 `configs/foresight_templates.yaml`.
 
 When capturing metrics, the first five logged cycles blend real observations
-with the template curve using:
+with the template trajectory using:
 
 ```python
 alpha = min(logged_cycles / 5.0, 1.0)
@@ -128,10 +141,13 @@ if tracker.is_cold_start("trading_bot"):
 
 ## Predicting ROI collapse
 
-The helper :func:`predict_roi_collapse` examines recent ROI and
-``scenario_degradation`` values to forecast when a workflow's trajectory
-falls below zero. It adjusts the projection curve using the expected entropy
-reference from :func:`get_entropy_template_curve`.
+The helper :func:`predict_roi_collapse` analyses recent ``roi_delta`` history to
+compute a slope via :func:`get_trend_curve`. Cycle‑to‑cycle volatility is
+calculated as the standard deviation of ROI changes. Recorded
+``scenario_degradation`` is compared against the expected entropy baseline from
+:func:`get_entropy_template_curve`, and both entropy deviation and volatility
+reduce the projected slope before extrapolating it a few cycles into the
+future. The routine then estimates when the trajectory falls below zero.
 
 ### Risk categories
 

@@ -1,4 +1,32 @@
-"""Utilities for tracking workflow metrics and assessing trend stability."""
+"""Track workflow metrics and forecast ROI collapse risk.
+
+`ForesightTracker` stores recent ROI and related metrics for each workflow and
+offers :meth:`predict_roi_collapse` to extrapolate these trends. The helper
+adjusts the ROI slope using recorded entropy degradation and volatility to
+estimate when the trajectory will dip below zero.
+
+``predict_roi_collapse`` returns a dictionary with a projected ROI ``curve``,
+an optional ``collapse_in`` horizon and two diagnostic fields:
+
+``risk``
+    One of ``Stable``, ``Slow decay``, ``Volatile`` or ``Immediate collapse
+    risk`` depending on the slope and volatility of recent ROI deltas.
+``brittle``
+    ``True`` when minor entropy increases trigger large ROI drops.
+
+Baseline curves can be supplied through ``configs/foresight_templates.yaml``.
+The file supports ``profiles`` and ``trajectories`` for ROI bootstrapping and
+optional ``entropy_profiles``/``risk_profiles`` with matching
+``entropy_trajectories``/``risk_trajectories``.
+
+Example
+-------
+>>> from menace_sandbox.foresight_tracker import ForesightTracker
+>>> tracker = ForesightTracker()
+>>> info = tracker.predict_roi_collapse("workflow-1")
+>>> info["risk"]
+'Stable'
+"""
 
 from __future__ import annotations
 
