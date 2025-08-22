@@ -9,9 +9,11 @@ class DummyGauge:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, float]] = []
         self.label = ""
+        self._labels: tuple[str, ...] = ()
 
-    def labels(self, label: str):
-        self.label = label
+    def labels(self, *labels: str):
+        self._labels = labels
+        self.label = labels[0] if labels else ""
         return self
 
     def inc(self, amount: float = 1.0) -> None:

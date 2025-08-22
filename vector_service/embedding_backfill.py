@@ -12,6 +12,7 @@ import json
 import sys
 import hashlib
 import pkgutil
+import queue
 
 from .registry import get_db_registry
 
@@ -35,14 +36,20 @@ try:  # pragma: no cover - optional dependency for metrics
 except Exception:  # pragma: no cover - fallback when running standalone
     import metrics_exporter as _me  # type: ignore
 
+try:  # pragma: no cover - optional dependency for event handling
+    from unified_event_bus import UnifiedEventBus  # type: ignore
+except Exception:  # pragma: no cover - fallback when bus unavailable
+    UnifiedEventBus = None  # type: ignore
+
 _RUN_OUTCOME = _me.Gauge(
     "embedding_backfill_runs_total",
     "Outcomes of EmbeddingBackfill.run calls",
-    labelnames=["status"],
+    labelnames=["status", "trigger"],
 )
 _RUN_DURATION = _me.Gauge(
     "embedding_backfill_run_duration_seconds",
     "Duration of EmbeddingBackfill.run calls",
+    labelnames=["trigger"],
 )
 _RUN_SKIPPED = _me.Gauge(
     "embedding_backfill_skipped_total",
@@ -252,6 +259,7 @@ class EmbeddingBackfill:
         backend: str | None = None,
         db: str | None = None,
         dbs: List[str] | None = None,
+        trigger: str = "manual",
     ) -> None:
         """Backfill embeddings for ``EmbeddableDBMixin`` subclasses.
 
@@ -298,11 +306,11 @@ class EmbeddingBackfill:
                     continue
         except Exception:
             status = "failure"
-            _RUN_OUTCOME.labels(status).inc()
-            _RUN_DURATION.set(time.time() - start)
+            _RUN_OUTCOME.labels(status, trigger).inc()
+            _RUN_DURATION.labels(trigger).set(time.time() - start)
             raise
-        _RUN_OUTCOME.labels(status).inc()
-        _RUN_DURATION.set(time.time() - start)
+        _RUN_OUTCOME.labels(status, trigger).inc()
+        _RUN_DURATION.labels(trigger).set(time.time() - start)
 
     # ------------------------------------------------------------------
     def watch(
@@ -320,6 +328,70 @@ class EmbeddingBackfill:
         """
 
         watch_databases(interval=interval, dbs=dbs, backend=self.backend)
+
+    def watch_events(
+        self,
+        *,
+        bus: "UnifiedEventBus" | None = None,
+        batch_size: int | None = None,
+    ) -> None:
+        """Listen for database change events and trigger incremental backfills."""
+
+        watch_event_bus(
+            bus=bus,
+            backend=self.backend,
+            batch_size=batch_size if batch_size is not None else 1,
+        )
+
+
+def watch_event_bus(
+    *,
+    bus: "UnifiedEventBus" | None = None,
+    backend: str = "annoy",
+    batch_size: int = 1,
+) -> None:
+    """Listen for database change events via :class:`UnifiedEventBus`."""
+
+    if UnifiedEventBus is None:
+        raise RuntimeError("UnifiedEventBus unavailable")
+
+    bus = bus or UnifiedEventBus()
+    backfill = EmbeddingBackfill(batch_size=batch_size, backend=backend)
+    q: queue.Queue[str] = queue.Queue()
+    pending: set[str] = set()
+
+    def _enqueue(kind: str) -> None:
+        if kind not in pending:
+            pending.add(kind)
+            q.put(kind)
+
+    def _handle(_topic: str, event: object) -> None:
+        kind = None
+        if isinstance(event, dict):
+            kind = event.get("db") or event.get("kind")
+        elif isinstance(event, str):
+            kind = event
+        if kind:
+            _enqueue(str(kind))
+
+    for topic in ("db:record_added", "db:record_updated", "embedding:backfill"):
+        bus.subscribe(topic, _handle)
+
+    while True:
+        kind = q.get()
+        try:
+            backfill.run(
+                dbs=[kind],
+                batch_size=batch_size,
+                backend=backend,
+                trigger="event",
+            )
+        except Exception:  # pragma: no cover - best effort
+            logging.getLogger(__name__).exception(
+                "event-triggered backfill failed for %s", kind
+            )
+        finally:
+            pending.discard(kind)
 
 
 def watch_databases(
@@ -404,6 +476,7 @@ __all__ = [
     "schedule_backfill",
     "KNOWN_DB_KINDS",
     "watch_databases",
+    "watch_event_bus",
 ]
 
 
