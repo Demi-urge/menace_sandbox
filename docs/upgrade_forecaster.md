@@ -25,8 +25,9 @@ The helper persists each forecast under ``forecast_records/`` and optionally log
 
 ## Cold‑start behaviour
 
-When ``ForesightTracker`` has fewer than three recorded cycles for a workflow, ``UpgradeForecaster`` falls back to template curves.
-The ROI for each projected cycle is taken from the template while risk is derived from ``1 - roi`` and decay from ``-roi``.
+When ``ForesightTracker`` has fewer than three recorded cycles for a workflow, ``UpgradeForecaster`` blends template trajectories with real metrics.
+Template ROI and entropy curves from :meth:`ForesightTracker.get_template_curve` (or CSSM‑provided profiles) are mixed with simulated metrics using ``alpha = samples / 5``.
+Risk is approximated as ``1 - blended_roi`` while decay derives from the blended entropy curve.
 Confidence is based solely on the number of collected samples, avoiding misleading projections until real metrics accumulate.
 
 ## Output schema
