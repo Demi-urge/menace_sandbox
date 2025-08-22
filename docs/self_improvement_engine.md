@@ -55,7 +55,7 @@ from workflow_graph import WorkflowGraph
 graph = WorkflowGraph()
 
 def run_with_projection(engine, target_wid: str) -> None:
-    projection = graph.simulate_impact_wave(target_wid)
+    projection = graph.simulate_impact_wave(target_wid, 1.0, 0.0)
     # ...use `projection` to prioritise follow-up actions...
     engine.run_cycle()
 ```

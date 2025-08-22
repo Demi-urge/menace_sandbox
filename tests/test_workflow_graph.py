@@ -1,43 +1,9 @@
-import sys
-import types
-
+import pytest
 import pytest
 
 import menace.task_handoff_bot as thb
 from menace.unified_event_bus import UnifiedEventBus
 import workflow_graph as wg
-
-
-def _patch_prediction_modules(monkeypatch: pytest.MonkeyPatch, start_id: str) -> None:
-    """Provide lightweight substitutes for ROI and synergy helpers."""
-    roi_mod = types.ModuleType("roi_predictor")
-
-    class DummyPredictor:
-        def forecast(self, history, exog=None):  # pragma: no cover - trivial
-            base = float(history[-1]) if history else 0.0
-            return base + 1.0, (0.0, 0.0)
-
-    roi_mod.ROIPredictor = DummyPredictor
-    monkeypatch.setitem(sys.modules, "roi_predictor", roi_mod)
-
-    syn_tools = types.ModuleType("synergy_tools")
-    monkeypatch.setitem(sys.modules, "synergy_tools", syn_tools)
-
-    syn_mod = types.ModuleType("synergy_history_db")
-
-    class _Conn:
-        def close(self):  # pragma: no cover - trivial
-            pass
-
-    def connect(_path):
-        return _Conn()
-
-    def fetch_latest(_conn):
-        return {start_id: 0.2}
-
-    syn_mod.connect = connect
-    syn_mod.fetch_latest = fetch_latest
-    monkeypatch.setitem(sys.modules, "synergy_history_db", syn_mod)
 
 
 @pytest.fixture
@@ -85,8 +51,7 @@ def test_node_edge_weight_and_wave(populated_graph, monkeypatch):
 
     assert calls == [(a, b), (b, c)]
 
-    _patch_prediction_modules(monkeypatch, a)
-    result = g.simulate_impact_wave(int(a))
+    result = g.simulate_impact_wave(a, 1.0, 0.2)
 
     assert result[a]["roi"] == pytest.approx(1.0)
     assert result[b]["roi"] == pytest.approx(0.5)

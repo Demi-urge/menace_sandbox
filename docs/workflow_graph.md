@@ -21,7 +21,7 @@ g = WorkflowGraph()
 g.add_workflow("A", roi=0.5)
 g.add_workflow("B", roi=0.3)
 g.add_dependency("A", "B", impact_weight=0.6)
-projection = g.simulate_impact_wave("A")
+projection = g.simulate_impact_wave("A", 0.1, 0.0)
 print(projection["B"])  # {'roi': 0.06, 'synergy': 0.0}
 ```
 
@@ -34,4 +34,4 @@ self‑improvement modules can consume.
 
 [`workflow_graph.py`](../workflow_graph.py) uses [`NetworkX`](https://networkx.org) when available for graph management. If the library is missing the module transparently falls back to a lightweight adjacency-list implementation so basic functionality remains available.
 
-The `simulate_impact_wave` method also downgrades gracefully when optional predictors or history databases can't be imported, using baseline ROI and synergy values instead.
+`simulate_impact_wave` accepts explicit ROI and synergy deltas and does not rely on external predictors or history databases.
