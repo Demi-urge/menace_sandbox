@@ -38,7 +38,18 @@ def test_feedback_event_triggers_retrain(monkeypatch):
     svc = DummyService()
     sched = rs.RankerScheduler([svc], event_bus=bus, interval=1000, roi_threshold=0.5)
     monkeypatch.setattr(rs.rvr, "retrain", lambda *a, **k: retrain_calls.append(a))
-    bus.publish("retrieval:feedback", {"roi": 1.0, "db": "x"})
+    bus.publish(rs.ROI_TOPIC, {"roi": 1.0, "db": "x"})
+    assert retrain_calls == [(["x"],)]
+    assert svc.calls == [1]
+
+
+def test_risk_event_triggers_retrain(monkeypatch):
+    retrain_calls: list[tuple] = []
+    bus = DummyBus()
+    svc = DummyService()
+    sched = rs.RankerScheduler([svc], event_bus=bus, interval=1000, risk_threshold=0.5)
+    monkeypatch.setattr(rs.rvr, "retrain", lambda *a, **k: retrain_calls.append(a))
+    bus.publish(rs.RISK_TOPIC, {"risk": 1.0, "db": "x"})
     assert retrain_calls == [(["x"],)]
     assert svc.calls == [1]
 

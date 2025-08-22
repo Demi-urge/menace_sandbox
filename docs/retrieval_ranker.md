@@ -61,9 +61,11 @@ Environment variables can control its behaviour:
 
 * `RANKER_SCHEDULER_ROI_THRESHOLD` – cumulative per-origin ROI delta that
   triggers an immediate retrain when crossed.
+* `RANKER_SCHEDULER_RISK_THRESHOLD` – cumulative per-origin risk delta that
+  triggers an immediate retrain when crossed.
 * `RANKER_SCHEDULER_EVENT_LOG` – optional SQLite file for persisting
   `UnifiedEventBus` events.
 * `RANKER_SCHEDULER_RABBITMQ_HOST` – RabbitMQ host for mirroring bus events.
 
-When a threshold is provided the scheduler listens on `retrieval:feedback` and
-accumulates ROI deltas per origin.
+When thresholds are provided the scheduler listens on `roi:update` and
+accumulates ROI and risk deltas per origin.
