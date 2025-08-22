@@ -185,4 +185,5 @@ evolution_history.db
 roi_events.db
 
 # Bundled embedding model archive
-vector_service/minilm/
+vector_service/minilm/*
+!vector_service/minilm/.gitkeep

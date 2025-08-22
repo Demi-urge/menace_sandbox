@@ -109,6 +109,7 @@ class SharedVectorService:
                 raise RuntimeError("embedding failed")
             return [float(x) for x in vec]
         if SentenceTransformer is None:
+            # SentenceTransformer not installed: load bundled model
             return _local_embed(text)
         raise RuntimeError("text embedder unavailable")
 
