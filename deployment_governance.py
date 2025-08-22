@@ -26,6 +26,7 @@ from .foresight_tracker import ForesightTracker
 from .upgrade_forecaster import ForecastResult, UpgradeForecaster
 from .workflow_graph import WorkflowGraph
 from .forecast_logger import ForecastLogger
+from .borderline_bucket import BorderlineBucket
 
 
 logger = logging.getLogger(__name__)
@@ -727,8 +728,10 @@ class RuleEvaluator:
         self,
         scorecard: Mapping[str, Any] | None,
         *,
+        patch: Iterable[str] | str | None = None,
         foresight_tracker: ForesightTracker | None = None,
         workflow_id: str | None = None,
+        borderline_bucket: BorderlineBucket | None = None,
     ) -> Dict[str, Any]:
         scorecard = scorecard or {}
         alignment = str(
@@ -800,19 +803,36 @@ class RuleEvaluator:
                         }
                         if (
                             decision == "promote"
+                            and patch is not None
                             and foresight_tracker is not None
                             and workflow_id is not None
                         ):
                             try:
-                                risk = foresight_tracker.predict_roi_collapse(workflow_id)
-                                if risk.get("risk") == "Immediate collapse risk" or bool(
-                                    risk.get("brittle")
-                                ):
-                                    result["decision"] = "demote"
-                                    if "roi_collapse_risk" not in result["reason_codes"]:
-                                        result["reason_codes"].append("roi_collapse_risk")
+                                forecaster = UpgradeForecaster(foresight_tracker)
+                                graph = WorkflowGraph()
+                                ok, fs_reasons, forecast = is_foresight_safe_to_promote(
+                                    workflow_id,
+                                    patch,
+                                    forecaster=forecaster,
+                                    tracker=foresight_tracker,
+                                    graph=graph,
+                                )
+                                result["foresight"] = {
+                                    "forecast": {
+                                        "projections": [p.__dict__ for p in forecast.projections],
+                                        "confidence": forecast.confidence,
+                                        "upgrade_id": forecast.upgrade_id,
+                                    },
+                                    "reason_codes": list(fs_reasons),
+                                }
+                                if not ok:
+                                    reasons.extend(fs_reasons)
+                                    result["reason_codes"] = reasons
+                                    result["decision"] = (
+                                        "borderline" if borderline_bucket is not None else "pilot"
+                                    )
                             except Exception:
-                                logger.exception("foresight risk evaluation failed")
+                                logger.exception("foresight promotion gate failed")
                         return result
                 except Exception:
                     continue
@@ -828,13 +848,19 @@ def evaluate_scorecard(
     scorecard: Mapping[str, Any] | None,
     rules: Iterable[EvalRule] | None = None,
     *,
+    patch: Iterable[str] | str | None = None,
     foresight_tracker: ForesightTracker | None = None,
     workflow_id: str | None = None,
+    borderline_bucket: BorderlineBucket | None = None,
 ) -> Dict[str, Any]:
     """Convenience wrapper around :class:`RuleEvaluator`."""
 
     return RuleEvaluator(rules).evaluate(
-        scorecard, foresight_tracker=foresight_tracker, workflow_id=workflow_id
+        scorecard,
+        patch=patch,
+        foresight_tracker=foresight_tracker,
+        workflow_id=workflow_id,
+        borderline_bucket=borderline_bucket,
     )
 
 
