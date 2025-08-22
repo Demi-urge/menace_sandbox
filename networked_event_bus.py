@@ -1,6 +1,17 @@
 from __future__ import annotations
 
-"""RabbitMQ backed event bus for distributed bots."""
+"""RabbitMQ backed event bus for distributed bots.
+
+``NetworkedEventBus`` implements the same API as
+:class:`~unified_event_bus.UnifiedEventBus` but transports messages over
+RabbitMQ using :mod:`pika`.  When the broker or dependency is unavailable it
+falls back to an in-process queue so tests and single-node deployments can
+continue to operate.
+
+The public surface mirrors ``subscribe``, ``subscribe_async`` and ``publish``
+methods so components can switch between local and networked buses with
+minimal changes.
+"""
 
 from typing import Callable, Awaitable, Dict, List, Optional
 import json

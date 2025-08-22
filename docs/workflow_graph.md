@@ -2,6 +2,23 @@
 
 The workflow graph models the project's workflows as a directed acyclic graph. Each node represents a workflow and edges capture dependency relationships that let the system analyse how changes ripple through the network and persist this information on disk.
 
+## Building and Persisting the DAG
+
+`WorkflowGraph` instances can be created from scratch or pre-populated from
+`task_handoff_bot.WorkflowDB`.  Workflows are added with `add_workflow` and
+dependencies with `add_dependency`.  Every mutation triggers a save to
+`sandbox_data/workflow_graph.json` (or a custom path if provided) so the graph
+can be reconstructed on the next run.
+
+```python
+from workflow_graph import WorkflowGraph
+
+g = WorkflowGraph()
+g.add_workflow("A", roi=0.5)
+g.add_dependency("A", "B", impact_weight=0.6)
+g.save()  # optional, mutations save automatically
+```
+
 ## Edge Weights
 
 Dependency edges carry an `impact_weight` reflecting how strongly one workflow influences another. The weight is derived by [`estimate_edge_weight`](../workflow_graph.py) which blends three heuristics:
@@ -12,7 +29,7 @@ Dependency edges carry an `impact_weight` reflecting how strongly one workflow i
 
 The final weight is normalised to the range `[0, 1]` and falls back to `1.0` when required supporting data or modules are unavailable.
 
-## Example: `simulate_impact_wave`
+## Running `simulate_impact_wave`
 
 ```python
 from workflow_graph import WorkflowGraph
@@ -35,3 +52,24 @@ self‑improvement modules can consume.
 [`workflow_graph.py`](../workflow_graph.py) uses [`NetworkX`](https://networkx.org) when available for graph management. If the library is missing the module transparently falls back to a lightweight adjacency-list implementation so basic functionality remains available.
 
 `simulate_impact_wave` accepts explicit ROI and synergy deltas and does not rely on external predictors or history databases.
+
+## Publishing Workflow Events
+
+Other components should emit workflow lifecycle events on a shared
+`UnifiedEventBus` so the graph stays current.  After calling
+`graph.attach_event_bus(bus)`, the graph listens for the following topics:
+
+* `workflows:new` – payload contains `workflow_id` of a new workflow.
+* `workflows:updated` – payload may include `workflow_id`, `roi`,
+  `synergy_scores`, and optional `roi_delta` or `synergy_delta` values.
+* `workflows:deleted` / `workflows:refactor` – remove a workflow from the DAG.
+
+```python
+from unified_event_bus import UnifiedEventBus
+
+bus = UnifiedEventBus()
+graph.attach_event_bus(bus)
+bus.publish("workflows:new", {"workflow_id": "42"})
+```
+
+Publishing these events ensures the persisted DAG reflects the live system.

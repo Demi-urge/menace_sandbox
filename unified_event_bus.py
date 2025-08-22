@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-"""Lightweight publish/subscribe event bus used by Menace bots."""
+"""Lightweight publish/subscribe event bus used by Menace bots.
+
+``UnifiedEventBus`` provides an in-process dispatcher for topic-based events.
+Callbacks can be registered with :meth:`subscribe` or :meth:`subscribe_async`
+and messages are broadcast via :meth:`publish`.  Events may optionally be
+persisted to SQLite and mirrored to a :class:`NetworkedEventBus` (RabbitMQ)
+when ``rabbitmq_host`` is supplied.
+
+The bus also integrates a small review queue so that costly callbacks may be
+audited by :class:`~automated_reviewer.AutomatedReviewer` implementations.
+"""
 
 from collections import defaultdict
 from threading import Lock

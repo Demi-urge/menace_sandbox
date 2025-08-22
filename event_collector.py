@@ -1,6 +1,20 @@
 from __future__ import annotations
 
-"""Unified event collector for tracking bot activity."""
+"""Unified event collector for tracking bot activity.
+
+``EventCollector`` subscribes to one or more topics on a
+:class:`~unified_event_bus.UnifiedEventBus` and records relationships between
+bots and workflows.  By default it listens for ``bot:call`` and
+``workflows:new`` style events, updating the :class:`~bot_registry.BotRegistry`
+accordingly.  When supplied with a :class:`~neuroplasticity.PathwayDB` each
+event is also logged as a :class:`~neuroplasticity.PathwayRecord` for later
+analysis.
+
+Typical usage::
+
+    bus = UnifiedEventBus()
+    collector = EventCollector(bus, topics=["bot:call", "workflows:new"])
+"""
 
 from typing import Iterable
 import logging
