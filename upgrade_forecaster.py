@@ -211,6 +211,26 @@ class UpgradeForecaster:
             slope, intercept, stability = self.tracker.get_trend_curve(wf_id)
 
             hist_len = len(roi_hist) if roi_hist else 1
+            if risk_hist:
+                baseline_risk = 0.0
+                template_risk: List[float] = []
+                alpha = 0.0
+            else:
+                profile = self.tracker.get_temporal_profile(wf_id)
+                resil = [p.get("resilience", 0.0) for p in profile]
+                baseline = float(np.mean(resil)) if resil else 0.0
+                baseline_risk = max(0.0, min(1.0, 1.0 - baseline))
+                get_risk_template = getattr(
+                    self.tracker, "get_risk_template_curve", None
+                )
+                template_risk = []
+                if callable(get_risk_template):
+                    try:
+                        template_risk = list(get_risk_template(wf_id) or [])
+                    except Exception:
+                        template_risk = []
+                alpha = min(1.0, samples / 5.0)
+
             for i in range(1, cycles + 1):
                 sim_roi = roi_hist[i - 1] if i - 1 < len(roi_hist) else (
                     roi_hist[-1] if roi_hist else 0.0
@@ -236,10 +256,13 @@ class UpgradeForecaster:
                     )
                     risk = max(0.0, min(1.0, sim_risk + (1.0 - stability)))
                 else:
-                    profile = self.tracker.get_temporal_profile(wf_id)
-                    resil = [p.get("resilience", 0.0) for p in profile]
-                    baseline = float(np.mean(resil)) if resil else 0.0
-                    risk = max(0.0, min(1.0, 1.0 - baseline))
+                    templ_risk = (
+                        template_risk[i - 1]
+                        if i - 1 < len(template_risk)
+                        else (template_risk[-1] if template_risk else baseline_risk)
+                    )
+                    risk = alpha * baseline_risk + (1.0 - alpha) * templ_risk
+                    risk = max(0.0, min(1.0, risk))
 
                 decay = entropy * 0.1 * i
 

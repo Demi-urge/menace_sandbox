@@ -245,6 +245,53 @@ def test_forecast_roi_risk_decay(monkeypatch, tmp_path):
     assert result.confidence == pytest.approx(0.75)
 
 
+def test_non_cold_start_risk_template_blending(monkeypatch, tmp_path):
+    class DummyTracker:
+        def __init__(self) -> None:
+            self.history = {
+                "wf": [
+                    {
+                        "roi_delta": 0.0,
+                        "confidence": 1.0,
+                        "resilience": 0.5,
+                        "scenario_degradation": 0.0,
+                    }
+                    for _ in range(2)
+                ]
+            }
+
+        def is_cold_start(self, _wf: str) -> bool:
+            return False
+
+        def get_trend_curve(self, _wf: str):
+            return 0.0, 0.0, 1.0
+
+        def get_temporal_profile(self, _wf: str):
+            return list(self.history["wf"])
+
+        def get_risk_template_curve(self, _wf: str):
+            return [0.2, 0.4, 0.6]
+
+    def fake_sim(*a, **k):
+        return types.SimpleNamespace(
+            roi_history=[0.0, 0.0, 0.0],
+            metrics_history={"synergy_shannon_entropy": [], "synergy_risk_index": []},
+        )
+
+    monkeypatch.setattr(
+        "upgrade_forecaster.simulate_temporal_trajectory", fake_sim
+    )
+    tracker = DummyTracker()
+    forecaster = UpgradeForecaster(tracker, records_base=tmp_path)
+    result = forecaster.forecast("wf", patch=[], cycles=3)
+
+    assert [p.risk for p in result.projections] == [
+        pytest.approx(0.32),
+        pytest.approx(0.44),
+        pytest.approx(0.56),
+    ]
+
+
 def test_forecast_confidence_sample_variance(monkeypatch, tmp_path):
     def make_tracker(samples: int):
         class DummyTracker:
