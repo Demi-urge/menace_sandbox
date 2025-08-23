@@ -14,6 +14,7 @@ import sys
 from datetime import datetime
 from governed_retrieval import govern_retrieval
 import joblib
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 _ALIASES = (
     "universal_retriever",
@@ -54,6 +55,7 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback when event bus unavailable
     UnifiedEventBus = None  # type: ignore
 
+router: DBRouter = GLOBAL_ROUTER or init_db_router("universal_retriever")
 _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 
 try:  # pragma: no cover - typing only
@@ -149,7 +151,7 @@ def _log_stat_to_db(entry: dict[str, Any]) -> None:
     """Persist retrieval statistics for later analysis."""
 
     try:
-        conn = sqlite3.connect("metrics.db")
+        conn = router.get_connection("retrieval_stats")
         with conn:
             conn.execute(
                 """
@@ -228,7 +230,7 @@ def mark_retrieval_contribution(session_id: str, record_id: Any, contribution: f
     """Update contribution score for a retrieval result."""
 
     try:
-        conn = sqlite3.connect("metrics.db")
+        conn = router.get_connection("retrieval_stats")
         with conn:
             conn.execute(
                 "UPDATE retrieval_stats SET contribution=? WHERE session_id=? AND record_id=?",
@@ -242,13 +244,12 @@ def _prior_hit_count(origin_db: str, record_id: Any) -> int:
     """Return how many times a vector has previously been a hit."""
 
     try:
-        conn = sqlite3.connect("metrics.db")
+        conn = router.get_connection("retrieval_stats")
         cur = conn.execute(
             "SELECT COUNT(*) FROM retrieval_stats WHERE origin_db=? AND record_id=? AND hit=1",
             (origin_db, str(record_id)),
         )
         row = cur.fetchone()
-        conn.close()
         return int(row[0]) if row and row[0] is not None else 0
     except Exception:  # pragma: no cover - best effort
         return 0
@@ -767,7 +768,7 @@ class UniversalRetriever:
         if not stats and MetricsDB is not None:
             try:
                 mdb = MetricsDB()
-                with sqlite3.connect(mdb.path) as conn:
+                with router.get_connection("retriever_stats") as conn:
                     cur = conn.execute(
                         "SELECT origin_db, wins, regrets FROM retriever_stats"
                     )

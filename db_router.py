@@ -93,6 +93,9 @@ if "LOCAL_TABLES" in globals():
             "bot_trials",
             "update_history",
             "roi_events",
+            "evolution_history",
+            "retrieval_stats",
+            "retriever_stats",
         }
     )
 else:
@@ -124,6 +127,9 @@ else:
         "bot_trials",
         "update_history",
         "roi_events",
+        "evolution_history",
+        "retrieval_stats",
+        "retriever_stats",
     }
 
 # Tables explicitly denied even if present in the allow lists.  Also mutated

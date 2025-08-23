@@ -6,7 +6,6 @@ import logging
 from threading import Lock, Thread
 from contextlib import contextmanager
 from typing import Optional, Dict, Generator
-import sqlite3
 
 from .retry_utils import publish_with_retry
 
@@ -22,14 +21,8 @@ _logger = logging.getLogger(__name__)
 # Path for the evolution history database
 _DB_PATH = "evolution_history.db"
 
-# Create a single shared database instance and reopen the connection with
-# ``check_same_thread=False`` to allow access across threads.
+# Create a single shared database instance for logging mutations.
 _history_db = EvolutionHistoryDB(_DB_PATH)
-try:  # ensure the connection is usable from multiple threads
-    _history_db.conn.close()
-    _history_db.conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
-except Exception:  # pragma: no cover - fallback for unusual environments
-    pass
 
 _lock = Lock()
 
