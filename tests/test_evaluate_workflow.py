@@ -125,7 +125,9 @@ def test_override_path_nested_bypasses_micro_pilot(tmp_path, monkeypatch):
         "adapter_roi": 1.2,
     }
 
-    policy = {"overrides": {"override_path": str(override), "public_key_path": str(key)}}
+    policy = {
+        "overrides": {"override_path": str(override), "public_key_path": str(key)}
+    }
     res = dg.evaluate_workflow(scorecard, policy)
     assert res["verdict"] == "promote"
     assert "micro_pilot" not in res["reason_codes"]
@@ -163,6 +165,7 @@ def test_foresight_gate_pass(monkeypatch):
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
+    monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
 
     res = dg.evaluate_workflow(
         scorecard,
@@ -195,6 +198,7 @@ def test_foresight_gate_failure(monkeypatch):
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
+    monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
 
     res = dg.evaluate_workflow(
         scorecard,
@@ -206,6 +210,51 @@ def test_foresight_gate_failure(monkeypatch):
     assert res["verdict"] == "pilot"
     assert "low_confidence" in res["reason_codes"]
     assert res.get("foresight", {}).get("reason_codes") == ["low_confidence"]
+
+
+def test_foresight_gate_failure_borderline_bucket(monkeypatch):
+    _reset(monkeypatch)
+    scorecard = {
+        "scenario_scores": {"s": 0.8},
+        "alignment_status": "pass",
+        "raroi": 1.02,
+        "confidence": 0.72,
+    }
+
+    def fake_gate(
+        workflow_id,
+        patch,
+        tracker,
+        workflow_graph,
+        roi_threshold=dg.DeploymentGovernor.raroi_threshold,
+    ):
+        return False, ["borderline"]
+
+    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
+    monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
+
+    class Bucket:
+        def __init__(self):
+            self.called = False
+
+        def enqueue(self, workflow_id, raroi, confidence, context=None):
+            self.called = True
+            self.args = (workflow_id, raroi, confidence, context)
+
+    bucket = Bucket()
+    res = dg.evaluate_workflow(
+        scorecard,
+        {},
+        foresight_tracker=_DummyTracker(),
+        workflow_id="wf1",
+        patch=[],
+        borderline_bucket=bucket,
+    )
+    assert res["verdict"] == "pilot"
+    assert "borderline" in res["reason_codes"]
+    assert res.get("foresight", {}).get("reason_codes") == ["borderline"]
+    assert bucket.called
 
 
 def test_policy_thresholds_passed(monkeypatch):

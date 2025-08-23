@@ -96,7 +96,11 @@ def _safe_eval(expr: str, variables: Mapping[str, Any]) -> Any:
     for node in ast.walk(tree):
         if not isinstance(node, allowed_nodes):
             raise ValueError(f"unsafe expression: {expr}")
-        if isinstance(node, ast.Call) or isinstance(node, ast.Attribute) or isinstance(node, ast.Subscript):
+        if (
+            isinstance(node, ast.Call)
+            or isinstance(node, ast.Attribute)
+            or isinstance(node, ast.Subscript)
+        ):
             raise ValueError(f"unsafe expression: {expr}")
         if isinstance(node, ast.BoolOp) and not isinstance(node.op, allowed_boolops):
             raise ValueError(f"unsafe expression: {expr}")
@@ -164,17 +168,30 @@ def _load_rules(path: str | None = None) -> List[Rule]:
         candidates.append(os.path.join(base, "deployment_governance.json"))
 
     loaded: List[Rule] = []
-    schema_path = os.path.join(os.path.dirname(__file__), "config", "deployment_governance.schema.json")
+    schema_path = os.path.join(
+        os.path.dirname(__file__), "config", "deployment_governance.schema.json"
+    )
     for candidate in candidates:
         if os.path.exists(candidate):
             try:
                 with open(candidate, "r", encoding="utf-8") as fh:
-                    data = json.load(fh) if candidate.endswith(".json") else yaml.safe_load(fh)
+                    data = (
+                        json.load(fh)
+                        if candidate.endswith(".json")
+                        else yaml.safe_load(fh)
+                    )
                 with open(schema_path, "r", encoding="utf-8") as sfh:
                     schema = json.load(sfh)
                 validate(data, schema)
-            except (OSError, ValidationError, json.JSONDecodeError, yaml.YAMLError) as exc:
-                logger.error("Invalid deployment governance rules file %s: %s", candidate, exc)
+            except (
+                OSError,
+                ValidationError,
+                json.JSONDecodeError,
+                yaml.YAMLError,
+            ) as exc:
+                logger.error(
+                    "Invalid deployment governance rules file %s: %s", candidate, exc
+                )
                 raise ValueError(f"invalid rules file: {candidate}") from exc
             for item in data:
                 decision = str(item.get("decision"))
@@ -220,16 +237,27 @@ def _load_policy(path: str | None = None) -> Mapping[str, Any]:
         candidates.append(os.path.join(base, "deployment_policy.json"))
 
     policy: Mapping[str, Any] | None = None
-    schema_path = os.path.join(os.path.dirname(__file__), "config", "deployment_policy.schema.json")
+    schema_path = os.path.join(
+        os.path.dirname(__file__), "config", "deployment_policy.schema.json"
+    )
     for candidate in candidates:
         if os.path.exists(candidate):
             try:
                 with open(candidate, "r", encoding="utf-8") as fh:
-                    data = json.load(fh) if candidate.endswith(".json") else yaml.safe_load(fh)
+                    data = (
+                        json.load(fh)
+                        if candidate.endswith(".json")
+                        else yaml.safe_load(fh)
+                    )
                 with open(schema_path, "r", encoding="utf-8") as sfh:
                     schema = json.load(sfh)
                 validate(data, schema)
-            except (OSError, ValidationError, json.JSONDecodeError, yaml.YAMLError) as exc:
+            except (
+                OSError,
+                ValidationError,
+                json.JSONDecodeError,
+                yaml.YAMLError,
+            ) as exc:
                 logger.error("Invalid deployment policy file %s: %s", candidate, exc)
                 raise ValueError(f"invalid policy file: {candidate}") from exc
             policy = data
@@ -261,6 +289,10 @@ class DeploymentGovernor:
         policy: Mapping[str, float] | None = None,
         *,
         overrides: Mapping[str, Any] | None = None,
+        patch: Iterable[str] | str | None = None,
+        foresight_tracker: ForesightTracker | None = None,
+        workflow_id: str | None = None,
+        borderline_bucket: BorderlineBucket | None = None,
     ) -> Dict[str, Any]:
         """Return deployment verdict and reasoning.
 
@@ -283,6 +315,14 @@ class DeploymentGovernor:
         overrides:
             Optional operator override flags. Set ``bypass_micro_pilot`` to
             ``True`` to ignore the automatic micro pilot trigger.
+        patch, foresight_tracker, workflow_id:
+            Optional foresight promotion gate parameters.  When supplied and the
+            initial verdict resolves to ``"promote"``,
+            :func:`is_foresight_safe_to_promote` is consulted and may downgrade
+            the verdict.
+        borderline_bucket:
+            Optional queue used when a promotion is rejected by foresight while
+            RAROI or confidence values are borderline.
         """
 
         rules = _load_rules()
@@ -381,7 +421,75 @@ class DeploymentGovernor:
             except Exception:
                 continue
 
-        return {"verdict": verdict, "reasons": reasons, "override": override}
+        foresight_info: dict[str, Any] | None = None
+        if (
+            verdict == "promote"
+            and foresight_tracker is not None
+            and workflow_id is not None
+        ):
+            patch_repr = (
+                []
+                if patch is None
+                else (patch if isinstance(patch, str) else list(patch))
+            )
+            try:
+                graph = WorkflowGraph()
+                roi_min = float(
+                    (policy or {}).get("roi_forecast_min", self.raroi_threshold)
+                )
+                ok, fs_reasons = is_foresight_safe_to_promote(
+                    workflow_id,
+                    patch_repr,
+                    foresight_tracker,
+                    graph,
+                    roi_threshold=roi_min,
+                )
+                foresight_info = {"reason_codes": list(fs_reasons)}
+                record = {
+                    "event": "foresight_promotion_decision",
+                    "workflow_id": workflow_id,
+                    "patch": patch_repr,
+                    **foresight_info,
+                }
+                try:
+                    audit_logger.log_event("foresight_promotion_decision", record)
+                except Exception:
+                    logger.exception("audit logging failed")
+                if not ok:
+                    verdict = "pilot"
+                    for rc in fs_reasons:
+                        if rc not in reasons:
+                            reasons.append(rc)
+                    if (
+                        borderline_bucket is not None
+                        and raroi is not None
+                        and confidence is not None
+                    ):
+                        try:
+                            margin = 0.05
+                            r_close = abs(float(raroi) - self.raroi_threshold) <= margin
+                            c_close = (
+                                abs(float(confidence) - self.confidence_threshold)
+                                <= margin
+                            )
+                            if r_close or c_close:
+                                borderline_bucket.enqueue(
+                                    workflow_id,
+                                    float(raroi),
+                                    float(confidence),
+                                    {"reason_codes": list(fs_reasons)},
+                                )
+                        except Exception:
+                            logger.exception("borderline enqueue failed")
+            except Exception:
+                logger.exception("foresight promotion gate failed")
+
+        return {
+            "verdict": verdict,
+            "reasons": reasons,
+            "override": override,
+            "foresight": foresight_info,
+        }
 
 
 def evaluate_workflow(
@@ -391,6 +499,7 @@ def evaluate_workflow(
     foresight_tracker: ForesightTracker | None = None,
     workflow_id: str | None = None,
     patch: Iterable[str] | str | None = None,
+    borderline_bucket: BorderlineBucket | None = None,
 ) -> Dict[str, Any]:
     """Return deployment verdict and reasoning for *scorecard*.
 
@@ -426,15 +535,21 @@ def evaluate_workflow(
             overrides["override_path"] = str(override_path)
 
     gov = DeploymentGovernor(
-        raroi_threshold=float(policy.get("raroi_threshold", DeploymentGovernor.raroi_threshold)),
+        raroi_threshold=float(
+            policy.get("raroi_threshold", DeploymentGovernor.raroi_threshold)
+        ),
         confidence_threshold=float(
             policy.get("confidence_threshold", DeploymentGovernor.confidence_threshold)
         ),
         scenario_score_min=float(
             policy.get("scenario_score_min", DeploymentGovernor.scenario_score_min)
         ),
-        sandbox_roi_low=float(policy.get("sandbox_roi_low", DeploymentGovernor.sandbox_roi_low)),
-        adapter_roi_high=float(policy.get("adapter_roi_high", DeploymentGovernor.adapter_roi_high)),
+        sandbox_roi_low=float(
+            policy.get("sandbox_roi_low", DeploymentGovernor.sandbox_roi_low)
+        ),
+        adapter_roi_high=float(
+            policy.get("adapter_roi_high", DeploymentGovernor.adapter_roi_high)
+        ),
     )
 
     alignment_status = str(scorecard.get("alignment_status", "pass"))
@@ -443,12 +558,6 @@ def evaluate_workflow(
     sandbox_roi = scorecard.get("sandbox_roi")
     adapter_roi = scorecard.get("adapter_roi")
 
-    policy_eval = {
-        k: policy[k]
-        for k in ("sandbox_low", "adapter_high", "max_variance", "scenario_thresholds")
-        if k in policy
-    }
-
     result = gov.evaluate(
         scorecard,
         alignment_status,
@@ -456,8 +565,12 @@ def evaluate_workflow(
         confidence,
         sandbox_roi,
         adapter_roi,
-        policy_eval or None,
+        policy or None,
         overrides=overrides,
+        patch=patch,
+        foresight_tracker=foresight_tracker,
+        workflow_id=workflow_id,
+        borderline_bucket=borderline_bucket,
     )
 
     forced = overrides.get("verdict") or overrides.get("forced_verdict")
@@ -469,13 +582,16 @@ def evaluate_workflow(
     combined_override = {**overrides, **result.get("override", {})}
     verdict = result.get("verdict", "no_go")
     reason_codes = list(result.get("reasons", []))
-    foresight_info: dict[str, Any] | None = None
+    foresight_info: dict[str, Any] | None = result.get("foresight")
     if (
         verdict == "promote"
         and foresight_tracker is not None
         and workflow_id is not None
+        and foresight_info is None
     ):
-        patch_repr = [] if patch is None else (patch if isinstance(patch, str) else list(patch))
+        patch_repr = (
+            [] if patch is None else (patch if isinstance(patch, str) else list(patch))
+        )
         try:
             graph = WorkflowGraph()
             roi_min = float(
@@ -489,11 +605,41 @@ def evaluate_workflow(
                 roi_threshold=roi_min,
             )
             foresight_info = {"reason_codes": list(fs_reasons)}
+            record = {
+                "event": "foresight_promotion_decision",
+                "workflow_id": workflow_id,
+                "patch": patch_repr,
+                **foresight_info,
+            }
+            try:
+                audit_logger.log_event("foresight_promotion_decision", record)
+            except Exception:
+                logger.exception("audit logging failed")
             if not ok:
                 verdict = "pilot"
                 for rc in fs_reasons:
                     if rc not in reason_codes:
                         reason_codes.append(rc)
+                if (
+                    borderline_bucket is not None
+                    and raroi is not None
+                    and confidence is not None
+                ):
+                    try:
+                        margin = 0.05
+                        r_close = abs(float(raroi) - gov.raroi_threshold) <= margin
+                        c_close = (
+                            abs(float(confidence) - gov.confidence_threshold) <= margin
+                        )
+                        if r_close or c_close:
+                            borderline_bucket.enqueue(
+                                workflow_id,
+                                float(raroi),
+                                float(confidence),
+                                {"reason_codes": list(fs_reasons)},
+                            )
+                    except Exception:
+                        logger.exception("borderline enqueue failed")
         except Exception:
             logger.exception("foresight promotion gate failed")
 
@@ -593,9 +739,7 @@ def evaluate(
                     logger.exception("audit logging failed")
                 if not ok:
                     reasons.extend(fs_reasons)
-                    verdict = (
-                        "borderline" if borderline_bucket is not None else "pilot"
-                    )
+                    verdict = "borderline" if borderline_bucket is not None else "pilot"
             except Exception:
                 logger.exception("foresight promotion gate failed")
         if (
@@ -682,11 +826,7 @@ def evaluate(
         ):
             reasons.append("scenario_below_min")
         mv = thr.get("max_variance")
-        if (
-            mv is not None
-            and score_variance is not None
-            and score_variance > float(mv)
-        ):
+        if mv is not None and score_variance is not None and score_variance > float(mv):
             reasons.append("variance_above_max")
         per_thr = thr.get("scenario_thresholds")
         if isinstance(per_thr, Mapping) and scenario_scores:
@@ -725,9 +865,7 @@ def evaluate(
     promote_cfg = policy_cfg.get("promote", {})
     promote_thr = promote_cfg.get("thresholds", {})
     if meets(promote_thr)[0] and (
-        adapter_roi is None
-        or sandbox_roi is None
-        or adapter_roi >= sandbox_roi
+        adapter_roi is None or sandbox_roi is None or adapter_roi >= sandbox_roi
     ):
         reason = promote_cfg.get("reason_code")
         if reason:
@@ -818,14 +956,10 @@ class RuleEvaluator:
     ) -> Dict[str, Any]:
         scorecard = scorecard or {}
         alignment = str(
-            scorecard.get("alignment_status")
-            or scorecard.get("alignment")
-            or ""
+            scorecard.get("alignment_status") or scorecard.get("alignment") or ""
         ).lower()
         security = str(
-            scorecard.get("security_status")
-            or scorecard.get("security")
-            or ""
+            scorecard.get("security_status") or scorecard.get("security") or ""
         ).lower()
         if alignment != "pass":
             return {
@@ -890,7 +1024,9 @@ class RuleEvaluator:
                             and foresight_tracker is not None
                             and workflow_id is not None
                         ):
-                            patch_repr = patch if isinstance(patch, str) else list(patch)
+                            patch_repr = (
+                                patch if isinstance(patch, str) else list(patch)
+                            )
                             try:
                                 graph = WorkflowGraph()
                                 ok, fs_reasons = is_foresight_safe_to_promote(
@@ -899,9 +1035,7 @@ class RuleEvaluator:
                                     foresight_tracker,
                                     graph,
                                 )
-                                result["foresight"] = {
-                                    "reason_codes": list(fs_reasons)
-                                }
+                                result["foresight"] = {"reason_codes": list(fs_reasons)}
                                 record = {
                                     "event": "foresight_promotion_decision",
                                     "workflow_id": workflow_id,
@@ -918,7 +1052,9 @@ class RuleEvaluator:
                                     reasons.extend(fs_reasons)
                                     result["reason_codes"] = reasons
                                     result["decision"] = (
-                                        "borderline" if borderline_bucket is not None else "pilot"
+                                        "borderline"
+                                        if borderline_bucket is not None
+                                        else "pilot"
                                     )
                             except Exception:
                                 logger.exception("foresight promotion gate failed")
