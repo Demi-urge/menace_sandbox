@@ -2,6 +2,7 @@ import json
 from types import MethodType
 
 from discrepancy_db import DiscrepancyDB, DiscrepancyRecord
+from db_router import DBRouter
 from vector_metrics_db import VectorMetricsDB
 from vector_service.context_builder import ContextBuilder
 from vector_service.cognition_layer import CognitionLayer
@@ -34,7 +35,9 @@ class DiscrepancyRetriever:
 
 
 def test_cognition_layer_returns_discrepancies(tmp_path):
-    db = DiscrepancyDB(tmp_path / "d.db", vector_index_path=tmp_path / "d.index")
+    shared_db = tmp_path / "shared.db"
+    router = DBRouter("one", str(tmp_path / "local.db"), str(shared_db))
+    db = DiscrepancyDB(router=router, vector_index_path=tmp_path / "d.index")
 
     def fake_encode(self, text: str):
         return [float(len(text))]
@@ -58,3 +61,4 @@ def test_cognition_layer_returns_discrepancies(tmp_path):
     data = json.loads(ctx)
     assert "discrepancies" in data and data["discrepancies"]
     assert any(origin == "discrepancy" for origin, _vid, _s in layer._session_vectors[sid])
+    router.close()

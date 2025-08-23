@@ -12,6 +12,11 @@ from typing import Any, Dict, Iterator, List
 
 from vector_service import EmbeddableDBMixin
 
+try:  # pragma: no cover - package and top-level imports
+    from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+except Exception:  # pragma: no cover - fallback for tests
+    from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,11 +37,15 @@ class DiscrepancyDB(EmbeddableDBMixin):
         self,
         path: str | Path = "discrepancies.db",
         *,
+        router: DBRouter | None = None,
         vector_index_path: str | Path | None = None,
         embedding_version: int = 1,
         vector_backend: str = "annoy",
     ) -> None:
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "discrepancies", str(path), str(path)
+        )
+        self.conn = self.router.get_connection("discrepancies")
         self.conn.row_factory = sqlite3.Row
         self.conn.execute(
             """
