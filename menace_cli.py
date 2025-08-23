@@ -6,6 +6,7 @@ performing any database work.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import uuid
@@ -14,7 +15,10 @@ from db_router import GLOBAL_ROUTER, init_db_router
 
 # Expose a DBRouter for CLI operations early so imported modules can rely on
 # ``GLOBAL_ROUTER``.
-DB_ROUTER = GLOBAL_ROUTER or init_db_router(uuid.uuid4().hex)
+MENACE_ID = uuid.uuid4().hex
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from menace.plugins import load_plugins
 

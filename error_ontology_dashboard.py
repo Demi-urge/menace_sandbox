@@ -2,12 +2,15 @@ from __future__ import annotations
 
 """Dashboard for exploring error ontology statistics."""
 
+import os
 import uuid
 
 from db_router import init_db_router
 
 MENACE_ID = uuid.uuid4().hex
-init_db_router(MENACE_ID)
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from pathlib import Path
 from typing import Optional
