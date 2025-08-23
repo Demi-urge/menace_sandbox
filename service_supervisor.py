@@ -18,7 +18,9 @@ from .db_router import GLOBAL_ROUTER, init_db_router
 # that may touch the database. When a router already exists it is reused to
 # avoid spawning multiple routers.
 MENACE_ID = uuid.uuid4().hex
-DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from .menace_master import _init_unused_bots
 from .menace_orchestrator import MenaceOrchestrator

@@ -1497,6 +1497,19 @@ router = GLOBAL_ROUTER or init_db_router("alpha")
 conn = router.get_connection("bots")
 ```
 
+Entry-point scripts must initialise the router with explicit database paths
+**before** importing modules that touch the database:
+
+```python
+import os, uuid
+from db_router import init_db_router
+
+MENACE_ID = uuid.uuid4().hex
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
+```
+
 For detailed router configuration, audit logging and log analysis utilities see
 [docs/db_router.md](docs/db_router.md).
 

@@ -13,12 +13,15 @@ from pathlib import Path
 
 import ast
 import logging
+import os
 import uuid
 
 from db_router import init_db_router
 
 MENACE_ID = uuid.uuid4().hex
-DB_ROUTER = init_db_router(MENACE_ID)
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+DB_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 # Placeholder assigned during runtime import within ``debug_and_deploy`` so
 # tests can monkeypatch :class:`SelfDebuggerSandbox`.
