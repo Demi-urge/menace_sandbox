@@ -203,12 +203,20 @@ JSON but can be set to key-value pairs by defining `DB_ROUTER_LOG_FORMAT=kv`.
 
 ### Audit log
 
-The router can emit an audit trail of every table access. Configure a file path
-via the `DB_ROUTER_AUDIT_LOG` environment variable or provide an `"audit_log"`
-entry in the JSON configuration referenced by `DB_ROUTER_CONFIG`. When
-enabled, each access is appended to that file as a JSON object containing the
-menace ID, table name, operation and timestamp. Leave the configuration unset to
-disable auditing.
+Enable detailed auditing of every table access by following these steps:
+
+1. **Choose a log path.** Set `DB_ROUTER_AUDIT_LOG` to the destination file or
+   provide an `"audit_log"` entry in the JSON file referenced by
+   `DB_ROUTER_CONFIG`.
+2. **Run your application.** Each database access is appended to the log as a
+   JSON line containing the menace ID, table name, operation and timestamp. A
+   typical entry looks like:
+
+   ```json
+   {"menace_id": "alpha", "table_name": "bots", "operation": "write", "timestamp": "2024-05-14T12:00:00Z"}
+   ```
+3. **Review or rotate logs as needed.** Unset the environment variable to
+   disable auditing.
 
 #### Deployment examples
 
@@ -222,20 +230,32 @@ export DB_ROUTER_AUDIT_LOG="/var/log/menace/db_router_audit.log"
 
 ### Analysing audit logs
 
-An `analysis/db_router_log_analysis.py` script is included to aggregate these
-logs for cross-instance auditing.  Run the tool with the path to the audit log
-file:
+Use the `analysis/db_router_log_analysis.py` helper to summarise the log:
 
 ```bash
-python -m analysis.db_router_log_analysis path/to/audit.log
+python -m analysis.db_router_log_analysis /var/log/menace/db_router_audit.log
 ```
 
-The script outputs three sections:
+Example output:
 
-1. Per-operation counts grouped by menace ID, table name and operation.
-2. Aggregated counts by menace ID and table across all operations.
-3. A summary of the top menace IDs writing to tables that are shared with other
-   menaces, helping to highlight potential misuse or hotspots.
+```
+menace  table  op    count
+alpha   bots   write 12
+
+menace  table  count
+alpha   bots   12
+
+Top shared-table writers:
+alpha   12
+```
+
+Interpretation:
+
+1. The first block groups counts by menace ID, table name and operation.
+2. The second block aggregates counts across operations for each menace/table
+   pair.
+3. The final block highlights menace IDs writing to tables that are shared with
+   other instances, helping to spot misuse or hotspots.
 
 Use these summaries to identify unexpected writes to shared tables or excessive
 cross-instance activity.
