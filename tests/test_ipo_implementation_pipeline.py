@@ -1,8 +1,8 @@
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
-import sqlite3
 from pathlib import Path
 
+from db_router import GLOBAL_ROUTER, init_db_router
 import menace.ipo_implementation_pipeline as ipp
 import menace.ipo_bot as ipb
 import menace.bot_development_bot as bdb
@@ -12,12 +12,14 @@ import menace.deployment_bot as dep
 
 
 def _make_db(path: Path) -> Path:
-    conn = sqlite3.connect(path)
+    init_db_router(
+        "ipo_pipeline_test", local_db_path=str(path.parent / "local.db"), shared_db_path=str(path)
+    )
+    conn = GLOBAL_ROUTER.get_connection("bots")
     conn.execute(
-        "CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT, keywords TEXT, reuse INTEGER)"
+        "CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, keywords TEXT, reuse INTEGER)"
     )
     conn.commit()
-    conn.close()
     return path
 
 
