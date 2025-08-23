@@ -14,7 +14,7 @@ import threading
 from contextlib import contextmanager
 from typing import Iterator
 
-__all__ = ["DBRouter", "SHARED_TABLES"]
+__all__ = ["DBRouter", "SHARED_TABLES", "GLOBAL_ROUTER", "init_db_router"]
 
 
 # Tables that should always be stored in the shared database.
@@ -81,4 +81,29 @@ class DBRouter:
 
         self.local_conn.close()
         self.shared_conn.close()
+
+
+# Global router instance used throughout the application.
+GLOBAL_ROUTER: DBRouter | None = None
+
+
+def init_db_router(
+    menace_id: str, local_path: str = "./", shared_path: str = "./shared/global.db"
+) -> DBRouter:
+    """Initialise :class:`DBRouter` and store it globally.
+
+    Parameters
+    ----------
+    menace_id:
+        Identifier for the Menace instance. A unique value should be supplied for
+        each process to keep local databases isolated.
+    local_path:
+        Optional override for where the local database lives.
+    shared_path:
+        Optional override for the shared database location.
+    """
+
+    global GLOBAL_ROUTER
+    GLOBAL_ROUTER = DBRouter(menace_id, local_path=local_path, shared_path=shared_path)
+    return GLOBAL_ROUTER
 
