@@ -26,7 +26,7 @@ if __package__:  # pragma: no cover - allow both package and direct execution
     from .foresight_tracker import ForesightTracker
     from .upgrade_forecaster import UpgradeForecaster
     from .workflow_graph import WorkflowGraph
-    from .forecast_logger import ForecastLogger
+    from .forecast_logger import ForecastLogger, log_forecast_record
     from .foresight_gate import is_foresight_safe_to_promote
     from . import audit_logger
     from .borderline_bucket import BorderlineBucket
@@ -36,7 +36,7 @@ else:  # pragma: no cover
     from foresight_tracker import ForesightTracker  # type: ignore
     from upgrade_forecaster import UpgradeForecaster  # type: ignore
     from workflow_graph import WorkflowGraph  # type: ignore
-    from forecast_logger import ForecastLogger  # type: ignore
+    from forecast_logger import ForecastLogger, log_forecast_record  # type: ignore
     from foresight_gate import is_foresight_safe_to_promote  # type: ignore
     import audit_logger  # type: ignore
     from borderline_bucket import BorderlineBucket  # type: ignore
@@ -443,7 +443,7 @@ class DeploymentGovernor:
                     (policy or {}).get("roi_forecast_min", self.raroi_threshold)
                 )
                 logger_obj = ForecastLogger("forecast_records/foresight.log")
-                forecaster = UpgradeForecaster(foresight_tracker, logger=logger_obj)
+                forecaster = UpgradeForecaster(foresight_tracker)
                 ok, fs_reasons, forecast_res = is_foresight_safe_to_promote(
                     workflow_id,
                     patch_repr,
@@ -451,10 +451,24 @@ class DeploymentGovernor:
                     graph,
                     roi_threshold=roi_min,
                 )
+                projections = [
+                    asdict(p) for p in getattr(forecast_res, "projections", [])
+                ]
+                conf_val = getattr(forecast_res, "confidence", None)
                 foresight_info = {
                     "reason_codes": list(fs_reasons),
-                    "forecast_id": forecast_res.upgrade_id,
+                    "forecast_id": getattr(forecast_res, "upgrade_id", None),
+                    "projections": projections,
+                    "confidence": conf_val,
                 }
+                log_forecast_record(
+                    logger_obj,
+                    workflow_id,
+                    projections,
+                    conf_val,
+                    fs_reasons,
+                    getattr(forecast_res, "upgrade_id", None),
+                )
                 record = {
                     "event": "foresight_promotion_decision",
                     "workflow_id": workflow_id,
@@ -615,7 +629,7 @@ def evaluate_workflow(
                 policy.get("roi_forecast_min", DeploymentGovernor.raroi_threshold)
             )
             logger_obj = ForecastLogger("forecast_records/foresight.log")
-            forecaster = UpgradeForecaster(foresight_tracker, logger=logger_obj)
+            forecaster = UpgradeForecaster(foresight_tracker)
             ok, fs_reasons, forecast_res = is_foresight_safe_to_promote(
                 workflow_id,
                 patch_repr,
@@ -623,10 +637,24 @@ def evaluate_workflow(
                 graph,
                 roi_threshold=roi_min,
             )
+            projections = [
+                asdict(p) for p in getattr(forecast_res, "projections", [])
+            ]
+            conf_val = getattr(forecast_res, "confidence", None)
             foresight_info = {
                 "reason_codes": list(fs_reasons),
-                "forecast_id": forecast_res.upgrade_id,
+                "forecast_id": getattr(forecast_res, "upgrade_id", None),
+                "projections": projections,
+                "confidence": conf_val,
             }
+            log_forecast_record(
+                logger_obj,
+                workflow_id,
+                projections,
+                conf_val,
+                fs_reasons,
+                getattr(forecast_res, "upgrade_id", None),
+            )
             record = {
                 "event": "foresight_promotion_decision",
                 "workflow_id": workflow_id,
@@ -750,17 +778,31 @@ def evaluate(
             try:
                 graph = WorkflowGraph()
                 logger_obj = ForecastLogger("forecast_records/foresight.log")
-                forecaster = UpgradeForecaster(foresight_tracker, logger=logger_obj)
+                forecaster = UpgradeForecaster(foresight_tracker)
                 ok, fs_reasons, forecast_res = is_foresight_safe_to_promote(
                     workflow_id,
                     patch_repr,
                     forecaster,
                     graph,
                 )
+                projections = [
+                    asdict(p) for p in getattr(forecast_res, "projections", [])
+                ]
+                conf_val = getattr(forecast_res, "confidence", None)
                 forecast_info = {
                     "reason_codes": list(fs_reasons),
-                    "forecast_id": forecast_res.upgrade_id,
+                    "forecast_id": getattr(forecast_res, "upgrade_id", None),
+                    "projections": projections,
+                    "confidence": conf_val,
                 }
+                log_forecast_record(
+                    logger_obj,
+                    workflow_id,
+                    projections,
+                    conf_val,
+                    fs_reasons,
+                    getattr(forecast_res, "upgrade_id", None),
+                )
                 record = {
                     "event": "foresight_promotion_decision",
                     "workflow_id": workflow_id,
@@ -1064,6 +1106,7 @@ class RuleEvaluator:
                             and foresight_tracker is not None
                             and workflow_id is not None
                         ):
+
                             patch_repr = (
                                 patch if isinstance(patch, str) else list(patch)
                             )
@@ -1071,19 +1114,31 @@ class RuleEvaluator:
                             try:
                                 graph = WorkflowGraph()
                                 logger_obj = ForecastLogger("forecast_records/foresight.log")
-                                forecaster = UpgradeForecaster(
-                                    foresight_tracker, logger=logger_obj
-                                )
+                                forecaster = UpgradeForecaster(foresight_tracker)
                                 ok, fs_reasons, forecast_res = is_foresight_safe_to_promote(
                                     workflow_id,
                                     patch_repr,
                                     forecaster,
                                     graph,
                                 )
+                                projections = [
+                                    asdict(p) for p in getattr(forecast_res, "projections", [])
+                                ]
+                                conf_val = getattr(forecast_res, "confidence", None)
                                 result["foresight"] = {
                                     "reason_codes": list(fs_reasons),
-                                    "forecast_id": forecast_res.upgrade_id,
+                                    "forecast_id": getattr(forecast_res, "upgrade_id", None),
+                                    "projections": projections,
+                                    "confidence": conf_val,
                                 }
+                                log_forecast_record(
+                                    logger_obj,
+                                    workflow_id,
+                                    projections,
+                                    conf_val,
+                                    fs_reasons,
+                                    getattr(forecast_res, "upgrade_id", None),
+                                )
                                 record = {
                                     "event": "foresight_promotion_decision",
                                     "workflow_id": workflow_id,

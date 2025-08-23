@@ -172,6 +172,10 @@ try:  # pragma: no cover - allow flat imports
     from .workflow_graph import WorkflowGraph
 except Exception:  # pragma: no cover - fallback for flat layout
     from workflow_graph import WorkflowGraph  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .forecast_logger import ForecastLogger, log_forecast_record
+except Exception:  # pragma: no cover - fallback for flat layout
+    from forecast_logger import ForecastLogger, log_forecast_record  # type: ignore
 
 logger = get_logger(__name__)
 
@@ -5501,25 +5505,46 @@ class SelfImprovementEngine:
                         except Exception:
                             self.logger.exception("risk queue enqueue failed")
                     if verdict == "promote" and self.foresight_tracker:
+                        logger_obj: ForecastLogger | None = None
                         try:
                             forecaster = UpgradeForecaster(self.foresight_tracker)
                             graph = WorkflowGraph()
+                            logger_obj = ForecastLogger("forecast_records/foresight.log")
                             safe, fs_codes, forecast_res = is_foresight_safe_to_promote(
                                 workflow_id,
                                 str(patch_id) if patch_id is not None else "",
                                 forecaster,
                                 graph,
                             )
+                            projections = [
+                                asdict(p) for p in getattr(forecast_res, "projections", [])
+                            ]
+                            conf_val = getattr(forecast_res, "confidence", None)
+                            upgrade = getattr(forecast_res, "upgrade_id", None)
                             forecast_info = {
-                                "projections": [asdict(p) for p in forecast_res.projections],
-                                "confidence": forecast_res.confidence,
-                                "upgrade_id": forecast_res.upgrade_id,
+                                "projections": projections,
+                                "confidence": conf_val,
+                                "upgrade_id": upgrade,
                             }
+                            log_forecast_record(
+                                logger_obj,
+                                workflow_id,
+                                projections,
+                                conf_val,
+                                fs_codes,
+                                upgrade,
+                            )
                             if not safe:
                                 verdict = "pilot"
                                 reasons.extend(fs_codes)
                         except Exception:
                             self.logger.exception("foresight gate check failed")
+                        finally:
+                            try:
+                                if logger_obj is not None:
+                                    logger_obj.close()
+                            except Exception:
+                                pass
                     scorecard["forecast"] = forecast_info
                     scorecard["reasons"] = list(reasons)
                     try:
