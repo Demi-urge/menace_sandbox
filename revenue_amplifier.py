@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 import threading
 import logging
 from dataclasses import dataclass
@@ -13,6 +12,9 @@ from typing import List, Tuple, Optional
 
 from .unified_event_bus import UnifiedEventBus
 from .retry_utils import publish_with_retry
+from .db_router import GLOBAL_ROUTER, init_db_router
+
+router = GLOBAL_ROUTER or init_db_router("revenue_amplifier")
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,7 @@ class RevenueEventsDB:
 
     def __init__(self, path: Path | str = "revenue_events.db", *, event_bus: Optional[UnifiedEventBus] = None) -> None:
         # Allow usage across threads since bots may share this DB connection
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn = router.get_connection("revenue")
         self.event_bus = event_bus
         self.conn.execute(
             """
@@ -94,7 +96,7 @@ class SubscriptionDB:
 
     def __init__(self, path: Path | str = "subscriptions.db", *, event_bus: Optional[UnifiedEventBus] = None) -> None:
         # DB may be accessed from different threads
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn = router.get_connection("subs")
         self.event_bus = event_bus
         self.conn.execute(
             """
@@ -134,7 +136,7 @@ class ChurnDB:
 
     def __init__(self, path: Path | str = "churn.db", *, event_bus: Optional[UnifiedEventBus] = None) -> None:
         # Connection shared across threads
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn = router.get_connection("churn")
         self.event_bus = event_bus
         self.conn.execute(
             """
@@ -173,7 +175,7 @@ class LeadDB:
 
     def __init__(self, path: Path | str = "leads.db", *, event_bus: Optional[UnifiedEventBus] = None) -> None:
         # Use a connection that can be shared across threads
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn = router.get_connection("leads")
         self.event_bus = event_bus
         self.conn.execute(
             """
@@ -215,7 +217,7 @@ class ProfitabilityDB:
 
     def __init__(self, path: Path | str = "profitability.db", *, event_bus: Optional[UnifiedEventBus] = None) -> None:
         # Share connection across threads safely
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn = router.get_connection("profit")
         self.lock = threading.Lock()
         self.event_bus = event_bus
         self.conn.execute(

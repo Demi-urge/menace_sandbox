@@ -8,7 +8,11 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from db_router import GLOBAL_ROUTER, init_db_router
+
 logger = logging.getLogger(__name__)
+
+router = GLOBAL_ROUTER or init_db_router("visual_agent_queue")
 
 
 class VisualAgentQueue:
@@ -23,19 +27,19 @@ class VisualAgentQueue:
     # ------------------------------------------------------------------
     def _init_db(self) -> None:
         try:
-            with sqlite3.connect(self.path) as conn:
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS tasks(
-                    id TEXT PRIMARY KEY,
-                    prompt TEXT,
-                    branch TEXT,
-                    status TEXT,
-                    error TEXT,
-                    ts REAL,
-                    qorder INTEGER
-                )
+            conn = router.get_connection("tasks")
+            conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS tasks(
+                id TEXT PRIMARY KEY,
+                prompt TEXT,
+                branch TEXT,
+                status TEXT,
+                error TEXT,
+                ts REAL,
+                qorder INTEGER
+            )
+            """
             )
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS metadata(last_completed REAL)"
@@ -64,38 +68,39 @@ class VisualAgentQueue:
             except Exception:
                 pass
             logger.warning("queue database corrupt; moved to %s", corrupt)
-            with sqlite3.connect(self.path) as conn:
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS tasks(
-                        id TEXT PRIMARY KEY,
-                        prompt TEXT,
-                        branch TEXT,
-                        status TEXT,
-                        error TEXT,
-                        ts REAL,
-                        qorder INTEGER
-                    )
-                    """
+            conn = router.get_connection("tasks")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tasks(
+                    id TEXT PRIMARY KEY,
+                    prompt TEXT,
+                    branch TEXT,
+                    status TEXT,
+                    error TEXT,
+                    ts REAL,
+                    qorder INTEGER
                 )
-                conn.execute(
-                    "CREATE TABLE IF NOT EXISTS metadata(last_completed REAL)"
-                )
-                conn.execute("INSERT INTO metadata(last_completed) VALUES(0)")
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_tasks_status_qorder ON tasks(status, qorder)"
-                )
-                conn.commit()
+                """
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS metadata(last_completed REAL)"
+            )
+            conn.execute("INSERT INTO metadata(last_completed) VALUES(0)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_status_qorder ON tasks(status, qorder)"
+            )
+            conn.commit()
 
     # ------------------------------------------------------------------
     def check_integrity(self) -> bool:
         """Verify required tables exist. Rebuild DB if corrupt."""
         try:
-            with sqlite3.connect(self.path) as conn:
-                tables = {r[0] for r in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'")}
-                if {"tasks", "metadata"} <= tables:
-                    return False
+            conn = router.get_connection("tasks")
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )}
+            if {"tasks", "metadata"} <= tables:
+                return False
         except sqlite3.DatabaseError:
             pass
 
@@ -148,47 +153,47 @@ class VisualAgentQueue:
             items = []
 
         q = VisualAgentQueue(db_path)
-        with sqlite3.connect(q.path) as conn:
-            now = time.time()
-            order = 1
-            for itm in items:
-                tid = str(itm.get("id"))
-                if not tid:
-                    continue
-                info = job_status.get(tid, {})
-                conn.execute(
-                    "INSERT OR IGNORE INTO tasks(id,prompt,branch,status,error,ts,qorder) VALUES(?,?,?,?,?,?,?)",
-                    (
-                        tid,
-                        itm.get("prompt", info.get("prompt", "")),
-                        itm.get("branch", info.get("branch")),
-                        info.get("status", "queued"),
-                        info.get("error"),
-                        now,
-                        order,
-                    ),
-                )
-                order += 1
-            for tid, info in job_status.items():
-                if any(i.get("id") == tid for i in items):
-                    continue
-                conn.execute(
-                    "INSERT OR IGNORE INTO tasks(id,prompt,branch,status,error,ts,qorder) VALUES(?,?,?,?,?,?,?)",
-                    (
-                        tid,
-                        info.get("prompt", ""),
-                        info.get("branch"),
-                        info.get("status", "queued"),
-                        info.get("error"),
-                        now,
-                        order,
-                    ),
-                )
-                order += 1
+        conn = router.get_connection("tasks")
+        now = time.time()
+        order = 1
+        for itm in items:
+            tid = str(itm.get("id"))
+            if not tid:
+                continue
+            info = job_status.get(tid, {})
             conn.execute(
-                "UPDATE metadata SET last_completed=?", (last_completed,)
+                "INSERT OR IGNORE INTO tasks(id,prompt,branch,status,error,ts,qorder) VALUES(?,?,?,?,?,?,?)",
+                (
+                    tid,
+                    itm.get("prompt", info.get("prompt", "")),
+                    itm.get("branch", info.get("branch")),
+                    info.get("status", "queued"),
+                    info.get("error"),
+                    now,
+                    order,
+                ),
             )
-            conn.commit()
+            order += 1
+        for tid, info in job_status.items():
+            if any(i.get("id") == tid for i in items):
+                continue
+            conn.execute(
+                "INSERT OR IGNORE INTO tasks(id,prompt,branch,status,error,ts,qorder) VALUES(?,?,?,?,?,?,?)",
+                (
+                    tid,
+                    info.get("prompt", ""),
+                    info.get("branch"),
+                    info.get("status", "queued"),
+                    info.get("error"),
+                    now,
+                    order,
+                ),
+            )
+            order += 1
+        conn.execute(
+            "UPDATE metadata SET last_completed=?", (last_completed,)
+        )
+        conn.commit()
 
         try:
             jsonl_path.rename(jsonl_path.with_suffix(jsonl_path.suffix + ".bak"))
@@ -208,7 +213,8 @@ class VisualAgentQueue:
 
     # ------------------------------------------------------------------
     def append(self, item: Dict[str, object]) -> None:
-        with self._lock, sqlite3.connect(self.path) as conn:
+        with self._lock:
+            conn = router.get_connection("tasks")
             qorder = conn.execute("SELECT COALESCE(MAX(qorder),0)+1 FROM tasks").fetchone()[0]
             conn.execute(
                 "INSERT OR REPLACE INTO tasks(id,prompt,branch,status,error,ts,qorder) VALUES(?,?,?,?,?,?,?)",
@@ -225,7 +231,8 @@ class VisualAgentQueue:
             conn.commit()
 
     def popleft(self) -> Dict[str, object]:
-        with self._lock, sqlite3.connect(self.path) as conn:
+        with self._lock:
+            conn = router.get_connection("tasks")
             row = conn.execute(
                 "SELECT id,prompt,branch FROM tasks WHERE status='queued' ORDER BY qorder LIMIT 1"
             ).fetchone()
@@ -239,7 +246,8 @@ class VisualAgentQueue:
             return {"id": row[0], "prompt": row[1], "branch": row[2]}
 
     def peek(self) -> Optional[Dict[str, object]]:
-        with self._lock, sqlite3.connect(self.path) as conn:
+        with self._lock:
+            conn = router.get_connection("tasks")
             row = conn.execute(
                 "SELECT id,prompt,branch,status FROM tasks WHERE status='queued' ORDER BY qorder LIMIT 1"
             ).fetchone()
@@ -248,7 +256,8 @@ class VisualAgentQueue:
             return None
 
     def load_all(self) -> List[Dict[str, object]]:
-        with self._lock, sqlite3.connect(self.path) as conn:
+        with self._lock:
+            conn = router.get_connection("tasks")
             rows = conn.execute(
                 "SELECT id,prompt,branch,status FROM tasks WHERE status='queued' ORDER BY qorder"
             ).fetchall()
@@ -257,7 +266,8 @@ class VisualAgentQueue:
             ]
 
     def update_status(self, task_id: str, status: str, error: Optional[str] = None) -> None:
-        with self._lock, sqlite3.connect(self.path) as conn:
+        with self._lock:
+            conn = router.get_connection("tasks")
             conn.execute(
                 "UPDATE tasks SET status=?, error=?, ts=? WHERE id=?",
                 (status, error, time.time(), task_id),
@@ -265,7 +275,8 @@ class VisualAgentQueue:
             conn.commit()
 
     def get_status(self) -> Dict[str, Dict[str, object]]:
-        with self._lock, sqlite3.connect(self.path) as conn:
+        with self._lock:
+            conn = router.get_connection("tasks")
             rows = conn.execute(
                 "SELECT id,prompt,branch,status,error FROM tasks"
             ).fetchall()
@@ -283,30 +294,35 @@ class VisualAgentQueue:
 
     def reset_running_tasks(self) -> None:
         """Mark any ``running`` tasks as ``queued``."""
-        with self._lock, sqlite3.connect(self.path) as conn:
+        with self._lock:
+            conn = router.get_connection("tasks")
             conn.execute("UPDATE tasks SET status='queued' WHERE status='running'")
             conn.commit()
 
     def get_last_completed(self) -> float:
-        with self._lock, sqlite3.connect(self.path) as conn:
+        with self._lock:
+            conn = router.get_connection("metadata")
             row = conn.execute("SELECT last_completed FROM metadata").fetchone()
             if row and row[0] is not None:
                 return float(row[0])
             return 0.0
 
     def set_last_completed(self, ts: float) -> None:
-        with self._lock, sqlite3.connect(self.path) as conn:
+        with self._lock:
+            conn = router.get_connection("metadata")
             conn.execute("UPDATE metadata SET last_completed=?", (ts,))
             conn.commit()
 
     # ------------------------------------------------------------------
     def clear(self) -> None:
-        with self._lock, sqlite3.connect(self.path) as conn:
+        with self._lock:
+            conn = router.get_connection("tasks")
             conn.execute("DELETE FROM tasks")
             conn.commit()
 
     def __len__(self) -> int:
-        with self._lock, sqlite3.connect(self.path) as conn:
+        with self._lock:
+            conn = router.get_connection("tasks")
             row = conn.execute(
                 "SELECT COUNT(*) FROM tasks WHERE status='queued'"
             ).fetchone()

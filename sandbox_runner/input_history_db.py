@@ -4,9 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List
-import sqlite3
 import json
 import threading
+
+from db_router import GLOBAL_ROUTER, init_db_router
+
+router = GLOBAL_ROUTER or init_db_router("sandbox_runner_input_history_db")
 
 
 @dataclass
@@ -21,40 +24,40 @@ class InputHistoryDB:
     def __init__(self, path: Path | str = "input_history.db") -> None:
         self.path = Path(path)
         self._lock = threading.Lock()
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                """
-            CREATE TABLE IF NOT EXISTS history(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                data TEXT,
-                ts TEXT
-            )
+        conn = router.get_connection("history")
+        conn.execute(
             """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_history_ts ON history(ts)"
-            )
-            conn.commit()
+        CREATE TABLE IF NOT EXISTS history(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data TEXT,
+            ts TEXT
+        )
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_history_ts ON history(ts)"
+        )
+        conn.commit()
 
     def add(self, rec: InputRecord | dict[str, Any]) -> None:
         if isinstance(rec, dict):
             rec = InputRecord(rec)
         payload = json.dumps(rec.data)
         with self._lock:
-            with sqlite3.connect(self.path) as conn:
-                conn.execute(
-                    "INSERT INTO history(data, ts) VALUES(?, ?)",
-                    (payload, rec.ts),
-                )
-                conn.commit()
+            conn = router.get_connection("history")
+            conn.execute(
+                "INSERT INTO history(data, ts) VALUES(?, ?)",
+                (payload, rec.ts),
+            )
+            conn.commit()
 
     def sample(self, limit: int = 10) -> List[dict[str, Any]]:
         with self._lock:
-            with sqlite3.connect(self.path) as conn:
-                rows = conn.execute(
-                    "SELECT data FROM history ORDER BY RANDOM() LIMIT ?",
-                    (int(limit),),
-                ).fetchall()
+            conn = router.get_connection("history")
+            rows = conn.execute(
+                "SELECT data FROM history ORDER BY RANDOM() LIMIT ?",
+                (int(limit),),
+            ).fetchall()
         samples: List[dict[str, Any]] = []
         for r in rows:
             try:
@@ -68,11 +71,11 @@ class InputHistoryDB:
     def recent(self, limit: int = 10) -> List[dict[str, Any]]:
         """Return up to ``limit`` most recent records."""
         with self._lock:
-            with sqlite3.connect(self.path) as conn:
-                rows = conn.execute(
-                    "SELECT data FROM history ORDER BY id DESC LIMIT ?",
-                    (int(limit),),
-                ).fetchall()
+            conn = router.get_connection("history")
+            rows = conn.execute(
+                "SELECT data FROM history ORDER BY id DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
         records: List[dict[str, Any]] = []
         for r in rows:
             try:
