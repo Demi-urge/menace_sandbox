@@ -25,6 +25,7 @@ from .task_handoff_bot import WorkflowDB
 from .database_manager import DB_PATH, update_model, init_db
 from .prediction_manager_bot import PredictionManager
 from .unified_event_bus import UnifiedEventBus
+from .db_router import DBRouter, GLOBAL_ROUTER
 try:  # pragma: no cover - optional dependency
     from .adaptive_roi_predictor import AdaptiveROIPredictor
 except Exception:  # pragma: no cover - predictor missing
@@ -123,6 +124,7 @@ class PreExecutionROIBot:
         self,
         history: ROIHistoryDB | None = None,
         *,
+        router: DBRouter | None = GLOBAL_ROUTER,
         models_db: Path | str = DB_PATH,
         workflows_db: Path | str = "workflows.db",
         enhancements_db: Path | str = "enhancements.db",
@@ -132,6 +134,7 @@ class PreExecutionROIBot:
         event_bus: UnifiedEventBus | None = None,
     ) -> None:
         self.history = history or ROIHistoryDB()
+        self.router = router or GLOBAL_ROUTER
         self.models_db = Path(models_db)
         self.workflows_db = Path(workflows_db)
         self.enhancements_db = Path(enhancements_db)
@@ -215,8 +218,10 @@ class PreExecutionROIBot:
 
     # ------------------------------------------------------------------
     def _avg_model_roi(self, name: str) -> float:
+        if not self.router:
+            return 0.0
         try:
-            with sqlite3.connect(self.models_db) as conn:
+            with self.router.get_connection("models") as conn:
                 try:
                     init_db(conn)
                 except Exception:
@@ -481,17 +486,22 @@ class PreExecutionROIBot:
             npv=npv,
         )
         try:
-            with sqlite3.connect(self.models_db) as conn:
-                try:
-                    init_db(conn)
-                except Exception:
-                    pass
-                row = conn.execute(
-                    "SELECT id FROM models WHERE name LIKE ? ORDER BY id DESC LIMIT 1",
-                    (f"%{model}%",),
-                ).fetchone()
-                if row:
-                    update_model(row[0], db_path=Path(self.models_db), final_roi_prediction=final.roi)
+            if self.router:
+                with self.router.get_connection("models") as conn:
+                    try:
+                        init_db(conn)
+                    except Exception:
+                        pass
+                    row = conn.execute(
+                        "SELECT id FROM models WHERE name LIKE ? ORDER BY id DESC LIMIT 1",
+                        (f"%{model}%",),
+                    ).fetchone()
+                    if row:
+                        update_model(
+                            row[0],
+                            db_path=Path(self.models_db),
+                            final_roi_prediction=final.roi,
+                        )
         except Exception as exc:
             logger.warning("Failed to record ROI to database: %s", exc)
         return final
