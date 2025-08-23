@@ -42,7 +42,7 @@ def test_unknown_table_raises(tmp_path):
         router.close()
 
 
-def test_shared_table_logging(tmp_path, caplog):
+def test_table_logging(tmp_path, caplog):
     shared_db = tmp_path / "shared.db"
     local_db = tmp_path / "local.db"
     router = DBRouter("test", str(local_db), str(shared_db))
@@ -50,8 +50,14 @@ def test_shared_table_logging(tmp_path, caplog):
     try:
         with caplog.at_level(logging.INFO):
             router.get_connection("bots")
+            router.get_connection("models")
         assert (
-            "Shared table 'bots' accessed by menace 'test'" in caplog.text
+            "Shared table 'bots' accessed by menace 'test' on thread 'MainThread'"
+            in caplog.text
+        )
+        assert (
+            "Local table 'models' accessed by menace 'test' on thread 'MainThread'"
+            in caplog.text
         )
     finally:
         router.close()
@@ -88,6 +94,22 @@ def test_get_connection_thread_safe(tmp_path):
     assert all(path == str(local_db) for path in local_paths)
 
     router.close()
+
+
+def test_access_metrics(tmp_path):
+    shared_db = tmp_path / "shared.db"
+    local_db = tmp_path / "local.db"
+    router = DBRouter("test", str(local_db), str(shared_db))
+
+    try:
+        router.get_connection("bots")
+        router.get_connection("bots")
+        router.get_connection("models")
+        counts = router.get_access_counts()
+        assert counts["shared"]["bots"] == 2
+        assert counts["local"]["models"] == 1
+    finally:
+        router.close()
 
 
 def test_table_lists_from_env(tmp_path, monkeypatch):
@@ -144,7 +166,9 @@ def test_logging_respects_env_level(tmp_path, monkeypatch, caplog):
     try:
         with caplog.at_level(logging.INFO):
             router.get_connection("bots")
-        assert "Shared table 'bots' accessed" not in caplog.text
+            router.get_connection("models")
+        assert "table 'bots' accessed" not in caplog.text
+        assert "table 'models' accessed" not in caplog.text
     finally:
         router.close()
     monkeypatch.delenv("DB_ROUTER_LOG_LEVEL", raising=False)
