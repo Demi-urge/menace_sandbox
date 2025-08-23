@@ -9,6 +9,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence, List
 
+from db_router import GLOBAL_ROUTER, init_db_router
+
+MENACE_ID = "retrieval_cache"
+DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
+
 __all__ = ["RetrievalCache"]
 
 
@@ -26,6 +31,7 @@ class RetrievalCache:
 
     def __post_init__(self) -> None:
         self.path = str(self.path)
+        self.router = DB_ROUTER
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.execute(
             """
