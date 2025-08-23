@@ -11,6 +11,7 @@ repos:
         name: Prevent direct sqlite3.connect usage
         entry: python scripts/check_sqlite_connections.py
         language: system
+        pass_filenames: true
         files: '\.py$'
   - repo: https://github.com/pycqa/flake8
     rev: 6.1.0
