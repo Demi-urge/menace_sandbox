@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
@@ -27,6 +26,7 @@ from .research_aggregator_bot import InfoDB
 from .chatgpt_enhancement_bot import EnhancementDB
 from .error_bot import ErrorDB
 from .database_router import DatabaseRouter
+from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .code_database import CodeDB, CodeRecord
 from .database_manager import update_model, DB_PATH
 from .databases import MenaceDB
@@ -42,13 +42,22 @@ from .audit_logger import log_event as audit_log_event
 # ---------------------------------------------------------------------------
 
 class DeploymentDB:
-    """SQLite‑backed deployment & error log."""
+    """SQLite‑backed deployment & error log using :class:`DBRouter`."""
 
-    def __init__(self, path: str | Path = "deployment.db", *, event_bus: Optional[UnifiedEventBus] = None) -> None:
-        self.conn = sqlite3.connect(path)
+    def __init__(
+        self,
+        path: str | Path = "deployment.db",
+        *,
+        event_bus: Optional[UnifiedEventBus] = None,
+        router: DBRouter | None = None,
+    ) -> None:
+        p = Path(path)
+        self.router = router or init_db_router("deployment", str(p), str(p))
+        LOCAL_TABLES.update({"deployments", "errors", "bot_trials", "update_history"})
         self.event_bus = event_bus
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.conn.execute(
+        conn = self.router.get_connection("deployments")
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS deployments(
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,7 +68,7 @@ class DeploymentDB:
             )
             """
         )
-        self.conn.execute(
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS errors(
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,7 +78,7 @@ class DeploymentDB:
             )
             """
         )
-        self.conn.execute(
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS bot_trials(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,7 +89,7 @@ class DeploymentDB:
             )
             """
         )
-        self.conn.execute(
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS update_history(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,16 +99,17 @@ class DeploymentDB:
             )
             """
         )
-        self.conn.commit()
+        conn.commit()
 
     # ----------------------------- CRUD helpers ----------------------------
 
     def add(self, name: str, status: str, log: str) -> int:
-        cur = self.conn.execute(
+        conn = self.router.get_connection("deployments")
+        cur = conn.execute(
             "INSERT INTO deployments(name, status, ts, log) VALUES (?,?,?,?)",
             (name, status, datetime.utcnow().isoformat(), log),
         )
-        self.conn.commit()
+        conn.commit()
         did = int(cur.lastrowid)
         if self.event_bus:
             try:
@@ -115,11 +125,12 @@ class DeploymentDB:
         return did
 
     def update_status(self, deploy_id: int, status: str) -> None:
-        self.conn.execute(
+        conn = self.router.get_connection("deployments")
+        conn.execute(
             "UPDATE deployments SET status = ? WHERE id = ?",
             (status, deploy_id),
         )
-        self.conn.commit()
+        conn.commit()
         if self.event_bus:
             try:
                 self.event_bus.publish("deployments:update", {"id": deploy_id, "status": status})
@@ -127,11 +138,12 @@ class DeploymentDB:
                 _log_exception(self.logger, "publish deployments:update", exc)
 
     def error(self, deploy_id: int, message: str) -> None:
-        self.conn.execute(
+        conn = self.router.get_connection("errors")
+        conn.execute(
             "INSERT INTO errors(deploy_id, message, ts) VALUES (?,?,?)",
             (deploy_id, message, datetime.utcnow().isoformat()),
         )
-        self.conn.commit()
+        conn.commit()
         if self.event_bus:
             try:
                 self.event_bus.publish(
@@ -143,14 +155,16 @@ class DeploymentDB:
 
     def errors_for(self, deploy_id: int) -> List[int]:
         """Return IDs of errors logged for a deployment."""
-        rows = self.conn.execute(
+        conn = self.router.get_connection("errors")
+        rows = conn.execute(
             "SELECT id FROM errors WHERE deploy_id=?",
             (deploy_id,),
         ).fetchall()
         return [r[0] for r in rows]
 
     def get(self, deploy_id: int) -> Dict[str, Any]:
-        row = self.conn.execute(
+        conn = self.router.get_connection("deployments")
+        row = conn.execute(
             "SELECT id,name,status,ts,log FROM deployments WHERE id = ?",
             (deploy_id,),
         ).fetchone()
@@ -167,22 +181,25 @@ class DeploymentDB:
     # Trial helpers ----------------------------------------------------
 
     def add_trial(self, bot_id: int, deploy_id: int, status: str = "active") -> int:
-        cur = self.conn.execute(
+        conn = self.router.get_connection("bot_trials")
+        cur = conn.execute(
             "INSERT INTO bot_trials(bot_id, deploy_id, status, ts) VALUES (?,?,?,?)",
             (bot_id, deploy_id, status, datetime.utcnow().isoformat()),
         )
-        self.conn.commit()
+        conn.commit()
         return int(cur.lastrowid)
 
     def update_trial(self, trial_id: int, status: str) -> None:
-        self.conn.execute(
+        conn = self.router.get_connection("bot_trials")
+        conn.execute(
             "UPDATE bot_trials SET status=? WHERE id=?",
             (status, trial_id),
         )
-        self.conn.commit()
+        conn.commit()
 
     def trials(self, status: str = "active") -> List[dict[str, Any]]:
-        cur = self.conn.execute(
+        conn = self.router.get_connection("bot_trials")
+        cur = conn.execute(
             "SELECT id, bot_id, deploy_id, status, ts FROM bot_trials WHERE status=?",
             (status,),
         )
@@ -193,11 +210,12 @@ class DeploymentDB:
     # Update history helpers ------------------------------------------
 
     def add_update(self, packages: Iterable[str], status: str) -> int:
-        cur = self.conn.execute(
+        conn = self.router.get_connection("update_history")
+        cur = conn.execute(
             "INSERT INTO update_history(packages, status, ts) VALUES (?,?,?)",
             (";".join(packages), status, datetime.utcnow().isoformat()),
         )
-        self.conn.commit()
+        conn.commit()
         return int(cur.lastrowid)
 
 # ---------------------------------------------------------------------------

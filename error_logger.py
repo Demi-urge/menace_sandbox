@@ -17,6 +17,8 @@ from datetime import datetime
 from functools import wraps
 from typing import Any, Callable, Optional
 
+from .db_router import GLOBAL_ROUTER, init_db_router
+
 try:
     from .sentry_client import SentryClient
 except ImportError:  # pragma: no cover - package fallback
@@ -424,6 +426,8 @@ class ErrorLogger:
 
                 db = _StubDB()
             else:
+                if GLOBAL_ROUTER is None:
+                    init_db_router("errors")
                 db = _ErrorDB()
         self.db = db
         self.classifier = ErrorClassifier()

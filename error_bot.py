@@ -16,7 +16,7 @@ from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence, Itera
 
 from .unified_event_bus import EventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
-from db_router import DBRouter, GLOBAL_ROUTER
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 import asyncio
 import threading
 from jinja2 import Template
@@ -78,11 +78,9 @@ class ErrorDB(EmbeddableDBMixin):
         embedding_version: int = 1,
         router: DBRouter | None = None,
     ) -> None:
-        self.router = router or GLOBAL_ROUTER
-        if not self.router:
-            raise RuntimeError("Database router is not initialised")
-        with self.router.get_connection("errors") as conn:
-            self.conn = conn
+        p = Path(path or "errors.db")
+        self.router = router or init_db_router("errors_db", str(p), str(p))
+        self.conn = self.router.get_connection("errors")
         self.conn.row_factory = sqlite3.Row
         self.event_bus = event_bus
         self.graph = graph
