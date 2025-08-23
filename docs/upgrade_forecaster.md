@@ -79,11 +79,18 @@ patch can be promoted.  The helper combines ``UpgradeForecaster``,
 forecast)``.  Promotion proceeds only when all four gates pass:
 
 1. every projected ROI meets or exceeds the supplied ``roi_threshold``;
-2. forecast ``confidence`` is at least ``0.6``;
+2. forecast ``confidence`` is at least ``0.6`` (customisable via
+   ``confidence_threshold``);
 3. :meth:`ForesightTracker.predict_roi_collapse` reports neither immediate
    collapse risk nor a ``collapse_in`` value within the forecast horizon; and
 4. :meth:`WorkflowGraph.simulate_impact_wave` reports no negative downstream ROI
-   deltas.
+   deltas unless ``allow_negative_dag`` is ``True``.
+
+All gate decisions are appended to ``forecast_records/decision_log.jsonl`` using
+``ForecastLogger``. Each line stores a ``timestamp``, ``workflow_id``,
+``patch_summary``, the list of ``forecast_projections``, top‑level
+``forecast_confidence``, an optional ``dag_impact`` mapping, the boolean
+``decision`` and any ``reason_codes``.
 
 If ``ok`` is ``False`` the calling :class:`DeploymentGovernor` downgrades the
 workflow to the borderline bucket (when available) or triggers a pilot run
