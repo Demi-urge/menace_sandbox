@@ -20,7 +20,7 @@ from dataclasses import asdict
 import license_detector
 from vector_service import EmbeddableDBMixin
 from embeddable_db_mixin import log_embedding_metrics
-from db_router import DBRouter, GLOBAL_ROUTER
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 try:  # optional dependency for future scalability
     from sqlalchemy.engine import Engine  # type: ignore
@@ -896,7 +896,11 @@ class PatchHistoryDB:
     """SQLite-backed store for patch history."""
 
     def __init__(
-        self, path: Path | str | None = None, *, code_db: CodeDB | None = None
+        self,
+        path: Path | str | None = None,
+        *,
+        code_db: CodeDB | None = None,
+        router: DBRouter | None = None,
     ) -> None:
         """Initialise the patch history database."""
         self.path = Path(
@@ -907,9 +911,15 @@ class PatchHistoryDB:
         self.keyword_counts: Counter[str] = Counter()
         self.keyword_recent: Dict[str, float] = {}
         self._vec_db = VectorMetricsDB() if VectorMetricsDB is not None else None
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                """
+        # Always initialise a router for the provided path unless an explicit
+        # router instance is supplied.  This ensures tests using temporary
+        # databases do not share state via ``GLOBAL_ROUTER``.
+        self.router = router or init_db_router(
+            "patch_history", str(self.path), str(self.path)
+        )
+        conn = self.router.get_connection("patch_history")
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS patch_history(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT,
@@ -939,9 +949,9 @@ class PatchHistoryDB:
                 trigger TEXT
             )
             """
-            )
-            conn.execute(
-                """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS score_weights(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 w1 REAL,
@@ -953,9 +963,9 @@ class PatchHistoryDB:
                 ts TEXT
             )
             """
-            )
-            conn.execute(
-                """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS flakiness_history(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT,
@@ -963,9 +973,9 @@ class PatchHistoryDB:
                 ts TEXT
             )
             """
-            )
-            conn.execute(
-                """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS patch_provenance(
                 patch_id INTEGER,
                 origin TEXT,
@@ -979,9 +989,9 @@ class PatchHistoryDB:
                 FOREIGN KEY(patch_id) REFERENCES patch_history(id)
             )
             """
-            )
-            conn.execute(
-                """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS patch_ancestry(
                 patch_id INTEGER,
                 origin TEXT,
@@ -993,9 +1003,9 @@ class PatchHistoryDB:
                 FOREIGN KEY(patch_id) REFERENCES patch_history(id)
             )
             """
-            )
-            conn.execute(
-                """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS patch_contributors(
                 patch_id INTEGER,
                 vector_id TEXT,
@@ -1004,106 +1014,98 @@ class PatchHistoryDB:
                 FOREIGN KEY(patch_id) REFERENCES patch_history(id)
             )
             """
-            )
-            cols = [
-                r[1]
-                for r in conn.execute("PRAGMA table_info(patch_history)").fetchall()
-            ]
-            migrations = {
-                "errors_before": "ALTER TABLE patch_history ADD COLUMN errors_before INTEGER DEFAULT 0",
-                "errors_after": "ALTER TABLE patch_history ADD COLUMN errors_after INTEGER DEFAULT 0",
-                "roi_delta": "ALTER TABLE patch_history ADD COLUMN roi_delta REAL DEFAULT 0",
-                "complexity_before": "ALTER TABLE patch_history ADD COLUMN complexity_before REAL DEFAULT 0",
-                "complexity_after": "ALTER TABLE patch_history ADD COLUMN complexity_after REAL DEFAULT 0",
-                "complexity_delta": "ALTER TABLE patch_history ADD COLUMN complexity_delta REAL DEFAULT 0",
-                "entropy_before": "ALTER TABLE patch_history ADD COLUMN entropy_before REAL DEFAULT 0",
-                "entropy_after": "ALTER TABLE patch_history ADD COLUMN entropy_after REAL DEFAULT 0",
-                "entropy_delta": "ALTER TABLE patch_history ADD COLUMN entropy_delta REAL DEFAULT 0",
-                "predicted_roi": "ALTER TABLE patch_history ADD COLUMN predicted_roi REAL DEFAULT 0",
-                "predicted_errors": "ALTER TABLE patch_history ADD COLUMN predicted_errors REAL DEFAULT 0",
-                "reverted": "ALTER TABLE patch_history ADD COLUMN reverted INTEGER DEFAULT 0",
-                "trending_topic": "ALTER TABLE patch_history ADD COLUMN trending_topic TEXT",
-                "source_bot": "ALTER TABLE patch_history ADD COLUMN source_bot TEXT",
-                "version": "ALTER TABLE patch_history ADD COLUMN version TEXT",
-                "code_id": "ALTER TABLE patch_history ADD COLUMN code_id INTEGER",
-                "code_hash": "ALTER TABLE patch_history ADD COLUMN code_hash TEXT",
-                "parent_patch_id": "ALTER TABLE patch_history ADD COLUMN parent_patch_id INTEGER",
-                "reason": "ALTER TABLE patch_history ADD COLUMN reason TEXT",
-                "trigger": "ALTER TABLE patch_history ADD COLUMN trigger TEXT",
-            }
-            for name, stmt in migrations.items():
-                if name not in cols:
-                    conn.execute(stmt)
-            # Ensure patch_provenance and patch_ancestry have alert columns
-            cols = [
-                r[1]
-                for r in conn.execute("PRAGMA table_info(patch_provenance)").fetchall()
-            ]
-            if "license" not in cols:
-                conn.execute("ALTER TABLE patch_provenance ADD COLUMN license TEXT")
-            if "license_fingerprint" not in cols:
-                conn.execute(
-                    "ALTER TABLE patch_provenance ADD COLUMN license_fingerprint TEXT"
-                )
-            if "semantic_alerts" not in cols:
-                conn.execute(
-                    "ALTER TABLE patch_provenance ADD COLUMN semantic_alerts TEXT"
-                )
-            cols = [
-                r[1]
-                for r in conn.execute("PRAGMA table_info(patch_ancestry)").fetchall()
-            ]
-            if "license" not in cols:
-                conn.execute("ALTER TABLE patch_ancestry ADD COLUMN license TEXT")
-            if "license_fingerprint" not in cols:
-                conn.execute(
-                    "ALTER TABLE patch_ancestry ADD COLUMN license_fingerprint TEXT"
-                )
-            if "semantic_alerts" not in cols:
-                conn.execute(
-                    "ALTER TABLE patch_ancestry ADD COLUMN semantic_alerts TEXT"
-                )
+        )
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(patch_history)").fetchall()]
+        migrations = {
+            "errors_before": "ALTER TABLE patch_history ADD COLUMN errors_before INTEGER DEFAULT 0",
+            "errors_after": "ALTER TABLE patch_history ADD COLUMN errors_after INTEGER DEFAULT 0",
+            "roi_delta": "ALTER TABLE patch_history ADD COLUMN roi_delta REAL DEFAULT 0",
+            "complexity_before": "ALTER TABLE patch_history ADD COLUMN complexity_before REAL DEFAULT 0",
+            "complexity_after": "ALTER TABLE patch_history ADD COLUMN complexity_after REAL DEFAULT 0",
+            "complexity_delta": "ALTER TABLE patch_history ADD COLUMN complexity_delta REAL DEFAULT 0",
+            "entropy_before": "ALTER TABLE patch_history ADD COLUMN entropy_before REAL DEFAULT 0",
+            "entropy_after": "ALTER TABLE patch_history ADD COLUMN entropy_after REAL DEFAULT 0",
+            "entropy_delta": "ALTER TABLE patch_history ADD COLUMN entropy_delta REAL DEFAULT 0",
+            "predicted_roi": "ALTER TABLE patch_history ADD COLUMN predicted_roi REAL DEFAULT 0",
+            "predicted_errors": "ALTER TABLE patch_history ADD COLUMN predicted_errors REAL DEFAULT 0",
+            "reverted": "ALTER TABLE patch_history ADD COLUMN reverted INTEGER DEFAULT 0",
+            "trending_topic": "ALTER TABLE patch_history ADD COLUMN trending_topic TEXT",
+            "source_bot": "ALTER TABLE patch_history ADD COLUMN source_bot TEXT",
+            "version": "ALTER TABLE patch_history ADD COLUMN version TEXT",
+            "code_id": "ALTER TABLE patch_history ADD COLUMN code_id INTEGER",
+            "code_hash": "ALTER TABLE patch_history ADD COLUMN code_hash TEXT",
+            "parent_patch_id": "ALTER TABLE patch_history ADD COLUMN parent_patch_id INTEGER",
+            "reason": "ALTER TABLE patch_history ADD COLUMN reason TEXT",
+            "trigger": "ALTER TABLE patch_history ADD COLUMN trigger TEXT",
+        }
+        for name, stmt in migrations.items():
+            if name not in cols:
+                conn.execute(stmt)
+        # Ensure patch_provenance and patch_ancestry have alert columns
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(patch_provenance)").fetchall()]
+        if "license" not in cols:
+            conn.execute("ALTER TABLE patch_provenance ADD COLUMN license TEXT")
+        if "license_fingerprint" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_patch_filename ON patch_history(filename)"
+                "ALTER TABLE patch_provenance ADD COLUMN license_fingerprint TEXT"
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_patch_ts ON patch_history(ts)")
+        if "semantic_alerts" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_patch_roi_delta ON patch_history(roi_delta)"
+                "ALTER TABLE patch_provenance ADD COLUMN semantic_alerts TEXT"
             )
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(patch_ancestry)").fetchall()]
+        if "license" not in cols:
+            conn.execute("ALTER TABLE patch_ancestry ADD COLUMN license TEXT")
+        if "license_fingerprint" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_patch_parent ON patch_history(parent_patch_id)"
+                "ALTER TABLE patch_ancestry ADD COLUMN license_fingerprint TEXT"
             )
+        if "semantic_alerts" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_flaky_file ON flakiness_history(filename)"
+                "ALTER TABLE patch_ancestry ADD COLUMN semantic_alerts TEXT"
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_provenance_patch ON patch_provenance(patch_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_ancestry_patch ON patch_ancestry(patch_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_ancestry_vector ON patch_ancestry(vector_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_contributors_patch ON patch_contributors(patch_id)"
-            )
-            conn.execute("PRAGMA user_version = 1")
-            conn.commit()
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_patch_filename ON patch_history(filename)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_patch_ts ON patch_history(ts)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_patch_roi_delta ON patch_history(roi_delta)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_patch_parent ON patch_history(parent_patch_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_flaky_file ON flakiness_history(filename)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_provenance_patch ON patch_provenance(patch_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ancestry_patch ON patch_ancestry(patch_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ancestry_vector ON patch_ancestry(vector_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_contributors_patch ON patch_contributors(patch_id)"
+        )
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
         # expose connection for diagnostics and tests
-        self.conn = sqlite3.connect(self.path)
+        self.conn = self.router.get_connection("patch_history")
         self.conn.execute("PRAGMA foreign_keys = ON")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
-            conn = sqlite3.connect(self.path)
+            conn = self.router.get_connection("patch_history")
             conn.execute("PRAGMA foreign_keys = ON")
             try:
                 yield conn
                 conn.commit()
-            finally:
-                conn.close()
+            except Exception:
+                conn.rollback()
+                raise
 
     def _with_conn(self, func: Callable[[sqlite3.Connection], T]) -> T:
         with self._connect() as conn:
