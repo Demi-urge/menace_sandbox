@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import logging
 from filelock import FileLock
 
+from db_router import DBRouter
 from . import RAISE_ERRORS
 
 logger = logging.getLogger(__name__)
@@ -21,42 +22,55 @@ CREATE_TABLE = (
 )
 
 
-def connect(path: str | Path) -> sqlite3.Connection:
+def connect(path: str | Path, *, router: DBRouter | None = None) -> sqlite3.Connection:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(p))
+    router = router or DBRouter("synergy_history", str(p), ":memory:")
+    conn = router.get_connection("synergy_history")
     try:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(CREATE_TABLE)
         conn.commit()
     except Exception:
-        conn.close()
+        orig_close = conn.close
+        orig_close()
+        router.shared_conn.close()
         raise
+
+    orig_close = conn.close
+
+    def _close() -> None:
+        try:
+            orig_close()
+        finally:
+            router.shared_conn.close()
+
+    conn.close = _close  # type: ignore[attr-defined]
     return conn
 
 
 @contextmanager
-def connect_locked(path: str | Path) -> Iterator[sqlite3.Connection]:
+def connect_locked(path: str | Path, *, router: DBRouter | None = None) -> Iterator[sqlite3.Connection]:
     """Yield a connection with an exclusive lock on ``path``."""
     p = Path(path)
     lock_path = p.with_suffix(p.suffix + ".lock")
     p.parent.mkdir(parents=True, exist_ok=True)
     lock = FileLock(str(lock_path))
     with lock:
-        conn = connect(p)
+        conn = connect(p, router=router)
         try:
             yield conn
         finally:
             conn.close()
 
 
-def load_history(path: str | Path) -> List[Dict[str, float]]:
+def load_history(path: str | Path, *, router: DBRouter | None = None) -> List[Dict[str, float]]:
     """Return synergy history entries from ``path`` SQLite database."""
     p = Path(path)
     if not p.exists():
         return []
     try:
-        with sqlite3.connect(p) as conn:
+        with connect(p, router=router) as conn:
             rows = conn.execute(
                 "SELECT entry FROM synergy_history ORDER BY id"
             ).fetchall()

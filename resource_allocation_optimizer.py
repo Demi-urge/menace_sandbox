@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
-import sqlite3
 import asyncio
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
+
+from db_router import DBRouter, GLOBAL_ROUTER
 
 try:
     import requests  # type: ignore
@@ -55,10 +56,11 @@ class KPIRecord:
 class ROIDB:
     """SQLite store for per-run ROI metrics."""
 
-    def __init__(self, path: Path | str = "roi.db") -> None:
+    def __init__(self, path: Path | str = "roi.db", *, router: DBRouter = GLOBAL_ROUTER) -> None:
         self.path = str(Path(path))
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
+        self.router = router
+        conn = self.router.get_connection("roi")
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS roi(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,8 +72,8 @@ class ROIDB:
                 ts TEXT
             )
             """
-            )
-            conn.execute(
+        )
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS action_roi(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,8 +85,8 @@ class ROIDB:
                 ts TEXT
             )
             """
-            )
-            conn.execute(
+        )
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS allocation_weights(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,24 +95,24 @@ class ROIDB:
                 ts TEXT
             )
             """
-            )
-            conn.commit()
+        )
+        conn.commit()
 
     def add(self, rec: KPIRecord) -> int:
-        with sqlite3.connect(self.path) as conn:
-            cur = conn.execute(
-                "INSERT INTO roi(bot, revenue, api_cost, cpu_seconds, success_rate, ts) VALUES (?,?,?,?,?,?)",
-                (
-                    rec.bot,
-                    rec.revenue,
-                    rec.api_cost,
-                    rec.cpu_seconds,
-                    rec.success_rate,
-                    rec.ts,
-                ),
-            )
-            conn.commit()
-            return int(cur.lastrowid)
+        conn = self.router.get_connection("roi")
+        cur = conn.execute(
+            "INSERT INTO roi(bot, revenue, api_cost, cpu_seconds, success_rate, ts) VALUES (?,?,?,?,?,?)",
+            (
+                rec.bot,
+                rec.revenue,
+                rec.api_cost,
+                rec.cpu_seconds,
+                rec.success_rate,
+                rec.ts,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
 
     def add_action_roi(
         self,
@@ -122,63 +124,63 @@ class ROIDB:
         ts: str | None = None,
     ) -> int:
         ts = ts or datetime.utcnow().isoformat()
-        with sqlite3.connect(self.path) as conn:
-            cur = conn.execute(
-                "INSERT INTO action_roi(action, revenue, api_cost, cpu_seconds, success_rate, ts) VALUES (?,?,?,?,?,?)",
-                (
-                    action,
-                    revenue,
-                    api_cost,
-                    cpu_seconds,
-                    success_rate,
-                    ts,
-                ),
-            )
-            conn.commit()
-            return int(cur.lastrowid)
+        conn = self.router.get_connection("action_roi")
+        cur = conn.execute(
+            "INSERT INTO action_roi(action, revenue, api_cost, cpu_seconds, success_rate, ts) VALUES (?,?,?,?,?,?)",
+            (
+                action,
+                revenue,
+                api_cost,
+                cpu_seconds,
+                success_rate,
+                ts,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
 
     def history(self, bot: str | None = None, limit: int = 50) -> pd.DataFrame:
-        with sqlite3.connect(self.path) as conn:
-            if bot:
+        conn = self.router.get_connection("action_roi")
+        if bot:
+            query = (
+                "SELECT action AS bot, revenue, api_cost, cpu_seconds, success_rate, ts FROM action_roi WHERE action=? ORDER BY id DESC LIMIT ?"
+            )
+            df = pd.read_sql(query, conn, params=(bot, limit))
+            if df.empty:
                 query = (
-                    "SELECT action AS bot, revenue, api_cost, cpu_seconds, success_rate, ts FROM action_roi WHERE action=? ORDER BY id DESC LIMIT ?"
+                    "SELECT bot, revenue, api_cost, cpu_seconds, success_rate, ts FROM roi WHERE bot=? ORDER BY id DESC LIMIT ?"
                 )
                 df = pd.read_sql(query, conn, params=(bot, limit))
-                if df.empty:
-                    query = (
-                        "SELECT bot, revenue, api_cost, cpu_seconds, success_rate, ts FROM roi WHERE bot=? ORDER BY id DESC LIMIT ?"
-                    )
-                    df = pd.read_sql(query, conn, params=(bot, limit))
-                return df
-            df1 = pd.read_sql(
-                "SELECT action AS bot, revenue, api_cost, cpu_seconds, success_rate, ts FROM action_roi ORDER BY id DESC LIMIT ?",
-                conn,
-                params=(limit,),
-            )
-            df2 = pd.read_sql(
-                "SELECT bot, revenue, api_cost, cpu_seconds, success_rate, ts FROM roi ORDER BY id DESC LIMIT ?",
-                conn,
-                params=(limit,),
-            )
-            return pd.concat([df1, df2], ignore_index=True)
+            return df
+        df1 = pd.read_sql(
+            "SELECT action AS bot, revenue, api_cost, cpu_seconds, success_rate, ts FROM action_roi ORDER BY id DESC LIMIT ?",
+            conn,
+            params=(limit,),
+        )
+        df2 = pd.read_sql(
+            "SELECT bot, revenue, api_cost, cpu_seconds, success_rate, ts FROM roi ORDER BY id DESC LIMIT ?",
+            conn,
+            params=(limit,),
+        )
+        return pd.concat([df1, df2], ignore_index=True)
 
     def add_weight(self, bot: str, weight: float, ts: str | None = None) -> int:
         ts = ts or datetime.utcnow().isoformat()
-        with sqlite3.connect(self.path) as conn:
-            cur = conn.execute(
-                "INSERT INTO allocation_weights(bot, weight, ts) VALUES (?,?,?)",
-                (bot, weight, ts),
-            )
-            conn.commit()
-            return int(cur.lastrowid)
+        conn = self.router.get_connection("allocation_weights")
+        cur = conn.execute(
+            "INSERT INTO allocation_weights(bot, weight, ts) VALUES (?,?,?)",
+            (bot, weight, ts),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
 
     def weight_history(self, limit: int = 50) -> pd.DataFrame:
-        with sqlite3.connect(self.path) as conn:
-            return pd.read_sql(
-                "SELECT bot, weight, ts FROM allocation_weights ORDER BY id DESC LIMIT ?",
-                conn,
-                params=(limit,),
-            )
+        conn = self.router.get_connection("allocation_weights")
+        return pd.read_sql(
+            "SELECT bot, weight, ts FROM allocation_weights ORDER BY id DESC LIMIT ?",
+            conn,
+            params=(limit,),
+        )
 
     def future_roi(self, action: str, discount: float = 0.9) -> float:
         df = self.history(action, limit=5)

@@ -95,6 +95,7 @@ if "LOCAL_TABLES" in globals():
             "update_history",
             "roi_events",
             "action_roi",
+            "allocation_weights",
             "ledger",
             "profit_history",
             "capital_summary",
@@ -114,6 +115,8 @@ if "LOCAL_TABLES" in globals():
             "evaluation_history",
             "weight_override",
             "roi",
+            "failures",
+            "synergy_history",
             "feedback",
             "mirror_logs",
         }
@@ -149,6 +152,7 @@ else:
         "update_history",
         "roi_events",
         "action_roi",
+        "allocation_weights",
         "ledger",
         "profit_history",
         "capital_summary",
@@ -168,6 +172,8 @@ else:
         "evaluation_history",
         "weight_override",
         "roi",
+        "failures",
+        "synergy_history",
         "feedback",
         "mirror_logs",
     }

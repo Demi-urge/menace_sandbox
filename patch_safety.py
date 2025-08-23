@@ -18,10 +18,11 @@ failures.
 from dataclasses import dataclass, field
 import json
 import math
-import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Tuple
+
+from db_router import DBRouter, GLOBAL_ROUTER
 
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from error_vectorizer import ErrorVectorizer
@@ -86,6 +87,7 @@ class PatchSafety:
     storage_path: str | None = None
     failure_db_path: str | None = "failures.db"
     failure_vectorizer: FailureVectorizer | None = None
+    router: DBRouter = field(default_factory=lambda: GLOBAL_ROUTER)
     _failures: List[List[float]] = field(default_factory=list)
     _records: List[Dict[str, Any]] = field(default_factory=list)
     _origins: List[str] = field(default_factory=list)
@@ -220,12 +222,11 @@ class PatchSafety:
         if not db_path or FailureVectorizer is None:
             return
         try:
-            conn = sqlite3.connect(db_path)
+            conn = self.router.get_connection("failures")
             cur = conn.execute(
                 "SELECT cause, demographics, profitability, retention, cac, roi FROM failures"
             )
             rows = cur.fetchall()
-            conn.close()
         except Exception:  # pragma: no cover - missing DB or table
             return
         if not rows:
