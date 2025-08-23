@@ -62,7 +62,7 @@ RAROI and confidence. A minimal example scorecard is provided in
 ## Foresight promotion gate
 
 Before a `promote` verdict is finalised, `DeploymentGovernor` calls
-`is_foresight_safe_to_promote()` to simulate the patch with
+`foresight_gate.is_foresight_safe_to_promote()` to simulate the patch with
 `UpgradeForecaster`, `ForesightTracker` and a `WorkflowGraph`. The gate enforces
 per‑cycle ROI and confidence thresholds (defaults: `roi_threshold=0.0`,
 `confidence_threshold=0.6`), rejects upcoming collapse risk and, unless

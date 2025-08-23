@@ -124,7 +124,7 @@
   menace_sandbox.adaptive_roi_cli scorecard`.
 - Deployment governance evaluates RAROI, confidence and scenario scores with
   optional signed overrides and a foresight promotion gate. The
-  `is_foresight_safe_to_promote` check enforces projected ROI thresholds and a
+  `foresight_gate.is_foresight_safe_to_promote` check enforces projected ROI thresholds and a
   minimum `0.6` confidence, rejects collapse risk or negative DAG impact and
   logs each decision to `forecast_records/decision_log.jsonl`. Failed gates are
   downgraded to the borderline bucket when available or routed through a pilot
@@ -157,7 +157,7 @@ tracker.borderline_bucket.process(
   The snippet records an ROI delta, computes a risk-adjusted score and evaluates
   borderline workflows before full adoption.
 
-`DeploymentGovernor` invokes `is_foresight_safe_to_promote` before finalising a
+`DeploymentGovernor` invokes `foresight_gate.is_foresight_safe_to_promote` before finalising a
 promote verdict. The gate requires each projected ROI to clear the supplied
 threshold and the forecast confidence to meet or exceed `0.6`, rejects collapse
 predictions and negative DAG impact, and logs the evaluation to

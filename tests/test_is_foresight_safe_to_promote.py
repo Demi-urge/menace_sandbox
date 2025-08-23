@@ -1,4 +1,4 @@
-import menace.deployment_governance as dg
+import menace.foresight_gate as fg
 from menace.upgrade_forecaster import ForecastResult, CycleProjection
 
 
@@ -27,7 +27,7 @@ def test_projected_roi_below_threshold(stub_graph, stable_tracker):
         upgrade_id="u1",
     )
     forecaster = DummyForecaster(result, tracker=stable_tracker)
-    ok, reasons, forecast = dg.is_foresight_safe_to_promote(
+    ok, reasons, forecast = fg.is_foresight_safe_to_promote(
         "wf", [], forecaster, stub_graph, roi_threshold=0.5
     )
     assert not ok
@@ -42,7 +42,7 @@ def test_low_confidence(stub_graph, stable_tracker):
         upgrade_id="u2",
     )
     forecaster = DummyForecaster(result, tracker=stable_tracker)
-    ok, reasons, forecast = dg.is_foresight_safe_to_promote("wf", [], forecaster, stub_graph)
+    ok, reasons, forecast = fg.is_foresight_safe_to_promote("wf", [], forecaster, stub_graph)
     assert not ok
     assert "low_confidence" in reasons
     assert forecast.get("upgrade_id") == "u2"
@@ -56,7 +56,7 @@ def test_negative_dag_impact(negative_impact_graph, stable_tracker):
     )
     logger = DummyLogger()
     forecaster = DummyForecaster(result, tracker=stable_tracker, logger=logger)
-    ok, reasons, forecast = dg.is_foresight_safe_to_promote(
+    ok, reasons, forecast = fg.is_foresight_safe_to_promote(
         "wf", [], forecaster, negative_impact_graph
     )
     assert not ok
@@ -74,7 +74,7 @@ def test_early_collapse_flag(stub_graph, brittle_tracker):
     )
     logger = DummyLogger()
     forecaster = DummyForecaster(result, tracker=brittle_tracker, logger=logger)
-    ok, reasons, forecast = dg.is_foresight_safe_to_promote("wf", [], forecaster, stub_graph)
+    ok, reasons, forecast = fg.is_foresight_safe_to_promote("wf", [], forecaster, stub_graph)
     assert not ok
     assert "roi_collapse_risk" in reasons
     assert logger.last["reason_codes"] == ["roi_collapse_risk"]
@@ -89,7 +89,7 @@ def test_success_path(stub_graph, stable_tracker):
         upgrade_id="u5",
     )
     forecaster = DummyForecaster(result, tracker=stable_tracker)
-    ok, reasons, forecast = dg.is_foresight_safe_to_promote("wf", [], forecaster, stub_graph)
+    ok, reasons, forecast = fg.is_foresight_safe_to_promote("wf", [], forecaster, stub_graph)
     assert ok
     assert reasons == []
     assert forecast.get("upgrade_id") == "u5"

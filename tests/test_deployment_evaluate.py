@@ -42,7 +42,7 @@ def _patch_gate(monkeypatch, ok, reasons):
 
     monkeypatch.setattr(dg, "WorkflowGraph", DummyGraph)
     monkeypatch.setattr(dg, "ForecastLogger", lambda *a, **k: DummyLogger())
-    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
     return DummyTracker()
 

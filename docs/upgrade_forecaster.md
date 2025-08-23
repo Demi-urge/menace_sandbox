@@ -73,7 +73,7 @@ their workflow identifiers, upgrade hashes and timestamps. The JSON record inclu
 ## Foresight promotion gate
 
 The higher‑level deployment flow calls
-:func:`deployment_governance.is_foresight_safe_to_promote` to decide whether a
+:func:`foresight_gate.is_foresight_safe_to_promote` to decide whether a
 patch can be promoted.  The helper combines ``UpgradeForecaster``,
 ``ForesightTracker`` and a ``WorkflowGraph`` and returns ``(ok, reason_codes,
 forecast)``.  Promotion proceeds only when all four gates pass:
