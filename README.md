@@ -32,6 +32,7 @@
 - Neuroplasticity tracking via PathwayDB ([docs/neuroplasticity.md](docs/neuroplasticity.md))
 - Atomic write mirroring with `TransactionManager`
 - Remote database replication via `DatabaseRouter(remote_url=...)`
+- Shared/local SQLite routing via `DBRouter` ([docs/db_router.md](docs/db_router.md))
 - Change Data Capture events published to `UnifiedEventBus`
 - Vector embedding search via `EmbeddableDBMixin` for bots, workflows,
   errors, enhancements and research items. Each database stores its own
