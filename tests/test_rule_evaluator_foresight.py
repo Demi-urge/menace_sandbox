@@ -29,13 +29,11 @@ def test_gate_pass(monkeypatch):
         patch,
         tracker,
         workflow_graph,
-        roi_threshold=0.0,
-        confidence_threshold=0.6,
-        allow_negative_dag=False,
+        roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
         called["wf"] = workflow_id
         called["patch"] = patch
-        return True, [], dg.ForecastResult([], 0.0, "fid")
+        return True, []
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: DummyGraph())
@@ -49,11 +47,6 @@ def test_gate_pass(monkeypatch):
 
     assert result["decision"] == "promote"
     assert result["reason_codes"] == ["meets_promotion_criteria"]
-    assert result["foresight"]["forecast"] == {
-        "projections": [],
-        "confidence": 0.0,
-        "upgrade_id": "fid",
-    }
     assert result["foresight"]["reason_codes"] == []
     assert called["wf"] == "wf1"
     assert called["patch"] == ["diff"]
@@ -65,11 +58,9 @@ def test_gate_failure_borderline(monkeypatch, tmp_path):
         patch,
         tracker,
         workflow_graph,
-        roi_threshold=0.0,
-        confidence_threshold=0.6,
-        allow_negative_dag=False,
+        roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
-        return False, ["r1", "r2"], dg.ForecastResult([], 0.0, "fid")
+        return False, ["r1", "r2"]
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: DummyGraph())
@@ -94,11 +85,9 @@ def test_gate_failure_pilot(monkeypatch):
         patch,
         tracker,
         workflow_graph,
-        roi_threshold=0.0,
-        confidence_threshold=0.6,
-        allow_negative_dag=False,
+        roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
-        return False, ["bad"], dg.ForecastResult([], 0.0, "fid")
+        return False, ["bad"]
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: DummyGraph())

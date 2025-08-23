@@ -157,11 +157,9 @@ def test_foresight_gate_pass(monkeypatch):
         patch,
         tracker,
         workflow_graph,
-        roi_threshold=0.0,
-        confidence_threshold=0.6,
-        allow_negative_dag=False,
+        roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
-        return True, [], dg.ForecastResult([], 0.9, "f0")
+        return True, []
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
@@ -191,11 +189,9 @@ def test_foresight_gate_failure(monkeypatch):
         patch,
         tracker,
         workflow_graph,
-        roi_threshold=0.0,
-        confidence_threshold=0.6,
-        allow_negative_dag=False,
+        roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
-        return False, ["low_confidence"], dg.ForecastResult([], 0.9, "f0")
+        return False, ["low_confidence"]
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
@@ -228,23 +224,15 @@ def test_policy_thresholds_passed(monkeypatch):
         patch,
         tracker,
         workflow_graph,
-        roi_threshold=0.0,
-        confidence_threshold=0.6,
-        allow_negative_dag=False,
+        roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
         called["roi_threshold"] = roi_threshold
-        called["confidence_threshold"] = confidence_threshold
-        called["allow_negative_dag"] = allow_negative_dag
-        return True, [], dg.ForecastResult([], 0.9, "f0")
+        return True, []
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
 
-    policy = {
-        "roi_forecast_min": 0.5,
-        "foresight_confidence_min": 0.7,
-        "allow_negative_dag": True,
-    }
+    policy = {"roi_forecast_min": 0.5}
 
     dg.evaluate_workflow(
         scorecard,
@@ -255,5 +243,3 @@ def test_policy_thresholds_passed(monkeypatch):
     )
 
     assert called["roi_threshold"] == 0.5
-    assert called["confidence_threshold"] == 0.7
-    assert called["allow_negative_dag"] is True

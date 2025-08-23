@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 class DummyForecaster:
-    def __init__(self, result):
+    def __init__(self, result, tracker=None, logger=None):
         self._result = result
 
     def forecast(self, workflow_id, patch, cycles=None, simulations=None):
@@ -32,10 +32,12 @@ def test_projected_roi_below_threshold(monkeypatch, tmp_path):
         confidence=0.9,
         upgrade_id="u1",
     )
-    monkeypatch.setattr(dg, "UpgradeForecaster", lambda tracker: DummyForecaster(result))
+    monkeypatch.setattr(
+        dg, "UpgradeForecaster", lambda tracker, logger=None: DummyForecaster(result)
+    )
     tracker = DummyTracker({"risk": "Stable"})
     graph = _make_graph(tmp_path)
-    ok, reasons, _ = dg.is_foresight_safe_to_promote(
+    ok, reasons = dg.is_foresight_safe_to_promote(
         "wf", [], tracker, graph, roi_threshold=0.5
     )
     assert not ok
@@ -48,10 +50,12 @@ def test_low_confidence(monkeypatch, tmp_path):
         confidence=0.5,
         upgrade_id="u2",
     )
-    monkeypatch.setattr(dg, "UpgradeForecaster", lambda tracker: DummyForecaster(result))
+    monkeypatch.setattr(
+        dg, "UpgradeForecaster", lambda tracker, logger=None: DummyForecaster(result)
+    )
     tracker = DummyTracker({"risk": "Stable"})
     graph = _make_graph(tmp_path)
-    ok, reasons, _ = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
+    ok, reasons = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
     assert not ok
     assert "low_confidence" in reasons
 
@@ -62,13 +66,15 @@ def test_negative_impact_wave(monkeypatch, tmp_path):
         confidence=0.9,
         upgrade_id="u3",
     )
-    monkeypatch.setattr(dg, "UpgradeForecaster", lambda tracker: DummyForecaster(result))
+    monkeypatch.setattr(
+        dg, "UpgradeForecaster", lambda tracker, logger=None: DummyForecaster(result)
+    )
     tracker = DummyTracker({"risk": "Stable"})
     graph = WorkflowGraph(path=str(tmp_path / "graph.json"))
     graph.add_workflow("wf", roi=0.0)
     graph.add_workflow("dep", roi=0.0)
     graph.add_dependency("wf", "dep", impact_weight=1.0)
-    ok, reasons, _ = dg.is_foresight_safe_to_promote(
+    ok, reasons = dg.is_foresight_safe_to_promote(
         "wf", [], tracker, graph, roi_threshold=-0.2
     )
     assert not ok
@@ -81,27 +87,12 @@ def test_collapse_risk(monkeypatch, tmp_path):
         confidence=0.9,
         upgrade_id="u4",
     )
-    monkeypatch.setattr(dg, "UpgradeForecaster", lambda tracker: DummyForecaster(result))
+    monkeypatch.setattr(
+        dg, "UpgradeForecaster", lambda tracker, logger=None: DummyForecaster(result)
+    )
     tracker = DummyTracker({"risk": "Immediate collapse risk"})
     graph = _make_graph(tmp_path)
-    ok, reasons, _ = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
-    assert not ok
-    assert "roi_collapse_risk" in reasons
-
-
-def test_collapse_in_horizon(monkeypatch, tmp_path):
-    result = ForecastResult(
-        projections=[
-            CycleProjection(1, 1.0, 0.0, 1.0, 0.0),
-            CycleProjection(2, 1.0, 0.0, 1.0, 0.0),
-        ],
-        confidence=0.9,
-        upgrade_id="u6",
-    )
-    monkeypatch.setattr(dg, "UpgradeForecaster", lambda tracker: DummyForecaster(result))
-    tracker = DummyTracker({"risk": "Stable", "collapse_in": 1})
-    graph = _make_graph(tmp_path)
-    ok, reasons, _ = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
+    ok, reasons = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
     assert not ok
     assert "roi_collapse_risk" in reasons
 
@@ -112,9 +103,11 @@ def test_success_path(monkeypatch, tmp_path):
         confidence=0.9,
         upgrade_id="u5",
     )
-    monkeypatch.setattr(dg, "UpgradeForecaster", lambda tracker: DummyForecaster(result))
+    monkeypatch.setattr(
+        dg, "UpgradeForecaster", lambda tracker, logger=None: DummyForecaster(result)
+    )
     tracker = DummyTracker({"risk": "Stable"})
     graph = _make_graph(tmp_path)
-    ok, reasons, _ = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
+    ok, reasons = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
     assert ok
     assert reasons == []
