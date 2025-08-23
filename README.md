@@ -33,6 +33,11 @@
 - Atomic write mirroring with `TransactionManager`
 - Remote database replication via `DatabaseRouter(remote_url=...)`
 - Shared/local SQLite routing via `DBRouter` ([docs/db_router.md](docs/db_router.md))
+  - Table access metrics can be flushed to the telemetry backend via
+    `router.get_access_counts(flush=True)`.
+  - Set `DB_ROUTER_METRICS_INTERVAL` to automatically report counts at the
+    specified interval (seconds).
+  - Run `python table_usage_cli.py --flush` to view shared vs. local usage.
 - Change Data Capture events published to `UnifiedEventBus`
 - Vector embedding search via `EmbeddableDBMixin` for bots, workflows,
   errors, enhancements and research items. Each database stores its own

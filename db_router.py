@@ -262,6 +262,19 @@ class DBRouter:
             "local": defaultdict(int),
         }
 
+        # Background reporting thread placeholders
+        self._report_thread: threading.Thread | None = None
+        self._report_stop: threading.Event | None = None
+
+        interval = os.getenv("DB_ROUTER_METRICS_INTERVAL")
+        if interval:
+            try:
+                seconds = float(interval)
+            except ValueError:
+                seconds = 0.0
+            if seconds > 0:
+                self.start_periodic_reporting(seconds)
+
     # ------------------------------------------------------------------
     def get_connection(self, table_name: str, operation: str = "read") -> sqlite3.Connection:
         """Return the appropriate connection for ``table_name``.
@@ -311,37 +324,88 @@ class DBRouter:
 
             _record_audit(entry)
 
-            _tb = None
-            try:  # pragma: no cover - import available only in package context
-                from . import telemetry_backend as _tb  # type: ignore
-            except Exception:  # pragma: no cover - fallback for tests
-                try:
-                    import telemetry_backend as _tb  # type: ignore
-                except Exception:
-                    _tb = None
-            if _tb is not None:
-                try:
-                    _tb.record_table_access(self.menace_id, table_name, operation)
-                except Exception:  # pragma: no cover - best effort
-                    pass
-
             return conn
 
     # ------------------------------------------------------------------
     def close(self) -> None:
         """Close both the local and shared database connections."""
-
+        self.stop_periodic_reporting()
         self.local_conn.close()
         self.shared_conn.close()
 
     # ------------------------------------------------------------------
-    def get_access_counts(self) -> dict[str, dict[str, int]]:
-        """Return a snapshot of table access counts for monitoring."""
+    def start_periodic_reporting(self, interval: float = 60.0) -> None:
+        """Start a background thread periodically flushing metrics.
+
+        Parameters
+        ----------
+        interval:
+            Seconds between metric flushes.
+        """
+
+        if self._report_thread and self._report_thread.is_alive():
+            return
+        stop = threading.Event()
+        self._report_stop = stop
+
+        def _worker() -> None:
+            while not stop.wait(interval):
+                try:
+                    self.get_access_counts(flush=True)
+                except Exception:  # pragma: no cover - best effort
+                    pass
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        self._report_thread = thread
+
+    # ------------------------------------------------------------------
+    def stop_periodic_reporting(self) -> None:
+        """Stop the background reporting thread if active."""
+
+        if self._report_stop is not None:
+            self._report_stop.set()
+        thread = self._report_thread
+        if thread is not None:
+            thread.join(timeout=1.0)
+        self._report_thread = None
+        self._report_stop = None
+
+    # ------------------------------------------------------------------
+    def get_access_counts(self, *, flush: bool = False) -> dict[str, dict[str, int]]:
+        """Return a snapshot of table access counts for monitoring.
+
+        When ``flush`` is true the counts are also forwarded to the telemetry
+        backend via ``telemetry_backend.record_table_access`` and then reset.
+        """
 
         with self._lock:
-            return {
+            snapshot = {
                 kind: dict(counts) for kind, counts in self._access_counts.items()
             }
+
+            if flush:
+                _tb = None
+                try:  # pragma: no cover - import available only in package context
+                    from . import telemetry_backend as _tb  # type: ignore
+                except Exception:  # pragma: no cover - fallback for tests
+                    try:
+                        import telemetry_backend as _tb  # type: ignore
+                    except Exception:
+                        _tb = None
+                if _tb is not None:
+                    for kind, counts in snapshot.items():
+                        for table, count in counts.items():
+                            try:
+                                _tb.record_table_access(
+                                    self.menace_id, table, kind, count
+                                )
+                            except Exception:  # pragma: no cover - best effort
+                                pass
+                for counts in self._access_counts.values():
+                    counts.clear()
+
+            return snapshot
 
 
 def init_db_router(
