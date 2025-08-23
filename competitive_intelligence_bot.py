@@ -6,7 +6,6 @@ import sqlite3
 import logging
 import os
 import json
-import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -19,6 +18,9 @@ from security.secret_redactor import redact
 import license_detector
 from analysis.semantic_diff_filter import find_semantic_risks
 from governed_embeddings import governed_embed
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+
+LOCAL_TABLES.update({"intel_records", "intel_metrics"})
 
 logger = logging.getLogger(__name__)
 try:
@@ -233,26 +235,16 @@ class IntelligenceDB:
     SCHEMA_VERSION = 2
 
     def __init__(
-        self, path: Path | str = Path("intelligence.db"), *, pool: bool = True
+        self, path: Path | str = Path("intelligence.db"), *, router: DBRouter | None = None
     ) -> None:
-        self.path = Path(path)
-        self.pool = pool
-        self._local = threading.local()
-        self._conns: set[sqlite3.Connection] = set()
+        self.path = str(path)
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "intelligence_db", local_db_path=self.path, shared_db_path=self.path
+        )
         self._init()
 
     def _get_conn(self) -> sqlite3.Connection:
-        if not self.pool:
-            conn = sqlite3.connect(self.path, check_same_thread=False)
-            conn.execute("PRAGMA journal_mode=WAL")
-            return conn
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(self.path, check_same_thread=False)
-            conn.execute("PRAGMA journal_mode=WAL")
-            self._local.conn = conn
-            self._conns.add(conn)
-        return conn
+        return self.router.get_connection("intel_records")
 
     def _init(self) -> None:
         conn = self._get_conn()
@@ -266,13 +258,11 @@ class IntelligenceDB:
             self._migrate(conn, version, self.SCHEMA_VERSION)
         elif version > self.SCHEMA_VERSION:
             raise RuntimeError(f"Unsupported DB schema version {version}")
-        if not self.pool:
-            conn.close()
 
     def _create_v1_schema(self, conn: sqlite3.Connection) -> None:
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS updates (
+            CREATE TABLE IF NOT EXISTS intel_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT,
                 content TEXT,
@@ -280,22 +270,24 @@ class IntelligenceDB:
                 timestamp TEXT,
                 sentiment REAL,
                 entities TEXT,
-                ai_signals INTEGER
+                ai_signals INTEGER,
+                category TEXT DEFAULT ''
             )
             """
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_updates_ts ON updates(timestamp)"
+            "CREATE INDEX IF NOT EXISTS idx_intel_records_ts ON intel_records(timestamp)"
         )
 
     def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
-        """Add ``category`` column to ``updates`` table."""
+        """Add ``category`` column to ``intel_records`` table."""
         cols = [
-            r[1] for r in conn.execute("PRAGMA table_info(updates)").fetchall()
+            r[1]
+            for r in conn.execute("PRAGMA table_info(intel_records)").fetchall()
         ]
         if "category" not in cols:
             conn.execute(
-                "ALTER TABLE updates ADD COLUMN category TEXT DEFAULT ''"
+                "ALTER TABLE intel_records ADD COLUMN category TEXT DEFAULT ''"
             )
         conn.commit()
 
@@ -317,33 +309,19 @@ class IntelligenceDB:
         conn.execute(f"PRAGMA user_version={to_version}")
         conn.commit()
 
-    def close_all(self) -> None:
-        for conn in list(self._conns):
-            try:
-                conn.close()
-            except Exception:
-                logger.exception("failed closing db connection")
-            finally:
-                self._conns.discard(conn)
-
-    def __del__(self) -> None:
-        self.close_all()
-
     def add(self, update: CompetitorUpdate) -> int:
         conn = self._get_conn()
         norm_ts = _normalize_timestamp(update.timestamp)
         cur = conn.execute(
-            "SELECT id FROM updates WHERE title=? AND content=? AND timestamp=? LIMIT 1",
+            "SELECT id FROM intel_records WHERE title=? AND content=? AND timestamp=? LIMIT 1",
             (update.title, update.content, norm_ts),
         )
         row = cur.fetchone()
         if row:
-            if not self.pool:
-                conn.close()
             return int(row[0])
         cur = conn.execute(
             """
-            INSERT INTO updates
+            INSERT INTO intel_records
                 (title, content, source, timestamp, sentiment, entities, ai_signals, category)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -359,20 +337,15 @@ class IntelligenceDB:
             ),
         )
         conn.commit()
-        last_id = cur.lastrowid
-        if not self.pool:
-            conn.close()
-        return last_id
+        return int(cur.lastrowid)
 
     def fetch(self, limit: int = 50) -> List[CompetitorUpdate]:
         conn = self._get_conn()
         rows = conn.execute(
             "SELECT title, content, source, timestamp, sentiment, entities, ai_signals, category"
-            " FROM updates ORDER BY id DESC LIMIT ?",
+            " FROM intel_records ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        if not self.pool:
-            conn.close()
         results: List[CompetitorUpdate] = []
         for r in rows:
             results.append(
@@ -394,13 +367,10 @@ class IntelligenceDB:
         cutoff = datetime.utcnow() - timedelta(days=older_than_days)
         conn = self._get_conn()
         cur = conn.execute(
-            "DELETE FROM updates WHERE timestamp < ?", (cutoff.isoformat(),)
+            "DELETE FROM intel_records WHERE timestamp < ?", (cutoff.isoformat(),)
         )
         conn.commit()
-        removed = cur.rowcount
-        if not self.pool:
-            conn.close()
-        return int(removed)
+        return int(cur.rowcount)
 
 
 def fetch_updates(url: str) -> List[CompetitorUpdate]:
@@ -536,9 +506,10 @@ class CompetitiveIntelligenceBot:
         self,
         db: IntelligenceDB | None = None,
         *,
+        router: DBRouter | None = None,
         strict_mode: bool | None = None,
     ) -> None:
-        self.db = db or IntelligenceDB()
+        self.db = db or IntelligenceDB(router=router)
         self.strict_mode = _STRICT_MODE if strict_mode is None else strict_mode
 
     def collect(self, urls: Iterable[str]) -> List[CompetitorUpdate]:
