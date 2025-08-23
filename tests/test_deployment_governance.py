@@ -209,28 +209,39 @@ def decision_logs(monkeypatch):
     logs = []
 
     class DummyLogger:
+        def __init__(self, *a, **k):
+            pass
+
         def log(self, data):
             logs.append(data)
 
-    monkeypatch.setattr(dg, "_decision_logger", DummyLogger())
+        def close(self):
+            pass
+
+    monkeypatch.setattr(dg, "ForecastLogger", lambda *a, **k: DummyLogger())
+    monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
     return logs
 
 
 def _set_forecast(monkeypatch, rois, confidence=0.9):
     result = ForecastResult(
-        projections=[CycleProjection(i + 1, r, 0.0, 1.0, 0.0) for i, r in enumerate(rois)],
+        projections=[
+            CycleProjection(i + 1, r, 0.0, 1.0, 0.0) for i, r in enumerate(rois)
+        ],
         confidence=confidence,
         upgrade_id="u1",
     )
 
     class DummyForecaster:
-        def __init__(self, tracker):
+        def __init__(self, tracker, logger=None):
             self.tracker = tracker
 
         def forecast(self, workflow_id, patch, cycles=None, simulations=None):
             return result
 
-    monkeypatch.setattr(dg, "UpgradeForecaster", lambda tracker: DummyForecaster(tracker))
+    monkeypatch.setattr(
+        dg, "UpgradeForecaster", lambda tracker, **kw: DummyForecaster(tracker, **kw)
+    )
     return result
 
 
@@ -327,3 +338,89 @@ def test_negative_dag_impact_downgrades_verdict(
     assert res["verdict"] == "pilot"
     assert "negative_impact_wave" in res["reason_codes"]
     assert decision_logs[0]["reason_codes"] == ["negative_impact_wave"]
+
+
+def test_governor_foresight_gate_failure(monkeypatch):
+    scorecard = {"scenario_scores": {"s": 0.8}}
+
+    def fake_gate(
+        workflow_id,
+        patch,
+        tracker,
+        workflow_graph,
+        roi_threshold=dg.DeploymentGovernor.raroi_threshold,
+    ):
+        return False, ["fs_fail"]
+
+    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(
+        dg,
+        "WorkflowGraph",
+        lambda: type("G", (), {"simulate_impact_wave": lambda self, *a, **k: {}})(),
+    )
+    monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
+
+    class Bucket:
+        def __init__(self):
+            self.called = False
+
+        def enqueue(self, workflow_id, raroi, confidence, context=None):
+            self.called = True
+            self.args = (workflow_id, raroi, confidence, context)
+
+    bucket = Bucket()
+    gov = dg.DeploymentGovernor()
+    res = gov.evaluate(
+        scorecard,
+        "pass",
+        1.02,
+        0.72,
+        None,
+        None,
+        {},
+        patch=[],
+        foresight_tracker=object(),
+        workflow_id="wf1",
+        borderline_bucket=bucket,
+    )
+    assert res["verdict"] == "pilot"
+    assert "fs_fail" in res["reasons"]
+    assert res.get("foresight", {}).get("reason_codes") == ["fs_fail"]
+    assert bucket.called
+
+
+def test_governor_foresight_gate_pass(monkeypatch):
+    scorecard = {"scenario_scores": {"s": 0.8}}
+
+    def fake_gate(
+        workflow_id,
+        patch,
+        tracker,
+        workflow_graph,
+        roi_threshold=dg.DeploymentGovernor.raroi_threshold,
+    ):
+        return True, []
+
+    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(
+        dg,
+        "WorkflowGraph",
+        lambda: type("G", (), {"simulate_impact_wave": lambda self, *a, **k: {}})(),
+    )
+    monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
+
+    gov = dg.DeploymentGovernor()
+    res = gov.evaluate(
+        scorecard,
+        "pass",
+        1.3,
+        0.9,
+        None,
+        None,
+        {},
+        patch=[],
+        foresight_tracker=object(),
+        workflow_id="wf1",
+    )
+    assert res["verdict"] == "promote"
+    assert res.get("foresight", {}).get("reason_codes") == []
