@@ -71,7 +71,7 @@ def test_roi_collapse_risk():
     assert reasons == ["roi_collapse_risk"]
 
 
-def test_negative_impact_wave():
+def test_negative_dag_impact():
     result = _make_result(1.0)
     tracker = DummyTracker({"risk": "Stable"})
     forecaster = DummyForecaster(result, tracker)
@@ -80,7 +80,7 @@ def test_negative_impact_wave():
         "wf", "patch", forecaster, graph
     )
     assert not safe
-    assert reasons == ["negative_impact_wave"]
+    assert reasons == ["negative_dag_impact"]
 
 
 def test_safe_path():

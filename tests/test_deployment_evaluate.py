@@ -75,7 +75,7 @@ def test_deployment_evaluate_borderline(monkeypatch):
 
 
 def test_deployment_evaluate_pilot(monkeypatch):
-    tracker = _patch_gate(monkeypatch, False, ["negative_impact_wave"])
+    tracker = _patch_gate(monkeypatch, False, ["negative_dag_impact"])
     res = evaluate(
         {"alignment": "pass", "security": "pass"},
         {"raroi": 1.0, "confidence": 0.9},
@@ -84,4 +84,4 @@ def test_deployment_evaluate_pilot(monkeypatch):
         workflow_id="wf",
     )
     assert res["verdict"] == "pilot"
-    assert "negative_impact_wave" in res["reasons"]
+    assert "negative_dag_impact" in res["reasons"]

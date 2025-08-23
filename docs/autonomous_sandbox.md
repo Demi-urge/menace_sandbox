@@ -63,7 +63,7 @@ four gating conditions and returns ``(ok, reason_codes, forecast)``:
 If any condition fails the caller downgrades the workflow to the borderline
 bucket when one is configured, otherwise a micro‑pilot run is scheduled.
 Reason codes – ``projected_roi_below_threshold``, ``low_confidence``,
-``roi_collapse_risk`` and ``negative_impact_wave`` – reveal which gate triggered
+``roi_collapse_risk`` and ``negative_dag_impact`` – reveal which gate triggered
 the downgrade.
 
 ### Example: borderline/pilot downgrade

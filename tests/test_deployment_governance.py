@@ -336,8 +336,8 @@ def test_negative_dag_impact_downgrades_verdict(
         patch=dummy_patch,
     )
     assert res["verdict"] == "pilot"
-    assert "negative_impact_wave" in res["reason_codes"]
-    assert decision_logs[0]["reason_codes"] == ["negative_impact_wave"]
+    assert "negative_dag_impact" in res["reason_codes"]
+    assert decision_logs[0]["reason_codes"] == ["negative_dag_impact"]
 
 
 def test_governor_foresight_gate_failure(monkeypatch):

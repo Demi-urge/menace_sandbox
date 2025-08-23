@@ -16,7 +16,7 @@ except Exception:  # pragma: no cover
 _reason_roi = "projected_roi_below_threshold"
 _reason_conf = "low_confidence"
 _reason_collapse = "roi_collapse_risk"
-_reason_wave = "negative_impact_wave"
+_reason_dag = "negative_dag_impact"
 
 
 def _log(logger: ForecastLogger | None, payload: dict) -> None:
@@ -89,8 +89,8 @@ def is_foresight_safe_to_promote(
                 workflow_id, float(roi_delta), float(synergy_delta)
             )
             for vals in impacts.values():
-                if vals.get("roi", 0.0) < 0 or vals.get("synergy", 0.0) < 0:
-                    reasons.append(_reason_wave)
+                if vals.get("roi", 0.0) < 0:
+                    reasons.append(_reason_dag)
                     break
         except Exception:  # pragma: no cover - best effort
             pass
