@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover - optional dependency
 from .chatgpt_research_bot import ChatGPTResearchBot, Exchange, summarise_text
 from .database_manager import get_connection, DB_PATH
 from .capital_management_bot import CapitalManagementBot
-from .db_router import DBRouter
+from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from vector_service import EmbeddableDBMixin
 try:
     from .menace_db import MenaceDB
@@ -116,6 +116,7 @@ class InfoDB(EmbeddableDBMixin):
         vector_backend: str = "annoy",
         vector_index_path: Path | str = "information_embeddings.index",
         embedding_version: int = 1,
+        router: DBRouter | None = None,
     ) -> None:
         self.path = path
         self.event_bus = event_bus
@@ -125,7 +126,10 @@ class InfoDB(EmbeddableDBMixin):
         self.video_bot = video_bot
         self.menace_db = menace_db
         self.has_fts = False
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "information", str(path), str(path)
+        )
+        self.conn = self.router.get_connection("information")
         self.conn.row_factory = sqlite3.Row
         conn = self.conn
         conn.execute(
@@ -265,13 +269,13 @@ class InfoDB(EmbeddableDBMixin):
         # embedding will be generated via add_embedding
         item.embedding = embedding if embedding is not None else None
 
-        with sqlite3.connect(self.path) as conn:
-            cur = conn.execute(
-                """
-                INSERT INTO info(
-                    model_id, contrarian_id, title, summary, tags, category, type, content,
-                    data_depth, source_url, notes, associated_bots, associated_errors,
-                    performance_data, timestamp, energy, corroboration_count
+        conn = self.router.get_connection("information")
+        cur = conn.execute(
+            """
+            INSERT INTO info(
+                model_id, contrarian_id, title, summary, tags, category, type, content,
+                data_depth, source_url, notes, associated_bots, associated_errors,
+                performance_data, timestamp, energy, corroboration_count
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
@@ -294,21 +298,21 @@ class InfoDB(EmbeddableDBMixin):
                     item.corroboration_count,
                 ),
             )
-            item.item_id = cur.lastrowid
-            if self.has_fts:
-                try:
-                    conn.execute(
-                        "INSERT INTO info_fts(rowid, title, tags, content) VALUES (?,?,?,?)",
-                        (
-                            item.item_id,
-                            item.title or item.topic,
-                            tags,
-                            item.content,
-                        ),
-                    )
-                except sqlite3.OperationalError:
-                    self.has_fts = False
-            conn.commit()
+        item.item_id = cur.lastrowid
+        if self.has_fts:
+            try:
+                conn.execute(
+                    "INSERT INTO info_fts(rowid, title, tags, content) VALUES (?,?,?,?)",
+                    (
+                        item.item_id,
+                        item.title or item.topic,
+                        tags,
+                        item.content,
+                    ),
+                )
+            except sqlite3.OperationalError:
+                self.has_fts = False
+        conn.commit()
         item.embedding = None
         try:
             self.add_embedding(
@@ -343,11 +347,11 @@ class InfoDB(EmbeddableDBMixin):
             return
         sets = ", ".join(f"{k}=?" for k in fields)
         params = list(fields.values()) + [info_id]
-        with sqlite3.connect(self.path) as conn:
-            conn.row_factory = sqlite3.Row
-            conn.execute(f"UPDATE info SET {sets} WHERE id=?", params)
-            row = conn.execute("SELECT * FROM info WHERE id=?", (info_id,)).fetchone()
-            conn.commit()
+        conn = self.router.get_connection("information")
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"UPDATE info SET {sets} WHERE id=?", params)
+        row = conn.execute("SELECT * FROM info WHERE id=?", (info_id,)).fetchone()
+        conn.commit()
         if not row:
             return
         item = ResearchItem(
@@ -504,11 +508,11 @@ class InfoDB(EmbeddableDBMixin):
 
     def search(self, term: str) -> List[ResearchItem]:
         pattern = f"%{term.lower()}%"
-        with sqlite3.connect(self.path) as conn:
-            conn.row_factory = sqlite3.Row
-            if self.has_fts:
-                try:
-                    rows = conn.execute(
+        conn = self.router.get_connection("information")
+        conn.row_factory = sqlite3.Row
+        if self.has_fts:
+            try:
+                rows = conn.execute(
                         """
                         SELECT i.id, i.model_id, i.contrarian_id, i.title, i.summary, i.tags, i.category, i.type, i.content,
                                i.data_depth, i.source_url, i.notes, i.associated_bots, i.associated_errors,
@@ -518,19 +522,8 @@ class InfoDB(EmbeddableDBMixin):
                         """,
                         (f"{term}*",),
                     ).fetchall()
-                except sqlite3.OperationalError:
-                    self.has_fts = False
-                    rows = conn.execute(
-                        """
-                        SELECT id, model_id, contrarian_id, title, summary, tags, category, type, content,
-                               data_depth, source_url, notes, associated_bots, associated_errors,
-                               performance_data, timestamp, energy, corroboration_count
-                        FROM info
-                        WHERE LOWER(title) LIKE ? OR LOWER(tags) LIKE ?
-                        """,
-                        (pattern, pattern),
-                    ).fetchall()
-            else:
+            except sqlite3.OperationalError:
+                self.has_fts = False
                 rows = conn.execute(
                     """
                     SELECT id, model_id, contrarian_id, title, summary, tags, category, type, content,
@@ -541,6 +534,17 @@ class InfoDB(EmbeddableDBMixin):
                     """,
                     (pattern, pattern),
                 ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, model_id, contrarian_id, title, summary, tags, category, type, content,
+                       data_depth, source_url, notes, associated_bots, associated_errors,
+                       performance_data, timestamp, energy, corroboration_count
+                FROM info
+                WHERE LOWER(title) LIKE ? OR LOWER(tags) LIKE ?
+                """,
+                (pattern, pattern),
+            ).fetchall()
         results: List[ResearchItem] = []
         for row in rows:
             results.append(
@@ -571,60 +575,60 @@ class InfoDB(EmbeddableDBMixin):
 
     # ------------------------------------------------------------------
     def link_workflow(self, info_id: int, workflow_id: int) -> None:
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                "INSERT INTO info_workflows(info_id, workflow_id) VALUES (?, ?)",
-                (info_id, workflow_id),
-            )
-            conn.commit()
+        conn = self.router.get_connection("information")
+        conn.execute(
+            "INSERT INTO info_workflows(info_id, workflow_id) VALUES (?, ?)",
+            (info_id, workflow_id),
+        )
+        conn.commit()
 
     def workflows_for(self, info_id: int) -> List[int]:
-        with sqlite3.connect(self.path) as conn:
-            rows = conn.execute(
-                "SELECT workflow_id FROM info_workflows WHERE info_id=?",
-                (info_id,),
-            ).fetchall()
+        conn = self.router.get_connection("information")
+        rows = conn.execute(
+            "SELECT workflow_id FROM info_workflows WHERE info_id=?",
+            (info_id,),
+        ).fetchall()
         return [r[0] for r in rows]
 
     def link_enhancement(self, info_id: int, enhancement_id: int) -> None:
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                "INSERT INTO info_enhancements(info_id, enhancement_id) VALUES (?, ?)",
-                (info_id, enhancement_id),
-            )
-            conn.commit()
+        conn = self.router.get_connection("information")
+        conn.execute(
+            "INSERT INTO info_enhancements(info_id, enhancement_id) VALUES (?, ?)",
+            (info_id, enhancement_id),
+        )
+        conn.commit()
 
     def link_bot(self, info_id: int, bot_id: int) -> None:
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                "INSERT INTO info_bots(info_id, bot_id) VALUES (?, ?)",
-                (info_id, bot_id),
-            )
-            conn.commit()
+        conn = self.router.get_connection("information")
+        conn.execute(
+            "INSERT INTO info_bots(info_id, bot_id) VALUES (?, ?)",
+            (info_id, bot_id),
+        )
+        conn.commit()
 
     def enhancements_for(self, info_id: int) -> List[int]:
-        with sqlite3.connect(self.path) as conn:
-            rows = conn.execute(
-                "SELECT enhancement_id FROM info_enhancements WHERE info_id=?",
-                (info_id,),
-            ).fetchall()
+        conn = self.router.get_connection("information")
+        rows = conn.execute(
+            "SELECT enhancement_id FROM info_enhancements WHERE info_id=?",
+            (info_id,),
+        ).fetchall()
         return [r[0] for r in rows]
 
     def bots_for(self, info_id: int) -> List[int]:
-        with sqlite3.connect(self.path) as conn:
-            rows = conn.execute(
-                "SELECT bot_id FROM info_bots WHERE info_id=?",
-                (info_id,),
-            ).fetchall()
+        conn = self.router.get_connection("information")
+        rows = conn.execute(
+            "SELECT bot_id FROM info_bots WHERE info_id=?",
+            (info_id,),
+        ).fetchall()
         return [r[0] for r in rows]
 
     def items_for_model(self, model_id: int) -> List[ResearchItem]:
-        with sqlite3.connect(self.path) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT * FROM info WHERE model_id=?",
-                (model_id,),
-            ).fetchall()
+        conn = self.router.get_connection("information")
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM info WHERE model_id=?",
+            (model_id,),
+        ).fetchall()
         items: List[ResearchItem] = []
         for row in rows:
             items.append(

@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List
 
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -47,68 +49,76 @@ class FeedbackItem:
 class SentimentDB:
     """SQLite-backed storage for feedback items."""
 
-    def __init__(self, path: Path | str = Path("sentiment.db")) -> None:
+    def __init__(
+        self,
+        path: Path | str = Path("sentiment.db"),
+        *,
+        router: DBRouter | None = None,
+    ) -> None:
         self.path = Path(path)
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "sentiment", str(self.path), str(self.path)
+        )
         self._init()
 
     def _init(self) -> None:
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS feedback (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    product TEXT,
-                    text TEXT,
-                    source TEXT,
-                    sentiment REAL,
-                    predicted REAL,
-                    impact REAL,
-                    profitability REAL,
-                    label TEXT,
-                    features TEXT,
-                    ts TEXT
-                )
-                """
+        conn = self.router.get_connection("feedback")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product TEXT,
+                text TEXT,
+                source TEXT,
+                sentiment REAL,
+                predicted REAL,
+                impact REAL,
+                profitability REAL,
+                label TEXT,
+                features TEXT,
+                ts TEXT
             )
-            conn.commit()
+            """
+        )
+        conn.commit()
 
     def add(self, item: FeedbackItem) -> int:
-        with sqlite3.connect(self.path) as conn:
-            cur = conn.execute(
-                """
-                INSERT INTO feedback(product, text, source, sentiment, predicted, impact, profitability, label, features, ts)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    item.product,
-                    item.text,
-                    item.source,
-                    item.sentiment,
-                    item.predicted,
-                    item.impact,
-                    item.profitability,
-                    item.label,
-                    ",".join(item.features),
-                    item.ts,
-                ),
-            )
-            conn.commit()
-            return cur.lastrowid
+        conn = self.router.get_connection("feedback")
+        cur = conn.execute(
+            """
+            INSERT INTO feedback(product, text, source, sentiment, predicted, impact, profitability, label, features, ts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item.product,
+                item.text,
+                item.source,
+                item.sentiment,
+                item.predicted,
+                item.impact,
+                item.profitability,
+                item.label,
+                ",".join(item.features),
+                item.ts,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
 
     def fetch(self, product: str | None = None, limit: int = 50) -> List[FeedbackItem]:
-        with sqlite3.connect(self.path) as conn:
-            if product:
-                rows = conn.execute(
-                    "SELECT product, text, source, sentiment, predicted, impact, profitability, label, features, ts"
-                    " FROM feedback WHERE product=? ORDER BY id DESC LIMIT ?",
-                    (product, limit),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT product, text, source, sentiment, predicted, impact, profitability, label, features, ts"
-                    " FROM feedback ORDER BY id DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
+        conn = self.router.get_connection("feedback")
+        if product:
+            rows = conn.execute(
+                "SELECT product, text, source, sentiment, predicted, impact, profitability, label, features, ts"
+                " FROM feedback WHERE product=? ORDER BY id DESC LIMIT ?",
+                (product, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT product, text, source, sentiment, predicted, impact, profitability, label, features, ts"
+                " FROM feedback ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
         items: List[FeedbackItem] = []
         for r in rows:
             items.append(
@@ -128,11 +138,11 @@ class SentimentDB:
         return items
 
     def avg_sentiment(self, product: str, window: int = 5) -> float:
-        with sqlite3.connect(self.path) as conn:
-            rows = conn.execute(
-                "SELECT sentiment FROM feedback WHERE product=? ORDER BY id DESC LIMIT ?",
-                (product, window),
-            ).fetchall()
+        conn = self.router.get_connection("feedback")
+        rows = conn.execute(
+            "SELECT sentiment FROM feedback WHERE product=? ORDER BY id DESC LIMIT ?",
+            (product, window),
+        ).fetchall()
         if not rows:
             return 0.0
         return float(sum(r[0] for r in rows) / len(rows))

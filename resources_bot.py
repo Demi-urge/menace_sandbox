@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+
 try:
     import pandas as pd  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -40,11 +42,15 @@ class ROIHistoryDB(EmbeddableDBMixin):
         self,
         path: str | Path = "roi_history.db",
         *,
+        router: DBRouter | None = None,
         vector_index_path: str = "resource_embeddings.index",
         embedding_version: int = 1,
         vector_backend: str = "annoy",
     ) -> None:
-        self.conn = sqlite3.connect(path)
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "roi_history", str(path), str(path)
+        )
+        self.conn = self.router.get_connection("roi")
         self.conn.row_factory = sqlite3.Row
         self.conn.execute(
             """
