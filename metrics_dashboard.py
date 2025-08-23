@@ -17,7 +17,7 @@ from flask import Flask, jsonify, send_file, request
 import sys
 from types import ModuleType
 
-from .telemetry_backend import TelemetryBackend
+from .telemetry_backend import TelemetryBackend, get_table_access_counts
 from .db_router import GLOBAL_ROUTER, init_db_router
 
 
@@ -207,6 +207,12 @@ class MetricsDashboard:
             metrics["roi_rankings"] = rows
         except Exception:
             pass
+
+        # Include DBRouter table usage metrics
+        try:
+            metrics["table_access"] = get_table_access_counts()
+        except Exception:
+            metrics["table_access"] = {}
 
         # Highlight modules recently flagged by relevancy radar with impact scores
         try:

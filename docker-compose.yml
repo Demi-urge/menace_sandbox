@@ -7,6 +7,7 @@ services:
       - .env
     environment:
       VM_SETTINGS: '{"windows_image":"/vm-images/windows.qcow2","macos_image":"/vm-images/macos.qcow2","memory":"2G"}'
+      DB_ROUTER_METRICS_INTERVAL: "60"
     volumes:
       - .:/app
       - ./qemu_images:/vm-images
