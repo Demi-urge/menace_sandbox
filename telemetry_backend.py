@@ -19,11 +19,28 @@ _TABLE_ACCESS = Gauge(
 )
 
 
-def record_table_access(menace_id: str, table_name: str, operation: str) -> None:
-    """Increment telemetry count for a table access."""
+def record_table_access(
+    menace_id: str, table_name: str, operation: str, count: int = 1
+) -> None:
+    """Increment telemetry count for a table access.
+
+    Parameters
+    ----------
+    menace_id:
+        Identifier of the Menace instance reporting the metric.
+    table_name:
+        Table being accessed.
+    operation:
+        Operation type or table category (for example ``"read"``,
+        ``"write"``, ``"shared"`` or ``"local"``).
+    count:
+        Number of accesses to record.  Defaults to ``1``.
+    """
 
     try:
-        _TABLE_ACCESS.labels(menace=menace_id, table=table_name, operation=operation).inc()
+        _TABLE_ACCESS.labels(
+            menace=menace_id, table=table_name, operation=operation
+        ).inc(count)
     except Exception:  # pragma: no cover - best effort
         pass
 
@@ -32,6 +49,36 @@ def record_shared_table_access(table_name: str) -> None:  # pragma: no cover - l
     """Backward compatible wrapper around :func:`record_table_access`."""
 
     record_table_access("shared", table_name, "unknown")
+
+
+def get_table_access_counts() -> Dict[str, Dict[str, float]]:
+    """Return aggregated table access metrics grouped by operation.
+
+    The returned mapping has the structure ``{operation: {table: count}}`` and
+    is derived from the in-memory metrics.  Values are floats to accommodate the
+    Prometheus client API which stores metrics as doubles.
+    """
+
+    results: Dict[str, Dict[str, float]] = {}
+    wrappers = getattr(_TABLE_ACCESS, "_values", None) or getattr(
+        _TABLE_ACCESS, "_metrics", {}
+    )
+    for labels, wrapper in wrappers.items():
+        try:
+            menace, table, operation = labels
+        except Exception:  # pragma: no cover - defensive
+            continue
+        try:
+            value = wrapper.get()  # stub gauge
+        except Exception:
+            try:
+                value = wrapper._value.get()  # prometheus client
+            except Exception:  # pragma: no cover - defensive
+                continue
+        results.setdefault(operation, {})[table] = results.setdefault(operation, {}).get(
+            table, 0.0
+        ) + float(value)
+    return results
 
 
 class TelemetryBackend:

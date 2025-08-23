@@ -82,17 +82,23 @@ def test_table_metrics_callback(tmp_path, monkeypatch):
     local_db = tmp_path / "local.db"
     router = DBRouter("test", str(local_db), str(shared_db))
 
-    calls: list[tuple[str, str, str]] = []
+    calls: list[tuple[str, str, str, int]] = []
     dummy = types.SimpleNamespace(
-        record_table_access=lambda menace, table, op: calls.append((menace, table, op))
+        record_table_access=lambda menace, table, op, count=1: calls.append(
+            (menace, table, op, count)
+        )
     )
     monkeypatch.setitem(sys.modules, "telemetry_backend", dummy)
     try:
-        router.get_connection("bots", operation="write")
+        router.get_connection("bots")
         router.get_connection("models")
+        router.get_access_counts(flush=True)
     finally:
         router.close()
-    assert calls == [("test", "bots", "write"), ("test", "models", "read")]
+    assert calls == [
+        ("test", "bots", "shared", 1),
+        ("test", "models", "local", 1),
+    ]
 
 
 def test_get_connection_thread_safe(tmp_path):
