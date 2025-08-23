@@ -101,11 +101,31 @@ provide `shared`, `local` and optional `deny` arrays:
 }
 ```
 
-Environment variables remain available for ad‑hoc overrides.  Set
-`DB_ROUTER_SHARED_TABLES`, `DB_ROUTER_LOCAL_TABLES` or `DB_ROUTER_DENY_TABLES`
-to comma separated table lists.  Alternatively, point `DB_ROUTER_CONFIG` to a
-different JSON file following the structure above to extend or restrict the
-loaded lists.
+### Environment variable overrides
+
+Environment variables offer ad‑hoc customisation without editing the
+configuration file. The router inspects the following on import:
+
+- `DB_ROUTER_SHARED_TABLES` – comma‑separated tables forced into the shared
+  database.
+- `DB_ROUTER_LOCAL_TABLES` – additional tables kept local to each instance.
+- `DB_ROUTER_DENY_TABLES` – tables to block entirely. Entries here are removed
+  from both routing sets and any access attempts raise a `ValueError`.
+
+These values are merged with the JSON configuration. Alternatively, point
+`DB_ROUTER_CONFIG` to a different JSON file following the structure above to
+extend or restrict the loaded lists.
+
+#### Deployment examples
+
+```bash
+# Development: keep experimental tables isolated locally
+export DB_ROUTER_LOCAL_TABLES="session,debug_stats"
+
+# Staging: share alerts and metrics but block finance tables
+export DB_ROUTER_SHARED_TABLES="alerts,metrics"
+export DB_ROUTER_DENY_TABLES="capital_ledger,finance_logs"
+```
 
 ## Retrieving connections
 
@@ -162,12 +182,22 @@ JSON but can be set to key-value pairs by defining `DB_ROUTER_LOG_FORMAT=kv`.
 
 ### Audit log
 
-For additional auditing, set the `DB_ROUTER_AUDIT_LOG` environment variable to a
-file path or provide an `"audit_log"` entry in the configuration file referenced
-by `DB_ROUTER_CONFIG`. When configured, every table access (shared and local) is
-appended to this file as a JSON object containing the menace ID, table name,
-operation and timestamp. Leave the configuration unset to disable audit
-logging.
+The router can emit an audit trail of every table access. Configure a file path
+via the `DB_ROUTER_AUDIT_LOG` environment variable or provide an `"audit_log"`
+entry in the JSON configuration referenced by `DB_ROUTER_CONFIG`. When
+enabled, each access is appended to that file as a JSON object containing the
+menace ID, table name, operation and timestamp. Leave the configuration unset to
+disable auditing.
+
+#### Deployment examples
+
+```bash
+# Development: write audit entries to a temporary file
+export DB_ROUTER_AUDIT_LOG="/tmp/menace_audit.log"
+
+# Production: store audit logs centrally
+export DB_ROUTER_AUDIT_LOG="/var/log/menace/db_router_audit.log"
+```
 
 ### Analysing audit logs
 
