@@ -48,7 +48,8 @@ from .identity_seeder import seed_identity
 from .session_vault import SessionVault
 import requests
 from .cognition_layer import build_cognitive_context, log_feedback, _patch_safety
-from db_router import DBRouter, init_db_router
+import db_router
+from db_router import DBRouter
 
 
 class _RemoteVisualAgent:
@@ -209,7 +210,14 @@ class MenaceOrchestrator:
         #run_startup_checks()
         menace_id = menace_id or uuid.uuid4().hex
         self.menace_id = menace_id
-        self.router = router or init_db_router(menace_id)
+        if router is None:
+            router = DBRouter(
+                menace_id,
+                f"./menace_{menace_id}_local.db",
+                "./shared/global.db",
+            )
+        db_router.GLOBAL_ROUTER = router
+        self.router = router
         self.pipeline = ModelAutomationPipeline(pathway_db=pathway_db, myelination_threshold=myelination_threshold)
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
