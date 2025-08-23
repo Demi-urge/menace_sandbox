@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-import sqlite3
 import pandas as pd
 
+from db_router import GLOBAL_ROUTER, init_db_router
 from evaluation_history_db import EvaluationHistoryDB
 
 
@@ -21,17 +21,17 @@ class DatasetRecord:
     gpt_score: float
 
 
-def _load_roi_events(path: str | Path) -> pd.DataFrame:
+router = GLOBAL_ROUTER or init_db_router("analytics")
+
+
+def _load_roi_events() -> pd.DataFrame:
     """Return ROI deltas per module."""
 
-    conn = sqlite3.connect(path)
-    try:
-        df = pd.read_sql(
-            "SELECT action AS module, roi_before, roi_after, ts FROM roi_events",
-            conn,
-        )
-    finally:
-        conn.close()
+    conn = router.get_connection("roi_events")
+    df = pd.read_sql(
+        "SELECT action AS module, roi_before, roi_after, ts FROM roi_events",
+        conn,
+    )
     if df.empty:
         return pd.DataFrame(columns=["module", "ts", "roi_delta"])
     df["ts"] = pd.to_datetime(df["ts"])  # type: ignore[call-arg]
@@ -39,17 +39,14 @@ def _load_roi_events(path: str | Path) -> pd.DataFrame:
     return df[["module", "ts", "roi_delta"]]
 
 
-def _load_performance(path: str | Path) -> pd.DataFrame:
+def _load_performance() -> pd.DataFrame:
     """Return performance deltas based on profitability per module."""
 
-    conn = sqlite3.connect(path)
-    try:
-        df = pd.read_sql(
-            "SELECT bot AS module, profitability, ts FROM metrics",
-            conn,
-        )
-    finally:
-        conn.close()
+    conn = router.get_connection("metrics")
+    df = pd.read_sql(
+        "SELECT bot AS module, profitability, ts FROM metrics",
+        conn,
+    )
     if df.empty:
         return pd.DataFrame(columns=["module", "ts", "performance_delta"])
     df["ts"] = pd.to_datetime(df["ts"])  # type: ignore[call-arg]
@@ -73,8 +70,6 @@ def _load_eval_scores(path: str | Path) -> pd.DataFrame:
 
 def build_dataset(
     *,
-    roi_path: str | Path = "roi_events.db",
-    metrics_path: str | Path = "metrics.db",
     evaluation_path: str | Path = "evaluation_history.db",
 ) -> pd.DataFrame:
     """Load, merge and normalise ROI, performance and evaluation data.
@@ -84,8 +79,8 @@ def build_dataset(
     normalised to zero mean and unit variance.
     """
 
-    roi_df = _load_roi_events(roi_path)
-    perf_df = _load_performance(metrics_path)
+    roi_df = _load_roi_events()
+    perf_df = _load_performance()
     eval_df = _load_eval_scores(evaluation_path)
 
     if roi_df.empty or perf_df.empty or eval_df.empty:

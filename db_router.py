@@ -115,6 +115,7 @@ if "LOCAL_TABLES" in globals():
             "weight_override",
             "roi",
             "feedback",
+            "mirror_logs",
         }
     )
 else:
@@ -168,6 +169,7 @@ else:
         "weight_override",
         "roi",
         "feedback",
+        "mirror_logs",
     }
 
 # Tables explicitly denied even if present in the allow lists.  Also mutated
