@@ -97,3 +97,6 @@ workflow to the borderline bucket (when available) or triggers a pilot run
 instead.  Reason codes such as ``projected_roi_below_threshold``,
 ``low_confidence``, ``roi_collapse_risk`` and ``negative_impact_wave`` identify
 which gate failed.
+
+A minimal integration example lives at
+[`examples/foresight_gate.py`](examples/foresight_gate.py).
