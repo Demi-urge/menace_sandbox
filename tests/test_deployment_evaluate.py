@@ -32,11 +32,13 @@ def _patch_gate(monkeypatch, ok, reasons):
     def fake_gate(
         workflow_id,
         patch,
-        tracker,
+        forecaster,
         workflow_graph,
+        *,
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
+        confidence_threshold=0.6,
     ):
-        return ok, list(reasons), "fid"
+        return ok, type("R", (), {"upgrade_id": "fid"})(), list(reasons)
 
     monkeypatch.setattr(dg, "WorkflowGraph", DummyGraph)
     monkeypatch.setattr(dg, "ForecastLogger", lambda *a, **k: DummyLogger())
