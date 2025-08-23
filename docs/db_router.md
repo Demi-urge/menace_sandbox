@@ -116,11 +116,15 @@ explicit. The default configuration assigns:
 
 Update these sets to route additional tables:
 
-```python
-from db_router import SHARED_TABLES, LOCAL_TABLES
+1. **Import the routing sets.**
+2. **Add or remove table names** from the appropriate collection.
 
-SHARED_TABLES.add("alerts")
-LOCAL_TABLES.add("session")
+```python
+from db_router import SHARED_TABLES, LOCAL_TABLES, DENY_TABLES
+
+SHARED_TABLES.add("alerts")      # visible to all Menace instances
+LOCAL_TABLES.add("session")      # stored in each instance's local DB
+DENY_TABLES.add("legacy_data")   # block unapproved access entirely
 ```
 
 For larger or frequently changing inventories the table lists may be maintained
@@ -183,12 +187,18 @@ cursor = conn.execute("SELECT * FROM bots")
 Modules should avoid calling `sqlite3.connect()` directly. Instead, initialise
 the router and obtain connections via `get_connection` so table placement
 remains centralised. Services must call `init_db_router(menace_id)` once at
-startup before any database operations:
+startup before any database operations. A typical refactor looks like:
 
 ```python
-from db_router import init_db_router
+# Before
+import sqlite3
+conn = sqlite3.connect("bots.db")
 
-init_db_router("alpha")  # make GLOBAL_ROUTER available
+# After
+from db_router import GLOBAL_ROUTER, init_db_router
+
+router = GLOBAL_ROUTER or init_db_router("alpha")
+conn = router.get_connection("bots")
 ```
 
 ### Shared table example
@@ -255,8 +265,9 @@ router.
 
 ## Logging and metrics
 
-`DBRouter` emits structured logs for shared table accesses. Each entry contains
-the menace ID, table name, operation type and an ISO timestamp. Local table
+`DBRouter` emits structured logs for shared table accesses. Because each entry
+includes the `menace_id`, table name, operation and timestamp, these logs can be
+aggregated across deployments to monitor cross‑Menace behaviour. Local table
 accesses are silent unless audit logging is enabled. Configure the verbosity via
 the `DB_ROUTER_LOG_LEVEL` environment variable. The output format defaults to
 JSON but can be set to key-value pairs by defining `DB_ROUTER_LOG_FORMAT=kv`.
