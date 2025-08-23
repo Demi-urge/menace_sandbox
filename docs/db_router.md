@@ -16,7 +16,29 @@ modules that rely on a globally accessible instance.
 Tables listed in `SHARED_TABLES` are written to the shared database while
 `LOCAL_TABLES` entries reside in the local database. Table names must be
 explicitly declared; unlisted tables raise a `ValueError` to keep routing
-explicit. Update these sets to route additional tables:
+explicit. The default configuration assigns:
+
+**Shared tables**
+
+- `enhancements`
+- `bots`
+- `errors`
+- `code`
+- `discrepancies`
+- `workflow_summaries`
+
+**Local tables**
+
+- `models`
+- `patch_history`
+- `variants`
+- `memory`
+- `events`
+- `sandbox_metrics`
+- `roi_logs`
+- `menace_config`
+
+Update these sets to route additional tables:
 
 ```python
 from db_router import SHARED_TABLES, LOCAL_TABLES
