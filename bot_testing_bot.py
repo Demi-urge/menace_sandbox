@@ -21,6 +21,7 @@ import hashlib
 import time
 
 from .bot_testing_config import BotTestingSettings
+from .db_router import DBRouter
 
 logger = logging.getLogger("BotTester")
 
@@ -90,16 +91,20 @@ class TestingLogDB:
         *,
         backend: str = "sqlite",
         settings: BotTestingSettings | None = None,
+        router: DBRouter | None = None,
     ) -> None:
         self.settings = settings or BotTestingSettings()
         self.lock = threading.Lock()
         backend = os.environ.get("BOT_TESTING_DB_BACKEND", self.settings.db_backend)
         if backend == "sqlite":
-            db_path = path or os.environ.get(
-                "BOT_TESTING_DB_PATH", self.settings.db_path
-            )
-            connector = connect_func or sqlite3.connect
-            self.conn = connector(db_path, timeout=30, check_same_thread=False)
+            if router is not None:
+                self.conn = router.get_connection("results")
+            else:
+                db_path = path or os.environ.get(
+                    "BOT_TESTING_DB_PATH", self.settings.db_path
+                )
+                connector = connect_func or sqlite3.connect
+                self.conn = connector(db_path, timeout=30, check_same_thread=False)
         elif backend == "postgres":  # pragma: no cover - optional backend
             import psycopg2  # type: ignore
 
