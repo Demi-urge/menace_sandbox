@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Iterable, List
 import uuid
 
-from db_router import init_db_router
+import db_router
+from db_router import DBRouter
 
 # allow running directly from the package directory
 _pkg_dir = Path(__file__).resolve().parent
@@ -22,7 +23,9 @@ if _pkg_dir.name == "menace" and str(_pkg_dir.parent) not in sys.path:
 logger = logging.getLogger(__name__)
 
 # Initialise a router for this process with a unique menace_id
-DB_ROUTER = init_db_router(uuid.uuid4().hex)
+MENACE_ID = uuid.uuid4().hex
+DB_ROUTER = DBRouter(MENACE_ID, f"./menace_{MENACE_ID}_local.db", "./shared/global.db")
+db_router.GLOBAL_ROUTER = DB_ROUTER
 
 
 def discover_modules() -> List[str]:
