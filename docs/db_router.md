@@ -11,7 +11,8 @@ at `./menace_<menace_id>_local.db` and shared data lives in `./shared/global.db`
 by default.
 
 Tables listed in `SHARED_TABLES` are written to the shared database while
-`LOCAL_TABLES` and any unlisted tables reside in the local database.
+`LOCAL_TABLES` entries reside in the local database. Table names must be
+explicitly declared; unlisted tables raise a `ValueError`.
 
 ## Thread safety
 
@@ -24,6 +25,6 @@ router.
 - **Shared tables**: `SHARED_TABLES` entries persist across different
   `menace_id` instances. Writes to these tables are visible to all routers
   pointing at the same shared database.
-- **Local tables**: `LOCAL_TABLES` (and tables not listed in `SHARED_TABLES`) are
-  stored in each instance's local database, keeping data isolated between
-  different `menace_id` values.
+- **Local tables**: `LOCAL_TABLES` entries are stored in each instance's local
+  database, keeping data isolated between different `menace_id` values. Table
+  names outside these sets are rejected.
