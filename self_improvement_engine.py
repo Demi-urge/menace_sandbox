@@ -159,6 +159,15 @@ try:
     from .borderline_bucket import BorderlineBucket
 except Exception:  # pragma: no cover - fallback for flat layout
     from borderline_bucket import BorderlineBucket  # type: ignore
+from dataclasses import asdict
+try:  # pragma: no cover - allow flat imports
+    from .foresight_gate import is_foresight_safe_to_promote
+except Exception:  # pragma: no cover - fallback for flat layout
+    from foresight_gate import is_foresight_safe_to_promote  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .upgrade_forecaster import UpgradeForecaster
+except Exception:  # pragma: no cover - fallback for flat layout
+    from upgrade_forecaster import UpgradeForecaster  # type: ignore
 
 logger = get_logger(__name__)
 
@@ -5485,6 +5494,26 @@ class SelfImprovementEngine:
                             self.enqueue_preventative_fixes([workflow_id])
                         except Exception:
                             self.logger.exception("risk queue enqueue failed")
+                    if verdict == "promote" and self.foresight_tracker:
+                        try:
+                            forecaster = UpgradeForecaster(self.foresight_tracker)
+                            safe, forecast_res, fs_codes = is_foresight_safe_to_promote(
+                                workflow_id,
+                                str(patch_id) if patch_id is not None else "",
+                                forecaster,
+                            )
+                            forecast_info = {
+                                "projections": [asdict(p) for p in forecast_res.projections],
+                                "confidence": forecast_res.confidence,
+                                "upgrade_id": forecast_res.upgrade_id,
+                            }
+                            if not safe:
+                                verdict = "pilot"
+                                reasons.extend(fs_codes)
+                        except Exception:
+                            self.logger.exception("foresight gate check failed")
+                    scorecard["forecast"] = forecast_info
+                    scorecard["reasons"] = list(reasons)
                     try:
                         audit_log_event(
                             "deployment_verdict",
