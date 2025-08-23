@@ -6,6 +6,12 @@ import logging
 import os
 import subprocess
 import time
+import uuid
+
+from db_router import init_db_router
+
+MENACE_ID = uuid.uuid4().hex
+init_db_router(MENACE_ID)
 
 from menace import RAISE_ERRORS
 
