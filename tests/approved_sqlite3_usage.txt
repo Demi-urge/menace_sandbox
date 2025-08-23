@@ -4,7 +4,6 @@ chatgpt_prediction_bot.py
 code_database.py
 competitive_intelligence_bot.py
 contrarian_db.py
-coordination_manager.py
 data_bot.py
 db_router.py
 dynamic_resource_allocator_bot.py

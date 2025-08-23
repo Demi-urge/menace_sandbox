@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
+
+from db_router import GLOBAL_ROUTER, init_db_router
 
 try:
     import pika  # type: ignore
@@ -31,7 +32,8 @@ class MessageLog:
     """SQLite-backed log of exchanged messages."""
 
     def __init__(self, path: Path | str = "messages.db") -> None:
-        self.conn = sqlite3.connect(path)
+        router = GLOBAL_ROUTER or init_db_router("coordination_manager", local_db_path=str(path))
+        self.conn = router.get_connection("messages")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS messages(
