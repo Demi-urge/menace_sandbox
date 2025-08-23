@@ -3,7 +3,7 @@ import sys
 import types
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-sys.modules.setdefault("menace.database_router", types.SimpleNamespace(DatabaseRouter=object))
+sys.modules.setdefault("menace.db_router", types.SimpleNamespace(DBRouter=object))
 sys.modules.setdefault("pytube", types.ModuleType("pytube"))
 sys.modules["pytube"].YouTube = object
 sys.modules.setdefault("speech_recognition", types.ModuleType("sr"))

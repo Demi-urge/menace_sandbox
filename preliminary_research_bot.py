@@ -22,7 +22,7 @@ from .prediction_manager_bot import PredictionManager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - avoid circular import at runtime
-    from .database_router import DatabaseRouter
+    from .db_router import DBRouter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ class PreliminaryResearchBot:
         session: Optional[requests.Session] = None,
         *,
         prediction_manager: "PredictionManager" | None = None,
-        db_steward: "DatabaseRouter" | None = None,
+        db_steward: "DBRouter" | None = None,
     ) -> None:
         self.session = session or requests.Session()
         self.prediction_manager = prediction_manager

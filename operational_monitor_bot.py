@@ -23,7 +23,7 @@ from .data_bot import DataBot, MetricsDB, MetricRecord
 from .database_steward_bot import ESIndex
 from .splunk_logger import SplunkHEC
 from .report_generation_bot import ReportGenerationBot, ReportOptions
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 from .advanced_error_management import (
     AnomalyEnsembleDetector,
@@ -86,7 +86,7 @@ class OperationalMonitoringBot(AdminBotBase):
         splunk: SplunkHEC | None = None,
         anomaly_db: AnomalyDB | None = None,
         reporter: ReportGenerationBot | None = None,
-        db_router: DatabaseRouter | None = None,
+        db_router: DBRouter | None = None,
         autoscaler: Autoscaler | None = None,
         *,
         event_bus: UnifiedEventBus | None = None,

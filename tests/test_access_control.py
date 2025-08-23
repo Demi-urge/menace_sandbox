@@ -3,7 +3,7 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from menace.databases import MenaceDB
-from menace.database_router import DatabaseRouter
+from menace.db_router import DBRouter
 from menace.audit_trail import AuditTrail
 from menace.bot_database import BotDB
 from menace.code_database import CodeDB, CodeRecord
@@ -19,7 +19,7 @@ def setup_router(tmp_path):
         format=serialization.PrivateFormat.Raw,
         encryption_algorithm=serialization.NoEncryption(),
     )
-    router = DatabaseRouter(
+    router = DBRouter(
         bot_db=BotDB(tmp_path / 'b.db'),
         code_db=CodeDB(tmp_path / 'c.db'),
         menace_db=mdb,

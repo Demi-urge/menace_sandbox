@@ -69,7 +69,7 @@ from .revenue_amplifier import (
     RevenueEventsDB,
 )
 from .bot_db_utils import wrap_bot_methods
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 from .unified_event_bus import UnifiedEventBus
 from .bot_registry import BotRegistry
 from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
@@ -128,7 +128,7 @@ class ModelAutomationPipeline:
         reinvestment_bot: AutoReinvestmentBot | None = None,
         spike_bot: RevenueSpikeEvaluatorBot | None = None,
         allocation_bot: CapitalAllocationBot | None = None,
-        db_router: DatabaseRouter | None = None,
+        db_router: DBRouter | None = None,
         pathway_db: PathwayDB | None = None,
         myelination_threshold: float = 1.0,
         learning_engine: UnifiedLearningEngine | None = None,
@@ -196,7 +196,7 @@ class ModelAutomationPipeline:
         self.spike_bot = spike_bot or RevenueSpikeEvaluatorBot(RevenueEventsDB())
         self.allocation_bot = allocation_bot or CapitalAllocationBot()
 
-        self.db_router = db_router or DatabaseRouter(event_bus=event_bus)
+        self.db_router = db_router or DBRouter(event_bus=event_bus)
         self.bot_registry = bot_registry or BotRegistry()
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold

@@ -39,7 +39,7 @@ sys.modules.setdefault("jinja2", types.SimpleNamespace(Template=lambda *a, **k: 
 ed = sys.modules["cryptography.hazmat.primitives.asymmetric.ed25519"]
 ed.Ed25519PrivateKey = types.SimpleNamespace(generate=lambda: object())
 ed.Ed25519PublicKey = object
-sys.modules.setdefault("database_router", types.SimpleNamespace(DatabaseRouter=object, DBResult=object))
+sys.modules.setdefault("db_router", types.SimpleNamespace(DBRouter=object, DBResult=object))
 
 import menace.implementation_pipeline as ip
 import menace.bot_development_bot as bdb

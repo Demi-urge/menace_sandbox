@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 from typing import TYPE_CHECKING
 
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 from . import RAISE_ERRORS
 from .bot_dev_config import BotDevConfig
 from .models_repo import (
@@ -230,7 +230,7 @@ class BotDevelopmentBot:
         self,
         repo_base: Path | str | None = None,
         es_url: str | None = None,
-        db_steward: "DatabaseRouter" | None = None,
+        db_steward: "DBRouter" | None = None,
         watchdog: "Watchdog" | None = None,
         *,
         config: BotDevConfig | None = None,

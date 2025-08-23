@@ -34,7 +34,7 @@ from .error_forecaster import ErrorForecaster
 from .error_logger import TelemetryEvent, ErrorLogger
 from .error_ontology import ErrorType
 from .knowledge_graph import KnowledgeGraph
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from vector_service import EmbeddableDBMixin
@@ -768,7 +768,7 @@ class ErrorBot(AdminBotBase):
         bot_db: "BotDB" | None = None,
         enhancement_db: "EnhancementDB" | None = None,
         conversation_bot: "ConversationManagerBot" | None = None,
-        db_router: "DatabaseRouter" | None = None,
+        db_router: "DBRouter" | None = None,
         event_bus: Optional[EventBus] = None,
         memory_mgr: MenaceMemoryManager | None = None,
         graph: KnowledgeGraph | None = None,

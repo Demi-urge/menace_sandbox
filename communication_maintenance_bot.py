@@ -52,7 +52,7 @@ except Exception:  # pragma: no cover - optional
 import asyncio
 from . import env_config
 from .env_config import MENACE_MODE
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 from .unified_event_bus import UnifiedEventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
@@ -1064,7 +1064,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
         error_bot: ErrorBot | None = None,
         repo_path: Path | str | None = None,
         broker: str | None = None,
-        db_router: DatabaseRouter | None = None,
+        db_router: DBRouter | None = None,
         *,
         event_bus: Optional[UnifiedEventBus] = None,
         memory_mgr: MenaceMemoryManager | None = None,

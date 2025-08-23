@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 import types
-sys.modules["menace.database_router"] = types.SimpleNamespace(DatabaseRouter=object)
+sys.modules["menace.db_router"] = types.SimpleNamespace(DBRouter=object)
 sys.modules["menace.chatgpt_idea_bot"] = types.SimpleNamespace(ChatGPTClient=object)
 import menace.chatgpt_research_bot as crb
 

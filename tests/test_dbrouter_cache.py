@@ -7,7 +7,7 @@ from menace.bot_database import BotDB, BotRecord
 from menace.databases import MenaceDB
 from menace.bot_registry import BotRegistry
 from menace.neuroplasticity import PathwayDB, PathwayRecord, Outcome
-from menace.database_router import DatabaseRouter
+from menace.db_router import DBRouter
 
 
 def _setup_menace(tmp_path):
@@ -21,7 +21,7 @@ def _setup_menace(tmp_path):
 
 def test_execute_query_caching_and_flush(tmp_path):
     bdb = BotDB(tmp_path / 'b.db')
-    router = DatabaseRouter(bot_db=bdb, cache_seconds=1.0)
+    router = DBRouter(bot_db=bdb, cache_seconds=1.0)
 
     bdb.add_bot(BotRecord(name='x'))
     res1 = router.execute_query('bot', 'SELECT name FROM bots')
@@ -41,7 +41,7 @@ def test_cross_query_cache_expiration(tmp_path):
     pdb = PathwayDB(tmp_path / 'p.db')
     pdb.log(PathwayRecord(actions='wfA', inputs='', outputs='', exec_time=1.0, resources='', outcome=Outcome.SUCCESS, roi=1.0))
 
-    router = DatabaseRouter(menace_db=db, cache_seconds=0.2)
+    router = DBRouter(menace_db=db, cache_seconds=0.2)
 
     res1 = router.related_workflows('A', registry=reg, pathway_db=pdb)
 

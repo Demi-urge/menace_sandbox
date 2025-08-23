@@ -8,13 +8,13 @@ from typing import Callable, Optional
 
 from .unified_event_bus import UnifiedEventBus
 
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 from .bot_registry import BotRegistry
 
 
 def wrap_bot_methods(
     bot: object,
-    db_router: DatabaseRouter,
+    db_router: DBRouter,
     bot_registry: Optional[BotRegistry] = None,
     *,
     event_bus: Optional[UnifiedEventBus] = None,
@@ -37,7 +37,7 @@ def wrap_bot_methods(
         @wraps(func)
         def wrapper(*args, __f=func, __name=name, **kwargs):
             try:
-                db_router.query_all(__name)
+                db_router.get_connection("bots").execute("SELECT 1")
             except Exception as exc:  # pragma: no cover - best effort logging
                 logger.warning("DB query for %s failed: %s", __name, exc)
 

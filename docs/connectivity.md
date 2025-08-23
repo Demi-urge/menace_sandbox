@@ -5,18 +5,17 @@ link together for maximum emergent behaviour.
 
 ## Database Router
 
-Bots should interact with data through `DatabaseRouter`. The router mirrors
-inserts and updates across the local SQLite stores and the optional
-`MenaceDB`. It also subscribes to events so that new research items
-automatically create cross references to existing bots. When a `remote_url`
-is supplied the router opens a pooled connection to the central database and
-replicates writes atomically using `TransactionManager`.
+Bots should interact with data through `DBRouter`. The router decides whether
+tables reside in the local or shared SQLite database and returns a connection
+via :meth:`get_connection`. The legacy `database_router` module has been
+removed; import `DBRouter` from `db_router` instead:
 
-When no connection to the remote database is available the router works
-offline using the local stores. Results of `execute_query` and the cross
-query helpers are cached in-memory for `cache_seconds` (60&nbsp;seconds by
-default). Use `router.flush_cache()` or `router.enable_cache(False)` to
-disable caching when you need fresh reads.
+```python
+from menace.db_router import DBRouter
+
+router = DBRouter("demo", "./local.db", "./shared.db")
+conn = router.get_connection("bots")
+```
 
 ## Event Bus
 
@@ -61,26 +60,11 @@ Select the backend with the `vector_backend` argument (`"faiss"` or
 defaults.  Existing databases can populate vectors with
 `backfill_embeddings()`.
 
-## Cross Query Helpers
-
-Functions in `menace.cross_query` explore these links to surface related
-workflows, code snippets and resources across the system. The
-`related_resources` helper traverses bots, research items and memory entries to
-expose higher-order connections.
-
-These helpers are also available directly from `DatabaseRouter`:
+For ad-hoc SQL needs obtain a connection and execute statements directly:
 
 ```python
-router = DatabaseRouter(menace_db=menace_db, info_db=info_db, memory_mgr=memory_mgr)
-workflows = router.related_workflows("ExampleBot", registry=registry, pathway_db=pathway_db)
-snippets = router.similar_code_snippets("data processor", registry=registry)
-resources = router.related_resources("ExampleBot", registry=registry, pathway_db=pathway_db)
-```
-
-For ad-hoc SQL needs a centralised API is available:
-
-```python
-rows = router.execute_query("bot", "SELECT name FROM bots WHERE status=?", ["active"])
+conn = router.get_connection("bots")
+rows = conn.execute("SELECT name FROM bots WHERE status=?", ("active",)).fetchall()
 ```
 
 ## Bot Heartbeat Tracking

@@ -24,10 +24,10 @@ sys.modules["menace.databases"] = mn
 spec.loader.exec_module(mn)
 
 spec = importlib.util.spec_from_file_location(
-    "menace.database_router", ROOT / "database_router.py", submodule_search_locations=[str(ROOT)]
+    "menace.db_router", ROOT / "db_router.py", submodule_search_locations=[str(ROOT)]
 )
 dr = importlib.util.module_from_spec(spec)
-sys.modules["menace.database_router"] = dr
+sys.modules["menace.db_router"] = dr
 spec.loader.exec_module(dr)
 
 spec = importlib.util.spec_from_file_location(
@@ -61,7 +61,7 @@ class FailingTM(dr.TransactionManager):
 def test_insert_workflow_rollback(tmp_path):
     mdb = mn.MenaceDB(url=f"sqlite:///{tmp_path / 'm.db'}")
     wfdb = thb.WorkflowDB(tmp_path / 'wf.db')
-    router = dr.DatabaseRouter(workflow_db=wfdb, menace_db=mdb, transaction_manager=FailingTM())
+    router = dr.DBRouter(workflow_db=wfdb, menace_db=mdb, transaction_manager=FailingTM())
     wf = thb.WorkflowRecord(workflow=["a"], title="t")
     with pytest.raises(RuntimeError):
         router.insert_workflow(wf)
@@ -74,7 +74,7 @@ def test_insert_workflow_rollback(tmp_path):
 def test_update_bot_rollback(tmp_path):
     mdb = mn.MenaceDB(url=f"sqlite:///{tmp_path / 'm.db'}")
     bdb = bd.BotDB(tmp_path / 'b.db')
-    router = dr.DatabaseRouter(bot_db=bdb, menace_db=mdb)
+    router = dr.DBRouter(bot_db=bdb, menace_db=mdb)
     bid = router.insert_bot(bd.BotRecord(name="b"))
     router.transaction_manager = FailingTM()
     with pytest.raises(RuntimeError):
@@ -89,7 +89,7 @@ def test_update_bot_rollback(tmp_path):
 def test_delete_info_rollback(tmp_path):
     mdb = mn.MenaceDB(url=f"sqlite:///{tmp_path / 'm.db'}")
     info = rab.InfoDB(tmp_path / 'i.db')
-    router = dr.DatabaseRouter(info_db=info, menace_db=mdb)
+    router = dr.DBRouter(info_db=info, menace_db=mdb)
     item = rab.ResearchItem(topic="t", content="c", timestamp=0.0)
     info_id = router.insert_info(item)
     router.transaction_manager = FailingTM()

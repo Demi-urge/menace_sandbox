@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 import types
-sys.modules["menace.database_router"] = types.SimpleNamespace(DatabaseRouter=object)
+sys.modules["menace.db_router"] = types.SimpleNamespace(DBRouter=object)
 import menace.text_research_bot as trb
 
 
@@ -52,10 +52,9 @@ def test_db_hit_avoids_download(monkeypatch):
     from types import SimpleNamespace
     import time
     from menace.research_aggregator_bot import ResearchItem
-    from menace.database_router import DBResult
-
+    
     router = SimpleNamespace()
-    router.query_all = lambda term: DBResult(code=[], bots=[], info=[ResearchItem(topic=term, content="cached", timestamp=time.time(), source_url="u")], memory=[], menace=[])
+    router.query_all = lambda term: SimpleNamespace(code=[], bots=[], info=[ResearchItem(topic=term, content="cached", timestamp=time.time(), source_url="u")], memory=[], menace=[])
     bot = trb.TextResearchBot(db_router=router)
 
     def fail(*a, **k):

@@ -40,10 +40,9 @@ def test_whisper_transcribe(monkeypatch, tmp_path: Path):
 
 def test_db_hit_skips_network(monkeypatch, tmp_path: Path):
     from menace.research_aggregator_bot import ResearchItem
-    from menace.database_router import DBResult
     info = ResearchItem(topic="T", content="trans", summary="sum", timestamp=0.0, source_url="http://y")
     router = SimpleNamespace()
-    router.query_all = lambda q: DBResult(code=[], bots=[], info=[info], memory=[], menace=[])
+    router.query_all = lambda q: SimpleNamespace(code=[], bots=[], info=[info], memory=[], menace=[])
     bot = vrb.VideoResearchBot(api_key="k", storage_dir=tmp_path, db_router=router)
 
     def fail(*a, **k):

@@ -6,7 +6,7 @@ pytest.importorskip("networkx")
 from menace.bot_registry import BotRegistry
 from menace.neuroplasticity import PathwayDB, PathwayRecord, Outcome
 from menace.databases import MenaceDB
-from menace.database_router import DatabaseRouter
+from menace.db_router import DBRouter
 
 
 def _setup_menace(tmp_path):
@@ -27,7 +27,7 @@ def test_router_related_workflows(tmp_path):
     reg.register_interaction('A', 'B')
     pdb = PathwayDB(tmp_path / 'p.db')
     pdb.log(PathwayRecord(actions='wfB', inputs='', outputs='', exec_time=1.0, resources='', outcome=Outcome.SUCCESS, roi=1.0))
-    router = DatabaseRouter(menace_db=db)
+    router = DBRouter(menace_db=db)
 
     results = router.related_workflows('A', registry=reg, pathway_db=pdb)
     assert 'wfA' in results

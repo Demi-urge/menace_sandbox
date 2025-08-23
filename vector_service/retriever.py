@@ -468,19 +468,19 @@ def fts_search(
     dbs: Sequence[str] | None = None,
     limit: int | None = None,
 ) -> List[Dict[str, Any]]:
-    """Run SQLite FTS queries via :class:`DatabaseRouter`.
+    """Run SQLite FTS queries via :class:`DBRouter`.
 
     The helper is intentionally lightweight and returns an empty list on any
     failure so callers can use it opportunistically.
     """
 
     try:  # pragma: no cover - optional dependency
-        from database_router import DatabaseRouter
+        from db_router import DBRouter
     except Exception:
         return []
 
     try:
-        router = DatabaseRouter()
+        router = DBRouter()
         return router.search_fts(query, dbs=dbs, limit=limit)
     except Exception:
         return []

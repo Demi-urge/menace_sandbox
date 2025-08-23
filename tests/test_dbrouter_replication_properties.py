@@ -28,7 +28,7 @@ def _load(name: str):
     return mod
 
 mn = _load("databases")
-dr = _load("database_router")
+dr = _load("db_router")
 bd = _load("bot_database")
 
 
@@ -38,7 +38,7 @@ def test_replication_checksums_consistency(tmp_path, actions):
     uid = uuid4().hex
     remote = f"sqlite:///{tmp_path / f'remote_{uid}.db'}"
     local_path = tmp_path / f'local_{uid}.db'
-    router = dr.DatabaseRouter(
+    router = dr.DBRouter(
         bot_db=bd.BotDB(local_path),
         remote_url=remote,
         auto_cross_link=False,
