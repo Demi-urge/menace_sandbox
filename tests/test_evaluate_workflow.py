@@ -152,7 +152,15 @@ def test_foresight_gate_pass(monkeypatch):
         "confidence": 0.8,
     }
 
-    def fake_gate(workflow_id, patch, tracker, workflow_graph, roi_threshold=0.0):
+    def fake_gate(
+        workflow_id,
+        patch,
+        tracker,
+        workflow_graph,
+        roi_threshold=0.0,
+        confidence_threshold=0.6,
+        allow_negative_dag=False,
+    ):
         return True, [], dg.ForecastResult([], 0.9, "f0")
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
@@ -178,7 +186,15 @@ def test_foresight_gate_failure(monkeypatch):
         "confidence": 0.8,
     }
 
-    def fake_gate(workflow_id, patch, tracker, workflow_graph, roi_threshold=0.0):
+    def fake_gate(
+        workflow_id,
+        patch,
+        tracker,
+        workflow_graph,
+        roi_threshold=0.0,
+        confidence_threshold=0.6,
+        allow_negative_dag=False,
+    ):
         return False, ["low_confidence"], dg.ForecastResult([], 0.9, "f0")
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
@@ -194,3 +210,50 @@ def test_foresight_gate_failure(monkeypatch):
     assert res["verdict"] == "pilot"
     assert "low_confidence" in res["reason_codes"]
     assert res.get("foresight", {}).get("reason_codes") == ["low_confidence"]
+
+
+def test_policy_thresholds_passed(monkeypatch):
+    _reset(monkeypatch)
+    scorecard = {
+        "scenario_scores": {"s": 0.8},
+        "alignment_status": "pass",
+        "raroi": 1.2,
+        "confidence": 0.8,
+    }
+
+    called = {}
+
+    def fake_gate(
+        workflow_id,
+        patch,
+        tracker,
+        workflow_graph,
+        roi_threshold=0.0,
+        confidence_threshold=0.6,
+        allow_negative_dag=False,
+    ):
+        called["roi_threshold"] = roi_threshold
+        called["confidence_threshold"] = confidence_threshold
+        called["allow_negative_dag"] = allow_negative_dag
+        return True, [], dg.ForecastResult([], 0.9, "f0")
+
+    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
+
+    policy = {
+        "roi_forecast_min": 0.5,
+        "foresight_confidence_min": 0.7,
+        "allow_negative_dag": True,
+    }
+
+    dg.evaluate_workflow(
+        scorecard,
+        policy,
+        foresight_tracker=_DummyTracker(),
+        workflow_id="wf1",
+        patch=[],
+    )
+
+    assert called["roi_threshold"] == 0.5
+    assert called["confidence_threshold"] == 0.7
+    assert called["allow_negative_dag"] is True

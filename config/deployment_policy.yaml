@@ -12,6 +12,10 @@
 #         condition: Python expression evaluated with available metrics
 #         reason_code: override specific reason code
 
+roi_forecast_min: 0.0
+foresight_confidence_min: 0.6
+allow_negative_dag: false
+
 promote:
   thresholds:
     raroi_min: 0.8

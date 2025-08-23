@@ -24,7 +24,15 @@ def _make_scorecard():
 def test_gate_pass(monkeypatch):
     called = {}
 
-    def fake_gate(workflow_id, patch, tracker, workflow_graph, roi_threshold=0.0):
+    def fake_gate(
+        workflow_id,
+        patch,
+        tracker,
+        workflow_graph,
+        roi_threshold=0.0,
+        confidence_threshold=0.6,
+        allow_negative_dag=False,
+    ):
         called["wf"] = workflow_id
         called["patch"] = patch
         return True, [], dg.ForecastResult([], 0.0, "fid")
@@ -52,7 +60,15 @@ def test_gate_pass(monkeypatch):
 
 
 def test_gate_failure_borderline(monkeypatch, tmp_path):
-    def fake_gate(workflow_id, patch, tracker, workflow_graph, roi_threshold=0.0):
+    def fake_gate(
+        workflow_id,
+        patch,
+        tracker,
+        workflow_graph,
+        roi_threshold=0.0,
+        confidence_threshold=0.6,
+        allow_negative_dag=False,
+    ):
         return False, ["r1", "r2"], dg.ForecastResult([], 0.0, "fid")
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
@@ -73,7 +89,15 @@ def test_gate_failure_borderline(monkeypatch, tmp_path):
 
 
 def test_gate_failure_pilot(monkeypatch):
-    def fake_gate(workflow_id, patch, tracker, workflow_graph, roi_threshold=0.0):
+    def fake_gate(
+        workflow_id,
+        patch,
+        tracker,
+        workflow_graph,
+        roi_threshold=0.0,
+        confidence_threshold=0.6,
+        allow_negative_dag=False,
+    ):
         return False, ["bad"], dg.ForecastResult([], 0.0, "fid")
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)

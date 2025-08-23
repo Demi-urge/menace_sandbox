@@ -482,11 +482,17 @@ def evaluate_workflow(
         patch_repr = [] if patch is None else (patch if isinstance(patch, str) else list(patch))
         try:
             graph = WorkflowGraph()
+            roi_min = float(policy.get("roi_forecast_min", 0.0))
+            conf_min = float(policy.get("foresight_confidence_min", 0.6))
+            allow_negative = bool(policy.get("allow_negative_dag", False))
             ok, fs_reasons, forecast = is_foresight_safe_to_promote(
                 workflow_id,
                 patch_repr,
                 foresight_tracker,
                 graph,
+                roi_threshold=roi_min,
+                confidence_threshold=conf_min,
+                allow_negative_dag=allow_negative,
             )
             foresight_info = {
                 "forecast": {
@@ -992,14 +998,17 @@ def is_foresight_safe_to_promote(
     tracker: ForesightTracker,
     workflow_graph: WorkflowGraph,
     roi_threshold: float = 0.0,
+    confidence_threshold: float = 0.6,
+    allow_negative_dag: bool = False,
 ) -> tuple[bool, list[str], ForecastResult]:
     """Return foresight gate decision for ``workflow_id``.
 
     A forecast is generated for ``patch`` using :class:`UpgradeForecaster`.
     Promotion proceeds only when all projected ROI values exceed
-    ``roi_threshold``, the forecast confidence is at least ``0.6``, no collapse
-    is predicted within the forecast horizon and the simulated impact wave does
-    not yield negative downstream ROI deltas.
+    ``roi_threshold``, the forecast confidence is at least
+    ``confidence_threshold``, no collapse is predicted within the forecast
+    horizon and, unless ``allow_negative_dag`` is set, the simulated impact wave
+    does not yield negative downstream ROI deltas.
     """
 
     if isinstance(patch, str):
@@ -1023,7 +1032,7 @@ def is_foresight_safe_to_promote(
     if any(p.roi < roi_threshold for p in forecast.projections):
         reasons.append("projected_roi_below_threshold")
 
-    if forecast.confidence < 0.6:
+    if forecast.confidence < confidence_threshold:
         reasons.append("low_confidence")
 
     try:
@@ -1045,8 +1054,9 @@ def is_foresight_safe_to_promote(
         )
         for wid, vals in impact_summary.items():
             if wid != workflow_id and vals.get("roi", 0.0) < 0:
-                reasons.append("negative_impact_wave")
-                break
+                if not allow_negative_dag:
+                    reasons.append("negative_impact_wave")
+                    break
     except Exception:
         logger.exception("impact wave simulation failed")
 
