@@ -168,6 +168,10 @@ try:  # pragma: no cover - allow flat imports
     from .upgrade_forecaster import UpgradeForecaster
 except Exception:  # pragma: no cover - fallback for flat layout
     from upgrade_forecaster import UpgradeForecaster  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .workflow_graph import WorkflowGraph
+except Exception:  # pragma: no cover - fallback for flat layout
+    from workflow_graph import WorkflowGraph  # type: ignore
 
 logger = get_logger(__name__)
 
@@ -5499,10 +5503,12 @@ class SelfImprovementEngine:
                     if verdict == "promote" and self.foresight_tracker:
                         try:
                             forecaster = UpgradeForecaster(self.foresight_tracker)
+                            graph = WorkflowGraph()
                             safe, forecast_res, fs_codes = is_foresight_safe_to_promote(
                                 workflow_id,
                                 str(patch_id) if patch_id is not None else "",
                                 forecaster,
+                                graph,
                             )
                             forecast_info = {
                                 "projections": [asdict(p) for p in forecast_res.projections],

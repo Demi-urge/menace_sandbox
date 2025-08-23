@@ -62,7 +62,7 @@ def test_low_confidence(monkeypatch, tmp_path):
     assert fid == "u2"
 
 
-def test_negative_impact_wave(monkeypatch, tmp_path):
+def test_negative_dag_impact(monkeypatch, tmp_path):
     result = ForecastResult(
         projections=[CycleProjection(1, -0.1, 0.0, 1.0, 0.0)],
         confidence=0.9,
@@ -80,7 +80,7 @@ def test_negative_impact_wave(monkeypatch, tmp_path):
         "wf", [], tracker, graph, roi_threshold=-0.2
     )
     assert not ok
-    assert "negative_impact_wave" in reasons
+    assert "negative_dag_impact" in reasons
     assert fid == "u3"
 
 

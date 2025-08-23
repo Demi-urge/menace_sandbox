@@ -95,7 +95,7 @@ All gate decisions are appended to ``forecast_records/decision_log.jsonl`` using
 If ``ok`` is ``False`` the calling :class:`DeploymentGovernor` downgrades the
 workflow to the borderline bucket (when available) or triggers a pilot run
 instead.  Reason codes such as ``projected_roi_below_threshold``,
-``low_confidence``, ``roi_collapse_risk`` and ``negative_impact_wave`` identify
+``low_confidence``, ``roi_collapse_risk`` and ``negative_dag_impact`` identify
 which gate failed.
 
 A minimal integration example lives at
