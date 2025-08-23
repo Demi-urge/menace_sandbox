@@ -7,7 +7,6 @@ contrarian_db.py
 data_bot.py
 db_router.py
 dynamic_resource_allocator_bot.py
-efficiency_bot.py
 evaluation_history_db.py
 failure_learning_system.py
 investment_engine.py
@@ -15,7 +14,6 @@ learning_engine.py
 mirror_bot.py
 model_automation_pipeline.py
 neuroplasticity.py
-niche_saturation_bot.py
 operational_monitor_bot.py
 patch_suggestion_db.py
 pre_execution_roi_bot.py

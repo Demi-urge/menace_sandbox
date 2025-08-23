@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 import logging
 
@@ -16,6 +15,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
+from .db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
 from .prediction_manager_bot import PredictionManager
@@ -42,7 +42,10 @@ class EfficiencyDB:
     """SQLite backed store for efficiency records."""
 
     def __init__(self, path: str | Path = "efficiency.db") -> None:
-        self.conn = sqlite3.connect(path)
+        LOCAL_TABLES.add("efficiency")
+        p = Path(path).resolve()
+        self.router = GLOBAL_ROUTER or init_db_router("efficiency_db", str(p), str(p))
+        self.conn = self.router.get_connection("efficiency")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS efficiency(

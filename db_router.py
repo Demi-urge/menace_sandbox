@@ -119,6 +119,8 @@ if "LOCAL_TABLES" in globals():
             "synergy_history",
             "feedback",
             "mirror_logs",
+            "efficiency",
+            "saturation",
         }
     )
 else:
@@ -176,6 +178,8 @@ else:
         "synergy_history",
         "feedback",
         "mirror_logs",
+        "efficiency",
+        "saturation",
     }
 
 # Tables explicitly denied even if present in the allow lists.  Also mutated

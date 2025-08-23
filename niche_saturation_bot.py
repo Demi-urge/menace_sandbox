@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 
 logger = logging.getLogger(__name__)
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +22,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
+from .db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .resource_allocation_bot import ResourceAllocationBot
 from .resource_prediction_bot import ResourceMetrics
 from .prediction_manager_bot import PredictionManager
@@ -52,7 +52,10 @@ class NicheDB:
     """SQLite storage for saturation history."""
 
     def __init__(self, path: str | Path = "niche_history.db") -> None:
-        self.conn = sqlite3.connect(path)
+        LOCAL_TABLES.add("saturation")
+        p = Path(path).resolve()
+        self.router = GLOBAL_ROUTER or init_db_router("niche_db", str(p), str(p))
+        self.conn = self.router.get_connection("saturation")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS saturation(
