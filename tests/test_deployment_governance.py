@@ -297,6 +297,7 @@ def test_roi_below_threshold_downgrades_verdict(
     assert res["verdict"] == "pilot"
     assert "projected_roi_below_threshold" in res["reason_codes"]
     assert decision_logs[0]["reason_codes"] == ["projected_roi_below_threshold"]
+    assert decision_logs[0]["decision"] == "pilot"
 
 
 def test_low_confidence_downgrades_verdict(
@@ -317,6 +318,7 @@ def test_low_confidence_downgrades_verdict(
     assert res["verdict"] == "pilot"
     assert "low_confidence" in res["reason_codes"]
     assert decision_logs[0]["reason_codes"] == ["low_confidence"]
+    assert decision_logs[0]["decision"] == "pilot"
 
 
 def test_early_collapse_downgrades_verdict(
@@ -338,6 +340,7 @@ def test_early_collapse_downgrades_verdict(
     assert res["verdict"] == "pilot"
     assert "roi_collapse_risk" in res["reason_codes"]
     assert decision_logs[0]["reason_codes"] == ["roi_collapse_risk"]
+    assert decision_logs[0]["decision"] == "pilot"
 
 
 def test_negative_dag_impact_downgrades_verdict(
@@ -364,6 +367,7 @@ def test_negative_dag_impact_downgrades_verdict(
     assert res["verdict"] == "pilot"
     assert "negative_dag_impact" in res["reason_codes"]
     assert decision_logs[0]["reason_codes"] == ["negative_dag_impact"]
+    assert decision_logs[0]["decision"] == "pilot"
 
 
 def test_governor_foresight_gate_failure(monkeypatch):

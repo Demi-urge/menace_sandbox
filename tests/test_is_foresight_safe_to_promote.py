@@ -63,7 +63,29 @@ def test_negative_dag_impact(negative_impact_graph, stable_tracker):
     assert "negative_dag_impact" in decision.reasons
     assert logger.last["reason_codes"] == ["negative_dag_impact"]
     assert logger.last["decision"] is False
+    assert logger.last["recommendation"] == "pilot"
+    assert decision.recommendation == "pilot"
     assert decision.forecast.get("upgrade_id") == "u3"
+
+
+def test_borderline_downgrade_signaled(stub_graph, stable_tracker):
+    result = ForecastResult(
+        projections=[CycleProjection(1, 0.48, 0.0, 1.0, 0.0)],
+        confidence=0.9,
+        upgrade_id="u6",
+    )
+    logger = DummyLogger()
+    forecaster = DummyForecaster(result, tracker=stable_tracker, logger=logger)
+    decision = fg.is_foresight_safe_to_promote(
+        "wf", [], forecaster, stub_graph, roi_threshold=0.5
+    )
+    assert not decision.safe
+    assert decision.recommendation == "borderline"
+    assert "projected_roi_below_threshold" in decision.reasons
+    assert logger.last["reason_codes"] == ["projected_roi_below_threshold"]
+    assert logger.last["recommendation"] == "borderline"
+    assert logger.last["decision"] is False
+    assert decision.forecast.get("upgrade_id") == "u6"
 
 
 def test_early_collapse_flag(stub_graph, brittle_tracker):
