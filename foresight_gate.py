@@ -25,6 +25,7 @@ class ForesightDecision(NamedTuple):
     safe: bool
     reasons: List[str]
     forecast: Dict[str, Any]
+    recommendation: str
 
 
 def _log(logger: ForecastLogger | None, payload: dict) -> None:
@@ -44,6 +45,7 @@ def is_foresight_safe_to_promote(
     *,
     roi_threshold: float = 0.0,
     confidence_threshold: float = 0.6,
+    borderline_margin: float = 0.05,
 ) -> ForesightDecision:
     """Assess whether ``patch`` may be promoted based on forecasted metrics.
 
@@ -111,6 +113,27 @@ def is_foresight_safe_to_promote(
 
     safe = not reasons
 
+    recommendation = "promote"
+    if not safe:
+        borderline_reasons = {_reason_roi, _reason_conf}
+        borderline = False
+        if all(r in borderline_reasons for r in reasons):
+            checks: List[bool] = []
+            if _reason_roi in reasons:
+                min_roi = min(
+                    (p.roi for p in forecast.projections),
+                    default=roi_threshold - 1.0,
+                )
+                checks.append(min_roi >= roi_threshold - borderline_margin)
+            if _reason_conf in reasons:
+                checks.append(
+                    forecast.confidence
+                    >= confidence_threshold - borderline_margin
+                )
+            if checks and all(checks):
+                borderline = True
+        recommendation = "borderline" if borderline else "pilot"
+
     forecast_info: Dict[str, Any] = {
         "projections": [asdict(p) for p in forecast.projections],
         "confidence": forecast.confidence,
@@ -124,10 +147,11 @@ def is_foresight_safe_to_promote(
             "forecast": forecast_info,
             "reason_codes": reasons,
             "decision": safe,
+            "recommendation": recommendation,
         },
     )
 
-    return ForesightDecision(safe, reasons, forecast_info)
+    return ForesightDecision(safe, reasons, forecast_info, recommendation)
 
 
 __all__ = ["is_foresight_safe_to_promote", "ForesightDecision"]

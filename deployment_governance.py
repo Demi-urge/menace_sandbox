@@ -436,8 +436,6 @@ class DeploymentGovernor:
                 if patch is None
                 else (patch if isinstance(patch, str) else list(patch))
             )
-            ok = True
-            fs_reasons: list[str] = []
             logger_obj: ForecastLogger | None = None
             try:
                 graph = WorkflowGraph()
@@ -462,6 +460,7 @@ class DeploymentGovernor:
                     "forecast_id": decision.forecast.get("upgrade_id"),
                     "projections": projections,
                     "confidence": conf_val,
+                    "recommendation": decision.recommendation,
                 }
                 log_forecast_record(
                     logger_obj,
@@ -482,31 +481,27 @@ class DeploymentGovernor:
                 except Exception:
                     logger.exception("audit logging failed")
                 if not decision.safe:
-                    verdict = "pilot"
                     for rc in decision.reasons:
                         if rc not in reasons:
                             reasons.append(rc)
                     if (
-                        borderline_bucket is not None
+                        decision.recommendation == "borderline"
+                        and borderline_bucket is not None
                         and raroi is not None
                         and confidence is not None
                     ):
                         try:
-                            margin = 0.05
-                            r_close = abs(float(raroi) - self.raroi_threshold) <= margin
-                            c_close = (
-                                abs(float(confidence) - self.confidence_threshold)
-                                <= margin
+                            borderline_bucket.enqueue(
+                                workflow_id,
+                                float(raroi),
+                                float(confidence),
+                                {"reason_codes": list(decision.reasons)},
                             )
-                            if r_close or c_close:
-                                borderline_bucket.enqueue(
-                                    workflow_id,
-                                    float(raroi),
-                                    float(confidence),
-                                    {"reason_codes": list(decision.reasons)},
-                                )
                         except Exception:
                             logger.exception("borderline enqueue failed")
+                        verdict = "borderline"
+                    else:
+                        verdict = "pilot"
             except Exception:
                 logger.exception("foresight promotion gate failed")
             finally:
@@ -632,28 +627,31 @@ def evaluate_workflow(
             )
             logger_obj = ForecastLogger("forecast_records/foresight.log")
             forecaster = UpgradeForecaster(foresight_tracker)
-            ok, fs_reasons, forecast_info = foresight_gate.is_foresight_safe_to_promote(
+            decision = foresight_gate.is_foresight_safe_to_promote(
                 workflow_id,
                 patch_repr,
                 forecaster,
                 graph,
                 roi_threshold=roi_min,
             )
-            projections = forecast_info.get("projections", [])
-            conf_val = forecast_info.get("confidence")
+            if not isinstance(decision, ForesightDecision):
+                decision = ForesightDecision(*decision)
+            projections = decision.forecast.get("projections", [])
+            conf_val = decision.forecast.get("confidence")
             foresight_info = {
-                "reason_codes": list(fs_reasons),
-                "forecast_id": forecast_info.get("upgrade_id"),
+                "reason_codes": list(decision.reasons),
+                "forecast_id": decision.forecast.get("upgrade_id"),
                 "projections": projections,
                 "confidence": conf_val,
+                "recommendation": decision.recommendation,
             }
             log_forecast_record(
                 logger_obj,
                 workflow_id,
                 projections,
                 conf_val,
-                fs_reasons,
-                forecast_info.get("upgrade_id"),
+                decision.reasons,
+                decision.forecast.get("upgrade_id"),
             )
             record = {
                 "event": "foresight_promotion_decision",
@@ -665,31 +663,28 @@ def evaluate_workflow(
                 audit_logger.log_event("foresight_promotion_decision", record)
             except Exception:
                 logger.exception("audit logging failed")
-            if not ok:
-                verdict = "pilot"
-                for rc in fs_reasons:
+            if not decision.safe:
+                for rc in decision.reasons:
                     if rc not in reason_codes:
                         reason_codes.append(rc)
                 if (
-                    borderline_bucket is not None
+                    decision.recommendation == "borderline"
+                    and borderline_bucket is not None
                     and raroi is not None
                     and confidence is not None
                 ):
                     try:
-                        margin = 0.05
-                        r_close = abs(float(raroi) - gov.raroi_threshold) <= margin
-                        c_close = (
-                            abs(float(confidence) - gov.confidence_threshold) <= margin
+                        borderline_bucket.enqueue(
+                            workflow_id,
+                            float(raroi),
+                            float(confidence),
+                            {"reason_codes": list(decision.reasons)},
                         )
-                        if r_close or c_close:
-                            borderline_bucket.enqueue(
-                                workflow_id,
-                                float(raroi),
-                                float(confidence),
-                                {"reason_codes": list(fs_reasons)},
-                            )
                     except Exception:
                         logger.exception("borderline enqueue failed")
+                    verdict = "borderline"
+                else:
+                    verdict = "pilot"
         except Exception:
             logger.exception("foresight promotion gate failed")
         finally:
@@ -779,26 +774,29 @@ def evaluate(
                 graph = WorkflowGraph()
                 logger_obj = ForecastLogger("forecast_records/foresight.log")
                 forecaster = UpgradeForecaster(foresight_tracker)
-                ok, fs_reasons, forecast_info = foresight_gate.is_foresight_safe_to_promote(
+                decision = foresight_gate.is_foresight_safe_to_promote(
                     workflow_id,
                     patch_repr,
                     forecaster,
                     graph,
                 )
-                projections = forecast_info.get("projections", [])
-                conf_val = forecast_info.get("confidence")
+                if not isinstance(decision, ForesightDecision):
+                    decision = ForesightDecision(*decision)
+                projections = decision.forecast.get("projections", [])
+                conf_val = decision.forecast.get("confidence")
                 forecast_info = {
-                    "reason_codes": list(fs_reasons),
-                    "forecast_id": forecast_info.get("upgrade_id"),
+                    "reason_codes": list(decision.reasons),
+                    "forecast_id": decision.forecast.get("upgrade_id"),
                     "projections": projections,
                     "confidence": conf_val,
+                    "recommendation": decision.recommendation,
                 }
                 log_forecast_record(
                     logger_obj,
                     workflow_id,
                     projections,
                     conf_val,
-                    fs_reasons,
+                    decision.reasons,
                     forecast_info.get("forecast_id"),
                 )
                 record = {
@@ -811,9 +809,12 @@ def evaluate(
                     audit_logger.log_event("foresight_promotion_decision", record)
                 except Exception:
                     logger.exception("audit logging failed")
-                if not ok:
-                    reasons.extend(fs_reasons)
-                    verdict = "borderline" if borderline_bucket is not None else "pilot"
+                if not decision.safe:
+                    reasons.extend(decision.reasons)
+                    if decision.recommendation == "borderline" and borderline_bucket is not None:
+                        verdict = "borderline"
+                    else:
+                        verdict = "pilot"
             except Exception:
                 logger.exception("foresight promotion gate failed")
             finally:
@@ -1113,27 +1114,30 @@ class RuleEvaluator:
                                 graph = WorkflowGraph()
                                 logger_obj = ForecastLogger("forecast_records/foresight.log")
                                 forecaster = UpgradeForecaster(foresight_tracker)
-                                ok, fs_reasons, forecast_info = foresight_gate.is_foresight_safe_to_promote(
+                                decision = foresight_gate.is_foresight_safe_to_promote(
                                     workflow_id,
                                     patch_repr,
                                     forecaster,
                                     graph,
                                 )
-                                projections = forecast_info.get("projections", [])
-                                conf_val = forecast_info.get("confidence")
+                                if not isinstance(decision, ForesightDecision):
+                                    decision = ForesightDecision(*decision)
+                                projections = decision.forecast.get("projections", [])
+                                conf_val = decision.forecast.get("confidence")
                                 result["foresight"] = {
-                                    "reason_codes": list(fs_reasons),
-                                    "forecast_id": forecast_info.get("upgrade_id"),
+                                    "reason_codes": list(decision.reasons),
+                                    "forecast_id": decision.forecast.get("upgrade_id"),
                                     "projections": projections,
                                     "confidence": conf_val,
+                                    "recommendation": decision.recommendation,
                                 }
                                 log_forecast_record(
                                     logger_obj,
                                     workflow_id,
                                     projections,
                                     conf_val,
-                                    fs_reasons,
-                                    forecast_info.get("upgrade_id"),
+                                    decision.reasons,
+                                    decision.forecast.get("upgrade_id"),
                                 )
                                 record = {
                                     "event": "foresight_promotion_decision",
@@ -1147,12 +1151,12 @@ class RuleEvaluator:
                                     )
                                 except Exception:
                                     logger.exception("audit logging failed")
-                                if not ok:
-                                    reasons.extend(fs_reasons)
+                                if not decision.safe:
+                                    reasons.extend(decision.reasons)
                                     result["reason_codes"] = reasons
                                     result["decision"] = (
                                         "borderline"
-                                        if borderline_bucket is not None
+                                        if decision.recommendation == "borderline" and borderline_bucket is not None
                                         else "pilot"
                                     )
                             except Exception:
