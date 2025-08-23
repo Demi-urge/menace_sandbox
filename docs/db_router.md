@@ -180,19 +180,50 @@ cursor = conn.execute("SELECT * FROM bots")
 
 ## Replacing direct `sqlite3.connect` calls
 
-Modules should avoid calling `sqlite3.connect()` directly. Instead, retrieve a
-connection through the router so table placement remains centralised:
+Modules should avoid calling `sqlite3.connect()` directly. Instead, initialise
+the router and obtain connections via `get_connection` so table placement
+remains centralised. Services must call `init_db_router(menace_id)` once at
+startup before any database operations:
 
 ```python
-# Legacy code
-conn = sqlite3.connect("bots.db")
+from db_router import init_db_router
 
-# Updated approach
+init_db_router("alpha")  # make GLOBAL_ROUTER available
+```
+
+### Shared table example
+
+```python
 from db_router import GLOBAL_ROUTER, init_db_router
 
 router = GLOBAL_ROUTER or init_db_router("alpha")
-conn = router.get_connection("bots")
+conn = router.get_connection("bots")  # routes to shared/global.db
 ```
+
+### Local table example
+
+```python
+from db_router import GLOBAL_ROUTER, init_db_router
+
+router = GLOBAL_ROUTER or init_db_router("alpha")
+conn = router.get_connection("memory")  # routes to menace_<id>_local.db
+```
+
+### Environment or configuration overrides
+
+If a table is not covered by the default routing lists, its placement can be
+changed through environment variables or a JSON config:
+
+```bash
+export DB_ROUTER_SHARED_TABLES="analytics"   # force into shared database
+export DB_ROUTER_LOCAL_TABLES="session"      # keep table local
+export DB_ROUTER_CONFIG="/etc/menace/db_router_tables.json"
+```
+
+After setting the overrides, calls such as
+`router.get_connection("analytics")` will target the shared database while
+`router.get_connection("session")` remains local. See *Environment variable
+overrides* above for more details.
 
 A pre-commit hook enforces this rule by rejecting commits that introduce
 `sqlite3.connect()` outside `db_router.py`.  Obtaining connections through the
