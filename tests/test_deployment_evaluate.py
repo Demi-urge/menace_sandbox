@@ -1,13 +1,6 @@
-import types
-
 from menace.deployment_governance import evaluate
 import menace.deployment_governance as dg
-from menace.upgrade_forecaster import ForecastResult, CycleProjection
-
-
-class DummyForecaster:
-    def __init__(self, tracker, logger=None):
-        pass
+from menace.upgrade_forecaster import ForecastResult
 
 
 class DummyTracker:
@@ -37,9 +30,10 @@ class DummyBucket:
 
 def _patch_gate(monkeypatch, ok, reasons):
     forecast = ForecastResult([], 0.9, "u0")
-    def fake_gate(workflow_id, patch, forecaster, tracker, graph, roi_threshold=0.0):
+
+    def fake_gate(workflow_id, patch, tracker, workflow_graph, roi_threshold=0.0):
         return ok, list(reasons), forecast
-    monkeypatch.setattr(dg, "UpgradeForecaster", DummyForecaster)
+
     monkeypatch.setattr(dg, "WorkflowGraph", DummyGraph)
     monkeypatch.setattr(dg, "ForecastLogger", lambda *a, **k: DummyLogger())
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)

@@ -1,19 +1,11 @@
 import menace.deployment_governance as dg
 import pytest
 
+import menace.deployment_governance as dg
+
 
 class DummyTracker:
     pass
-
-
-class DummyForecaster:
-    def __init__(self, tracker):
-        self.tracker = tracker
-
-    def forecast(self, workflow_id, patch):
-        return dg.ForecastResult([], 1.0, "u")
-
-
 class DummyGraph:
     def simulate_impact_wave(self, *args, **kwargs):
         return {}
@@ -32,15 +24,12 @@ def _make_scorecard():
 def test_gate_pass(monkeypatch):
     called = {}
 
-    def fake_gate(workflow_id, patch, *, forecaster, tracker, graph, roi_threshold=0.0):
+    def fake_gate(workflow_id, patch, tracker, workflow_graph, roi_threshold=0.0):
         called["wf"] = workflow_id
         called["patch"] = patch
         return True, [], dg.ForecastResult([], 0.0, "fid")
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
-    monkeypatch.setattr(
-        dg, "UpgradeForecaster", lambda tracker, **kw: DummyForecaster(tracker)
-    )
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: DummyGraph())
 
     result = dg.evaluate_scorecard(
@@ -63,13 +52,10 @@ def test_gate_pass(monkeypatch):
 
 
 def test_gate_failure_borderline(monkeypatch, tmp_path):
-    def fake_gate(workflow_id, patch, *, forecaster, tracker, graph, roi_threshold=0.0):
+    def fake_gate(workflow_id, patch, tracker, workflow_graph, roi_threshold=0.0):
         return False, ["r1", "r2"], dg.ForecastResult([], 0.0, "fid")
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
-    monkeypatch.setattr(
-        dg, "UpgradeForecaster", lambda tracker, **kw: DummyForecaster(tracker)
-    )
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: DummyGraph())
 
     bucket = dg.BorderlineBucket(tmp_path / "b.jsonl")
@@ -87,13 +73,10 @@ def test_gate_failure_borderline(monkeypatch, tmp_path):
 
 
 def test_gate_failure_pilot(monkeypatch):
-    def fake_gate(workflow_id, patch, *, forecaster, tracker, graph, roi_threshold=0.0):
+    def fake_gate(workflow_id, patch, tracker, workflow_graph, roi_threshold=0.0):
         return False, ["bad"], dg.ForecastResult([], 0.0, "fid")
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
-    monkeypatch.setattr(
-        dg, "UpgradeForecaster", lambda tracker, **kw: DummyForecaster(tracker)
-    )
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: DummyGraph())
 
     result = dg.evaluate_scorecard(

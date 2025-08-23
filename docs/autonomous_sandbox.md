@@ -55,15 +55,16 @@ four gating conditions and returns ``(ok, reason_codes, forecast)``:
 
 1. all projected ROI values meet or exceed the supplied ``roi_threshold``;
 2. forecast ``confidence`` is at least ``0.6``;
-3. :func:`ForesightTracker.predict_roi_collapse` reports neither immediate collapse risk nor brittleness; and
-4. ``WorkflowGraph.simulate_impact_wave`` yields a non‑negative net ROI.
+3. :func:`ForesightTracker.predict_roi_collapse` reports neither immediate
+   collapse risk nor a ``collapse_in`` value within the forecast horizon; and
+4. ``WorkflowGraph.simulate_impact_wave`` reports no negative downstream ROI
+   deltas.
 
-Each call logs a ``foresight_promotion_check`` record via ``ForecastLogger`` and
-``audit_logger``.  If any condition fails the caller downgrades the workflow to
-the borderline bucket when one is configured, otherwise a micro‑pilot run is
-scheduled.  Reason codes – ``projected_roi_below_threshold``,
-``low_confidence``, ``roi_collapse_risk`` and ``negative_impact_wave`` – reveal
-which gate triggered the downgrade.
+If any condition fails the caller downgrades the workflow to the borderline
+bucket when one is configured, otherwise a micro‑pilot run is scheduled.
+Reason codes – ``projected_roi_below_threshold``, ``low_confidence``,
+``roi_collapse_risk`` and ``negative_impact_wave`` – reveal which gate triggered
+the downgrade.
 
 ### Example: borderline/pilot downgrade
 

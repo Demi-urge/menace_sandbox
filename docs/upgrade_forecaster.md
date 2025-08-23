@@ -81,13 +81,12 @@ forecast)``.  Promotion proceeds only when all four gates pass:
 1. every projected ROI meets or exceeds the supplied ``roi_threshold``;
 2. forecast ``confidence`` is at least ``0.6``;
 3. :meth:`ForesightTracker.predict_roi_collapse` reports neither immediate
-   collapse risk nor brittleness; and
-4. :meth:`WorkflowGraph.simulate_impact_wave` yields a non‑negative net ROI.
+   collapse risk nor a ``collapse_in`` value within the forecast horizon; and
+4. :meth:`WorkflowGraph.simulate_impact_wave` reports no negative downstream ROI
+   deltas.
 
-Each invocation logs a ``foresight_promotion_check`` event through
-``ForecastLogger`` (falling back to ``forecast_records/foresight.log`` when no
-logger is attached) and mirrors the record to ``audit_logger``.  If ``ok`` is
-``False`` the calling :class:`DeploymentGovernor` downgrades the workflow to the
-borderline bucket (when available) or triggers a pilot run instead.  Reason codes
-such as ``projected_roi_below_threshold``, ``low_confidence``,
-``roi_collapse_risk`` and ``negative_impact_wave`` identify which gate failed.
+If ``ok`` is ``False`` the calling :class:`DeploymentGovernor` downgrades the
+workflow to the borderline bucket (when available) or triggers a pilot run
+instead.  Reason codes such as ``projected_roi_below_threshold``,
+``low_confidence``, ``roi_collapse_risk`` and ``negative_impact_wave`` identify
+which gate failed.
