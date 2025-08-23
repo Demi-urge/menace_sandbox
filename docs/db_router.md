@@ -3,16 +3,60 @@
 The `DBRouter` routes SQLite queries to either a local database specific to a
 Menace instance or to a shared database used by all instances.
 
-## Configuration
+## Instantiation
 
 Initialise a router via `init_db_router(menace_id)` or directly by creating a
-`DBRouter(menace_id, local_db_path, shared_db_path)`.  Local databases are stored
+`DBRouter(menace_id, local_db_path, shared_db_path)`. Local databases are stored
 at `./menace_<menace_id>_local.db` and shared data lives in `./shared/global.db`
-by default.
+by default. `init_db_router` also stores the router in `GLOBAL_ROUTER` for
+modules that rely on a globally accessible instance.
+
+## Shared vs. local tables
 
 Tables listed in `SHARED_TABLES` are written to the shared database while
 `LOCAL_TABLES` entries reside in the local database. Table names must be
-explicitly declared; unlisted tables raise a `ValueError`.
+explicitly declared; unlisted tables raise a `ValueError` to keep routing
+explicit. Update these sets to route additional tables:
+
+```python
+from db_router import SHARED_TABLES, LOCAL_TABLES
+
+SHARED_TABLES.add("alerts")
+LOCAL_TABLES.add("session")
+```
+
+## Retrieving connections
+
+Use `DBRouter.get_connection(table_name)` to obtain an `sqlite3.Connection` for
+a given table. The router returns the shared connection for names in
+`SHARED_TABLES` and the local connection for `LOCAL_TABLES` entries:
+
+```python
+from db_router import init_db_router
+
+router = init_db_router("alpha")
+conn = router.get_connection("bots")
+cursor = conn.execute("SELECT * FROM bots")
+```
+
+## Replacing direct `sqlite3.connect` calls
+
+Modules should avoid calling `sqlite3.connect()` directly. Instead, retrieve a
+connection through the router so table placement remains centralised:
+
+```python
+# Legacy code
+conn = sqlite3.connect("bots.db")
+
+# Updated approach
+from db_router import GLOBAL_ROUTER, init_db_router
+
+router = GLOBAL_ROUTER or init_db_router("alpha")
+conn = router.get_connection("bots")
+```
+
+This pattern ensures shared data resides in the global database while
+instance-specific tables use the local database.
 
 ## Thread safety
 
