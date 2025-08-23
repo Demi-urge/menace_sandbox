@@ -3,7 +3,7 @@ from __future__ import annotations
 """Foresight promotion gate evaluating forecast projections."""
 
 from dataclasses import asdict
-from typing import Iterable, List, Any, Dict
+from typing import Iterable, List, Any, Dict, NamedTuple
 
 from upgrade_forecaster import UpgradeForecaster
 from forecast_logger import ForecastLogger
@@ -17,6 +17,14 @@ _reason_roi = "projected_roi_below_threshold"
 _reason_conf = "low_confidence"
 _reason_collapse = "roi_collapse_risk"
 _reason_dag = "negative_dag_impact"
+
+
+class ForesightDecision(NamedTuple):
+    """Result returned by :func:`is_foresight_safe_to_promote`."""
+
+    safe: bool
+    reasons: List[str]
+    forecast: Dict[str, Any]
 
 
 def _log(logger: ForecastLogger | None, payload: dict) -> None:
@@ -36,7 +44,7 @@ def is_foresight_safe_to_promote(
     *,
     roi_threshold: float = 0.0,
     confidence_threshold: float = 0.6,
-) -> tuple[bool, List[str], Dict[str, Any]]:
+) -> ForesightDecision:
     """Assess whether ``patch`` may be promoted based on forecasted metrics.
 
     Parameters
@@ -57,7 +65,7 @@ def is_foresight_safe_to_promote(
     
     Returns
     -------
-    tuple[bool, List[str], Dict[str, Any]]
+    ForesightDecision
         ``safe`` decision flag, list of ``reasons`` for rejection and a
         ``forecast`` mapping containing projection details.
     """
@@ -119,7 +127,7 @@ def is_foresight_safe_to_promote(
         },
     )
 
-    return safe, reasons, forecast_info
+    return ForesightDecision(safe, reasons, forecast_info)
 
 
-__all__ = ["is_foresight_safe_to_promote"]
+__all__ = ["is_foresight_safe_to_promote", "ForesightDecision"]

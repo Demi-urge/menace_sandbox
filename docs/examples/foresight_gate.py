@@ -10,11 +10,9 @@ bucket = BorderlineBucket()
 
 patch = ["tune_step_a"]
 
-safe, reasons, forecast = is_foresight_safe_to_promote(
-    "workflow-1", patch, tracker, graph
-)
+decision = is_foresight_safe_to_promote("workflow-1", patch, tracker, graph)
 
-if safe:
+if decision.safe:
     result = governor.evaluate(
         {},
         alignment_status="pass",
@@ -26,8 +24,11 @@ if safe:
     )
 else:
     bucket.enqueue(
-        "workflow-1", raroi=0.8, confidence=forecast.get("confidence"), context=reasons
+        "workflow-1",
+        raroi=0.8,
+        confidence=decision.forecast.get("confidence"),
+        context=decision.reasons,
     )
-    result = {"verdict": "pilot", "reasons": reasons}
+    result = {"verdict": "pilot", "reasons": decision.reasons}
 
 print(result)

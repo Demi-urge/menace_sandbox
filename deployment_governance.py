@@ -27,7 +27,7 @@ if __package__:  # pragma: no cover - allow both package and direct execution
     from .upgrade_forecaster import UpgradeForecaster
     from .workflow_graph import WorkflowGraph
     from .forecast_logger import ForecastLogger, log_forecast_record
-    from .foresight_gate import is_foresight_safe_to_promote
+    from .foresight_gate import ForesightDecision, is_foresight_safe_to_promote
     from . import audit_logger
     from .borderline_bucket import BorderlineBucket
 else:  # pragma: no cover
@@ -37,7 +37,7 @@ else:  # pragma: no cover
     from upgrade_forecaster import UpgradeForecaster  # type: ignore
     from workflow_graph import WorkflowGraph  # type: ignore
     from forecast_logger import ForecastLogger, log_forecast_record  # type: ignore
-    from foresight_gate import is_foresight_safe_to_promote  # type: ignore
+    from foresight_gate import ForesightDecision, is_foresight_safe_to_promote  # type: ignore
     import audit_logger  # type: ignore
     from borderline_bucket import BorderlineBucket  # type: ignore
 
@@ -444,18 +444,20 @@ class DeploymentGovernor:
                 )
                 logger_obj = ForecastLogger("forecast_records/foresight.log")
                 forecaster = UpgradeForecaster(foresight_tracker)
-                ok, fs_reasons, forecast_info = is_foresight_safe_to_promote(
+                decision = is_foresight_safe_to_promote(
                     workflow_id,
                     patch_repr,
                     forecaster,
                     graph,
                     roi_threshold=roi_min,
                 )
-                projections = forecast_info.get("projections", [])
-                conf_val = forecast_info.get("confidence")
+                if not isinstance(decision, ForesightDecision):
+                    decision = ForesightDecision(*decision)
+                projections = decision.forecast.get("projections", [])
+                conf_val = decision.forecast.get("confidence")
                 foresight_info = {
-                    "reason_codes": list(fs_reasons),
-                    "forecast_id": forecast_info.get("upgrade_id"),
+                    "reason_codes": list(decision.reasons),
+                    "forecast_id": decision.forecast.get("upgrade_id"),
                     "projections": projections,
                     "confidence": conf_val,
                 }
@@ -464,8 +466,8 @@ class DeploymentGovernor:
                     workflow_id,
                     projections,
                     conf_val,
-                    fs_reasons,
-                    forecast_info.get("upgrade_id"),
+                    decision.reasons,
+                    decision.forecast.get("upgrade_id"),
                 )
                 record = {
                     "event": "foresight_promotion_decision",
@@ -477,9 +479,9 @@ class DeploymentGovernor:
                     audit_logger.log_event("foresight_promotion_decision", record)
                 except Exception:
                     logger.exception("audit logging failed")
-                if not ok:
+                if not decision.safe:
                     verdict = "pilot"
-                    for rc in fs_reasons:
+                    for rc in decision.reasons:
                         if rc not in reasons:
                             reasons.append(rc)
                     if (
@@ -499,7 +501,7 @@ class DeploymentGovernor:
                                     workflow_id,
                                     float(raroi),
                                     float(confidence),
-                                    {"reason_codes": list(fs_reasons)},
+                                    {"reason_codes": list(decision.reasons)},
                                 )
                         except Exception:
                             logger.exception("borderline enqueue failed")

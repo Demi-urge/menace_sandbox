@@ -160,9 +160,9 @@ try:
 except Exception:  # pragma: no cover - fallback for flat layout
     from borderline_bucket import BorderlineBucket  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .foresight_gate import is_foresight_safe_to_promote
+    from .foresight_gate import ForesightDecision, is_foresight_safe_to_promote
 except Exception:  # pragma: no cover - fallback for flat layout
-    from foresight_gate import is_foresight_safe_to_promote  # type: ignore
+    from foresight_gate import ForesightDecision, is_foresight_safe_to_promote  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .upgrade_forecaster import UpgradeForecaster
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -5509,23 +5509,25 @@ class SelfImprovementEngine:
                             forecaster = UpgradeForecaster(self.foresight_tracker)
                             graph = WorkflowGraph()
                             logger_obj = ForecastLogger("forecast_records/foresight.log")
-                            safe, fs_codes, forecast_info = is_foresight_safe_to_promote(
+                            decision = is_foresight_safe_to_promote(
                                 workflow_id,
                                 str(patch_id) if patch_id is not None else "",
                                 forecaster,
                                 graph,
                             )
+                            if not isinstance(decision, ForesightDecision):
+                                decision = ForesightDecision(*decision)
                             log_forecast_record(
                                 logger_obj,
                                 workflow_id,
-                                forecast_info.get("projections", []),
-                                forecast_info.get("confidence"),
-                                fs_codes,
-                                forecast_info.get("upgrade_id"),
+                                decision.forecast.get("projections", []),
+                                decision.forecast.get("confidence"),
+                                decision.reasons,
+                                decision.forecast.get("upgrade_id"),
                             )
-                            if not safe:
+                            if not decision.safe:
                                 verdict = "pilot"
-                                reasons.extend(fs_codes)
+                                reasons.extend(decision.reasons)
                         except Exception:
                             self.logger.exception("foresight gate check failed")
                         finally:
