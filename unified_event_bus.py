@@ -99,12 +99,11 @@ class UnifiedEventBus:
             # allow event persistence from multiple threads
             if not router:
                 raise RuntimeError("Database router is not initialised")
-            with router.get_connection("events") as conn:
-                self._persist = conn
-                self._persist.execute(
-                    "CREATE TABLE IF NOT EXISTS events(ts REAL, topic TEXT, payload TEXT)"
-                )
-                self._persist.commit()
+            self._persist = router.get_connection("events")
+            self._persist.execute(
+                "CREATE TABLE IF NOT EXISTS events(ts REAL, topic TEXT, payload TEXT)"
+            )
+            self._persist.commit()
 
     def subscribe(self, topic: str, callback: Callable[[str, object], None]) -> None:
         """Register *callback* to receive events for *topic*."""

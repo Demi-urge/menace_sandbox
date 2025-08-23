@@ -6,12 +6,13 @@ import json
 import os
 import time
 import logging
-import sqlite3
 from datetime import datetime
 from threading import Thread
 from typing import Any, List, Dict, Optional
 
 from .retry_utils import publish_with_retry
+from db_router import GLOBAL_ROUTER as router
+import sqlite3
 
 try:  # optional dependency
     from .unified_event_bus import UnifiedEventBus  # type: ignore
@@ -46,48 +47,55 @@ def _ensure_log_dir() -> None:
     os.makedirs(LOG_DIR, exist_ok=True)
 
 
+def _alignment_conn() -> sqlite3.Connection:
+    """Return a connection for alignment warnings."""
+    if not router:
+        raise RuntimeError("Database router is not initialised")
+    return router.get_connection("errors")
+
+
 def persist_alignment_warning(record: Dict[str, Any]) -> None:
     """Persist a single alignment warning to the dedicated SQLite store."""
 
     _ensure_log_dir()
-    conn = sqlite3.connect(ALIGNMENT_DB_PATH)
+    conn = _alignment_conn()
     patch_link = None
     evidence = record.get("evidence") or {}
     if isinstance(evidence, dict):
         patch_link = evidence.get("patch_link") or evidence.get("patch_id")
-    with conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS warnings (
-                timestamp INTEGER,
-                entry_id TEXT,
-                violation_type TEXT,
-                severity INTEGER,
-                patch_link TEXT,
-                review_status TEXT DEFAULT 'pending'
-            )
-            """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS warnings (
+            timestamp INTEGER,
+            entry_id TEXT,
+            violation_type TEXT,
+            severity INTEGER,
+            patch_link TEXT,
+            review_status TEXT DEFAULT 'pending'
         )
-        # Ensure the new column exists for pre-existing databases
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(warnings)").fetchall()]
-        if "review_status" not in cols:
-            conn.execute(
-                "ALTER TABLE warnings ADD COLUMN review_status TEXT DEFAULT 'pending'"
-            )
-            conn.execute(
-                "UPDATE warnings SET review_status = 'pending' WHERE review_status IS NULL"
-            )
+        """
+    )
+    # Ensure the new column exists for pre-existing databases
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(warnings)").fetchall()]
+    if "review_status" not in cols:
         conn.execute(
-            "INSERT INTO warnings (timestamp, entry_id, violation_type, severity, patch_link, review_status)"
-            " VALUES (?, ?, ?, ?, ?, 'pending')",
-            (
-                record.get("timestamp"),
-                record.get("entry_id"),
-                record.get("violation_type"),
-                record.get("severity"),
-                patch_link,
-            ),
+            "ALTER TABLE warnings ADD COLUMN review_status TEXT DEFAULT 'pending'"
         )
+        conn.execute(
+            "UPDATE warnings SET review_status = 'pending' WHERE review_status IS NULL"
+        )
+    conn.execute(
+        "INSERT INTO warnings (timestamp, entry_id, violation_type, severity, patch_link, review_status)"
+        " VALUES (?, ?, ?, ?, ?, 'pending')",
+        (
+            record.get("timestamp"),
+            record.get("entry_id"),
+            record.get("violation_type"),
+            record.get("severity"),
+            patch_link,
+        ),
+    )
+    conn.commit()
 
 
 def load_persisted_alignment_warnings(
@@ -100,9 +108,9 @@ def load_persisted_alignment_warnings(
 
     if limit <= 0:
         return []
-    if not os.path.exists(ALIGNMENT_DB_PATH):
+    if not router and not os.path.exists(ALIGNMENT_DB_PATH):
         return []
-    conn = sqlite3.connect(ALIGNMENT_DB_PATH)
+    conn = _alignment_conn()
     query = (
         "SELECT timestamp, entry_id, violation_type, severity, patch_link, review_status FROM warnings WHERE 1=1"
     )
@@ -119,7 +127,6 @@ def load_persisted_alignment_warnings(
     query += " ORDER BY timestamp DESC LIMIT ?"
     params.append(limit)
     rows = conn.execute(query, params).fetchall()
-    conn.close()
     return [
         {
             "timestamp": row[0],
@@ -137,12 +144,12 @@ def update_warning_status(entry_id: str, status: str) -> None:
     """Update the review status for a warning identified by ``entry_id``."""
 
     _ensure_log_dir()
-    conn = sqlite3.connect(ALIGNMENT_DB_PATH)
-    with conn:
-        conn.execute(
-            "UPDATE warnings SET review_status = ? WHERE entry_id = ?",
-            (status, entry_id),
-        )
+    conn = _alignment_conn()
+    conn.execute(
+        "UPDATE warnings SET review_status = ? WHERE entry_id = ?",
+        (status, entry_id),
+    )
+    conn.commit()
 
 
 def mark_warning_pending(entry_id: str) -> None:

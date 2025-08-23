@@ -24,6 +24,8 @@ except Exception:  # pragma: no cover - optional dependency
     warnings.warn("MenaceDB unavailable, Menace integration disabled.")
 from uuid import uuid4
 
+from db_router import GLOBAL_ROUTER as router
+
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .deployment_bot import DeploymentDB
 
@@ -115,9 +117,9 @@ class BotDB(EmbeddableDBMixin):
         vector_index_path: Path | str = "bot_embeddings.index",
         embedding_version: int = 1,
     ) -> None:
-        db_path = path or os.getenv("BOT_DB_PATH", "bots.db")
-        # make connection usable across threads for async tasks
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        if not router:
+            raise RuntimeError("Database router is not initialised")
+        self.conn = router.get_connection("bots")
         self.event_bus = event_bus
         self.menace_db = menace_db
         self.failed_events: list[FailedEvent] = []
