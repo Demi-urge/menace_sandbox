@@ -97,6 +97,10 @@ if "LOCAL_TABLES" in globals():
             "evolution_history",
             "retrieval_stats",
             "retriever_stats",
+            "retrieval_cache",
+            "experiment_history",
+            "experiment_tests",
+            "embedding_stats",
         }
     )
 else:
@@ -132,6 +136,10 @@ else:
         "evolution_history",
         "retrieval_stats",
         "retriever_stats",
+        "retrieval_cache",
+        "experiment_history",
+        "experiment_tests",
+        "embedding_stats",
     }
 
 # Tables explicitly denied even if present in the allow lists.  Also mutated

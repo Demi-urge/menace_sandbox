@@ -1,4 +1,3 @@
-adaptive_roi_predictor.py
 analytics/adaptive_roi_dataset.py
 bot_testing_bot.py
 chatgpt_prediction_bot.py
@@ -10,9 +9,7 @@ data_bot.py
 db_router.py
 dynamic_resource_allocator_bot.py
 efficiency_bot.py
-embedding_stats_db.py
 evaluation_history_db.py
-experiment_history_db.py
 failure_learning_system.py
 investment_engine.py
 learning_engine.py
@@ -29,7 +26,6 @@ relevancy_radar.py
 research_aggregator_bot.py
 resource_allocation_optimizer.py
 resources_bot.py
-retrieval_cache.py
 safety_monitor.py
 sandbox_runner/environment.py
 scalability_assessment_bot.py
@@ -79,6 +75,7 @@ tests/test_retrieval_training_dataset.py
 tests/test_run_autonomous_env_setup.py
 tests/test_run_autonomous_integration_full.py
 tests/test_run_autonomous_visual_agent_history.py
+tests/test_router_initialization.py
 tests/test_self_improvement_engine.py
 tests/test_synergy_auto_trainer.py
 tests/test_synergy_exporter.py

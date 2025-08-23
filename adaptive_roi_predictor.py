@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Sequence, Tuple, Dict, Any
 
 import numpy as np
-import sqlite3
 import json
 
 try:  # pragma: no cover - optional dependency
@@ -77,6 +76,10 @@ from .roi_tracker import ROITracker
 from .evaluation_history_db import EvaluationHistoryDB
 from .evolution_history_db import EvolutionHistoryDB
 from .truth_adapter import TruthAdapter
+from db_router import GLOBAL_ROUTER, init_db_router
+
+MENACE_ID = "adaptive_roi_predictor"
+DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
 
 __all__ = [
     "AdaptiveROIPredictor",
@@ -997,7 +1000,7 @@ def load_training_data(
     df["gpt_score"] = scores
 
     # ROI event deltas ------------------------------------------------------
-    roi_conn = sqlite3.connect(roi_events_path)
+    roi_conn = DB_ROUTER.get_connection("roi_events")
     try:
         roi_df = pd.read_sql(
             "SELECT roi_after - roi_before AS roi_event_delta FROM roi_events ORDER BY ts",
@@ -1005,15 +1008,14 @@ def load_training_data(
         )
     except Exception:  # pragma: no cover - missing table or DB
         roi_df = pd.DataFrame(columns=["roi_event_delta"])
+    pred_conn = DB_ROUTER.get_connection("roi_prediction_events")
     try:
         pred_df = pd.read_sql(
             "SELECT predicted_roi, actual_roi, predicted_class, actual_class, confidence FROM roi_prediction_events ORDER BY ts",
-            roi_conn,
+            pred_conn,
         )
     except Exception:  # pragma: no cover - missing table or DB
         pred_df = pd.DataFrame(columns=["predicted_roi", "actual_roi", "predicted_class", "actual_class", "confidence"])
-    finally:
-        roi_conn.close()
 
     event_deltas = roi_df.get("roi_event_delta", pd.Series(dtype=float)).astype(float).tolist()
     if len(event_deltas) < n:

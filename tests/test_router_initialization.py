@@ -17,12 +17,15 @@ def test_retrieval_cache_initialises_router(tmp_path, monkeypatch):
 
     monkeypatch.setattr(db_router, 'init_db_router', fake_init)
     rc_mod = importlib.reload(importlib.import_module('retrieval_cache'))
-    real_connect = sqlite3.connect
 
-    def fake_connect(*args, **kwargs):
+    calls2 = {}
+
+    def fake_get_connection(table, operation='read'):
         assert db_router.GLOBAL_ROUTER is not None
-        return real_connect(*args, **kwargs)
+        calls2['table'] = table
+        return sqlite3.connect(':memory:')
 
-    monkeypatch.setattr(rc_mod.sqlite3, 'connect', fake_connect)
-    rc_mod.RetrievalCache(path=tmp_path / 'cache.db')
+    monkeypatch.setattr(rc_mod.DB_ROUTER, 'get_connection', fake_get_connection)
+    rc_mod.RetrievalCache(ttl=1)
     assert calls['id'] == 'retrieval_cache'
+    assert calls2['table'] == 'retrieval_cache'

@@ -6,6 +6,11 @@ from datetime import datetime
 from pathlib import Path
 import sqlite3
 
+from db_router import GLOBAL_ROUTER, init_db_router
+
+MENACE_ID = "embedding_stats_db"
+DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
+
 
 class EmbeddingStatsDB:
     """Persist high-level embedding metrics.
@@ -16,16 +21,10 @@ class EmbeddingStatsDB:
     """
 
     def __init__(self, path: str | Path = "metrics.db") -> None:
-        """Create or connect to the metrics database.
+        """Initialise the metrics table via ``DBRouter``."""
 
-        Historically embedding statistics were written to a dedicated
-        ``embedding_stats.db`` file.  The new design stores them alongside
-        other metrics in ``metrics.db`` for easier aggregation.  The table
-        now records optional ``patch_id`` and ``db_source`` fields and a
-        timestamp column named ``ts`` to mirror the rest of the schema.
-        """
-
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.router = DB_ROUTER
+        self.conn = self.router.get_connection("embedding_stats")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS embedding_stats(
@@ -54,7 +53,8 @@ class EmbeddingStatsDB:
         """Insert a new embedding statistics row."""
 
         ts = datetime.utcnow().isoformat()
-        self.conn.execute(
+        conn = self.router.get_connection("embedding_stats")
+        conn.execute(
             """
             INSERT INTO embedding_stats(
                 db_name, tokens, wall_ms, store_ms, patch_id, db_source, ts
@@ -70,4 +70,4 @@ class EmbeddingStatsDB:
                 ts,
             ),
         )
-        self.conn.commit()
+        conn.commit()
