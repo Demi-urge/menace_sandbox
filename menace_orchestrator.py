@@ -10,6 +10,7 @@ import os
 import time
 import threading
 import asyncio
+import uuid
 from .knowledge_graph import KnowledgeGraph
 
 from .advanced_error_management import AutomatedRollbackManager
@@ -47,6 +48,7 @@ from .identity_seeder import seed_identity
 from .session_vault import SessionVault
 import requests
 from .cognition_layer import build_cognitive_context, log_feedback, _patch_safety
+from db_router import DBRouter, init_db_router
 
 
 class _RemoteVisualAgent:
@@ -197,12 +199,17 @@ class MenaceOrchestrator:
         myelination_threshold: float = 1.0,
         ad_client: AdIntegration | None = None,
         rollback_mgr: AutomatedRollbackManager | None = None,
+        menace_id: str | None = None,
+        router: DBRouter | None = None,
         *,
         on_restart: Callable[[str], None] | None = None,
         auto_bootstrap: bool | None = None,
         visual_agent_client: object | None = None,
     ) -> None:
         #run_startup_checks()
+        menace_id = menace_id or uuid.uuid4().hex
+        self.menace_id = menace_id
+        self.router = router or init_db_router(menace_id)
         self.pipeline = ModelAutomationPipeline(pathway_db=pathway_db, myelination_threshold=myelination_threshold)
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
@@ -251,7 +258,7 @@ class MenaceOrchestrator:
         self.last_root_causes: Dict[str, List[str]] = {}
         self.workflow_confidence: Dict[str, float] = {}
         self._workflow_counts: Dict[str, int] = {}
-        self.watchdog = Watchdog(ErrorDB(), ROIDB(), MetricsDB())
+        self.watchdog = Watchdog(ErrorDB(router=self.router), ROIDB(), MetricsDB())
         self.scheduler: object | None = None
         self.planner = StrategicPlanner(
             StrategyPredictionBot(), Autoscaler(), TrendPredictor()

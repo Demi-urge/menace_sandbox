@@ -12,7 +12,7 @@ import sqlite3
 import threading
 from typing import Optional, Set
 
-__all__ = ["DBRouter", "SHARED_TABLES", "LOCAL_TABLES"]
+__all__ = ["DBRouter", "SHARED_TABLES", "LOCAL_TABLES", "init_db_router", "GLOBAL_ROUTER"]
 
 
 # Tables that should always be stored in the shared database.
@@ -33,6 +33,11 @@ LOCAL_TABLES: Set[str] = {
     "memory",
     "events",
 }
+
+
+# Global router instance used by modules that do not receive an explicit
+# router.  ``init_db_router`` populates this value.
+GLOBAL_ROUTER: "DBRouter" | None = None
 
 
 class DBRouter:
@@ -107,4 +112,26 @@ class DBRouter:
 
         self.local_conn.close()
         self.shared_conn.close()
+
+
+def init_db_router(
+    menace_id: str,
+    local_db_path: str | None = None,
+    shared_db_path: str | None = None,
+) -> DBRouter:
+    """Initialise a :class:`DBRouter` for ``menace_id``.
+
+    The router is stored in :data:`GLOBAL_ROUTER` for modules that rely on a
+    global instance.  ``local_db_path`` and ``shared_db_path`` default to the
+    repository's ``menace_<id>_local.db`` and ``shared/global.db`` respectively
+    when not provided.
+    """
+
+    global GLOBAL_ROUTER
+
+    local_path = local_db_path or f"./menace_{menace_id}_local.db"
+    shared_path = shared_db_path or "./shared/global.db"
+
+    GLOBAL_ROUTER = DBRouter(menace_id, local_path, shared_path)
+    return GLOBAL_ROUTER
 
