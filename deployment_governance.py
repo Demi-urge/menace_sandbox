@@ -9,7 +9,7 @@ scores, scenario stress test results and alignment checks.  Optional policy
 files may provide rule expressions that override the built in heuristics.
 """
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, Iterable, List, Mapping
 
 import ast
@@ -440,7 +440,7 @@ class DeploymentGovernor:
                 roi_min = float(
                     (policy or {}).get("roi_forecast_min", self.raroi_threshold)
                 )
-                logger_obj = ForecastLogger("forecast_records/foresight.log")
+                logger_obj = ForecastLogger("forecast_records/decision_log.jsonl")
                 forecaster = UpgradeForecaster(foresight_tracker)
                 safe, forecast, reason_codes = is_foresight_safe_to_promote(
                     workflow_id,
@@ -449,14 +449,21 @@ class DeploymentGovernor:
                     graph,
                     roi_threshold=roi_min,
                 )
-                projections = forecast.get("projections", [])
-                conf_val = forecast.get("confidence")
-                recommendation = forecast.get("recommendation")
+                if isinstance(forecast, Mapping):
+                    forecast_map = dict(forecast)
+                else:
+                    forecast_map = {
+                        "projections": [asdict(p) for p in getattr(forecast, "projections", [])],
+                        "confidence": getattr(forecast, "confidence", None),
+                        "upgrade_id": getattr(forecast, "upgrade_id", None),
+                    }
+                recommendation = forecast_map.get("recommendation")
                 foresight_info = {
+                    "forecast": forecast_map,
                     "reason_codes": list(reason_codes),
-                    "forecast_id": forecast.get("upgrade_id"),
-                    "projections": projections,
-                    "confidence": conf_val,
+                    "forecast_id": forecast_map.get("upgrade_id"),
+                    "projections": forecast_map.get("projections", []),
+                    "confidence": forecast_map.get("confidence"),
                 }
                 if recommendation is not None:
                     foresight_info["recommendation"] = recommendation
@@ -466,15 +473,15 @@ class DeploymentGovernor:
                 log_forecast_record(
                     logger_obj,
                     workflow_id,
-                    forecast,
+                    forecast_map,
                     decision_label,
                     reason_codes,
                 )
                 record = {
-                    "event": "foresight_promotion_decision",
                     "workflow_id": workflow_id,
                     "patch": patch_repr,
-                    **foresight_info,
+                    "forecast": forecast_map,
+                    "reason_codes": list(reason_codes),
                 }
                 try:
                     audit_logger.log_event("foresight_promotion_decision", record)
@@ -625,7 +632,7 @@ def evaluate_workflow(
             roi_min = float(
                 policy.get("roi_forecast_min", DeploymentGovernor.raroi_threshold)
             )
-            logger_obj = ForecastLogger("forecast_records/foresight.log")
+            logger_obj = ForecastLogger("forecast_records/decision_log.jsonl")
             forecaster = UpgradeForecaster(foresight_tracker)
             safe, forecast, reason_codes = is_foresight_safe_to_promote(
                 workflow_id,
@@ -634,14 +641,21 @@ def evaluate_workflow(
                 graph,
                 roi_threshold=roi_min,
             )
-            projections = forecast.get("projections", [])
-            conf_val = forecast.get("confidence")
-            recommendation = forecast.get("recommendation")
+            if isinstance(forecast, Mapping):
+                forecast_map = dict(forecast)
+            else:
+                forecast_map = {
+                    "projections": [asdict(p) for p in getattr(forecast, "projections", [])],
+                    "confidence": getattr(forecast, "confidence", None),
+                    "upgrade_id": getattr(forecast, "upgrade_id", None),
+                }
+            recommendation = forecast_map.get("recommendation")
             foresight_info = {
+                "forecast": forecast_map,
                 "reason_codes": list(reason_codes),
-                "forecast_id": forecast.get("upgrade_id"),
-                "projections": projections,
-                "confidence": conf_val,
+                "forecast_id": forecast_map.get("upgrade_id"),
+                "projections": forecast_map.get("projections", []),
+                "confidence": forecast_map.get("confidence"),
             }
             if recommendation is not None:
                 foresight_info["recommendation"] = recommendation
@@ -649,15 +663,15 @@ def evaluate_workflow(
             log_forecast_record(
                 logger_obj,
                 workflow_id,
-                forecast,
+                forecast_map,
                 decision_label,
                 reason_codes,
             )
             record = {
-                "event": "foresight_promotion_decision",
                 "workflow_id": workflow_id,
                 "patch": patch_repr,
-                **foresight_info,
+                "forecast": forecast_map,
+                "reason_codes": list(reason_codes),
             }
             try:
                 audit_logger.log_event("foresight_promotion_decision", record)
@@ -770,7 +784,7 @@ def evaluate(
             logger_obj: ForecastLogger | None = None
             try:
                 graph = WorkflowGraph()
-                logger_obj = ForecastLogger("forecast_records/foresight.log")
+                logger_obj = ForecastLogger("forecast_records/decision_log.jsonl")
                 forecaster = UpgradeForecaster(foresight_tracker)
                 safe, forecast, reason_codes = is_foresight_safe_to_promote(
                     workflow_id,
@@ -778,14 +792,21 @@ def evaluate(
                     forecaster,
                     graph,
                 )
-                projections = forecast.get("projections", [])
-                conf_val = forecast.get("confidence")
-                recommendation = forecast.get("recommendation")
+                if isinstance(forecast, Mapping):
+                    forecast_map = dict(forecast)
+                else:
+                    forecast_map = {
+                        "projections": [asdict(p) for p in getattr(forecast, "projections", [])],
+                        "confidence": getattr(forecast, "confidence", None),
+                        "upgrade_id": getattr(forecast, "upgrade_id", None),
+                    }
+                recommendation = forecast_map.get("recommendation")
                 forecast_info = {
+                    "forecast": forecast_map,
                     "reason_codes": list(reason_codes),
-                    "forecast_id": forecast.get("upgrade_id"),
-                    "projections": projections,
-                    "confidence": conf_val,
+                    "forecast_id": forecast_map.get("upgrade_id"),
+                    "projections": forecast_map.get("projections", []),
+                    "confidence": forecast_map.get("confidence"),
                 }
                 if recommendation is not None:
                     forecast_info["recommendation"] = recommendation
@@ -793,15 +814,15 @@ def evaluate(
                 log_forecast_record(
                     logger_obj,
                     workflow_id,
-                    forecast,
+                    forecast_map,
                     decision_label,
                     reason_codes,
                 )
                 record = {
-                    "event": "foresight_promotion_decision",
                     "workflow_id": workflow_id,
                     "patch": patch_repr,
-                    **forecast_info,
+                    "forecast": forecast_map,
+                    "reason_codes": list(reason_codes),
                 }
                 try:
                     audit_logger.log_event("foresight_promotion_decision", record)
@@ -1110,7 +1131,7 @@ class RuleEvaluator:
                             logger_obj: ForecastLogger | None = None
                             try:
                                 graph = WorkflowGraph()
-                                logger_obj = ForecastLogger("forecast_records/foresight.log")
+                                logger_obj = ForecastLogger("forecast_records/decision_log.jsonl")
                                 forecaster = UpgradeForecaster(foresight_tracker)
                                 safe, forecast, reason_codes = is_foresight_safe_to_promote(
                                     workflow_id,
@@ -1118,14 +1139,24 @@ class RuleEvaluator:
                                     forecaster,
                                     graph,
                                 )
-                                projections = forecast.get("projections", [])
-                                conf_val = forecast.get("confidence")
-                                recommendation = forecast.get("recommendation")
+                                if isinstance(forecast, Mapping):
+                                    forecast_map = dict(forecast)
+                                else:
+                                    forecast_map = {
+                                        "projections": [
+                                            asdict(p)
+                                            for p in getattr(forecast, "projections", [])
+                                        ],
+                                        "confidence": getattr(forecast, "confidence", None),
+                                        "upgrade_id": getattr(forecast, "upgrade_id", None),
+                                    }
+                                recommendation = forecast_map.get("recommendation")
                                 result["foresight"] = {
+                                    "forecast": forecast_map,
                                     "reason_codes": list(reason_codes),
-                                    "forecast_id": forecast.get("upgrade_id"),
-                                    "projections": projections,
-                                    "confidence": conf_val,
+                                    "forecast_id": forecast_map.get("upgrade_id"),
+                                    "projections": forecast_map.get("projections", []),
+                                    "confidence": forecast_map.get("confidence"),
                                 }
                                 if recommendation is not None:
                                     result["foresight"]["recommendation"] = recommendation
@@ -1133,15 +1164,15 @@ class RuleEvaluator:
                                 log_forecast_record(
                                     logger_obj,
                                     workflow_id,
-                                    forecast,
+                                    forecast_map,
                                     decision_label,
                                     reason_codes,
                                 )
                                 record = {
-                                    "event": "foresight_promotion_decision",
                                     "workflow_id": workflow_id,
                                     "patch": patch_repr,
-                                    **result["foresight"],
+                                    "forecast": forecast_map,
+                                    "reason_codes": list(reason_codes),
                                 }
                                 try:
                                     audit_logger.log_event(

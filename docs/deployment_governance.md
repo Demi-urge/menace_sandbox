@@ -62,18 +62,19 @@ RAROI and confidence. A minimal example scorecard is provided in
 ## Foresight promotion gate
 
 Before a `promote` verdict is finalised, `DeploymentGovernor` calls
-`foresight_gate.is_foresight_safe_to_promote()` to simulate the patch with
+`foresight_gate.is_foresight_safe_to_promote()` which returns a
+`ForecastResult` and associated reason codes. The patch is simulated with
 `UpgradeForecaster`, `ForesightTracker` and a `WorkflowGraph`. The gate enforces
 per‑cycle ROI and confidence thresholds (defaults: `roi_threshold=0.0`,
 `confidence_threshold=0.6`), rejects upcoming collapse risk and, unless
 `allow_negative_dag` is set, any negative downstream ROI from
 `WorkflowGraph.simulate_impact_wave()`.
 
-Each decision is appended to `forecast_records/decision_log.jsonl` via
-`ForecastLogger`. Every JSON line contains a `timestamp`, `workflow_id`, a
-`patch_summary`, the full list of `forecast_projections`, the overall
-`forecast_confidence`, optional `dag_impact` summaries, the boolean `decision`
-and the collected `reason_codes`.
+The returned forecast and reasons are logged via `audit_logger.log_event` and
+persisted to `forecast_records/decision_log.jsonl` using `ForecastLogger`.
+Each JSON line records the `workflow_id`, `patch_summary`, the full
+`forecast` projections, top‑level `confidence`, optional `dag_impact`
+summaries, the final `decision` and collected `reason_codes`.
 
 When the gate fails, `evaluate()` downgrades the verdict to `borderline` if a
 `BorderlineBucket` was supplied, otherwise it falls back to a `pilot` run. The
