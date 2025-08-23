@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple
 
+from db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+
 try:
     import pandas as pd  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -34,7 +36,12 @@ class ResolutionDB:
     """SQLite store for resolution logs."""
 
     def __init__(self, path: Path | str = "resolutions.db") -> None:
-        self.conn = sqlite3.connect(path)
+        LOCAL_TABLES.add("resolutions")
+        p = Path(path).resolve()
+        self.router = GLOBAL_ROUTER or init_db_router(
+            "resolutions_db", str(p), str(p)
+        )
+        self.conn = self.router.get_connection("resolutions")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS resolutions(

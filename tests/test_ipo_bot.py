@@ -1,8 +1,8 @@
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
-import sqlite3
 from pathlib import Path
 
+from db_router import GLOBAL_ROUTER, init_db_router
 import menace.ipo_bot as ipb
 
 
@@ -10,13 +10,19 @@ BLUEPRINT = "BotA collects data using BotB. BotC processes results after BotB."
 
 
 def make_db(path: Path) -> Path:
-    conn = sqlite3.connect(path)
+    init_db_router(
+        "ipo_bot_test", local_db_path=str(path.parent / "local.db"), shared_db_path=str(path)
+    )
+    conn = GLOBAL_ROUTER.get_connection("bots")
     cur = conn.cursor()
-    cur.execute("CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT, keywords TEXT, reuse INTEGER)")
-    cur.execute("INSERT INTO bots (name, keywords, reuse) VALUES ('BotB', 'collect data scrape web', 1)")
-    cur.execute("INSERT INTO bots (name, keywords, reuse) VALUES ('BotC', 'process results', 1)")
+    cur.execute("CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, keywords TEXT, reuse INTEGER)")
+    cur.execute(
+        "INSERT INTO bots (name, keywords, reuse) VALUES ('BotB', 'collect data scrape web', 1)"
+    )
+    cur.execute(
+        "INSERT INTO bots (name, keywords, reuse) VALUES ('BotC', 'process results', 1)"
+    )
     conn.commit()
-    conn.close()
     return path
 
 

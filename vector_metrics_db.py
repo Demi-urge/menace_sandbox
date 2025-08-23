@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Tuple
 import json
 import sqlite3
 
+from db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+
 try:  # pragma: no cover - optional dependency
     from . import metrics_exporter as _me
 except Exception:  # pragma: no cover - fallback when running directly
@@ -63,7 +65,12 @@ class VectorMetricsDB:
     """SQLite-backed store for :class:`VectorMetric` records."""
 
     def __init__(self, path: Path | str = "vector_metrics.db") -> None:
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        LOCAL_TABLES.add("vector_metrics")
+        p = Path(path).resolve()
+        self.router = GLOBAL_ROUTER or init_db_router(
+            "vector_metrics_db", str(p), str(p)
+        )
+        self.conn = self.router.get_connection("vector_metrics")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS vector_metrics(

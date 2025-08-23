@@ -15,7 +15,6 @@ coordination_manager.py
 data_bot.py
 database_manager.py
 db_router.py
-diagnostic_manager.py
 dynamic_resource_allocator_bot.py
 efficiency_bot.py
 embedding_stats_db.py
@@ -24,7 +23,6 @@ evolution_history_db.py
 experiment_history_db.py
 failure_learning_system.py
 investment_engine.py
-ipo_bot.py
 learning_engine.py
 mirror_bot.py
 model_automation_pipeline.py
@@ -79,8 +77,6 @@ tests/test_evolution_migration.py
 tests/test_healing_logging.py
 tests/test_information_db_router.py
 tests/test_intelligence_db_migration.py
-tests/test_ipo_bot.py
-tests/test_ipo_implementation_pipeline.py
 tests/test_knowledge_graph_gpt_insights.py
 tests/test_memory_maintenance_integration.py
 tests/test_menace_db_vector.py
@@ -104,5 +100,4 @@ tests/test_visual_agent_concurrency.py
 tests/test_visual_agent_queue_validation.py
 unified_learning_engine.py
 universal_retriever.py
-vector_metrics_db.py
 vector_service/patch_logger.py

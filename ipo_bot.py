@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Iterable, Optional
+
+from db_router import GLOBAL_ROUTER, init_db_router
 
 import networkx as nx
 try:
@@ -91,7 +92,8 @@ class BotDatabaseSearcher:
         self.db_path = db_path
 
     def search(self, keywords: Iterable[str]) -> List[BotCandidate]:
-        conn = sqlite3.connect(self.db_path)
+        router = GLOBAL_ROUTER or init_db_router("ipo_bot", shared_db_path=self.db_path)
+        conn = router.get_connection("bots")
         cur = conn.cursor()
         key = "%" + "%".join(keywords) + "%"
         cur.execute(
@@ -102,7 +104,6 @@ class BotDatabaseSearcher:
             (key, key),
         )
         rows = cur.fetchall()
-        conn.close()
         return [BotCandidate(name=r[0], keywords=r[1], reuse=bool(r[2])) for r in rows]
 
 
@@ -149,7 +150,8 @@ class IPOEnhancementsDB:
 
     def __init__(self, path: Path = Path("enhancements.db")) -> None:
         self.path = path
-        self.conn = sqlite3.connect(self.path)
+        router = GLOBAL_ROUTER or init_db_router("ipo_bot", shared_db_path=str(path))
+        self.conn = router.get_connection("enhancements")
         c = self.conn.cursor()
         c.execute(
             "CREATE TABLE IF NOT EXISTS enhancements (id INTEGER PRIMARY KEY, blueprint_id TEXT, bot TEXT, action TEXT, reason TEXT)"
