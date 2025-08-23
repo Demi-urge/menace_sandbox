@@ -11,7 +11,6 @@ files may provide rule expressions that override the built in heuristics.
 
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Iterable, List, Mapping
-from pathlib import Path
 
 import ast
 import json
@@ -42,9 +41,6 @@ else:  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
-_decision_logger = ForecastLogger(
-    Path(__file__).resolve().parent / "forecast_records" / "decision_log.jsonl"
-)
 
 
 def _safe_eval(expr: str, variables: Mapping[str, Any]) -> Any:
@@ -482,26 +478,17 @@ def evaluate_workflow(
         patch_repr = [] if patch is None else (patch if isinstance(patch, str) else list(patch))
         try:
             graph = WorkflowGraph()
-            roi_min = float(policy.get("roi_forecast_min", 0.0))
-            conf_min = float(policy.get("foresight_confidence_min", 0.6))
-            allow_negative = bool(policy.get("allow_negative_dag", False))
-            ok, fs_reasons, forecast = is_foresight_safe_to_promote(
+            roi_min = float(
+                policy.get("roi_forecast_min", DeploymentGovernor.raroi_threshold)
+            )
+            ok, fs_reasons = is_foresight_safe_to_promote(
                 workflow_id,
                 patch_repr,
                 foresight_tracker,
                 graph,
                 roi_threshold=roi_min,
-                confidence_threshold=conf_min,
-                allow_negative_dag=allow_negative,
             )
-            foresight_info = {
-                "forecast": {
-                    "projections": [p.__dict__ for p in forecast.projections],
-                    "confidence": forecast.confidence,
-                    "upgrade_id": forecast.upgrade_id,
-                },
-                "reason_codes": list(fs_reasons),
-            }
+            foresight_info = {"reason_codes": list(fs_reasons)}
             if not ok:
                 verdict = "pilot"
                 for rc in fs_reasons:
@@ -584,34 +571,22 @@ def evaluate(
             and foresight_tracker is not None
             and workflow_id is not None
         ):
-            logger_obj = ForecastLogger("forecast_records/foresight.log")
             patch_repr = patch if isinstance(patch, str) else list(patch)
             try:
                 graph = WorkflowGraph()
-                ok, fs_reasons, forecast = is_foresight_safe_to_promote(
+                ok, fs_reasons = is_foresight_safe_to_promote(
                     workflow_id,
                     patch_repr,
                     foresight_tracker,
                     graph,
                 )
-                forecast_info = {
-                    "forecast": {
-                        "projections": [p.__dict__ for p in forecast.projections],
-                        "confidence": forecast.confidence,
-                        "upgrade_id": forecast.upgrade_id,
-                    },
-                    "reason_codes": list(fs_reasons),
-                }
+                forecast_info = {"reason_codes": list(fs_reasons)}
                 record = {
                     "event": "foresight_promotion_decision",
                     "workflow_id": workflow_id,
                     "patch": patch_repr,
                     **forecast_info,
                 }
-                try:
-                    logger_obj.log(record)
-                except Exception:
-                    logger.exception("forecast logging failed")
                 try:
                     audit_logger.log_event("foresight_promotion_decision", record)
                 except Exception:
@@ -623,8 +598,6 @@ def evaluate(
                     )
             except Exception:
                 logger.exception("foresight promotion gate failed")
-            finally:
-                logger_obj.close()
         if (
             verdict == "promote"
             and foresight_tracker is not None
@@ -917,23 +890,17 @@ class RuleEvaluator:
                             and foresight_tracker is not None
                             and workflow_id is not None
                         ):
-                            logger_obj = ForecastLogger("forecast_records/foresight.log")
                             patch_repr = patch if isinstance(patch, str) else list(patch)
                             try:
                                 graph = WorkflowGraph()
-                                ok, fs_reasons, forecast = is_foresight_safe_to_promote(
+                                ok, fs_reasons = is_foresight_safe_to_promote(
                                     workflow_id,
                                     patch_repr,
                                     foresight_tracker,
                                     graph,
                                 )
                                 result["foresight"] = {
-                                    "forecast": {
-                                        "projections": [p.__dict__ for p in forecast.projections],
-                                        "confidence": forecast.confidence,
-                                        "upgrade_id": forecast.upgrade_id,
-                                    },
-                                    "reason_codes": list(fs_reasons),
+                                    "reason_codes": list(fs_reasons)
                                 }
                                 record = {
                                     "event": "foresight_promotion_decision",
@@ -941,10 +908,6 @@ class RuleEvaluator:
                                     "patch": patch_repr,
                                     **result["foresight"],
                                 }
-                                try:
-                                    logger_obj.log(record)
-                                except Exception:
-                                    logger.exception("forecast logging failed")
                                 try:
                                     audit_logger.log_event(
                                         "foresight_promotion_decision", record
@@ -959,8 +922,6 @@ class RuleEvaluator:
                                     )
                             except Exception:
                                 logger.exception("foresight promotion gate failed")
-                            finally:
-                                logger_obj.close()
                         return result
                 except Exception:
                     continue
@@ -997,18 +958,17 @@ def is_foresight_safe_to_promote(
     patch: Iterable[str] | str,
     tracker: ForesightTracker,
     workflow_graph: WorkflowGraph,
-    roi_threshold: float = 0.0,
-    confidence_threshold: float = 0.6,
-    allow_negative_dag: bool = False,
-) -> tuple[bool, list[str], ForecastResult]:
+    roi_threshold: float = DeploymentGovernor.raroi_threshold,
+) -> tuple[bool, list[str]]:
     """Return foresight gate decision for ``workflow_id``.
 
-    A forecast is generated for ``patch`` using :class:`UpgradeForecaster`.
-    Promotion proceeds only when all projected ROI values exceed
-    ``roi_threshold``, the forecast confidence is at least
-    ``confidence_threshold``, no collapse is predicted within the forecast
-    horizon and, unless ``allow_negative_dag`` is set, the simulated impact wave
-    does not yield negative downstream ROI deltas.
+    The function forecasts the effect of ``patch`` using
+    :class:`UpgradeForecaster` and evaluates whether promotion is considered
+    safe.  All projected ROI values must meet or exceed ``roi_threshold`` and
+    the forecast confidence must be at least ``0.6``.  If the tracker signals an
+    immediate collapse risk or reports the workflow as brittle, promotion is
+    rejected.  Downstream impact waves are simulated using ``workflow_graph``;
+    any negative ROI impact causes failure.
     """
 
     if isinstance(patch, str):
@@ -1017,66 +977,63 @@ def is_foresight_safe_to_promote(
         patch = list(patch)
         patch_summary = "\n".join(patch)
 
-    try:
-        forecaster = UpgradeForecaster(tracker, logger=_decision_logger)
-    except TypeError:
-        forecaster = UpgradeForecaster(tracker)
-        try:
-            forecaster.logger = _decision_logger  # type: ignore[attr-defined]
-        except Exception:
-            pass
-    forecast = forecaster.forecast(workflow_id, patch)
+    logger_obj = ForecastLogger("forecast_records/foresight.log")
+    forecaster = UpgradeForecaster(tracker, logger=logger_obj)
+    result = forecaster.forecast(workflow_id, patch)
 
     reasons: list[str] = []
 
-    if any(p.roi < roi_threshold for p in forecast.projections):
+    if any(p.roi < roi_threshold for p in result.projections):
         reasons.append("projected_roi_below_threshold")
 
-    if forecast.confidence < confidence_threshold:
+    if result.confidence < 0.6:
         reasons.append("low_confidence")
 
     try:
         collapse = tracker.predict_roi_collapse(workflow_id)
-        horizon = len(forecast.projections)
-        collapse_in = collapse.get("collapse_in")
-        if collapse.get("risk") == "Immediate collapse risk" or (
-            isinstance(collapse_in, (int, float)) and horizon and collapse_in <= horizon
-        ):
+        if collapse.get("risk") == "Immediate collapse risk" or collapse.get("brittle"):
             reasons.append("roi_collapse_risk")
     except Exception:
         logger.exception("foresight risk evaluation failed")
 
-    impact_summary: Mapping[str, Dict[str, float]] | None = None
     try:
-        roi_delta = forecast.projections[0].roi if forecast.projections else 0.0
-        impact_summary = workflow_graph.simulate_impact_wave(
-            workflow_id, float(roi_delta), 0.0
+        projected_delta = result.projections[0].roi if result.projections else 0.0
+        impacts = workflow_graph.simulate_impact_wave(
+            workflow_id, float(projected_delta), 0.0
         )
-        for wid, vals in impact_summary.items():
-            if wid != workflow_id and vals.get("roi", 0.0) < 0:
-                if not allow_negative_dag:
-                    reasons.append("negative_impact_wave")
-                    break
+        for vals in impacts.values():
+            if vals.get("roi", 0.0) < 0:
+                reasons.append("negative_impact_wave")
+                break
     except Exception:
         logger.exception("impact wave simulation failed")
+        impacts = None
 
-    decision = len(reasons) == 0
+    safe = not reasons
     try:
-        _decision_logger.log(
+        logger_obj.log(
             {
                 "workflow_id": workflow_id,
                 "patch_summary": patch_summary,
-                "forecast_projections": [asdict(p) for p in forecast.projections],
-                "forecast_confidence": forecast.confidence,
-                "dag_impact": impact_summary,
-                "decision": decision,
+                "forecast": {
+                    "projections": [asdict(p) for p in result.projections],
+                    "confidence": result.confidence,
+                    "upgrade_id": result.upgrade_id,
+                },
+                "dag_impact": impacts,
                 "reason_codes": reasons,
+                "decision": safe,
             }
         )
     except Exception:
         logger.exception("decision logging failed")
+    finally:
+        try:
+            logger_obj.close()
+        except Exception:
+            pass
 
-    return (decision, reasons, forecast)
+    return safe, reasons
 
 
 __all__ = [
