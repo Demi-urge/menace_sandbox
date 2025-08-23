@@ -20,6 +20,7 @@ from dataclasses import asdict
 import license_detector
 from vector_service import EmbeddableDBMixin
 from embeddable_db_mixin import log_embedding_metrics
+from db_router import DBRouter, GLOBAL_ROUTER
 
 try:  # optional dependency for future scalability
     from sqlalchemy.engine import Engine  # type: ignore
@@ -217,6 +218,7 @@ class CodeDB(EmbeddableDBMixin):
         *,
         event_bus: Optional[UnifiedEventBus] = None,
         engine: "Engine" | None = None,
+        router: DBRouter | None = None,
     ) -> None:
         """Create a new ``CodeDB`` instance.
 
@@ -229,11 +231,18 @@ class CodeDB(EmbeddableDBMixin):
             Bus used to emit events for create/update/delete actions.
         engine:
             Optional SQLAlchemy engine to use instead of sqlite3.
+        router:
+            ``DBRouter`` providing connections.  When ``None`` the
+            global ``GLOBAL_ROUTER`` is used.
         """
         self.engine = engine
+        self.router = router or GLOBAL_ROUTER
+        if self.engine is None and self.router is None:
+            raise ValueError("router must be provided when engine is None")
+
         self.path = (
             Path(path or _default_db_path("CODE_DB_PATH", "code.db"))
-            if engine is None
+            if self.engine is None
             else Path("")
         )
         self.event_bus = event_bus
@@ -257,10 +266,8 @@ class CodeDB(EmbeddableDBMixin):
         if self.engine is not None:
             self._init_engine()
         else:
-            with sqlite3.connect(self.path) as conn:
-                conn.execute("PRAGMA foreign_keys = ON")
+            with self._connect() as conn:
                 self._ensure_schema(conn)
-                conn.commit()
 
         index_path = (
             self.path.with_suffix(".index") if self.path else Path("code_embeddings.index")
@@ -280,13 +287,16 @@ class CodeDB(EmbeddableDBMixin):
                 with self.engine.begin() as conn:
                     yield conn
             else:
-                conn = sqlite3.connect(self.path)
+                if self.router is None:
+                    raise RuntimeError("DBRouter not configured")
+                conn = self.router.get_connection("code")
                 conn.execute("PRAGMA foreign_keys = ON")
                 try:
                     yield conn
                     conn.commit()
-                finally:
-                    conn.close()
+                except Exception:
+                    conn.rollback()
+                    raise
 
     def _execute(self, conn: Any, sql: str, params: Iterable[Any] | None = None) -> Any:
         if hasattr(conn, "exec_driver_sql"):
