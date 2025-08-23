@@ -79,7 +79,9 @@ class ErrorDB(EmbeddableDBMixin):
         router: DBRouter | None = None,
     ) -> None:
         p = Path(path or "errors.db")
-        self.router = router or init_db_router("errors_db", str(p), str(p))
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "errors_db", str(p), str(p)
+        )
         self.conn = self.router.get_connection("errors")
         self.conn.row_factory = sqlite3.Row
         self.event_bus = event_bus

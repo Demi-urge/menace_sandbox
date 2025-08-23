@@ -9,7 +9,7 @@ import signal
 import uuid
 from typing import TYPE_CHECKING
 
-from db_router import init_db_router, GLOBAL_ROUTER as router
+from db_router import init_db_router
 
 from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
 from memory_aware_gpt_client import ask_with_memory
@@ -24,8 +24,12 @@ except Exception:  # pragma: no cover - fallback
         pass
 
 
-# Initialise a router for this process with a unique menace_id
+# Initialise a router for this process with a unique menace_id so
+# ``GLOBAL_ROUTER`` becomes available to imported modules.  Local code uses the
+# placeholder ``router`` which defaults to ``None`` to preserve legacy behaviour
+# where sandbox utilities operate without a database connection when possible.
 DB_ROUTER = init_db_router(uuid.uuid4().hex)
+router = None
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]

@@ -83,7 +83,9 @@ class CommTestDB:
         self, path: Path | str | None = None, *, router: DBRouter | None = None
     ) -> None:
         p = Path(path or _default_db_path())
-        self.router = router or init_db_router("comm_test", str(p), str(p))
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "comm_test", str(p), str(p)
+        )
         LOCAL_TABLES.add("results")
         self._ensure_schema()
 

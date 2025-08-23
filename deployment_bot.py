@@ -52,7 +52,9 @@ class DeploymentDB:
         router: DBRouter | None = None,
     ) -> None:
         p = Path(path)
-        self.router = router or init_db_router("deployment", str(p), str(p))
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "deployment", str(p), str(p)
+        )
         LOCAL_TABLES.update({"deployments", "errors", "bot_trials", "update_history"})
         self.event_bus = event_bus
         self.logger = logging.getLogger(self.__class__.__name__)
