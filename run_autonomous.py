@@ -103,7 +103,8 @@ def _verify_required_dependencies() -> None:
 
 _verify_required_dependencies()
 
-# Initialise database router with a unique menace_id
+# Initialise database router with a unique menace_id. All DB access must go
+# through the router.
 DB_ROUTER = init_db_router(uuid.uuid4().hex)
 
 from filelock import FileLock

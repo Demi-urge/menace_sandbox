@@ -28,6 +28,7 @@ except Exception:  # pragma: no cover - fallback
 # ``GLOBAL_ROUTER`` becomes available to imported modules.  Local code uses the
 # placeholder ``router`` which defaults to ``None`` to preserve legacy behaviour
 # where sandbox utilities operate without a database connection when possible.
+# All DB access must go through the router.
 DB_ROUTER = init_db_router(uuid.uuid4().hex)
 router = None
 

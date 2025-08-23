@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Initialise the global router early so modules can access ``GLOBAL_ROUTER``
 # without explicit dependency injection.  A unique ``menace_id`` keeps local
-# tables isolated for this process.
+# tables isolated for this process. All DB access must go through the router.
 MENACE_ID = uuid.uuid4().hex
 DB_ROUTER = init_db_router(MENACE_ID)
 
