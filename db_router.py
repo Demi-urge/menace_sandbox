@@ -13,6 +13,7 @@ import logging
 import os
 import sqlite3
 import threading
+from datetime import datetime
 from typing import Set
 
 __all__ = [
@@ -93,6 +94,11 @@ def _load_table_overrides() -> None:
 _load_table_overrides()
 
 
+logger = logging.getLogger(__name__)
+_level_name = os.getenv("DB_ROUTER_LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, _level_name, logging.INFO))
+
+
 # Global router instance used by modules that rely on a single router without
 # passing it around explicitly.  ``init_db_router`` populates this value.
 GLOBAL_ROUTER: "DBRouter" | None = None
@@ -150,7 +156,13 @@ class DBRouter:
             if table_name in DENY_TABLES:
                 raise ValueError(f"Access to table '{table_name}' is denied")
             if table_name in SHARED_TABLES:
-                logging.info("Routing table '%s' to shared database", table_name)
+                timestamp = datetime.utcnow().isoformat()
+                logger.info(
+                    "Shared table '%s' accessed by menace '%s' at %s",
+                    table_name,
+                    self.menace_id,
+                    timestamp,
+                )
                 return self.shared_conn
             if table_name in LOCAL_TABLES:
                 return self.local_conn
