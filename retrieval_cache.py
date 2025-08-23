@@ -30,9 +30,8 @@ class RetrievalCache:
     _conn: sqlite3.Connection = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self.path = str(self.path)
         self.router = DB_ROUTER
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        self._conn = self.router.get_connection("retrieval_cache")
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS retrieval_cache(

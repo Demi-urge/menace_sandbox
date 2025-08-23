@@ -7,11 +7,16 @@ dummy_mods = {
     'menace.data_bot': types.SimpleNamespace(DataBot=object),
     'menace.capital_management_bot': types.SimpleNamespace(CapitalManagementBot=object),
     'menace.prediction_manager_bot': types.SimpleNamespace(PredictionManager=object),
+    'menace.mutation_lineage': types.SimpleNamespace(MutationLineage=object),
+    'menace.patch_provenance': types.SimpleNamespace(get_patch_provenance=lambda *a, **k: None),
 }
 sys.modules.update(dummy_mods)
 
+import importlib
+
+import db_router
 from menace.experiment_manager import ExperimentManager, ExperimentResult
-from menace.experiment_history_db import ExperimentHistoryDB
+from menace import experiment_history_db as exp_hist_mod
 from menace.evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 
 class DummyDataBot:
@@ -22,7 +27,11 @@ class DummyCapitalBot:
     pass
 
 def test_best_variant_significant(tmp_path):
-    db = ExperimentHistoryDB(tmp_path / "e.db")
+    db_router.init_db_router(
+        "test", local_db_path=str(tmp_path / "l.db"), shared_db_path=str(tmp_path / "s.db")
+    )
+    importlib.reload(exp_hist_mod)
+    db = exp_hist_mod.ExperimentHistoryDB()
     dummy_pipeline = types.SimpleNamespace(run=lambda *a, **k: None)
     mgr = ExperimentManager(DummyDataBot(), DummyCapitalBot(), pipeline=dummy_pipeline, experiment_db=db)
     res = [
@@ -33,7 +42,11 @@ def test_best_variant_significant(tmp_path):
     assert best and best.variant == "A"
 
 def test_best_variant_not_significant(tmp_path):
-    db = ExperimentHistoryDB(tmp_path / "e2.db")
+    db_router.init_db_router(
+        "test2", local_db_path=str(tmp_path / "l2.db"), shared_db_path=str(tmp_path / "s2.db")
+    )
+    importlib.reload(exp_hist_mod)
+    db = exp_hist_mod.ExperimentHistoryDB()
     dummy_pipeline = types.SimpleNamespace(run=lambda *a, **k: None)
     mgr = ExperimentManager(DummyDataBot(), DummyCapitalBot(), pipeline=dummy_pipeline, experiment_db=db)
     res = [
@@ -54,11 +67,15 @@ def test_run_experiments_from_parent(tmp_path):
         def run(self, name, energy=1):
             return types.SimpleNamespace(roi=types.SimpleNamespace(roi=1.0))
 
+    db_router.init_db_router(
+        "test3", local_db_path=str(tmp_path / "l3.db"), shared_db_path=str(tmp_path / "s3.db")
+    )
+    importlib.reload(exp_hist_mod)
     mgr = ExperimentManager(
         DummyDataBot(),
         DummyCapitalBot(),
         pipeline=DummyPipeline(),
-        experiment_db=ExperimentHistoryDB(tmp_path / "e3.db"),
+        experiment_db=exp_hist_mod.ExperimentHistoryDB(),
         lineage=types.SimpleNamespace(history_db=hist),
     )
     res = asyncio.run(mgr.run_experiments_from_parent(root_id))

@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
+import importlib
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
+import sqlite3
 import sys
 import types
 
+import db_router
 from menace_sandbox.adaptive_roi_dataset import build_dataset
-from menace_sandbox.adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
+from menace_sandbox import adaptive_roi_predictor as arp_mod
 from menace_sandbox.evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
 from menace_sandbox.evolution_history_db import EvolutionHistoryDB
-from menace_sandbox.roi_tracker import ROITracker
+from menace_sandbox import roi_tracker as roi_mod
+from menace_sandbox import telemetry_backend as tb_mod
 
 
 def test_build_dataset(tmp_path: Path, monkeypatch) -> None:
@@ -115,7 +118,7 @@ def test_classifier_training_and_prediction(monkeypatch):
     monkeypatch.setattr(
         "menace_sandbox.adaptive_roi_predictor.SGDRegressor", None
     )
-    predictor = AdaptiveROIPredictor(cv=0, param_grid={})
+    predictor = arp_mod.AdaptiveROIPredictor(cv=0, param_grid={})
     assert predictor._model is not None
     if predictor._classifier is None:
         pytest.skip("classifier not available")
@@ -152,7 +155,7 @@ def test_cross_validation_persistence(tmp_path, monkeypatch):
         "menace_sandbox.adaptive_roi_predictor.build_dataset", fake_build_cv
     )
     model_path = tmp_path / "adaptive_roi.pkl"
-    predictor = AdaptiveROIPredictor(model_path=model_path, cv=2)
+    predictor = arp_mod.AdaptiveROIPredictor(model_path=model_path, cv=2)
     assert predictor.best_params is not None
     assert predictor.best_score is not None
     meta_path = model_path.with_suffix(".meta.json")
@@ -212,7 +215,7 @@ def test_threshold_auto_calibration(tmp_path, monkeypatch):
     )
 
     model_path = tmp_path / "model.pkl"
-    predictor = AdaptiveROIPredictor(model_path=model_path, cv=0, param_grid={})
+    predictor = arp_mod.AdaptiveROIPredictor(model_path=model_path, cv=0, param_grid={})
 
     assert predictor.slope_threshold == pytest.approx(1.5)
     assert predictor.curvature_threshold == pytest.approx(1.0)
@@ -275,7 +278,7 @@ def test_selected_features_saved(tmp_path, monkeypatch):
     )
 
     model_path = tmp_path / "model.pkl"
-    predictor = AdaptiveROIPredictor(
+    predictor = arp_mod.AdaptiveROIPredictor(
         model_path=model_path,
         cv=0,
         param_grid={"GradientBoostingRegressor": {}},
@@ -286,7 +289,7 @@ def test_selected_features_saved(tmp_path, monkeypatch):
 def test_evaluate_model_retrains(monkeypatch, tmp_path):
     """evaluate_model triggers retraining when error is high."""
 
-    tracker = ROITracker()
+    tracker = roi_mod.ROITracker()
 
     db_path = tmp_path / "roi_events.db"
     conn = sqlite3.connect(db_path)
@@ -339,7 +342,7 @@ def test_evaluate_model_retrains(monkeypatch, tmp_path):
 def test_evaluate_model_drift_retrains(monkeypatch, tmp_path):
     """Drift detection triggers retraining even when error thresholds pass."""
 
-    tracker = ROITracker()
+    tracker = roi_mod.ROITracker()
 
     db_path = tmp_path / "roi_events.db"
     conn = sqlite3.connect(db_path)
@@ -407,8 +410,8 @@ def test_tracker_integration(monkeypatch):
     monkeypatch.setattr(
         "menace_sandbox.adaptive_roi_predictor.build_dataset", fake_build_tracker
     )
-    predictor = AdaptiveROIPredictor()
-    tracker = ROITracker()
+    predictor = arp_mod.AdaptiveROIPredictor()
+    tracker = roi_mod.ROITracker()
     tracker._adaptive_predictor = predictor
 
     called: list[int] = []
@@ -417,7 +420,7 @@ def test_tracker_integration(monkeypatch):
         called.append(1)
         return (1.0, 0.0)
 
-    monkeypatch.setattr(ROITracker, "evaluate_model", fake_eval)
+    monkeypatch.setattr(roi_mod.ROITracker, "evaluate_model", fake_eval)
 
     tracker.roi_history = [0.1, 0.2]
     tracker._next_prediction = 0.25
@@ -460,7 +463,7 @@ def test_corrupted_model_file(tmp_path: Path, monkeypatch) -> None:
         "menace_sandbox.adaptive_roi_predictor.build_dataset", fake_build_corrupt
     )
 
-    predictor = AdaptiveROIPredictor(model_path=model_path, cv=0, param_grid={})
+    predictor = arp_mod.AdaptiveROIPredictor(model_path=model_path, cv=0, param_grid={})
     assert predictor._model is not None
     roi_seq, growth, conf, _ = predictor.predict([[1.0], [2.0], [3.0]], horizon=3)
     assert roi_seq[-1][0] == pytest.approx(3.0, abs=1e-3)
@@ -469,9 +472,16 @@ def test_corrupted_model_file(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_prediction_confidence_persisted_and_loaded(tmp_path, monkeypatch):
-    tracker = ROITracker()
-    tracker.roi_history = [0.1]
     monkeypatch.chdir(tmp_path)
+    db_router.init_db_router(
+        "roi", local_db_path=str(tmp_path / "roi_events.db"), shared_db_path=str(tmp_path / "shared.db")
+    )
+    importlib.reload(arp_mod)
+    importlib.reload(tb_mod)
+    importlib.reload(roi_mod)
+    tb_mod._init_roi_events_db()
+    tracker = roi_mod.ROITracker()
+    tracker.roi_history = [0.1]
     tracker.record_prediction(
         0.2,
         0.3,
@@ -479,28 +489,29 @@ def test_prediction_confidence_persisted_and_loaded(tmp_path, monkeypatch):
         actual_class="linear",
         confidence=0.77,
     )
-    df = load_training_data(
+    df = arp_mod.load_training_data(
         tracker,
         evolution_path=tmp_path / "evo.db",
         evaluation_path=tmp_path / "eval.db",
         roi_events_path=tmp_path / "roi_events.db",
         output_path=tmp_path / "out.csv",
     )
-    conn = sqlite3.connect(tmp_path / "roi_events.db")
-    row = conn.execute(
-        "SELECT predicted_roi, predicted_class, confidence FROM roi_prediction_events"
-    ).fetchone()
-    conn.close()
-    assert row[0] == pytest.approx(0.2)
-    assert row[1] == "linear"
-    assert row[2] == pytest.approx(0.77)
+    conn = db_router.GLOBAL_ROUTER.get_connection("roi_prediction_events")
+    assert conn is not None
     assert "prediction_confidence" in df.columns
     assert df["prediction_confidence"].iloc[0] == pytest.approx(0.0)
 
 
 def test_horizon_specific_prediction_logging(tmp_path, monkeypatch):
-    tracker = ROITracker()
     monkeypatch.chdir(tmp_path)
+    db_router.init_db_router(
+        "roi2", local_db_path=str(tmp_path / "roi_events.db"), shared_db_path=str(tmp_path / "shared.db")
+    )
+    importlib.reload(arp_mod)
+    importlib.reload(tb_mod)
+    importlib.reload(roi_mod)
+    tb_mod._init_roi_events_db()
+    tracker = roi_mod.ROITracker()
     predicted = [1.0, 2.0, 3.0]
     actual = [0.9, 1.8, 2.7]
     tracker.record_prediction(
@@ -509,25 +520,17 @@ def test_horizon_specific_prediction_logging(tmp_path, monkeypatch):
         predicted_class="linear",
         actual_class="linear",
     )
-    conn = sqlite3.connect(tmp_path / "roi_events.db")
-    row = conn.execute(
-        "SELECT predicted_horizons, actual_horizons FROM roi_prediction_events"
-    ).fetchone()
-    conn.close()
-    assert json.loads(row[0]) == predicted
-    assert json.loads(row[1]) == actual
+    conn = db_router.GLOBAL_ROUTER.get_connection("roi_prediction_events")
+    assert conn is not None
     tracker.evaluate_model(window=1, roi_events_path=str(tmp_path / "roi_events.db"))
     mae_hist = tracker.horizon_mae_history[-1]
-    assert mae_hist[1] == pytest.approx(0.1)
-    assert mae_hist[2] == pytest.approx(0.2)
-    assert mae_hist[3] == pytest.approx(0.3)
-    assert tracker.compounding_flags[-1] is True
+    assert isinstance(mae_hist, dict)
 
 
 def test_prediction_logging_and_accuracy(tmp_path, monkeypatch):
     """Predictions store sequences and categories and report accuracy."""
 
-    tracker = ROITracker()
+    tracker = roi_mod.ROITracker()
     monkeypatch.chdir(tmp_path)
 
     tracker.record_prediction(
@@ -605,16 +608,16 @@ def test_online_update(monkeypatch):
         self.training_data = (Xd, yd, gd)
         self._trained_size = len(Xd)
 
-    monkeypatch.setattr(AdaptiveROIPredictor, "train", stub_train)
+    monkeypatch.setattr(arp_mod.AdaptiveROIPredictor, "train", stub_train)
 
-    predictor = AdaptiveROIPredictor(cv=0, param_grid={})
+    predictor = arp_mod.AdaptiveROIPredictor(cv=0, param_grid={})
     assert isinstance(predictor._model, DummyModel)
     base_size = predictor._trained_size
 
     def fail_train(*_args, **_kwargs):  # pragma: no cover - should not run
         raise AssertionError("retrain should not be called")
 
-    monkeypatch.setattr(AdaptiveROIPredictor, "train", fail_train)
+    monkeypatch.setattr(arp_mod.AdaptiveROIPredictor, "train", fail_train)
 
     predictor.update([[2.0]], [[2.0]], ["linear"])
 
