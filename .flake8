@@ -1,0 +1,7 @@
+[flake8]
+max-line-length = 100
+
+[flake8:local-plugins]
+extension =
+    SQL001 = flake8_sqlite:Plugin
+paths = scripts
