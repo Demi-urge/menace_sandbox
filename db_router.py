@@ -36,6 +36,7 @@ SHARED_TABLES: Set[str] = {
     "code",
     "discrepancies",
     "workflow_summaries",
+    "overrides",
 }
 
 # Tables stored in the local database.  These are private to a specific

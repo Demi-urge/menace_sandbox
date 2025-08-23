@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
+
+from .db_router import init_db_router
 
 
 @dataclass
@@ -21,7 +22,8 @@ class OverrideDB:
 
     def __init__(self, path: Path | str = "overrides.db") -> None:
         self.path = Path(path)
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.router = init_db_router("overrides", str(self.path), str(self.path))
+        self.conn = self.router.get_connection("overrides")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS overrides(
