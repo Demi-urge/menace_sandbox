@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import smtplib
-import sqlite3
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -13,6 +12,7 @@ from email.message import EmailMessage
 from typing import Iterable, Callable
 
 from . import RAISE_ERRORS
+from db_router import GLOBAL_ROUTER
 
 try:
     import pandas as pd  # type: ignore
@@ -258,11 +258,14 @@ class Watchdog:
 
     # ------------------------------------------------------------------
     def _consecutive_failures(self) -> int:
-        with sqlite3.connect(self.error_db.path) as conn:
-            rows = conn.execute(
-                "SELECT stack_trace FROM telemetry ORDER BY id DESC LIMIT ?",
-                (self.thresholds.consecutive_failures,),
-            ).fetchall()
+        router = GLOBAL_ROUTER
+        if router is None:
+            raise RuntimeError("Database router is not initialised")
+        conn = router.get_connection("errors")
+        rows = conn.execute(
+            "SELECT stack_trace FROM telemetry ORDER BY id DESC LIMIT ?",
+            (self.thresholds.consecutive_failures,),
+        ).fetchall()
         return len(rows)
 
     def _roi_loss(self) -> float:
@@ -370,11 +373,14 @@ class Watchdog:
                 self.db = db
 
             def recent_errors(self, limit: int = 5) -> list[str]:
-                with sqlite3.connect(self.db.path) as conn:
-                    rows = conn.execute(
-                        "SELECT stack_trace FROM telemetry ORDER BY id DESC LIMIT ?",
-                        (limit,),
-                    ).fetchall()
+                router = GLOBAL_ROUTER
+                if router is None:
+                    raise RuntimeError("Database router is not initialised")
+                conn = router.get_connection("errors")
+                rows = conn.execute(
+                    "SELECT stack_trace FROM telemetry ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
                 return [str(r[0]) for r in rows]
 
         try:
@@ -440,11 +446,14 @@ class Watchdog:
     def compile_dossier(self, limit: int = 5) -> tuple[str, list[str]]:
         """Gather recent traces and metrics and build a runbook."""
         bots: set[str] = set()
-        with sqlite3.connect(self.error_db.path) as conn:
-            rows = conn.execute(
-                "SELECT bot_id, stack_trace FROM telemetry ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        router = GLOBAL_ROUTER
+        if router is None:
+            raise RuntimeError("Database router is not initialised")
+        conn = router.get_connection("errors")
+        rows = conn.execute(
+            "SELECT bot_id, stack_trace FROM telemetry ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
         traces = []
         for bot, trace in rows:
             traces.append(trace)
