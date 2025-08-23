@@ -37,12 +37,11 @@ class ForecastLogger:
 def log_forecast_record(
     logger: "ForecastLogger" | None,
     workflow_id: str,
-    projections: Iterable[Mapping[str, Any]],
-    confidence: float | None,
+    forecast: Mapping[str, Any],
+    decision: str,
     reason_codes: Iterable[str],
-    upgrade_id: str | None = None,
 ) -> None:
-    """Helper to persist a structured foresight promotion record.
+    """Persist a structured foresight promotion record.
 
     Parameters
     ----------
@@ -50,27 +49,22 @@ def log_forecast_record(
         Instance of :class:`ForecastLogger` or ``None``.
     workflow_id:
         Identifier of the workflow being evaluated.
-    projections:
-        Iterable of projection mappings, typically produced by the
-        forecaster.
-    confidence:
-        Confidence score associated with the forecast.
+    forecast:
+        Full forecast mapping produced by the forecaster.
+    decision:
+        Final recommendation derived from the forecast.
     reason_codes:
         Iterable of reason codes explaining promotion downgrade decisions.
-    upgrade_id:
-        Optional identifier of the forecast run.
     """
 
     if logger is None:
         return
     payload: dict[str, Any] = {
         "workflow_id": workflow_id,
-        "projections": list(projections),
-        "confidence": confidence,
+        "forecast": dict(forecast),
+        "decision": decision,
         "reason_codes": list(reason_codes),
     }
-    if upgrade_id is not None:
-        payload["upgrade_id"] = upgrade_id
     try:
         logger.log(payload)
     except Exception:

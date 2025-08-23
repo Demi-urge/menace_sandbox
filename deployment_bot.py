@@ -623,10 +623,10 @@ class DeploymentBot:
         reason_codes = eval_res.get("reason_codes", [])
         override_allowed = bool(eval_res.get("override_allowed"))
         try:
-            audit_log_event(
-                "deployment_verdict",
-                {"verdict": verdict, "reason_codes": reason_codes},
-            )
+            payload = {"verdict": verdict, "reason_codes": reason_codes}
+            if verdict in {"borderline", "pilot"}:
+                payload["downgrade_type"] = verdict
+            audit_log_event("deployment_verdict", payload)
         except Exception as exc:
             _log_exception(self.logger, "audit log", exc)
         self.logger.info(

@@ -5519,13 +5519,17 @@ class SelfImprovementEngine:
                             if not isinstance(decision, ForesightDecision):
                                 decision = ForesightDecision(*decision)
                             forecast_info = decision.forecast
+                            decision_label = (
+                                decision.recommendation
+                                if not decision.safe
+                                else "promote"
+                            )
                             log_forecast_record(
                                 logger_obj,
                                 workflow_id,
-                                forecast_info.get("projections", []),
-                                forecast_info.get("confidence"),
+                                forecast_info,
+                                decision_label,
                                 decision.reasons,
-                                forecast_info.get("upgrade_id"),
                             )
                             if not decision.safe:
                                 verdict = decision.recommendation
@@ -5541,14 +5545,14 @@ class SelfImprovementEngine:
                     scorecard["forecast"] = forecast_info
                     scorecard["reasons"] = list(reasons)
                     try:
-                        audit_log_event(
-                            "deployment_verdict",
-                            {
-                                "verdict": verdict,
-                                "reasons": reasons,
-                                "forecast": forecast_info,
-                            },
-                        )
+                        payload = {
+                            "verdict": verdict,
+                            "reasons": reasons,
+                            "forecast": forecast_info,
+                        }
+                        if verdict in {"borderline", "pilot"}:
+                            payload["downgrade_type"] = verdict
+                        audit_log_event("deployment_verdict", payload)
                     except Exception:
                         self.logger.exception("audit log failed")
                     if self.event_bus:

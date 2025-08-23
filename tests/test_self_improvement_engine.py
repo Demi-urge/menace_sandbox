@@ -1202,6 +1202,7 @@ def test_deployment_gate_borderline(tmp_path, monkeypatch):
     assert engine.workflow_ready is False
     assert bucket.candidates and bucket.candidates[0][-1] == "low_confidence"
     assert events and events[-1]["verdict"] == "borderline"
+    assert events[-1]["downgrade_type"] == "borderline"
 
 
 def test_deployment_gate_pilot(tmp_path, monkeypatch):
@@ -1225,3 +1226,4 @@ def test_deployment_gate_pilot(tmp_path, monkeypatch):
     engine.run_cycle()
     assert engine.workflow_ready is False
     assert events and events[-1]["verdict"] == "pilot"
+    assert events[-1]["downgrade_type"] == "pilot"
