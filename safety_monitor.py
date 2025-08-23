@@ -7,6 +7,7 @@ from typing import Dict, Iterable, Optional
 import sqlite3
 import logging
 
+from db_router import DBRouter, GLOBAL_ROUTER
 from .bot_testing_bot import BotTestingBot
 from .unified_event_bus import UnifiedEventBus
 
@@ -53,18 +54,23 @@ class SafetyMonitor:
             self.fail_counts.pop(bot_id, None)
         return passed
 
-    def validate_workflow(self, workflow_id: int, db: Optional[object] = None) -> bool:
-        """Check workflow integrity using ``db`` if provided."""
+    def validate_workflow(
+        self,
+        workflow_id: int,
+        db: Optional[object] = None,
+        router: DBRouter | None = None,
+    ) -> bool:
+        """Check workflow integrity using ``router`` if provided."""
         tasks: Iterable[str] = []
-        if db and hasattr(db, "path"):
+        router = router or GLOBAL_ROUTER
+        if db and router:
             try:
-                conn = sqlite3.connect(db.path)
+                conn = router.get_connection("workflows")
                 conn.row_factory = sqlite3.Row
                 row = conn.execute(
                     "SELECT workflow FROM workflows WHERE id=?",
                     (workflow_id,),
                 ).fetchone()
-                conn.close()
                 if row and row["workflow"]:
                     tasks = row["workflow"].split(",")
             except Exception:
