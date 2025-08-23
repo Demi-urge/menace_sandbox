@@ -10,7 +10,6 @@ import os
 import atexit
 import tempfile
 import time
-import sqlite3
 try:  # optional dependency
     from sqlalchemy import Column, String, Text, Table, MetaData, create_engine
     from sqlalchemy.engine import Engine
@@ -52,12 +51,13 @@ except Exception:  # pragma: no cover - optional
 import asyncio
 from . import env_config
 from .env_config import MENACE_MODE
-from .db_router import DBRouter
+from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from .admin_bot_base import AdminBotBase
 from .unified_event_bus import UnifiedEventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
 
 logger = logging.getLogger(__name__)
+router = GLOBAL_ROUTER or init_db_router("communication_maintenance")
 
 SESSION_NOW = datetime.utcnow()
 
@@ -573,7 +573,7 @@ class SQLiteMaintenanceDB(MaintenanceStorageAdapter):
     def __init__(self, path: Path | str | None = None) -> None:
         db_path = Path(path or os.environ.get("MAINTENANCE_DB", env_config.MAINTENANCE_DB))
         ensure_directory(db_path.parent)
-        self.conn = sqlite3.connect(db_path)
+        self.conn = router.get_connection("maintenance")
         self.path = db_path
         self.conn.execute(
             """
@@ -710,21 +710,20 @@ class MaintenanceDB(MaintenanceStorageAdapter):
         if create_engine is None:
             if prod and not db_url.startswith("sqlite"):
                 raise RuntimeError("SQLAlchemy is required for MaintenanceDB in production")
-            import sqlite3
 
             if db_path is not None and "//" not in db_url:
                 self.path = db_path
             else:
                 self.path = Path(db_url.split("///")[-1])
-            with sqlite3.connect(self.path) as conn:
-                conn.execute(
-                    "CREATE TABLE IF NOT EXISTS maintenance(task TEXT, status TEXT, details TEXT, ts TEXT)"
-                )
-                conn.execute(
-                    "CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY, value TEXT)"
-                )
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.commit()
+            conn = router.get_connection("maintenance")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS maintenance(task TEXT, status TEXT, details TEXT, ts TEXT)"
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY, value TEXT)"
+            )
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.commit()
             self.engine = None  # type: ignore
             self.meta = None  # type: ignore
             self.table = None  # type: ignore
@@ -754,14 +753,13 @@ class MaintenanceDB(MaintenanceStorageAdapter):
 
     def log(self, rec: MaintenanceRecord) -> None:
         if self._sqlite:
-            import sqlite3
             try:
-                with sqlite3.connect(self.path) as conn:
-                    conn.execute(
-                        "INSERT INTO maintenance(task, status, details, ts) VALUES (?,?,?,?)",
-                        (rec.task, rec.status, rec.details, rec.ts),
-                    )
-                    conn.commit()
+                conn = router.get_connection("maintenance")
+                conn.execute(
+                    "INSERT INTO maintenance(task, status, details, ts) VALUES (?,?,?,?)",
+                    (rec.task, rec.status, rec.details, rec.ts),
+                )
+                conn.commit()
             except Exception as exc:  # pragma: no cover - sqlite failure
                 logging.getLogger(__name__).error("sqlite log failed: %s", exc)
         else:
@@ -781,12 +779,11 @@ class MaintenanceDB(MaintenanceStorageAdapter):
 
     def fetch(self) -> List[Tuple[str, str, str, str]]:
         if self._sqlite:
-            import sqlite3
             try:
-                with sqlite3.connect(self.path) as conn:
-                    rows = conn.execute(
-                        "SELECT task, status, details, ts FROM maintenance"
-                    ).fetchall()
+                conn = router.get_connection("maintenance")
+                rows = conn.execute(
+                    "SELECT task, status, details, ts FROM maintenance"
+                ).fetchall()
             except Exception as exc:  # pragma: no cover - sqlite failure
                 logging.getLogger(__name__).error("sqlite fetch failed: %s", exc)
                 return []
@@ -798,14 +795,13 @@ class MaintenanceDB(MaintenanceStorageAdapter):
     # simple key/value state helpers
     def set_state(self, key: str, value: str) -> None:
         if self._sqlite:
-            import sqlite3
             try:
-                with sqlite3.connect(self.path) as conn:
-                    conn.execute(
-                        "INSERT OR REPLACE INTO state(key,value) VALUES (?,?)",
-                        (key, value),
-                    )
-                    conn.commit()
+                conn = router.get_connection("maintenance")
+                conn.execute(
+                    "INSERT OR REPLACE INTO state(key,value) VALUES (?,?)",
+                    (key, value),
+                )
+                conn.commit()
             except Exception as exc:  # pragma: no cover - sqlite failure
                 logging.getLogger(__name__).error("sqlite set_state failed: %s", exc)
         else:
@@ -822,13 +818,12 @@ class MaintenanceDB(MaintenanceStorageAdapter):
 
     def get_state(self, key: str) -> Optional[str]:
         if self._sqlite:
-            import sqlite3
             try:
-                with sqlite3.connect(self.path) as conn:
-                    row = conn.execute(
-                        "SELECT value FROM state WHERE key=?", (key,)
-                    ).fetchone()
-                    return row[0] if row else None
+                conn = router.get_connection("maintenance")
+                row = conn.execute(
+                    "SELECT value FROM state WHERE key=?", (key,)
+                ).fetchone()
+                return row[0] if row else None
             except Exception as exc:  # pragma: no cover - sqlite failure
                 logging.getLogger(__name__).error("sqlite get_state failed: %s", exc)
                 return None

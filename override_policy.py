@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 import threading
 from typing import TYPE_CHECKING
 
@@ -32,19 +31,19 @@ class OverridePolicyManager:
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def _fetch_results(self, signature: str) -> list[int]:
-        with sqlite3.connect(self.enh_db.path) as conn:
-            rows = conn.execute(
-                "SELECT success FROM prompt_history WHERE fix=? ORDER BY id DESC LIMIT ?",
-                (signature, self.window_size),
-            ).fetchall()
+        conn = self.enh_db.router.get_connection("enhancements")
+        rows = conn.execute(
+            "SELECT success FROM prompt_history WHERE fix=? ORDER BY id DESC LIMIT ?",
+            (signature, self.window_size),
+        ).fetchall()
         return [int(r[0]) for r in rows]
 
     def _signatures(self) -> set[str]:
         sigs = {rec.signature for rec in self.override_db.all()}
-        with sqlite3.connect(self.enh_db.path) as conn:
-            rows = conn.execute(
-                "SELECT DISTINCT fix FROM prompt_history WHERE fix != ''"
-            ).fetchall()
+        conn = self.enh_db.router.get_connection("enhancements")
+        rows = conn.execute(
+            "SELECT DISTINCT fix FROM prompt_history WHERE fix != ''"
+        ).fetchall()
         sigs.update(r[0] for r in rows)
         return sigs
 

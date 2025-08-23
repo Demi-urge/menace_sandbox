@@ -6,12 +6,12 @@ from typing import Any, Callable, Iterable, List, Mapping, Sequence, Tuple, Unio
 
 import asyncio
 import logging
-import sqlite3
 import time
 
 from .decorators import log_and_measure
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from patch_safety import PatchSafety
+from db_router import GLOBAL_ROUTER, init_db_router
 
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me  # type: ignore
@@ -104,6 +104,7 @@ except Exception:  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
+router = GLOBAL_ROUTER or init_db_router("patch_logger")
 
 
 class TrackResult(dict):
@@ -584,8 +585,7 @@ class PatchLogger:
 
         # Persist risk summaries for audit
         try:
-            db_path = self.patch_safety.failure_db_path or "failures.db"
-            conn = sqlite3.connect(db_path)
+            conn = router.get_connection("risk_summaries")
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS risk_summaries(ts REAL, patch_id TEXT, origin TEXT, risk REAL)"
             )
@@ -596,7 +596,6 @@ class PatchLogger:
                     (ts, str(patch_id), origin, float(risk)),
                 )
             conn.commit()
-            conn.close()
         except Exception:
             logger.exception("Failed to persist risk summaries")
 

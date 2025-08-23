@@ -32,7 +32,11 @@
     "action_roi",
     "ledger",
     "profit_history",
-    "capital_summary"
+    "capital_summary",
+    "bot_performance",
+    "maintenance",
+    "allocations",
+    "risk_summaries"
   ],
   "deny": [
     "capital_ledger",
