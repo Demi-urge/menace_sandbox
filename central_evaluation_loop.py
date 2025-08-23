@@ -31,6 +31,7 @@ from .logging_utils import log_record
 from .deployment_governance import evaluate_workflow
 from .borderline_bucket import BorderlineBucket
 from .rollback_manager import RollbackManager
+from .foresight_tracker import ForesightTracker
 
 try:  # pragma: no cover - metrics optional
     from . import metrics_exporter as _me
@@ -66,6 +67,7 @@ load_dotenv()
 
 BORDERLINE_BUCKET = BorderlineBucket()
 ROLLBACK_MANAGER = RollbackManager()
+FORESIGHT_TRACKER = ForesightTracker()
 
 # Paths for input logs and output records
 ACTIONS_FILE = os.getenv("ACTIONS_FILE", "/mnt/shared/menace_logs/actions.jsonl")
@@ -225,7 +227,13 @@ def process_action(raw_line: str) -> bool:
     if roi_score is not None:
         scorecard["raroi"] = roi_score
     scorecard["alignment_status"] = alignment_status
-    eval_result = evaluate_workflow(scorecard, action.get("deployment_policy"))
+    eval_result = evaluate_workflow(
+        scorecard,
+        action.get("deployment_policy"),
+        foresight_tracker=FORESIGHT_TRACKER,
+        workflow_id=action.get("workflow_id"),
+        patch=action.get("patch") or [],
+    )
     verdict = eval_result.get("verdict")
     if verdict == "promote":
         wf_id = action.get("workflow_id")

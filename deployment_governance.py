@@ -390,6 +390,7 @@ def evaluate_workflow(
     *,
     foresight_tracker: ForesightTracker | None = None,
     workflow_id: str | None = None,
+    patch: Iterable[str] | str | None = None,
 ) -> Dict[str, Any]:
     """Return deployment verdict and reasoning for *scorecard*.
 
@@ -468,6 +469,37 @@ def evaluate_workflow(
     combined_override = {**overrides, **result.get("override", {})}
     verdict = result.get("verdict", "no_go")
     reason_codes = list(result.get("reasons", []))
+    foresight_info: dict[str, Any] | None = None
+    if (
+        verdict == "promote"
+        and foresight_tracker is not None
+        and workflow_id is not None
+    ):
+        patch_repr = [] if patch is None else (patch if isinstance(patch, str) else list(patch))
+        try:
+            graph = WorkflowGraph()
+            ok, fs_reasons, forecast = is_foresight_safe_to_promote(
+                workflow_id,
+                patch_repr,
+                foresight_tracker,
+                graph,
+            )
+            foresight_info = {
+                "forecast": {
+                    "projections": [p.__dict__ for p in forecast.projections],
+                    "confidence": forecast.confidence,
+                    "upgrade_id": forecast.upgrade_id,
+                },
+                "reason_codes": list(fs_reasons),
+            }
+            if not ok:
+                verdict = "pilot"
+                for rc in fs_reasons:
+                    if rc not in reason_codes:
+                        reason_codes.append(rc)
+        except Exception:
+            logger.exception("foresight promotion gate failed")
+
     if (
         verdict == "promote"
         and foresight_tracker is not None
@@ -487,6 +519,7 @@ def evaluate_workflow(
         "verdict": verdict,
         "reason_codes": reason_codes,
         "overrides": combined_override,
+        "foresight": foresight_info,
     }
 
 
