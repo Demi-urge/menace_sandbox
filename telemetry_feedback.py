@@ -3,10 +3,11 @@ from __future__ import annotations
 """Automatic patching feedback loop using telemetry."""
 
 from pathlib import Path
-import sqlite3
 import threading
 import time
 from typing import Optional, List, Tuple
+
+from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, SHARED_TABLES, init_db_router
 
 from .error_logger import ErrorLogger
 from .self_coding_engine import SelfCodingEngine
@@ -24,12 +25,15 @@ class TelemetryFeedback:
         threshold: int = 3,
         interval: int = 60,
         graph: KnowledgeGraph | None = None,
+        router: DBRouter | None = None,
     ) -> None:
         self.logger = logger
         self.engine = engine
         self.threshold = threshold
         self.interval = interval
         self.graph = graph
+        self.router = router or GLOBAL_ROUTER or init_db_router("telemetry_fb")
+        SHARED_TABLES.add("telemetry")
         self.running = False
         self._thread: Optional[threading.Thread] = None
 
@@ -89,13 +93,13 @@ class TelemetryFeedback:
                 pass
 
     def _mark_attempt(self, events: List[Tuple[int, str, str, str]], patch_id: int | None) -> None:
-        with sqlite3.connect(self.logger.db.path) as conn:
-            for ev in events:
-                conn.execute(
-                    "UPDATE telemetry SET patch_id=?, resolution_status='attempted' WHERE id=?",
-                    (patch_id, ev[0]),
-                )
-            conn.commit()
+        conn = self.router.get_connection("telemetry")
+        for ev in events:
+            conn.execute(
+                "UPDATE telemetry SET patch_id=?, resolution_status='attempted' WHERE id=?",
+                (patch_id, ev[0]),
+            )
+        conn.commit()
 
 
 __all__ = ["TelemetryFeedback"]

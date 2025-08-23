@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from difflib import SequenceMatcher
-import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,6 +20,7 @@ from .bot_testing_bot import BotTestingBot
 from .mirror_bot import MirrorBot
 from .comm_testing_config import SETTINGS
 from .logging_utils import get_logger
+from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
 
 def _default_db_path() -> Path:
@@ -79,14 +79,17 @@ class CommTestDB:
     ]
     SCHEMA_VERSION = MIGRATIONS[-1][0]
 
-    def __init__(self, path: Path | str | None = None) -> None:
-        db_path = Path(path or _default_db_path())
-        # allow connection reuse across threads for async tests
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+    def __init__(
+        self, path: Path | str | None = None, *, router: DBRouter | None = None
+    ) -> None:
+        p = Path(path or _default_db_path())
+        self.router = router or init_db_router("comm_test", str(p), str(p))
+        LOCAL_TABLES.add("results")
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
-        cur = self.conn.cursor()
+        conn = self.router.get_connection("results")
+        cur = conn.cursor()
         version = int(cur.execute("PRAGMA user_version").fetchone()[0])
         for target, stmts in self.MIGRATIONS:
             if version < target:
@@ -94,17 +97,19 @@ class CommTestDB:
                     cur.execute(stmt)
                 version = target
                 cur.execute(f"PRAGMA user_version = {version}")
-        self.conn.commit()
+        conn.commit()
 
     def log(self, result: CommTestResult) -> None:
-        self.conn.execute(
+        conn = self.router.get_connection("results")
+        conn.execute(
             "INSERT INTO results(name, passed, details, ts) VALUES (?, ?, ?, ?)",
             (result.name, int(result.passed), result.details, result.timestamp),
         )
-        self.conn.commit()
+        conn.commit()
 
     def fetch(self) -> List[CommTestResult]:
-        cur = self.conn.execute(
+        conn = self.router.get_connection("results")
+        cur = conn.execute(
             "SELECT name, passed, details, ts FROM results ORDER BY id"
         )
         rows = cur.fetchall()
@@ -114,7 +119,8 @@ class CommTestDB:
         ]
 
     def fetch_failed(self) -> List[CommTestResult]:
-        cur = self.conn.execute(
+        conn = self.router.get_connection("results")
+        cur = conn.execute(
             "SELECT name, passed, details, ts FROM results WHERE passed=0 ORDER BY id"
         )
         rows = cur.fetchall()
@@ -124,7 +130,8 @@ class CommTestDB:
         ]
 
     def fetch_by_name(self, name: str) -> List[CommTestResult]:
-        cur = self.conn.execute(
+        conn = self.router.get_connection("results")
+        cur = conn.execute(
             "SELECT name, passed, details, ts FROM results WHERE name=? ORDER BY id",
             (name,),
         )
