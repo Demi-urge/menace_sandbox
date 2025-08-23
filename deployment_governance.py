@@ -444,7 +444,7 @@ class DeploymentGovernor:
                 )
                 logger_obj = ForecastLogger("forecast_records/foresight.log")
                 forecaster = UpgradeForecaster(foresight_tracker, logger=logger_obj)
-                ok, forecast_res, fs_reasons = is_foresight_safe_to_promote(
+                ok, fs_reasons, forecast_res = is_foresight_safe_to_promote(
                     workflow_id,
                     patch_repr,
                     forecaster,
@@ -465,24 +465,18 @@ class DeploymentGovernor:
                     audit_logger.log_event("foresight_promotion_decision", record)
                 except Exception:
                     logger.exception("audit logging failed")
-            finally:
-                try:
-                    if logger_obj is not None:
-                        logger_obj.close()
-                except Exception:
-                    pass
-            if not ok:
-                verdict = "pilot"
-                for rc in fs_reasons:
-                    if rc not in reasons:
-                        reasons.append(rc)
-                if (
-                    borderline_bucket is not None
-                    and raroi is not None
-                    and confidence is not None
-                ):
-                    try:
-                        margin = 0.05
+                if not ok:
+                    verdict = "pilot"
+                    for rc in fs_reasons:
+                        if rc not in reasons:
+                            reasons.append(rc)
+                    if (
+                        borderline_bucket is not None
+                        and raroi is not None
+                        and confidence is not None
+                    ):
+                        try:
+                            margin = 0.05
                             r_close = abs(float(raroi) - self.raroi_threshold) <= margin
                             c_close = (
                                 abs(float(confidence) - self.confidence_threshold)
@@ -499,6 +493,12 @@ class DeploymentGovernor:
                             logger.exception("borderline enqueue failed")
             except Exception:
                 logger.exception("foresight promotion gate failed")
+            finally:
+                try:
+                    if logger_obj is not None:
+                        logger_obj.close()
+                except Exception:
+                    pass
 
         return {
             "verdict": verdict,
@@ -616,7 +616,7 @@ def evaluate_workflow(
             )
             logger_obj = ForecastLogger("forecast_records/foresight.log")
             forecaster = UpgradeForecaster(foresight_tracker, logger=logger_obj)
-            ok, forecast_res, fs_reasons = is_foresight_safe_to_promote(
+            ok, fs_reasons, forecast_res = is_foresight_safe_to_promote(
                 workflow_id,
                 patch_repr,
                 forecaster,
@@ -751,7 +751,7 @@ def evaluate(
                 graph = WorkflowGraph()
                 logger_obj = ForecastLogger("forecast_records/foresight.log")
                 forecaster = UpgradeForecaster(foresight_tracker, logger=logger_obj)
-                ok, forecast_res, fs_reasons = is_foresight_safe_to_promote(
+                ok, fs_reasons, forecast_res = is_foresight_safe_to_promote(
                     workflow_id,
                     patch_repr,
                     forecaster,
@@ -1074,7 +1074,7 @@ class RuleEvaluator:
                                 forecaster = UpgradeForecaster(
                                     foresight_tracker, logger=logger_obj
                                 )
-                                ok, forecast_res, fs_reasons = is_foresight_safe_to_promote(
+                                ok, fs_reasons, forecast_res = is_foresight_safe_to_promote(
                                     workflow_id,
                                     patch_repr,
                                     forecaster,

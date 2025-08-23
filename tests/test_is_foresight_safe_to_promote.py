@@ -36,7 +36,7 @@ def test_projected_roi_below_threshold(tmp_path):
     tracker = DummyTracker({"risk": "Stable"})
     graph = _make_graph(tmp_path)
     forecaster = DummyForecaster(result, tracker=tracker)
-    ok, forecast, reasons = dg.is_foresight_safe_to_promote(
+    ok, reasons, forecast = dg.is_foresight_safe_to_promote(
         "wf", [], forecaster, graph, roi_threshold=0.5
     )
     assert not ok
@@ -53,7 +53,7 @@ def test_low_confidence(tmp_path):
     tracker = DummyTracker({"risk": "Stable"})
     graph = _make_graph(tmp_path)
     forecaster = DummyForecaster(result, tracker=tracker)
-    ok, forecast, reasons = dg.is_foresight_safe_to_promote("wf", [], forecaster, graph)
+    ok, reasons, forecast = dg.is_foresight_safe_to_promote("wf", [], forecaster, graph)
     assert not ok
     assert "low_confidence" in reasons
     assert forecast.upgrade_id == "u2"
@@ -71,7 +71,7 @@ def test_negative_dag_impact(tmp_path):
     graph.add_workflow("dep", roi=0.0)
     graph.add_dependency("wf", "dep", impact_weight=1.0)
     forecaster = DummyForecaster(result, tracker=tracker)
-    ok, forecast, reasons = dg.is_foresight_safe_to_promote(
+    ok, reasons, forecast = dg.is_foresight_safe_to_promote(
         "wf", [], forecaster, graph, roi_threshold=-0.2
     )
     assert not ok
@@ -88,7 +88,7 @@ def test_collapse_risk(tmp_path):
     tracker = DummyTracker({"risk": "Immediate collapse risk"})
     graph = _make_graph(tmp_path)
     forecaster = DummyForecaster(result, tracker=tracker)
-    ok, forecast, reasons = dg.is_foresight_safe_to_promote("wf", [], forecaster, graph)
+    ok, reasons, forecast = dg.is_foresight_safe_to_promote("wf", [], forecaster, graph)
     assert not ok
     assert "roi_collapse_risk" in reasons
     assert forecast.upgrade_id == "u4"
@@ -103,7 +103,7 @@ def test_success_path(tmp_path):
     tracker = DummyTracker({"risk": "Stable"})
     graph = _make_graph(tmp_path)
     forecaster = DummyForecaster(result, tracker=tracker)
-    ok, forecast, reasons = dg.is_foresight_safe_to_promote("wf", [], forecaster, graph)
+    ok, reasons, forecast = dg.is_foresight_safe_to_promote("wf", [], forecaster, graph)
     assert ok
     assert reasons == []
     assert forecast.upgrade_id == "u5"

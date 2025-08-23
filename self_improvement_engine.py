@@ -5504,7 +5504,7 @@ class SelfImprovementEngine:
                         try:
                             forecaster = UpgradeForecaster(self.foresight_tracker)
                             graph = WorkflowGraph()
-                            safe, forecast_res, fs_codes = is_foresight_safe_to_promote(
+                            safe, fs_codes, forecast_res = is_foresight_safe_to_promote(
                                 workflow_id,
                                 str(patch_id) if patch_id is not None else "",
                                 forecaster,
