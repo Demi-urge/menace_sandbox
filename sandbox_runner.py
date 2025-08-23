@@ -9,6 +9,8 @@ import signal
 import uuid
 from typing import TYPE_CHECKING
 
+from db_router import init_db_router, GLOBAL_ROUTER as router
+
 from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
 from memory_aware_gpt_client import ask_with_memory
 from shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE, LocalKnowledgeModule
@@ -20,6 +22,10 @@ except Exception:  # pragma: no cover - fallback
         """Fallback ErrorResult when vector service lacks explicit class."""
 
         pass
+
+
+# Initialise a router for this process with a unique menace_id
+DB_ROUTER = init_db_router(uuid.uuid4().hex)
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
@@ -750,15 +756,14 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     def _changed_modules(last_id: int) -> tuple[list[str], int]:
         if not patch_db_path.exists():
             return [], last_id
-        import sqlite3
 
         try:
-            with sqlite3.connect(patch_db_path, check_same_thread=False) as conn:
+            with router.get_connection("patch_history") as conn:
                 rows = conn.execute(
                     "SELECT id, filename FROM patch_history WHERE id>?",
                     (last_id,),
                 ).fetchall()
-        except sqlite3.Error as exc:
+        except Exception as exc:
             logger.exception("patch history read failed: %s", exc)
             return [], last_id
         modules = [str(r[1]) for r in rows]

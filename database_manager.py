@@ -60,12 +60,34 @@ DB_PATH = Path(__file__).parent / "models.db"
 
 
 @contextmanager
-def get_connection(db_path: Path = DB_PATH) -> Iterable[sqlite3.Connection]:
-    """Context manager yielding a SQLite connection."""
-    if not router:
-        raise RuntimeError("Database router is not initialised")
-    with router.get_connection("models") as conn:
-        yield conn
+def get_connection(
+    db_path: Path = DB_PATH, *, conn: sqlite3.Connection | None = None
+) -> Iterable[sqlite3.Connection]:
+    """Context manager yielding a SQLite connection.
+
+    If ``conn`` is provided it is assumed to be a pre-routed connection and will
+    be used directly. Otherwise a connection is obtained from the global router.
+    The context manager ensures commits and rollbacks mirror the behaviour of
+    :func:`sqlite3.connect` when used as a context manager.
+    """
+
+    if conn is None:
+        if not router:
+            raise RuntimeError("Database router is not initialised")
+        with router.get_connection("models") as conn:
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+    else:
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def init_db(conn: sqlite3.Connection) -> None:
