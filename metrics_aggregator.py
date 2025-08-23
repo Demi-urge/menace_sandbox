@@ -31,7 +31,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     MetricsDB = None  # type: ignore
 
-from .db_router import init_db_router, GLOBAL_ROUTER
+from .db_router import GLOBAL_ROUTER, init_db_router
 
 _RETRIEVER_WIN_GAUGE = _me.Gauge(
     "retriever_win_rate", "Win rate of retrieved patches", ["origin_db"]
@@ -72,7 +72,7 @@ _RETR_COUNT_GAUGE = _me.Gauge(
 )
 
 
-init_db_router("metrics_aggregator")
+router = GLOBAL_ROUTER or init_db_router("metrics_aggregator")
 
 
 def compute_retriever_stats(
@@ -84,7 +84,7 @@ def compute_retriever_stats(
         raise RuntimeError("pandas is required for retriever stats")
 
     try:
-        conn = GLOBAL_ROUTER.get_connection("patch_outcomes")
+        conn = router.get_connection("patch_outcomes")
         outcomes = pd.read_sql(
             "SELECT patch_id, origin_db, success, reverted FROM patch_outcomes", conn
         )
@@ -96,7 +96,7 @@ def compute_retriever_stats(
 
     roi_df = pd.DataFrame(columns=["patch_id", "revenue", "api_cost", "roi"])
     try:
-        conn = GLOBAL_ROUTER.get_connection("action_roi")
+        conn = router.get_connection("action_roi")
         roi_df = pd.read_sql(
             "SELECT action AS patch_id, revenue, api_cost FROM action_roi", conn
         )
@@ -240,7 +240,7 @@ class MetricsAggregator:
                     conn.execute(stmt)
 
     def _connect(self, table: str) -> sqlite3.Connection:
-        return GLOBAL_ROUTER.get_connection(table)
+        return router.get_connection(table)
 
     def _aggregate_table(self, table: str, cols: List[str], period: str) -> "pd.DataFrame":
         if pd is None:

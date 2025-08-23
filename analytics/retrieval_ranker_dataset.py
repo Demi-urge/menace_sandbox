@@ -18,7 +18,7 @@ import argparse
 
 import pandas as pd
 
-from ..db_router import init_db_router, GLOBAL_ROUTER
+from ..db_router import GLOBAL_ROUTER, init_db_router
 from ..vector_metrics_db import VectorMetricsDB  # type: ignore
 try:  # pragma: no cover - optional dependency
     from ..vector_service import Retriever  # type: ignore
@@ -34,7 +34,7 @@ except BaseException:  # pragma: no cover - fallback for lightweight environment
             return 0.0
 
 
-init_db_router("retrieval_ranker_dataset")
+router = GLOBAL_ROUTER or init_db_router("retrieval_ranker_dataset")
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ def _record_age(db_name: str, vec_id: str, *, now: datetime) -> float:
     if not table:
         return 0.0
     try:
-        conn = GLOBAL_ROUTER.get_connection(table)
+        conn = router.get_connection(table)
         cur = conn.execute(f"SELECT {col} FROM {table} WHERE id=?", (vec_id,))
         row = cur.fetchone()
         if row and row[0]:

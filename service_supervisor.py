@@ -12,12 +12,13 @@ from pathlib import Path
 from threading import Event
 from typing import Callable, Dict, Tuple, Optional
 
-from .db_router import init_db_router
+from .db_router import GLOBAL_ROUTER, init_db_router
 
 # Initialise a global DB router with a unique menace_id before importing modules
-# that may touch the database. All DB access must go through the router.
+# that may touch the database. When a router already exists it is reused to
+# avoid spawning multiple routers.
 MENACE_ID = uuid.uuid4().hex
-DB_ROUTER = init_db_router(MENACE_ID)
+DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
 
 from .menace_master import _init_unused_bots
 from .menace_orchestrator import MenaceOrchestrator

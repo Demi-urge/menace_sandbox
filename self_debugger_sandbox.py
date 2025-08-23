@@ -44,7 +44,7 @@ class CandidateEvaluationError(RuntimeError):
 import sqlite3
 import threading
 
-from db_router import init_db_router, GLOBAL_ROUTER
+from db_router import GLOBAL_ROUTER, init_db_router
 from .automated_debugger import AutomatedDebugger
 from .self_coding_engine import SelfCodingEngine
 from .audit_trail import AuditTrail
@@ -54,7 +54,7 @@ from .roi_tracker import ROITracker
 from typing import Callable, Mapping
 from .error_cluster_predictor import ErrorClusterPredictor
 
-init_db_router("self_debugger_sandbox")
+router = GLOBAL_ROUTER or init_db_router("self_debugger_sandbox")
 
 
 class SelfDebuggerSandbox(AutomatedDebugger):
@@ -102,7 +102,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._history_records: list[tuple[float, float, float, float, float, float]] = []
         try:
             path = Path(os.getenv("SANDBOX_SCORE_DB", "score_history.db"))
-            self._history_conn = GLOBAL_ROUTER.get_connection("flakiness_history")
+            self._history_conn = router.get_connection("flakiness_history")
             self._history_conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS flakiness_history(

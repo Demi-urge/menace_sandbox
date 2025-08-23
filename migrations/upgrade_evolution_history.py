@@ -1,12 +1,15 @@
 from pathlib import Path
 import sys
 
-from db_router import init_db_router, GLOBAL_ROUTER
+from db_router import GLOBAL_ROUTER, init_db_router
+
+
+router = GLOBAL_ROUTER or init_db_router("upgrade_evolution_history")
 
 
 def upgrade(path: str | Path | None = None) -> None:
     """Upgrade evolution_history schema with new columns if missing."""
-    conn = GLOBAL_ROUTER.get_connection("evolution_history")
+    conn = router.get_connection("evolution_history")
     cols = [r[1] for r in conn.execute("PRAGMA table_info(evolution_history)").fetchall()]
     if "efficiency" not in cols:
         conn.execute("ALTER TABLE evolution_history ADD COLUMN efficiency REAL DEFAULT 0")
@@ -33,7 +36,6 @@ def upgrade(path: str | Path | None = None) -> None:
 
 
 if __name__ == "__main__":
-    init_db_router("upgrade_evolution_history")
     if len(sys.argv) < 2:
         upgrade()
     else:

@@ -104,9 +104,11 @@ else:  # pragma: no cover - metrics optional
 
 logger = get_logger(__name__)
 
-from db_router import init_db_router, GLOBAL_ROUTER
+from db_router import GLOBAL_ROUTER, init_db_router
 
-init_db_router("roi_tracker")
+# Reuse a pre-configured router when available, otherwise create a local one
+# for standalone execution.
+router = GLOBAL_ROUTER or init_db_router("roi_tracker")
 
 # Critical test suites that significantly impact safety if they fail. The
 # collection may be extended as the project grows but defaults cover the most
@@ -953,7 +955,7 @@ class ROITracker:
         if not os.path.exists(path):
             return
         try:
-            conn = GLOBAL_ROUTER.get_connection("roi_prediction_events")
+            conn = router.get_connection("roi_prediction_events")
             try:
                 cur = conn.execute(
                     "SELECT workflow, predicted_roi, actual_roi, confidence FROM roi_prediction_events ORDER BY ts"
@@ -1004,7 +1006,7 @@ class ROITracker:
     ) -> List[Dict[str, Any]]:
         """Return persisted prediction events with telemetry details."""
 
-        conn = GLOBAL_ROUTER.get_connection("roi_prediction_events")
+        conn = router.get_connection("roi_prediction_events")
         try:
             cur = conn.cursor()
             base = (
@@ -1057,7 +1059,7 @@ class ROITracker:
     ) -> List[Dict[str, Any]]:
         """Return drift scores and flags for dashboards."""
 
-        conn = GLOBAL_ROUTER.get_connection("roi_prediction_events")
+        conn = router.get_connection("roi_prediction_events")
         try:
             cur = conn.cursor()
             base = "SELECT drift_flag, ts FROM roi_prediction_events"
@@ -1114,7 +1116,7 @@ class ROITracker:
         """
 
         try:
-            conn = GLOBAL_ROUTER.get_connection("roi_prediction_events")
+            conn = router.get_connection("roi_prediction_events")
             try:
                 cur = conn.execute(
                     "SELECT workflow_id, predicted_roi, actual_roi, predicted_class, actual_class, predicted_horizons, actual_horizons, predicted_categories, actual_categories "
@@ -2965,7 +2967,7 @@ class ROITracker:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(data, fh)
             return
-        with GLOBAL_ROUTER.get_connection("roi_history") as conn:
+        with router.get_connection("roi_history") as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS roi_history (delta REAL, confidence REAL, raroi REAL, mae REAL, roi_variance REAL, final_score REAL)"
             )
@@ -3477,7 +3479,7 @@ class ROITracker:
                 self._worst_scenario = None
             return
         try:
-            with GLOBAL_ROUTER.get_connection("roi_history") as conn:
+            with router.get_connection("roi_history") as conn:
                 try:
                     rows = conn.execute(
                         "SELECT delta, confidence, raroi, mae, roi_variance, final_score FROM roi_history ORDER BY rowid"
@@ -4020,7 +4022,7 @@ class ROITracker:
                 _DB_ROI_GAUGE.labels(origin_db=origin).set(avg)
 
         if sqlite_path:
-            with GLOBAL_ROUTER.get_connection("db_roi_metrics") as conn:
+            with router.get_connection("db_roi_metrics") as conn:
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS db_roi_metrics (

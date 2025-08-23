@@ -1,12 +1,15 @@
 from pathlib import Path
 import sys
 
-from db_router import init_db_router, GLOBAL_ROUTER
+from db_router import GLOBAL_ROUTER, init_db_router
+
+
+router = GLOBAL_ROUTER or init_db_router("upgrade_patch_provenance")
 
 
 def upgrade(path: str | Path | None = None) -> None:
     """Upgrade patch provenance schema with alert columns."""
-    conn = GLOBAL_ROUTER.get_connection("patch_provenance")
+    conn = router.get_connection("patch_provenance")
     try:
         for table in ("patch_provenance", "patch_ancestry"):
             cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
@@ -22,7 +25,6 @@ def upgrade(path: str | Path | None = None) -> None:
 
 
 if __name__ == "__main__":
-    init_db_router("upgrade_patch_provenance")
     if len(sys.argv) < 2:
         upgrade()
     else:

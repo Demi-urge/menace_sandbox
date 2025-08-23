@@ -13,9 +13,11 @@ from typing import Iterable, Dict, Tuple, List
 from analytics.session_roi import per_origin_stats
 from vector_metrics_db import VectorMetricsDB
 
-from db_router import init_db_router, GLOBAL_ROUTER
+from db_router import GLOBAL_ROUTER, init_db_router
 
-init_db_router("vector_metrics_aggregator")
+# Use existing router when available, falling back to a local initialisation
+# when the module runs standalone.
+router = GLOBAL_ROUTER or init_db_router("vector_metrics_aggregator")
 
 
 class VectorMetricsAggregator:
@@ -29,11 +31,8 @@ class VectorMetricsAggregator:
         """Yield ``(event_type, db, tokens, contribution, ts)`` rows from the database."""
         if not self.db_path.exists():
             return []
-        cur = (
-            GLOBAL_ROUTER.get_connection("vector_metrics")
-            .execute(
-                "SELECT event_type, db, tokens, COALESCE(contribution,0), ts FROM vector_metrics"
-            )
+        cur = router.get_connection("vector_metrics").execute(
+            "SELECT event_type, db, tokens, COALESCE(contribution,0), ts FROM vector_metrics"
         )
         return cur.fetchall()
 

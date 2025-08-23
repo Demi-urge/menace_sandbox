@@ -15,10 +15,11 @@ from typing import Literal
 
 import pandas as pd
 
-from db_router import init_db_router, GLOBAL_ROUTER
+from db_router import GLOBAL_ROUTER, init_db_router
 
-
-init_db_router("retrieval_training_dataset")
+# Allow reuse of an existing router but fall back to a local initialisation
+# when the module is executed directly.
+router = GLOBAL_ROUTER or init_db_router("retrieval_training_dataset")
 
 
 @dataclass
@@ -45,7 +46,7 @@ def build_dataset(
 
     v_path = Path(vector_db)
 
-    vconn = GLOBAL_ROUTER.get_connection("vector_metrics")
+    vconn = router.get_connection("vector_metrics")
     retrieval_df = pd.read_sql(
             """
             SELECT session_id, vector_id, db AS db_type, age, similarity,
@@ -69,7 +70,7 @@ def build_dataset(
         ]
     )
     if p_path.exists():
-        pconn = GLOBAL_ROUTER.get_connection("patch_outcomes")
+        pconn = router.get_connection("patch_outcomes")
         patch_df = pd.read_sql(
                 """
                 SELECT session_id, vector_id,

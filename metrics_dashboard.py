@@ -18,10 +18,10 @@ import sys
 from types import ModuleType
 
 from .telemetry_backend import TelemetryBackend
-from .db_router import init_db_router, GLOBAL_ROUTER
+from .db_router import GLOBAL_ROUTER, init_db_router
 
 
-init_db_router("metrics_dashboard")
+router = GLOBAL_ROUTER or init_db_router("metrics_dashboard")
 
 
 def _get_metrics_exporter() -> ModuleType | None:
@@ -194,7 +194,7 @@ class MetricsDashboard:
             pass
 
         try:
-            with GLOBAL_ROUTER.get_connection("retriever_kpi") as conn:
+            with router.get_connection("retriever_kpi") as conn:
                 rows = conn.execute(
                     """
             SELECT origin_db, roi FROM retriever_kpi
@@ -284,7 +284,7 @@ class MetricsDashboard:
         table = f"{metric}_agg_{period}"
         rows: List[dict] = []
         try:
-            with GLOBAL_ROUTER.get_connection(table) as conn:
+            with router.get_connection(table) as conn:
                 cur = conn.execute(f"SELECT * FROM {table}")
                 cols = [c[0] for c in cur.description]
                 rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -296,7 +296,7 @@ class MetricsDashboard:
                 from .metrics_aggregator import MetricsAggregator
 
                 MetricsAggregator("metrics.db", "analytics").run(period)
-                with GLOBAL_ROUTER.get_connection(table) as conn:
+                with router.get_connection(table) as conn:
                     cur = conn.execute(f"SELECT * FROM {table}")
                     cols = [c[0] for c in cur.description]
                     rows = [dict(zip(cols, r)) for r in cur.fetchall()]

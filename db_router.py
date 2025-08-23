@@ -343,9 +343,11 @@ def init_db_router(
 ) -> DBRouter:
     """Initialise a global :class:`DBRouter` instance.
 
-    ``local_db_path`` defaults to ``./menace_<id>_local.db`` and
-    ``shared_db_path`` defaults to ``./shared/global.db`` when not provided.
-    The created router is stored in :data:`GLOBAL_ROUTER` and returned.
+    Entry points must invoke this before performing any database operations so
+    that :data:`GLOBAL_ROUTER` is available to imported modules. ``local_db_path``
+    defaults to ``./menace_<id>_local.db`` and ``shared_db_path`` defaults to
+    ``./shared/global.db`` when not provided. The created router is stored in
+    :data:`GLOBAL_ROUTER` and returned.
     """
 
     global GLOBAL_ROUTER
