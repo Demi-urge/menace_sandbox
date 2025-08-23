@@ -206,7 +206,8 @@ def dummy_patch():
 
 @pytest.fixture
 def decision_logs(monkeypatch):
-    logs = []
+    logs: list[dict] = []
+    events: list[dict] = []
 
     class DummyLogger:
         def __init__(self, *a, **k):
@@ -218,9 +219,12 @@ def decision_logs(monkeypatch):
         def close(self):
             pass
 
+    def fake_event(event_type, data):
+        events.append({"type": event_type, "data": data})
+
     monkeypatch.setattr(dg, "ForecastLogger", lambda *a, **k: DummyLogger())
-    monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
-    return logs
+    monkeypatch.setattr(dg.audit_logger, "log_event", fake_event)
+    return logs, events
 
 
 @pytest.fixture
@@ -266,6 +270,7 @@ def test_promotion_proceeds_when_all_criteria_pass(
     decision_logs,
     mock_forecaster,
 ):
+    logs, events = decision_logs
     mock_forecaster([1.0, 1.0], confidence=0.9)
     res = dg.evaluate_workflow(
         _base_scorecard(),
@@ -276,7 +281,12 @@ def test_promotion_proceeds_when_all_criteria_pass(
     )
     assert res["verdict"] == "promote"
     assert res["reason_codes"] == []
-    assert decision_logs and decision_logs[0]["reason_codes"] == []
+    assert logs and logs[0]["reason_codes"] == []
+    assert "forecast" in logs[0]
+    assert "projections" in logs[0]["forecast"]
+    assert "confidence" in logs[0]["forecast"]
+    assert events and events[0]["data"]["reason_codes"] == []
+    assert "forecast" in events[0]["data"]
 
 
 def test_roi_below_threshold_downgrades_verdict(
@@ -286,6 +296,7 @@ def test_roi_below_threshold_downgrades_verdict(
     decision_logs,
     mock_forecaster,
 ):
+    logs, events = decision_logs
     mock_forecaster([0.1], confidence=0.9)
     res = dg.evaluate_workflow(
         _base_scorecard(),
@@ -296,8 +307,9 @@ def test_roi_below_threshold_downgrades_verdict(
     )
     assert res["verdict"] == "pilot"
     assert "projected_roi_below_threshold" in res["reason_codes"]
-    assert decision_logs[0]["reason_codes"] == ["projected_roi_below_threshold"]
-    assert decision_logs[0]["decision"] == "pilot"
+    assert logs[0]["reason_codes"] == ["projected_roi_below_threshold"]
+    assert logs[0]["decision"] == "pilot"
+    assert events[0]["data"]["reason_codes"] == ["projected_roi_below_threshold"]
 
 
 def test_low_confidence_downgrades_verdict(
@@ -307,6 +319,7 @@ def test_low_confidence_downgrades_verdict(
     decision_logs,
     mock_forecaster,
 ):
+    logs, events = decision_logs
     mock_forecaster([1.0], confidence=0.5)
     res = dg.evaluate_workflow(
         _base_scorecard(),
@@ -317,8 +330,9 @@ def test_low_confidence_downgrades_verdict(
     )
     assert res["verdict"] == "pilot"
     assert "low_confidence" in res["reason_codes"]
-    assert decision_logs[0]["reason_codes"] == ["low_confidence"]
-    assert decision_logs[0]["decision"] == "pilot"
+    assert logs[0]["reason_codes"] == ["low_confidence"]
+    assert logs[0]["decision"] == "pilot"
+    assert events[0]["data"]["reason_codes"] == ["low_confidence"]
 
 
 def test_early_collapse_downgrades_verdict(
@@ -328,6 +342,7 @@ def test_early_collapse_downgrades_verdict(
     decision_logs,
     mock_forecaster,
 ):
+    logs, events = decision_logs
     mock_forecaster([1.0], confidence=0.9)
     foresight_tracker.collapse = {"risk": "Immediate collapse risk"}
     res = dg.evaluate_workflow(
@@ -339,8 +354,9 @@ def test_early_collapse_downgrades_verdict(
     )
     assert res["verdict"] == "pilot"
     assert "roi_collapse_risk" in res["reason_codes"]
-    assert decision_logs[0]["reason_codes"] == ["roi_collapse_risk"]
-    assert decision_logs[0]["decision"] == "pilot"
+    assert logs[0]["reason_codes"] == ["roi_collapse_risk"]
+    assert logs[0]["decision"] == "pilot"
+    assert events[0]["data"]["reason_codes"] == ["roi_collapse_risk"]
 
 
 def test_negative_dag_impact_downgrades_verdict(
@@ -351,6 +367,7 @@ def test_negative_dag_impact_downgrades_verdict(
     mock_forecaster,
     monkeypatch,
 ):
+    logs, events = decision_logs
     mock_forecaster([1.0], confidence=0.9)
 
     def bad_wave(wf_id, roi_delta, _):
@@ -366,8 +383,39 @@ def test_negative_dag_impact_downgrades_verdict(
     )
     assert res["verdict"] == "pilot"
     assert "negative_dag_impact" in res["reason_codes"]
-    assert decision_logs[0]["reason_codes"] == ["negative_dag_impact"]
-    assert decision_logs[0]["decision"] == "pilot"
+    assert logs[0]["reason_codes"] == ["negative_dag_impact"]
+    assert logs[0]["decision"] == "pilot"
+    assert events[0]["data"]["reason_codes"] == ["negative_dag_impact"]
+
+
+def test_decision_log_file_records_details(
+    tmp_path,
+    foresight_tracker,
+    workflow_graph,
+    dummy_patch,
+    mock_forecaster,
+    monkeypatch,
+):
+    mock_forecaster([1.0], confidence=0.9)
+    path = tmp_path / "decision_log.jsonl"
+
+    from menace.forecast_logger import ForecastLogger as RealLogger
+
+    monkeypatch.setattr(dg, "ForecastLogger", lambda *a, **k: RealLogger(path))
+    monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
+    dg.evaluate_workflow(
+        _base_scorecard(),
+        {},
+        foresight_tracker=foresight_tracker,
+        workflow_id="wf",
+        patch=dummy_patch,
+    )
+    line = path.read_text().strip().splitlines()[0]
+    entry = json.loads(line)
+    assert entry["reason_codes"] == []
+    assert "forecast" in entry
+    assert "projections" in entry["forecast"]
+    assert "confidence" in entry["forecast"]
 
 
 def test_governor_foresight_gate_failure(monkeypatch):
