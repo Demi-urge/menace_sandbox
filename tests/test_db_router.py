@@ -60,19 +60,20 @@ def test_get_connection_thread_safe(tmp_path):
     local_db = tmp_path / "local.db"
     router = DBRouter("test", str(local_db), str(shared_db))
 
-    results = []
-    errors = []
+    results: list[tuple[str, str]] = []
+    errors: list[Exception] = []
+    tables = ("bots", "models") * 10
+    barrier = threading.Barrier(len(tables))
 
-    def worker(table_name):
+    def worker(table_name: str) -> None:
         try:
-            conn = router.get_connection(table_name)
-            results.append((_db_path(conn), table_name))
+            barrier.wait()
+            with router.get_connection(table_name) as conn:
+                results.append((_db_path(conn), table_name))
         except Exception as exc:  # pragma: no cover - capturing unexpected errors
             errors.append(exc)
 
-    threads = [
-        threading.Thread(target=worker, args=(t,)) for t in ("bots", "models") * 10
-    ]
+    threads = [threading.Thread(target=worker, args=(t,)) for t in tables]
     for t in threads:
         t.start()
     for t in threads:
