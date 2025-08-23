@@ -39,16 +39,12 @@ def _patch_gate(monkeypatch, ok, reasons):
         confidence_threshold=0.6,
     ):
         rec = "promote" if ok else "borderline"
-        return dg.ForesightDecision(
-            ok,
-            list(reasons),
-            {"upgrade_id": "fid", "projections": [], "confidence": None},
-            rec,
-        )
+        forecast = {"upgrade_id": "fid", "projections": [], "confidence": None, "recommendation": rec}
+        return ok, forecast, list(reasons)
 
     monkeypatch.setattr(dg, "WorkflowGraph", DummyGraph)
     monkeypatch.setattr(dg, "ForecastLogger", lambda *a, **k: DummyLogger())
-    monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
     return DummyTracker()
 
