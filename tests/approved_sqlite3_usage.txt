@@ -17,13 +17,11 @@ model_automation_pipeline.py
 neuroplasticity.py
 niche_saturation_bot.py
 operational_monitor_bot.py
-patch_safety.py
 patch_suggestion_db.py
 pre_execution_roi_bot.py
 relevancy_metrics_db.py
 relevancy_radar.py
 research_aggregator_bot.py
-resource_allocation_optimizer.py
 resources_bot.py
 safety_monitor.py
 sandbox_runner/environment.py
@@ -35,7 +33,6 @@ scripts/new_vector_module.py
 scripts/scaffold_db.py
 sentiment_bot.py
 session_vault.py
-synergy_history_db.py
 task_handoff_bot.py
 tests/stress/test_autonomous_extended_run.py
 tests/stress/test_autonomous_long_run.py
