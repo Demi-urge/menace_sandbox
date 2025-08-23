@@ -286,6 +286,18 @@ class DBRouter:
                 self.start_periodic_reporting(seconds)
 
     # ------------------------------------------------------------------
+    def __enter__(self) -> "DBRouter":
+        """Return ``self`` when entering a context manager."""
+
+        return self
+
+    # ------------------------------------------------------------------
+    def __exit__(self, exc_type, exc, tb) -> None:
+        """Close connections when leaving a context manager."""
+
+        self.close()
+
+    # ------------------------------------------------------------------
     def get_connection(self, table_name: str, operation: str = "read") -> sqlite3.Connection:
         """Return the appropriate connection for ``table_name``.
 

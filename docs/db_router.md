@@ -11,6 +11,20 @@ at `./menace_<menace_id>_local.db` and shared data lives in `./shared/global.db`
 by default. `init_db_router` also stores the router in `GLOBAL_ROUTER` for
 modules that rely on a globally accessible instance.
 
+### Context manager usage
+
+`DBRouter` acts as a context manager to automatically close both database
+connections when the block exits:
+
+```python
+from db_router import DBRouter
+
+with DBRouter("alpha", "local.db", "shared.db") as router:
+    conn = router.get_connection("bots")
+    conn.execute("SELECT 1")
+# exiting the block closes the local and shared connections
+```
+
 ## Startup initialisation
 
 Application entry points (for example `main.py`, `sandbox_runner.py` or other
