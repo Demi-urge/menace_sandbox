@@ -101,6 +101,7 @@ if "LOCAL_TABLES" in globals():
             "experiment_history",
             "experiment_tests",
             "embedding_stats",
+            "messages",
         }
     )
 else:
@@ -140,6 +141,7 @@ else:
         "experiment_history",
         "experiment_tests",
         "embedding_stats",
+        "messages",
     }
 
 # Tables explicitly denied even if present in the allow lists.  Also mutated
