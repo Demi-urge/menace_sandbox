@@ -22,6 +22,8 @@ from typing import Iterable, List, Tuple
 import numpy as np
 import logging
 
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+
 from . import RAISE_ERRORS
 
 logger = logging.getLogger(__name__)
@@ -280,17 +282,24 @@ class TrafficSample:
 class CounterDB:
     """Lightweight log of counter operations backed by SQLite or DuckDB."""
 
-    def __init__(self, path: Path | str | None = None, *, engine: str | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | str | None = None,
+        *,
+        engine: str | None = None,
+        router: DBRouter | None = None,
+    ) -> None:
         self.path = Path(path or os.getenv("AI_COUNTER_DB", "ai_counter.db"))
         eng = engine or os.getenv("AI_COUNTER_DB_ENGINE", "sqlite").lower()
         self.engine = "duckdb" if eng == "duckdb" and duckdb is not None else "sqlite"
+        self.router = router or GLOBAL_ROUTER or init_db_router("ai_counter")
         self._init()
 
     def _init(self) -> None:
         if self.engine == "duckdb" and duckdb is not None:
             conn = duckdb.connect(str(self.path))
         else:
-            conn = sqlite3.connect(self.path)
+            conn = self.router.get_connection("events")
         with conn:
             conn.execute(
                 """
@@ -308,7 +317,7 @@ class CounterDB:
         if self.engine == "duckdb" and duckdb is not None:
             conn = duckdb.connect(str(self.path))
         else:
-            conn = sqlite3.connect(self.path)
+            conn = self.router.get_connection("events")
         with conn:
             cur = conn.execute(
                 "INSERT INTO events(text, detected, algorithm, counter) VALUES(?,?,?,?)",
@@ -320,7 +329,7 @@ class CounterDB:
         if self.engine == "duckdb" and duckdb is not None:
             conn = duckdb.connect(str(self.path))
         else:
-            conn = sqlite3.connect(self.path)
+            conn = self.router.get_connection("events")
         with conn:
             rows = conn.execute(
                 "SELECT text, detected, algorithm, counter FROM events ORDER BY id"
@@ -333,7 +342,7 @@ class CounterDB:
             if self.engine == "duckdb" and duckdb is not None:
                 conn = duckdb.connect(str(self.path))
             else:
-                conn = sqlite3.connect(self.path)
+                conn = self.router.get_connection("events")
             with conn:
                 ids = conn.execute(
                     "SELECT id FROM events ORDER BY id DESC LIMIT ?",

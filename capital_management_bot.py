@@ -16,7 +16,7 @@ from collections import deque
 import asyncio
 import statistics
 
-from db_router import GLOBAL_ROUTER, init_db_router
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 try:  # pragma: no cover - optional dependency
     from dotenv import load_dotenv
@@ -36,6 +36,12 @@ from .error_bot import ErrorBot
 from .retry_utils import retry
 
 logger = logging.getLogger(__name__)
+
+
+def _get_router(router: DBRouter | None = None) -> DBRouter:
+    """Return an initialised :class:`DBRouter` instance."""
+
+    return router or GLOBAL_ROUTER or init_db_router("capital")
 
 # ---------------------------------------------------------------------------
 # Configuration defaults can be overridden via environment variables. The
@@ -123,30 +129,31 @@ def fetch_metric_from_db(
     default: float | None = None,
     error_bot: "ErrorBot" | None = None,
     webhook_url: str | None = None,
+    router: DBRouter | None = None,
 ) -> float:
     """Fetch the latest metric value from a SQLite database."""
     try:
-        with sqlite3.connect(db_path) as conn:
-            cur = conn.execute(
-                "SELECT value FROM metrics WHERE name=? ORDER BY ts DESC LIMIT 1",
-                (metric_name,),
-            )
-            row = cur.fetchone()
-            if row is None:
-                if default is None:
-                    raise KeyError(f"metric {metric_name} not found")
-                if error_bot:
-                    error_bot.flag_module(__name__)
-                if webhook_url:
-                    try:
-                        send_discord_alert(
-                            f"Metric {metric_name} missing; using fallback",
-                            webhook_url,
-                        )
-                    except Exception:
-                        logger.exception("discord alert failed")
-                return float(default)
-            return float(row[0])
+        conn = _get_router(router).get_connection("metrics")
+        cur = conn.execute(
+            "SELECT value FROM metrics WHERE name=? ORDER BY ts DESC LIMIT 1",
+            (metric_name,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            if default is None:
+                raise KeyError(f"metric {metric_name} not found")
+            if error_bot:
+                error_bot.flag_module(__name__)
+            if webhook_url:
+                try:
+                    send_discord_alert(
+                        f"Metric {metric_name} missing; using fallback",
+                        webhook_url,
+                    )
+                except Exception:
+                    logger.exception("discord alert failed")
+            return float(default)
+        return float(row[0])
     except Exception as exc:  # pragma: no cover - DB or parsing error
         logger.exception("metric fetch failed: %s", exc)
         if default is not None:
@@ -294,12 +301,14 @@ class LedgerEntry:
 class CapitalLedger:
     """SQLite-backed ledger for capital movements."""
 
-    def __init__(self, path: Path | str = LEDGER_DB_PATH) -> None:
+    def __init__(
+        self, path: Path | str = LEDGER_DB_PATH, *, router: DBRouter | None = None
+    ) -> None:
         # allow cross-thread usage since the bot may run async workers
         self.lock = threading.Lock()
         try:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            self.conn = sqlite3.connect(path, check_same_thread=False)
+            self.router = _get_router(router)
+            self.conn = self.router.get_connection("ledger")
             self.conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ledger(
@@ -365,8 +374,10 @@ class CapitalLedger:
 class CapitalAllocationLedger(CapitalLedger):
     """Ledger dedicated to capital deployment decisions."""
 
-    def __init__(self, path: Path | str = ALLOC_LEDGER_DB_PATH) -> None:
-        super().__init__(path)
+    def __init__(
+        self, path: Path | str = ALLOC_LEDGER_DB_PATH, *, router: DBRouter | None = None
+    ) -> None:
+        super().__init__(path, router=router)
 
 
 @dataclass
@@ -382,10 +393,12 @@ class ROIEvent:
 class ROIEventDB:
     """SQLite-backed store for ROI change events."""
 
-    def __init__(self, path: Path | str = ROI_EVENTS_DB_PATH) -> None:
+    def __init__(
+        self, path: Path | str = ROI_EVENTS_DB_PATH, *, router: DBRouter | None = None
+    ) -> None:
         try:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            self.conn = sqlite3.connect(path)
+            self.router = _get_router(router)
+            self.conn = self.router.get_connection("roi_events")
             self.conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS roi_events(
@@ -448,10 +461,12 @@ class ProfitRecord:
 class ProfitHistoryDB:
     """Simple SQLite store of profit over time."""
 
-    def __init__(self, path: Path | str = PROFIT_HISTORY_DB_PATH) -> None:
+    def __init__(
+        self, path: Path | str = PROFIT_HISTORY_DB_PATH, *, router: DBRouter | None = None
+    ) -> None:
         try:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            self.conn = sqlite3.connect(path, check_same_thread=False)
+            self.router = _get_router(router)
+            self.conn = self.router.get_connection("profit_history")
             self.conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS profit_history(
@@ -494,10 +509,12 @@ class SummaryRecord:
 class SummaryHistoryDB:
     """SQLite-backed store of capital summaries."""
 
-    def __init__(self, path: Path | str = SUMMARY_HISTORY_DB_PATH) -> None:
+    def __init__(
+        self, path: Path | str = SUMMARY_HISTORY_DB_PATH, *, router: DBRouter | None = None
+    ) -> None:
         try:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            self.conn = sqlite3.connect(path, check_same_thread=False)
+            self.router = _get_router(router)
+            self.conn = self.router.get_connection("capital_summary")
             self.conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS capital_summary(
