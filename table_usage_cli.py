@@ -9,12 +9,14 @@ from db_router import GLOBAL_ROUTER
 import telemetry_backend
 
 
-def _format_counts(counts: Dict[str, Dict[str, float]]) -> str:
+def _format_counts(counts: Dict[str, Dict[str, Dict[str, float]]]) -> str:
     lines = []
-    for kind, tables in counts.items():
-        lines.append(f"{kind}:")
-        for table, count in sorted(tables.items()):
-            lines.append(f"  {table}: {int(count)}")
+    for menace, ops in counts.items():
+        lines.append(f"{menace}:")
+        for kind, tables in ops.items():
+            lines.append(f"  {kind}:")
+            for table, count in sorted(tables.items()):
+                lines.append(f"    {table}: {int(count)}")
     return "\n".join(lines)
 
 

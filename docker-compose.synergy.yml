@@ -5,6 +5,8 @@ services:
     command: ["python", "-m", "menace.synergy_exporter", "--history-file", "sandbox_data/synergy_history.db"]
     env_file:
       - .env
+    environment:
+      DB_ROUTER_METRICS_INTERVAL: "60"
     volumes:
       - ./sandbox_data:/app/sandbox_data
     ports:
@@ -14,5 +16,7 @@ services:
     command: ["python", "-m", "menace.synergy_auto_trainer", "--history-file", "sandbox_data/synergy_history.db", "--weights-file", "sandbox_data/synergy_weights.json"]
     env_file:
       - .env
+    environment:
+      DB_ROUTER_METRICS_INTERVAL: "60"
     volumes:
       - ./sandbox_data:/app/sandbox_data

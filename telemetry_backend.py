@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
@@ -16,6 +17,11 @@ _TABLE_ACCESS = Gauge(
     "table_access_total",
     "Count of table accesses",
     ["menace", "table", "operation"],
+)
+
+# In-memory collector for table usage grouped by menace and operation
+_TABLE_ACCESS_COUNTS: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(
+    lambda: defaultdict(dict)
 )
 
 
@@ -44,6 +50,9 @@ def record_table_access(
     except Exception:  # pragma: no cover - best effort
         pass
 
+    counts = _TABLE_ACCESS_COUNTS[menace_id][operation]
+    counts[table_name] = counts.get(table_name, 0.0) + float(count)
+
 
 def record_shared_table_access(table_name: str) -> None:  # pragma: no cover - legacy
     """Backward compatible wrapper around :func:`record_table_access`."""
@@ -51,34 +60,23 @@ def record_shared_table_access(table_name: str) -> None:  # pragma: no cover - l
     record_table_access("shared", table_name, "unknown")
 
 
-def get_table_access_counts() -> Dict[str, Dict[str, float]]:
-    """Return aggregated table access metrics grouped by operation.
+def get_table_access_counts(*, flush: bool = False) -> Dict[str, Dict[str, Dict[str, float]]]:
+    """Return collected table access metrics grouped by menace and operation.
 
-    The returned mapping has the structure ``{operation: {table: count}}`` and
-    is derived from the in-memory metrics.  Values are floats to accommodate the
-    Prometheus client API which stores metrics as doubles.
+    The returned mapping has the structure `{menace: {operation: {table: count}}}`.
+    Counts are stored as floats to align with the Prometheus client API. When
+    `flush` is true the internal collector is cleared after the snapshot is
+    taken.
     """
 
-    results: Dict[str, Dict[str, float]] = {}
-    wrappers = getattr(_TABLE_ACCESS, "_values", None) or getattr(
-        _TABLE_ACCESS, "_metrics", {}
-    )
-    for labels, wrapper in wrappers.items():
-        try:
-            menace, table, operation = labels
-        except Exception:  # pragma: no cover - defensive
-            continue
-        try:
-            value = wrapper.get()  # stub gauge
-        except Exception:
-            try:
-                value = wrapper._value.get()  # prometheus client
-            except Exception:  # pragma: no cover - defensive
-                continue
-        results.setdefault(operation, {})[table] = results.setdefault(operation, {}).get(
-            table, 0.0
-        ) + float(value)
-    return results
+    snapshot: Dict[str, Dict[str, Dict[str, float]]] = {
+        menace: {op: dict(tables) for op, tables in ops.items()}
+        for menace, ops in _TABLE_ACCESS_COUNTS.items()
+    }
+    if flush:
+        _TABLE_ACCESS_COUNTS.clear()
+    return snapshot
+
 
 
 class TelemetryBackend:
