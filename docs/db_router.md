@@ -47,11 +47,24 @@ SHARED_TABLES.add("alerts")
 LOCAL_TABLES.add("session")
 ```
 
-The router can also be configured via environment variables or a JSON file. Set
+For larger or frequently changing inventories the table lists may be maintained
+centrally.  A configuration file at `config/db_router_tables.json` is loaded
+automatically on import and merged with the built‑in defaults.  It should
+provide `shared`, `local` and optional `deny` arrays:
+
+```json
+{
+  "shared": ["enhancements", "bots"],
+  "local": ["models", "sandbox_metrics"],
+  "deny": []
+}
+```
+
+Environment variables remain available for ad‑hoc overrides.  Set
 `DB_ROUTER_SHARED_TABLES`, `DB_ROUTER_LOCAL_TABLES` or `DB_ROUTER_DENY_TABLES`
-to comma separated table lists. Alternatively, point `DB_ROUTER_CONFIG` to a
-JSON file containing `{"shared": [...], "local": [...], "deny": [...]}` to
-extend or restrict the built-in lists.
+to comma separated table lists.  Alternatively, point `DB_ROUTER_CONFIG` to a
+different JSON file following the structure above to extend or restrict the
+loaded lists.
 
 ## Retrieving connections
 
