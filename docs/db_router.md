@@ -132,6 +132,13 @@ silent. Configure the verbosity via the `DB_ROUTER_LOG_LEVEL` environment
 variable. The output format defaults to JSON but can be set to key-value pairs
 by defining `DB_ROUTER_LOG_FORMAT=kv`.
 
+### Audit log
+
+For additional auditing, set the `DB_ROUTER_AUDIT_LOG` environment variable to a
+file path. When configured, every shared-table access is appended to this file
+as a JSON object containing the menace ID, table name and timestamp. Leave the
+variable unset to disable audit logging.
+
 The router also aggregates simple access counts per table, accessible via
 `DBRouter.get_access_counts()`, and exposes shared table counts via the
 `shared_table_access_total` telemetry gauge.

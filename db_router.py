@@ -110,6 +110,25 @@ _level_name = os.getenv("DB_ROUTER_LOG_LEVEL", "INFO").upper()
 logger.setLevel(getattr(logging, _level_name, logging.INFO))
 _log_format = os.getenv("DB_ROUTER_LOG_FORMAT", "json").lower()
 
+# Optional audit log for shared table accesses. When ``DB_ROUTER_AUDIT_LOG`` is
+# defined, entries are appended to the referenced file as JSON lines.
+_audit_log_path = os.getenv("DB_ROUTER_AUDIT_LOG")
+
+
+def _record_audit(entry: dict[str, str]) -> None:
+    """Persist *entry* to the audit log when configured."""
+
+    if not _audit_log_path:
+        return
+    try:
+        directory = os.path.dirname(_audit_log_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(_audit_log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception:  # pragma: no cover - best effort
+        pass
+
 
 # Global router instance used by modules that rely on a single router without
 # passing it around explicitly.  ``init_db_router`` populates this value.
@@ -184,6 +203,7 @@ class DBRouter:
                 else:
                     msg = json.dumps(entry)
                 logger.info(msg)
+                _record_audit(entry)
                 self._access_counts["shared"][table_name] += 1
                 _tb = None
                 try:  # pragma: no cover - import available only in package context
