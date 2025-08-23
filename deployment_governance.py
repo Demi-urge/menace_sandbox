@@ -462,13 +462,15 @@ class DeploymentGovernor:
                     "confidence": conf_val,
                     "recommendation": decision.recommendation,
                 }
+                decision_label = (
+                    decision.recommendation if not decision.safe else "promote"
+                )
                 log_forecast_record(
                     logger_obj,
                     workflow_id,
-                    projections,
-                    conf_val,
+                    decision.forecast,
+                    decision_label,
                     decision.reasons,
-                    decision.forecast.get("upgrade_id"),
                 )
                 record = {
                     "event": "foresight_promotion_decision",
@@ -645,13 +647,15 @@ def evaluate_workflow(
                 "confidence": conf_val,
                 "recommendation": decision.recommendation,
             }
+            decision_label = (
+                decision.recommendation if not decision.safe else "promote"
+            )
             log_forecast_record(
                 logger_obj,
                 workflow_id,
-                projections,
-                conf_val,
+                decision.forecast,
+                decision_label,
                 decision.reasons,
-                decision.forecast.get("upgrade_id"),
             )
             record = {
                 "event": "foresight_promotion_decision",
@@ -791,13 +795,15 @@ def evaluate(
                     "confidence": conf_val,
                     "recommendation": decision.recommendation,
                 }
+                decision_label = (
+                    decision.recommendation if not decision.safe else "promote"
+                )
                 log_forecast_record(
                     logger_obj,
                     workflow_id,
-                    projections,
-                    conf_val,
+                    decision.forecast,
+                    decision_label,
                     decision.reasons,
-                    forecast_info.get("forecast_id"),
                 )
                 record = {
                     "event": "foresight_promotion_decision",
@@ -1131,13 +1137,17 @@ class RuleEvaluator:
                                     "confidence": conf_val,
                                     "recommendation": decision.recommendation,
                                 }
+                                decision_label = (
+                                    decision.recommendation
+                                    if not decision.safe
+                                    else "promote"
+                                )
                                 log_forecast_record(
                                     logger_obj,
                                     workflow_id,
-                                    projections,
-                                    conf_val,
+                                    decision.forecast,
+                                    decision_label,
                                     decision.reasons,
-                                    decision.forecast.get("upgrade_id"),
                                 )
                                 record = {
                                     "event": "foresight_promotion_decision",
