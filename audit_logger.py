@@ -10,6 +10,8 @@ import sqlite3
 from datetime import datetime
 from typing import Any, Dict, List
 
+from db_router import GLOBAL_ROUTER, init_db_router
+
 # Directory and default log paths
 LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
 JSONL_PATH = os.path.join(LOG_DIR, "audit_log.jsonl")
@@ -99,16 +101,22 @@ def log_to_sqlite(event_type: str, data: Dict[str, Any], db_path: str = SQLITE_P
     _ensure_log_dir()
     event_id = generate_event_id(event_type)
     ts = datetime.utcnow().isoformat()
-    conn = sqlite3.connect(db_path)
+    router = GLOBAL_ROUTER or init_db_router("default")
+    conn = router.get_connection("events")
     _ensure_db(conn)
     cur = conn.cursor()
-    cur.execute("INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)", (event_id, ts, event_type))
+    cur.execute(
+        "INSERT INTO events (event_id, timestamp, event_type) VALUES (?, ?, ?)",
+        (event_id, ts, event_type),
+    )
     for key, value in data.items():
         if isinstance(value, (dict, list)):
             value = json.dumps(value)
-        cur.execute("INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)", (event_id, key, str(value)))
+        cur.execute(
+            "INSERT INTO event_data (event_id, key, value) VALUES (?, ?, ?)",
+            (event_id, key, str(value)),
+        )
     conn.commit()
-    conn.close()
     return event_id
 
 
@@ -116,23 +124,26 @@ def get_recent_events(limit: int = 100, jsonl_path: str = JSONL_PATH, db_path: s
     """Return the most recent events from the JSONL or SQLite log."""
     if limit <= 0:
         return []
-    if os.path.exists(db_path):
-        conn = sqlite3.connect(db_path)
-        _ensure_db(conn)
-        cur = conn.cursor()
-        cur.execute("SELECT event_id, timestamp, event_type FROM events ORDER BY timestamp DESC LIMIT ?", (limit,))
-        events: List[Dict[str, Any]] = []
-        for event_id, ts, etype in cur.fetchall():
-            cur.execute("SELECT key, value FROM event_data WHERE event_id=?", (event_id,))
-            data = {k: v for k, v in cur.fetchall()}
-            try:
-                for k, v in data.items():
-                    if isinstance(v, str) and (v.startswith("{") or v.startswith("[")):
-                        data[k] = json.loads(v)
-            except Exception:
-                pass
-            events.append({"timestamp": ts, "event_type": etype, "event_id": event_id, "data": data})
-        conn.close()
+    router = GLOBAL_ROUTER or init_db_router("default")
+    conn = router.get_connection("events")
+    _ensure_db(conn)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT event_id, timestamp, event_type FROM events ORDER BY timestamp DESC LIMIT ?",
+        (limit,),
+    )
+    events: List[Dict[str, Any]] = []
+    for event_id, ts, etype in cur.fetchall():
+        cur.execute("SELECT key, value FROM event_data WHERE event_id=?", (event_id,))
+        data = {k: v for k, v in cur.fetchall()}
+        try:
+            for k, v in data.items():
+                if isinstance(v, str) and (v.startswith("{") or v.startswith("[")):
+                    data[k] = json.loads(v)
+        except Exception:
+            pass
+        events.append({"timestamp": ts, "event_type": etype, "event_id": event_id, "data": data})
+    if events:
         return list(reversed(events))
     if not os.path.exists(jsonl_path):
         return []

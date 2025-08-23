@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional, Callable, Iterable, cast
+from typing import Dict, Iterable, List, Optional, Callable, Tuple, cast
 from enum import Enum
 import os
 import threading
@@ -15,6 +15,8 @@ import logging
 from collections import deque
 import asyncio
 import statistics
+
+from db_router import GLOBAL_ROUTER, init_db_router
 
 try:  # pragma: no cover - optional dependency
     from dotenv import load_dotenv
@@ -1405,16 +1407,18 @@ class CapitalManagementBot:
                     {"bot": k, "revenue": v["revenue"], "expense": v["expense"]}
                     for k, v in rows.items()
                 ]
-            with sqlite3.connect(models_db) as conn:
-                for row in rows:
-                    roi = float(row.get("revenue", 0.0) - row.get("expense", 0.0))
-                    bot_name = row.get("bot", "")
-                    if not bot_name:
-                        continue
-                    conn.execute(
-                        "UPDATE models SET current_roi = ? WHERE name LIKE ?",
-                        (roi, f"%{bot_name}%"),
-                    )
+            router = GLOBAL_ROUTER or init_db_router("default")
+            conn = router.get_connection("models")
+            for row in rows:
+                roi = float(row.get("revenue", 0.0) - row.get("expense", 0.0))
+                bot_name = row.get("bot", "")
+                if not bot_name:
+                    continue
+                conn.execute(
+                    "UPDATE models SET current_roi = ? WHERE name LIKE ?",
+                    (roi, f"%{bot_name}%"),
+                )
+            conn.commit()
         except Exception as exc:
             logger.exception("failed to update ROIs: %s", exc)
 
