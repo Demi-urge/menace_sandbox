@@ -159,7 +159,6 @@ try:
     from .borderline_bucket import BorderlineBucket
 except Exception:  # pragma: no cover - fallback for flat layout
     from borderline_bucket import BorderlineBucket  # type: ignore
-from dataclasses import asdict
 try:  # pragma: no cover - allow flat imports
     from .foresight_gate import is_foresight_safe_to_promote
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -5510,29 +5509,19 @@ class SelfImprovementEngine:
                             forecaster = UpgradeForecaster(self.foresight_tracker)
                             graph = WorkflowGraph()
                             logger_obj = ForecastLogger("forecast_records/foresight.log")
-                            safe, fs_codes, forecast_res = is_foresight_safe_to_promote(
+                            safe, fs_codes, forecast_info = is_foresight_safe_to_promote(
                                 workflow_id,
                                 str(patch_id) if patch_id is not None else "",
                                 forecaster,
                                 graph,
                             )
-                            projections = [
-                                asdict(p) for p in getattr(forecast_res, "projections", [])
-                            ]
-                            conf_val = getattr(forecast_res, "confidence", None)
-                            upgrade = getattr(forecast_res, "upgrade_id", None)
-                            forecast_info = {
-                                "projections": projections,
-                                "confidence": conf_val,
-                                "upgrade_id": upgrade,
-                            }
                             log_forecast_record(
                                 logger_obj,
                                 workflow_id,
-                                projections,
-                                conf_val,
+                                forecast_info.get("projections", []),
+                                forecast_info.get("confidence"),
                                 fs_codes,
-                                upgrade,
+                                forecast_info.get("upgrade_id"),
                             )
                             if not safe:
                                 verdict = "pilot"

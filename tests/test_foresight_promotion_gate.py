@@ -1,5 +1,4 @@
 import json
-from dataclasses import asdict
 
 import menace.foresight_gate as fg
 from menace.upgrade_forecaster import ForecastResult, CycleProjection
@@ -100,7 +99,7 @@ def test_engine_downgrades_and_logs(tmp_path):
     tracker = DummyTracker({"risk": "Stable"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({})
-    safe, reasons, forecast_res = fg.is_foresight_safe_to_promote(
+    safe, reasons, forecast_info = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph
     )
     assert not safe
@@ -112,11 +111,6 @@ def test_engine_downgrades_and_logs(tmp_path):
     ed.GOVERNANCE_LOG = log_path
     scorecard = {}
     vetoes: list[str] = []
-    forecast_info = {
-        "projections": [asdict(p) for p in forecast_res.projections],
-        "confidence": forecast_res.confidence,
-        "upgrade_id": forecast_res.upgrade_id,
-    }
     verdict = "promote"
     if not safe:
         verdict = "pilot"

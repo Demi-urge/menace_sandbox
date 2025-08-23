@@ -41,7 +41,7 @@ def test_projected_roi_below_threshold(tmp_path):
     )
     assert not ok
     assert "projected_roi_below_threshold" in reasons
-    assert forecast.upgrade_id == "u1"
+    assert forecast.get("upgrade_id") == "u1"
 
 
 def test_low_confidence(tmp_path):
@@ -56,7 +56,7 @@ def test_low_confidence(tmp_path):
     ok, reasons, forecast = dg.is_foresight_safe_to_promote("wf", [], forecaster, graph)
     assert not ok
     assert "low_confidence" in reasons
-    assert forecast.upgrade_id == "u2"
+    assert forecast.get("upgrade_id") == "u2"
 
 
 def test_negative_dag_impact(tmp_path):
@@ -76,7 +76,7 @@ def test_negative_dag_impact(tmp_path):
     )
     assert not ok
     assert "negative_dag_impact" in reasons
-    assert forecast.upgrade_id == "u3"
+    assert forecast.get("upgrade_id") == "u3"
 
 
 def test_collapse_risk(tmp_path):
@@ -91,7 +91,7 @@ def test_collapse_risk(tmp_path):
     ok, reasons, forecast = dg.is_foresight_safe_to_promote("wf", [], forecaster, graph)
     assert not ok
     assert "roi_collapse_risk" in reasons
-    assert forecast.upgrade_id == "u4"
+    assert forecast.get("upgrade_id") == "u4"
 
 
 def test_success_path(tmp_path):
@@ -106,4 +106,4 @@ def test_success_path(tmp_path):
     ok, reasons, forecast = dg.is_foresight_safe_to_promote("wf", [], forecaster, graph)
     assert ok
     assert reasons == []
-    assert forecast.upgrade_id == "u5"
+    assert forecast.get("upgrade_id") == "u5"

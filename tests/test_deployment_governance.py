@@ -378,7 +378,7 @@ def test_governor_foresight_gate_failure(monkeypatch):
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
         confidence_threshold=0.6,
     ):
-        return False, ["fs_fail"], type("R", (), {"upgrade_id": "fid1"})()
+        return False, ["fs_fail"], {"upgrade_id": "fid1", "projections": [], "confidence": None}
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(
@@ -430,7 +430,7 @@ def test_governor_foresight_gate_pass(monkeypatch):
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
         confidence_threshold=0.6,
     ):
-        return True, [], type("R", (), {"upgrade_id": "fid2"})()
+        return True, [], {"upgrade_id": "fid2", "projections": [], "confidence": None}
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(

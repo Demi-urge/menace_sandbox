@@ -9,7 +9,7 @@ scores, scenario stress test results and alignment checks.  Optional policy
 files may provide rule expressions that override the built in heuristics.
 """
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping
 
 import ast
@@ -444,20 +444,18 @@ class DeploymentGovernor:
                 )
                 logger_obj = ForecastLogger("forecast_records/foresight.log")
                 forecaster = UpgradeForecaster(foresight_tracker)
-                ok, fs_reasons, forecast_res = is_foresight_safe_to_promote(
+                ok, fs_reasons, forecast_info = is_foresight_safe_to_promote(
                     workflow_id,
                     patch_repr,
                     forecaster,
                     graph,
                     roi_threshold=roi_min,
                 )
-                projections = [
-                    asdict(p) for p in getattr(forecast_res, "projections", [])
-                ]
-                conf_val = getattr(forecast_res, "confidence", None)
+                projections = forecast_info.get("projections", [])
+                conf_val = forecast_info.get("confidence")
                 foresight_info = {
                     "reason_codes": list(fs_reasons),
-                    "forecast_id": getattr(forecast_res, "upgrade_id", None),
+                    "forecast_id": forecast_info.get("upgrade_id"),
                     "projections": projections,
                     "confidence": conf_val,
                 }
@@ -467,7 +465,7 @@ class DeploymentGovernor:
                     projections,
                     conf_val,
                     fs_reasons,
-                    getattr(forecast_res, "upgrade_id", None),
+                    forecast_info.get("upgrade_id"),
                 )
                 record = {
                     "event": "foresight_promotion_decision",
@@ -630,20 +628,18 @@ def evaluate_workflow(
             )
             logger_obj = ForecastLogger("forecast_records/foresight.log")
             forecaster = UpgradeForecaster(foresight_tracker)
-            ok, fs_reasons, forecast_res = is_foresight_safe_to_promote(
+            ok, fs_reasons, forecast_info = is_foresight_safe_to_promote(
                 workflow_id,
                 patch_repr,
                 forecaster,
                 graph,
                 roi_threshold=roi_min,
             )
-            projections = [
-                asdict(p) for p in getattr(forecast_res, "projections", [])
-            ]
-            conf_val = getattr(forecast_res, "confidence", None)
+            projections = forecast_info.get("projections", [])
+            conf_val = forecast_info.get("confidence")
             foresight_info = {
                 "reason_codes": list(fs_reasons),
-                "forecast_id": getattr(forecast_res, "upgrade_id", None),
+                "forecast_id": forecast_info.get("upgrade_id"),
                 "projections": projections,
                 "confidence": conf_val,
             }
@@ -653,7 +649,7 @@ def evaluate_workflow(
                 projections,
                 conf_val,
                 fs_reasons,
-                getattr(forecast_res, "upgrade_id", None),
+                forecast_info.get("upgrade_id"),
             )
             record = {
                 "event": "foresight_promotion_decision",
@@ -779,19 +775,17 @@ def evaluate(
                 graph = WorkflowGraph()
                 logger_obj = ForecastLogger("forecast_records/foresight.log")
                 forecaster = UpgradeForecaster(foresight_tracker)
-                ok, fs_reasons, forecast_res = is_foresight_safe_to_promote(
+                ok, fs_reasons, forecast_info = is_foresight_safe_to_promote(
                     workflow_id,
                     patch_repr,
                     forecaster,
                     graph,
                 )
-                projections = [
-                    asdict(p) for p in getattr(forecast_res, "projections", [])
-                ]
-                conf_val = getattr(forecast_res, "confidence", None)
+                projections = forecast_info.get("projections", [])
+                conf_val = forecast_info.get("confidence")
                 forecast_info = {
                     "reason_codes": list(fs_reasons),
-                    "forecast_id": getattr(forecast_res, "upgrade_id", None),
+                    "forecast_id": forecast_info.get("upgrade_id"),
                     "projections": projections,
                     "confidence": conf_val,
                 }
@@ -801,7 +795,7 @@ def evaluate(
                     projections,
                     conf_val,
                     fs_reasons,
-                    getattr(forecast_res, "upgrade_id", None),
+                    forecast_info.get("forecast_id"),
                 )
                 record = {
                     "event": "foresight_promotion_decision",
@@ -1115,19 +1109,17 @@ class RuleEvaluator:
                                 graph = WorkflowGraph()
                                 logger_obj = ForecastLogger("forecast_records/foresight.log")
                                 forecaster = UpgradeForecaster(foresight_tracker)
-                                ok, fs_reasons, forecast_res = is_foresight_safe_to_promote(
+                                ok, fs_reasons, forecast_info = is_foresight_safe_to_promote(
                                     workflow_id,
                                     patch_repr,
                                     forecaster,
                                     graph,
                                 )
-                                projections = [
-                                    asdict(p) for p in getattr(forecast_res, "projections", [])
-                                ]
-                                conf_val = getattr(forecast_res, "confidence", None)
+                                projections = forecast_info.get("projections", [])
+                                conf_val = forecast_info.get("confidence")
                                 result["foresight"] = {
                                     "reason_codes": list(fs_reasons),
-                                    "forecast_id": getattr(forecast_res, "upgrade_id", None),
+                                    "forecast_id": forecast_info.get("upgrade_id"),
                                     "projections": projections,
                                     "confidence": conf_val,
                                 }
@@ -1137,7 +1129,7 @@ class RuleEvaluator:
                                     projections,
                                     conf_val,
                                     fs_reasons,
-                                    getattr(forecast_res, "upgrade_id", None),
+                                    forecast_info.get("upgrade_id"),
                                 )
                                 record = {
                                     "event": "foresight_promotion_decision",
