@@ -7,7 +7,8 @@
     "errors",
     "information",
     "overrides",
-    "workflow_summaries"
+    "workflow_summaries",
+    "telemetry"
   ],
   "local": [
     "events",
@@ -17,7 +18,19 @@
     "patch_history",
     "roi_logs",
     "sandbox_metrics",
-    "variants"
+    "variants",
+    "vector_metrics",
+    "roi_telemetry",
+    "roi_prediction_events",
+    "results",
+    "resolutions",
+    "deployments",
+    "bot_trials",
+    "update_history",
+    "roi_events"
   ],
-  "deny": []
+  "deny": [
+    "capital_ledger",
+    "finance_logs"
+  ]
 }

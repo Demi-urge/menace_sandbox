@@ -43,6 +43,7 @@ if "SHARED_TABLES" in globals():
             "information",
             "overrides",
             "workflow_summaries",
+            "telemetry",
         }
     )
 else:
@@ -55,6 +56,7 @@ else:
         "information",
         "overrides",
         "workflow_summaries",
+        "telemetry",
     }
 
 # Tables stored in the local database.  These are private to a specific
@@ -82,6 +84,15 @@ if "LOCAL_TABLES" in globals():
             "healing_actions",
             "tasks",
             "metadata",
+            "vector_metrics",
+            "roi_telemetry",
+            "roi_prediction_events",
+            "results",
+            "resolutions",
+            "deployments",
+            "bot_trials",
+            "update_history",
+            "roi_events",
         }
     )
 else:
@@ -104,6 +115,15 @@ else:
         "healing_actions",
         "tasks",
         "metadata",
+        "vector_metrics",
+        "roi_telemetry",
+        "roi_prediction_events",
+        "results",
+        "resolutions",
+        "deployments",
+        "bot_trials",
+        "update_history",
+        "roi_events",
     }
 
 # Tables explicitly denied even if present in the allow lists.  Also mutated
