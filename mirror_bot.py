@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import Iterable, List
+from typing import List
+
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 _POSITIVE = {"great", "good", "love", "excellent", "nice", "awesome"}
 _NEGATIVE = {"bad", "terrible", "hate", "awful", "poor"}
@@ -28,49 +28,43 @@ class InteractionRecord:
 
 
 class MirrorDB:
-    def __init__(self, path: Path | str = Path("mirror.db")) -> None:
-        self.path = Path(path)
-        self._init()
-
-    def _init(self) -> None:
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS logs(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user TEXT,
-                    response TEXT,
-                    feedback TEXT,
-                    sentiment REAL,
-                    ts TEXT
-                )
-                """
+    def __init__(self, *, router: DBRouter | None = None) -> None:
+        self.router = router or GLOBAL_ROUTER or init_db_router("mirror")
+        self.conn = self.router.get_connection("mirror_logs")
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mirror_logs(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user TEXT,
+                response TEXT,
+                feedback TEXT,
+                sentiment REAL,
+                ts TEXT
             )
-            conn.commit()
+            """
+        )
+        self.conn.commit()
 
     def add(self, rec: InteractionRecord) -> int:
-        with sqlite3.connect(self.path) as conn:
-            cur = conn.execute(
-                "INSERT INTO logs(user, response, feedback, sentiment, ts) VALUES (?, ?, ?, ?, ?)",
-                (rec.user, rec.response, rec.feedback, rec.sentiment, rec.ts),
-            )
-            conn.commit()
-            return cur.lastrowid
+        cur = self.conn.execute(
+            "INSERT INTO mirror_logs(user, response, feedback, sentiment, ts) VALUES (?, ?, ?, ?, ?)",
+            (rec.user, rec.response, rec.feedback, rec.sentiment, rec.ts),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
 
     def fetch(self, limit: int = 100) -> List[InteractionRecord]:
-        with sqlite3.connect(self.path) as conn:
-            rows = conn.execute(
-                "SELECT user, response, feedback, sentiment, ts FROM logs ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        rows = self.conn.execute(
+            "SELECT user, response, feedback, sentiment, ts FROM mirror_logs ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
         return [InteractionRecord(*r) for r in rows]
 
     def avg_sentiment(self, last: int = 5) -> float:
-        with sqlite3.connect(self.path) as conn:
-            rows = conn.execute(
-                "SELECT sentiment FROM logs ORDER BY id DESC LIMIT ?",
-                (last,),
-            ).fetchall()
+        rows = self.conn.execute(
+            "SELECT sentiment FROM mirror_logs ORDER BY id DESC LIMIT ?",
+            (last,),
+        ).fetchall()
         if not rows:
             return 0.0
         return float(sum(r[0] for r in rows) / len(rows))
