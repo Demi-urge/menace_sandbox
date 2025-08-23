@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -12,6 +11,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+from db_router import GLOBAL_ROUTER, init_db_router
 from .unified_event_bus import UnifiedEventBus
 
 
@@ -47,7 +47,8 @@ class PathwayDB:
         *,
         event_bus: "UnifiedEventBus" | None = None,
     ) -> None:
-        self.conn = sqlite3.connect(path)
+        router = GLOBAL_ROUTER or init_db_router("neuroplasticity", str(path), str(path))
+        self.conn = router.get_connection("metadata")
         self.half_life = half_life_days
         self.event_bus = event_bus
         self.conn.execute(

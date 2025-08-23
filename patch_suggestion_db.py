@@ -6,9 +6,10 @@ from pathlib import Path
 from collections import Counter
 from typing import Any, Dict, Iterator, List, Optional
 import logging
-import sqlite3
 import threading
 from filelock import FileLock
+
+from db_router import GLOBAL_ROUTER, init_db_router
 
 from analysis.semantic_diff_filter import find_semantic_risks
 from patch_safety import PatchSafety
@@ -42,7 +43,10 @@ class PatchSuggestionDB(EmbeddableDBMixin):
         self._file_lock = FileLock(str(self.path) + ".lock")
         self._semantic_threshold = semantic_threshold
         self._safety = safety
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.router = init_db_router(
+            "patch_suggestion_db", str(self.path), str(self.path)
+        )
+        self.conn = self.router.get_connection("patches")
         with self._file_lock:
             self.conn.execute(
                 """
@@ -120,13 +124,16 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 rec.module, rec.description, False, risks[0][1], rec.ts
             )
             raise ValueError(f"unsafe suggestion: {risks[0][1]}")
-        if self._safety and self._safety.is_risky(
-            {"category": rec.description, "module": rec.module}
-        ):
-            self.log_decision(
-                rec.module, rec.description, False, "failure similarity", rec.ts
+        if self._safety:
+            passed, *_ = self._safety.evaluate(
+                {"category": rec.description, "module": rec.module},
+                {"category": rec.description, "module": rec.module},
             )
-            raise ValueError("unsafe suggestion: failure similarity")
+            if not passed:
+                self.log_decision(
+                    rec.module, rec.description, False, "failure similarity", rec.ts
+                )
+                raise ValueError("unsafe suggestion: failure similarity")
         with self._file_lock:
             with self._lock:
                 cur = self.conn.execute(

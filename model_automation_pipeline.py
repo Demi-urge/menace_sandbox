@@ -17,7 +17,6 @@ try:
     import pandas as pd  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
-import sqlite3
 try:
     from marshmallow import Schema, fields  # type: ignore
     from marshmallow import ValidationError as MMValidationError  # type: ignore
@@ -56,7 +55,7 @@ from .meta_genetic_algorithm_bot import MetaGeneticAlgorithmBot
 from .offer_testing_bot import OfferTestingBot
 from .research_fallback_bot import ResearchFallbackBot
 from .resource_allocation_optimizer import ResourceAllocationOptimizer
-from .database_manager import update_model, DB_PATH
+from .database_manager import update_model
 from .ai_counter_bot import AICounterBot
 from .dynamic_resource_allocator_bot import DynamicResourceAllocator
 from .diagnostic_manager import DiagnosticManager
@@ -603,13 +602,13 @@ class ModelAutomationPipeline:
             )
         elif roi.roi < self.roi_threshold:
             try:
-                with sqlite3.connect(DB_PATH) as conn:
+                with DB_ROUTER.get_connection("models") as conn:
                     row = conn.execute(
                         "SELECT id FROM models WHERE name LIKE ? ORDER BY id DESC LIMIT 1",
                         (f"%{model}%",),
                     ).fetchone()
                     if row:
-                        update_model(row[0], db_path=DB_PATH, exploration_status="killed")
+                        update_model(row[0], exploration_status="killed")
             except Exception as exc:
                 self.logger.exception("failed to update exploration status: %s", exc)
 
