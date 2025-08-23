@@ -1,7 +1,6 @@
 """Centralised rollback coordination service."""
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, Iterable, Optional
@@ -9,6 +8,10 @@ import os
 import json
 import base64
 import logging
+
+from .db_router import GLOBAL_ROUTER, init_db_router
+
+router = GLOBAL_ROUTER or init_db_router("rollback_manager")
 
 try:
     import requests  # type: ignore
@@ -87,29 +90,29 @@ class RollbackManager:
 
     # ------------------------------------------------------------------
     def _ensure(self) -> None:
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS patches (patch_id TEXT, node TEXT, applied_at TEXT)"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS healing_actions ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "bot TEXT, action TEXT, patch_id TEXT, ts TEXT)"
-            )
-            conn.commit()
+        conn = router.get_connection("patches")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS patches (patch_id TEXT, node TEXT, applied_at TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS healing_actions ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "bot TEXT, action TEXT, patch_id TEXT, ts TEXT)"
+        )
+        conn.commit()
 
     # ------------------------------------------------------------------
     def log_healing_action(
         self, bot: str, action: str, patch_id: str | None = None
     ) -> int:
         ts = datetime.utcnow().isoformat()
-        with sqlite3.connect(self.path) as conn:
-            cur = conn.execute(
-                "INSERT INTO healing_actions (bot, action, patch_id, ts) VALUES (?, ?, ?, ?)",
-                (bot, action, patch_id, ts),
-            )
-            conn.commit()
-            cid = cur.lastrowid
+        conn = router.get_connection("healing_actions")
+        cur = conn.execute(
+            "INSERT INTO healing_actions (bot, action, patch_id, ts) VALUES (?, ?, ?, ?)",
+            (bot, action, patch_id, ts),
+        )
+        conn.commit()
+        cid = cur.lastrowid
 
         try:
             payload = json.dumps(
@@ -128,10 +131,10 @@ class RollbackManager:
         return int(cid)
 
     def healing_actions(self) -> list[dict[str, str]]:
-        with sqlite3.connect(self.path) as conn:
-            rows = conn.execute(
-                "SELECT id, bot, action, patch_id, ts FROM healing_actions"
-            ).fetchall()
+        conn = router.get_connection("healing_actions")
+        rows = conn.execute(
+            "SELECT id, bot, action, patch_id, ts FROM healing_actions"
+        ).fetchall()
         return [
             {
                 "id": str(r[0]),
@@ -146,24 +149,24 @@ class RollbackManager:
     # ------------------------------------------------------------------
     def register_patch(self, patch_id: str, node: str) -> None:
         ts = datetime.utcnow().isoformat()
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                "INSERT INTO patches (patch_id, node, applied_at) VALUES (?, ?, ?)",
-                (patch_id, node, ts),
-            )
-            conn.commit()
+        conn = router.get_connection("patches")
+        conn.execute(
+            "INSERT INTO patches (patch_id, node, applied_at) VALUES (?, ?, ?)",
+            (patch_id, node, ts),
+        )
+        conn.commit()
 
     def applied_patches(self, node: str | None = None) -> list[PatchRecord]:
-        with sqlite3.connect(self.path) as conn:
-            if node:
-                rows = conn.execute(
-                    "SELECT patch_id, node, applied_at FROM patches WHERE node=?",
-                    (node,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT patch_id, node, applied_at FROM patches"
-                ).fetchall()
+        conn = router.get_connection("patches")
+        if node:
+            rows = conn.execute(
+                "SELECT patch_id, node, applied_at FROM patches WHERE node=?",
+                (node,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT patch_id, node, applied_at FROM patches"
+            ).fetchall()
         return [PatchRecord(*r) for r in rows]
 
     def rollback(
@@ -191,12 +194,12 @@ class RollbackManager:
             self._log_attempt(requesting_bot, "rollback_denied", {"patch_id": patch_id})
             raise
 
-        with sqlite3.connect(self.path) as conn:
-            rows = conn.execute(
-                "SELECT node FROM patches WHERE patch_id=?",
-                (patch_id,),
-            ).fetchall()
-            nodes = [r[0] for r in rows]
+        conn = router.get_connection("patches")
+        rows = conn.execute(
+            "SELECT node FROM patches WHERE patch_id=?",
+            (patch_id,),
+        ).fetchall()
+        nodes = [r[0] for r in rows]
 
         for node in nodes:
             ok = False
@@ -225,9 +228,9 @@ class RollbackManager:
             if not ok:
                 self.logger.warning("rollback notification failed for %s", node)
 
-        with sqlite3.connect(self.path) as conn:
-            conn.execute("DELETE FROM patches WHERE patch_id=?", (patch_id,))
-            conn.commit()
+        conn = router.get_connection("patches")
+        conn.execute("DELETE FROM patches WHERE patch_id=?", (patch_id,))
+        conn.commit()
 
     # ------------------------------------------------------------------
     def start_rpc_server(self, host: str = "127.0.0.1", port: int = 0) -> None:

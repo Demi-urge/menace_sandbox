@@ -72,6 +72,16 @@ if "LOCAL_TABLES" in globals():
             "roi_logs",
             "sandbox_metrics",
             "variants",
+            "revenue",
+            "subs",
+            "churn",
+            "leads",
+            "profit",
+            "history",
+            "patches",
+            "healing_actions",
+            "tasks",
+            "metadata",
         }
     )
 else:
@@ -84,6 +94,16 @@ else:
         "roi_logs",
         "sandbox_metrics",
         "variants",
+        "revenue",
+        "subs",
+        "churn",
+        "leads",
+        "profit",
+        "history",
+        "patches",
+        "healing_actions",
+        "tasks",
+        "metadata",
     }
 
 # Tables explicitly denied even if present in the allow lists.  Also mutated
