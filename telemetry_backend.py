@@ -12,20 +12,26 @@ from .metrics_exporter import Gauge
 ROI_EVENTS_DB = "roi_events.db"
 
 
-_SHARED_TABLE_ACCESS = Gauge(
-    "shared_table_access_total",
-    "Count of shared table accesses",
-    ["table"],
+_TABLE_ACCESS = Gauge(
+    "table_access_total",
+    "Count of table accesses",
+    ["menace", "table", "operation"],
 )
 
 
-def record_shared_table_access(table_name: str) -> None:
-    """Increment telemetry count for accesses to a shared table."""
+def record_table_access(menace_id: str, table_name: str, operation: str) -> None:
+    """Increment telemetry count for a table access."""
 
     try:
-        _SHARED_TABLE_ACCESS.labels(table=table_name).inc()
+        _TABLE_ACCESS.labels(menace=menace_id, table=table_name, operation=operation).inc()
     except Exception:  # pragma: no cover - best effort
         pass
+
+
+def record_shared_table_access(table_name: str) -> None:  # pragma: no cover - legacy
+    """Backward compatible wrapper around :func:`record_table_access`."""
+
+    record_table_access("shared", table_name, "unknown")
 
 
 class TelemetryBackend:

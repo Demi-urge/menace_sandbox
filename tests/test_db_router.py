@@ -58,6 +58,7 @@ def test_structured_logging_for_shared_table(tmp_path, caplog):
         entry = records[0]
         assert entry["menace_id"] == "test"
         assert entry["table_name"] == "bots"
+        assert entry["operation"] == "read"
         assert "timestamp" in entry
     finally:
         router.close()
@@ -76,21 +77,22 @@ def test_local_table_logging_suppressed(tmp_path, caplog):
         router.close()
 
 
-def test_shared_table_metrics_callback(tmp_path, monkeypatch):
+def test_table_metrics_callback(tmp_path, monkeypatch):
     shared_db = tmp_path / "shared.db"
     local_db = tmp_path / "local.db"
     router = DBRouter("test", str(local_db), str(shared_db))
 
-    calls: list[str] = []
+    calls: list[tuple[str, str, str]] = []
     dummy = types.SimpleNamespace(
-        record_shared_table_access=lambda table: calls.append(table)
+        record_table_access=lambda menace, table, op: calls.append((menace, table, op))
     )
     monkeypatch.setitem(sys.modules, "telemetry_backend", dummy)
     try:
-        router.get_connection("bots")
+        router.get_connection("bots", operation="write")
+        router.get_connection("models")
     finally:
         router.close()
-    assert calls == ["bots"]
+    assert calls == [("test", "bots", "write"), ("test", "models", "read")]
 
 
 def test_get_connection_thread_safe(tmp_path):
