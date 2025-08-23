@@ -64,6 +64,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 if TYPE_CHECKING:  # pragma: no cover
     from foresight_tracker import ForesightTracker
+    from db_router import DBRouter
 
 # Relevancy radar integration -------------------------------------------------
 _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
@@ -6373,7 +6374,10 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
 
 # ----------------------------------------------------------------------
 def generate_workflows_for_modules(
-    modules: Iterable[str], workflows_db: str | Path = "workflows.db"
+    modules: Iterable[str],
+    workflows_db: str | Path = "workflows.db",
+    *,
+    router: DBRouter | None = None,
 ) -> list[int]:
     """Create simple workflows executing each *module* in isolation.
 
@@ -6393,7 +6397,7 @@ def generate_workflows_for_modules(
 
     from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
 
-    wf_db = WorkflowDB(Path(workflows_db))
+    wf_db = WorkflowDB(Path(workflows_db), router=router)
     ids: list[int] = []
     for mod in modules:
         name = str(mod)
@@ -6412,6 +6416,8 @@ def try_integrate_into_workflows(
     workflows_db: str | Path = "workflows.db",
     side_effects: Mapping[str, float] | None = None,
     side_effect_threshold: float = 10,
+    *,
+    router: DBRouter | None = None,
 ) -> list[int]:
     """Append orphan ``modules`` to related workflows if possible.
 
@@ -6425,7 +6431,7 @@ def try_integrate_into_workflows(
     from menace.task_handoff_bot import WorkflowDB
     from module_index_db import ModuleIndexDB
     from self_test_service import SelfTestService
-    import sqlite3
+    from db_router import GLOBAL_ROUTER
     import ast
     import asyncio
 
@@ -6517,7 +6523,7 @@ def try_integrate_into_workflows(
             except Exception:
                 pass
 
-    wf_db = WorkflowDB(Path(workflows_db))
+    wf_db = WorkflowDB(Path(workflows_db), router=router)
     workflows = wf_db.fetch(limit=1000)
     updated: list[int] = []
     candidates: dict[int, list[str]] = {}
@@ -6586,30 +6592,33 @@ def try_integrate_into_workflows(
 
     passed_set = {Path(p).resolve().as_posix() for p in passed}
 
-    with sqlite3.connect(wf_db.path) as conn:
-        for wf in workflows:
-            mods = [
-                m
-                for m in candidates.get(wf.wid, [])
-                if (repo / m).resolve().as_posix() in passed_set
-            ]
-            if not mods:
-                continue
-            for mod in mods:
-                wf.workflow.append(names[mod])
-            conn.execute(
-                "UPDATE workflows SET workflow=? WHERE id=?",
-                (",".join(wf.workflow), wf.wid),
-            )
-            updated.append(wf.wid)
-        conn.commit()
+    conn = (router or wf_db.router or GLOBAL_ROUTER).get_connection("workflows")
+    for wf in workflows:
+        mods = [
+            m
+            for m in candidates.get(wf.wid, [])
+            if (repo / m).resolve().as_posix() in passed_set
+        ]
+        if not mods:
+            continue
+        for mod in mods:
+            wf.workflow.append(names[mod])
+        conn.execute(
+            "UPDATE workflows SET workflow=? WHERE id=?",
+            (",".join(wf.workflow), wf.wid),
+        )
+        updated.append(wf.wid)
+    conn.commit()
 
     return updated
 
 
 # ----------------------------------------------------------------------
 def append_orphan_modules_to_workflows(
-    modules: Iterable[str], workflows_db: str | Path = "workflows.db"
+    modules: Iterable[str],
+    workflows_db: str | Path = "workflows.db",
+    *,
+    router: DBRouter | None = None,
 ) -> list[int]:
     """Append modules to existing workflows and commit the updates.
 
@@ -6628,7 +6637,7 @@ def append_orphan_modules_to_workflows(
     """
 
     from menace.task_handoff_bot import WorkflowDB
-    import sqlite3
+    from db_router import GLOBAL_ROUTER
 
     repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
     steps: list[str] = []
@@ -6646,26 +6655,25 @@ def append_orphan_modules_to_workflows(
     if not steps:
         return []
 
-    wf_db = WorkflowDB(Path(workflows_db))
+    wf_db = WorkflowDB(Path(workflows_db), router=router)
     workflows = wf_db.fetch(limit=1000)
     updated: list[int] = []
-
-    with sqlite3.connect(wf_db.path) as conn:
-        for wf in workflows:
-            changed = False
-            existing = set(wf.workflow)
-            for step in steps:
-                if step not in existing:
-                    wf.workflow.append(step)
-                    existing.add(step)
-                    changed = True
-            if changed:
-                conn.execute(
-                    "UPDATE workflows SET workflow=? WHERE id=?",
-                    (",".join(wf.workflow), wf.wid),
-                )
-                updated.append(wf.wid)
-        conn.commit()
+    conn = (router or wf_db.router or GLOBAL_ROUTER).get_connection("workflows")
+    for wf in workflows:
+        changed = False
+        existing = set(wf.workflow)
+        for step in steps:
+            if step not in existing:
+                wf.workflow.append(step)
+                existing.add(step)
+                changed = True
+        if changed:
+            conn.execute(
+                "UPDATE workflows SET workflow=? WHERE id=?",
+                (",".join(wf.workflow), wf.wid),
+            )
+            updated.append(wf.wid)
+    conn.commit()
 
     return updated
 
@@ -6682,6 +6690,7 @@ def run_workflow_simulations(
     return_details: bool = False,
     tracker: "ROITracker" | None = None,
     foresight_tracker: "ForesightTracker" | None = None,
+    router: DBRouter | None = None,
 ) -> "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]:
     """Execute stored workflows under optional environment presets.
 
@@ -6765,7 +6774,7 @@ def run_workflow_simulations(
         except Exception:
             pass
 
-    wf_db = WorkflowDB(Path(workflows_db))
+    wf_db = WorkflowDB(Path(workflows_db), router=router)
     workflows = wf_db.fetch()
     if dynamic_workflows or not workflows:
         from dynamic_module_mapper import discover_module_groups, dotify_groups
@@ -7100,6 +7109,8 @@ def auto_include_modules(
     modules: Iterable[str],
     recursive: bool = False,
     validate: bool = False,
+    *,
+    router: DBRouter | None = None,
 ) -> tuple["ROITracker", Dict[str, list[str]]]:
     """Automatically include ``modules`` into the workflow system.
 
@@ -7147,6 +7158,7 @@ def auto_include_modules(
     import json
     from sandbox_settings import SandboxSettings
     from .dependency_utils import collect_local_dependencies
+    from db_router import GLOBAL_ROUTER
     try:
         from . import metrics_exporter as _me
     except Exception:  # pragma: no cover - fallback import
@@ -7450,7 +7462,7 @@ def auto_include_modules(
     except Exception:
         pass
 
-    baseline_result = run_workflow_simulations()
+    baseline_result = run_workflow_simulations(router=router)
     baseline_tracker = (
         baseline_result[0] if isinstance(baseline_result, tuple) else baseline_result
     )
@@ -7468,8 +7480,8 @@ def auto_include_modules(
     accepted: list[str] = []
     low_roi_mods: list[str] = []
     for mod in mods:
-        ids = generate_workflows_for_modules([mod])
-        result = run_workflow_simulations()
+        ids = generate_workflows_for_modules([mod], router=router)
+        result = run_workflow_simulations(router=router)
         tracker = result[0] if isinstance(result, tuple) else result
         new_roi = sum(float(r) for r in getattr(tracker, "roi_history", []))
         delta = new_roi - baseline_roi
@@ -7480,12 +7492,10 @@ def auto_include_modules(
         else:
             low_roi_mods.append(mod)
             try:
-                import sqlite3
-
-                with sqlite3.connect("workflows.db") as conn:
-                    for wid in ids:
-                        conn.execute("DELETE FROM workflows WHERE id=?", (wid,))
-                    conn.commit()
+                conn = (router or GLOBAL_ROUTER).get_connection("workflows")
+                for wid in ids:
+                    conn.execute("DELETE FROM workflows WHERE id=?", (wid,))
+                conn.commit()
             except Exception:
                 pass
     if low_roi_mods:
@@ -7512,7 +7522,7 @@ def auto_include_modules(
         return baseline_tracker, tested
 
     pre_integrate_roi = baseline_roi
-    try_integrate_into_workflows(mods)
+    try_integrate_into_workflows(mods, router=router)
     for mod in mods:
         if mod in isolated_mods:
             try:
@@ -7551,7 +7561,7 @@ def auto_include_modules(
     except Exception:
         pass
 
-    result = run_workflow_simulations()
+    result = run_workflow_simulations(router=router)
     tracker = result[0] if isinstance(result, tuple) else result
     new_roi = sum(float(r) for r in getattr(tracker, "roi_history", []))
     if new_roi < pre_integrate_roi:
