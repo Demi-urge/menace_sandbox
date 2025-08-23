@@ -5426,6 +5426,8 @@ class SelfImprovementEngine:
                 }
                 workflow_id = "self_improvement"
                 gov_result: Dict[str, Any] | None = None
+                forecast_info: Dict[str, Any] | None = None
+                reasons: List[str] = []
                 try:
                     wf_ctx = getattr(environment, "current_context", None)
                     try:
@@ -5600,7 +5602,7 @@ class SelfImprovementEngine:
                 except Exception:
                     self.logger.exception("governance check failed")
                 try:
-                    append_governance_result(scorecard, vetoes)
+                    append_governance_result(scorecard, vetoes, forecast_info, reasons)
                 except Exception:
                     self.logger.exception("governance logging failed")
                 if vetoes and patch_id is not None and self.self_coding_engine and not reverted:
@@ -6099,7 +6101,7 @@ class SelfImprovementEngine:
         }
 
 
-from typing import Any, Callable, Optional, Type, Iterable, Sequence, Dict
+from typing import Any, Callable, Optional, Type, Iterable, Sequence, Dict, List
 
 
 class ImprovementEngineRegistry:
