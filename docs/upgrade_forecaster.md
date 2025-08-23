@@ -69,3 +69,25 @@ Persisted forecasts live under ``forecast_records/``. Use :func:`load_record` to
 recent result for a workflow. :func:`list_records` returns a summary of all available records with
 their workflow identifiers, upgrade hashes and timestamps. The JSON record includes the top‑level
 ``timestamp`` field shown above in addition to ``projections`` and overall ``confidence``.
+
+## Foresight promotion gate
+
+The higher‑level deployment flow calls
+:func:`deployment_governance.is_foresight_safe_to_promote` to decide whether a
+patch can be promoted.  The helper combines ``UpgradeForecaster``,
+``ForesightTracker`` and a ``WorkflowGraph`` and returns ``(ok, reason_codes,
+forecast)``.  Promotion proceeds only when all four gates pass:
+
+1. every projected ROI meets or exceeds the supplied ``roi_threshold``;
+2. forecast ``confidence`` is at least ``0.6``;
+3. :meth:`ForesightTracker.predict_roi_collapse` reports neither immediate
+   collapse risk nor brittleness; and
+4. :meth:`WorkflowGraph.simulate_impact_wave` yields a non‑negative net ROI.
+
+Each invocation logs a ``foresight_promotion_check`` event through
+``ForecastLogger`` (falling back to ``forecast_records/foresight.log`` when no
+logger is attached) and mirrors the record to ``audit_logger``.  If ``ok`` is
+``False`` the calling :class:`DeploymentGovernor` downgrades the workflow to the
+borderline bucket (when available) or triggers a pilot run instead.  Reason codes
+such as ``projected_roi_below_threshold``, ``low_confidence``,
+``roi_collapse_risk`` and ``negative_impact_wave`` identify which gate failed.

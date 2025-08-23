@@ -47,6 +47,49 @@ Possible risk labels returned by `predict_roi_collapse` are:
 
 The result also includes a `brittle` flag when small entropy changes cause outsized ROI drops.
 
+## Foresight promotion gate
+
+Before final promotion the sandbox invokes
+``deployment_governance.is_foresight_safe_to_promote``.  The helper evaluates
+four gating conditions and returns ``(ok, reason_codes, forecast)``:
+
+1. all projected ROI values meet or exceed the supplied ``roi_threshold``;
+2. forecast ``confidence`` is at least ``0.6``;
+3. :func:`ForesightTracker.predict_roi_collapse` reports neither immediate collapse risk nor brittleness; and
+4. ``WorkflowGraph.simulate_impact_wave`` yields a non‑negative net ROI.
+
+Each call logs a ``foresight_promotion_check`` record via ``ForecastLogger`` and
+``audit_logger``.  If any condition fails the caller downgrades the workflow to
+the borderline bucket when one is configured, otherwise a micro‑pilot run is
+scheduled.  Reason codes – ``projected_roi_below_threshold``,
+``low_confidence``, ``roi_collapse_risk`` and ``negative_impact_wave`` – reveal
+which gate triggered the downgrade.
+
+### Example: borderline/pilot downgrade
+
+```python
+from menace_sandbox.deployment_governance import evaluate
+from menace_sandbox.foresight_tracker import ForesightTracker
+from menace_sandbox.borderline_bucket import BorderlineBucket
+
+bucket = BorderlineBucket("sandbox_data/borderline_bucket.jsonl")
+tracker = ForesightTracker()
+
+result = evaluate(
+    {"alignment": "pass"},
+    {"raroi": 1.0, "confidence": 0.8},
+    patch=["step_a"],
+    foresight_tracker=tracker,
+    workflow_id="wf-1",
+    borderline_bucket=bucket,
+)
+print(result["verdict"], result["reason_codes"])
+# -> 'borderline', ['low_confidence']
+```
+
+Dropping ``borderline_bucket`` from the call yields ``verdict: 'pilot'`` for the
+same failing condition.
+
 ## GPT Interaction Tags
 
 All GPT interactions are recorded with a standard tag so that feedback and
