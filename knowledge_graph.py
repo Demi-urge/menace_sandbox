@@ -7,6 +7,8 @@ import logging
 from pathlib import Path
 import atexit
 
+from db_router import GLOBAL_ROUTER
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -396,17 +398,17 @@ class KnowledgeGraph:
         if self.graph is None:
             return
 
-        import sqlite3
-
+        router = GLOBAL_ROUTER
+        if router is None:
+            return
         try:
-            conn = sqlite3.connect(code_db.path)
+            conn = router.get_connection("code")
         except Exception:
             return
         cur = conn.cursor()
         try:
             rows = cur.execute("SELECT id, summary FROM code").fetchall()
         except Exception:
-            conn.close()
             return
         for cid, summary in rows:
             bots = cur.execute(
