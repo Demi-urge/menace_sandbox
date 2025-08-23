@@ -23,6 +23,8 @@ import json
 import time
 import logging
 
+from db_router import GLOBAL_ROUTER as router
+
 from .automated_reviewer import AutomatedReviewer
 from .resilience import CircuitBreaker, CircuitOpenError, retry_with_backoff
 from .logging_utils import set_correlation_id
@@ -95,11 +97,14 @@ class UnifiedEventBus:
                 self._network = None
         if persist_path:
             # allow event persistence from multiple threads
-            self._persist = sqlite3.connect(persist_path, check_same_thread=False)
-            self._persist.execute(
-                "CREATE TABLE IF NOT EXISTS events(ts REAL, topic TEXT, payload TEXT)"
-            )
-            self._persist.commit()
+            if not router:
+                raise RuntimeError("Database router is not initialised")
+            with router.get_connection("events") as conn:
+                self._persist = conn
+                self._persist.execute(
+                    "CREATE TABLE IF NOT EXISTS events(ts REAL, topic TEXT, payload TEXT)"
+                )
+                self._persist.commit()
 
     def subscribe(self, topic: str, callback: Callable[[str, object], None]) -> None:
         """Register *callback* to receive events for *topic*."""

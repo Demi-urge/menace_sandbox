@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from db_router import GLOBAL_ROUTER as router
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - for type hints
@@ -60,12 +62,10 @@ DB_PATH = Path(__file__).parent / "models.db"
 @contextmanager
 def get_connection(db_path: Path = DB_PATH) -> Iterable[sqlite3.Connection]:
     """Context manager yielding a SQLite connection."""
-    conn = sqlite3.connect(db_path)
-    try:
+    if not router:
+        raise RuntimeError("Database router is not initialised")
+    with router.get_connection("models") as conn:
         yield conn
-    finally:
-        conn.commit()
-        conn.close()
 
 
 def init_db(conn: sqlite3.Connection) -> None:

@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Sequence, Any
 import logging
 
+from db_router import GLOBAL_ROUTER as router
+
 try:
     from sklearn.cluster import KMeans  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -115,7 +117,6 @@ class MenaceMemoryManager(GPTMemoryInterface):
 
     def __init__(
         self,
-        path: Path | str = "menace_memory.db",
         *,
         event_bus: Optional[UnifiedEventBus] = None,
         bot_db: "BotDB" | None = None,
@@ -129,7 +130,10 @@ class MenaceMemoryManager(GPTMemoryInterface):
         summary_interval: int = 50,
     ) -> None:
         # allow connections to be shared across threads
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        if not router:
+            raise RuntimeError("Database router is not initialised")
+        with router.get_connection("memory") as conn:
+            self.conn = conn
         self.subscribers: List[Callable[[MemoryEntry], None]] = []
         self.event_bus = event_bus
         self.bot_db = bot_db
