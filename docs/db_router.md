@@ -11,6 +11,25 @@ at `./menace_<menace_id>_local.db` and shared data lives in `./shared/global.db`
 by default. `init_db_router` also stores the router in `GLOBAL_ROUTER` for
 modules that rely on a globally accessible instance.
 
+## Startup initialisation
+
+Application entry points (for example `main.py`, `sandbox_runner.py` or other
+service launch scripts) should invoke `init_db_router(menace_id)` as early as
+possible during startup. This ensures `GLOBAL_ROUTER` is populated so imported
+modules can retrieve a router without explicit dependency injection.
+
+Modules that may be executed standalone should include a safe fallback to
+initialise the router when `GLOBAL_ROUTER` has not been set:
+
+```python
+from db_router import GLOBAL_ROUTER, init_db_router
+
+router = GLOBAL_ROUTER or init_db_router("alpha")
+```
+
+This pattern guarantees that a router is always available regardless of how the
+module is invoked.
+
 ## Shared vs. local tables
 
 Tables listed in `SHARED_TABLES` are written to the shared database while

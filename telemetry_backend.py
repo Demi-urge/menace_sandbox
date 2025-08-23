@@ -18,7 +18,9 @@ class TelemetryBackend:
         self, db_path: str = "telemetry.db", *, router: DBRouter | None = None
     ) -> None:
         self.db_path = db_path
-        self.router = router or init_db_router("telemetry", db_path, db_path)
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "telemetry", db_path, db_path
+        )
         LOCAL_TABLES.add("roi_telemetry")
         LOCAL_TABLES.add("roi_prediction_events")
         self._init_db()
