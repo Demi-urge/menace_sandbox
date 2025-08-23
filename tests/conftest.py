@@ -260,3 +260,52 @@ def foresight_templates(tmp_path):
 def tracker_with_templates(foresight_templates):
     return ForesightTracker(templates_path=foresight_templates)
 
+
+# ---------------------------------------------------------------------------
+# Foresight gate helper fixtures
+# ---------------------------------------------------------------------------
+
+
+class _CollapseTracker:
+    def __init__(self, result):
+        self._result = result
+
+    def predict_roi_collapse(self, workflow_id):
+        return self._result
+
+
+@pytest.fixture
+def stable_tracker():
+    """Tracker reporting no collapse risk."""
+
+    return _CollapseTracker({"risk": "Stable", "brittle": False})
+
+
+@pytest.fixture
+def brittle_tracker():
+    """Tracker flagging early collapse brittleness."""
+
+    return _CollapseTracker({"risk": "Stable", "brittle": True})
+
+
+@pytest.fixture
+def stub_graph():
+    """WorkflowGraph stub with no negative impact."""
+
+    class _Graph:
+        def simulate_impact_wave(self, workflow_id, roi_delta, synergy_delta):
+            return {}
+
+    return _Graph()
+
+
+@pytest.fixture
+def negative_impact_graph():
+    """WorkflowGraph stub reporting a negative ROI impact."""
+
+    class _Graph:
+        def simulate_impact_wave(self, workflow_id, roi_delta, synergy_delta):
+            return {"dep": {"roi": -0.1}}
+
+    return _Graph()
+
