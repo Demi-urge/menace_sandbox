@@ -20,13 +20,24 @@ import os
 import yaml
 from jsonschema import ValidationError, validate
 
-from .override_validator import validate_override_file
-from .governance import Rule as GovRule, check_veto
-from .foresight_tracker import ForesightTracker
-from .upgrade_forecaster import ForecastResult, UpgradeForecaster
-from .workflow_graph import WorkflowGraph
-from .forecast_logger import ForecastLogger
-from .borderline_bucket import BorderlineBucket
+if __package__:  # pragma: no cover - allow both package and direct execution
+    from .override_validator import validate_override_file
+    from .governance import Rule as GovRule, check_veto
+    from .foresight_tracker import ForesightTracker
+    from .upgrade_forecaster import ForecastResult, UpgradeForecaster
+    from .workflow_graph import WorkflowGraph
+    from .forecast_logger import ForecastLogger
+    from . import audit_logger
+    from .borderline_bucket import BorderlineBucket
+else:  # pragma: no cover
+    from override_validator import validate_override_file  # type: ignore
+    from governance import Rule as GovRule, check_veto  # type: ignore
+    from foresight_tracker import ForesightTracker  # type: ignore
+    from upgrade_forecaster import ForecastResult, UpgradeForecaster  # type: ignore
+    from workflow_graph import WorkflowGraph  # type: ignore
+    from forecast_logger import ForecastLogger  # type: ignore
+    import audit_logger  # type: ignore
+    from borderline_bucket import BorderlineBucket  # type: ignore
 
 
 logger = logging.getLogger(__name__)
@@ -530,12 +541,16 @@ def evaluate(
             and foresight_tracker is not None
             and workflow_id is not None
         ):
+            logger_obj = ForecastLogger("forecast_records/foresight.log")
+            patch_repr = patch if isinstance(patch, str) else list(patch)
             try:
-                forecaster = UpgradeForecaster(foresight_tracker)
+                forecaster = UpgradeForecaster(
+                    foresight_tracker, logger=logger_obj
+                )
                 graph = WorkflowGraph()
                 ok, fs_reasons, forecast = is_foresight_safe_to_promote(
                     workflow_id,
-                    patch,
+                    patch_repr,
                     forecaster=forecaster,
                     tracker=foresight_tracker,
                     graph=graph,
@@ -548,6 +563,20 @@ def evaluate(
                     },
                     "reason_codes": list(fs_reasons),
                 }
+                record = {
+                    "event": "foresight_promotion_decision",
+                    "workflow_id": workflow_id,
+                    "patch": patch_repr,
+                    **forecast_info,
+                }
+                try:
+                    logger_obj.log(record)
+                except Exception:
+                    logger.exception("forecast logging failed")
+                try:
+                    audit_logger.log_event("foresight_promotion_decision", record)
+                except Exception:
+                    logger.exception("audit logging failed")
                 if not ok:
                     reasons.extend(fs_reasons)
                     verdict = (
@@ -555,6 +584,8 @@ def evaluate(
                     )
             except Exception:
                 logger.exception("foresight promotion gate failed")
+            finally:
+                logger_obj.close()
         if (
             verdict == "promote"
             and foresight_tracker is not None
@@ -846,12 +877,16 @@ class RuleEvaluator:
                             and foresight_tracker is not None
                             and workflow_id is not None
                         ):
+                            logger_obj = ForecastLogger("forecast_records/foresight.log")
+                            patch_repr = patch if isinstance(patch, str) else list(patch)
                             try:
-                                forecaster = UpgradeForecaster(foresight_tracker)
+                                forecaster = UpgradeForecaster(
+                                    foresight_tracker, logger=logger_obj
+                                )
                                 graph = WorkflowGraph()
                                 ok, fs_reasons, forecast = is_foresight_safe_to_promote(
                                     workflow_id,
-                                    patch,
+                                    patch_repr,
                                     forecaster=forecaster,
                                     tracker=foresight_tracker,
                                     graph=graph,
@@ -864,6 +899,22 @@ class RuleEvaluator:
                                     },
                                     "reason_codes": list(fs_reasons),
                                 }
+                                record = {
+                                    "event": "foresight_promotion_decision",
+                                    "workflow_id": workflow_id,
+                                    "patch": patch_repr,
+                                    **result["foresight"],
+                                }
+                                try:
+                                    logger_obj.log(record)
+                                except Exception:
+                                    logger.exception("forecast logging failed")
+                                try:
+                                    audit_logger.log_event(
+                                        "foresight_promotion_decision", record
+                                    )
+                                except Exception:
+                                    logger.exception("audit logging failed")
                                 if not ok:
                                     reasons.extend(fs_reasons)
                                     result["reason_codes"] = reasons
@@ -872,6 +923,8 @@ class RuleEvaluator:
                                     )
                             except Exception:
                                 logger.exception("foresight promotion gate failed")
+                            finally:
+                                logger_obj.close()
                         return result
                 except Exception:
                     continue
@@ -989,6 +1042,10 @@ def is_foresight_safe_to_promote(
             logger_obj.log(data)
         except Exception:
             logger.exception("forecast logging failed")
+        try:
+            audit_logger.log_event("foresight_promotion_check", data)
+        except Exception:
+            logger.exception("audit logging failed")
         finally:
             if fallback is not None:
                 fallback.close()

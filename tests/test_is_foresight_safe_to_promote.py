@@ -1,10 +1,10 @@
 import os
 from pathlib import Path
 
-from deployment_governance import is_foresight_safe_to_promote
-from upgrade_forecaster import ForecastResult, CycleProjection
-from forecast_logger import ForecastLogger
-from workflow_graph import WorkflowGraph
+from menace.deployment_governance import is_foresight_safe_to_promote
+from menace.upgrade_forecaster import ForecastResult, CycleProjection
+from menace.forecast_logger import ForecastLogger
+from menace.workflow_graph import WorkflowGraph
 
 
 class DummyForecaster:

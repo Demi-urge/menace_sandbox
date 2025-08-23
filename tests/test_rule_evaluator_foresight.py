@@ -38,7 +38,9 @@ def test_gate_pass(monkeypatch):
         return True, [], dg.ForecastResult([], 0.0, "fid")
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
-    monkeypatch.setattr(dg, "UpgradeForecaster", lambda tracker: DummyForecaster(tracker))
+    monkeypatch.setattr(
+        dg, "UpgradeForecaster", lambda tracker, **kw: DummyForecaster(tracker)
+    )
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: DummyGraph())
 
     result = dg.evaluate_scorecard(
@@ -65,7 +67,9 @@ def test_gate_failure_borderline(monkeypatch, tmp_path):
         return False, ["r1", "r2"], dg.ForecastResult([], 0.0, "fid")
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
-    monkeypatch.setattr(dg, "UpgradeForecaster", lambda tracker: DummyForecaster(tracker))
+    monkeypatch.setattr(
+        dg, "UpgradeForecaster", lambda tracker, **kw: DummyForecaster(tracker)
+    )
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: DummyGraph())
 
     bucket = dg.BorderlineBucket(tmp_path / "b.jsonl")
@@ -87,7 +91,9 @@ def test_gate_failure_pilot(monkeypatch):
         return False, ["bad"], dg.ForecastResult([], 0.0, "fid")
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
-    monkeypatch.setattr(dg, "UpgradeForecaster", lambda tracker: DummyForecaster(tracker))
+    monkeypatch.setattr(
+        dg, "UpgradeForecaster", lambda tracker, **kw: DummyForecaster(tracker)
+    )
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: DummyGraph())
 
     result = dg.evaluate_scorecard(
