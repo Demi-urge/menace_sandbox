@@ -9,7 +9,10 @@ router = GLOBAL_ROUTER or init_db_router("upgrade_evolution_history")
 
 def upgrade(path: str | Path | None = None) -> None:
     """Upgrade evolution_history schema with new columns if missing."""
-    conn = router.get_connection("evolution_history")
+    local_router = router
+    if path is not None:
+        local_router = init_db_router("upgrade_evolution_history", str(path), str(path))
+    conn = local_router.get_connection("evolution_history")
     cols = [r[1] for r in conn.execute("PRAGMA table_info(evolution_history)").fetchall()]
     if "efficiency" not in cols:
         conn.execute("ALTER TABLE evolution_history ADD COLUMN efficiency REAL DEFAULT 0")

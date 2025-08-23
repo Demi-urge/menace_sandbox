@@ -2,11 +2,12 @@ from __future__ import annotations
 
 """Store history of evolution cycles and their outcomes."""
 
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Tuple
+
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 
 @dataclass
@@ -35,8 +36,15 @@ class EvolutionEvent:
 class EvolutionHistoryDB:
     """SQLite-backed store for evolution history."""
 
-    def __init__(self, path: Path | str = "evolution_history.db") -> None:
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+    def __init__(
+        self,
+        path: Path | str = "evolution_history.db",
+        router: DBRouter | None = None,
+    ) -> None:
+        self.router = router or GLOBAL_ROUTER
+        if self.router is None:
+            self.router = init_db_router("evolution_history", str(path), str(path))
+        self.conn = self.router.get_connection("evolution_history")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS evolution_history(

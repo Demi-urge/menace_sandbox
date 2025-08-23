@@ -16,14 +16,12 @@ dynamic_resource_allocator_bot.py
 efficiency_bot.py
 embedding_stats_db.py
 evaluation_history_db.py
-evolution_history_db.py
 experiment_history_db.py
 failure_learning_system.py
 investment_engine.py
 learning_engine.py
 mirror_bot.py
 model_automation_pipeline.py
-mutation_logger.py
 neuroplasticity.py
 niche_saturation_bot.py
 operational_monitor_bot.py
@@ -96,5 +94,4 @@ tests/test_synergy_history_migration.py
 tests/test_visual_agent_concurrency.py
 tests/test_visual_agent_queue_validation.py
 unified_learning_engine.py
-universal_retriever.py
 vector_service/patch_logger.py
