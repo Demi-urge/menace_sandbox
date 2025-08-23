@@ -1,11 +1,12 @@
-import sqlite3
 from pathlib import Path
 import sys
 
+from db_router import init_db_router, GLOBAL_ROUTER
 
-def upgrade(path: str | Path) -> None:
+
+def upgrade(path: str | Path | None = None) -> None:
     """Upgrade metrics.db schema with vector and patch metrics."""
-    conn = sqlite3.connect(path)
+    conn = GLOBAL_ROUTER.get_connection("patch_outcomes")
     try:
         conn.execute(
             """
@@ -52,11 +53,12 @@ def upgrade(path: str | Path) -> None:
             )
         conn.commit()
     finally:
-        conn.close()
+        pass
 
 
 if __name__ == "__main__":
+    init_db_router("upgrade_metrics_db")
     if len(sys.argv) < 2:
-        print("Usage: upgrade_metrics_db.py <db_path>")
+        upgrade()
     else:
         upgrade(sys.argv[1])

@@ -1,11 +1,12 @@
-import sqlite3
 from pathlib import Path
 import sys
 
+from db_router import init_db_router, GLOBAL_ROUTER
 
-def upgrade(path: str | Path) -> None:
+
+def upgrade(path: str | Path | None = None) -> None:
     """Upgrade patch provenance schema with alert columns."""
-    conn = sqlite3.connect(path)
+    conn = GLOBAL_ROUTER.get_connection("patch_provenance")
     try:
         for table in ("patch_provenance", "patch_ancestry"):
             cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
@@ -17,11 +18,12 @@ def upgrade(path: str | Path) -> None:
                 )
         conn.commit()
     finally:
-        conn.close()
+        pass
 
 
 if __name__ == "__main__":
+    init_db_router("upgrade_patch_provenance")
     if len(sys.argv) < 2:
-        print("Usage: upgrade_patch_provenance.py <db_path>")
+        upgrade()
     else:
         upgrade(sys.argv[1])

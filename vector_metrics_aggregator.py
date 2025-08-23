@@ -13,6 +13,10 @@ from typing import Iterable, Dict, Tuple, List
 from analytics.session_roi import per_origin_stats
 from vector_metrics_db import VectorMetricsDB
 
+from db_router import init_db_router, GLOBAL_ROUTER
+
+init_db_router("vector_metrics_aggregator")
+
 
 class VectorMetricsAggregator:
     """Summarise :class:`VectorMetricsDB` records by time period."""
@@ -25,11 +29,13 @@ class VectorMetricsAggregator:
         """Yield ``(event_type, db, tokens, contribution, ts)`` rows from the database."""
         if not self.db_path.exists():
             return []
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute(
+        cur = (
+            GLOBAL_ROUTER.get_connection("vector_metrics")
+            .execute(
                 "SELECT event_type, db, tokens, COALESCE(contribution,0), ts FROM vector_metrics"
             )
-            return cur.fetchall()
+        )
+        return cur.fetchall()
 
     # ------------------------------------------------------------------
     def aggregate(self, period: str = "hourly") -> List[Dict[str, object]]:

@@ -29,6 +29,8 @@ import threading
 import asyncio
 import os
 
+from db_router import init_db_router, GLOBAL_ROUTER
+
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     setup_logging()
 from sandbox_settings import SandboxSettings
@@ -46,6 +48,8 @@ from .metrics_exporter import (
     prediction_mae,
     prediction_reliability,
 )
+
+init_db_router("self_improvement_engine")
 from alert_dispatcher import dispatch_alert
 import json
 import inspect
@@ -1337,8 +1341,8 @@ class SelfImprovementEngine:
         if not history_file.exists():
             return
         try:
-            with sqlite3.connect(history_file) as conn:
-                hist = shd.fetch_all(conn)
+            conn = GLOBAL_ROUTER.get_connection("synergy_history")
+            hist = shd.fetch_all(conn)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.exception("failed to load history: %s", exc)
             return
@@ -2387,7 +2391,7 @@ class SelfImprovementEngine:
     ) -> None:
         """Persist chosen actions and ROI predictions for auditing."""
         try:
-            conn = sqlite3.connect("evaluation_history.db")
+            conn = GLOBAL_ROUTER.get_connection("action_audit")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS action_audit(
@@ -2416,9 +2420,6 @@ class SelfImprovementEngine:
             conn.commit()
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("failed to log action audit: %s", exc)
-        finally:
-            with contextlib.suppress(Exception):
-                conn.close()
 
     # ------------------------------------------------------------------
     def _should_trigger(self) -> bool:
@@ -6273,10 +6274,11 @@ def load_synergy_history(path: str | Path) -> list[dict[str, float]]:
     if not p.exists():
         return []
     try:
-        with sqlite3.connect(p) as conn:
-            rows = conn.execute(
-                "SELECT entry FROM synergy_history ORDER BY id"
-            ).fetchall()
+        rows = (
+            GLOBAL_ROUTER.get_connection("synergy_history")
+            .execute("SELECT entry FROM synergy_history ORDER BY id")
+            .fetchall()
+        )
         hist: list[dict[str, float]] = []
         for (text,) in rows:
             data = json.loads(text)
