@@ -4,7 +4,8 @@ import sqlite3
 import threading
 import logging
 from contextlib import contextmanager
-from typing import Iterator
+from pathlib import Path
+from typing import Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -58,3 +59,27 @@ class DBRouter:
 
         with lock:
             yield conn
+
+
+# Global router instance used by startups to expose access to other modules
+GLOBAL_ROUTER: Optional[DBRouter] = None
+
+
+def init_db_router(menace_id: str) -> DBRouter:
+    """Initialise and globally register a :class:`DBRouter`.
+
+    Databases are created at ``./menace_{menace_id}_local.db`` and
+    ``./shared/global.db``.  Any required directories are created
+    automatically.
+    """
+
+    global GLOBAL_ROUTER
+
+    local_db = Path(f"./menace_{menace_id}_local.db")
+    shared_db = Path("./shared/global.db")
+    # Ensure parent directories exist
+    local_db.parent.mkdir(parents=True, exist_ok=True)
+    shared_db.parent.mkdir(parents=True, exist_ok=True)
+
+    GLOBAL_ROUTER = DBRouter(menace_id, str(local_db), str(shared_db))
+    return GLOBAL_ROUTER
