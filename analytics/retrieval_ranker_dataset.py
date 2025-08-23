@@ -18,6 +18,7 @@ import argparse
 
 import pandas as pd
 
+from ..db_router import init_db_router, GLOBAL_ROUTER
 from ..vector_metrics_db import VectorMetricsDB  # type: ignore
 try:  # pragma: no cover - optional dependency
     from ..vector_service import Retriever  # type: ignore
@@ -31,6 +32,9 @@ except BaseException:  # pragma: no cover - fallback for lightweight environment
 
         def bot_deploy_freq(self, *_args: Any, **_kw: Any) -> float:
             return 0.0
+
+
+init_db_router("retrieval_ranker_dataset")
 
 
 # ---------------------------------------------------------------------------
@@ -55,18 +59,17 @@ def _record_age(db_name: str, vec_id: str, *, now: datetime) -> float:
     """Return age in seconds for a record in ``db_name``."""
 
     mapping = {
-        "error": ("errors.db", "errors", "ts"),
-        "workflow": ("workflows.db", "workflows", "timestamp"),
-        "bot": ("bots.db", "bots", "creation_date"),
+        "error": ("errors", "ts"),
+        "workflow": ("workflows", "timestamp"),
+        "bot": ("bots", "creation_date"),
     }
-    path, table, col = mapping.get(db_name, (None, None, None))
-    if not path or not Path(path).exists():
+    table, col = mapping.get(db_name, (None, None))
+    if not table:
         return 0.0
     try:
-        conn = sqlite3.connect(path)
+        conn = GLOBAL_ROUTER.get_connection(table)
         cur = conn.execute(f"SELECT {col} FROM {table} WHERE id=?", (vec_id,))
         row = cur.fetchone()
-        conn.close()
         if row and row[0]:
             ts = datetime.fromisoformat(str(row[0]))
             return (now - ts).total_seconds()
@@ -155,7 +158,7 @@ def build_dataset(
 
     vmdb = VectorMetricsDB(vec_db_path)
     retriever = Retriever()
-    roi_conn = sqlite3.connect(roi_path)
+    roi_conn = GLOBAL_ROUTER.get_connection("roi_events")
 
     now = datetime.utcnow()
     cur = vmdb.conn.execute(

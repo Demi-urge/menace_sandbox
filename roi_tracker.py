@@ -96,13 +96,17 @@ if _me is not None:  # pragma: no cover - metrics optional
         except Exception:
             _DB_ROI_GAUGE = None
             _TA_LOW_CONF_GAUGE = None
-            _ROI_BOTTLENECK_GAUGE = None
+    _ROI_BOTTLENECK_GAUGE = None
 else:  # pragma: no cover - metrics optional
     _DB_ROI_GAUGE = None
     _TA_LOW_CONF_GAUGE = None
     _ROI_BOTTLENECK_GAUGE = None
 
 logger = get_logger(__name__)
+
+from db_router import init_db_router, GLOBAL_ROUTER
+
+init_db_router("roi_tracker")
 
 # Critical test suites that significantly impact safety if they fail. The
 # collection may be extended as the project grows but defaults cover the most
@@ -949,7 +953,7 @@ class ROITracker:
         if not os.path.exists(path):
             return
         try:
-            conn = sqlite3.connect(path)
+            conn = GLOBAL_ROUTER.get_connection("roi_prediction_events")
             try:
                 cur = conn.execute(
                     "SELECT workflow, predicted_roi, actual_roi, confidence FROM roi_prediction_events ORDER BY ts"
@@ -1000,7 +1004,7 @@ class ROITracker:
     ) -> List[Dict[str, Any]]:
         """Return persisted prediction events with telemetry details."""
 
-        conn = sqlite3.connect(path)
+        conn = GLOBAL_ROUTER.get_connection("roi_prediction_events")
         try:
             cur = conn.cursor()
             base = (
@@ -1053,7 +1057,7 @@ class ROITracker:
     ) -> List[Dict[str, Any]]:
         """Return drift scores and flags for dashboards."""
 
-        conn = sqlite3.connect(path)
+        conn = GLOBAL_ROUTER.get_connection("roi_prediction_events")
         try:
             cur = conn.cursor()
             base = "SELECT drift_flag, ts FROM roi_prediction_events"
@@ -1110,7 +1114,7 @@ class ROITracker:
         """
 
         try:
-            conn = sqlite3.connect(roi_events_path)
+            conn = GLOBAL_ROUTER.get_connection("roi_prediction_events")
             try:
                 cur = conn.execute(
                     "SELECT workflow_id, predicted_roi, actual_roi, predicted_class, actual_class, predicted_horizons, actual_horizons, predicted_categories, actual_categories "
@@ -2961,7 +2965,7 @@ class ROITracker:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(data, fh)
             return
-        with sqlite3.connect(path) as conn:
+        with GLOBAL_ROUTER.get_connection("roi_history") as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS roi_history (delta REAL, confidence REAL, raroi REAL, mae REAL, roi_variance REAL, final_score REAL)"
             )
@@ -3473,7 +3477,7 @@ class ROITracker:
                 self._worst_scenario = None
             return
         try:
-            with sqlite3.connect(path) as conn:
+            with GLOBAL_ROUTER.get_connection("roi_history") as conn:
                 try:
                     rows = conn.execute(
                         "SELECT delta, confidence, raroi, mae, roi_variance, final_score FROM roi_history ORDER BY rowid"
@@ -4016,7 +4020,7 @@ class ROITracker:
                 _DB_ROI_GAUGE.labels(origin_db=origin).set(avg)
 
         if sqlite_path:
-            with sqlite3.connect(sqlite_path) as conn:
+            with GLOBAL_ROUTER.get_connection("db_roi_metrics") as conn:
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS db_roi_metrics (

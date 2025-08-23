@@ -1,11 +1,12 @@
-import sqlite3
 from pathlib import Path
 import sys
 
+from db_router import init_db_router, GLOBAL_ROUTER
 
-def upgrade(path: str | Path) -> None:
+
+def upgrade(path: str | Path | None = None) -> None:
     """Upgrade evolution_history schema with new columns if missing."""
-    conn = sqlite3.connect(path)
+    conn = GLOBAL_ROUTER.get_connection("evolution_history")
     cols = [r[1] for r in conn.execute("PRAGMA table_info(evolution_history)").fetchall()]
     if "efficiency" not in cols:
         conn.execute("ALTER TABLE evolution_history ADD COLUMN efficiency REAL DEFAULT 0")
@@ -32,7 +33,8 @@ def upgrade(path: str | Path) -> None:
 
 
 if __name__ == "__main__":
+    init_db_router("upgrade_evolution_history")
     if len(sys.argv) < 2:
-        print("Usage: upgrade_evolution_history.py <db_path>")
+        upgrade()
     else:
         upgrade(sys.argv[1])

@@ -22,6 +22,10 @@ from memory_logging import log_with_tags
 from memory_aware_gpt_client import ask_with_memory
 from vector_service import Retriever, FallbackResult
 from foresight_tracker import ForesightTracker
+from db_router import init_db_router, GLOBAL_ROUTER
+
+
+init_db_router("sandbox_cycle")
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when unavailable
@@ -1038,14 +1042,13 @@ def _sandbox_cycle_runner(
         patch_complexity = 0.0
         if ctx.patch_db_path.exists():
             try:
-                import sqlite3
-
-                with sqlite3.connect(
-                    ctx.patch_db_path, check_same_thread=False
-                ) as conn:
-                    rows = conn.execute(
+                rows = (
+                    GLOBAL_ROUTER.get_connection("patch_history")
+                    .execute(
                         "SELECT complexity_after FROM patch_history ORDER BY id DESC LIMIT 5"
-                    ).fetchall()
+                    )
+                    .fetchall()
+                )
                 if rows:
                     patch_complexity = sum(float(r[0] or 0.0) for r in rows) / len(rows)
             except Exception:

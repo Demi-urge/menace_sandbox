@@ -15,6 +15,11 @@ from typing import Literal
 
 import pandas as pd
 
+from db_router import init_db_router, GLOBAL_ROUTER
+
+
+init_db_router("retrieval_training_dataset")
+
 
 @dataclass
 class TrainingSample:
@@ -39,11 +44,9 @@ def build_dataset(
     """Return a ``pandas.DataFrame`` with training features and labels."""
 
     v_path = Path(vector_db)
-    if not v_path.exists():
-        raise FileNotFoundError(v_path)
 
-    with sqlite3.connect(v_path) as vconn:
-        retrieval_df = pd.read_sql(
+    vconn = GLOBAL_ROUTER.get_connection("vector_metrics")
+    retrieval_df = pd.read_sql(
             """
             SELECT session_id, vector_id, db AS db_type, age, similarity,
                    contribution, hit, ts
@@ -66,8 +69,8 @@ def build_dataset(
         ]
     )
     if p_path.exists():
-        with sqlite3.connect(p_path) as pconn:
-            patch_df = pd.read_sql(
+        pconn = GLOBAL_ROUTER.get_connection("patch_outcomes")
+        patch_df = pd.read_sql(
                 """
                 SELECT session_id, vector_id,
                        CASE WHEN success=1 AND COALESCE(reverted,0)=0 THEN 1 ELSE 0 END AS label
@@ -75,35 +78,35 @@ def build_dataset(
                 """,
                 pconn,
             )
+        try:
+            stats_df = pd.read_sql(
+                "SELECT origin_db, win_rate, regret_rate, stale_cost, sample_count, roi FROM retriever_stats",
+                pconn,
+            )
+        except Exception:
             try:
-                stats_df = pd.read_sql(
-                    "SELECT origin_db, win_rate, regret_rate, stale_cost, sample_count, roi FROM retriever_stats",
+                tmp = pd.read_sql(
+                    "SELECT origin_db, wins, regrets FROM retriever_stats",
                     pconn,
                 )
-            except Exception:
-                try:
-                    tmp = pd.read_sql(
-                        "SELECT origin_db, wins, regrets FROM retriever_stats",
-                        pconn,
-                    )
-                    total = tmp["wins"].fillna(0) + tmp["regrets"].fillna(0)
-                    tmp["win_rate"] = tmp["wins"].fillna(0) / total.where(total > 0, 1)
-                    tmp["regret_rate"] = tmp["regrets"].fillna(0) / total.where(total > 0, 1)
-                    tmp["stale_cost"] = 0.0
-                    tmp["sample_count"] = total
-                    tmp["roi"] = 0.0
-                    stats_df = tmp[
-                        [
-                            "origin_db",
-                            "win_rate",
-                            "regret_rate",
-                            "stale_cost",
-                            "sample_count",
-                            "roi",
-                        ]
+                total = tmp["wins"].fillna(0) + tmp["regrets"].fillna(0)
+                tmp["win_rate"] = tmp["wins"].fillna(0) / total.where(total > 0, 1)
+                tmp["regret_rate"] = tmp["regrets"].fillna(0) / total.where(total > 0, 1)
+                tmp["stale_cost"] = 0.0
+                tmp["sample_count"] = total
+                tmp["roi"] = 0.0
+                stats_df = tmp[
+                    [
+                        "origin_db",
+                        "win_rate",
+                        "regret_rate",
+                        "stale_cost",
+                        "sample_count",
+                        "roi",
                     ]
-                except Exception:
-                    pass
+                ]
+            except Exception:
+                pass
 
     # Merge retrieval metrics with patch outcomes and reliability statistics.
     df = retrieval_df.merge(patch_df, on=["session_id", "vector_id"], how="left")

@@ -14,6 +14,9 @@ from typing import Dict
 
 from .metrics_exporter import Gauge, start_metrics_server, stop_metrics_server
 from . import synergy_auto_trainer  # ensure trainer gauges are registered
+from .db_router import init_db_router, GLOBAL_ROUTER
+
+init_db_router("synergy_exporter")
 
 # Gauges tracking exporter uptime and failures
 exporter_uptime = Gauge(
@@ -56,7 +59,7 @@ class SynergyExporter:
         if not p.exists():
             return {}
         try:
-            with sqlite3.connect(p) as conn:
+            with GLOBAL_ROUTER.get_connection("synergy_history") as conn:
                 row = conn.execute(
                     "SELECT entry FROM synergy_history ORDER BY id DESC LIMIT 1"
                 ).fetchone()

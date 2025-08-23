@@ -31,6 +31,8 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     MetricsDB = None  # type: ignore
 
+from .db_router import init_db_router, GLOBAL_ROUTER
+
 _RETRIEVER_WIN_GAUGE = _me.Gauge(
     "retriever_win_rate", "Win rate of retrieved patches", ["origin_db"]
 )
@@ -70,6 +72,9 @@ _RETR_COUNT_GAUGE = _me.Gauge(
 )
 
 
+init_db_router("metrics_aggregator")
+
+
 def compute_retriever_stats(
     metrics_db: Path | str = "metrics.db", roi_db: Path | str = "roi.db"
 ) -> Dict[str, Dict[str, float]]:
@@ -78,26 +83,26 @@ def compute_retriever_stats(
     if pd is None:
         raise RuntimeError("pandas is required for retriever stats")
 
-    m_path = Path(metrics_db)
-    if not m_path.exists():
-        return {}
-
-    with sqlite3.connect(m_path) as conn:
+    try:
+        conn = GLOBAL_ROUTER.get_connection("patch_outcomes")
         outcomes = pd.read_sql(
             "SELECT patch_id, origin_db, success, reverted FROM patch_outcomes", conn
         )
         stale_df = pd.read_sql(
             "SELECT origin_db, stale_seconds FROM embedding_staleness", conn
         )
+    except Exception:
+        return {}
 
-    roi_path = Path(roi_db)
     roi_df = pd.DataFrame(columns=["patch_id", "revenue", "api_cost", "roi"])
-    if roi_path.exists():
-        with sqlite3.connect(roi_path) as conn:
-            roi_df = pd.read_sql(
-                "SELECT action AS patch_id, revenue, api_cost FROM action_roi", conn
-            )
-            roi_df["roi"] = roi_df["revenue"].fillna(0) - roi_df["api_cost"].fillna(0)
+    try:
+        conn = GLOBAL_ROUTER.get_connection("action_roi")
+        roi_df = pd.read_sql(
+            "SELECT action AS patch_id, revenue, api_cost FROM action_roi", conn
+        )
+        roi_df["roi"] = roi_df["revenue"].fillna(0) - roi_df["api_cost"].fillna(0)
+    except Exception:
+        pass
 
     merged = outcomes.merge(roi_df, on="patch_id", how="left")
     metrics: Dict[str, Dict[str, float]] = {}
@@ -169,7 +174,7 @@ class MetricsAggregator:
         a standalone script.
         """
 
-        with self._connect() as conn:
+        with self._connect("embedding_stats") as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS embedding_stats(
@@ -234,14 +239,14 @@ class MetricsAggregator:
                 if column not in cols:
                     conn.execute(stmt)
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+    def _connect(self, table: str) -> sqlite3.Connection:
+        return GLOBAL_ROUTER.get_connection(table)
 
     def _aggregate_table(self, table: str, cols: List[str], period: str) -> "pd.DataFrame":
         if pd is None:
             raise RuntimeError("pandas is required for aggregation")
         query = f"SELECT {', '.join(cols)}, ts FROM {table}"
-        with self._connect() as conn:
+        with self._connect(table) as conn:
             exists = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
             ).fetchone()
@@ -287,7 +292,7 @@ class MetricsAggregator:
     def _store_aggregate(self, df: "pd.DataFrame", table: str) -> None:
         if df.empty:
             return
-        with self._connect() as conn:
+        with self._connect(table) as conn:
             df.to_sql(table, conn, if_exists="replace", index=False)
 
     def run(self, period: str = "day") -> Dict[str, Path | None]:
