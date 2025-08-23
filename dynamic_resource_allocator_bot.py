@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+
 from .data_bot import MetricsDB, MetricRecord
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
@@ -34,9 +36,17 @@ class DecisionRecord:
 class DecisionLedger:
     """SQLite-backed ledger for resource decisions."""
 
-    def __init__(self, path: Path | str = "decision_ledger.db") -> None:
+    def __init__(
+        self,
+        path: Path | str = "decision_ledger.db",
+        router: DBRouter | None = None,
+    ) -> None:
         # allow connection access from multiple threads
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        LOCAL_TABLES.add("decisions")
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "dynamic_resource_allocator", local_db_path=str(path), shared_db_path=str(path)
+        )
+        self.conn = self.router.get_connection("decisions")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS decisions(

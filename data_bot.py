@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Dict, TYPE_CHECKING
 
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+
 from .unified_event_bus import UnifiedEventBus
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .code_database import PatchHistoryDB
@@ -80,11 +82,18 @@ class MetricRecord:
 
 class MetricsDB:
     """SQLite-backed storage for metrics."""
-
-    def __init__(self, path: Path | str = "metrics.db") -> None:
+    def __init__(
+        self,
+        path: Path | str = "metrics.db",
+        router: DBRouter | None = None,
+    ) -> None:
         self.path = str(path)
-        with sqlite3.connect(self.path, check_same_thread=False) as conn:
-            conn.execute(
+        LOCAL_TABLES.add("metrics")
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "metrics_db", local_db_path=self.path, shared_db_path=self.path
+        )
+        conn = self.router.get_connection("metrics")
+        conn.execute(
                 """
             CREATE TABLE IF NOT EXISTS metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -417,7 +426,7 @@ class MetricsDB:
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.path, check_same_thread=False)
+        return self.router.get_connection("metrics")
 
     def add(self, rec: MetricRecord) -> int:
         with self._connect() as conn:

@@ -8,6 +8,7 @@ import json
 import sqlite3
 from pathlib import Path
 import logging
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
 logger = logging.getLogger(__name__)
 
@@ -420,6 +421,7 @@ class LearningEngine:
         self.evaluation_history: List[Dict[str, float]] = []
         self.persist_path = Path(persist_path) if persist_path else None
         self._persist_conn: sqlite3.Connection | None = None
+        self._router: DBRouter | None = None
         self._auto_train_stop = False
         if self.persist_path and self.persist_path.suffix not in {".json", ".jsonl"}:
             try:
