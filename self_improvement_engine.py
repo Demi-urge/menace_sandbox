@@ -5505,6 +5505,7 @@ class SelfImprovementEngine:
                             self.logger.exception("risk queue enqueue failed")
                     if verdict == "promote" and self.foresight_tracker:
                         logger_obj: ForecastLogger | None = None
+                        forecast_info: Dict[str, Any] | None = None
                         try:
                             forecaster = UpgradeForecaster(self.foresight_tracker)
                             graph = WorkflowGraph()
@@ -5517,16 +5518,17 @@ class SelfImprovementEngine:
                             )
                             if not isinstance(decision, ForesightDecision):
                                 decision = ForesightDecision(*decision)
+                            forecast_info = decision.forecast
                             log_forecast_record(
                                 logger_obj,
                                 workflow_id,
-                                decision.forecast.get("projections", []),
-                                decision.forecast.get("confidence"),
+                                forecast_info.get("projections", []),
+                                forecast_info.get("confidence"),
                                 decision.reasons,
-                                decision.forecast.get("upgrade_id"),
+                                forecast_info.get("upgrade_id"),
                             )
                             if not decision.safe:
-                                verdict = "pilot"
+                                verdict = decision.recommendation
                                 reasons.extend(decision.reasons)
                         except Exception:
                             self.logger.exception("foresight gate check failed")

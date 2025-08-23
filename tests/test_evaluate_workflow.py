@@ -163,7 +163,12 @@ def test_foresight_gate_pass(monkeypatch):
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
         confidence_threshold=0.6,
     ):
-        return True, [], {"upgrade_id": "fid1", "projections": [], "confidence": None}
+        return dg.ForesightDecision(
+            True,
+            [],
+            {"upgrade_id": "fid1", "projections": [], "confidence": None},
+            "promote",
+        )
 
     monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
@@ -198,7 +203,12 @@ def test_foresight_gate_failure(monkeypatch):
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
         confidence_threshold=0.6,
     ):
-        return False, ["low_confidence"], {"upgrade_id": "fid2", "projections": [], "confidence": None}
+        return dg.ForesightDecision(
+            False,
+            ["low_confidence"],
+            {"upgrade_id": "fid2", "projections": [], "confidence": None},
+            "pilot",
+        )
 
     monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
@@ -234,7 +244,12 @@ def test_foresight_gate_failure_borderline_bucket(monkeypatch):
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
         confidence_threshold=0.6,
     ):
-        return False, ["borderline"], {"upgrade_id": "fid3", "projections": [], "confidence": None}
+        return dg.ForesightDecision(
+            False,
+            ["borderline"],
+            {"upgrade_id": "fid3", "projections": [], "confidence": None},
+            "borderline",
+        )
 
     monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
@@ -257,7 +272,7 @@ def test_foresight_gate_failure_borderline_bucket(monkeypatch):
         patch=[],
         borderline_bucket=bucket,
     )
-    assert res["verdict"] == "pilot"
+    assert res["verdict"] == "borderline"
     assert "borderline" in res["reason_codes"]
     assert res.get("foresight", {}).get("reason_codes") == ["borderline"]
     assert bucket.called
@@ -284,7 +299,12 @@ def test_policy_thresholds_passed(monkeypatch):
         confidence_threshold=0.6,
     ):
         called["roi_threshold"] = roi_threshold
-        return True, [], {"upgrade_id": "fid4", "projections": [], "confidence": None}
+        return dg.ForesightDecision(
+            True,
+            [],
+            {"upgrade_id": "fid4", "projections": [], "confidence": None},
+            "promote",
+        )
 
     monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())

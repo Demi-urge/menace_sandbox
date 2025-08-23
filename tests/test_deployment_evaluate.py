@@ -38,7 +38,13 @@ def _patch_gate(monkeypatch, ok, reasons):
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
         confidence_threshold=0.6,
     ):
-        return ok, list(reasons), {"upgrade_id": "fid", "projections": [], "confidence": None}
+        rec = "promote" if ok else "borderline"
+        return dg.ForesightDecision(
+            ok,
+            list(reasons),
+            {"upgrade_id": "fid", "projections": [], "confidence": None},
+            rec,
+        )
 
     monkeypatch.setattr(dg, "WorkflowGraph", DummyGraph)
     monkeypatch.setattr(dg, "ForecastLogger", lambda *a, **k: DummyLogger())

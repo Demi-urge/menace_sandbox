@@ -39,11 +39,11 @@ def test_projected_roi_below_threshold():
     tracker = DummyTracker({"risk": "Stable"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({})
-    safe, reasons, forecast = fg.is_foresight_safe_to_promote(
+    decision = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph, roi_threshold=0.5
     )
-    assert not safe
-    assert reasons == ["projected_roi_below_threshold"]
+    assert not decision.safe
+    assert decision.reasons == ["projected_roi_below_threshold"]
 
 
 def test_low_confidence():
@@ -51,11 +51,11 @@ def test_low_confidence():
     tracker = DummyTracker({"risk": "Stable"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({})
-    safe, reasons, forecast = fg.is_foresight_safe_to_promote(
+    decision = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph
     )
-    assert not safe
-    assert reasons == ["low_confidence"]
+    assert not decision.safe
+    assert decision.reasons == ["low_confidence"]
 
 
 def test_roi_collapse_risk():
@@ -63,11 +63,11 @@ def test_roi_collapse_risk():
     tracker = DummyTracker({"risk": "Immediate collapse risk"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({})
-    safe, reasons, forecast = fg.is_foresight_safe_to_promote(
+    decision = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph
     )
-    assert not safe
-    assert reasons == ["roi_collapse_risk"]
+    assert not decision.safe
+    assert decision.reasons == ["roi_collapse_risk"]
 
 
 def test_negative_dag_impact():
@@ -75,11 +75,11 @@ def test_negative_dag_impact():
     tracker = DummyTracker({"risk": "Stable"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({"dep": {"roi": -0.1}})
-    safe, reasons, forecast = fg.is_foresight_safe_to_promote(
+    decision = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph
     )
-    assert not safe
-    assert reasons == ["negative_dag_impact"]
+    assert not decision.safe
+    assert decision.reasons == ["negative_dag_impact"]
 
 
 def test_safe_path():
@@ -87,11 +87,11 @@ def test_safe_path():
     tracker = DummyTracker({"risk": "Stable"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({"dep": {"roi": 0.1}})
-    safe, reasons, forecast = fg.is_foresight_safe_to_promote(
+    decision = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph
     )
-    assert safe
-    assert reasons == []
+    assert decision.safe
+    assert decision.reasons == []
 
 
 def test_engine_downgrades_and_logs(tmp_path):
@@ -99,24 +99,34 @@ def test_engine_downgrades_and_logs(tmp_path):
     tracker = DummyTracker({"risk": "Stable"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({})
-    safe, reasons, forecast_info = fg.is_foresight_safe_to_promote(
+    decision = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph
     )
-    assert not safe
-    assert reasons == ["low_confidence"]
+    assert not decision.safe
+    assert decision.reasons == ["low_confidence"]
 
-    # mimic self_improvement_engine gating
-    from menace import evaluation_dashboard as ed
+    # mimic self_improvement_engine gating without heavy imports
     log_path = tmp_path / "gov.jsonl"
-    ed.GOVERNANCE_LOG = log_path
+
+    class _ED:
+        GOVERNANCE_LOG = log_path
+
+        @staticmethod
+        def append_governance_result(scorecard, vetoes, forecast, reasons):
+            with open(_ED.GOVERNANCE_LOG, "w", encoding="utf-8") as fh:
+                json.dump({"forecast": forecast, "reasons": reasons}, fh)
+
+    ed = _ED
     scorecard = {}
     vetoes: list[str] = []
     verdict = "promote"
-    if not safe:
-        verdict = "pilot"
-    ed.append_governance_result(scorecard, vetoes, forecast_info, list(reasons))
+    if not decision.safe:
+        verdict = decision.recommendation
+    ed.append_governance_result(
+        scorecard, vetoes, decision.forecast, list(decision.reasons)
+    )
 
     assert verdict == "pilot"
     data = json.loads(log_path.read_text())
-    assert data["forecast"] == forecast_info
-    assert data["reasons"] == reasons
+    assert data["forecast"] == decision.forecast
+    assert data["reasons"] == decision.reasons
