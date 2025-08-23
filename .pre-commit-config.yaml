@@ -7,3 +7,8 @@ repos:
         language: system
         pass_filenames: false
         files: '\.py$'
+      - id: forbid-sqlite3-connect
+        name: Prevent direct sqlite3.connect usage
+        entry: python scripts/check_sqlite_connections.py
+        language: system
+        files: '\.py$'
