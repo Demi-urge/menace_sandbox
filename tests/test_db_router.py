@@ -50,7 +50,9 @@ def test_shared_table_logging(tmp_path, caplog):
     try:
         with caplog.at_level(logging.INFO):
             router.get_connection("bots")
-        assert "Routing table 'bots' to shared database" in caplog.text
+        assert (
+            "Shared table 'bots' accessed by menace 'test'" in caplog.text
+        )
     finally:
         router.close()
 
@@ -130,5 +132,21 @@ def test_table_lists_from_config(tmp_path, monkeypatch):
     finally:
         router.close()
     monkeypatch.delenv("DB_ROUTER_CONFIG", raising=False)
+    importlib.reload(db_router)
+
+
+def test_logging_respects_env_level(tmp_path, monkeypatch, caplog):
+    shared_db = tmp_path / "shared.db"
+    local_db = tmp_path / "local.db"
+    monkeypatch.setenv("DB_ROUTER_LOG_LEVEL", "WARNING")
+    importlib.reload(db_router)
+    router = db_router.DBRouter("test", str(local_db), str(shared_db))
+    try:
+        with caplog.at_level(logging.INFO):
+            router.get_connection("bots")
+        assert "Shared table 'bots' accessed" not in caplog.text
+    finally:
+        router.close()
+    monkeypatch.delenv("DB_ROUTER_LOG_LEVEL", raising=False)
     importlib.reload(db_router)
 
