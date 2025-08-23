@@ -12,6 +12,10 @@ import logging
 
 from vector_service import EmbeddableDBMixin
 from .unified_event_bus import UnifiedEventBus
+try:  # pragma: no cover - import available in package context
+    from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+except Exception:  # pragma: no cover - fallback for top-level imports
+    from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 
 logger = logging.getLogger(__name__)
@@ -45,12 +49,16 @@ class InformationDB(EmbeddableDBMixin):
         self,
         path: str = "information.db",
         *,
+        router: DBRouter | None = None,
         vector_index_path: str = "information_embeddings.index",
         embedding_version: int = 1,
         vector_backend: str = "annoy",
         event_bus: UnifiedEventBus | None = None,
     ) -> None:
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "information", path, path
+        )
+        self.conn = self.router.get_connection("information")
         self.event_bus = event_bus
         self.conn.row_factory = sqlite3.Row
         self.conn.execute(
