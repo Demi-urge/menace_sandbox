@@ -26,7 +26,7 @@ if safe:
     )
 else:
     bucket.enqueue(
-        "workflow-1", raroi=0.8, confidence=forecast.confidence, context=reasons
+        "workflow-1", raroi=0.8, confidence=forecast.get("confidence"), context=reasons
     )
     result = {"verdict": "pilot", "reasons": reasons}
 
