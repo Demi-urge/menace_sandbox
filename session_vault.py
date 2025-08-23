@@ -1,13 +1,21 @@
 from __future__ import annotations
 
-"""Session Vault storing browser identities in Redis with SQLite backup."""
+"""Session Vault storing browser identities in Redis with SQLite backup.
+
+Entry points must ensure the global database router is initialised before
+interacting with the vault.  When executed as a script this module initialises
+the router with the identifier ``"session_vault"``.
+"""
 
 import json
 import sqlite3
 import time
 from dataclasses import dataclass, asdict
-from pathlib import Path
 from typing import Any, Dict, Optional
+
+from db_router import GLOBAL_ROUTER, init_db_router
+
+router = GLOBAL_ROUTER or init_db_router("session_vault")
 
 try:  # pragma: no cover - optional dependency
     import redis  # type: ignore
@@ -32,8 +40,8 @@ class SessionData:
 class SessionVault:
     """Store and retrieve sessions using Redis for speed and SQLite for durability."""
 
-    def __init__(self, path: str = "sessions.db", redis_url: str = "redis://localhost:6379/0") -> None:
-        self.path = Path(path)
+    def __init__(self, path: str | None = None, redis_url: str = "redis://localhost:6379/0") -> None:
+        self.conn = router.local_conn
         self._init_sqlite()
         self.redis = None
         if redis and self._connect_redis(redis_url):
@@ -50,43 +58,43 @@ class SessionVault:
 
     # SQLite schema
     def _init_sqlite(self) -> None:
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS sessions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    domain TEXT,
-                    cookies TEXT,
-                    user_agent TEXT,
-                    fingerprint TEXT,
-                    last_seen REAL,
-                    success_count INTEGER,
-                    fail_count INTEGER
-                )
-                """
+        conn = self.conn
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT,
+                cookies TEXT,
+                user_agent TEXT,
+                fingerprint TEXT,
+                last_seen REAL,
+                success_count INTEGER,
+                fail_count INTEGER
             )
-            conn.commit()
+            """
+        )
+        conn.commit()
 
     def add(self, domain: str, data: SessionData) -> int:
         """Insert a new session."""
         data.last_seen = time.time()
         data.domain = domain
-        with sqlite3.connect(self.path) as conn:
-            cur = conn.execute(
-                """INSERT INTO sessions(domain,cookies,user_agent,fingerprint,last_seen,success_count,fail_count)
-                VALUES(?,?,?,?,?,?,?)""",
-                (
-                    domain,
-                    json.dumps(data.cookies),
-                    data.user_agent,
-                    data.fingerprint,
-                    data.last_seen,
-                    data.success_count,
-                    data.fail_count,
-                ),
-            )
-            conn.commit()
-            sid = int(cur.lastrowid)
+        conn = self.conn
+        cur = conn.execute(
+            """INSERT INTO sessions(domain,cookies,user_agent,fingerprint,last_seen,success_count,fail_count)
+            VALUES(?,?,?,?,?,?,?)""",
+            (
+                domain,
+                json.dumps(data.cookies),
+                data.user_agent,
+                data.fingerprint,
+                data.last_seen,
+                data.success_count,
+                data.fail_count,
+            ),
+        )
+        conn.commit()
+        sid = int(cur.lastrowid)
 
         data.session_id = sid
         if self.redis:
@@ -96,22 +104,22 @@ class SessionVault:
 
     def count(self, domain: str | None = None) -> int:
         """Return number of stored sessions optionally filtered by *domain*."""
-        with sqlite3.connect(self.path) as conn:
-            if domain is None:
-                row = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()
-            else:
-                row = conn.execute(
-                    "SELECT COUNT(*) FROM sessions WHERE domain=?",
-                    (domain,),
-                ).fetchone()
+        conn = self.conn
+        if domain is None:
+            row = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM sessions WHERE domain=?",
+                (domain,),
+            ).fetchone()
         return int(row[0]) if row else 0
 
     def _load_from_sqlite(self, sid: int) -> Optional[SessionData]:
-        with sqlite3.connect(self.path) as conn:
-            row = conn.execute(
-                "SELECT id,domain,cookies,user_agent,fingerprint,last_seen,success_count,fail_count FROM sessions WHERE id=?",
-                (sid,),
-            ).fetchone()
+        conn = self.conn
+        row = conn.execute(
+            "SELECT id,domain,cookies,user_agent,fingerprint,last_seen,success_count,fail_count FROM sessions WHERE id=?",
+            (sid,),
+        ).fetchone()
         if not row:
             return None
         return SessionData(
@@ -138,13 +146,13 @@ class SessionVault:
                     sid = int(sid_raw)
                     break
         if sid is None:
-            with sqlite3.connect(self.path) as conn:
-                row = conn.execute(
-                    "SELECT id FROM sessions WHERE domain=? ORDER BY last_seen ASC LIMIT 1",
-                    (domain,),
-                ).fetchone()
-                if row:
-                    sid = int(row[0])
+            conn = self.conn
+            row = conn.execute(
+                "SELECT id FROM sessions WHERE domain=? ORDER BY last_seen ASC LIMIT 1",
+                (domain,),
+            ).fetchone()
+            if row:
+                sid = int(row[0])
         if sid is None:
             return None
         data = self._load_from_sqlite(sid)
@@ -160,12 +168,12 @@ class SessionVault:
         if captcha or banned or success is False:
             data.fail_count += 1
         data.last_seen = time.time()
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                "UPDATE sessions SET last_seen=?, success_count=?, fail_count=? WHERE id=?",
-                (data.last_seen, data.success_count, data.fail_count, sid),
-            )
-            conn.commit()
+        conn = self.conn
+        conn.execute(
+            "UPDATE sessions SET last_seen=?, success_count=?, fail_count=? WHERE id=?",
+            (data.last_seen, data.success_count, data.fail_count, sid),
+        )
+        conn.commit()
         if self.redis:
             self.redis.hset(f"session:{sid}", mapping=asdict(data))
             if not self.redis.lrem(f"domain:{data.domain}", 0, sid):

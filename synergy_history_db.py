@@ -1,13 +1,21 @@
+"""Utilities for persisting synergy history.
+
+The module relies on the global database router.  When executed as a script it
+initialises the router with the identifier ``"synergy_history_db"``.
+"""
+
 import json
 import sqlite3
 from pathlib import Path
-from typing import Dict, List, Tuple, Iterator
+from typing import Dict, Iterator, List, Tuple
 from contextlib import contextmanager
 import logging
 from filelock import FileLock
 
-from db_router import DBRouter
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from . import RAISE_ERRORS
+
+router = GLOBAL_ROUTER or init_db_router("synergy_history_db")
 
 logger = logging.getLogger(__name__)
 
@@ -22,58 +30,55 @@ CREATE_TABLE = (
 )
 
 
-def connect(path: str | Path, *, router: DBRouter | None = None) -> sqlite3.Connection:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    router = router or DBRouter("synergy_history", str(p), ":memory:")
-    conn = router.get_connection("synergy_history")
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute(CREATE_TABLE)
-        conn.commit()
-    except Exception:
-        orig_close = conn.close
-        orig_close()
-        router.shared_conn.close()
-        raise
+def connect(path: str | Path | None = None, *, router: DBRouter | None = None) -> sqlite3.Connection:
+    """Return a connection to the synergy history database.
 
-    orig_close = conn.close
+    When ``path`` is provided a temporary router pointing at that file is
+    created; otherwise the globally initialised router is used.
+    """
 
-    def _close() -> None:
-        try:
-            orig_close()
-        finally:
-            router.shared_conn.close()
+    if router is None:
+        if path is not None:
+            p = Path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            r = DBRouter("synergy_history_db", str(p), str(p))
+        else:
+            r = globals()["router"]
+    else:
+        r = router
 
-    conn.close = _close  # type: ignore[attr-defined]
+    conn = r.get_connection("synergy_history")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(CREATE_TABLE)
+    conn.commit()
     return conn
 
 
 @contextmanager
-def connect_locked(path: str | Path, *, router: DBRouter | None = None) -> Iterator[sqlite3.Connection]:
-    """Yield a connection with an exclusive lock on ``path``."""
-    p = Path(path)
-    lock_path = p.with_suffix(p.suffix + ".lock")
-    p.parent.mkdir(parents=True, exist_ok=True)
-    lock = FileLock(str(lock_path))
-    with lock:
-        conn = connect(p, router=router)
-        try:
+def connect_locked(path: str | Path | None = None, *, router: DBRouter | None = None) -> Iterator[sqlite3.Connection]:
+    """Yield a connection with an exclusive lock on the database file."""
+
+    if path is not None:
+        lock_path = Path(path).with_suffix(Path(path).suffix + ".lock")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        lock = FileLock(str(lock_path))
+        with lock:
+            conn = connect(path, router=router)
             yield conn
-        finally:
-            conn.close()
+    else:
+        conn = connect(router=router)
+        yield conn
 
 
-def load_history(path: str | Path, *, router: DBRouter | None = None) -> List[Dict[str, float]]:
-    """Return synergy history entries from ``path`` SQLite database."""
-    p = Path(path)
-    if not p.exists():
+def load_history(path: str | Path | None = None, *, router: DBRouter | None = None) -> List[Dict[str, float]]:
+    """Return synergy history entries from the SQLite database."""
+    if path is not None and not Path(path).exists():
         return []
     try:
-        with connect(p, router=router) as conn:
-            rows = conn.execute(
-                "SELECT entry FROM synergy_history ORDER BY id"
-            ).fetchall()
+        conn = connect(path, router=router)
+        rows = conn.execute(
+            "SELECT entry FROM synergy_history ORDER BY id"
+        ).fetchall()
         hist: List[Dict[str, float]] = []
         for (text,) in rows:
             try:
@@ -86,7 +91,7 @@ def load_history(path: str | Path, *, router: DBRouter | None = None) -> List[Di
                     raise HistoryParseError(str(exc)) from exc
         return hist
     except Exception as exc:
-        logger.exception("failed to load history from %s: %s", p, exc)
+        logger.exception("failed to load history: %s", exc)
         if RAISE_ERRORS:
             raise HistoryParseError(str(exc)) from exc
         return []
@@ -163,7 +168,7 @@ def fetch_latest(conn: sqlite3.Connection) -> Dict[str, float]:
     return {}
 
 
-def migrate_json_to_db(json_path: str | Path, db_path: str | Path) -> None:
+def migrate_json_to_db(json_path: str | Path, db_path: str | Path | None = None) -> None:
     jp = Path(json_path)
     if not jp.exists():
         return
@@ -177,21 +182,15 @@ def migrate_json_to_db(json_path: str | Path, db_path: str | Path) -> None:
             raise HistoryParseError(str(exc)) from exc
         return
     conn = connect(db_path)
-    try:
-        for entry in data:
-            if isinstance(entry, dict):
-                insert_entry(conn, {str(k): float(v) for k, v in entry.items()})
-    finally:
-        conn.close()
+    for entry in data:
+        if isinstance(entry, dict):
+            insert_entry(conn, {str(k): float(v) for k, v in entry.items()})
 
 
-def record(path: str | Path, entry: Dict[str, float]) -> None:
-    """Append ``entry`` to the history database at ``path``."""
+def record(entry: Dict[str, float], path: str | Path | None = None) -> None:
+    """Append ``entry`` to the history database."""
     conn = connect(path)
-    try:
-        insert_entry(conn, entry)
-    finally:
-        conn.close()
+    insert_entry(conn, entry)
 
 
 __all__ = [
