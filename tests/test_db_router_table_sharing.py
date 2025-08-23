@@ -84,3 +84,17 @@ def test_shared_and_local_visibility_across_instances(tmp_path):
             )
         )
         assert tables == []
+
+
+def test_recent_local_tables_route_to_local(tmp_path):
+    """Ensure newly added local tables use the menace-specific database."""
+    shared_db = tmp_path / "shared.db"
+    local_db = tmp_path / "local.db"
+    router = DBRouter("one", str(local_db), str(shared_db))
+    try:
+        for table in ("sandbox_metrics", "roi_logs", "menace_config"):
+            with router.get_connection(table) as conn:
+                db_path = conn.execute("PRAGMA database_list").fetchall()[0][2]
+                assert db_path == str(local_db)
+    finally:
+        router.close()

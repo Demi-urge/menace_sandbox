@@ -1,0 +1,22 @@
+{
+  "shared": [
+    "enhancements",
+    "bots",
+    "errors",
+    "code",
+    "discrepancies",
+    "workflow_summaries",
+    "overrides"
+  ],
+  "local": [
+    "models",
+    "patch_history",
+    "variants",
+    "memory",
+    "events",
+    "sandbox_metrics",
+    "roi_logs",
+    "menace_config"
+  ],
+  "deny": []
+}

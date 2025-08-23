@@ -15,6 +15,7 @@ import sqlite3
 import threading
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from typing import Set
 
 __all__ = [
@@ -69,6 +70,10 @@ def _load_table_overrides() -> None:
     local_env = os.getenv("DB_ROUTER_LOCAL_TABLES", "")
     deny_env = os.getenv("DB_ROUTER_DENY_TABLES", "")
     config_path = os.getenv("DB_ROUTER_CONFIG")
+    if not config_path:
+        default_cfg = Path(__file__).resolve().parent / "config" / "db_router_tables.json"
+        if default_cfg.exists():
+            config_path = str(default_cfg)
 
     def _split(value: str) -> Set[str]:
         return {t.strip() for t in value.split(",") if t.strip()}
