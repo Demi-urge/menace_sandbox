@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import os
 import sys
 import types
+import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -38,34 +39,33 @@ sys.modules.setdefault(
 )
 
 from menace.admin_bot_base import AdminBotBase
-from menace.database_router import DBResult
 
 
 class DummyRouter:
     def __init__(self):
         self.calls = []
 
-    def query_all(self, term: str, **options):
-        self.calls.append((term, options))
-        return DBResult(code=[], bots=[], info=[], memory=[], menace=[])
+    def get_connection(self, table_name: str):
+        self.calls.append(table_name)
+        class DummyConn:
+            def execute(self, _sql):
+                return None
+
+        return DummyConn()
 
 
-def test_health_check_term_override():
-    class CustomBot(AdminBotBase):
-        def health_check_term(self) -> str:
-            return "custom:check"
-
+def test_health_check_uses_router_connection():
     router = DummyRouter()
-    CustomBot(db_router=router)
-    assert router.calls == [("custom:check", {})]
+
+    AdminBotBase(db_router=router)
+
+    assert router.calls == ["bots"]
 
 
-def test_query_passes_options_and_returns_result():
-    router = DummyRouter()
-    bot = AdminBotBase(db_router=router, perform_health_check=False)
-    res = bot.query("hello", requesting_bot="tester")
-    assert router.calls == [("hello", {"requesting_bot": "tester"})]
-    assert isinstance(res, DBResult)
+def test_query_is_not_implemented():
+    bot = AdminBotBase(db_router=DummyRouter(), perform_health_check=False)
+    with pytest.raises(NotImplementedError):
+        bot.query("anything")
 
 
 def test_skip_health_check():
