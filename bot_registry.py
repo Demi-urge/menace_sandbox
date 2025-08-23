@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Iterable, List, Tuple, Union, Optional, Dict
 from pathlib import Path
-import sqlite3
 import time
 
 try:
@@ -22,6 +21,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .unified_event_bus import UnifiedEventBus
+import db_router
+from db_router import DBRouter, init_db_router
 
 
 class BotRegistry:
@@ -149,12 +150,20 @@ class BotRegistry:
         }
 
     # ------------------------------------------------------------------
-    def save(self, dest: Union[Path, str, "MenaceDB", "PathwayDB"]) -> None:
+    def save(
+        self, dest: Union[Path, str, "MenaceDB", "PathwayDB", DBRouter]
+    ) -> None:
         """Persist the current graph to a SQLite-backed database."""
-        if isinstance(dest, str) or isinstance(dest, Path):
+        if isinstance(dest, (str, Path)):
             path = Path(dest)
-            conn = sqlite3.connect(path)
-            close_conn = True
+            router = db_router.GLOBAL_ROUTER or init_db_router(
+                "bot_registry", str(path), str(path)
+            )
+            conn = router.get_connection("bots")
+            close_conn = False
+        elif isinstance(dest, DBRouter):
+            conn = dest.get_connection("bots")
+            close_conn = False
         elif MenaceDB is not None and isinstance(dest, MenaceDB):
             conn = dest.engine.raw_connection()
             close_conn = False
@@ -190,12 +199,20 @@ class BotRegistry:
             conn.close()
 
     # ------------------------------------------------------------------
-    def load(self, src: Union[Path, str, "MenaceDB", "PathwayDB"]) -> None:
+    def load(
+        self, src: Union[Path, str, "MenaceDB", "PathwayDB", DBRouter]
+    ) -> None:
         """Populate ``self.graph`` from ``src`` tables."""
         if isinstance(src, (str, Path)):
             path = Path(src)
-            conn = sqlite3.connect(path)
-            close_conn = True
+            router = db_router.GLOBAL_ROUTER or init_db_router(
+                "bot_registry", str(path), str(path)
+            )
+            conn = router.get_connection("bots")
+            close_conn = False
+        elif isinstance(src, DBRouter):
+            conn = src.get_connection("bots")
+            close_conn = False
         elif MenaceDB is not None and isinstance(src, MenaceDB):
             conn = src.engine.raw_connection()
             close_conn = False

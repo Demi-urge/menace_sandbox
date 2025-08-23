@@ -1,34 +1,41 @@
-import sqlite3
 import pytest
 
 pytest.importorskip("networkx")
 
 from menace.bot_registry import BotRegistry
+from db_router import init_db_router
 
 
 def test_registry_save_roundtrip(tmp_path):
+    path = tmp_path / "g.db"
+    router = init_db_router("br", str(path), str(path))
     reg = BotRegistry()
     reg.register_interaction("a", "b", 2.0)
-    path = tmp_path / "g.db"
-    reg.save(path)
-    conn = sqlite3.connect(path)
-    row = conn.execute(
-        "SELECT weight FROM bot_edges WHERE from_bot='a' AND to_bot='b'"
-    ).fetchone()
+    reg.save(router)
+    with router.get_connection("bots") as conn:
+        row = conn.execute(
+            "SELECT weight FROM bot_edges WHERE from_bot='a' AND to_bot='b'",
+        ).fetchone()
     assert row and row[0] == 2.0
-    conn.close()
+    assert router._access_counts["shared"]["bots"] >= 1
+    router.close()
 
 
 def test_registry_load(tmp_path):
+    path = tmp_path / "g.db"
+    router = init_db_router("br2", str(path), str(path))
     reg = BotRegistry()
     reg.register_interaction("a", "b", 2.0)
-    path = tmp_path / "g.db"
-    reg.save(path)
+    reg.save(router)
+    router.close()
 
+    router = init_db_router("br2", str(path), str(path))
     reg2 = BotRegistry()
-    reg2.load(path)
+    reg2.load(router)
     assert reg2.graph.has_edge("a", "b")
     assert float(reg2.graph["a"]["b"].get("weight")) == 2.0
+    assert router._access_counts["shared"]["bots"] >= 1
+    router.close()
 
 
 def test_init_logs_load_error(tmp_path, monkeypatch, caplog):
