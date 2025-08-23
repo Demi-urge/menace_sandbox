@@ -237,6 +237,7 @@ def mock_forecaster(monkeypatch):
         class DummyForecaster:
             def __init__(self, tracker, logger=None):
                 self.tracker = tracker
+                self.logger = logger
 
             def forecast(self, workflow_id, patch, cycles=None, simulations=None):
                 return result
@@ -377,7 +378,7 @@ def test_governor_foresight_gate_failure(monkeypatch):
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
         confidence_threshold=0.6,
     ):
-        return False, type("R", (), {"upgrade_id": "fid1"})(), ["fs_fail"]
+        return False, ["fs_fail"], type("R", (), {"upgrade_id": "fid1"})()
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(
@@ -429,7 +430,7 @@ def test_governor_foresight_gate_pass(monkeypatch):
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
         confidence_threshold=0.6,
     ):
-        return True, type("R", (), {"upgrade_id": "fid2"})(), []
+        return True, [], type("R", (), {"upgrade_id": "fid2"})()
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(

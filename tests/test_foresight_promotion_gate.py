@@ -40,7 +40,7 @@ def test_projected_roi_below_threshold():
     tracker = DummyTracker({"risk": "Stable"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({})
-    safe, forecast, reasons = fg.is_foresight_safe_to_promote(
+    safe, reasons, forecast = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph, roi_threshold=0.5
     )
     assert not safe
@@ -52,7 +52,7 @@ def test_low_confidence():
     tracker = DummyTracker({"risk": "Stable"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({})
-    safe, forecast, reasons = fg.is_foresight_safe_to_promote(
+    safe, reasons, forecast = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph
     )
     assert not safe
@@ -64,7 +64,7 @@ def test_roi_collapse_risk():
     tracker = DummyTracker({"risk": "Immediate collapse risk"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({})
-    safe, forecast, reasons = fg.is_foresight_safe_to_promote(
+    safe, reasons, forecast = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph
     )
     assert not safe
@@ -76,7 +76,7 @@ def test_negative_dag_impact():
     tracker = DummyTracker({"risk": "Stable"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({"dep": {"roi": -0.1}})
-    safe, forecast, reasons = fg.is_foresight_safe_to_promote(
+    safe, reasons, forecast = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph
     )
     assert not safe
@@ -88,7 +88,7 @@ def test_safe_path():
     tracker = DummyTracker({"risk": "Stable"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({"dep": {"roi": 0.1}})
-    safe, forecast, reasons = fg.is_foresight_safe_to_promote(
+    safe, reasons, forecast = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph
     )
     assert safe
@@ -100,7 +100,7 @@ def test_engine_downgrades_and_logs(tmp_path):
     tracker = DummyTracker({"risk": "Stable"})
     forecaster = DummyForecaster(result, tracker)
     graph = DummyGraph({})
-    safe, forecast_res, reasons = fg.is_foresight_safe_to_promote(
+    safe, reasons, forecast_res = fg.is_foresight_safe_to_promote(
         "wf", "patch", forecaster, graph
     )
     assert not safe

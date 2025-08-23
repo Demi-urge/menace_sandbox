@@ -36,7 +36,7 @@ def is_foresight_safe_to_promote(
     *,
     roi_threshold: float = 0.0,
     confidence_threshold: float = 0.6,
-) -> tuple[bool, ForecastResult, List[str]]:
+) -> tuple[bool, List[str], ForecastResult]:
     """Assess whether ``patch`` may be promoted based on forecasted metrics.
 
     Parameters
@@ -54,6 +54,12 @@ def is_foresight_safe_to_promote(
         Minimum acceptable ROI projection for all cycles.
     confidence_threshold:
         Minimum forecast confidence required for promotion.
+    
+    Returns
+    -------
+    tuple[bool, List[str], ForecastResult]
+        ``safe`` decision flag, list of ``reasons`` for rejection and the
+        ``forecast`` object providing projection details.
     """
 
     forecast = forecaster.forecast(workflow_id, patch)
@@ -111,7 +117,7 @@ def is_foresight_safe_to_promote(
         },
     )
 
-    return safe, forecast, reasons
+    return safe, reasons, forecast
 
 
 __all__ = ["is_foresight_safe_to_promote"]
