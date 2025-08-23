@@ -69,12 +69,15 @@ from .revenue_amplifier import (
     RevenueEventsDB,
 )
 from .bot_db_utils import wrap_bot_methods
-from .db_router import DBRouter
+from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from .unified_event_bus import UnifiedEventBus
 from .bot_registry import BotRegistry
 from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
 from .unified_learning_engine import UnifiedLearningEngine
 from .action_planner import ActionPlanner
+
+MENACE_ID = "model_automation_pipeline"
+DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
 
 
 @dataclass
@@ -175,7 +178,7 @@ class ModelAutomationPipeline:
         self.performance_bot = performance_bot or PerformanceAssessmentBot()
         self.comms_bot = comms_bot or CommunicationMaintenanceBot()
         self.monitor_bot = monitor_bot or OperationalMonitoringBot()
-        self.db_bot = db_bot or CentralDatabaseBot()
+        self.db_bot = db_bot or CentralDatabaseBot(db_router=self.db_router)
         self.sentiment_bot = sentiment_bot or SentimentBot()
         self.query_bot = query_bot or QueryBot()
         self.memory_bot = memory_bot or MemoryBot()
@@ -196,7 +199,7 @@ class ModelAutomationPipeline:
         self.spike_bot = spike_bot or RevenueSpikeEvaluatorBot(RevenueEventsDB())
         self.allocation_bot = allocation_bot or CapitalAllocationBot()
 
-        self.db_router = db_router or DBRouter(event_bus=event_bus)
+        self.db_router = db_router or DB_ROUTER
         self.bot_registry = bot_registry or BotRegistry()
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
