@@ -2,6 +2,13 @@ from __future__ import annotations
 
 """Dashboard for visualising sandbox ROI history and weight changes."""
 
+import uuid
+
+from db_router import init_db_router
+
+MENACE_ID = uuid.uuid4().hex
+init_db_router(MENACE_ID)
+
 from pathlib import Path
 from typing import List
 import json

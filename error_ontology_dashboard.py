@@ -2,6 +2,13 @@ from __future__ import annotations
 
 """Dashboard for exploring error ontology statistics."""
 
+import uuid
+
+from db_router import init_db_router
+
+MENACE_ID = uuid.uuid4().hex
+init_db_router(MENACE_ID)
+
 from pathlib import Path
 from typing import Optional
 import json

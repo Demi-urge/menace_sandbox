@@ -5,6 +5,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from typing import Any
+import uuid
+
+from db_router import init_db_router
+
+MENACE_ID = uuid.uuid4().hex
+init_db_router(MENACE_ID)
 
 
 MODULE_TEMPLATE = '''from __future__ import annotations
