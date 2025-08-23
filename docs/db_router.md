@@ -25,6 +25,12 @@ SHARED_TABLES.add("alerts")
 LOCAL_TABLES.add("session")
 ```
 
+The router can also be configured via environment variables or a JSON file. Set
+`DB_ROUTER_SHARED_TABLES`, `DB_ROUTER_LOCAL_TABLES` or `DB_ROUTER_DENY_TABLES`
+to comma separated table lists. Alternatively, point `DB_ROUTER_CONFIG` to a
+JSON file containing `{"shared": [...], "local": [...], "deny": [...]}` to
+extend or restrict the built-in lists.
+
 ## Retrieving connections
 
 Use `DBRouter.get_connection(table_name)` to obtain an `sqlite3.Connection` for

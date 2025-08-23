@@ -3,6 +3,10 @@ import threading
 
 import pytest
 
+import importlib
+import json
+
+import db_router
 from db_router import DBRouter
 
 
@@ -81,4 +85,49 @@ def test_get_connection_thread_safe(tmp_path):
     assert all(path == str(local_db) for path in local_paths)
 
     router.close()
+
+
+def test_table_lists_from_env(tmp_path, monkeypatch):
+    shared_db = tmp_path / "shared.db"
+    local_db = tmp_path / "local.db"
+    monkeypatch.setenv("DB_ROUTER_SHARED_TABLES", "env_shared")
+    monkeypatch.setenv("DB_ROUTER_LOCAL_TABLES", "env_local")
+    monkeypatch.setenv("DB_ROUTER_DENY_TABLES", "bots")
+    importlib.reload(db_router)
+    router = db_router.DBRouter("test", str(local_db), str(shared_db))
+    try:
+        with router.get_connection("env_shared") as conn:
+            assert _db_path(conn) == str(shared_db)
+        with router.get_connection("env_local") as conn:
+            assert _db_path(conn) == str(local_db)
+        with pytest.raises(ValueError):
+            router.get_connection("bots")
+    finally:
+        router.close()
+    monkeypatch.delenv("DB_ROUTER_SHARED_TABLES", raising=False)
+    monkeypatch.delenv("DB_ROUTER_LOCAL_TABLES", raising=False)
+    monkeypatch.delenv("DB_ROUTER_DENY_TABLES", raising=False)
+    importlib.reload(db_router)
+
+
+def test_table_lists_from_config(tmp_path, monkeypatch):
+    shared_db = tmp_path / "shared.db"
+    local_db = tmp_path / "local.db"
+    cfg = {"shared": ["cfg_shared"], "local": ["cfg_local"], "deny": ["bots"]}
+    cfg_path = tmp_path / "cfg.json"
+    cfg_path.write_text(json.dumps(cfg))
+    monkeypatch.setenv("DB_ROUTER_CONFIG", str(cfg_path))
+    importlib.reload(db_router)
+    router = db_router.DBRouter("test", str(local_db), str(shared_db))
+    try:
+        with router.get_connection("cfg_shared") as conn:
+            assert _db_path(conn) == str(shared_db)
+        with router.get_connection("cfg_local") as conn:
+            assert _db_path(conn) == str(local_db)
+        with pytest.raises(ValueError):
+            router.get_connection("bots")
+    finally:
+        router.close()
+    monkeypatch.delenv("DB_ROUTER_CONFIG", raising=False)
+    importlib.reload(db_router)
 

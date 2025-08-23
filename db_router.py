@@ -8,13 +8,21 @@ available to every Menace instance while local tables are isolated per
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
 import threading
 from typing import Set
 
-__all__ = ["DBRouter", "SHARED_TABLES", "LOCAL_TABLES", "init_db_router", "GLOBAL_ROUTER"]
+__all__ = [
+    "DBRouter",
+    "SHARED_TABLES",
+    "LOCAL_TABLES",
+    "DENY_TABLES",
+    "init_db_router",
+    "GLOBAL_ROUTER",
+]
 
 
 # Tables stored in the shared database.  These tables are visible to every
@@ -37,6 +45,52 @@ LOCAL_TABLES: Set[str] = {
     "memory",
     "events",
 }
+
+# Tables explicitly denied even if present in the allow lists.
+DENY_TABLES: Set[str] = set()
+
+
+def _load_table_overrides() -> None:
+    """Extend allow/deny lists from env vars or optional config file.
+
+    Environment variables ``DB_ROUTER_SHARED_TABLES``, ``DB_ROUTER_LOCAL_TABLES``
+    and ``DB_ROUTER_DENY_TABLES`` accept comma separated table names.  A JSON
+    config file referenced via ``DB_ROUTER_CONFIG`` may define ``shared``,
+    ``local`` and ``deny`` arrays.
+    """
+
+    shared_env = os.getenv("DB_ROUTER_SHARED_TABLES", "")
+    local_env = os.getenv("DB_ROUTER_LOCAL_TABLES", "")
+    deny_env = os.getenv("DB_ROUTER_DENY_TABLES", "")
+    config_path = os.getenv("DB_ROUTER_CONFIG")
+
+    def _split(value: str) -> Set[str]:
+        return {t.strip() for t in value.split(",") if t.strip()}
+
+    shared_extra = _split(shared_env)
+    local_extra = _split(local_env)
+    deny_extra = _split(deny_env)
+
+    if config_path and os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            shared_extra.update(data.get("shared", []))
+            local_extra.update(data.get("local", []))
+            deny_extra.update(data.get("deny", []))
+        except Exception:
+            # Ignore malformed config files; routing will fall back to defaults.
+            pass
+
+    SHARED_TABLES.update(shared_extra)
+    LOCAL_TABLES.update(local_extra)
+    DENY_TABLES.update(deny_extra)
+    for table in deny_extra:
+        SHARED_TABLES.discard(table)
+        LOCAL_TABLES.discard(table)
+
+
+_load_table_overrides()
 
 
 # Global router instance used by modules that rely on a single router without
@@ -93,6 +147,8 @@ class DBRouter:
             raise ValueError("table_name must be a non-empty string")
 
         with self._lock:
+            if table_name in DENY_TABLES:
+                raise ValueError(f"Access to table '{table_name}' is denied")
             if table_name in SHARED_TABLES:
                 logging.info("Routing table '%s' to shared database", table_name)
                 return self.shared_conn
