@@ -9,8 +9,9 @@ scores, scenario stress test results and alignment checks.  Optional policy
 files may provide rule expressions that override the built in heuristics.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Any, Dict, Iterable, List, Mapping
+from pathlib import Path
 
 import ast
 import json
@@ -41,6 +42,9 @@ else:  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
+_decision_logger = ForecastLogger(
+    Path(__file__).resolve().parent / "forecast_records" / "decision_log.jsonl"
+)
 
 
 def _safe_eval(expr: str, variables: Mapping[str, Any]) -> Any:
@@ -998,7 +1002,20 @@ def is_foresight_safe_to_promote(
     not yield negative downstream ROI deltas.
     """
 
-    forecaster = UpgradeForecaster(tracker)
+    if isinstance(patch, str):
+        patch_summary = patch
+    else:
+        patch = list(patch)
+        patch_summary = "\n".join(patch)
+
+    try:
+        forecaster = UpgradeForecaster(tracker, logger=_decision_logger)
+    except TypeError:
+        forecaster = UpgradeForecaster(tracker)
+        try:
+            forecaster.logger = _decision_logger  # type: ignore[attr-defined]
+        except Exception:
+            pass
     forecast = forecaster.forecast(workflow_id, patch)
 
     reasons: list[str] = []
@@ -1020,17 +1037,36 @@ def is_foresight_safe_to_promote(
     except Exception:
         logger.exception("foresight risk evaluation failed")
 
+    impact_summary: Mapping[str, Dict[str, float]] | None = None
     try:
         roi_delta = forecast.projections[0].roi if forecast.projections else 0.0
-        impacts = workflow_graph.simulate_impact_wave(workflow_id, float(roi_delta), 0.0)
-        for wid, vals in impacts.items():
+        impact_summary = workflow_graph.simulate_impact_wave(
+            workflow_id, float(roi_delta), 0.0
+        )
+        for wid, vals in impact_summary.items():
             if wid != workflow_id and vals.get("roi", 0.0) < 0:
                 reasons.append("negative_impact_wave")
                 break
     except Exception:
         logger.exception("impact wave simulation failed")
 
-    return (len(reasons) == 0, reasons, forecast)
+    decision = len(reasons) == 0
+    try:
+        _decision_logger.log(
+            {
+                "workflow_id": workflow_id,
+                "patch_summary": patch_summary,
+                "forecast_projections": [asdict(p) for p in forecast.projections],
+                "forecast_confidence": forecast.confidence,
+                "dag_impact": impact_summary,
+                "decision": decision,
+                "reason_codes": reasons,
+            }
+        )
+    except Exception:
+        logger.exception("decision logging failed")
+
+    return (decision, reasons, forecast)
 
 
 __all__ = [
