@@ -131,3 +131,66 @@ def test_override_path_nested_bypasses_micro_pilot(tmp_path, monkeypatch):
     assert "micro_pilot" not in res["reason_codes"]
     assert res["overrides"]["override_path"] == str(override)
     assert res["overrides"]["bypass_micro_pilot"] is True
+
+
+class _DummyTracker:
+    def predict_roi_collapse(self, _wf_id):
+        return {"risk": "Stable", "brittle": False}
+
+
+class _DummyGraph:
+    def simulate_impact_wave(self, *args, **kwargs):
+        return {}
+
+
+def test_foresight_gate_pass(monkeypatch):
+    _reset(monkeypatch)
+    scorecard = {
+        "scenario_scores": {"s": 0.8},
+        "alignment_status": "pass",
+        "raroi": 1.2,
+        "confidence": 0.8,
+    }
+
+    def fake_gate(workflow_id, patch, tracker, workflow_graph, roi_threshold=0.0):
+        return True, [], dg.ForecastResult([], 0.9, "f0")
+
+    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
+
+    res = dg.evaluate_workflow(
+        scorecard,
+        {},
+        foresight_tracker=_DummyTracker(),
+        workflow_id="wf1",
+        patch=[],
+    )
+    assert res["verdict"] == "promote"
+    assert res.get("foresight", {}).get("reason_codes") == []
+
+
+def test_foresight_gate_failure(monkeypatch):
+    _reset(monkeypatch)
+    scorecard = {
+        "scenario_scores": {"s": 0.8},
+        "alignment_status": "pass",
+        "raroi": 1.2,
+        "confidence": 0.8,
+    }
+
+    def fake_gate(workflow_id, patch, tracker, workflow_graph, roi_threshold=0.0):
+        return False, ["low_confidence"], dg.ForecastResult([], 0.9, "f0")
+
+    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
+
+    res = dg.evaluate_workflow(
+        scorecard,
+        {},
+        foresight_tracker=_DummyTracker(),
+        workflow_id="wf1",
+        patch=[],
+    )
+    assert res["verdict"] == "pilot"
+    assert "low_confidence" in res["reason_codes"]
+    assert res.get("foresight", {}).get("reason_codes") == ["low_confidence"]
