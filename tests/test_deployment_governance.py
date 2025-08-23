@@ -4,6 +4,9 @@ import pytest
 
 from menace.override_validator import generate_signature
 import menace.deployment_governance as dg
+from menace.foresight_tracker import ForesightTracker
+from menace.workflow_graph import WorkflowGraph
+from menace.upgrade_forecaster import CycleProjection, ForecastResult
 
 
 @pytest.fixture(autouse=True)
@@ -166,3 +169,161 @@ def test_unsafe_rule_ignored(tmp_path):
     res = dg.evaluate_workflow(scorecard, {})
     assert res["verdict"] != "demote"
     assert "bad" not in res["reason_codes"]
+
+
+# ---------------------------------------------------------------------------
+# Foresight promotion gate tests
+# ---------------------------------------------------------------------------
+
+
+class DummyTracker(ForesightTracker):
+    def __init__(self, collapse=None):
+        self.collapse = collapse or {"risk": "Stable"}
+
+    def predict_roi_collapse(self, workflow_id):
+        return self.collapse
+
+
+@pytest.fixture
+def foresight_tracker():
+    return DummyTracker()
+
+
+@pytest.fixture
+def workflow_graph(tmp_path, monkeypatch):
+    graph = WorkflowGraph(path=str(tmp_path / "graph.json"))
+    graph.add_workflow("wf", roi=0.0)
+    graph.add_workflow("dep", roi=0.0)
+    graph.add_dependency("wf", "dep", impact_weight=1.0)
+    monkeypatch.setattr(dg, "WorkflowGraph", lambda: graph)
+    return graph
+
+
+@pytest.fixture
+def dummy_patch():
+    return ["patch"]
+
+
+@pytest.fixture
+def decision_logs(monkeypatch):
+    logs = []
+
+    class DummyLogger:
+        def log(self, data):
+            logs.append(data)
+
+    monkeypatch.setattr(dg, "_decision_logger", DummyLogger())
+    return logs
+
+
+def _set_forecast(monkeypatch, rois, confidence=0.9):
+    result = ForecastResult(
+        projections=[CycleProjection(i + 1, r, 0.0, 1.0, 0.0) for i, r in enumerate(rois)],
+        confidence=confidence,
+        upgrade_id="u1",
+    )
+
+    class DummyForecaster:
+        def __init__(self, tracker):
+            self.tracker = tracker
+
+        def forecast(self, workflow_id, patch, cycles=None, simulations=None):
+            return result
+
+    monkeypatch.setattr(dg, "UpgradeForecaster", lambda tracker: DummyForecaster(tracker))
+    return result
+
+
+def _base_scorecard():
+    return {
+        "scenario_scores": {"s": 0.8},
+        "alignment_status": "pass",
+        "raroi": 1.2,
+        "confidence": 0.8,
+    }
+
+
+def test_promotion_proceeds_when_all_criteria_pass(
+    foresight_tracker, workflow_graph, dummy_patch, decision_logs, monkeypatch
+):
+    _set_forecast(monkeypatch, [1.0, 1.0], confidence=0.9)
+    res = dg.evaluate_workflow(
+        _base_scorecard(),
+        {},
+        foresight_tracker=foresight_tracker,
+        workflow_id="wf",
+        patch=dummy_patch,
+    )
+    assert res["verdict"] == "promote"
+    assert res["reason_codes"] == []
+    assert decision_logs and decision_logs[0]["reason_codes"] == []
+
+
+def test_roi_below_threshold_downgrades_verdict(
+    foresight_tracker, workflow_graph, dummy_patch, decision_logs, monkeypatch
+):
+    _set_forecast(monkeypatch, [0.1], confidence=0.9)
+    res = dg.evaluate_workflow(
+        _base_scorecard(),
+        {"roi_forecast_min": 0.5},
+        foresight_tracker=foresight_tracker,
+        workflow_id="wf",
+        patch=dummy_patch,
+    )
+    assert res["verdict"] == "pilot"
+    assert "projected_roi_below_threshold" in res["reason_codes"]
+    assert decision_logs[0]["reason_codes"] == ["projected_roi_below_threshold"]
+
+
+def test_low_confidence_downgrades_verdict(
+    foresight_tracker, workflow_graph, dummy_patch, decision_logs, monkeypatch
+):
+    _set_forecast(monkeypatch, [1.0], confidence=0.5)
+    res = dg.evaluate_workflow(
+        _base_scorecard(),
+        {},
+        foresight_tracker=foresight_tracker,
+        workflow_id="wf",
+        patch=dummy_patch,
+    )
+    assert res["verdict"] == "pilot"
+    assert "low_confidence" in res["reason_codes"]
+    assert decision_logs[0]["reason_codes"] == ["low_confidence"]
+
+
+def test_early_collapse_downgrades_verdict(
+    foresight_tracker, workflow_graph, dummy_patch, decision_logs, monkeypatch
+):
+    _set_forecast(monkeypatch, [1.0], confidence=0.9)
+    foresight_tracker.collapse = {"risk": "Immediate collapse risk"}
+    res = dg.evaluate_workflow(
+        _base_scorecard(),
+        {},
+        foresight_tracker=foresight_tracker,
+        workflow_id="wf",
+        patch=dummy_patch,
+    )
+    assert res["verdict"] == "pilot"
+    assert "roi_collapse_risk" in res["reason_codes"]
+    assert decision_logs[0]["reason_codes"] == ["roi_collapse_risk"]
+
+
+def test_negative_dag_impact_downgrades_verdict(
+    foresight_tracker, workflow_graph, dummy_patch, decision_logs, monkeypatch
+):
+    _set_forecast(monkeypatch, [1.0], confidence=0.9)
+
+    def bad_wave(wf_id, roi_delta, _):
+        return {"wf": {"roi": roi_delta}, "dep": {"roi": -0.1}}
+
+    monkeypatch.setattr(workflow_graph, "simulate_impact_wave", bad_wave)
+    res = dg.evaluate_workflow(
+        _base_scorecard(),
+        {},
+        foresight_tracker=foresight_tracker,
+        workflow_id="wf",
+        patch=dummy_patch,
+    )
+    assert res["verdict"] == "pilot"
+    assert "negative_impact_wave" in res["reason_codes"]
+    assert decision_logs[0]["reason_codes"] == ["negative_impact_wave"]
