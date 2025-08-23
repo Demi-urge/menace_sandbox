@@ -14,6 +14,7 @@
     "events",
     "memory",
     "menace_config",
+    "metrics",
     "models",
     "patch_history",
     "roi_logs",
@@ -27,7 +28,11 @@
     "deployments",
     "bot_trials",
     "update_history",
-    "roi_events"
+    "roi_events",
+    "action_roi",
+    "ledger",
+    "profit_history",
+    "capital_summary"
   ],
   "deny": [
     "capital_ledger",

@@ -24,11 +24,13 @@ tests continue to operate.
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple, Sequence
+from typing import Sequence, Tuple
 
 import json
 import sqlite3
 import numpy as np
+
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 from .evolution_history_db import EvolutionHistoryDB
 from .evaluation_history_db import EvaluationHistoryDB
@@ -42,6 +44,13 @@ def _parse_ts(ts: str) -> datetime:
     """Parse ISO formatted timestamps."""
 
     return datetime.fromisoformat(ts)
+
+
+# ---------------------------------------------------------------------------
+def _get_router(router: DBRouter | None = None) -> DBRouter:
+    """Return an initialised :class:`DBRouter` instance."""
+
+    return router or GLOBAL_ROUTER or init_db_router("default")
 
 
 # ---------------------------------------------------------------------------
@@ -227,12 +236,14 @@ def _collect_resource_metrics(tracker: ROITracker) -> dict[str, list[float]]:
 
 
 # ---------------------------------------------------------------------------
-def _collect_error_history(path: str | Path) -> list[tuple[datetime, int, int]]:
+def _collect_error_history(
+    path: str | Path, router: DBRouter | None = None
+) -> list[tuple[datetime, int, int]]:
     """Return cumulative error and repair counts ordered by timestamp."""
 
     records: list[tuple[datetime, int, int]] = []
     try:
-        conn = sqlite3.connect(path)
+        conn = _get_router(router).get_connection("telemetry")
         cur = conn.execute(
             "SELECT ts, resolution_status FROM telemetry ORDER BY ts"
         )
@@ -245,16 +256,13 @@ def _collect_error_history(path: str | Path) -> list[tuple[datetime, int, int]]:
             records.append((_parse_ts(ts), err_cnt, rep_cnt))
     except Exception:
         return []
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
     return records
 
 
 # ---------------------------------------------------------------------------
-def _collect_roi_event_extras(path: str | Path) -> dict[str, list[float]]:
+def _collect_roi_event_extras(
+    path: str | Path, router: DBRouter | None = None
+) -> dict[str, list[float]]:
     """Return additional per-cycle metrics stored in ``roi_events.db``.
 
     Any columns on the ``roi_events`` table beyond ``action``, ``roi_before``,
@@ -266,26 +274,23 @@ def _collect_roi_event_extras(path: str | Path) -> dict[str, list[float]]:
 
     extras: dict[str, list[float]] = {}
     try:
-        conn = sqlite3.connect(path)
-        try:
-            cols_cur = conn.execute("PRAGMA table_info(roi_events)")
-            cols = [row[1] for row in cols_cur.fetchall()]
-            base = {"action", "roi_before", "roi_after", "ts"}
-            extra_cols = [c for c in cols if c not in base]
-            if extra_cols:
-                query = "SELECT " + ",".join(extra_cols) + " FROM roi_events ORDER BY ts"
-                cur = conn.execute(query)
-                rows = cur.fetchall()
-                for idx, name in enumerate(extra_cols):
-                    extras[name] = []
-                    for r in rows:
-                        try:
-                            val = float(r[idx]) if r[idx] is not None else 0.0
-                        except Exception:
-                            val = 0.0
-                        extras[name].append(val)
-        finally:
-            conn.close()
+        conn = _get_router(router).get_connection("roi_events")
+        cols_cur = conn.execute("PRAGMA table_info(roi_events)")
+        cols = [row[1] for row in cols_cur.fetchall()]
+        base = {"action", "roi_before", "roi_after", "ts"}
+        extra_cols = [c for c in cols if c not in base]
+        if extra_cols:
+            query = "SELECT " + ",".join(extra_cols) + " FROM roi_events ORDER BY ts"
+            cur = conn.execute(query)
+            rows = cur.fetchall()
+            for idx, name in enumerate(extra_cols):
+                extras[name] = []
+                for r in rows:
+                    try:
+                        val = float(r[idx]) if r[idx] is not None else 0.0
+                    except Exception:
+                        val = 0.0
+                    extras[name].append(val)
     except Exception:
         return {}
     return extras
@@ -510,7 +515,8 @@ def build_dataset(
 
     evo_db = EvolutionHistoryDB(evolution_path)
     eval_db = EvaluationHistoryDB(evaluation_path)
-    roi_conn = sqlite3.connect(roi_path)
+    router = _get_router()
+    roi_conn = router.get_connection("action_roi")
 
     roi_hist = _collect_roi_history(roi_conn)
     eval_hist = _collect_eval_history(eval_db)
@@ -534,8 +540,8 @@ def build_dataset(
     metric_names.extend(resource_cols)
     metrics_hist = _collect_metrics_history(roi_conn, metric_names)
     resource_hist = _collect_resource_metrics(tracker_template)
-    error_hist = _collect_error_history(errors_path)
-    event_extras = _collect_roi_event_extras(roi_events_path)
+    error_hist = _collect_error_history(errors_path, router)
+    event_extras = _collect_roi_event_extras(roi_events_path, router)
     event_errs = event_extras.pop("error_count", [])
     event_reps = event_extras.pop("repair_count", [])
     event_api_deltas = event_extras.pop("api_cost_delta", [])
@@ -617,25 +623,20 @@ def build_dataset(
 
     # load persisted prediction events --------------------------------------
     try:
-        pred_conn = sqlite3.connect(roi_events_path)
+        conn = router.get_connection("roi_prediction_events")
         try:
-            cur = pred_conn.execute(
+            cur = conn.execute(
                 "SELECT predicted_roi, actual_roi, predicted_class, actual_class, "
                 "confidence, predicted_horizons, actual_horizons FROM roi_prediction_events ORDER BY ts"
             )
             pred_rows = cur.fetchall()
         except sqlite3.OperationalError:
-            cur = pred_conn.execute(
+            cur = conn.execute(
                 "SELECT predicted_roi, actual_roi, predicted_class, actual_class FROM roi_prediction_events ORDER BY ts"
             )
             pred_rows = [row + (None, None, None) for row in cur.fetchall()]
     except Exception:
         pred_rows = []
-    finally:
-        try:
-            pred_conn.close()
-        except Exception:
-            pass
 
     pred_vals = [float(r[0]) for r in pred_rows]
     act_vals = [float(r[1]) for r in pred_rows]
