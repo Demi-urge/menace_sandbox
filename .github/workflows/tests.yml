@@ -38,6 +38,8 @@ jobs:
         run: pre-commit run forbid-sqlite3-connect --all-files
       - name: Run flake8
         run: pre-commit run flake8 --all-files
+      - name: Enforce DB router usage
+        run: pytest tests/test_db_router_enforcement.py -q
       - name: Run unit and integration tests
         run: pytest -k "not fuzz"
       - name: Run fuzz and property-based tests
