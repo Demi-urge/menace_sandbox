@@ -198,6 +198,21 @@ A pre-commit hook enforces this rule by rejecting commits that introduce
 `sqlite3.connect()` outside `db_router.py`.  Obtaining connections through the
 router keeps database access centralised.
 
+### Approved direct connections
+
+A handful of utility scripts interact with SQLite before `DBRouter` can be
+initialised. These files are allowlisted in `scripts/check_sqlite_connections.py`
+and may call `sqlite3.connect` directly:
+
+- `scripts/new_db.py` – scaffolds a minimal database module.
+- `scripts/new_db_template.py` – templated database scaffolding with FTS and
+  safety hooks.
+- `scripts/scaffold_db.py` – legacy scaffolding helper.
+- `scripts/new_vector_module.py` – generates a vector database module.
+
+Any future exceptions require explicit approval and must be documented here and
+added to the pre-commit allowlist.
+
 This pattern ensures shared data resides in the global database while
 instance-specific tables use the local database.
 
