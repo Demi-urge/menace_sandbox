@@ -89,5 +89,6 @@ tests/test_synergy_exporter.py
 tests/test_synergy_history_migration.py
 tests/test_visual_agent_concurrency.py
 tests/test_visual_agent_queue_validation.py
+tests/test_db_initialization.py
 unified_learning_engine.py
 vector_service/patch_logger.py
