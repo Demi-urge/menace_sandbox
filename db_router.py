@@ -45,6 +45,9 @@ LOCAL_TABLES: Set[str] = {
     "variants",
     "memory",
     "events",
+    "sandbox_metrics",
+    "roi_logs",
+    "menace_config",
 }
 
 # Tables explicitly denied even if present in the allow lists.
