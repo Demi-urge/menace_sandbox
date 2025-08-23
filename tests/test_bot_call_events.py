@@ -16,9 +16,9 @@ class DummyRouter:
         return {}
 
 
-stub = types.ModuleType("menace.database_router")
-stub.DatabaseRouter = DummyRouter
-sys.modules["menace.database_router"] = stub
+stub = types.ModuleType("menace.db_router")
+stub.DBRouter = DummyRouter
+sys.modules["menace.db_router"] = stub
 
 from menace.bot_db_utils import wrap_bot_methods
 from menace.bot_registry import BotRegistry

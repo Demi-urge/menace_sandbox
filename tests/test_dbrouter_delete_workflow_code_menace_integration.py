@@ -23,10 +23,10 @@ sys.modules["menace.databases"] = mn
 spec.loader.exec_module(mn)
 
 spec = importlib.util.spec_from_file_location(
-    "menace.database_router", ROOT / "database_router.py", submodule_search_locations=[str(ROOT)]
+    "menace.db_router", ROOT / "db_router.py", submodule_search_locations=[str(ROOT)]
 )
 dr = importlib.util.module_from_spec(spec)
-sys.modules["menace.database_router"] = dr
+sys.modules["menace.db_router"] = dr
 spec.loader.exec_module(dr)
 
 spec = importlib.util.spec_from_file_location(
@@ -53,7 +53,7 @@ def test_delete_workflow_and_code_mirrors_to_menace(tmp_path):
         )
     wfdb = thb.WorkflowDB(tmp_path / "wf.db")
     wf_rec = thb.WorkflowRecord(workflow=["a"], title="t")
-    router = dr.DatabaseRouter(workflow_db=wfdb, menace_db=mdb, code_db=cdm.CodeDB(tmp_path/"c.db"))
+    router = dr.DBRouter(workflow_db=wfdb, menace_db=mdb, code_db=cdm.CodeDB(tmp_path/"c.db"))
     cid = router.insert_code(cdm.CodeRecord(code="print('x')", summary="s"))
     wid = router.insert_workflow(wf_rec)
 

@@ -25,7 +25,7 @@ from .task_handoff_bot import WorkflowDB, WorkflowRecord
 from .research_aggregator_bot import InfoDB
 from .chatgpt_enhancement_bot import EnhancementDB
 from .error_bot import ErrorDB
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .code_database import CodeDB, CodeRecord
 from .database_manager import update_model, DB_PATH
@@ -250,7 +250,7 @@ class DeploymentBot:
         error_db: ErrorDB | None = None,
         menace_db: MenaceDB | None = None,
         contrarian_db: ContrarianDB | None = None,
-        db_router: DatabaseRouter | None = None,
+        db_router: DBRouter | None = None,
         *,
         event_bus: UnifiedEventBus | None = None,
         memory_mgr: MenaceMemoryManager | None = None,
@@ -265,7 +265,7 @@ class DeploymentBot:
         self.error_db = error_db or ErrorDB()
         self.menace_db = menace_db
         self.contrarian_db = contrarian_db
-        self.db_router = db_router or DatabaseRouter()
+        self.db_router = db_router or DBRouter()
         self.event_bus = event_bus
         self.memory_mgr = memory_mgr
         self.last_deployment_event: object | None = None

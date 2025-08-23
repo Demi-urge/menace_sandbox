@@ -24,7 +24,7 @@ sys.modules.setdefault(
     "menace.bot_database", types.SimpleNamespace(BotDB=object, BotRecord=_BotRecord)
 )
 sys.modules.setdefault("menace.task_handoff_bot", types.SimpleNamespace(WorkflowDB=object))
-sys.modules.setdefault("menace.database_router", types.SimpleNamespace(DatabaseRouter=object))
+sys.modules.setdefault("menace.db_router", types.SimpleNamespace(DBRouter=object))
 sys.modules.setdefault("menace.unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
 sys.modules.setdefault("menace.trend_predictor", types.SimpleNamespace(TrendPredictor=object))
 sys.modules.setdefault("menace.menace_memory_manager", types.SimpleNamespace(MenaceMemoryManager=object))
@@ -78,7 +78,7 @@ for name in [
     "error_bot",
     "bot_database",
     "task_handoff_bot",
-    "database_router",
+    "db_router",
     "unified_event_bus",
     "trend_predictor",
     "menace_memory_manager",

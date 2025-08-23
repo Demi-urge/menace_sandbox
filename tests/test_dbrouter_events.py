@@ -25,7 +25,7 @@ def _load(name):
     return mod
 
 mn = _load("databases")
-dr = _load("database_router")
+dr = _load("db_router")
 bd = _load("bot_database")
 cd = _load("code_database")
 rab = _load("research_aggregator_bot")
@@ -35,7 +35,7 @@ ueb = _load("unified_event_bus")
 
 
 def _make_router(tmp_path, bus):
-    return dr.DatabaseRouter(
+    return dr.DBRouter(
         code_db=cd.CodeDB(tmp_path / "c.db", event_bus=bus),
         bot_db=bd.BotDB(tmp_path / "b.db", event_bus=bus),
         info_db=rab.InfoDB(tmp_path / "i.db", event_bus=bus),

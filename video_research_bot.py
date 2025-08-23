@@ -7,7 +7,7 @@ import os
 import logging
 from urllib import request as urlrequest, error as urlerror
 
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 
 try:
     import requests  # type: ignore
@@ -53,7 +53,7 @@ class VideoItem:
 class VideoResearchBot:
     """Bot that collects and summarises useful video content."""
 
-    def __init__(self, api_key: str | None = None, storage_dir: str = "videos", db_router: DatabaseRouter | None = None):
+    def __init__(self, api_key: str | None = None, storage_dir: str = "videos", db_router: DBRouter | None = None):
         self.api_key = api_key or os.getenv("YOUTUBE_API_KEY", "")
         self.storage_dir = storage_dir
         os.makedirs(storage_dir, exist_ok=True)

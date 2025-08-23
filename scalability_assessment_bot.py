@@ -18,7 +18,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
 
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 
 
 @dataclass
@@ -59,10 +59,10 @@ class PerformanceDB:
 class ScalabilityAssessmentBot:
     """Analyse blueprints and simulate high load to find bottlenecks."""
 
-    def __init__(self, db: PerformanceDB | None = None, rp_url: str | None = None, db_router: DatabaseRouter | None = None) -> None:
+    def __init__(self, db: PerformanceDB | None = None, rp_url: str | None = None, db_router: DBRouter | None = None) -> None:
         self.db = db or PerformanceDB()
         self.rp_url = rp_url
-        self.db_router = db_router or DatabaseRouter()
+        self.db_router = db_router or DBRouter()
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("ScalabilityBot")
 

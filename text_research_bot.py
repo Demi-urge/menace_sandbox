@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 
 try:
     from bs4 import BeautifulSoup  # type: ignore
@@ -140,7 +140,7 @@ class TextResearchBot:
         self,
         session: Optional[requests.Session] = None,
         send_callback: Optional[Callable[[Iterable[TextSource]], None]] = None,
-        db_router: Optional[DatabaseRouter] = None,
+        db_router: Optional[DBRouter] = None,
     ) -> None:
         self.session = session or requests.Session()
         self.send_callback = send_callback

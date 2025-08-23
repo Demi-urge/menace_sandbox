@@ -115,8 +115,8 @@ try:  # shared GPT memory instance
 except Exception:  # pragma: no cover - fallback for flat layout
     from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 
-DatabaseRouter = _deps.load(
-    "DatabaseRouter", lambda: __import__("menace.database_router", fromlist=["DatabaseRouter"]).DatabaseRouter
+DBRouter = _deps.load(
+    "DBRouter", lambda: __import__("menace.db_router", fromlist=["DBRouter"]).DBRouter
 ) or object  # type: ignore
 
 summarize = _deps.load("gensim_summarize", lambda: __import__("gensim.summarization", fromlist=["summarize"]).summarize)
@@ -593,7 +593,7 @@ class ChatGPTResearchBot:
         self,
         client: ChatGPTClient,
         send_callback: Optional[Callable[[Iterable[Exchange], str], None]] = None,
-        db_steward: "DatabaseRouter" | None = None,
+        db_steward: "DBRouter" | None = None,
         summary_config: SummaryConfig | None = None,
         *,
         settings: ResearchBotSettings | None = None,
@@ -603,8 +603,8 @@ class ChatGPTResearchBot:
             raise TypeError("client must be ChatGPTClient")
         self.client = client
         self.send_callback = send_callback
-        if db_steward is not None and not isinstance(db_steward, DatabaseRouter):
-            raise TypeError("db_steward must be DatabaseRouter or None")
+        if db_steward is not None and not isinstance(db_steward, DBRouter):
+            raise TypeError("db_steward must be DBRouter or None")
         self.db_steward = db_steward
         self.summary_config = summary_config or SummaryConfig()
         self.settings = settings or ResearchBotSettings()

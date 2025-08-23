@@ -10,9 +10,9 @@ import logging
 import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-stub = ModuleType("database_router")
-stub.DatabaseRouter = object
-sys.modules.setdefault("menace.database_router", stub)
+stub = ModuleType("db_router")
+stub.DBRouter = object
+sys.modules.setdefault("menace.db_router", stub)
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
     "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]

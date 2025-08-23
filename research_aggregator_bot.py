@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover - optional dependency
 from .chatgpt_research_bot import ChatGPTResearchBot, Exchange, summarise_text
 from .database_manager import get_connection, DB_PATH
 from .capital_management_bot import CapitalManagementBot
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 from vector_service import EmbeddableDBMixin
 try:
     from .menace_db import MenaceDB
@@ -749,14 +749,14 @@ class ResearchAggregatorBot:
         video_bot: Optional[VideoResearchBot] = None,
         chatgpt_bot: Optional[ChatGPTResearchBot] = None,
         capital_manager: Optional[CapitalManagementBot] = None,
-        db_router: Optional[DatabaseRouter] = None,
+        db_router: Optional[DBRouter] = None,
         enhancement_interval: float = 300.0,
         cache_ttl: float = 3600.0,
     ) -> None:
         self.requirements = list(requirements)
         self.memory = memory or ResearchMemory()
         self.info_db = info_db or InfoDB()
-        self.db_router = db_router or DatabaseRouter(info_db=self.info_db)
+        self.db_router = db_router or DBRouter(info_db=self.info_db)
         self.enh_db = enhancements_db or EnhancementDB()
         self.enhancement_bot = enhancement_bot
         self.prediction_bot = prediction_bot

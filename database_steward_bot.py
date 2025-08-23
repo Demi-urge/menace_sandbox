@@ -36,7 +36,7 @@ except Exception:  # pragma: no cover - optional
 
 from .error_bot import ErrorBot
 from .conversation_manager_bot import ConversationManagerBot
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 
 
@@ -149,7 +149,7 @@ class DatabaseStewardBot(AdminBotBase):
         repo_path: Path | None = None,
         error_bot: ErrorBot | None = None,
         conversation_bot: "ConversationManagerBot" | None = None,
-        db_router: DatabaseRouter | None = None,
+        db_router: DBRouter | None = None,
     ) -> None:
         super().__init__(db_router=db_router)
         self.sql = SQLStore(sql_url)

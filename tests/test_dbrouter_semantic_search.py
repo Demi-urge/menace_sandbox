@@ -37,7 +37,7 @@ from menace.task_handoff_bot import WorkflowDB
 from menace.error_bot import ErrorDB
 import menace.chatgpt_enhancement_bot as ceb
 import menace.research_aggregator_bot as rab
-from menace.database_router import DatabaseRouter
+from menace.db_router import DBRouter
 
 
 def test_semantic_search_delegates_to_retriever(tmp_path):
@@ -47,7 +47,7 @@ def test_semantic_search_delegates_to_retriever(tmp_path):
     enh_db = ceb.EnhancementDB(tmp_path / "enh.db", vector_index_path=tmp_path / "enh.idx")
     info_db = rab.InfoDB(tmp_path / "info.db", vector_backend="annoy", vector_index_path=tmp_path / "i.idx")
 
-    router = DatabaseRouter(
+    router = DBRouter(
         bot_db=bot_db,
         workflow_db=wf_db,
         info_db=info_db,

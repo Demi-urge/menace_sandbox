@@ -3,7 +3,7 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 import menace.research_aggregator_bot as rab
-import menace.database_router as dr
+import menace.db_router as dr
 import menace.menace as mn
 
 
@@ -13,7 +13,7 @@ def test_dbrouter_insert_info(tmp_path):
         conn.execute(mdb.models.insert().values(model_id=1, model_name="m"))
         conn.execute(mdb.workflows.insert().values(workflow_id=2, workflow_name="w"))
     info = rab.InfoDB(tmp_path / "i.db")
-    router = dr.DatabaseRouter(info_db=info, menace_db=mdb)
+    router = dr.DBRouter(info_db=info, menace_db=mdb)
     router.info_db.set_current_model(1)
     item = rab.ResearchItem(topic="t", content="c", timestamp=0.0, model_id=1)
     router.insert_info(item, workflows=[2])
@@ -26,7 +26,7 @@ def test_dbrouter_insert_info(tmp_path):
 def test_dbrouter_update_and_delete_info(tmp_path):
     mdb = mn.MenaceDB(url=f"sqlite:///{tmp_path / 'm.db'}")
     info = rab.InfoDB(tmp_path / "i.db")
-    router = dr.DatabaseRouter(info_db=info, menace_db=mdb)
+    router = dr.DBRouter(info_db=info, menace_db=mdb)
     item = rab.ResearchItem(topic="t", content="c", summary="s", timestamp=0.0)
     info_id = router.insert_info(item)
 

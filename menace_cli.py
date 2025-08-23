@@ -330,7 +330,7 @@ def main(argv: list[str] | None = None) -> int:
     p_newvec.add_argument("name", help="Base name for the module")
     p_newvec.add_argument("--root", help="Target directory", default=None)
     p_newvec.add_argument(
-        "--register-router", action="store_true", help="Update database_router"
+        "--register-router", action="store_true", help="Update db_router"
     )
     p_newvec.add_argument(
         "--create-migration", action="store_true", help="Create alembic migration"

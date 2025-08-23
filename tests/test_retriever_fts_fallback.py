@@ -24,8 +24,8 @@ def _stub_router(monkeypatch, result):
 
     monkeypatch.setitem(
         sys.modules,
-        "database_router",
-        types.SimpleNamespace(DatabaseRouter=_Router),
+        "db_router",
+        types.SimpleNamespace(DBRouter=_Router),
     )
 
 

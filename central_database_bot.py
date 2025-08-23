@@ -17,7 +17,7 @@ from .resilience import (
 )
 
 from pydantic import BaseModel
-from .database_router import DatabaseRouter
+from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 try:
     from sqlalchemy import MetaData, Table, Column, Integer, Text, create_engine, select, text as sqtext  # type: ignore
@@ -73,7 +73,7 @@ class CentralDatabaseBot(AdminBotBase):
         stream: str = "menace.db_queue",
         results_stream: str = "menace.db_results",
         lock_key: str = "menace.db_lock",
-        db_router: "DatabaseRouter" | None = None,
+        db_router: "DBRouter" | None = None,
         fallback_local: bool = True,
     ) -> None:
         super().__init__(db_router=db_router)

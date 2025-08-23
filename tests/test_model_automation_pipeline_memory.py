@@ -11,7 +11,7 @@ import menace.implementation_optimiser_bot as iob
 import menace.resource_prediction_bot as rpb
 import menace.memory_bot as mb
 from menace.menace_memory_manager import MenaceMemoryManager
-from menace.database_router import DatabaseRouter
+from menace.db_router import DBRouter
 
 class DummyAggregator:
     def __init__(self):
@@ -26,7 +26,7 @@ class DummyPathway:
 def test_memory_search_called(monkeypatch, tmp_path):
     agg = DummyAggregator()
     mem_bot = mb.MemoryBot(mb.MemoryStorage(tmp_path / "m.json.gz"))
-    db_router = DatabaseRouter(memory_mgr=MenaceMemoryManager(tmp_path / "mem.db"))
+    db_router = DBRouter(memory_mgr=MenaceMemoryManager(tmp_path / "mem.db"))
     pipeline = mapl.ModelAutomationPipeline(
         aggregator=agg,
         synthesis_bot=isb.InformationSynthesisBot(db_url="sqlite:///:memory:"),

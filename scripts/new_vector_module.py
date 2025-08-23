@@ -6,7 +6,7 @@ This utility creates a module under ``vector_service/`` (or a specified
 location) that subclasses :class:`embeddable_db_mixin.EmbeddableDBMixin` and
 includes context extraction, indexing setup, license checks, and basic
 governance hooks.  It can also (optionally) register the module with
-``database_router`` and create an initial Alembic migration.
+``db_router`` and create an initial Alembic migration.
 """
 
 import argparse
@@ -203,7 +203,7 @@ def create_scaffold(
 
 
 def _register_in_router(module_name: str, class_name: str, record_class: str) -> None:
-    path = Path('database_router.py')
+    path = Path('db_router.py')
     if not path.exists():
         return
     text = path.read_text()
@@ -248,7 +248,7 @@ def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description='Scaffold a vector_service module')
     parser.add_argument('name', help='Base name for the module')
     parser.add_argument('--root', default='vector_service', help='Target directory')
-    parser.add_argument('--register-router', action='store_true', help='Update database_router')
+    parser.add_argument('--register-router', action='store_true', help='Update db_router')
     parser.add_argument('--create-migration', action='store_true', help='Create alembic migration')
     args = parser.parse_args(argv)
 
