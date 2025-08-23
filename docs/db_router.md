@@ -343,3 +343,22 @@ The router also aggregates simple access counts per table, accessible via
 - **Local tables**: `LOCAL_TABLES` entries are stored in each instance's local
   database, keeping data isolated between different `menace_id` values. Table
   names outside these sets are rejected.
+
+## Tests
+
+The automated test suite enforces correct routing behaviour:
+
+- `test_patch_safety_uses_router` confirms `PatchSafety` loads failure records
+  through the router and that the `failures` table remains local.
+- `test_connect_uses_router` exercises the synergy history helpers to ensure
+  connections for `synergy_history` are obtained via `DBRouter`.
+- `test_roidb_routes_through_router` verifies the resource allocation
+  optimiser's `ROIDB` accesses `roi`, `action_roi` and `allocation_weights`
+  tables through the router.
+- `test_get_connection_returns_thread_local_connections` spawns multiple
+  threads calling `DBRouter.get_connection` to validate thread safety.
+- `test_denied_tables_raise` asserts attempts to access tables listed in
+  `DENY_TABLES` (for example `capital_ledger`) raise `ValueError`.
+
+Run the relevant tests with `pytest` to validate new services adhere to the
+shared/local table policy and denial rules.
