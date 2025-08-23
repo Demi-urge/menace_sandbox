@@ -11,6 +11,15 @@ from typing import TYPE_CHECKING
 
 from db_router import init_db_router
 
+# Initialise a router for this process with a unique menace_id so
+# ``GLOBAL_ROUTER`` becomes available to imported modules.  Import modules that
+# require database access afterwards so they can rely on ``GLOBAL_ROUTER``. Local
+# code uses the placeholder ``router`` which defaults to ``None`` to preserve
+# legacy behaviour where sandbox utilities operate without a database connection
+# when possible. All DB access must go through the router.
+DB_ROUTER = init_db_router(uuid.uuid4().hex)
+router = None
+
 from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
 from memory_aware_gpt_client import ask_with_memory
 from shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE, LocalKnowledgeModule
@@ -22,15 +31,6 @@ except Exception:  # pragma: no cover - fallback
         """Fallback ErrorResult when vector service lacks explicit class."""
 
         pass
-
-
-# Initialise a router for this process with a unique menace_id so
-# ``GLOBAL_ROUTER`` becomes available to imported modules.  Local code uses the
-# placeholder ``router`` which defaults to ``None`` to preserve legacy behaviour
-# where sandbox utilities operate without a database connection when possible.
-# All DB access must go through the router.
-DB_ROUTER = init_db_router(uuid.uuid4().hex)
-router = None
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]

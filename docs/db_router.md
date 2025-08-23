@@ -30,6 +30,26 @@ router = GLOBAL_ROUTER or init_db_router("alpha")
 This pattern guarantees that a router is always available regardless of how the
 module is invoked.
 
+### Typical runtime script
+
+Entry-point scripts should initialise the router before importing modules that
+perform database operations so those imports can rely on `GLOBAL_ROUTER` or an
+explicitly passed router:
+
+```python
+import uuid
+from db_router import init_db_router
+
+DB_ROUTER = init_db_router(uuid.uuid4().hex)
+
+from some_module import Service
+
+service = Service(router=DB_ROUTER)  # or rely on GLOBAL_ROUTER
+```
+
+Passing `DB_ROUTER` to components is optional; modules can also access
+`GLOBAL_ROUTER` directly when explicit dependency injection is unnecessary.
+
 ## Shared vs. local tables
 
 Tables listed in `SHARED_TABLES` are written to the shared database while
