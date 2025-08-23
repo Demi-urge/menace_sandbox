@@ -172,6 +172,8 @@ from error_logger import ErrorLogger
 from knowledge_graph import KnowledgeGraph
 import sqlite3
 
+from db_router import GLOBAL_ROUTER, init_db_router
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # Persistent module usage tracking -------------------------------------------
@@ -4747,8 +4749,9 @@ def aggregate_history_stubs() -> Dict[str, Any]:
     """Return aggregated example values from the entire history database."""
     try:
         db = _get_history_db()
-        with sqlite3.connect(db.path) as conn:
-            rows = conn.execute("SELECT data FROM history").fetchall()
+        router = GLOBAL_ROUTER or init_db_router("default")
+        conn = router.get_connection("history")
+        rows = conn.execute("SELECT data FROM history").fetchall()
     except Exception:
         logger.exception("failed to aggregate input history")
         return {}

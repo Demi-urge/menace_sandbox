@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import logging
 import os
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Dict, Optional
+from typing import Dict, Iterable, List, Optional
 
 try:
     import requests  # type: ignore
@@ -48,6 +48,8 @@ try:  # memory-aware wrapper
 except Exception:  # pragma: no cover - fallback for flat layout
     from memory_aware_gpt_client import ask_with_memory  # type: ignore
 
+from db_router import GLOBAL_ROUTER, init_db_router
+
 DB_PATH = Path(__file__).parent / "news.db"
 
 
@@ -68,59 +70,60 @@ class Event:
 class NewsDB:
     """SQLite backed storage for events."""
 
-    def __init__(self, path: Path = DB_PATH) -> None:
+    def __init__(self, menace_id: str = "default", path: Path = DB_PATH) -> None:
         self.path = path
+        self.router = GLOBAL_ROUTER or init_db_router(menace_id)
         self._init()
 
     def _init(self) -> None:
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT,
-                    summary TEXT,
-                    source TEXT,
-                    timestamp TEXT,
-                    categories TEXT,
-                    sentiment REAL,
-                    exploration_depth INTEGER,
-                    impact REAL
-                )
-                """
+        conn = self.router.get_connection("events")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                summary TEXT,
+                source TEXT,
+                timestamp TEXT,
+                categories TEXT,
+                sentiment REAL,
+                exploration_depth INTEGER,
+                impact REAL
             )
-            conn.commit()
+            """
+        )
+        conn.commit()
 
     def add(self, event: Event) -> int:
-        with sqlite3.connect(self.path) as conn:
-            cur = conn.execute(
-                """
-                INSERT INTO events
-                    (title, summary, source, timestamp, categories, sentiment,
-                     exploration_depth, impact)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event.title,
-                    event.summary,
-                    event.source,
-                    event.timestamp,
-                    ",".join(event.categories),
-                    event.sentiment,
-                    event.exploration_depth,
-                    event.impact,
-                ),
-            )
-            conn.commit()
-            return cur.lastrowid
+        conn = self.router.get_connection("events")
+        cur = conn.execute(
+            """
+            INSERT INTO events
+                (title, summary, source, timestamp, categories, sentiment,
+                 exploration_depth, impact)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.title,
+                event.summary,
+                event.source,
+                event.timestamp,
+                ",".join(event.categories),
+                event.sentiment,
+                event.exploration_depth,
+                event.impact,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
 
     def fetch(self, limit: int = 100) -> List[Event]:
-        with sqlite3.connect(self.path) as conn:
-            rows = conn.execute(
-                "SELECT title, summary, source, timestamp, categories, sentiment,"
-                " exploration_depth, impact FROM events ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        conn = self.router.get_connection("events")
+        rows = conn.execute(
+            "SELECT title, summary, source, timestamp, categories, sentiment,"
+            " exploration_depth, impact FROM events ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
         events = []
         for row in rows:
             events.append(
@@ -138,12 +141,12 @@ class NewsDB:
         return events
 
     def increment_depth(self, title: str) -> None:
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                "UPDATE events SET exploration_depth = exploration_depth + 1 WHERE title = ?",
-                (title,),
-            )
-            conn.commit()
+        conn = self.router.get_connection("events")
+        conn.execute(
+            "UPDATE events SET exploration_depth = exploration_depth + 1 WHERE title = ?",
+            (title,),
+        )
+        conn.commit()
 
 
 quick_terms = [
