@@ -13,6 +13,7 @@ import logging
 import os
 import sqlite3
 import threading
+from collections import defaultdict
 from datetime import datetime
 from typing import Set
 
@@ -143,13 +144,17 @@ class DBRouter:
         # ``threading.Lock`` protects against concurrent access when deciding
         # which connection to return.
         self._lock = threading.Lock()
+        self._access_counts = {
+            "shared": defaultdict(int),
+            "local": defaultdict(int),
+        }
 
     # ------------------------------------------------------------------
     def get_connection(self, table_name: str) -> sqlite3.Connection:
         """Return the appropriate connection for ``table_name``.
 
         A :class:`ValueError` is raised for unknown tables.  Every request for a
-        shared table is logged for observability.
+        shared or local table is logged for observability.
         """
 
         if not table_name:
@@ -160,14 +165,27 @@ class DBRouter:
                 raise ValueError(f"Access to table '{table_name}' is denied")
             if table_name in SHARED_TABLES:
                 timestamp = datetime.utcnow().isoformat()
+                thread_name = threading.current_thread().name
                 logger.info(
-                    "Shared table '%s' accessed by menace '%s' at %s",
+                    "Shared table '%s' accessed by menace '%s' on thread '%s' at %s",
                     table_name,
                     self.menace_id,
+                    thread_name,
                     timestamp,
                 )
+                self._access_counts["shared"][table_name] += 1
                 return self.shared_conn
             if table_name in LOCAL_TABLES:
+                timestamp = datetime.utcnow().isoformat()
+                thread_name = threading.current_thread().name
+                logger.info(
+                    "Local table '%s' accessed by menace '%s' on thread '%s' at %s",
+                    table_name,
+                    self.menace_id,
+                    thread_name,
+                    timestamp,
+                )
+                self._access_counts["local"][table_name] += 1
                 return self.local_conn
 
         raise ValueError(f"Unknown table: {table_name}")
@@ -178,6 +196,15 @@ class DBRouter:
 
         self.local_conn.close()
         self.shared_conn.close()
+
+    # ------------------------------------------------------------------
+    def get_access_counts(self) -> dict[str, dict[str, int]]:
+        """Return a snapshot of table access counts for monitoring."""
+
+        with self._lock:
+            return {
+                kind: dict(counts) for kind, counts in self._access_counts.items()
+            }
 
 
 def init_db_router(

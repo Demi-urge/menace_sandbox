@@ -92,12 +92,15 @@ Connections are created with `check_same_thread=False` and guarded by
 `threading.Lock` instances so multiple threads can safely interact with the
 router.
 
-## Logging
+## Logging and metrics
 
-`DBRouter` accepts an optional `logger` and `log_level`. Each invocation of
-`get_connection()` records the table name and whether a shared or local
-connection was returned. Set `log_level=None` or raise the logger's level to
-silence these messages in production environments.
+`DBRouter` logs every invocation of `get_connection()` including whether the
+table was shared or local, the menace ID and the current thread name. These
+messages aid observability and can be silenced by increasing the logger level or
+setting `log_level=None`.
+
+The router also aggregates simple access counts per table, accessible via
+`DBRouter.get_access_counts()`, which can be used for lightweight monitoring.
 
 ## Table‑sharing policy
 
