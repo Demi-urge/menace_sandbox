@@ -56,6 +56,8 @@ def test_deployment_evaluate_promote(monkeypatch):
     )
     assert res["verdict"] == "promote"
     assert "meets_promotion_criteria" in res["reasons"]
+    assert res["foresight"]["reason_codes"] == []
+    assert res["foresight"]["forecast_id"] == "fid"
 
 
 def test_deployment_evaluate_borderline(monkeypatch):

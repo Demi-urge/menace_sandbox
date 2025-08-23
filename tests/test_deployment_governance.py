@@ -223,26 +223,30 @@ def decision_logs(monkeypatch):
     return logs
 
 
-def _set_forecast(monkeypatch, rois, confidence=0.9):
-    result = ForecastResult(
-        projections=[
-            CycleProjection(i + 1, r, 0.0, 1.0, 0.0) for i, r in enumerate(rois)
-        ],
-        confidence=confidence,
-        upgrade_id="u1",
-    )
+@pytest.fixture
+def mock_forecaster(monkeypatch):
+    def _apply(rois, confidence=0.9):
+        result = ForecastResult(
+            projections=[
+                CycleProjection(i + 1, r, 0.0, 1.0, 0.0) for i, r in enumerate(rois)
+            ],
+            confidence=confidence,
+            upgrade_id="u1",
+        )
 
-    class DummyForecaster:
-        def __init__(self, tracker, logger=None):
-            self.tracker = tracker
+        class DummyForecaster:
+            def __init__(self, tracker, logger=None):
+                self.tracker = tracker
 
-        def forecast(self, workflow_id, patch, cycles=None, simulations=None):
-            return result
+            def forecast(self, workflow_id, patch, cycles=None, simulations=None):
+                return result
 
-    monkeypatch.setattr(
-        dg, "UpgradeForecaster", lambda tracker, **kw: DummyForecaster(tracker, **kw)
-    )
-    return result
+        monkeypatch.setattr(
+            dg, "UpgradeForecaster", lambda tracker, **kw: DummyForecaster(tracker, **kw)
+        )
+        return result
+
+    return _apply
 
 
 def _base_scorecard():
@@ -255,9 +259,13 @@ def _base_scorecard():
 
 
 def test_promotion_proceeds_when_all_criteria_pass(
-    foresight_tracker, workflow_graph, dummy_patch, decision_logs, monkeypatch
+    foresight_tracker,
+    workflow_graph,
+    dummy_patch,
+    decision_logs,
+    mock_forecaster,
 ):
-    _set_forecast(monkeypatch, [1.0, 1.0], confidence=0.9)
+    mock_forecaster([1.0, 1.0], confidence=0.9)
     res = dg.evaluate_workflow(
         _base_scorecard(),
         {},
@@ -271,9 +279,13 @@ def test_promotion_proceeds_when_all_criteria_pass(
 
 
 def test_roi_below_threshold_downgrades_verdict(
-    foresight_tracker, workflow_graph, dummy_patch, decision_logs, monkeypatch
+    foresight_tracker,
+    workflow_graph,
+    dummy_patch,
+    decision_logs,
+    mock_forecaster,
 ):
-    _set_forecast(monkeypatch, [0.1], confidence=0.9)
+    mock_forecaster([0.1], confidence=0.9)
     res = dg.evaluate_workflow(
         _base_scorecard(),
         {"roi_forecast_min": 0.5},
@@ -287,9 +299,13 @@ def test_roi_below_threshold_downgrades_verdict(
 
 
 def test_low_confidence_downgrades_verdict(
-    foresight_tracker, workflow_graph, dummy_patch, decision_logs, monkeypatch
+    foresight_tracker,
+    workflow_graph,
+    dummy_patch,
+    decision_logs,
+    mock_forecaster,
 ):
-    _set_forecast(monkeypatch, [1.0], confidence=0.5)
+    mock_forecaster([1.0], confidence=0.5)
     res = dg.evaluate_workflow(
         _base_scorecard(),
         {},
@@ -303,9 +319,13 @@ def test_low_confidence_downgrades_verdict(
 
 
 def test_early_collapse_downgrades_verdict(
-    foresight_tracker, workflow_graph, dummy_patch, decision_logs, monkeypatch
+    foresight_tracker,
+    workflow_graph,
+    dummy_patch,
+    decision_logs,
+    mock_forecaster,
 ):
-    _set_forecast(monkeypatch, [1.0], confidence=0.9)
+    mock_forecaster([1.0], confidence=0.9)
     foresight_tracker.collapse = {"risk": "Immediate collapse risk"}
     res = dg.evaluate_workflow(
         _base_scorecard(),
@@ -320,9 +340,14 @@ def test_early_collapse_downgrades_verdict(
 
 
 def test_negative_dag_impact_downgrades_verdict(
-    foresight_tracker, workflow_graph, dummy_patch, decision_logs, monkeypatch
+    foresight_tracker,
+    workflow_graph,
+    dummy_patch,
+    decision_logs,
+    mock_forecaster,
+    monkeypatch,
 ):
-    _set_forecast(monkeypatch, [1.0], confidence=0.9)
+    mock_forecaster([1.0], confidence=0.9)
 
     def bad_wave(wf_id, roi_delta, _):
         return {"wf": {"roi": roi_delta}, "dep": {"roi": -0.1}}

@@ -1162,7 +1162,15 @@ def test_deployment_gate_promotes(tmp_path, monkeypatch):
         borderline_bucket=_Bucket(),
     )
     events: list[dict] = []
-    monkeypatch.setattr(sie, "deployment_evaluate", lambda *a, **k: {"verdict": "promote", "reasons": [], "foresight": None})
+    monkeypatch.setattr(
+        sie,
+        "deployment_evaluate",
+        lambda *a, **k: {
+            "verdict": "promote",
+            "reasons": [],
+            "foresight": {"reason_codes": [], "forecast_id": "fid"},
+        },
+    )
     monkeypatch.setattr(sie, "audit_log_event", lambda name, payload: events.append(payload))
     monkeypatch.setattr(sie, "SandboxSettings", lambda: types.SimpleNamespace(micropilot_mode=""))
     engine.run_cycle()
