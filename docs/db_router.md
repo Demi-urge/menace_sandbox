@@ -149,8 +149,25 @@ appended to this file as a JSON object containing the menace ID, table name,
 operation and timestamp. Leave the configuration unset to disable audit
 logging.
 
+### Analysing audit logs
+
 An `analysis/db_router_log_analysis.py` script is included to aggregate these
-logs for cross-instance auditing.
+logs for cross-instance auditing.  Run the tool with the path to the audit log
+file:
+
+```bash
+python -m analysis.db_router_log_analysis path/to/audit.log
+```
+
+The script outputs three sections:
+
+1. Per-operation counts grouped by menace ID, table name and operation.
+2. Aggregated counts by menace ID and table across all operations.
+3. A summary of the top menace IDs writing to tables that are shared with other
+   menaces, helping to highlight potential misuse or hotspots.
+
+Use these summaries to identify unexpected writes to shared tables or excessive
+cross-instance activity.
 
 The router also aggregates simple access counts per table, accessible via
 `DBRouter.get_access_counts()`, and exposes access counts via the
