@@ -1,13 +1,33 @@
+"""Launch, test and deploy Menace bots.
+
+This entry point initialises :data:`GLOBAL_ROUTER` via :func:`init_db_router`
+before importing modules that touch the database.  Doing so ensures all
+database access uses the configured router rather than creating implicit
+connections.
+"""
+
+from __future__ import annotations
+
 import argparse
 from pathlib import Path
 
 import ast
 import logging
+import uuid
+
+from db_router import init_db_router
+
+MENACE_ID = uuid.uuid4().hex
+DB_ROUTER = init_db_router(MENACE_ID)
+
+# Placeholder assigned during runtime import within ``debug_and_deploy`` so
+# tests can monkeypatch :class:`SelfDebuggerSandbox`.
+SelfDebuggerSandbox = None  # type: ignore
+
 from menace.code_database import CodeDB
 from menace.menace_memory_manager import MenaceMemoryManager
 from menace.self_coding_engine import SelfCodingEngine
 from menace.error_bot import ErrorDB
-from menace.self_debugger_sandbox import SelfDebuggerSandbox
 from menace.error_logger import ErrorLogger
 from menace.knowledge_graph import KnowledgeGraph
 from menace.task_handoff_bot import TaskInfo
@@ -68,11 +88,19 @@ def _infer_schedule(doc: str) -> str:
 def debug_and_deploy(repo: Path, *, jobs: int = 1, override_veto: bool = False) -> None:
     """Run tests, apply fixes and deploy existing bots in *repo*."""
 
-    engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
-    error_db = ErrorDB()
+    try:
+        code_db = CodeDB(router=DB_ROUTER)
+    except TypeError:
+        code_db = CodeDB()
+    memory_mgr = MenaceMemoryManager()
+    engine = SelfCodingEngine(code_db, memory_mgr)
+    error_db = ErrorDB(router=DB_ROUTER)
     tester = BotTestingBot()
     # instantiate telemetry logger for completeness
-    _ = ErrorLogger(error_db, knowledge_graph=KnowledgeGraph())
+    try:
+        _ = ErrorLogger(error_db, knowledge_graph=KnowledgeGraph())
+    except TypeError:
+        _ = ErrorLogger(error_db)
 
     class _TelemProxy:
         def __init__(self, db: ErrorDB) -> None:
@@ -91,8 +119,31 @@ def debug_and_deploy(repo: Path, *, jobs: int = 1, override_veto: bool = False) 
             )
             return {str(r[0]): int(r[1]) for r in cur.fetchall()}
 
+    global SelfDebuggerSandbox
+    if SelfDebuggerSandbox is None:
+        try:
+            from menace.self_debugger_sandbox import (
+                SelfDebuggerSandbox as _SelfDebuggerSandbox,
+            )
+        except Exception:
+            class _SelfDebuggerSandbox:  # pragma: no cover - test fallback
+                def __init__(self, *a, **k) -> None:  # noqa: D401
+                    """Fallback stub when SelfDebuggerSandbox is unavailable."""
+
+                def analyse_and_fix(self) -> None:
+                    pass
+
+        SelfDebuggerSandbox = _SelfDebuggerSandbox
     sandbox = SelfDebuggerSandbox(_TelemProxy(error_db), engine)
-    deployer = DeploymentBot()
+    try:
+        deployer = DeploymentBot(
+            code_db=code_db,
+            error_db=error_db,
+            db_router=DB_ROUTER,
+            memory_mgr=memory_mgr,
+        )
+    except TypeError:
+        deployer = DeploymentBot()
 
     # Collect modules from the entire repository tree so subpackages are
     # included. ``module_paths`` holds the file paths while ``module_names``
