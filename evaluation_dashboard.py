@@ -50,11 +50,31 @@ from .violation_logger import load_persisted_alignment_warnings
 GOVERNANCE_LOG = Path("sandbox_data/governance_outcomes.jsonl")
 
 
-def append_governance_result(scorecard: Dict[str, Any], vetoes: List[str]) -> None:
-    """Persist *scorecard* evaluation outcome for later review."""
+def append_governance_result(
+    scorecard: Dict[str, Any],
+    vetoes: List[str],
+    forecast: Dict[str, Any] | None = None,
+    reasons: List[str] | None = None,
+) -> None:
+    """Persist *scorecard* evaluation outcome for later review.
+
+    Parameters
+    ----------
+    scorecard:
+        The evaluation metrics collected for the workflow.
+    vetoes:
+        List of veto codes applied by governance rules.
+    forecast, reasons:
+        Optional foresight forecast data and reason codes to persist alongside
+        the scorecard and vetoes.
+    """
 
     rec = dict(scorecard)
     rec["vetoes"] = list(vetoes)
+    if forecast is not None:
+        rec["forecast"] = forecast
+    if reasons is not None:
+        rec["reasons"] = list(reasons)
     GOVERNANCE_LOG.parent.mkdir(parents=True, exist_ok=True)
     with GOVERNANCE_LOG.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec) + "\n")

@@ -80,6 +80,14 @@ When the gate fails, `evaluate()` downgrades the verdict to `borderline` if a
 caller can then queue the workflow for borderline review or run a limited
 pilot.
 
+## Governance outcomes log
+
+`append_governance_result()` can persist each decision for later analysis. The
+helper appends newline‑delimited JSON entries to
+`sandbox_data/governance_outcomes.jsonl`. Each record contains the original
+`scorecard`, any governance `vetoes` and, when available, the foresight gate
+`forecast` details and corresponding `reasons` codes.
+
 ## CLI and automation usage
 
 Automation such as `deployment_bot` and `central_evaluation_loop` calls

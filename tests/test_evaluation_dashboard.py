@@ -230,13 +230,19 @@ def test_governance_panel(tmp_path, monkeypatch):
     dash = ed.EvaluationDashboard(mgr)
     log_path = tmp_path / "gov.log"
     monkeypatch.setattr(ed, "GOVERNANCE_LOG", log_path)
-    ed.append_governance_result({"decision": "ship", "alignment": "pass", "raroi_increase": 0}, [])
     ed.append_governance_result(
-        {"decision": "rollback", "alignment": "fail", "raroi_increase": 1}, ["rule"]
+        {"decision": "ship", "alignment": "pass", "raroi_increase": 0}, [],
+        {"confidence": 0.9}, ["auto"]
+    )
+    ed.append_governance_result(
+        {"decision": "rollback", "alignment": "fail", "raroi_increase": 1}, ["rule"],
+        {"confidence": 0.1}, ["rule"]
     )
     panel = dash.governance_panel()
     assert len(panel) == 2
     assert panel[-1]["vetoes"] == ["rule"]
+    assert panel[-1]["forecast"] == {"confidence": 0.1}
+    assert panel[-1]["reasons"] == ["rule"]
 
 
 def test_relevancy_radar_panel_includes_impact_and_flag(tmp_path, monkeypatch):
