@@ -1,8 +1,13 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
+  "properties": {
+    "roi_forecast_min": {"type": "number"},
+    "foresight_confidence_min": {"type": "number"},
+    "allow_negative_dag": {"type": "boolean"}
+  },
   "patternProperties": {
-    "^[A-Za-z_][A-Za-z0-9_]*$": {
+    "^(?!roi_forecast_min$|foresight_confidence_min$|allow_negative_dag$)[A-Za-z_][A-Za-z0-9_]*$": {
       "type": "object",
       "properties": {
         "thresholds": {

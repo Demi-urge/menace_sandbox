@@ -31,7 +31,15 @@ class DummyBucket:
 def _patch_gate(monkeypatch, ok, reasons):
     forecast = ForecastResult([], 0.9, "u0")
 
-    def fake_gate(workflow_id, patch, tracker, workflow_graph, roi_threshold=0.0):
+    def fake_gate(
+        workflow_id,
+        patch,
+        tracker,
+        workflow_graph,
+        roi_threshold=0.0,
+        confidence_threshold=0.6,
+        allow_negative_dag=False,
+    ):
         return ok, list(reasons), forecast
 
     monkeypatch.setattr(dg, "WorkflowGraph", DummyGraph)
