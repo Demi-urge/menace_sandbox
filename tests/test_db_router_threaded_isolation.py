@@ -1,6 +1,8 @@
 import importlib
 import json
 import threading
+import time
+import sqlite3
 
 import pytest
 
@@ -73,6 +75,76 @@ def test_threaded_access_shared_and_local(tmp_path):
         counts = router.get_access_counts()
         assert counts["shared"]["bots"] >= 6  # includes setup reads
         assert counts["local"]["models"] >= 6
+    finally:
+        router.close()
+
+
+def test_concurrent_writes_shared_and_local(tmp_path):
+    """Simultaneous writes to shared and local tables are isolated."""
+    shared_db = tmp_path / "shared.db"
+    local_db = tmp_path / "local.db"
+    router = DBRouter("alpha", str(local_db), str(shared_db))
+
+    try:
+        with router.get_connection("bots", operation="write") as conn:
+            conn.execute("CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT)")
+            conn.commit()
+        with router.get_connection("models", operation="write") as conn:
+            conn.execute("CREATE TABLE models (id INTEGER PRIMARY KEY, name TEXT)")
+            conn.commit()
+
+        errors: list[Exception] = []
+        barrier = threading.Barrier(4)
+
+        def write_shared(idx: int) -> None:
+            try:
+                barrier.wait()
+                success = False
+                for _ in range(5):
+                    try:
+                        with router.get_connection("bots", operation="write") as conn:
+                            conn.execute("INSERT INTO bots (name) VALUES (?)", (f"bot{idx}",))
+                            conn.commit()
+                        success = True
+                        break
+                    except sqlite3.OperationalError:
+                        time.sleep(0.01)
+                if not success:
+                    errors.append(RuntimeError("write_shared failed"))
+            except Exception as exc:  # pragma: no cover - unexpected
+                errors.append(exc)
+
+        def write_local(idx: int) -> None:
+            try:
+                barrier.wait()
+                success = False
+                for _ in range(5):
+                    try:
+                        with router.get_connection("models", operation="write") as conn:
+                            conn.execute("INSERT INTO models (name) VALUES (?)", (f"model{idx}",))
+                            conn.commit()
+                        success = True
+                        break
+                    except sqlite3.OperationalError:
+                        time.sleep(0.01)
+                if not success:
+                    errors.append(RuntimeError("write_local failed"))
+            except Exception as exc:  # pragma: no cover - unexpected
+                errors.append(exc)
+
+        threads = [threading.Thread(target=write_shared, args=(i,)) for i in range(2)] + [
+            threading.Thread(target=write_local, args=(i,)) for i in range(2)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        with router.get_connection("bots") as conn:
+            assert conn.execute("SELECT COUNT(*) FROM bots").fetchone()[0] == 2
+        with router.get_connection("models") as conn:
+            assert conn.execute("SELECT COUNT(*) FROM models").fetchone()[0] == 2
     finally:
         router.close()
 
