@@ -121,6 +121,18 @@ if "LOCAL_TABLES" in globals():
             "mirror_logs",
             "efficiency",
             "saturation",
+            "action_audit",
+            "db_roi_metrics",
+            "decisions",
+            "flakiness_history",
+            "investments",
+            "module_metrics",
+            "patch_outcomes",
+            "patch_provenance",
+            "retriever_kpi",
+            "roi_history",
+            "test_history",
+            "workflows",
         }
     )
 else:
@@ -180,6 +192,18 @@ else:
         "mirror_logs",
         "efficiency",
         "saturation",
+        "action_audit",
+        "db_roi_metrics",
+        "decisions",
+        "flakiness_history",
+        "investments",
+        "module_metrics",
+        "patch_outcomes",
+        "patch_provenance",
+        "retriever_kpi",
+        "roi_history",
+        "test_history",
+        "workflows",
     }
 
 # Tables explicitly denied even if present in the allow lists.  Also mutated
