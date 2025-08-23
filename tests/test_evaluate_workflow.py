@@ -161,7 +161,7 @@ def test_foresight_gate_pass(monkeypatch):
         workflow_graph,
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
-        return True, []
+        return True, [], "fid1"
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
@@ -194,7 +194,7 @@ def test_foresight_gate_failure(monkeypatch):
         workflow_graph,
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
-        return False, ["low_confidence"]
+        return False, ["low_confidence"], "fid2"
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
@@ -228,7 +228,7 @@ def test_foresight_gate_failure_borderline_bucket(monkeypatch):
         workflow_graph,
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
-        return False, ["borderline"]
+        return False, ["borderline"], "fid3"
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
@@ -276,7 +276,7 @@ def test_policy_thresholds_passed(monkeypatch):
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
         called["roi_threshold"] = roi_threshold
-        return True, []
+        return True, [], "fid4"
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
