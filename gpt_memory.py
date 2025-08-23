@@ -17,13 +17,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import json
-import sqlite3
 import argparse
 import warnings
 import logging
 from time import perf_counter
 from typing import Any, List, Sequence, Mapping, Dict, Optional
 
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from gpt_memory_interface import GPTMemoryInterface
 from embeddable_db_mixin import log_embedding_metrics
 from analysis.semantic_diff_filter import find_semantic_risks
@@ -128,9 +128,13 @@ class GPTMemoryManager(GPTMemoryInterface):
         event_bus: Optional[UnifiedEventBus] = None,
         knowledge_graph: "KnowledgeGraph | None" = None,
         vector_service: SharedVectorService | None = None,
+        router: "DBRouter | None" = None,
     ) -> None:
         self.db_path = Path(db_path)
-        self.conn = sqlite3.connect(self.db_path)
+        self.router = router or GLOBAL_ROUTER
+        if self.router is None:
+            self.router = init_db_router("memory", str(self.db_path), str(self.db_path))
+        self.conn = self.router.get_connection("memory")
         self.embedder = embedder
         self.event_bus = event_bus
         self.graph = knowledge_graph

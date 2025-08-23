@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Iterator, Sequence
 
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
@@ -100,10 +101,14 @@ class EnhancementDB(EmbeddableDBMixin):
         metadata_path: Path | str | None = None,
         embedding_version: int = 1,
         event_bus: UnifiedEventBus | None = None,
+        router: "DBRouter | None" = None,
     ) -> None:
         self.path = Path(path) if path else DB_PATH
         self.override_manager = override_manager
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.router = router or GLOBAL_ROUTER
+        if self.router is None:
+            self.router = init_db_router("enh", str(self.path), str(self.path))
+        self.conn = self.router.get_connection("enhancements")
         self.conn.row_factory = sqlite3.Row
         self._init()
         self.vector_backend = vector_backend  # kept for compatibility
