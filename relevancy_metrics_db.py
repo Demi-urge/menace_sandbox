@@ -3,6 +3,8 @@ import sqlite3
 from pathlib import Path
 from typing import Iterable, TYPE_CHECKING, Any
 
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from module_index_db import ModuleIndexDB  # type: ignore
 else:  # pragma: no cover - fallback when module_index_db is unavailable
@@ -12,28 +14,32 @@ else:  # pragma: no cover - fallback when module_index_db is unavailable
 class RelevancyMetricsDB:
     """Lightweight store for module invocation metrics."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, router: DBRouter | None = None) -> None:
         self.path = str(path)
-        with sqlite3.connect(self.path, check_same_thread=False) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS module_metrics (
-                    module_id INTEGER PRIMARY KEY,
-                    module_name TEXT,
-                    call_count INTEGER DEFAULT 0,
-                    total_time REAL DEFAULT 0.0,
-                    roi_delta REAL DEFAULT 0.0,
-                    tags TEXT
-                )
-                """
+        LOCAL_TABLES.add("module_metrics")
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "relevancy_metrics_db", local_db_path=self.path, shared_db_path=self.path
+        )
+        conn = self.router.get_connection("module_metrics")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS module_metrics (
+                module_id INTEGER PRIMARY KEY,
+                module_name TEXT,
+                call_count INTEGER DEFAULT 0,
+                total_time REAL DEFAULT 0.0,
+                roi_delta REAL DEFAULT 0.0,
+                tags TEXT
             )
-            try:
-                conn.execute(
-                    "ALTER TABLE module_metrics ADD COLUMN roi_delta REAL DEFAULT 0.0"
-                )
-            except sqlite3.OperationalError:
-                # Column already exists – ignore migration errors
-                pass
+            """
+        )
+        try:
+            conn.execute(
+                "ALTER TABLE module_metrics ADD COLUMN roi_delta REAL DEFAULT 0.0"
+            )
+        except sqlite3.OperationalError:
+            # Column already exists – ignore migration errors
+            pass
 
     # --------------------------------------------------------------
     def record(
@@ -60,41 +66,41 @@ class RelevancyMetricsDB:
                 tag_set.update(module_index.get_tags(module))
             except Exception:
                 pass
-        with sqlite3.connect(self.path, check_same_thread=False) as conn:
-            row = conn.execute(
-                "SELECT call_count, total_time, roi_delta, tags FROM module_metrics WHERE module_id=?",
-                (mid,),
-            ).fetchone()
-            if row:
-                count, total, roi_val, existing = row
-                count = int(count) + 1
-                total = float(total) + float(elapsed)
-                roi_val = float(roi_val or 0.0) + float(roi_delta or 0.0)
-                current = set(json.loads(existing) if existing else [])
-                current.update(tag_set)
-                conn.execute(
-                    "UPDATE module_metrics SET module_name=?, call_count=?, total_time=?, roi_delta=?, tags=? WHERE module_id=?",
-                    (
-                        module,
-                        count,
-                        total,
-                        roi_val,
-                        json.dumps(sorted(current)),
-                        mid,
-                    ),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO module_metrics(module_id, module_name, call_count, total_time, roi_delta, tags) VALUES (?, ?, 1, ?, ?, ?)",
-                    (
-                        mid,
-                        module,
-                        float(elapsed),
-                        float(roi_delta or 0.0),
-                        json.dumps(sorted(tag_set)),
-                    ),
-                )
-            conn.commit()
+        conn = self.router.get_connection("module_metrics")
+        row = conn.execute(
+            "SELECT call_count, total_time, roi_delta, tags FROM module_metrics WHERE module_id=?",
+            (mid,),
+        ).fetchone()
+        if row:
+            count, total, roi_val, existing = row
+            count = int(count) + 1
+            total = float(total) + float(elapsed)
+            roi_val = float(roi_val or 0.0) + float(roi_delta or 0.0)
+            current = set(json.loads(existing) if existing else [])
+            current.update(tag_set)
+            conn.execute(
+                "UPDATE module_metrics SET module_name=?, call_count=?, total_time=?, roi_delta=?, tags=? WHERE module_id=?",
+                (
+                    module,
+                    count,
+                    total,
+                    roi_val,
+                    json.dumps(sorted(current)),
+                    mid,
+                ),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO module_metrics(module_id, module_name, call_count, total_time, roi_delta, tags) VALUES (?, ?, 1, ?, ?, ?)",
+                (
+                    mid,
+                    module,
+                    float(elapsed),
+                    float(roi_delta or 0.0),
+                    json.dumps(sorted(tag_set)),
+                ),
+            )
+        conn.commit()
 
     # --------------------------------------------------------------
     def get_roi_deltas(self, modules: Iterable[str] | None = None) -> dict[str, float]:
@@ -112,6 +118,6 @@ class RelevancyMetricsDB:
             placeholders = ",".join("?" for _ in module_list)
             query += f" WHERE module_name IN ({placeholders})"
             params = tuple(module_list)
-        with sqlite3.connect(self.path, check_same_thread=False) as conn:
-            rows = conn.execute(query, params).fetchall()
+        conn = self.router.get_connection("module_metrics")
+        rows = conn.execute(query, params).fetchall()
         return {str(name): float(delta or 0.0) for name, delta in rows}

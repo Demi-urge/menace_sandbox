@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+
 from dotenv import load_dotenv
 
 from . import stripe_handler
@@ -32,12 +34,20 @@ class InvestmentRecord:
 class InvestmentDB:
     """SQLite-backed store of reinvestment history."""
 
-    def __init__(self, path: Path | str = "investment_log.db") -> None:
+    def __init__(
+        self,
+        path: Path | str = "investment_log.db",
+        router: DBRouter | None = None,
+    ) -> None:
         # Allow the database connection to be used across threads. The
         # reinvestment bot may execute database operations from background
         # workers, so SQLite's default same-thread restriction would raise
         # `sqlite3.ProgrammingError` when accessed from a different thread.
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        LOCAL_TABLES.add("investments")
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "investment_engine", local_db_path=str(path), shared_db_path=str(path)
+        )
+        self.conn = self.router.get_connection("investments")
         self.lock = threading.Lock()
         self.conn.execute(
             """

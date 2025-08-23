@@ -22,6 +22,8 @@ import os
 from typing import Dict, Iterable, List, Callable, Any
 import builtins
 
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+
 import math
 
 import networkx as nx
@@ -735,10 +737,22 @@ def scan(
     if not db_path.exists():
         return {}
 
-    with sqlite3.connect(str(db_path), check_same_thread=False) as conn:
+    LOCAL_TABLES.add("module_metrics")
+    base_router = GLOBAL_ROUTER
+    close_router = False
+    if base_router is None:
+        base_router = init_db_router(
+            "relevancy_radar", local_db_path=str(db_path), shared_db_path=str(db_path)
+        )
+        close_router = True
+    conn = base_router.get_connection("module_metrics")
+    try:
         rows = conn.execute(
             "SELECT module_name, call_count, roi_delta FROM module_metrics"
         ).fetchall()
+    finally:
+        if close_router:
+            base_router.close()
 
     if not rows:
         return {}

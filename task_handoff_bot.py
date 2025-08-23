@@ -14,6 +14,7 @@ import sqlite3
 from .unified_event_bus import UnifiedEventBus
 from .workflow_graph import WorkflowGraph
 from vector_service import EmbeddableDBMixin
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -90,12 +91,17 @@ class WorkflowDB(EmbeddableDBMixin):
         vector_backend: str = "annoy",
         vector_index_path: Path | str = "workflow_embeddings.index",
         embedding_version: int = 1,
+        router: DBRouter | None = None,
     ) -> None:
         self.path = path
         self.event_bus = event_bus
         self.graph = workflow_graph
         self.vector_backend = vector_backend  # kept for compatibility
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        LOCAL_TABLES.add("workflows")
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "task_handoff", local_db_path=str(self.path), shared_db_path=str(self.path)
+        )
+        self.conn = self.router.get_connection("workflows")
         self.conn.row_factory = sqlite3.Row
         self.conn.execute(
             """
