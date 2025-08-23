@@ -119,6 +119,10 @@ router = GLOBAL_ROUTER or init_db_router("alpha")
 conn = router.get_connection("bots")
 ```
 
+A pre-commit hook enforces this rule by rejecting commits that introduce
+`sqlite3.connect()` outside `db_router.py`.  Obtaining connections through the
+router keeps database access centralised.
+
 This pattern ensures shared data resides in the global database while
 instance-specific tables use the local database.
 
