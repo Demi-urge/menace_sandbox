@@ -1489,6 +1489,9 @@ router = GLOBAL_ROUTER or init_db_router("alpha")
 conn = router.get_connection("bots")
 ```
 
+For detailed router configuration, audit logging and log analysis utilities see
+[docs/db_router.md](docs/db_router.md).
+
 ### Safe mode and overrides
 
 `SelfServiceOverride` now only logs warnings when ROI or error metrics exceed
