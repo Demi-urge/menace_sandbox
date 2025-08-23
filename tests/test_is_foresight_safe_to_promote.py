@@ -114,3 +114,23 @@ def test_collapse_risk(tmp_path):
     assert not ok
     assert "roi_collapse_risk" in reasons
 
+
+
+def test_success_path(tmp_path):
+    result = ForecastResult(
+        projections=[CycleProjection(1, 1.0, 0.0, 1.0, 0.0)],
+        confidence=0.9,
+        upgrade_id="u5",
+    )
+    forecaster = DummyForecaster(result, ForecastLogger(tmp_path / "log.jsonl"))
+    tracker = DummyTracker({"risk": "Stable", "brittle": False})
+    graph = _make_graph(tmp_path)
+    ok, reasons, _ = is_foresight_safe_to_promote(
+        "wf",
+        [],
+        forecaster=forecaster,
+        tracker=tracker,
+        graph=graph,
+    )
+    assert ok
+    assert reasons == []
