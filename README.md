@@ -39,6 +39,8 @@
     specified interval (seconds). Deployment configs now enable this by default.
   - Run `python table_usage_cli.py --flush` to view shared vs. local usage per
     Menace ID.
+  - Audit logs include the menace ID for cross‑Menace monitoring and can be
+    summarised with `analysis/db_router_log_analysis.py`.
 - Change Data Capture events published to `UnifiedEventBus`
 - Vector embedding search via `EmbeddableDBMixin` for bots, workflows,
   errors, enhancements and research items. Each database stores its own
