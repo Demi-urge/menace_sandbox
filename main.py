@@ -10,6 +10,7 @@ import argparse
 import importlib
 import inspect
 import logging
+import os
 import pkgutil
 import sys
 from pathlib import Path
@@ -27,9 +28,11 @@ logger = logging.getLogger(__name__)
 
 # Initialise the global router early so modules can access ``GLOBAL_ROUTER``
 # without explicit dependency injection.  A unique ``menace_id`` keeps local
-# tables isolated for this process. All DB access must go through the router.
+# tables isolated for this process. Explicit paths avoid relying on defaults.
 MENACE_ID = uuid.uuid4().hex
-DB_ROUTER = init_db_router(MENACE_ID)
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+DB_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 
 def discover_modules() -> List[str]:

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable, List, Sequence, Tuple, Union, Dict
 import logging
 import sys
+import os
 from datetime import datetime
 from governed_retrieval import govern_retrieval
 import joblib
@@ -55,7 +56,10 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback when event bus unavailable
     UnifiedEventBus = None  # type: ignore
 
-router: DBRouter = GLOBAL_ROUTER or init_db_router("universal_retriever")
+MENACE_ID = "universal_retriever"
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+router: DBRouter = GLOBAL_ROUTER or init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 
 try:  # pragma: no cover - typing only
