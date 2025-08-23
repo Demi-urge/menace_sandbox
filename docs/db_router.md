@@ -20,6 +20,13 @@ Connections are created with `check_same_thread=False` and guarded by
 `threading.Lock` instances so multiple threads can safely interact with the
 router.
 
+## Logging
+
+`DBRouter` accepts an optional `logger` and `log_level`. Each invocation of
+`get_connection()` records the table name and whether a shared or local
+connection was returned. Set `log_level=None` or raise the logger's level to
+silence these messages in production environments.
+
 ## Table‑sharing policy
 
 - **Shared tables**: `SHARED_TABLES` entries persist across different

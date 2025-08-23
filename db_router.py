@@ -6,8 +6,11 @@ a local database specific to a Menace instance or a shared global database.
 
 from __future__ import annotations
 
+import logging
+import os
 import sqlite3
-from typing import Set
+import threading
+from typing import Optional, Set
 
 __all__ = ["DBRouter", "SHARED_TABLES", "LOCAL_TABLES"]
 
@@ -35,7 +38,14 @@ LOCAL_TABLES: Set[str] = {
 class DBRouter:
     """Route table operations to local or shared SQLite databases."""
 
-    def __init__(self, menace_id: str, local_db_path: str, shared_db_path: str) -> None:
+    def __init__(
+        self,
+        menace_id: str,
+        local_db_path: str,
+        shared_db_path: str,
+        logger: Optional[logging.Logger] = None,
+        log_level: int | None = logging.INFO,
+    ) -> None:
         """Create a new :class:`DBRouter`.
 
         Parameters
@@ -49,8 +59,18 @@ class DBRouter:
         """
 
         self.menace_id = menace_id
-        self.local_conn = sqlite3.connect(local_db_path, check_same_thread=False)
+        local_path = (
+            os.path.join(local_db_path, f"{menace_id}.db")
+            if os.path.isdir(local_db_path)
+            else local_db_path
+        )
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        self.local_conn = sqlite3.connect(local_path, check_same_thread=False)
+        os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
         self.shared_conn = sqlite3.connect(shared_db_path, check_same_thread=False)
+        self.logger = logger or logging.getLogger(__name__)
+        self.log_level = log_level
+        self._lock = threading.Lock()
 
     def get_connection(self, table_name: str) -> sqlite3.Connection:
         """Return a connection for ``table_name``.
@@ -62,13 +82,25 @@ class DBRouter:
         if not isinstance(table_name, str) or not table_name:
             raise ValueError("table_name must be a non-empty string")
 
-        if table_name in SHARED_TABLES:
-            return self.shared_conn
+        with self._lock:
+            if table_name in SHARED_TABLES:
+                conn = self.shared_conn
+                source = "shared"
+            elif table_name in LOCAL_TABLES:
+                conn = self.local_conn
+                source = "local"
+            else:
+                raise ValueError(f"Unknown table: {table_name}")
 
-        if table_name in LOCAL_TABLES:
-            return self.local_conn
+        if self.log_level is not None and self.logger:
+            self.logger.log(
+                self.log_level,
+                "get_connection called for table '%s'; returning %s connection",
+                table_name,
+                source,
+            )
 
-        raise ValueError(f"Unknown table: {table_name}")
+        return conn
 
     def close(self) -> None:
         """Close both the local and shared database connections."""
