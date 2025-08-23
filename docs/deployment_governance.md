@@ -80,6 +80,9 @@ When the gate fails, `evaluate()` downgrades the verdict to `borderline` if a
 caller can then queue the workflow for borderline review or run a limited
 pilot.
 
+A minimal example of integrating the gate with :class:`DeploymentGovernor`
+is available at [`examples/foresight_gate.py`](examples/foresight_gate.py).
+
 ## Governance outcomes log
 
 `append_governance_result()` can persist each decision for later analysis. The
