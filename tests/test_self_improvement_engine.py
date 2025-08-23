@@ -174,6 +174,13 @@ neuro_mod.add_message = lambda *a, **k: None
 neuro_mod.get_recent_messages = lambda *a, **k: []
 sys.modules["neurosales"] = neuro_mod
 
+vs_mod = types.ModuleType("vector_service")
+vs_mod.CognitionLayer = object
+vs_mod.EmbeddableDBMixin = object
+sys.modules["vector_service"] = vs_mod
+sub = types.ModuleType("vector_service.cognition_layer")
+sub.CognitionLayer = object
+sys.modules["vector_service.cognition_layer"] = sub
 pytest.importorskip("pandas")
 
 import menace.self_improvement_engine as sie
@@ -1096,3 +1103,117 @@ def test_deployment_governor_pilot_enqueues_borderline(
 
     engine.run_cycle()
     assert "candidate" in calls and calls["candidate"][0] == engine.bot_name
+
+
+class _StubPipeline:
+    def run(self, model: str, energy: int = 1):
+        return mp.AutomationResult(
+            package=None,
+            roi=prb.ROIResult(1.0, 0.0, 0.0, 1.0, 0.0),
+        )
+
+
+class _ROITracker:
+    def __init__(self):
+        self.confidence_history = [0.9]
+        self.last_raroi = 1.0
+        self.confidence_threshold = 0.0
+
+    def update(self, *a, **k):
+        pass
+
+    def record_roi_prediction(self, *a, **k):
+        pass
+
+    def generate_scorecards(self):
+        class Card:
+            raroi_delta = 1.0
+        return [Card()]
+
+
+class _ForesightTracker:
+    def predict_roi_collapse(self, workflow_id):
+        return {"risk": "Stable", "brittle": False}
+
+
+class _Bucket:
+    def __init__(self):
+        self.candidates = []
+
+    def add_candidate(self, *a):
+        self.candidates.append(a)
+
+    def process(self, *a, **k):
+        pass
+
+
+def test_deployment_gate_promotes(tmp_path, monkeypatch):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=_StubPipeline(),
+        diagnostics=diag,
+        info_db=info,
+        roi_tracker=_ROITracker(),
+        foresight_tracker=_ForesightTracker(),
+        borderline_bucket=_Bucket(),
+    )
+    events: list[dict] = []
+    monkeypatch.setattr(sie, "deployment_evaluate", lambda *a, **k: {"verdict": "promote", "reasons": [], "foresight": None})
+    monkeypatch.setattr(sie, "audit_log_event", lambda name, payload: events.append(payload))
+    monkeypatch.setattr(sie, "SandboxSettings", lambda: types.SimpleNamespace(micropilot_mode=""))
+    engine.run_cycle()
+    assert engine.workflow_ready is True
+    assert engine.borderline_bucket.candidates == []
+    assert events and events[-1]["verdict"] == "promote"
+
+
+def test_deployment_gate_borderline(tmp_path, monkeypatch):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    bucket = _Bucket()
+    engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=_StubPipeline(),
+        diagnostics=diag,
+        info_db=info,
+        roi_tracker=_ROITracker(),
+        foresight_tracker=_ForesightTracker(),
+        borderline_bucket=bucket,
+    )
+    events: list[dict] = []
+    monkeypatch.setattr(sie, "deployment_evaluate", lambda *a, **k: {"verdict": "borderline", "reasons": ["low_confidence"], "foresight": {"reason_codes": ["low_confidence"]}})
+    monkeypatch.setattr(sie, "audit_log_event", lambda name, payload: events.append(payload))
+    monkeypatch.setattr(sie, "SandboxSettings", lambda: types.SimpleNamespace(micropilot_mode=""))
+    engine.run_cycle()
+    assert engine.workflow_ready is False
+    assert bucket.candidates and bucket.candidates[0][-1] == "low_confidence"
+    assert events and events[-1]["verdict"] == "borderline"
+
+
+def test_deployment_gate_pilot(tmp_path, monkeypatch):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=_StubPipeline(),
+        diagnostics=diag,
+        info_db=info,
+        roi_tracker=_ROITracker(),
+        foresight_tracker=_ForesightTracker(),
+        borderline_bucket=None,
+    )
+    events: list[dict] = []
+    monkeypatch.setattr(sie, "deployment_evaluate", lambda *a, **k: {"verdict": "pilot", "reasons": ["low_confidence"], "foresight": {"reason_codes": ["low_confidence"]}})
+    monkeypatch.setattr(sie, "audit_log_event", lambda name, payload: events.append(payload))
+    monkeypatch.setattr(sie, "SandboxSettings", lambda: types.SimpleNamespace(micropilot_mode=""))
+    engine.run_cycle()
+    assert engine.workflow_ready is False
+    assert events and events[-1]["verdict"] == "pilot"
