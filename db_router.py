@@ -29,33 +29,69 @@ __all__ = [
 
 
 # Tables stored in the shared database.  These tables are visible to every
-# Menace instance.
-SHARED_TABLES: Set[str] = {
-    "enhancements",
-    "bots",
-    "errors",
-    "code",
-    "discrepancies",
-    "workflow_summaries",
-    "overrides",
-    "information",
-}
+# Menace instance.  The container is mutated in-place on reload so existing
+# references (e.g. in tests) observe the updated contents.
+if "SHARED_TABLES" in globals():
+    SHARED_TABLES.clear()
+    SHARED_TABLES.update(
+        {
+            "bots",
+            "code",
+            "discrepancies",
+            "enhancements",
+            "errors",
+            "information",
+            "overrides",
+            "workflow_summaries",
+        }
+    )
+else:
+    SHARED_TABLES: Set[str] = {
+        "bots",
+        "code",
+        "discrepancies",
+        "enhancements",
+        "errors",
+        "information",
+        "overrides",
+        "workflow_summaries",
+    }
 
 # Tables stored in the local database.  These are private to a specific
-# ``menace_id`` instance.
-LOCAL_TABLES: Set[str] = {
-    "models",
-    "patch_history",
-    "variants",
-    "memory",
-    "events",
-    "sandbox_metrics",
-    "roi_logs",
-    "menace_config",
-}
+# ``menace_id`` instance.  The list is mutated in-place on reload to keep
+# references stable.
+if "LOCAL_TABLES" in globals():
+    LOCAL_TABLES.clear()
+    LOCAL_TABLES.update(
+        {
+            "events",
+            "memory",
+            "menace_config",
+            "models",
+            "patch_history",
+            "roi_logs",
+            "sandbox_metrics",
+            "variants",
+        }
+    )
+else:
+    LOCAL_TABLES: Set[str] = {
+        "events",
+        "memory",
+        "menace_config",
+        "models",
+        "patch_history",
+        "roi_logs",
+        "sandbox_metrics",
+        "variants",
+    }
 
-# Tables explicitly denied even if present in the allow lists.
-DENY_TABLES: Set[str] = set()
+# Tables explicitly denied even if present in the allow lists.  Also mutated
+# in-place on reload.
+if "DENY_TABLES" in globals():
+    DENY_TABLES.clear()
+else:
+    DENY_TABLES: Set[str] = set()
 
 
 def _load_table_overrides() -> None:
