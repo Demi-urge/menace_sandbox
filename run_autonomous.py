@@ -23,11 +23,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, List
 import math
+import uuid
 from scipy.stats import t
 from gpt_memory import GPTMemoryManager
 from memory_maintenance import MemoryMaintenance, _load_retention_rules
 from gpt_knowledge_service import GPTKnowledgeService
 from local_knowledge_module import LocalKnowledgeModule, init_local_knowledge
+from db_router import init_db_router
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") is None:
     os.environ["SANDBOX_CENTRAL_LOGGING"] = "1"
@@ -100,6 +102,9 @@ def _verify_required_dependencies() -> None:
 
 
 _verify_required_dependencies()
+
+# Initialise database router with a unique menace_id
+DB_ROUTER = init_db_router(uuid.uuid4().hex)
 
 from filelock import FileLock
 from pydantic import BaseModel, RootModel, ValidationError, validator
