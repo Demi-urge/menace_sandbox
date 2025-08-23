@@ -382,14 +382,13 @@ def test_governor_foresight_gate_failure(monkeypatch):
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
         confidence_threshold=0.6,
     ):
-        return dg.ForesightDecision(
+        return (
             False,
+            {"upgrade_id": "fid1", "projections": [], "confidence": None, "recommendation": "borderline"},
             ["fs_fail"],
-            {"upgrade_id": "fid1", "projections": [], "confidence": None},
-            "borderline",
         )
 
-    monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(
         dg,
         "WorkflowGraph",
@@ -439,14 +438,13 @@ def test_governor_foresight_gate_pass(monkeypatch):
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
         confidence_threshold=0.6,
     ):
-        return dg.ForesightDecision(
+        return (
             True,
+            {"upgrade_id": "fid2", "projections": [], "confidence": None, "recommendation": "promote"},
             [],
-            {"upgrade_id": "fid2", "projections": [], "confidence": None},
-            "promote",
         )
 
-    monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(
         dg,
         "WorkflowGraph",

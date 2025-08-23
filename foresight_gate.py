@@ -23,9 +23,12 @@ class ForesightDecision(NamedTuple):
     """Result returned by :func:`is_foresight_safe_to_promote`."""
 
     safe: bool
-    reasons: List[str]
     forecast: Dict[str, Any]
-    recommendation: str
+    reasons: List[str]
+
+    @property
+    def recommendation(self) -> Any:
+        return self.forecast.get("recommendation")
 
 
 def _log(logger: ForecastLogger | None, payload: dict) -> None:
@@ -138,6 +141,7 @@ def is_foresight_safe_to_promote(
         "projections": [asdict(p) for p in forecast.projections],
         "confidence": forecast.confidence,
         "upgrade_id": forecast.upgrade_id,
+        "recommendation": recommendation,
     }
 
     _log(
@@ -151,7 +155,7 @@ def is_foresight_safe_to_promote(
         },
     )
 
-    return ForesightDecision(safe, reasons, forecast_info, recommendation)
+    return ForesightDecision(safe, forecast_info, reasons)
 
 
 __all__ = ["is_foresight_safe_to_promote", "ForesightDecision"]
