@@ -59,6 +59,27 @@ RAROI and confidence. A minimal example scorecard is provided in
    verdict and contributes its `reason_code` to the output.
 4. If no rule matches, the built‑in default of ``promote`` is returned.
 
+## Foresight promotion gate
+
+Before a `promote` verdict is finalised, `DeploymentGovernor` calls
+`is_foresight_safe_to_promote()` to simulate the patch with
+`UpgradeForecaster`, `ForesightTracker` and a `WorkflowGraph`. The gate enforces
+per‑cycle ROI and confidence thresholds (defaults: `roi_threshold=0.0`,
+`confidence_threshold=0.6`), rejects upcoming collapse risk and, unless
+`allow_negative_dag` is set, any negative downstream ROI from
+`WorkflowGraph.simulate_impact_wave()`.
+
+Each decision is appended to `forecast_records/decision_log.jsonl` via
+`ForecastLogger`. Every JSON line contains a `timestamp`, `workflow_id`, a
+`patch_summary`, the full list of `forecast_projections`, the overall
+`forecast_confidence`, optional `dag_impact` summaries, the boolean `decision`
+and the collected `reason_codes`.
+
+When the gate fails, `evaluate()` downgrades the verdict to `borderline` if a
+`BorderlineBucket` was supplied, otherwise it falls back to a `pilot` run. The
+caller can then queue the workflow for borderline review or run a limited
+pilot.
+
 ## CLI and automation usage
 
 Automation such as `deployment_bot` and `central_evaluation_loop` calls
