@@ -22,10 +22,10 @@ from memory_logging import log_with_tags
 from memory_aware_gpt_client import ask_with_memory
 from vector_service import Retriever, FallbackResult
 from foresight_tracker import ForesightTracker
-from db_router import init_db_router, GLOBAL_ROUTER
+from db_router import GLOBAL_ROUTER, init_db_router
 
 
-init_db_router("sandbox_cycle")
+router = GLOBAL_ROUTER or init_db_router("sandbox_cycle")
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when unavailable
@@ -1043,7 +1043,7 @@ def _sandbox_cycle_runner(
         if ctx.patch_db_path.exists():
             try:
                 rows = (
-                    GLOBAL_ROUTER.get_connection("patch_history")
+                    router.get_connection("patch_history")
                     .execute(
                         "SELECT complexity_after FROM patch_history ORDER BY id DESC LIMIT 5"
                     )

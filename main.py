@@ -1,4 +1,8 @@
-"""Command line interface for running Menace modules."""
+"""Command line interface for running Menace modules.
+
+The entry point initialises a database router via :func:`init_db_router` before
+importing modules so that all database access goes through :data:`GLOBAL_ROUTER`.
+"""
 
 from __future__ import annotations
 

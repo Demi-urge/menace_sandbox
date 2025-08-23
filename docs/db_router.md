@@ -14,9 +14,10 @@ modules that rely on a globally accessible instance.
 ## Startup initialisation
 
 Application entry points (for example `main.py`, `sandbox_runner.py` or other
-service launch scripts) should invoke `init_db_router(menace_id)` as early as
-possible during startup. This ensures `GLOBAL_ROUTER` is populated so imported
-modules can retrieve a router without explicit dependency injection.
+service launch scripts) **must** invoke `init_db_router(menace_id)` before any
+database operations occur. Initialising the router early ensures
+`GLOBAL_ROUTER` is populated so imported modules can retrieve a router without
+explicit dependency injection.
 
 Modules that may be executed standalone should include a safe fallback to
 initialise the router when `GLOBAL_ROUTER` has not been set:

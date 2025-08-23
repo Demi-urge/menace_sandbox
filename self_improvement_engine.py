@@ -29,7 +29,7 @@ import threading
 import asyncio
 import os
 
-from db_router import init_db_router, GLOBAL_ROUTER
+from db_router import GLOBAL_ROUTER, init_db_router
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     setup_logging()
@@ -49,7 +49,7 @@ from .metrics_exporter import (
     prediction_reliability,
 )
 
-init_db_router("self_improvement_engine")
+router = GLOBAL_ROUTER or init_db_router("self_improvement_engine")
 from alert_dispatcher import dispatch_alert
 import json
 import inspect
@@ -1341,7 +1341,7 @@ class SelfImprovementEngine:
         if not history_file.exists():
             return
         try:
-            conn = GLOBAL_ROUTER.get_connection("synergy_history")
+            conn = router.get_connection("synergy_history")
             hist = shd.fetch_all(conn)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.exception("failed to load history: %s", exc)
@@ -2391,7 +2391,7 @@ class SelfImprovementEngine:
     ) -> None:
         """Persist chosen actions and ROI predictions for auditing."""
         try:
-            conn = GLOBAL_ROUTER.get_connection("action_audit")
+            conn = router.get_connection("action_audit")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS action_audit(
@@ -6275,7 +6275,7 @@ def load_synergy_history(path: str | Path) -> list[dict[str, float]]:
         return []
     try:
         rows = (
-            GLOBAL_ROUTER.get_connection("synergy_history")
+            router.get_connection("synergy_history")
             .execute("SELECT entry FROM synergy_history ORDER BY id")
             .fetchall()
         )

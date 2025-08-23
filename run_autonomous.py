@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-"""Wrapper for running the autonomous sandbox loop after dependency checks."""
+"""Wrapper for running the autonomous sandbox loop after dependency checks.
+
+Initialises :data:`GLOBAL_ROUTER` via :func:`init_db_router` before importing
+modules that touch the database.
+"""
 
 import argparse
 import atexit
@@ -25,7 +29,7 @@ from typing import Callable, List
 import math
 import uuid
 from scipy.stats import t
-from db_router import init_db_router
+from db_router import GLOBAL_ROUTER, init_db_router
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +108,7 @@ _verify_required_dependencies()
 # Initialise database router with a unique menace_id. All DB access must go
 # through the router.  Import modules requiring database access afterwards so
 # they can rely on ``GLOBAL_ROUTER``.
-DB_ROUTER = init_db_router(uuid.uuid4().hex)
+DB_ROUTER = GLOBAL_ROUTER or init_db_router(uuid.uuid4().hex)
 
 from gpt_memory import GPTMemoryManager
 from memory_maintenance import MemoryMaintenance, _load_retention_rules

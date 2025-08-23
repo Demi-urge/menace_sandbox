@@ -1,4 +1,8 @@
-"""Top-level CLI for common Menace workflows."""
+"""Command line utilities for interacting with Menace services.
+
+The CLI initialises :data:`GLOBAL_ROUTER` via :func:`init_db_router` before
+performing any database work.
+"""
 
 import argparse
 import json
@@ -6,11 +10,11 @@ import subprocess
 import sys
 import uuid
 
-from db_router import init_db_router
+from db_router import GLOBAL_ROUTER, init_db_router
 
 # Expose a DBRouter for CLI operations early so imported modules can rely on
 # ``GLOBAL_ROUTER``.
-DB_ROUTER = init_db_router(uuid.uuid4().hex)
+DB_ROUTER = GLOBAL_ROUTER or init_db_router(uuid.uuid4().hex)
 
 from menace.plugins import load_plugins
 

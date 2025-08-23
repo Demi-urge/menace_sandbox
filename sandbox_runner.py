@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Execute Menace patches in a controlled sandbox environment.
+
+The module initialises :data:`GLOBAL_ROUTER` early via :func:`init_db_router`
+so that subsequent imports can perform database operations safely.
+"""
+
 import importlib.util
 import logging
 import os

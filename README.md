@@ -1483,9 +1483,9 @@ Use the lightweight `DBRouter` to obtain connections for shared or local
 tables:
 
 ```python
-from db_router import init_db_router
+from db_router import GLOBAL_ROUTER, init_db_router
 
-router = init_db_router("alpha")
+router = GLOBAL_ROUTER or init_db_router("alpha")
 conn = router.get_connection("bots")
 ```
 

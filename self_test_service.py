@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable, Mapping
 import threading
 import inspect
 import subprocess
-from db_router import init_db_router, GLOBAL_ROUTER
+from db_router import GLOBAL_ROUTER, init_db_router
 
 from orphan_analyzer import classify_module
 from sandbox_settings import SandboxSettings
@@ -63,7 +63,7 @@ orphan_modules_reclassified_total = _me.orphan_modules_reclassified_total
 orphan_modules_redundant_total = _me.orphan_modules_redundant_total
 orphan_modules_legacy_total = _me.orphan_modules_legacy_total
 
-init_db_router("self_test_service")
+router = GLOBAL_ROUTER or init_db_router("self_test_service")
 
 self_test_passed_total = _me.Gauge(
     "self_test_passed_total", "Total number of passed self tests"
@@ -271,7 +271,7 @@ class SelfTestService:
             except Exception:
                 self.logger.exception("failed to load state file")
         if self.history_path and self.history_path.suffix == ".db":
-            self._history_db = GLOBAL_ROUTER.get_connection("test_history")
+            self._history_db = router.get_connection("test_history")
             self._history_db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS test_history(
