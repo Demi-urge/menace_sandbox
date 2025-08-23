@@ -16,6 +16,7 @@ from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence, Itera
 
 from .unified_event_bus import EventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
+from db_router import GLOBAL_ROUTER as router
 import asyncio
 import threading
 from jinja2 import Template
@@ -68,7 +69,6 @@ class ErrorDB(EmbeddableDBMixin):
 
     def __init__(
         self,
-        path: Path | str = "errors.db",
         *,
         event_bus: Optional[EventBus] = None,
         graph: KnowledgeGraph | None = None,
@@ -76,9 +76,10 @@ class ErrorDB(EmbeddableDBMixin):
         vector_index_path: Path | str = "error_embeddings.index",
         embedding_version: int = 1,
     ) -> None:
-        self.path = Path(path)
-        # Allow connection sharing across threads
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        if not router:
+            raise RuntimeError("Database router is not initialised")
+        with router.get_connection("errors") as conn:
+            self.conn = conn
         self.conn.row_factory = sqlite3.Row
         self.event_bus = event_bus
         self.graph = graph
@@ -899,7 +900,7 @@ class ErrorBot(AdminBotBase):
     async def prompt_rewriter_daemon(self, err_id: int) -> None:
         if not self.enhancement_db:
             return
-        with sqlite3.connect(self.db.path) as conn:
+        with router.get_connection("errors") as conn:
             row = conn.execute(
                 "SELECT message FROM errors WHERE id=?", (err_id,)
             ).fetchone()
