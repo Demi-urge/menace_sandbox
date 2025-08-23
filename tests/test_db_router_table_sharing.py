@@ -97,10 +97,36 @@ def test_recent_local_tables_route_to_local(tmp_path):
     local_db = tmp_path / "local.db"
     router = DBRouter("one", str(local_db), str(shared_db))
     try:
-        for table in ("sandbox_metrics", "roi_logs", "menace_config"):
+        for table in (
+            "sandbox_metrics",
+            "roi_logs",
+            "menace_config",
+            "vector_metrics",
+            "roi_telemetry",
+            "roi_prediction_events",
+            "results",
+            "resolutions",
+            "deployments",
+            "bot_trials",
+            "update_history",
+            "roi_events",
+        ):
             with router.get_connection(table) as conn:
                 db_path = conn.execute("PRAGMA database_list").fetchall()[0][2]
                 assert db_path == str(local_db)
+    finally:
+        router.close()
+
+
+def test_shared_telemetry_routes_to_shared(tmp_path):
+    """Verify the telemetry table is stored in the shared database."""
+    shared_db = tmp_path / "shared.db"
+    local_db = tmp_path / "local.db"
+    router = DBRouter("one", str(local_db), str(shared_db))
+    try:
+        with router.get_connection("telemetry") as conn:
+            db_path = conn.execute("PRAGMA database_list").fetchall()[0][2]
+            assert db_path == str(shared_db)
     finally:
         router.close()
 

@@ -67,6 +67,7 @@ explicit. The default configuration assigns:
 - `information`
 - `overrides`
 - `workflow_summaries`
+- `telemetry`
 
 **Local tables**
 
@@ -78,6 +79,25 @@ explicit. The default configuration assigns:
 - `roi_logs`
 - `sandbox_metrics`
 - `variants`
+- `revenue`
+- `subs`
+- `churn`
+- `leads`
+- `profit`
+- `history`
+- `patches`
+- `healing_actions`
+- `tasks`
+- `metadata`
+- `vector_metrics`
+- `roi_telemetry`
+- `roi_prediction_events`
+- `results`
+- `resolutions`
+- `deployments`
+- `bot_trials`
+- `update_history`
+- `roi_events`
 
 Update these sets to route additional tables:
 
