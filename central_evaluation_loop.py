@@ -233,6 +233,7 @@ def process_action(raw_line: str) -> bool:
         foresight_tracker=FORESIGHT_TRACKER,
         workflow_id=action.get("workflow_id"),
         patch=action.get("patch") or [],
+        borderline_bucket=BORDERLINE_BUCKET,
     )
     verdict = eval_result.get("verdict")
     if verdict == "promote":
@@ -247,7 +248,7 @@ def process_action(raw_line: str) -> bool:
             ROLLBACK_MANAGER.rollback("latest")
         except Exception:
             logging.exception("rollback failed")
-    elif verdict == "pilot":
+    elif verdict in {"pilot", "borderline"}:
         wf_id = action.get("workflow_id")
         if wf_id is not None:
             try:
@@ -258,7 +259,7 @@ def process_action(raw_line: str) -> bool:
                     context=action,
                 )
             except Exception:
-                logging.exception("micro-pilot enqueue failed")
+                logging.exception("borderline enqueue failed")
 
     decision = action.get("decision")
     if decision and decision in vetoes:
@@ -307,6 +308,11 @@ def process_action(raw_line: str) -> bool:
             audit_record["truth_adapter_low_confidence"] = True
     audit_record["workflow_verdict"] = verdict
     audit_record["workflow_reason_codes"] = eval_result.get("reason_codes", [])
+    foresight_info = eval_result.get("foresight") or {}
+    if foresight_info.get("forecast_id") is not None:
+        audit_record["foresight_forecast_id"] = foresight_info.get("forecast_id")
+    if foresight_info.get("reason_codes"):
+        audit_record["foresight_reason_codes"] = foresight_info.get("reason_codes")
     if dispatch_error:
         audit_record["dispatch_error"] = dispatch_error
     append_audit(audit_record)

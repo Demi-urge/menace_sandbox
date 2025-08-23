@@ -37,11 +37,12 @@ def test_projected_roi_below_threshold(monkeypatch, tmp_path):
     )
     tracker = DummyTracker({"risk": "Stable"})
     graph = _make_graph(tmp_path)
-    ok, reasons = dg.is_foresight_safe_to_promote(
+    ok, reasons, fid = dg.is_foresight_safe_to_promote(
         "wf", [], tracker, graph, roi_threshold=0.5
     )
     assert not ok
     assert "projected_roi_below_threshold" in reasons
+    assert fid == "u1"
 
 
 def test_low_confidence(monkeypatch, tmp_path):
@@ -55,9 +56,10 @@ def test_low_confidence(monkeypatch, tmp_path):
     )
     tracker = DummyTracker({"risk": "Stable"})
     graph = _make_graph(tmp_path)
-    ok, reasons = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
+    ok, reasons, fid = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
     assert not ok
     assert "low_confidence" in reasons
+    assert fid == "u2"
 
 
 def test_negative_impact_wave(monkeypatch, tmp_path):
@@ -74,11 +76,12 @@ def test_negative_impact_wave(monkeypatch, tmp_path):
     graph.add_workflow("wf", roi=0.0)
     graph.add_workflow("dep", roi=0.0)
     graph.add_dependency("wf", "dep", impact_weight=1.0)
-    ok, reasons = dg.is_foresight_safe_to_promote(
+    ok, reasons, fid = dg.is_foresight_safe_to_promote(
         "wf", [], tracker, graph, roi_threshold=-0.2
     )
     assert not ok
     assert "negative_impact_wave" in reasons
+    assert fid == "u3"
 
 
 def test_collapse_risk(monkeypatch, tmp_path):
@@ -92,9 +95,10 @@ def test_collapse_risk(monkeypatch, tmp_path):
     )
     tracker = DummyTracker({"risk": "Immediate collapse risk"})
     graph = _make_graph(tmp_path)
-    ok, reasons = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
+    ok, reasons, fid = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
     assert not ok
     assert "roi_collapse_risk" in reasons
+    assert fid == "u4"
 
 
 def test_success_path(monkeypatch, tmp_path):
@@ -108,6 +112,7 @@ def test_success_path(monkeypatch, tmp_path):
     )
     tracker = DummyTracker({"risk": "Stable"})
     graph = _make_graph(tmp_path)
-    ok, reasons = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
+    ok, reasons, fid = dg.is_foresight_safe_to_promote("wf", [], tracker, graph)
     assert ok
     assert reasons == []
+    assert fid == "u5"

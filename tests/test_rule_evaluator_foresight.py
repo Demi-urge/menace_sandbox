@@ -33,7 +33,7 @@ def test_gate_pass(monkeypatch):
     ):
         called["wf"] = workflow_id
         called["patch"] = patch
-        return True, []
+        return True, [], "fid1"
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: DummyGraph())
@@ -60,7 +60,7 @@ def test_gate_failure_borderline(monkeypatch, tmp_path):
         workflow_graph,
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
-        return False, ["r1", "r2"]
+        return False, ["r1", "r2"], "fid2"
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: DummyGraph())
@@ -87,7 +87,7 @@ def test_gate_failure_pilot(monkeypatch):
         workflow_graph,
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
-        return False, ["bad"]
+        return False, ["bad"], "fid3"
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: DummyGraph())

@@ -36,7 +36,7 @@ def _patch_gate(monkeypatch, ok, reasons):
         workflow_graph,
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
-        return ok, list(reasons)
+        return ok, list(reasons), "fid"
 
     monkeypatch.setattr(dg, "WorkflowGraph", DummyGraph)
     monkeypatch.setattr(dg, "ForecastLogger", lambda *a, **k: DummyLogger())

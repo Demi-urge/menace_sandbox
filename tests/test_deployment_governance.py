@@ -350,7 +350,7 @@ def test_governor_foresight_gate_failure(monkeypatch):
         workflow_graph,
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
-        return False, ["fs_fail"]
+        return False, ["fs_fail"], "fid1"
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(
@@ -386,6 +386,7 @@ def test_governor_foresight_gate_failure(monkeypatch):
     assert res["verdict"] == "pilot"
     assert "fs_fail" in res["reasons"]
     assert res.get("foresight", {}).get("reason_codes") == ["fs_fail"]
+    assert res.get("foresight", {}).get("forecast_id") == "fid1"
     assert bucket.called
 
 
@@ -399,7 +400,7 @@ def test_governor_foresight_gate_pass(monkeypatch):
         workflow_graph,
         roi_threshold=dg.DeploymentGovernor.raroi_threshold,
     ):
-        return True, []
+        return True, [], "fid2"
 
     monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(
@@ -424,3 +425,4 @@ def test_governor_foresight_gate_pass(monkeypatch):
     )
     assert res["verdict"] == "promote"
     assert res.get("foresight", {}).get("reason_codes") == []
+    assert res.get("foresight", {}).get("forecast_id") == "fid2"

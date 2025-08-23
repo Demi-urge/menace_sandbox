@@ -11,6 +11,14 @@ def _audit_path(tmp_path):
 def _setup(tmp_path, monkeypatch):
     monkeypatch.setattr(cel, "AUDIT_DIR", str(tmp_path))
     monkeypatch.setattr(cel.reward_dispatcher, "dispatch_reward", lambda _action: None)
+    monkeypatch.setattr(cel, "TRUTH_ADAPTER", None)
+    import menace.governance as gov
+
+    class _DummyTracker:
+        def calculate_raroi(self, roi, rollback_prob=0.0, metrics=None):
+            return roi, roi, {}
+
+    monkeypatch.setattr(gov, "ROITracker", _DummyTracker)
 
 
 def _read_last(path):
