@@ -7,8 +7,25 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 
 from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from .metrics_exporter import Gauge
 
 ROI_EVENTS_DB = "roi_events.db"
+
+
+_SHARED_TABLE_ACCESS = Gauge(
+    "shared_table_access_total",
+    "Count of shared table accesses",
+    ["table"],
+)
+
+
+def record_shared_table_access(table_name: str) -> None:
+    """Increment telemetry count for accesses to a shared table."""
+
+    try:
+        _SHARED_TABLE_ACCESS.labels(table=table_name).inc()
+    except Exception:  # pragma: no cover - best effort
+        pass
 
 
 class TelemetryBackend:

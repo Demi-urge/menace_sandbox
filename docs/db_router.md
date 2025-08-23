@@ -126,13 +126,15 @@ router.
 
 ## Logging and metrics
 
-`DBRouter` logs every invocation of `get_connection()` including whether the
-table was shared or local, the menace ID and the current thread name. These
-messages aid observability and can be silenced by increasing the logger level or
-setting `log_level=None`.
+`DBRouter` emits structured logs for shared table accesses. Each entry contains
+the menace ID, table name and an ISO timestamp. Local table accesses are
+silent. Configure the verbosity via the `DB_ROUTER_LOG_LEVEL` environment
+variable. The output format defaults to JSON but can be set to key-value pairs
+by defining `DB_ROUTER_LOG_FORMAT=kv`.
 
 The router also aggregates simple access counts per table, accessible via
-`DBRouter.get_access_counts()`, which can be used for lightweight monitoring.
+`DBRouter.get_access_counts()`, and exposes shared table counts via the
+`shared_table_access_total` telemetry gauge.
 
 ## Table‑sharing policy
 

@@ -107,6 +107,7 @@ _load_table_overrides()
 logger = logging.getLogger(__name__)
 _level_name = os.getenv("DB_ROUTER_LOG_LEVEL", "INFO").upper()
 logger.setLevel(getattr(logging, _level_name, logging.INFO))
+_log_format = os.getenv("DB_ROUTER_LOG_FORMAT", "json").lower()
 
 
 # Global router instance used by modules that rely on a single router without
@@ -159,8 +160,9 @@ class DBRouter:
     def get_connection(self, table_name: str) -> sqlite3.Connection:
         """Return the appropriate connection for ``table_name``.
 
-        A :class:`ValueError` is raised for unknown tables.  Every request for a
-        shared or local table is logged for observability.
+        A :class:`ValueError` is raised for unknown tables.  Shared table
+        accesses emit a structured log entry for observability while local
+        table accesses are silent.
         """
 
         if not table_name:
@@ -171,26 +173,32 @@ class DBRouter:
                 raise ValueError(f"Access to table '{table_name}' is denied")
             if table_name in SHARED_TABLES:
                 timestamp = datetime.utcnow().isoformat()
-                thread_name = threading.current_thread().name
-                logger.info(
-                    "Shared table '%s' accessed by menace '%s' on thread '%s' at %s",
-                    table_name,
-                    self.menace_id,
-                    thread_name,
-                    timestamp,
-                )
+                entry = {
+                    "menace_id": self.menace_id,
+                    "table_name": table_name,
+                    "timestamp": timestamp,
+                }
+                if _log_format == "kv":
+                    msg = " ".join(f"{k}={v}" for k, v in entry.items())
+                else:
+                    msg = json.dumps(entry)
+                logger.info(msg)
                 self._access_counts["shared"][table_name] += 1
+                _tb = None
+                try:  # pragma: no cover - import available only in package context
+                    from . import telemetry_backend as _tb  # type: ignore
+                except Exception:  # pragma: no cover - fallback for tests
+                    try:
+                        import telemetry_backend as _tb  # type: ignore
+                    except Exception:
+                        _tb = None
+                if _tb is not None:
+                    try:
+                        _tb.record_shared_table_access(table_name)
+                    except Exception:  # pragma: no cover - best effort
+                        pass
                 return self.shared_conn
             if table_name in LOCAL_TABLES:
-                timestamp = datetime.utcnow().isoformat()
-                thread_name = threading.current_thread().name
-                logger.info(
-                    "Local table '%s' accessed by menace '%s' on thread '%s' at %s",
-                    table_name,
-                    self.menace_id,
-                    thread_name,
-                    timestamp,
-                )
                 self._access_counts["local"][table_name] += 1
                 return self.local_conn
 
