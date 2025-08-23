@@ -6,8 +6,13 @@ import subprocess
 import sys
 import uuid
 
-from menace.plugins import load_plugins
 from db_router import init_db_router
+
+# Expose a DBRouter for CLI operations early so imported modules can rely on
+# ``GLOBAL_ROUTER``.
+DB_ROUTER = init_db_router(uuid.uuid4().hex)
+
+from menace.plugins import load_plugins
 
 
 def _run(cmd: list[str]) -> int:
@@ -24,9 +29,6 @@ from patch_provenance import (
 )
 from cache_utils import get_cached_chain, set_cached_chain, _get_cache
 from cache_utils import clear_cache, show_cache, cache_stats
-
-# Expose a DBRouter for CLI operations
-DB_ROUTER = init_db_router(uuid.uuid4().hex)
 
 
 def _normalise_hits(hits, origin=None):
