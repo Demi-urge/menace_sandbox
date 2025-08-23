@@ -23,6 +23,7 @@ def test_no_direct_sqlite_connect_usage() -> None:
 
     offenders: list[str] = []
     this_test = Path(__file__).relative_to(repo_root).as_posix()
+    pattern = "sqlite3." + "connect("
     for path in repo_root.rglob("*.py"):
         rel = path.relative_to(repo_root).as_posix()
         if rel == this_test:
@@ -31,7 +32,7 @@ def test_no_direct_sqlite_connect_usage() -> None:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        if "sqlite3.connect(" in text and rel not in allowed:
+        if pattern in text and rel not in allowed:
             offenders.append(rel)
 
     assert not offenders, "Disallowed sqlite3.connect usage:\n" + "\n".join(offenders)
