@@ -544,16 +544,12 @@ def evaluate(
             logger_obj = ForecastLogger("forecast_records/foresight.log")
             patch_repr = patch if isinstance(patch, str) else list(patch)
             try:
-                forecaster = UpgradeForecaster(
-                    foresight_tracker, logger=logger_obj
-                )
                 graph = WorkflowGraph()
                 ok, fs_reasons, forecast = is_foresight_safe_to_promote(
                     workflow_id,
                     patch_repr,
-                    forecaster=forecaster,
-                    tracker=foresight_tracker,
-                    graph=graph,
+                    foresight_tracker,
+                    graph,
                 )
                 forecast_info = {
                     "forecast": {
@@ -593,8 +589,9 @@ def evaluate(
         ):
             try:
                 risk = foresight_tracker.predict_roi_collapse(workflow_id)
-                if risk.get("risk") == "Immediate collapse risk" or bool(
-                    risk.get("brittle")
+                collapse_in = risk.get("collapse_in")
+                if risk.get("risk") == "Immediate collapse risk" or (
+                    isinstance(collapse_in, (int, float)) and collapse_in <= 5
                 ):
                     verdict = "no_go"
                     if "roi_collapse_risk" not in reasons:
@@ -880,16 +877,12 @@ class RuleEvaluator:
                             logger_obj = ForecastLogger("forecast_records/foresight.log")
                             patch_repr = patch if isinstance(patch, str) else list(patch)
                             try:
-                                forecaster = UpgradeForecaster(
-                                    foresight_tracker, logger=logger_obj
-                                )
                                 graph = WorkflowGraph()
                                 ok, fs_reasons, forecast = is_foresight_safe_to_promote(
                                     workflow_id,
                                     patch_repr,
-                                    forecaster=forecaster,
-                                    tracker=foresight_tracker,
-                                    graph=graph,
+                                    foresight_tracker,
+                                    graph,
                                 )
                                 result["foresight"] = {
                                     "forecast": {
@@ -959,31 +952,22 @@ def evaluate_scorecard(
 def is_foresight_safe_to_promote(
     workflow_id: str,
     patch: Iterable[str] | str,
-    *,
-    forecaster: UpgradeForecaster,
     tracker: ForesightTracker,
-    graph: WorkflowGraph,
+    workflow_graph: WorkflowGraph,
     roi_threshold: float = 0.0,
 ) -> tuple[bool, list[str], ForecastResult]:
-    """Assess whether ``workflow_id`` can be promoted based on foresight data.
+    """Return foresight gate decision for ``workflow_id``.
 
-    Parameters
-    ----------
-    workflow_id:
-        Identifier of the workflow under evaluation.
-    patch:
-        Patch representation forwarded to :class:`UpgradeForecaster`.
-    forecaster:
-        Instance used to generate ROI projections.
-    tracker:
-        :class:`ForesightTracker` providing collapse risk assessment.
-    graph:
-        :class:`WorkflowGraph` used to simulate wider ROI impact.
-    roi_threshold:
-        Minimum acceptable projected ROI for any cycle.
+    A forecast is generated for ``patch`` using :class:`UpgradeForecaster`.
+    Promotion proceeds only when all projected ROI values exceed
+    ``roi_threshold``, the forecast confidence is at least ``0.6``, no collapse
+    is predicted within the forecast horizon and the simulated impact wave does
+    not yield negative downstream ROI deltas.
     """
 
+    forecaster = UpgradeForecaster(tracker)
     forecast = forecaster.forecast(workflow_id, patch)
+
     reasons: list[str] = []
 
     if any(p.roi < roi_threshold for p in forecast.projections):
@@ -994,63 +978,26 @@ def is_foresight_safe_to_promote(
 
     try:
         collapse = tracker.predict_roi_collapse(workflow_id)
-        if collapse.get("risk") == "Immediate collapse risk" or bool(
-            collapse.get("brittle")
+        horizon = len(forecast.projections)
+        collapse_in = collapse.get("collapse_in")
+        if collapse.get("risk") == "Immediate collapse risk" or (
+            isinstance(collapse_in, (int, float)) and horizon and collapse_in <= horizon
         ):
             reasons.append("roi_collapse_risk")
     except Exception:
         logger.exception("foresight risk evaluation failed")
 
     try:
-        delta = forecast.projections[0].roi if forecast.projections else 0.0
-        impacts = graph.simulate_impact_wave(workflow_id, float(delta), 0.0)
-        net_roi = sum(v.get("roi", 0.0) for v in impacts.values())
-        if net_roi < 0:
-            reasons.append("negative_impact_wave")
+        roi_delta = forecast.projections[0].roi if forecast.projections else 0.0
+        impacts = workflow_graph.simulate_impact_wave(workflow_id, float(roi_delta), 0.0)
+        for wid, vals in impacts.items():
+            if wid != workflow_id and vals.get("roi", 0.0) < 0:
+                reasons.append("negative_impact_wave")
+                break
     except Exception:
         logger.exception("impact wave simulation failed")
 
-    decision_ok = not reasons
-
-    patch_repr = patch if isinstance(patch, str) else list(patch)
-    data = {
-        "event": "foresight_promotion_check",
-        "workflow_id": workflow_id,
-        "patch": patch_repr,
-        "forecast": {
-            "projections": [p.__dict__ for p in forecast.projections],
-            "confidence": forecast.confidence,
-            "upgrade_id": forecast.upgrade_id,
-        },
-        "decision_ok": decision_ok,
-        "reason_codes": reasons,
-        "roi_threshold": roi_threshold,
-    }
-
-    logger_obj = getattr(forecaster, "logger", None)
-    fallback: ForecastLogger | None = None
-    if not isinstance(logger_obj, ForecastLogger):
-        try:
-            fallback = ForecastLogger("forecast_records/foresight.log")
-            logger_obj = fallback
-        except Exception:
-            logger.exception("failed to create ForecastLogger")
-            logger_obj = None
-
-    if logger_obj is not None:
-        try:
-            logger_obj.log(data)
-        except Exception:
-            logger.exception("forecast logging failed")
-        try:
-            audit_logger.log_event("foresight_promotion_check", data)
-        except Exception:
-            logger.exception("audit logging failed")
-        finally:
-            if fallback is not None:
-                fallback.close()
-
-    return decision_ok, reasons, forecast
+    return (len(reasons) == 0, reasons, forecast)
 
 
 __all__ = [
