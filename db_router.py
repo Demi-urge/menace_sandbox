@@ -1,7 +1,9 @@
-"""SQLite database router for Menace.
+"""Database routing utilities for Menace.
 
-This module provides a :class:`DBRouter` that routes table operations to either
-a local database specific to a Menace instance or a shared global database.
+This module exposes a :class:`DBRouter` that decides whether a table should
+reside in the local or the shared SQLite database.  Shared tables are
+available to every Menace instance while local tables are isolated per
+``menace_id``.
 """
 
 from __future__ import annotations
@@ -10,12 +12,13 @@ import logging
 import os
 import sqlite3
 import threading
-from typing import Optional, Set
+from typing import Set
 
 __all__ = ["DBRouter", "SHARED_TABLES", "LOCAL_TABLES", "init_db_router", "GLOBAL_ROUTER"]
 
 
-# Tables that should always be stored in the shared database.
+# Tables stored in the shared database.  These tables are visible to every
+# Menace instance.
 SHARED_TABLES: Set[str] = {
     "enhancements",
     "bots",
@@ -25,7 +28,8 @@ SHARED_TABLES: Set[str] = {
     "workflow_summaries",
 }
 
-# Tables that are explicitly stored in the local database.
+# Tables stored in the local database.  These are private to a specific
+# ``menace_id`` instance.
 LOCAL_TABLES: Set[str] = {
     "models",
     "patch_history",
@@ -35,35 +39,33 @@ LOCAL_TABLES: Set[str] = {
 }
 
 
-# Global router instance used by modules that do not receive an explicit
-# router.  ``init_db_router`` populates this value.
+# Global router instance used by modules that rely on a single router without
+# passing it around explicitly.  ``init_db_router`` populates this value.
 GLOBAL_ROUTER: "DBRouter" | None = None
 
 
 class DBRouter:
     """Route table operations to local or shared SQLite databases."""
 
-    def __init__(
-        self,
-        menace_id: str,
-        local_db_path: str,
-        shared_db_path: str,
-        logger: Optional[logging.Logger] = None,
-        log_level: int | None = logging.INFO,
-    ) -> None:
+    def __init__(self, menace_id: str, local_db_path: str, shared_db_path: str) -> None:
         """Create a new :class:`DBRouter`.
 
         Parameters
         ----------
         menace_id:
-            Identifier for the Menace instance.
+            Identifier for the Menace instance.  When ``local_db_path`` points to
+            a directory a database file named ``"<menace_id>.db"`` will be created
+            inside that directory.
         local_db_path:
-            Path to the SQLite database used for local tables.
+            Path to the SQLite database used for local tables or a directory in
+            which a database for ``menace_id`` should be created.
         shared_db_path:
             Path to the SQLite database used for shared tables.
         """
 
         self.menace_id = menace_id
+        # When ``local_db_path`` is a directory, create a database file for this
+        # menace instance inside it.
         local_path = (
             os.path.join(local_db_path, f"{menace_id}.db")
             if os.path.isdir(local_db_path)
@@ -71,42 +73,35 @@ class DBRouter:
         )
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         self.local_conn = sqlite3.connect(local_path, check_same_thread=False)
+
         os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
         self.shared_conn = sqlite3.connect(shared_db_path, check_same_thread=False)
-        self.logger = logger or logging.getLogger(__name__)
-        self.log_level = log_level
+
+        # ``threading.Lock`` protects against concurrent access when deciding
+        # which connection to return.
         self._lock = threading.Lock()
 
+    # ------------------------------------------------------------------
     def get_connection(self, table_name: str) -> sqlite3.Connection:
-        """Return a connection for ``table_name``.
+        """Return the appropriate connection for ``table_name``.
 
-        The table must exist in :data:`SHARED_TABLES` or :data:`LOCAL_TABLES`.
-        A :class:`ValueError` is raised for unknown tables.
+        A :class:`ValueError` is raised for unknown tables.  Every request for a
+        shared table is logged for observability.
         """
 
-        if not isinstance(table_name, str) or not table_name:
+        if not table_name:
             raise ValueError("table_name must be a non-empty string")
 
         with self._lock:
             if table_name in SHARED_TABLES:
-                conn = self.shared_conn
-                source = "shared"
-            elif table_name in LOCAL_TABLES:
-                conn = self.local_conn
-                source = "local"
-            else:
-                raise ValueError(f"Unknown table: {table_name}")
+                logging.info("Routing table '%s' to shared database", table_name)
+                return self.shared_conn
+            if table_name in LOCAL_TABLES:
+                return self.local_conn
 
-        if self.log_level is not None and self.logger:
-            self.logger.log(
-                self.log_level,
-                "get_connection called for table '%s'; returning %s connection",
-                table_name,
-                source,
-            )
+        raise ValueError(f"Unknown table: {table_name}")
 
-        return conn
-
+    # ------------------------------------------------------------------
     def close(self) -> None:
         """Close both the local and shared database connections."""
 
@@ -119,12 +114,11 @@ def init_db_router(
     local_db_path: str | None = None,
     shared_db_path: str | None = None,
 ) -> DBRouter:
-    """Initialise a :class:`DBRouter` for ``menace_id``.
+    """Initialise a global :class:`DBRouter` instance.
 
-    The router is stored in :data:`GLOBAL_ROUTER` for modules that rely on a
-    global instance.  ``local_db_path`` and ``shared_db_path`` default to the
-    repository's ``menace_<id>_local.db`` and ``shared/global.db`` respectively
-    when not provided.
+    ``local_db_path`` defaults to ``./menace_<id>_local.db`` and
+    ``shared_db_path`` defaults to ``./shared/global.db`` when not provided.
+    The created router is stored in :data:`GLOBAL_ROUTER` and returned.
     """
 
     global GLOBAL_ROUTER
@@ -134,4 +128,5 @@ def init_db_router(
 
     GLOBAL_ROUTER = DBRouter(menace_id, local_path, shared_path)
     return GLOBAL_ROUTER
+
 
