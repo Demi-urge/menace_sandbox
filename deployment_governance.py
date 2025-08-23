@@ -27,7 +27,8 @@ if __package__:  # pragma: no cover - allow both package and direct execution
     from .upgrade_forecaster import UpgradeForecaster
     from .workflow_graph import WorkflowGraph
     from .forecast_logger import ForecastLogger, log_forecast_record
-    from .foresight_gate import ForesightDecision, is_foresight_safe_to_promote
+    from .foresight_gate import ForesightDecision
+    from . import foresight_gate
     from . import audit_logger
     from .borderline_bucket import BorderlineBucket
 else:  # pragma: no cover
@@ -37,7 +38,8 @@ else:  # pragma: no cover
     from upgrade_forecaster import UpgradeForecaster  # type: ignore
     from workflow_graph import WorkflowGraph  # type: ignore
     from forecast_logger import ForecastLogger, log_forecast_record  # type: ignore
-    from foresight_gate import ForesightDecision, is_foresight_safe_to_promote  # type: ignore
+    from foresight_gate import ForesightDecision  # type: ignore
+    import foresight_gate  # type: ignore
     import audit_logger  # type: ignore
     from borderline_bucket import BorderlineBucket  # type: ignore
 
@@ -320,7 +322,7 @@ class DeploymentGovernor:
         patch, foresight_tracker, workflow_id:
             Optional foresight promotion gate parameters.  When supplied and the
             initial verdict resolves to ``"promote"``,
-            :func:`is_foresight_safe_to_promote` is consulted and may downgrade
+            :func:`foresight_gate.is_foresight_safe_to_promote` is consulted and may downgrade
             the verdict.
         borderline_bucket:
             Optional queue used when a promotion is rejected by foresight while
@@ -444,7 +446,7 @@ class DeploymentGovernor:
                 )
                 logger_obj = ForecastLogger("forecast_records/foresight.log")
                 forecaster = UpgradeForecaster(foresight_tracker)
-                decision = is_foresight_safe_to_promote(
+                decision = foresight_gate.is_foresight_safe_to_promote(
                     workflow_id,
                     patch_repr,
                     forecaster,
@@ -630,7 +632,7 @@ def evaluate_workflow(
             )
             logger_obj = ForecastLogger("forecast_records/foresight.log")
             forecaster = UpgradeForecaster(foresight_tracker)
-            ok, fs_reasons, forecast_info = is_foresight_safe_to_promote(
+            ok, fs_reasons, forecast_info = foresight_gate.is_foresight_safe_to_promote(
                 workflow_id,
                 patch_repr,
                 forecaster,
@@ -777,7 +779,7 @@ def evaluate(
                 graph = WorkflowGraph()
                 logger_obj = ForecastLogger("forecast_records/foresight.log")
                 forecaster = UpgradeForecaster(foresight_tracker)
-                ok, fs_reasons, forecast_info = is_foresight_safe_to_promote(
+                ok, fs_reasons, forecast_info = foresight_gate.is_foresight_safe_to_promote(
                     workflow_id,
                     patch_repr,
                     forecaster,
@@ -1111,7 +1113,7 @@ class RuleEvaluator:
                                 graph = WorkflowGraph()
                                 logger_obj = ForecastLogger("forecast_records/foresight.log")
                                 forecaster = UpgradeForecaster(foresight_tracker)
-                                ok, fs_reasons, forecast_info = is_foresight_safe_to_promote(
+                                ok, fs_reasons, forecast_info = foresight_gate.is_foresight_safe_to_promote(
                                     workflow_id,
                                     patch_repr,
                                     forecaster,
@@ -1200,5 +1202,4 @@ __all__ = [
     "EvalRule",
     "RuleEvaluator",
     "evaluate_scorecard",
-    "is_foresight_safe_to_promote",
 ]

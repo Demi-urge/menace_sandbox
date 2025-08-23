@@ -50,7 +50,7 @@ The result also includes a `brittle` flag when small entropy changes cause outsi
 ## Foresight promotion gate
 
 Before final promotion the sandbox invokes
-``deployment_governance.is_foresight_safe_to_promote``.  The helper evaluates
+``foresight_gate.is_foresight_safe_to_promote``.  The helper evaluates
 four gating conditions and returns ``(ok, reason_codes, forecast)``:
 
 1. all projected ROI values meet or exceed the supplied ``roi_threshold``;

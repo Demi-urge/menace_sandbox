@@ -1,4 +1,5 @@
-from deployment_governance import DeploymentGovernor, is_foresight_safe_to_promote
+from deployment_governance import DeploymentGovernor
+from foresight_gate import is_foresight_safe_to_promote
 from borderline_bucket import BorderlineBucket
 from foresight_tracker import ForesightTracker
 from workflow_graph import WorkflowGraph

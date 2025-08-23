@@ -165,7 +165,7 @@ def test_foresight_gate_pass(monkeypatch):
     ):
         return True, [], {"upgrade_id": "fid1", "projections": [], "confidence": None}
 
-    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
     monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
 
@@ -200,7 +200,7 @@ def test_foresight_gate_failure(monkeypatch):
     ):
         return False, ["low_confidence"], {"upgrade_id": "fid2", "projections": [], "confidence": None}
 
-    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
     monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
 
@@ -236,7 +236,7 @@ def test_foresight_gate_failure_borderline_bucket(monkeypatch):
     ):
         return False, ["borderline"], {"upgrade_id": "fid3", "projections": [], "confidence": None}
 
-    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
     monkeypatch.setattr(dg.audit_logger, "log_event", lambda *a, **k: None)
 
@@ -286,7 +286,7 @@ def test_policy_thresholds_passed(monkeypatch):
         called["roi_threshold"] = roi_threshold
         return True, [], {"upgrade_id": "fid4", "projections": [], "confidence": None}
 
-    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(dg, "WorkflowGraph", lambda: _DummyGraph())
 
     policy = {"roi_forecast_min": 0.5}

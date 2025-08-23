@@ -380,7 +380,7 @@ def test_governor_foresight_gate_failure(monkeypatch):
     ):
         return False, ["fs_fail"], {"upgrade_id": "fid1", "projections": [], "confidence": None}
 
-    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(
         dg,
         "WorkflowGraph",
@@ -432,7 +432,7 @@ def test_governor_foresight_gate_pass(monkeypatch):
     ):
         return True, [], {"upgrade_id": "fid2", "projections": [], "confidence": None}
 
-    monkeypatch.setattr(dg, "is_foresight_safe_to_promote", fake_gate)
+    monkeypatch.setattr(dg.foresight_gate, "is_foresight_safe_to_promote", fake_gate)
     monkeypatch.setattr(
         dg,
         "WorkflowGraph",
