@@ -102,6 +102,10 @@ if "LOCAL_TABLES" in globals():
             "experiment_tests",
             "embedding_stats",
             "messages",
+            "evaluation_history",
+            "weight_override",
+            "roi",
+            "feedback",
         }
     )
 else:
@@ -142,6 +146,10 @@ else:
         "experiment_tests",
         "embedding_stats",
         "messages",
+        "evaluation_history",
+        "weight_override",
+        "roi",
+        "feedback",
     }
 
 # Tables explicitly denied even if present in the allow lists.  Also mutated

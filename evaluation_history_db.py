@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 import sqlite3
 
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+
 
 @dataclass
 class EvaluationRecord:
@@ -23,8 +25,16 @@ class EvaluationRecord:
 class EvaluationHistoryDB:
     """SQLite-backed store of :class:`EvaluationRecord` values."""
 
-    def __init__(self, path: Path | str = "evaluation_history.db") -> None:
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+    def __init__(
+        self,
+        path: Path | str = "evaluation_history.db",
+        *,
+        router: DBRouter | None = None,
+    ) -> None:
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "evaluation_history", str(path), str(path)
+        )
+        self.conn = self.router.get_connection("evaluation_history")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS evaluation_history(
