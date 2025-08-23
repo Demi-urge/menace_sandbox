@@ -39,23 +39,25 @@ explicit. The default configuration assigns:
 
 **Shared tables**
 
-- `enhancements`
 - `bots`
-- `errors`
 - `code`
 - `discrepancies`
+- `enhancements`
+- `errors`
+- `information`
+- `overrides`
 - `workflow_summaries`
 
 **Local tables**
 
+- `events`
+- `memory`
+- `menace_config`
 - `models`
 - `patch_history`
-- `variants`
-- `memory`
-- `events`
-- `sandbox_metrics`
 - `roi_logs`
-- `menace_config`
+- `sandbox_metrics`
+- `variants`
 
 Update these sets to route additional tables:
 

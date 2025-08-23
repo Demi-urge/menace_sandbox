@@ -1,22 +1,23 @@
 {
   "shared": [
-    "enhancements",
     "bots",
-    "errors",
     "code",
     "discrepancies",
-    "workflow_summaries",
-    "overrides"
+    "enhancements",
+    "errors",
+    "information",
+    "overrides",
+    "workflow_summaries"
   ],
   "local": [
+    "events",
+    "memory",
+    "menace_config",
     "models",
     "patch_history",
-    "variants",
-    "memory",
-    "events",
-    "sandbox_metrics",
     "roi_logs",
-    "menace_config"
+    "sandbox_metrics",
+    "variants"
   ],
   "deny": []
 }
