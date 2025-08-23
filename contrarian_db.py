@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES
 from vector_service import EmbeddableDBMixin
 
 logger = logging.getLogger(__name__)
@@ -38,11 +39,24 @@ class ContrarianDB(EmbeddableDBMixin):
         self,
         path: Path | str = "contrarian.db",
         *,
+        router: DBRouter | None = None,
         vector_index_path: str | Path | None = None,
         embedding_version: int = 1,
         vector_backend: str = "annoy",
     ) -> None:
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        LOCAL_TABLES.update(
+            {
+                "contrarian_experiments",
+                "contrarian_models",
+                "contrarian_workflows",
+                "contrarian_enhancements",
+                "contrarian_errors",
+                "contrarian_discrepancies",
+            }
+        )
+
+        self.router = router or GLOBAL_ROUTER or DBRouter("contrarian", str(path), str(path))
+        self.conn = self.router.get_connection("contrarian_experiments")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS contrarian_experiments(
@@ -60,19 +74,19 @@ class ContrarianDB(EmbeddableDBMixin):
             """
         )
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS contrarian_models(contrarian_id INTEGER, model_id INTEGER)"
+            "CREATE TABLE IF NOT EXISTS contrarian_models(contrarian_id INTEGER, model_id INTEGER)"  # noqa: E501
         )
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS contrarian_workflows(contrarian_id INTEGER, workflow_id INTEGER)"
+            "CREATE TABLE IF NOT EXISTS contrarian_workflows(contrarian_id INTEGER, workflow_id INTEGER)"  # noqa: E501
         )
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS contrarian_enhancements(contrarian_id INTEGER, enhancement_id INTEGER)"
+            "CREATE TABLE IF NOT EXISTS contrarian_enhancements(contrarian_id INTEGER, enhancement_id INTEGER)"  # noqa: E501
         )
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS contrarian_errors(contrarian_id INTEGER, error_id INTEGER)"
+            "CREATE TABLE IF NOT EXISTS contrarian_errors(contrarian_id INTEGER, error_id INTEGER)"  # noqa: E501
         )
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS contrarian_discrepancies(contrarian_id INTEGER, discrepancy_id INTEGER)"
+            "CREATE TABLE IF NOT EXISTS contrarian_discrepancies(contrarian_id INTEGER, discrepancy_id INTEGER)"  # noqa: E501
         )
         self.conn.commit()
 
@@ -295,7 +309,7 @@ class ContrarianDB(EmbeddableDBMixin):
     # ------------------------------------------------------------------
     def iter_records(self) -> Iterator[tuple[int, Dict[str, Any], str]]:
         cur = self.conn.execute(
-            "SELECT contrarian_id, innovation_name, innovation_type, activation_trigger, status FROM contrarian_experiments"
+            "SELECT contrarian_id, innovation_name, innovation_type, activation_trigger, status FROM contrarian_experiments"  # noqa: E501
         )
         for row in cur.fetchall():
             data = {

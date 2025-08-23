@@ -16,8 +16,10 @@ import json
 import hashlib
 import time
 from contextlib import nullcontext
-from tempfile import TemporaryDirectory, NamedTemporaryFile
+from tempfile import NamedTemporaryFile
 import logging
+
+from db_router import DBRouter, GLOBAL_ROUTER
 import math
 import os
 import sys
@@ -39,14 +41,14 @@ LOG_FORMAT = os.environ.get(
 logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
-from . import RAISE_ERRORS
+from . import RAISE_ERRORS  # noqa: E402
 
-from .mirror_bot import sentiment_score
+from .mirror_bot import sentiment_score  # noqa: E402
 try:  # pragma: no cover - optional dependency
     from .chatgpt_idea_bot import ChatGPTClient
 except BaseException:  # pragma: no cover - missing or failing dependency
     ChatGPTClient = None  # type: ignore
-from gpt_memory_interface import GPTMemoryInterface
+from gpt_memory_interface import GPTMemoryInterface  # noqa: E402
 try:  # memory-aware wrapper
     from .memory_aware_gpt_client import ask_with_memory
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -66,9 +68,9 @@ except Exception:  # pragma: no cover - optional dependency
     SentenceTransformer = None  # type: ignore
     st_util = None  # type: ignore
 
-from security.secret_redactor import redact
-from license_detector import detect as detect_license
-from governed_embeddings import governed_embed
+from security.secret_redactor import redact  # noqa: E402
+from license_detector import detect as detect_license  # noqa: E402
+from governed_embeddings import governed_embed  # noqa: E402
 try:  # pragma: no cover - optional dependency
     from analysis.semantic_diff_filter import find_semantic_risks
 except Exception:  # pragma: no cover - best effort optional import
@@ -437,8 +439,9 @@ def _define_fallback() -> None:
     class DataIngestor:
         """Load training data from file, API or database."""
 
-        def __init__(self, source: str | Path) -> None:
+        def __init__(self, source: str | Path, router: DBRouter | None = None) -> None:
             self.source = str(source)
+            self.router = router or GLOBAL_ROUTER
 
         # --------------------------------------------------
         def load(self) -> Tuple[List[dict], List[int]]:
@@ -484,18 +487,15 @@ def _define_fallback() -> None:
             return payload.get("X", []), payload.get("y", [])
 
         def _from_db(self, path: str) -> Tuple[List[dict], List[int]]:
-            import sqlite3
-
-            conn = sqlite3.connect(path)
-            try:
-                cur = conn.execute("SELECT features, label FROM training_data")
-                X: List[dict] = []
-                y: List[int] = []
-                for row in cur.fetchall():
-                    X.append(json.loads(row[0]))
-                    y.append(int(row[1]))
-            finally:
-                conn.close()
+            if not self.router:
+                raise RuntimeError("DBRouter not initialised")
+            conn = self.router.get_connection("training_data")
+            cur = conn.execute("SELECT features, label FROM training_data")
+            X: List[dict] = []
+            y: List[int] = []
+            for row in cur.fetchall():
+                X.append(json.loads(row[0]))
+                y.append(int(row[1]))
             return X, y
 
     def _generate_training_data(source: str | None) -> Tuple[List[dict], List[int]]:
@@ -701,7 +701,7 @@ class ChatGPTPredictionBot:
             try:
                 if "sklearn" in sys.modules and not hasattr(sys.modules["sklearn"], "__path__"):
                     raise ImportError
-                from sklearn.pipeline import Pipeline as SKPipeline  # type: ignore
+                from sklearn.pipeline import Pipeline as SKPipeline  # type: ignore  # noqa: F401
                 use_sklearn = True
             except Exception:
                 use_sklearn = False
@@ -764,10 +764,16 @@ class ChatGPTPredictionBot:
     def _check_drift(self) -> None:
         if not self._feedback:
             return
-        preds = [int(self.pipeline.predict_proba([f])[0][1] >= self.threshold) for f, _ in self._feedback]
+        preds = [
+            int(self.pipeline.predict_proba([f])[0][1] >= self.threshold)
+            for f, _ in self._feedback
+        ]
         y = [lbl for _, lbl in self._feedback]
         acc = sum(int(a == b) for a, b in zip(preds, y)) / len(y)
-        if self._last_accuracy is not None and self._last_accuracy - acc > self._drift_threshold:
+        if (
+            self._last_accuracy is not None
+            and self._last_accuracy - acc > self._drift_threshold
+        ):
             logger.warning("model drift detected; performing partial retrain")
             self.partial_retrain([f for f, _ in self._feedback], y)
         self._last_accuracy = acc
