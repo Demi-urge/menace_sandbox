@@ -103,6 +103,8 @@ def _load_table_overrides() -> None:
     ``local`` and ``deny`` arrays.
     """
 
+    global _audit_log_path
+
     shared_env = os.getenv("DB_ROUTER_SHARED_TABLES", "")
     local_env = os.getenv("DB_ROUTER_LOCAL_TABLES", "")
     deny_env = os.getenv("DB_ROUTER_DENY_TABLES", "")
@@ -126,6 +128,8 @@ def _load_table_overrides() -> None:
             shared_extra.update(data.get("shared", []))
             local_extra.update(data.get("local", []))
             deny_extra.update(data.get("deny", []))
+            if not _audit_log_path:
+                _audit_log_path = data.get("audit_log")
         except Exception:
             # Ignore malformed config files; routing will fall back to defaults.
             pass
@@ -137,18 +141,16 @@ def _load_table_overrides() -> None:
         SHARED_TABLES.discard(table)
         LOCAL_TABLES.discard(table)
 
-
-_load_table_overrides()
-
-
 logger = logging.getLogger(__name__)
 _level_name = os.getenv("DB_ROUTER_LOG_LEVEL", "INFO").upper()
 logger.setLevel(getattr(logging, _level_name, logging.INFO))
 _log_format = os.getenv("DB_ROUTER_LOG_FORMAT", "json").lower()
 
-# Optional audit log for shared table accesses. When ``DB_ROUTER_AUDIT_LOG`` is
-# defined, entries are appended to the referenced file as JSON lines.
-_audit_log_path = os.getenv("DB_ROUTER_AUDIT_LOG")
+# Optional audit log for table accesses. When ``DB_ROUTER_AUDIT_LOG`` is defined
+# or ``audit_log`` is provided in the DB router config, entries are appended to
+# the referenced file as JSON lines.
+_audit_log_path: str | None = os.getenv("DB_ROUTER_AUDIT_LOG")
+_load_table_overrides()
 
 
 def _record_audit(entry: dict[str, str]) -> None:
@@ -213,12 +215,20 @@ class DBRouter:
         }
 
     # ------------------------------------------------------------------
-    def get_connection(self, table_name: str) -> sqlite3.Connection:
+    def get_connection(self, table_name: str, operation: str = "read") -> sqlite3.Connection:
         """Return the appropriate connection for ``table_name``.
 
+        Parameters
+        ----------
+        table_name:
+            Name of the table being accessed.
+        operation:
+            Type of operation being performed (for example ``"read"`` or
+            ``"write"``).  The value is recorded in the audit log and metrics.
+
         A :class:`ValueError` is raised for unknown tables.  Shared table
-        accesses emit a structured log entry for observability while local
-        table accesses are silent.
+        accesses emit a structured log entry for observability while local table
+        accesses are silent except for the optional audit log.
         """
 
         if not table_name:
@@ -227,39 +237,47 @@ class DBRouter:
         with self._lock:
             if table_name in DENY_TABLES:
                 raise ValueError(f"Access to table '{table_name}' is denied")
+
+            timestamp = datetime.utcnow().isoformat()
+            entry = {
+                "menace_id": self.menace_id,
+                "table_name": table_name,
+                "operation": operation,
+                "timestamp": timestamp,
+            }
+
+            conn: sqlite3.Connection
             if table_name in SHARED_TABLES:
-                timestamp = datetime.utcnow().isoformat()
-                entry = {
-                    "menace_id": self.menace_id,
-                    "table_name": table_name,
-                    "timestamp": timestamp,
-                }
                 if _log_format == "kv":
                     msg = " ".join(f"{k}={v}" for k, v in entry.items())
                 else:
                     msg = json.dumps(entry)
                 logger.info(msg)
-                _record_audit(entry)
                 self._access_counts["shared"][table_name] += 1
-                _tb = None
-                try:  # pragma: no cover - import available only in package context
-                    from . import telemetry_backend as _tb  # type: ignore
-                except Exception:  # pragma: no cover - fallback for tests
-                    try:
-                        import telemetry_backend as _tb  # type: ignore
-                    except Exception:
-                        _tb = None
-                if _tb is not None:
-                    try:
-                        _tb.record_shared_table_access(table_name)
-                    except Exception:  # pragma: no cover - best effort
-                        pass
-                return self.shared_conn
-            if table_name in LOCAL_TABLES:
+                conn = self.shared_conn
+            elif table_name in LOCAL_TABLES:
                 self._access_counts["local"][table_name] += 1
-                return self.local_conn
+                conn = self.local_conn
+            else:
+                raise ValueError(f"Unknown table: {table_name}")
 
-        raise ValueError(f"Unknown table: {table_name}")
+            _record_audit(entry)
+
+            _tb = None
+            try:  # pragma: no cover - import available only in package context
+                from . import telemetry_backend as _tb  # type: ignore
+            except Exception:  # pragma: no cover - fallback for tests
+                try:
+                    import telemetry_backend as _tb  # type: ignore
+                except Exception:
+                    _tb = None
+            if _tb is not None:
+                try:
+                    _tb.record_table_access(self.menace_id, table_name, operation)
+                except Exception:  # pragma: no cover - best effort
+                    pass
+
+            return conn
 
     # ------------------------------------------------------------------
     def close(self) -> None:

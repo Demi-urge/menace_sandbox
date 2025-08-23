@@ -89,15 +89,17 @@ loaded lists.
 
 ## Retrieving connections
 
-Use `DBRouter.get_connection(table_name)` to obtain an `sqlite3.Connection` for
-a given table. The router returns the shared connection for names in
-`SHARED_TABLES` and the local connection for `LOCAL_TABLES` entries:
+Use `DBRouter.get_connection(table_name, operation="read")` to obtain an
+`sqlite3.Connection` for a given table. The router returns the shared
+connection for names in `SHARED_TABLES` and the local connection for
+`LOCAL_TABLES` entries. The optional `operation` argument is recorded in audit
+logs and metrics and can be set to values such as `"read"` or `"write"`:
 
 ```python
 from db_router import init_db_router
 
 router = init_db_router("alpha")
-conn = router.get_connection("bots")
+conn = router.get_connection("bots", operation="write")
 cursor = conn.execute("SELECT * FROM bots")
 ```
 
@@ -129,21 +131,26 @@ router.
 ## Logging and metrics
 
 `DBRouter` emits structured logs for shared table accesses. Each entry contains
-the menace ID, table name and an ISO timestamp. Local table accesses are
-silent. Configure the verbosity via the `DB_ROUTER_LOG_LEVEL` environment
-variable. The output format defaults to JSON but can be set to key-value pairs
-by defining `DB_ROUTER_LOG_FORMAT=kv`.
+the menace ID, table name, operation type and an ISO timestamp. Local table
+accesses are silent unless audit logging is enabled. Configure the verbosity via
+the `DB_ROUTER_LOG_LEVEL` environment variable. The output format defaults to
+JSON but can be set to key-value pairs by defining `DB_ROUTER_LOG_FORMAT=kv`.
 
 ### Audit log
 
 For additional auditing, set the `DB_ROUTER_AUDIT_LOG` environment variable to a
-file path. When configured, every shared-table access is appended to this file
-as a JSON object containing the menace ID, table name and timestamp. Leave the
-variable unset to disable audit logging.
+file path or provide an `"audit_log"` entry in the configuration file referenced
+by `DB_ROUTER_CONFIG`. When configured, every table access (shared and local) is
+appended to this file as a JSON object containing the menace ID, table name,
+operation and timestamp. Leave the configuration unset to disable audit
+logging.
+
+An `analysis/db_router_log_analysis.py` script is included to aggregate these
+logs for cross-instance auditing.
 
 The router also aggregates simple access counts per table, accessible via
-`DBRouter.get_access_counts()`, and exposes shared table counts via the
-`shared_table_access_total` telemetry gauge.
+`DBRouter.get_access_counts()`, and exposes access counts via the
+`table_access_total` telemetry gauge.
 
 ## Table‑sharing policy
 
