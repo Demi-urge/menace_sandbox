@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from dataclasses import dataclass, field
 from typing import List, Dict, Any
 
@@ -18,7 +17,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
 
-from .db_router import DBRouter
+from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 
 @dataclass
@@ -40,10 +39,11 @@ class ScalabilityReport:
 
 
 class PerformanceDB:
-    """Simple SQLite storage for performance metrics."""
+    """Storage for performance metrics using :class:`DBRouter`."""
 
-    def __init__(self, path: str = "performance.db") -> None:
-        self.conn = sqlite3.connect(path)
+    def __init__(self, *, router: DBRouter | None = None) -> None:
+        self.router = router or GLOBAL_ROUTER or init_db_router("scalability_assessment")
+        self.conn = self.router.get_connection("sandbox_metrics")
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS metrics(task TEXT, cpu REAL, memory REAL)"
         )
@@ -59,10 +59,18 @@ class PerformanceDB:
 class ScalabilityAssessmentBot:
     """Analyse blueprints and simulate high load to find bottlenecks."""
 
-    def __init__(self, db: PerformanceDB | None = None, rp_url: str | None = None, db_router: DBRouter | None = None) -> None:
-        self.db = db or PerformanceDB()
+    def __init__(
+        self,
+        db: PerformanceDB | None = None,
+        rp_url: str | None = None,
+        db_router: DBRouter | None = None,
+    ) -> None:
+        self.db_router = db_router or GLOBAL_ROUTER or init_db_router(
+            "scalability_assessment"
+        )
+        perf_router = self.db_router if hasattr(self.db_router, "get_connection") else None
+        self.db = db or PerformanceDB(router=perf_router)
         self.rp_url = rp_url
-        self.db_router = db_router or DBRouter()
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("ScalabilityBot")
 
