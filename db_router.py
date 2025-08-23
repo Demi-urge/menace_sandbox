@@ -74,6 +74,7 @@ if "LOCAL_TABLES" in globals():
             "roi_logs",
             "sandbox_metrics",
             "variants",
+            "metrics",
             "revenue",
             "subs",
             "churn",
@@ -93,6 +94,14 @@ if "LOCAL_TABLES" in globals():
             "bot_trials",
             "update_history",
             "roi_events",
+            "action_roi",
+            "ledger",
+            "profit_history",
+            "capital_summary",
+            "bot_performance",
+            "maintenance",
+            "allocations",
+            "risk_summaries",
             "evolutions",
             "evolution_history",
             "retrieval_stats",
@@ -118,6 +127,7 @@ else:
         "roi_logs",
         "sandbox_metrics",
         "variants",
+        "metrics",
         "revenue",
         "subs",
         "churn",
@@ -137,6 +147,14 @@ else:
         "bot_trials",
         "update_history",
         "roi_events",
+        "action_roi",
+        "ledger",
+        "profit_history",
+        "capital_summary",
+        "bot_performance",
+        "maintenance",
+        "allocations",
+        "risk_summaries",
         "evolutions",
         "evolution_history",
         "retrieval_stats",
@@ -156,8 +174,9 @@ else:
 # in-place on reload.
 if "DENY_TABLES" in globals():
     DENY_TABLES.clear()
+    DENY_TABLES.update({"capital_ledger", "finance_logs"})
 else:
-    DENY_TABLES: Set[str] = set()
+    DENY_TABLES: Set[str] = {"capital_ledger", "finance_logs"}
 
 
 def _load_table_overrides() -> None:
