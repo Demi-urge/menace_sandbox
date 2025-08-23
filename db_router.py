@@ -14,7 +14,15 @@ import threading
 from contextlib import contextmanager
 from typing import Iterator
 
-__all__ = ["DBRouter", "SHARED_TABLES", "GLOBAL_ROUTER", "init_db_router"]
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "DBRouter",
+    "SHARED_TABLES",
+    "LOCAL_TABLES",
+    "GLOBAL_ROUTER",
+    "init_db_router",
+]
 
 
 # Tables that should always be stored in the shared database.
@@ -25,6 +33,15 @@ SHARED_TABLES = {
     "code",
     "discrepancies",
     "workflow_summaries",
+}
+
+# Tables that are explicitly stored in the local database.
+LOCAL_TABLES = {
+    "models",
+    "patch_history",
+    "variants",
+    "memory",
+    "events",
 }
 
 
@@ -52,26 +69,41 @@ class DBRouter:
         )
         self.shared_conn = sqlite3.connect(shared_path, check_same_thread=False)
         self.lock = threading.RLock()
+        self.local_calls = 0
+        self.shared_calls = 0
 
     @contextmanager
     def get_connection(self, table_name: str) -> Iterator[sqlite3.Connection]:
         """Return a connection for *table_name*.
 
-        The router validates ``table_name`` and routes the request to the shared
-        database if the name appears in :data:`SHARED_TABLES`; otherwise the
-        request is routed to the local database. Routing decisions are logged and
-        operations on the connection are protected by :pyattr:`lock`.
+        ``table_name`` must exist in :data:`SHARED_TABLES` or
+        :data:`LOCAL_TABLES`; otherwise a :class:`ValueError` is raised. The
+        router logs routing decisions and counts the number of calls to each
+        database for basic auditing.
         """
 
         if not isinstance(table_name, str) or not table_name.strip():
             raise ValueError("table_name must be a non-empty string")
 
         if table_name in SHARED_TABLES:
-            logging.info("menace %s routing %s to shared database", self.menace_id, table_name)
+            self.shared_calls += 1
+            logger.debug(
+                "menace %s routing %s to shared database", self.menace_id, table_name
+            )
             conn = self.shared_conn
-        else:
-            logging.info("menace %s routing %s to local database", self.menace_id, table_name)
+        elif table_name in LOCAL_TABLES:
+            self.local_calls += 1
+            logger.debug(
+                "menace %s routing %s to local database", self.menace_id, table_name
+            )
             conn = self.local_conn
+        else:
+            logger.debug(
+                "menace %s attempted access to unknown table %s", self.menace_id, table_name
+            )
+            raise ValueError(
+                f"table_name '{table_name}' is not registered as shared or local"
+            )
 
         with self.lock:
             yield conn
