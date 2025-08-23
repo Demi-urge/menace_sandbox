@@ -16,8 +16,10 @@ import json
 import time
 
 from .env_config import BOT_PERFORMANCE_DB
+from db_router import GLOBAL_ROUTER, init_db_router
 
 logger = logging.getLogger(__name__)
+router = GLOBAL_ROUTER or init_db_router("bot_performance_history")
 
 DEFAULT_FIELD_INFO: dict[str, str] = {
     "bot": "TEXT",
@@ -103,7 +105,7 @@ class BotPerformanceHistoryDB:
         self.retry_delay = retry_delay
 
         def _conn() -> sqlite3.Connection:
-            return sqlite3.connect(self.path, timeout=10, check_same_thread=False)
+            return router.get_connection("bot_performance")
 
         field_info = field_info or DEFAULT_FIELD_INFO
 

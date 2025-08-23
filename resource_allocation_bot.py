@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +27,7 @@ from .retry_utils import retry
 from .prediction_manager_bot import PredictionManager
 from .databases import MenaceDB
 from .contrarian_db import ContrarianDB
+from db_router import GLOBAL_ROUTER, init_db_router
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .resources_bot import ResourcesBot
@@ -45,13 +45,16 @@ class AllocationRecord:
     ts: str = datetime.utcnow().isoformat()
 
 
+router = GLOBAL_ROUTER or init_db_router("resource_allocation")
+
+
 class AllocationDB:
     """SQLite-backed store for allocation history."""
 
     def __init__(self, path: Path | str = "allocation.db") -> None:
         # allow connection reuse across threads as the allocator may be invoked
         # from different workers
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn = router.get_connection("allocations")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS allocations(
