@@ -12,3 +12,7 @@ repos:
         entry: python scripts/check_sqlite_connections.py
         language: system
         files: '\.py$'
+  - repo: https://github.com/pycqa/flake8
+    rev: 6.1.0
+    hooks:
+      - id: flake8

@@ -36,6 +36,8 @@ jobs:
         run: pre-commit run check-governed-embeddings --all-files
       - name: Check for direct sqlite3 connections
         run: pre-commit run forbid-sqlite3-connect --all-files
+      - name: Run flake8
+        run: pre-commit run flake8 --all-files
       - name: Run unit and integration tests
         run: pytest -k "not fuzz"
       - name: Run fuzz and property-based tests
