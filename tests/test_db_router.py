@@ -1,4 +1,5 @@
 import logging
+import threading
 import pytest
 
 from db_router import DBRouter
@@ -76,4 +77,36 @@ def test_get_connection_logs(tmp_path, caplog):
         assert caplog.text == ""
     finally:
         router.close()
+
+
+def test_get_connection_thread_safe(tmp_path):
+    shared_db = tmp_path / "shared.db"
+    local_db = tmp_path / "local.db"
+    router = DBRouter("test", str(local_db), str(shared_db))
+
+    results = []
+    errors = []
+
+    def worker(table_name):
+        try:
+            conn = router.get_connection(table_name)
+            results.append((_db_path(conn), table_name))
+        except Exception as exc:  # pragma: no cover - capturing unexpected errors
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=worker, args=(t,)) for t in ("bots", "models") * 10
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    shared_paths = [p for p, table in results if table == "bots"]
+    local_paths = [p for p, table in results if table == "models"]
+    assert all(path == str(shared_db) for path in shared_paths)
+    assert all(path == str(local_db) for path in local_paths)
+
+    router.close()
 
