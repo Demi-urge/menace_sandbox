@@ -105,6 +105,7 @@ else:  # pragma: no cover - metrics optional
 logger = get_logger(__name__)
 
 from db_router import GLOBAL_ROUTER, init_db_router
+from db_scope import Scope, build_scope_clause, apply_scope
 
 # Reuse a pre-configured router when available, otherwise create a local one
 # for standalone execution.
@@ -1003,6 +1004,7 @@ class ROITracker:
         end_ts: str | None = None,
         limit: int | None = None,
         path: str = "roi_events.db",
+        scope: Scope | str = "local",
     ) -> List[Dict[str, Any]]:
         """Return persisted prediction events with telemetry details."""
 
@@ -1013,19 +1015,20 @@ class ROITracker:
                 "SELECT workflow_id, predicted_roi, actual_roi, confidence, "
                 "scenario_deltas, drift_flag, ts FROM roi_prediction_events"
             )
-            clauses: List[str] = []
-            params: List[Any] = []
+            clause, scope_params = build_scope_clause(
+                "roi_prediction_events", scope, router.menace_id
+            )
+            base = apply_scope(base, clause)
+            params: List[Any] = [*scope_params]
             if workflow_id is not None:
-                clauses.append("workflow_id = ?")
+                base = apply_scope(base, "workflow_id = ?")
                 params.append(workflow_id)
             if start_ts is not None:
-                clauses.append("ts >= ?")
+                base = apply_scope(base, "ts >= ?")
                 params.append(start_ts)
             if end_ts is not None:
-                clauses.append("ts <= ?")
+                base = apply_scope(base, "ts <= ?")
                 params.append(end_ts)
-            if clauses:
-                base += " WHERE " + " AND ".join(clauses)
             base += " ORDER BY ts"
             if limit is not None:
                 base += " LIMIT ?"
@@ -1056,6 +1059,7 @@ class ROITracker:
         *,
         limit: int | None = None,
         path: str = "roi_events.db",
+        scope: Scope | str = "local",
     ) -> List[Dict[str, Any]]:
         """Return drift scores and flags for dashboards."""
 
@@ -1063,13 +1067,14 @@ class ROITracker:
         try:
             cur = conn.cursor()
             base = "SELECT drift_flag, ts FROM roi_prediction_events"
-            params: List[Any] = []
-            clauses: List[str] = []
+            clause, scope_params = build_scope_clause(
+                "roi_prediction_events", scope, router.menace_id
+            )
+            base = apply_scope(base, clause)
+            params: List[Any] = [*scope_params]
             if workflow_id is not None:
-                clauses.append("workflow_id = ?")
+                base = apply_scope(base, "workflow_id = ?")
                 params.append(workflow_id)
-            if clauses:
-                base += " WHERE " + " AND ".join(clauses)
             base += " ORDER BY ts"
             if limit is not None:
                 base += " LIMIT ?"
@@ -1090,11 +1095,12 @@ class ROITracker:
         *,
         limit: int | None = None,
         path: str = "roi_events.db",
+        scope: Scope | str = "local",
     ) -> List[Dict[str, Any]]:
         """Wrapper around :func:`telemetry_backend.fetch_roi_events`."""
 
         return tb.fetch_roi_events(
-            workflow_id=workflow_id, limit=limit, db_path=path
+            workflow_id=workflow_id, limit=limit, db_path=path, scope=scope
         )
 
     # ------------------------------------------------------------------
