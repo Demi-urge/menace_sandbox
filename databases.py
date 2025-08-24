@@ -554,10 +554,19 @@ class MenaceDB:
     # ------------------------------------------------------------------
     # Query helpers
     # ------------------------------------------------------------------
+    def _current_menace_id(self, source_menace_id: str | None) -> str:
+        return source_menace_id or os.getenv("MENACE_ID", "")
 
-    def search(self, term: str) -> list[dict]:
+    def search(
+        self,
+        term: str,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> list[dict]:
         """Return rows from key tables containing *term*."""
         term_l = term.lower()
+        menace_id = self._current_menace_id(source_menace_id)
         results: list[dict] = []
         tables = [
             self.models,
@@ -569,7 +578,10 @@ class MenaceDB:
         with self.engine.begin() as conn:
             for tbl in tables:
                 try:
-                    rows = conn.execute(tbl.select()).fetchall()
+                    stmt = tbl.select()
+                    if not include_cross_instance and "source_menace_id" in tbl.c:
+                        stmt = stmt.where(tbl.c.source_menace_id == menace_id)
+                    rows = conn.execute(stmt).fetchall()
                 except Exception:
                     continue
                 for row in rows:
@@ -621,15 +633,17 @@ class MenaceDB:
         type_: str = "runtime",
         resolution: str = "fatal",
         source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
     ) -> int:
         """Insert a new error and return its id."""
-        menace_id = source_menace_id or os.getenv("MENACE_ID", "")
+        menace_id = self._current_menace_id(source_menace_id)
         with self.engine.begin() as conn:
-            row = conn.execute(
-                self.errors.select().where(
-                    self.errors.c.error_description == description
-                )
-            ).fetchone()
+            stmt = self.errors.select().where(
+                self.errors.c.error_description == description
+            )
+            if not include_cross_instance:
+                stmt = stmt.where(self.errors.c.source_menace_id == menace_id)
+            row = conn.execute(stmt).fetchone()
             if row:
                 return int(row["error_id"])
             res = conn.execute(

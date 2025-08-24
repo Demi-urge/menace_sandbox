@@ -22,7 +22,6 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     MenaceDB = None  # type: ignore
     warnings.warn("MenaceDB unavailable, Menace integration disabled.")
-from uuid import uuid4
 
 from db_router import GLOBAL_ROUTER as router
 
@@ -144,7 +143,8 @@ class BotDB(EmbeddableDBMixin):
                 last_modification_date TEXT,
                 status TEXT,
                 version TEXT,
-                estimated_profit REAL
+                estimated_profit REAL,
+                source_menace_id TEXT DEFAULT ''
             )
             """
         )
@@ -161,6 +161,10 @@ class BotDB(EmbeddableDBMixin):
             self.conn.execute("ALTER TABLE bots ADD COLUMN version TEXT")
         if "estimated_profit" not in cols:
             self.conn.execute("ALTER TABLE bots ADD COLUMN estimated_profit REAL")
+        if "source_menace_id" not in cols:
+            self.conn.execute(
+                "ALTER TABLE bots ADD COLUMN source_menace_id TEXT DEFAULT ''"
+            )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS bot_model(bot_id INTEGER, model_id INTEGER)"
         )
@@ -183,34 +187,79 @@ class BotDB(EmbeddableDBMixin):
         )
 
     # basic helpers -----------------------------------------------------
-    def find_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        cur = self.conn.execute(
-            "SELECT * FROM bots WHERE LOWER(name)=LOWER(?)", (name,)
+    def _current_menace_id(self, source_menace_id: str | None) -> str:
+        return source_menace_id or (
+            router.menace_id if router else os.getenv("MENACE_ID", "")
         )
+
+    def find_by_name(
+        self,
+        name: str,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        menace_id = self._current_menace_id(source_menace_id)
+        query = "SELECT * FROM bots WHERE LOWER(name)=LOWER(?)"
+        params: list[Any] = [name]
+        if not include_cross_instance:
+            query += " AND source_menace_id=?"
+            params.append(menace_id)
+        cur = self.conn.execute(query, params)
         row = cur.fetchone()
         return dict(row) if row else None
 
-    def fetch_all(self) -> list[Dict[str, Any]]:
-        cur = self.conn.execute("SELECT * FROM bots")
+    def fetch_all(
+        self,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> list[Dict[str, Any]]:
+        menace_id = self._current_menace_id(source_menace_id)
+        query = "SELECT * FROM bots"
+        params: list[Any] = []
+        if not include_cross_instance:
+            query += " WHERE source_menace_id=?"
+            params.append(menace_id)
+        cur = self.conn.execute(query, params)
         return [dict(r) for r in cur.fetchall()]
 
-    def by_level(self, level: str) -> list[Dict[str, Any]]:
-        cur = self.conn.execute(
-            "SELECT * FROM bots WHERE hierarchy_level=?",
-            (level,),
-        )
+    def by_level(
+        self,
+        level: str,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> list[Dict[str, Any]]:
+        menace_id = self._current_menace_id(source_menace_id)
+        query = "SELECT * FROM bots WHERE hierarchy_level=?"
+        params: list[Any] = [level]
+        if not include_cross_instance:
+            query += " AND source_menace_id=?"
+            params.append(menace_id)
+        cur = self.conn.execute(query, params)
         return [dict(r) for r in cur.fetchall()]
 
-    def deployment_frequency(self, bot_id: int, dep_db: "DeploymentDB") -> int:
+    def deployment_frequency(
+        self,
+        bot_id: int,
+        dep_db: "DeploymentDB",
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> int:
         """Return number of deployment trials recorded for ``bot_id``.
 
         The ``DeploymentDB`` maintains a ``bot_trials`` table which logs each
         deployment attempt. This helper simply counts rows for the given bot.
         """
-        cur = dep_db.conn.execute(
-            "SELECT COUNT(*) FROM bot_trials WHERE bot_id=?",
-            (bot_id,),
-        )
+        menace_id = self._current_menace_id(source_menace_id)
+        query = "SELECT COUNT(*) FROM bot_trials WHERE bot_id=?"
+        params: list[Any] = [bot_id]
+        if not include_cross_instance:
+            query += " AND source_menace_id=?"
+            params.append(menace_id)
+        cur = dep_db.conn.execute(query, params)
         row = cur.fetchone()
         return int(row[0]) if row else 0
 
@@ -254,7 +303,6 @@ class BotDB(EmbeddableDBMixin):
 
             self.failed_menace = still_pending
 
-
     def _embed_record_on_write(self, bot_id: int, rec: BotRecord | dict[str, Any]) -> None:
         """Best-effort embedding hook for inserts and updates."""
 
@@ -263,12 +311,21 @@ class BotDB(EmbeddableDBMixin):
         except Exception as exc:  # pragma: no cover - best effort
             logger.exception("embedding hook failed for %s: %s", bot_id, exc)
 
-    def license_text(self, rec: BotRecord | dict[str, Any]) -> str | None:
+    def license_text(
+        self,
+        rec: BotRecord | dict[str, Any],
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> str | None:
+        menace_id = self._current_menace_id(source_menace_id)
         if isinstance(rec, (int, str)):
-            row = self.conn.execute(
-                "SELECT purpose, tags, toolchain FROM bots WHERE id=?",
-                (rec,),
-            ).fetchone()
+            query = "SELECT purpose, tags, toolchain FROM bots WHERE id=?"
+            params: list[Any] = [rec]
+            if not include_cross_instance:
+                query += " AND source_menace_id=?"
+                params.append(menace_id)
+            row = self.conn.execute(query, params).fetchone()
             if not row:
                 return None
             rec = dict(row)
@@ -292,7 +349,13 @@ class BotDB(EmbeddableDBMixin):
             )
         return " ".join(filter(None, [purpose, ",".join(tags), ",".join(toolchain)]))
 
-    @auto_link({"models": "link_model", "workflows": "link_workflow", "enhancements": "link_enhancement"})
+    @auto_link(
+        {
+            "models": "link_model",
+            "workflows": "link_workflow",
+            "enhancements": "link_enhancement",
+        }
+    )
     def add_bot(
         self,
         rec: BotRecord,
@@ -300,15 +363,17 @@ class BotDB(EmbeddableDBMixin):
         models: Iterable[int] | None = None,
         workflows: Iterable[int] | None = None,
         enhancements: Iterable[int] | None = None,
+        source_menace_id: str | None = None,
     ) -> int:
+        menace_id = self._current_menace_id(source_menace_id)
         cur = self.conn.execute(
             """
             INSERT INTO bots(
                 name, type, tasks, parent_id, dependencies,
                 resources, hierarchy_level, purpose, tags, toolchain,
                 creation_date, last_modification_date, status,
-                version, estimated_profit
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                version, estimated_profit, source_menace_id
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 rec.name,
@@ -326,6 +391,7 @@ class BotDB(EmbeddableDBMixin):
                 rec.status,
                 rec.version,
                 rec.estimated_profit,
+                menace_id,
             ),
         )
         rec.bid = int(cur.lastrowid)
@@ -338,7 +404,8 @@ class BotDB(EmbeddableDBMixin):
                     models or [],
                     workflows or [],
                     enhancements or [],
-                    source_menace_id=router.menace_id if router else None,
+                    source_menace_id=source_menace_id
+                    or (router.menace_id if router else None),
                 )
             except Exception as exc:
                 logger.exception("MenaceDB insert failed: %s", exc)
@@ -364,7 +431,14 @@ class BotDB(EmbeddableDBMixin):
                 )
         return rec.bid
 
-    def update_bot(self, bot_id: int, **fields: Any) -> None:
+    def update_bot(
+        self,
+        bot_id: int,
+        *,
+        include_cross_instance: bool = False,
+        source_menace_id: str | None = None,
+        **fields: Any,
+    ) -> None:
         if not fields:
             return
         if "tags" in fields:
@@ -384,11 +458,19 @@ class BotDB(EmbeddableDBMixin):
         fields["last_modification_date"] = datetime.utcnow().isoformat()
         sets = ", ".join(f"{k}=?" for k in fields)
         params = list(fields.values()) + [bot_id]
-        self.conn.execute(f"UPDATE bots SET {sets} WHERE id=?", params)
+        menace_id = self._current_menace_id(source_menace_id)
+        query = f"UPDATE bots SET {sets} WHERE id=?"
+        if not include_cross_instance:
+            query += " AND source_menace_id=?"
+            params.append(menace_id)
+        self.conn.execute(query, params)
         self.conn.commit()
-        row = self.conn.execute(
-            "SELECT * FROM bots WHERE id=?", (bot_id,)
-        ).fetchone()
+        sel_q = "SELECT * FROM bots WHERE id=?"
+        sel_params: list[Any] = [bot_id]
+        if not include_cross_instance:
+            sel_q += " AND source_menace_id=?"
+            sel_params.append(menace_id)
+        row = self.conn.execute(sel_q, sel_params).fetchone()
         if row:
             self._embed_record_on_write(bot_id, dict(row))
         if self.event_bus:
@@ -398,20 +480,40 @@ class BotDB(EmbeddableDBMixin):
                 self.failed_events.append(FailedEvent("bot:update", payload))
 
     # embedding --------------------------------------------------------
-    def iter_records(self) -> Iterable[tuple[Any, Any, str]]:
-        cur = self.conn.execute("SELECT * FROM bots")
+    def iter_records(
+        self,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> Iterable[tuple[Any, Any, str]]:
+        menace_id = self._current_menace_id(source_menace_id)
+        query = "SELECT * FROM bots"
+        params: list[Any] = []
+        if not include_cross_instance:
+            query += " WHERE source_menace_id=?"
+            params.append(menace_id)
+        cur = self.conn.execute(query, params)
         for row in cur.fetchall():
             yield row["id"], dict(row), "bot"
 
     def backfill_embeddings(self) -> None:
         EmbeddableDBMixin.backfill_embeddings(self)
 
-    def vector(self, rec: Any) -> list[float]:
+    def vector(
+        self,
+        rec: Any,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> list[float]:
+        menace_id = self._current_menace_id(source_menace_id)
         if isinstance(rec, (int, str)):
-            row = self.conn.execute(
-                "SELECT purpose, tags, toolchain FROM bots WHERE id=?",
-                (rec,),
-            ).fetchone()
+            query = "SELECT purpose, tags, toolchain FROM bots WHERE id=?"
+            params: list[Any] = [rec]
+            if not include_cross_instance:
+                query += " AND source_menace_id=?"
+                params.append(menace_id)
+            row = self.conn.execute(query, params).fetchone()
             if not row:
                 raise ValueError("record not found")
             rec = dict(row)
@@ -439,14 +541,23 @@ class BotDB(EmbeddableDBMixin):
         return self.encode_text(text)
 
     def search_by_vector(
-        self, vector: Sequence[float], top_k: int = 5
+        self,
+        vector: Sequence[float],
+        top_k: int = 5,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
     ) -> list[Dict[str, Any]]:
+        menace_id = self._current_menace_id(source_menace_id)
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
         results: list[Dict[str, Any]] = []
         for rec_id, dist in matches:
-            row = self.conn.execute(
-                "SELECT * FROM bots WHERE id=?", (rec_id,)
-            ).fetchone()
+            query = "SELECT * FROM bots WHERE id=?"
+            params: list[Any] = [rec_id]
+            if not include_cross_instance:
+                query += " AND source_menace_id=?"
+                params.append(menace_id)
+            row = self.conn.execute(query, params).fetchone()
             if row:
                 rec = dict(row)
                 rec["_distance"] = dist
@@ -556,16 +667,35 @@ class BotDB(EmbeddableDBMixin):
                 estimated_profit=row.get("estimated_profit", 0.0),
                 bid=row["id"],
             )
-            mids = [m[0] for m in self.conn.execute("SELECT model_id FROM bot_model WHERE bot_id=?", (row["id"],)).fetchall()]
-            wids = [w[0] for w in self.conn.execute("SELECT workflow_id FROM bot_workflow WHERE bot_id=?", (row["id"],)).fetchall()]
-            eids = [e[0] for e in self.conn.execute("SELECT enhancement_id FROM bot_enhancement WHERE bot_id=?", (row["id"],)).fetchall()]
+            mids = [
+                m[0]
+                for m in self.conn.execute(
+                    "SELECT model_id FROM bot_model WHERE bot_id=?",
+                    (row["id"],),
+                ).fetchall()
+            ]
+            wids = [
+                w[0]
+                for w in self.conn.execute(
+                    "SELECT workflow_id FROM bot_workflow WHERE bot_id=?",
+                    (row["id"],),
+                ).fetchall()
+            ]
+            eids = [
+                e[0]
+                for e in self.conn.execute(
+                    "SELECT enhancement_id FROM bot_enhancement WHERE bot_id=?",
+                    (row["id"],),
+                ).fetchall()
+            ]
             try:
                 self._insert_menace(
                     rec,
                     mids,
                     wids,
                     eids,
-                    source_menace_id=router.menace_id if router else None,
+                    source_menace_id=row.get("source_menace_id")
+                    or (router.menace_id if router else None),
                 )
             except Exception as exc:
                 logger.exception("MenaceDB insert failed for %s: %s", rec.name, exc)
