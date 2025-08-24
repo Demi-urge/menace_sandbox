@@ -236,3 +236,112 @@ def test_get_synergy_cluster_cycle_terminates():
 
     assert grapher.get_synergy_cluster("a", threshold=0.5) == {"a", "b"}
     assert grapher.get_synergy_cluster("a", threshold=0.5, bfs=True) == {"a", "b"}
+
+
+# ---------------------------------------------------------------------------
+# Additional scoring behaviour
+
+
+def test_build_graph_scores_all_metrics(tmp_path: Path, monkeypatch):
+    """Edges combine import, structure, co-occurrence and embeddings."""
+
+    (tmp_path / "mod1.py").write_text(
+        '"""module a"""\nimport mod2\n\n'
+        'def foo():\n    pass\n\n'
+        'class K:\n    pass\n'
+    )
+    (tmp_path / "mod2.py").write_text(
+        '"""module b"""\n'
+        'def foo():\n    pass\n\n'
+        'class K:\n    pass\n'
+    )
+    (tmp_path / "mod3.py").write_text('"""module c"""')
+
+    embed_map = {
+        "module a": [1.0, 0.0],
+        "module b": [0.8, 0.2],
+        "module c": [0.0, 1.0],
+    }
+    monkeypatch.setattr(msg, "governed_embed", lambda text: embed_map[text])
+
+    def fake_workflow(self, root, modules):
+        return {("mod1", "mod3"): 3, ("mod3", "mod1"): 3}
+
+    def fake_history(self, root, modules):
+        return {("mod1", "mod3"): 2, ("mod3", "mod1"): 2}
+
+    monkeypatch.setattr(ModuleSynergyGrapher, "_workflow_pairs", fake_workflow)
+    monkeypatch.setattr(ModuleSynergyGrapher, "_history_pairs", fake_history)
+
+    graph = ModuleSynergyGrapher().build_graph(tmp_path)
+
+    assert graph["mod1"]["mod2"]["weight"] == pytest.approx(2.6368091668)
+    assert graph["mod2"]["mod1"]["weight"] == pytest.approx(1.6368091668)
+    assert graph["mod1"]["mod3"]["weight"] == pytest.approx(1.0)
+    assert graph["mod3"]["mod1"]["weight"] == pytest.approx(1.0)
+    assert "mod3" not in graph["mod2"]
+
+
+def test_update_graph_only_recomputes_affected_edges(tmp_path: Path, monkeypatch):
+    (tmp_path / "mod1.py").write_text(
+        '"""module a"""\nimport mod2\n\n'
+        'def foo():\n    pass\n\n'
+        'class K:\n    pass\n'
+    )
+    (tmp_path / "mod2.py").write_text(
+        '"""module b"""\n'
+        'def foo():\n    pass\n\n'
+        'class K:\n    pass\n'
+    )
+    (tmp_path / "mod3.py").write_text('"""module c"""')
+
+    embed_map = {
+        "module a": [1.0, 0.0],
+        "module b": [0.8, 0.2],
+        "module c": [0.0, 1.0],
+        "module b new": [0.0, 1.0],
+    }
+
+    monkeypatch.setattr(msg, "governed_embed", lambda text: embed_map[text])
+
+    def fake_workflow(self, root, modules):
+        return {("mod1", "mod3"): 3, ("mod3", "mod1"): 3}
+
+    def fake_history(self, root, modules):
+        return {("mod1", "mod3"): 2, ("mod3", "mod1"): 2}
+
+    monkeypatch.setattr(ModuleSynergyGrapher, "_workflow_pairs", fake_workflow)
+    monkeypatch.setattr(ModuleSynergyGrapher, "_history_pairs", fake_history)
+
+    grapher = ModuleSynergyGrapher()
+    graph = grapher.build_graph(tmp_path)
+    before = {(a, b): d["weight"] for a, b, d in graph.edges(data=True)}
+
+    (tmp_path / "mod2.py").write_text(
+        '"""module b new"""\n'
+        'def bar():\n    pass\n\n'
+        'class L:\n    pass\n'
+    )
+
+    grapher.update_graph(["mod2"])
+    after = {(a, b): d["weight"] for a, b, d in grapher.graph.edges(data=True)}
+
+    assert after[("mod1", "mod3")] == before[("mod1", "mod3")]
+    assert after[("mod1", "mod2")] == pytest.approx(1.0)
+    assert ("mod2", "mod1") not in after
+
+    changed = {
+        e for e in set(before) | set(after) if before.get(e) != after.get(e)
+    }
+    assert all("mod2" in e for e in changed)
+
+
+def test_get_synergy_cluster_known_graph():
+    g = nx.DiGraph()
+    g.add_edge("a", "b", weight=0.5)
+    g.add_edge("b", "c", weight=0.3)
+    g.add_edge("a", "c", weight=0.2)
+
+    grapher = ModuleSynergyGrapher(graph=g)
+    assert grapher.get_synergy_cluster("a", threshold=0.5) == {"a", "b", "c"}
+    assert grapher.get_synergy_cluster("a", threshold=0.6) == {"a", "c"}
