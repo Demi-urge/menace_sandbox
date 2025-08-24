@@ -1,10 +1,10 @@
 import importlib
 import json
-import sqlite3
 import threading
 
 import db_router
 from db_router import DBRouter
+import menace.bot_database as bdb
 
 
 def test_shared_table_persists_across_instances(tmp_path):
@@ -17,7 +17,9 @@ def test_shared_table_persists_across_instances(tmp_path):
     # Write to a shared table via router1
     with router1.get_connection("bots") as conn:
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, source_menace_id TEXT NOT NULL)"
+            "CREATE TABLE IF NOT EXISTS bots ("
+            "id INTEGER PRIMARY KEY, name TEXT, "
+            "source_menace_id TEXT NOT NULL)"
         )
         conn.execute(
             "INSERT INTO bots (name, source_menace_id) VALUES (?, ?)",
@@ -66,7 +68,9 @@ def test_shared_and_local_visibility_across_instances(tmp_path):
     # Populate a shared table via router1
     with router1.get_connection("bots") as conn:
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, source_menace_id TEXT NOT NULL)"
+            "CREATE TABLE IF NOT EXISTS bots ("
+            "id INTEGER PRIMARY KEY, name TEXT, "
+            "source_menace_id TEXT NOT NULL)"
         )
         conn.execute(
             "INSERT INTO bots (name, source_menace_id) VALUES (?, ?)",
@@ -95,6 +99,28 @@ def test_shared_and_local_visibility_across_instances(tmp_path):
             )
         )
         assert tables == []
+
+
+def test_fetch_all_scopes_with_shared_table(tmp_path, monkeypatch):
+    """BotDB fetches respect local, global and all scopes across menaces."""
+
+    shared_db = tmp_path / "shared.db"
+    monkeypatch.setattr(bdb.BotDB, "_embed_record_on_write", lambda *a, **k: None)
+
+    router_a = db_router.init_db_router("one", str(tmp_path / "one.db"), str(shared_db))
+    bdb.router = router_a
+    db_a = bdb.BotDB(tmp_path / "a.db")
+    db_a.add_bot(bdb.BotRecord(name="a"))
+
+    router_b = db_router.init_db_router("two", str(tmp_path / "two.db"), str(shared_db))
+    bdb.router = router_b
+    db_b = bdb.BotDB(tmp_path / "b.db")
+    db_b.add_bot(bdb.BotRecord(name="b"))
+
+    bdb.router = router_a
+    assert {r["name"] for r in db_a.fetch_all(scope="local")} == {"a"}
+    assert {r["name"] for r in db_a.fetch_all(scope="global")} == {"b"}
+    assert {r["name"] for r in db_a.fetch_all(scope="all")} == {"a", "b"}
 
 
 def test_recent_local_tables_route_to_local(tmp_path):
@@ -151,7 +177,9 @@ def test_threaded_shared_and_local_with_audit(tmp_path, monkeypatch):
         # Prepare shared and local tables
         with router.get_connection("bots", operation="write") as conn:
             conn.execute(
-                "CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT, source_menace_id TEXT NOT NULL)"
+                "CREATE TABLE bots ("
+                "id INTEGER PRIMARY KEY, name TEXT, "
+                "source_menace_id TEXT NOT NULL)"
             )
             conn.commit()
         with router.get_connection("models", operation="write") as conn:

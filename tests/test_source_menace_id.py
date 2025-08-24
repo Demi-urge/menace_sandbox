@@ -51,6 +51,13 @@ def test_default_queries_return_only_current_menace(multi_menace_db):
     assert names == {"a"}
 
 
+def test_explicit_local_scope(multi_menace_db):
+    bdb.router = multi_menace_db["router_a"]
+    db_a = multi_menace_db["db_a"]
+    names = {r["name"] for r in db_a.fetch_all(scope="local")}
+    assert names == {"a"}
+
+
 def test_scope_selection(multi_menace_db):
     bdb.router = multi_menace_db["router_a"]
     db_a = multi_menace_db["db_a"]

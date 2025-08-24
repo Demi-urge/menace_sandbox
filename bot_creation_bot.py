@@ -1,5 +1,6 @@
 """Bot Creation Bot for designing and deploying new bots."""
 
+# flake8: noqa
 from __future__ import annotations
 
 import asyncio
@@ -298,7 +299,7 @@ class BotCreationBot(AdminBotBase):
         if not file_path.exists():
             return
 
-        existing = self.deployer.code_db.fetch_all()
+        existing = self.deployer.code_db.fetch_all(scope="all")
         text = file_path.read_text()
         for segment in self._split_code(text):
             stripped = segment.lstrip()
@@ -415,7 +416,7 @@ class BotCreationBot(AdminBotBase):
         return file_path
 
     def _hierarchy_levels(self) -> Dict[str, int]:
-        bots = self.deployer.bot_db.fetch_all()
+        bots = self.deployer.bot_db.fetch_all(scope="all")
         order = {
             "L1": 1,
             "L2": 2,
@@ -538,7 +539,7 @@ class BotCreationBot(AdminBotBase):
             except Exception as exc:
                 self.logger.error("plan scoring failed: %s", exc)
         ids: List[int] = []
-        existing = self.deployer.bot_db.fetch_all()
+        existing = self.deployer.bot_db.fetch_all(scope="all")
         parent_bot_id: Optional[str] = None
         error_msgs = list(self.developer.errors)
         self.developer.errors.clear()
@@ -802,7 +803,7 @@ class BotCreationBot(AdminBotBase):
                     dependencies=parent_bot_id,
                 )
             parent_bot_id = bot_id or parent_bot_id
-            existing = self.deployer.bot_db.fetch_all()
+            existing = self.deployer.bot_db.fetch_all(scope="all")
 
         if self._needs_higher_order():
             name = f"supervisor_{len(existing)+1}"

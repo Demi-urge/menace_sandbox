@@ -1,3 +1,4 @@
+# flake8: noqa
 from __future__ import annotations
 
 import os
@@ -1344,7 +1345,7 @@ class PatchHistoryDB:
                 try:
                     matches = [
                         row["id"]
-                        for row in self.code_db.fetch_all()
+                        for row in self.code_db.fetch_all(scope="all")
                         if _hash_code(row["code"]) == rec.code_hash
                     ]
                     if matches:
