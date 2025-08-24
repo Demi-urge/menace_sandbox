@@ -136,6 +136,7 @@ class ResourceAllocationBot:
         try:
             delta = (new_roi - old_roi) / (abs(new_roi) + abs(old_roi) + 1e-6)
             with self.menace_db.engine.begin() as conn:
+                menace_id = router.menace_id
                 res = conn.execute(
                     self.menace_db.enhancements.insert().values(
                         description_of_change=f"Model {model_id} upgraded via contrarian strategy",
@@ -143,6 +144,7 @@ class ResourceAllocationBot:
                         performance_delta=delta,
                         timestamp=datetime.utcnow().isoformat(),
                         triggered_by=triggered_by,
+                        source_menace_id=menace_id,
                     )
                 )
                 enh_id = int(res.inserted_primary_key[0])
