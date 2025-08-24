@@ -10,4 +10,3 @@ CREATE TABLE IF NOT EXISTS code(
     source_menace_id TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_code_source_menace_id ON code(source_menace_id);

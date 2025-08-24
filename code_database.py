@@ -95,7 +95,9 @@ SQL_CREATE_INDEX_CODE_ERRORS_CODE = _load_sql("create_index_code_errors_code.sql
 SQL_CREATE_INDEX_CODE_ERRORS_ERROR = _load_sql("create_index_code_errors_error.sql")
 SQL_CREATE_INDEX_CODE_SUMMARY = _load_sql("create_index_code_summary.sql")
 SQL_CREATE_INDEX_CODE_BODY = _load_sql("create_index_code_body.sql")
-SQL_CREATE_INDEX_CODE_SOURCE_MENACE_ID = "CREATE INDEX IF NOT EXISTS idx_code_source_menace_id ON code(source_menace_id)"
+SQL_CREATE_INDEX_CODE_SOURCE_MENACE_ID = _load_sql(
+    "create_index_code_source_menace_id.sql"
+)
 
 SQL_CREATE_FTS = _load_sql("create_fts.sql")
 SQL_POPULATE_FTS = _load_sql("populate_fts.sql")
@@ -472,7 +474,7 @@ class CodeDB(EmbeddableDBMixin):
                     self.__class__.__name__, 0, 0.0, 0.0, vector_id=""
                 )
                 raise ValueError(f"disallowed license detected: {lic}")
-            menace_id = _current_menace_id(self.router)
+            menace_id = self.router.menace_id
             rec.cid = self._insert(
                 conn,
                 SQL_INSERT_CODE,
@@ -509,7 +511,12 @@ class CodeDB(EmbeddableDBMixin):
         return cid
 
     def update(
-        self, code_id: int, *, expected_revision: int | None = None, **fields: Any
+        self,
+        code_id: int,
+        *,
+        expected_revision: int | None = None,
+        source_menace_id: str | None = None,
+        **fields: Any,
     ) -> None:
         """Update fields of a code record.
 
@@ -526,7 +533,7 @@ class CodeDB(EmbeddableDBMixin):
             return
 
         def op(conn: Any) -> None:
-            menace_id = _current_menace_id(self.router)
+            menace_id = source_menace_id or _current_menace_id(self.router)
             if expected_revision is not None:
                 row = self._execute(
                     conn,
@@ -603,10 +610,10 @@ class CodeDB(EmbeddableDBMixin):
             if not publish_with_retry(self.event_bus, "code:update", payload):
                 logger.exception("failed to publish code:update event")
 
-    def fetch_all(self) -> List[Dict[str, Any]]:
+    def fetch_all(self, source_menace_id: str | None = None) -> List[Dict[str, Any]]:
         """Return all code records as a list of dictionaries."""
 
-        menace_id = _current_menace_id(self.router)
+        menace_id = source_menace_id or _current_menace_id(self.router)
 
         def op(conn: Any) -> List[Dict[str, Any]]:
             if isinstance(conn, sqlite3.Connection):
@@ -617,11 +624,15 @@ class CodeDB(EmbeddableDBMixin):
         return self._with_retry(lambda: self._conn_wrapper(op))
 
     def by_complexity(
-        self, min_score: float = 0.0, limit: int = 5
+        self,
+        min_score: float = 0.0,
+        limit: int = 5,
+        *,
+        source_menace_id: str | None = None,
     ) -> List[Dict[str, Any]]:
         """Return code records sorted by complexity score."""
 
-        menace_id = _current_menace_id(self.router)
+        menace_id = source_menace_id or _current_menace_id(self.router)
 
         def op(conn: Any) -> List[Dict[str, Any]]:
             if isinstance(conn, sqlite3.Connection):
@@ -633,10 +644,12 @@ class CodeDB(EmbeddableDBMixin):
 
         return self._with_retry(lambda: self._conn_wrapper(op))
 
-    def search(self, term: str) -> List[Dict[str, Any]]:
+    def search(
+        self, term: str, *, source_menace_id: str | None = None
+    ) -> List[Dict[str, Any]]:
         """Search code records by summary or code."""
         pattern = f"%{term}%"
-        menace_id = _current_menace_id(self.router)
+        menace_id = source_menace_id or _current_menace_id(self.router)
 
         def op(conn: Any) -> List[Dict[str, Any]]:
             if isinstance(conn, sqlite3.Connection):
@@ -676,10 +689,12 @@ class CodeDB(EmbeddableDBMixin):
 
         return self._with_retry(lambda: self._conn_wrapper(op))
 
-    def search_fallback(self, term: str) -> List[Dict[str, Any]]:
+    def search_fallback(
+        self, term: str, *, source_menace_id: str | None = None
+    ) -> List[Dict[str, Any]]:
         """Search using the non-FTS fallback query directly."""
         pattern = f"%{term}%"
-        menace_id = _current_menace_id(self.router)
+        menace_id = source_menace_id or _current_menace_id(self.router)
 
         def op(conn: Any) -> List[Dict[str, Any]]:
             if isinstance(conn, sqlite3.Connection):
@@ -693,10 +708,12 @@ class CodeDB(EmbeddableDBMixin):
 
         return self._with_retry(lambda: self._conn_wrapper(op))
 
-    def codes_for_bot(self, bot_id: str) -> List[int]:
+    def codes_for_bot(
+        self, bot_id: str, *, source_menace_id: str | None = None
+    ) -> List[int]:
         """Return IDs of code templates associated with a bot."""
 
-        menace_id = _current_menace_id(self.router)
+        menace_id = source_menace_id or _current_menace_id(self.router)
 
         def op(conn: Any) -> List[int]:
             rows = self._execute(
@@ -741,10 +758,10 @@ class CodeDB(EmbeddableDBMixin):
 
         self._with_retry(lambda: self._conn_wrapper(op))
 
-    def delete(self, code_id: int) -> None:
+    def delete(self, code_id: int, *, source_menace_id: str | None = None) -> None:
         """Safely remove a code record and its relationships."""
 
-        menace_id = _current_menace_id(self.router)
+        menace_id = source_menace_id or _current_menace_id(self.router)
 
         def op(conn: Any) -> None:
             tables = ["code_bots", "code_enhancements", "code_errors"]
@@ -789,10 +806,11 @@ class CodeDB(EmbeddableDBMixin):
         kind: str,
         *,
         source_id: str = "",
+        source_menace_id: str | None = None,
     ) -> None:
         """Embed ``record`` and store the vector and metadata."""
         if not isinstance(record, (CodeRecord, dict)):
-            menace_id = _current_menace_id(self.router)
+            menace_id = source_menace_id or _current_menace_id(self.router)
             with self._connect() as conn:
                 row = conn.execute(
                     "SELECT summary, code, template_type, language FROM code WHERE id=? AND source_menace_id=?",
@@ -818,9 +836,11 @@ class CodeDB(EmbeddableDBMixin):
         """Delegate to :class:`EmbeddableDBMixin` for compatibility."""
         EmbeddableDBMixin.backfill_embeddings(self)
 
-    def iter_records(self) -> Iterator[tuple[int, dict[str, Any], str]]:
+    def iter_records(
+        self, source_menace_id: str | None = None
+    ) -> Iterator[tuple[int, dict[str, Any], str]]:
         """Yield code rows for embedding backfill."""
-        menace_id = _current_menace_id(self.router)
+        menace_id = source_menace_id or _current_menace_id(self.router)
         with self._connect() as conn:
             cur = conn.execute(
                 "SELECT id, summary, code, template_type, language FROM code WHERE source_menace_id=?",
@@ -837,7 +857,9 @@ class CodeDB(EmbeddableDBMixin):
             }
             yield data["id"], data, "code"
 
-    def vector(self, rec: Any) -> List[float] | None:
+    def vector(
+        self, rec: Any, *, source_menace_id: str | None = None
+    ) -> List[float] | None:
         """Return an embedding vector for ``rec`` or record id."""
         if isinstance(rec, (int, str)):
             rid = str(rec)
@@ -848,7 +870,7 @@ class CodeDB(EmbeddableDBMixin):
                 rec_id = int(rec)
             except (TypeError, ValueError):
                 return None
-            menace_id = _current_menace_id(self.router)
+            menace_id = source_menace_id or _current_menace_id(self.router)
             with self._connect() as conn:
                 row = conn.execute(
                     "SELECT summary, code, template_type, language FROM code WHERE id=? AND source_menace_id=?",
@@ -874,11 +896,15 @@ class CodeDB(EmbeddableDBMixin):
         return self.encode_text(text) if text else None
 
     def search_by_vector(
-        self, vector: Sequence[float], top_k: int = 5
+        self,
+        vector: Sequence[float],
+        top_k: int = 5,
+        *,
+        source_menace_id: str | None = None,
     ) -> List[dict[str, Any]]:
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
         results: List[dict[str, Any]] = []
-        menace_id = _current_menace_id(self.router)
+        menace_id = source_menace_id or _current_menace_id(self.router)
         with self._connect() as conn:
             for cid, dist in matches:
                 row = conn.execute(
