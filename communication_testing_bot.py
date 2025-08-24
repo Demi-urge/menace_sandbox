@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from difflib import SequenceMatcher
 import time
 from dataclasses import dataclass
@@ -10,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, List, Tuple
 import asyncio
-import sqlite3
+import tempfile
 
 try:
     import pandas as pd  # type: ignore
@@ -22,7 +21,7 @@ from .mirror_bot import MirrorBot
 from .comm_testing_config import SETTINGS
 from .logging_utils import get_logger
 from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
-from .scope_utils import Scope, build_scope_clause
+from .scope_utils import Scope, build_scope_clause, apply_scope
 
 
 def _default_db_path() -> Path:
@@ -83,7 +82,8 @@ class CommTestDB:
             2,
             [
                 "ALTER TABLE results ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''",
-                "CREATE INDEX IF NOT EXISTS idx_results_source_menace_id ON results(source_menace_id)",
+                "CREATE INDEX IF NOT EXISTS idx_results_source_menace_id "
+                "ON results(source_menace_id)",
             ],
         ),
     ]
@@ -94,16 +94,10 @@ class CommTestDB:
     ) -> None:
         p = Path(path or _default_db_path())
         if str(p) == ":memory:" and router is None:
-            class _MemRouter:
-                menace_id = "memory"
-
-                def __init__(self) -> None:
-                    self.conn = sqlite3.connect(":memory:", check_same_thread=False)
-
-                def get_connection(self, table_name: str, operation: str = "read"):
-                    return self.conn
-
-            self.router = _MemRouter()
+            tmp = tempfile.NamedTemporaryFile(delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+            self.router = init_db_router("comm_test", tmp_path, tmp_path)
         else:
             self.router = router or GLOBAL_ROUTER or init_db_router(
                 "comm_test", str(p), str(p)
@@ -127,17 +121,27 @@ class CommTestDB:
         conn = self.router.get_connection("results")
         menace_id = source_menace_id or result.source_menace_id or self.router.menace_id
         conn.execute(
-            "INSERT INTO results(name, passed, details, ts, source_menace_id) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO results(name, passed, details, ts, source_menace_id) "
+            "VALUES (?, ?, ?, ?, ?)",
             (result.name, int(result.passed), result.details, result.timestamp, menace_id),
         )
         conn.commit()
         result.source_menace_id = menace_id
 
-    def fetch(self) -> List[CommTestResult]:
+    def fetch(
+        self,
+        *,
+        scope: Scope | str = Scope.LOCAL,
+        source_menace_id: str | None = None,
+    ) -> List[CommTestResult]:
         conn = self.router.get_connection("results")
-        cur = conn.execute(
-            "SELECT name, passed, details, ts, source_menace_id FROM results ORDER BY id"
+        menace_id = source_menace_id or self.router.menace_id
+        clause, params = build_scope_clause("results", scope, menace_id)
+        query = apply_scope(
+            "SELECT name, passed, details, ts, source_menace_id FROM results", clause
         )
+        query += " ORDER BY id"
+        cur = conn.execute(query, params)
         rows = cur.fetchall()
         return [
             CommTestResult(
@@ -166,7 +170,13 @@ class CommTestDB:
         cur = conn.execute(query, params)
         rows = cur.fetchall()
         return [
-            CommTestResult(name=r[0], passed=False, details=r[2], timestamp=r[3], source_menace_id=r[4])
+            CommTestResult(
+                name=r[0],
+                passed=False,
+                details=r[2],
+                timestamp=r[3],
+                source_menace_id=r[4],
+            )
             for r in rows
         ]
 
@@ -189,7 +199,13 @@ class CommTestDB:
         cur = conn.execute(query, params)
         rows = cur.fetchall()
         return [
-            CommTestResult(name=r[0], passed=bool(r[1]), details=r[2], timestamp=r[3], source_menace_id=r[4])
+            CommTestResult(
+                name=r[0],
+                passed=bool(r[1]),
+                details=r[2],
+                timestamp=r[3],
+                source_menace_id=r[4],
+            )
             for r in rows
         ]
 
