@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
+from typing import Literal
 
 from .env_config import DATABASE_URL
 try:
@@ -37,6 +38,7 @@ except Exception:  # pragma: no cover - optional dependency
         create_engine,
     ) = (None,) * 11  # type: ignore
 from sqlalchemy.engine import Engine
+from .db_scope import Scope
 
 
 @dataclass
@@ -573,11 +575,12 @@ class MenaceDB:
         term: str,
         *,
         source_menace_id: str | None = None,
-        include_cross_instance: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> list[dict]:
         """Return rows from key tables containing *term*."""
         term_l = term.lower()
         menace_id = self._current_menace_id(source_menace_id)
+        scope_enum = Scope(scope)
         results: list[dict] = []
         tables = [
             self.models,
@@ -590,8 +593,11 @@ class MenaceDB:
             for tbl in tables:
                 try:
                     stmt = tbl.select()
-                    if not include_cross_instance and "source_menace_id" in tbl.c:
-                        stmt = stmt.where(tbl.c.source_menace_id == menace_id)
+                    if "source_menace_id" in tbl.c:
+                        if scope_enum is Scope.LOCAL:
+                            stmt = stmt.where(tbl.c.source_menace_id == menace_id)
+                        elif scope_enum is Scope.GLOBAL:
+                            stmt = stmt.where(tbl.c.source_menace_id != menace_id)
                     rows = conn.execute(stmt).fetchall()
                 except Exception:
                     continue
@@ -644,16 +650,19 @@ class MenaceDB:
         type_: str = "runtime",
         resolution: str = "fatal",
         source_menace_id: str | None = None,
-        include_cross_instance: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> int:
         """Insert a new error and return its id."""
         menace_id = self._current_menace_id(source_menace_id)
+        scope_enum = Scope(scope)
         with self.engine.begin() as conn:
             stmt = self.errors.select().where(
                 self.errors.c.error_description == description
             )
-            if not include_cross_instance:
+            if scope_enum is Scope.LOCAL:
                 stmt = stmt.where(self.errors.c.source_menace_id == menace_id)
+            elif scope_enum is Scope.GLOBAL:
+                stmt = stmt.where(self.errors.c.source_menace_id != menace_id)
             row = conn.execute(stmt).fetchone()
             if row:
                 return int(row["error_id"])

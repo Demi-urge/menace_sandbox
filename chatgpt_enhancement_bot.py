@@ -10,7 +10,7 @@ import difflib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Iterator, Sequence
+from typing import Any, Iterable, List, Optional, Iterator, Sequence, Literal
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from .override_policy import OverridePolicyManager
@@ -32,6 +32,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 from vector_service import EmbeddableDBMixin
 from .unified_event_bus import UnifiedEventBus
+from .db_scope import Scope, build_scope_clause
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -411,15 +412,14 @@ class EnhancementDB(EmbeddableDBMixin):
         self,
         *,
         source_menace_id: str | None = None,
-        include_cross_instance: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> Iterator[tuple[int, sqlite3.Row, str]]:
         """Yield enhancement rows for embedding backfill."""
         menace_id = self._current_menace_id(source_menace_id)
+        clause, params = build_scope_clause("enhancements", Scope(scope), menace_id)
         query = "SELECT * FROM enhancements"
-        params: list[Any] = []
-        if not include_cross_instance:
-            query += " WHERE source_menace_id=?"
-            params.append(menace_id)
+        if clause:
+            query += f" {clause}"
         cur = self.conn.execute(query, params)
         for row in cur.fetchall():
             yield row["id"], row, "enhancement"
@@ -510,17 +510,22 @@ class EnhancementDB(EmbeddableDBMixin):
         enhancement_id: int,
         *,
         source_menace_id: str | None = None,
-        include_cross_instance: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> float | None:
         """Return ROI uplift score for ``enhancement_id`` from ``enhancements.score``."""
         menace_id = self._current_menace_id(source_menace_id)
         try:
             with self._connect() as conn:
-                query = "SELECT score FROM enhancements WHERE id=?"
-                params: list[Any] = [enhancement_id]
-                if not include_cross_instance:
-                    query += " AND source_menace_id=?"
-                    params.append(menace_id)
+                clause, params = build_scope_clause(
+                    "enhancements", Scope(scope), menace_id
+                )
+                query = "SELECT score FROM enhancements"
+                params = list(params)
+                if clause:
+                    query += f" {clause} AND id=?"
+                else:
+                    query += " WHERE id=?"
+                params.append(enhancement_id)
                 row = conn.execute(query, params).fetchone()
             return float(row["score"]) if row else None
         except sqlite3.Error as exc:
@@ -534,17 +539,18 @@ class EnhancementDB(EmbeddableDBMixin):
         limit: int = DEFAULT_FETCH_LIMIT,
         *,
         source_menace_id: str | None = None,
-        include_cross_instance: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> List[Enhancement]:
         try:
             menace_id = self._current_menace_id(source_menace_id)
             with self._connect() as conn:
                 conn.row_factory = sqlite3.Row
+                clause, params = build_scope_clause(
+                    "enhancements", Scope(scope), menace_id
+                )
                 query = "SELECT * FROM enhancements"
-                params: list[Any] = []
-                if not include_cross_instance:
-                    query += " WHERE source_menace_id=?"
-                    params.append(menace_id)
+                if clause:
+                    query += f" {clause}"
                 query += " ORDER BY id DESC LIMIT ?"
                 params.append(limit)
                 rows = conn.execute(query, params).fetchall()
@@ -611,20 +617,25 @@ class EnhancementDB(EmbeddableDBMixin):
         rec: Any,
         *,
         source_menace_id: str | None = None,
-        include_cross_instance: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> list[float] | None:
         """Return an embedding vector for ``rec`` or ``rec`` id."""
 
         menace_id = self._current_menace_id(source_menace_id)
         # allow passing a record identifier
         if isinstance(rec, (int, str)) and str(rec).isdigit():
-            query = (
-                "SELECT before_code, after_code, summary, context FROM enhancements WHERE id=?"
+            clause, params = build_scope_clause(
+                "enhancements", Scope(scope), menace_id
             )
-            params: list[Any] = [int(rec)]
-            if not include_cross_instance:
-                query += " AND source_menace_id=?"
-                params.append(menace_id)
+            query = (
+                "SELECT before_code, after_code, summary, context FROM enhancements"
+            )
+            params = list(params)
+            if clause:
+                query += f" {clause} AND id=?"
+            else:
+                query += " WHERE id=?"
+            params.append(int(rec))
             row = self.conn.execute(query, params).fetchone()
             if not row:
                 return None
@@ -680,17 +691,22 @@ class EnhancementDB(EmbeddableDBMixin):
         top_k: int = 5,
         *,
         source_menace_id: str | None = None,
-        include_cross_instance: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> List[Enhancement]:
         menace_id = self._current_menace_id(source_menace_id)
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
         results: List[Enhancement] = []
+        clause, base_params = build_scope_clause(
+            "enhancements", Scope(scope), menace_id
+        )
         for rec_id, dist in matches:
-            query = "SELECT * FROM enhancements WHERE id=?"
-            params: list[Any] = [rec_id]
-            if not include_cross_instance:
-                query += " AND source_menace_id=?"
-                params.append(menace_id)
+            query = "SELECT * FROM enhancements"
+            params = list(base_params)
+            if clause:
+                query += f" {clause} AND id=?"
+            else:
+                query += " WHERE id=?"
+            params.append(rec_id)
             row = self.conn.execute(query, params).fetchone()
             if row:
                 enh = Enhancement(
