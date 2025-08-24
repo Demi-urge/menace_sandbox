@@ -62,6 +62,13 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
+_USE_MODULE_SYNERGY = os.getenv("SANDBOX_USE_MODULE_SYNERGY") == "1"
+try:  # pragma: no cover - optional dependency
+    from module_synergy_grapher import get_synergy_cluster
+except Exception:  # pragma: no cover - optional dependency
+    def get_synergy_cluster(*_args: object, **_kwargs: object) -> set[str]:  # type: ignore
+        return set()
+
 if TYPE_CHECKING:  # pragma: no cover
     from foresight_tracker import ForesightTracker
     from db_router import DBRouter
@@ -5389,6 +5396,26 @@ def run_scenarios(
     wf_id = getattr(workflow, "wid", getattr(workflow, "id", "0"))
     wf_steps = _steps(workflow)
 
+    synergy_suggestions: Dict[str, List[str]] = {}
+    if _USE_MODULE_SYNERGY:
+        for step in wf_steps:
+            if ":" in step:
+                mod, _func = step.split(":", 1)
+            elif "." in step:
+                mod, _func = step.rsplit(".", 1)
+            else:
+                mod = step
+            try:
+                cluster = get_synergy_cluster(mod)
+            except Exception:
+                cluster = set()
+            if mod in cluster:
+                cluster.discard(mod)
+            if cluster:
+                synergy_suggestions[mod] = sorted(cluster)
+        if synergy_suggestions:
+            logger.info("module synergy suggestions: %s", synergy_suggestions)
+
     snippet_on = _wf_snippet(wf_steps)
     snippet_off = _wf_snippet([])
     presets = list(presets) if presets is not None else default_scenario_presets()
@@ -5518,6 +5545,8 @@ def run_scenarios(
         "scorecards": {scen: asdict(card) for scen, card in scorecards.items()},
         "status": tracker.workflow_label,
     }
+    if synergy_suggestions:
+        summary["synergy_suggestions"] = synergy_suggestions
     try:
         summary["workflow_scorecard"] = generate_scorecard(workflow, summary)
     except Exception:  # pragma: no cover - best effort
