@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import os
 
 from .env_config import DATABASE_URL
 try:
@@ -614,9 +615,15 @@ class MenaceDB:
     # ------------------------------------------------------------------
 
     def add_error(
-        self, description: str, *, type_: str = "runtime", resolution: str = "fatal"
+        self,
+        description: str,
+        *,
+        type_: str = "runtime",
+        resolution: str = "fatal",
+        source_menace_id: str | None = None,
     ) -> int:
         """Insert a new error and return its id."""
+        menace_id = source_menace_id or os.getenv("MENACE_ID", "")
         with self.engine.begin() as conn:
             row = conn.execute(
                 self.errors.select().where(
@@ -631,6 +638,7 @@ class MenaceDB:
                     error_type=type_,
                     error_description=description,
                     resolution_status=resolution,
+                    source_menace_id=menace_id,
                 )
             )
             return int(res.inserted_primary_key[0])
@@ -671,12 +679,21 @@ class MenaceDB:
     # Discrepancy helpers
     # ------------------------------------------------------------------
 
-    def add_discrepancy(self, description: str, notes: str = "") -> int:
+    def add_discrepancy(
+        self,
+        description: str,
+        notes: str = "",
+        *,
+        source_menace_id: str | None = None,
+    ) -> int:
         """Insert a discrepancy and return its id."""
+        menace_id = source_menace_id or os.getenv("MENACE_ID", "")
         with self.engine.begin() as conn:
             res = conn.execute(
                 self.discrepancies.insert().values(
-                    description=description, resolution_notes=notes
+                    description=description,
+                    resolution_notes=notes,
+                    source_menace_id=menace_id,
                 )
             )
             return int(res.inserted_primary_key[0])

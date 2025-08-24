@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -53,10 +54,16 @@ class DiscrepancyDB(EmbeddableDBMixin):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message TEXT,
                 metadata TEXT,
-                ts TEXT
+                ts TEXT,
+                source_menace_id TEXT DEFAULT ''
             )
             """
         )
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(discrepancies)").fetchall()]
+        if "source_menace_id" not in cols:
+            self.conn.execute(
+                "ALTER TABLE discrepancies ADD COLUMN source_menace_id TEXT DEFAULT ''"
+            )
         self.conn.commit()
         index_path = (
             Path(vector_index_path)
@@ -133,9 +140,10 @@ class DiscrepancyDB(EmbeddableDBMixin):
             logger.exception("embedding hook failed for %s: %s", rec_id, exc)
 
     def add(self, rec: DiscrepancyRecord) -> int:
+        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
         cur = self.conn.execute(
-            "INSERT INTO discrepancies(message, metadata, ts) VALUES (?,?,?)",
-            (rec.message, json.dumps(rec.metadata), rec.ts),
+            "INSERT INTO discrepancies(message, metadata, ts, source_menace_id) VALUES (?,?,?,?)",
+            (rec.message, json.dumps(rec.metadata), rec.ts, menace_id),
         )
         self.conn.commit()
         rec.id = int(cur.lastrowid)

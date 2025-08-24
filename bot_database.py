@@ -98,6 +98,7 @@ class FailedMenace:
     models: Iterable[int]
     workflows: Iterable[int]
     enhancements: Iterable[int]
+    source_menace_id: str
     attempt: int = 1
     next_retry: float = field(default_factory=time)
 
@@ -237,7 +238,13 @@ class BotDB(EmbeddableDBMixin):
                     still_pending.append(item)
                     continue
                 try:
-                    self._insert_menace(item.rec, item.models, item.workflows, item.enhancements)
+                    self._insert_menace(
+                        item.rec,
+                        item.models,
+                        item.workflows,
+                        item.enhancements,
+                        source_menace_id=item.source_menace_id,
+                    )
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.exception("MenaceDB insert retry failed for %s: %s", item.rec.name, exc)
                     item.attempt += 1
@@ -326,11 +333,23 @@ class BotDB(EmbeddableDBMixin):
         self._embed_record_on_write(rec.bid, rec)
         if self.menace_db:
             try:
-                self._insert_menace(rec, models or [], workflows or [], enhancements or [])
+                self._insert_menace(
+                    rec,
+                    models or [],
+                    workflows or [],
+                    enhancements or [],
+                    source_menace_id=router.menace_id if router else None,
+                )
             except Exception as exc:
                 logger.exception("MenaceDB insert failed: %s", exc)
                 self.failed_menace.append(
-                    FailedMenace(rec, models or [], workflows or [], enhancements or [])
+                    FailedMenace(
+                        rec,
+                        models or [],
+                        workflows or [],
+                        enhancements or [],
+                        router.menace_id if router else os.getenv("MENACE_ID", ""),
+                    )
                 )
         if self.event_bus:
             payload = dataclasses.asdict(rec)
@@ -462,11 +481,16 @@ class BotDB(EmbeddableDBMixin):
         models: Iterable[int],
         workflows: Iterable[int],
         enhancements: Iterable[int],
+        *,
+        source_menace_id: str | None = None,
     ) -> None:
         if not self.menace_db:
             return
         mdb = self.menace_db
         bot_id = rec.bid
+        menace_id = source_menace_id or (
+            router.menace_id if router else os.getenv("MENACE_ID", "")
+        )
         with mdb.engine.begin() as conn:
             conn.execute(
                 mdb.bots.insert().values(
@@ -482,6 +506,7 @@ class BotDB(EmbeddableDBMixin):
                     status=rec.status,
                     version=rec.version,
                     estimated_profit=rec.estimated_profit,
+                    source_menace_id=menace_id,
                 )
             )
             for mid in models:
@@ -535,10 +560,24 @@ class BotDB(EmbeddableDBMixin):
             wids = [w[0] for w in self.conn.execute("SELECT workflow_id FROM bot_workflow WHERE bot_id=?", (row["id"],)).fetchall()]
             eids = [e[0] for e in self.conn.execute("SELECT enhancement_id FROM bot_enhancement WHERE bot_id=?", (row["id"],)).fetchall()]
             try:
-                self._insert_menace(rec, mids, wids, eids)
+                self._insert_menace(
+                    rec,
+                    mids,
+                    wids,
+                    eids,
+                    source_menace_id=router.menace_id if router else None,
+                )
             except Exception as exc:
                 logger.exception("MenaceDB insert failed for %s: %s", rec.name, exc)
-                self.failed_menace.append(FailedMenace(rec, mids, wids, eids))
+                self.failed_menace.append(
+                    FailedMenace(
+                        rec,
+                        mids,
+                        wids,
+                        eids,
+                        router.menace_id if router else os.getenv("MENACE_ID", ""),
+                    )
+                )
 
     def close(self) -> None:
         self.conn.close()

@@ -76,10 +76,16 @@ class DeploymentDB:
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 deploy_id  INTEGER,
                 message    TEXT,
-                ts         TEXT
+                ts         TEXT,
+                source_menace_id TEXT DEFAULT ''
             )
             """
         )
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(errors)").fetchall()]
+        if "source_menace_id" not in cols:
+            conn.execute(
+                "ALTER TABLE errors ADD COLUMN source_menace_id TEXT DEFAULT ''"
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS bot_trials(
@@ -141,9 +147,10 @@ class DeploymentDB:
 
     def error(self, deploy_id: int, message: str) -> None:
         conn = self.router.get_connection("errors")
+        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
         conn.execute(
-            "INSERT INTO errors(deploy_id, message, ts) VALUES (?,?,?)",
-            (deploy_id, message, datetime.utcnow().isoformat()),
+            "INSERT INTO errors(deploy_id, message, ts, source_menace_id) VALUES (?,?,?,?)",
+            (deploy_id, message, datetime.utcnow().isoformat(), menace_id),
         )
         conn.commit()
         if self.event_bus:

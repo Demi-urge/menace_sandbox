@@ -13,6 +13,7 @@ import re
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+import os
 
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from dataclasses import asdict
@@ -459,6 +460,9 @@ class CodeDB(EmbeddableDBMixin):
                     self.__class__.__name__, 0, 0.0, 0.0, vector_id=""
                 )
                 raise ValueError(f"disallowed license detected: {lic}")
+            menace_id = (
+                self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+            )
             rec.cid = self._insert(
                 conn,
                 SQL_INSERT_CODE,
@@ -469,6 +473,7 @@ class CodeDB(EmbeddableDBMixin):
                     rec.version,
                     rec.complexity_score,
                     rec.summary,
+                    menace_id,
                 ),
             )
             if not self.has_fts:

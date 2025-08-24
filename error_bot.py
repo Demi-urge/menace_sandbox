@@ -6,6 +6,7 @@ import logging
 import sqlite3
 import json
 import hashlib
+import os
 from dataclasses import dataclass
 import dataclasses
 from datetime import datetime
@@ -100,10 +101,16 @@ class ErrorDB(EmbeddableDBMixin):
             CREATE TABLE IF NOT EXISTS discrepancies(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message TEXT,
-                ts TEXT
+                ts TEXT,
+                source_menace_id TEXT DEFAULT ''
             )
             """
         )
+        dcols = [r[1] for r in self.conn.execute("PRAGMA table_info(discrepancies)").fetchall()]
+        if "source_menace_id" not in dcols:
+            self.conn.execute(
+                "ALTER TABLE discrepancies ADD COLUMN source_menace_id TEXT DEFAULT ''"
+            )
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS errors(
@@ -115,7 +122,8 @@ class ErrorDB(EmbeddableDBMixin):
                 ts TEXT,
                 category TEXT,
                 cause TEXT,
-                frequency INTEGER
+                frequency INTEGER,
+                source_menace_id TEXT DEFAULT ''
             )
             """
         )
@@ -126,6 +134,10 @@ class ErrorDB(EmbeddableDBMixin):
             self.conn.execute("ALTER TABLE errors ADD COLUMN cause TEXT")
         if "frequency" not in cols:
             self.conn.execute("ALTER TABLE errors ADD COLUMN frequency INTEGER")
+        if "source_menace_id" not in cols:
+            self.conn.execute(
+                "ALTER TABLE errors ADD COLUMN source_menace_id TEXT DEFAULT ''"
+            )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS error_model(error_id INTEGER, model_id INTEGER)"
         )
@@ -306,9 +318,10 @@ class ErrorDB(EmbeddableDBMixin):
         return row[0] if row else None
 
     def log_discrepancy(self, message: str) -> None:
+        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
         self.conn.execute(
-            "INSERT INTO discrepancies(message, ts) VALUES (?, ?)",
-            (message, datetime.utcnow().isoformat()),
+            "INSERT INTO discrepancies(message, ts, source_menace_id) VALUES (?, ?, ?)",
+            (message, datetime.utcnow().isoformat(), menace_id),
         )
         self.conn.commit()
         self._publish("discrepancies:new", {"message": message})
@@ -395,14 +408,16 @@ class ErrorDB(EmbeddableDBMixin):
             except Exception as exc:  # pragma: no cover - best effort
                 logger.exception("embedding hook failed for %s: %s", found, exc)
             return found
+        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
         cur = self.conn.execute(
-            "INSERT INTO errors(message, type, description, resolution, ts) VALUES (?,?,?,?,?)",
+            "INSERT INTO errors(message, type, description, resolution, ts, source_menace_id) VALUES (?,?,?,?,?,?)",
             (
                 message,
                 type_,
                 description or message,
                 resolution,
                 datetime.utcnow().isoformat(),
+                menace_id,
             ),
         )
         self.conn.commit()
