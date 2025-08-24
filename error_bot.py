@@ -123,7 +123,7 @@ class ErrorDB(EmbeddableDBMixin):
                 category TEXT,
                 cause TEXT,
                 frequency INTEGER,
-                source_menace_id TEXT DEFAULT ''
+                source_menace_id TEXT NOT NULL DEFAULT ''
             )
             """
         )
@@ -136,8 +136,11 @@ class ErrorDB(EmbeddableDBMixin):
             self.conn.execute("ALTER TABLE errors ADD COLUMN frequency INTEGER")
         if "source_menace_id" not in cols:
             self.conn.execute(
-                "ALTER TABLE errors ADD COLUMN source_menace_id TEXT DEFAULT ''"
+                "ALTER TABLE errors ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
             )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_errors_source_menace_id ON errors(source_menace_id)"
+        )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS error_model(error_id INTEGER, model_id INTEGER)"
         )
@@ -378,10 +381,15 @@ class ErrorDB(EmbeddableDBMixin):
     # Expanded error tracking helpers
     # ------------------------------------------------------------------
 
-    def find_error(self, message: str) -> Optional[int]:
+    def find_error(
+        self, message: str, source_menace_id: str | None = None
+    ) -> Optional[int]:
+        menace_id = source_menace_id or (
+            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        )
         cur = self.conn.execute(
-            "SELECT id FROM errors WHERE message = ?",
-            (message,),
+            "SELECT id FROM errors WHERE message = ? AND source_menace_id = ?",
+            (message, menace_id),
         )
         row = cur.fetchone()
         return int(row[0]) if row else None
@@ -397,9 +405,13 @@ class ErrorDB(EmbeddableDBMixin):
         models: Iterable[int] | None = None,
         bots: Iterable[str] | None = None,
         codes: Iterable[int] | None = None,
+        source_menace_id: str | None = None,
     ) -> int:
         """Insert a new error if not already present and return its id."""
-        found = self.find_error(message)
+        menace_id = source_menace_id or (
+            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        )
+        found = self.find_error(message, menace_id)
         if found is not None:
             try:
                 self.add_embedding(
@@ -408,7 +420,6 @@ class ErrorDB(EmbeddableDBMixin):
             except Exception as exc:  # pragma: no cover - best effort
                 logger.exception("embedding hook failed for %s: %s", found, exc)
             return found
-        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
         cur = self.conn.execute(
             "INSERT INTO errors(message, type, description, resolution, ts, source_menace_id) VALUES (?,?,?,?,?,?)",
             (

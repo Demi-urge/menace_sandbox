@@ -360,7 +360,7 @@ class MenaceDB:
             Column("resolution_status", String),
             Column("source_menace_id", Text, nullable=False, server_default=""),
         )
-        Index("ix_errors_source_menace_id", self.errors.c.source_menace_id)
+        Index("idx_errors_source_menace_id", self.errors.c.source_menace_id)
 
         self.error_bots = Table(
             "error_bots",
