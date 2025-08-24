@@ -8,7 +8,7 @@ workflows and historical synergy records.  The resulting graph is saved to
 ## Building
 
 ```bash
-python module_synergy_grapher.py --build
+python module_synergy_grapher.py --build [--config config.toml]
 ```
 
 The graph is persisted to `sandbox_data/module_synergy_graph.json` and can be
@@ -24,16 +24,17 @@ The `--threshold` flag filters edges by weight when expanding the cluster.
 
 ## Configuration
 
-The `ModuleSynergyGrapher` constructor accepts a `coefficients` mapping to adjust
-how each signal contributes to an edge:
+The `ModuleSynergyGrapher` constructor accepts either a `coefficients` mapping
+or a JSON/TOML `config` file to adjust how each signal contributes to an edge:
 
 ```python
 from module_synergy_grapher import ModuleSynergyGrapher
 
-grapher = ModuleSynergyGrapher(
-    coefficients={"import": 1.0, "structure": 0.5, "cooccurrence": 1.0}
-)
+grapher = ModuleSynergyGrapher(config="weights.json")
 ```
+
+The CLI also accepts `--config` to load the same style of configuration file
+when building the graph.
 
 The optional `embedding_threshold` parameter controls the minimum cosine
 similarity between module docstrings required before an embedding edge is

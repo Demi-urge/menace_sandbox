@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import networkx as nx
 import pytest
@@ -100,6 +101,26 @@ def test_build_save_load_cluster(tmp_path: Path):
     assert set(loaded.edges) == {("a", "b")}
     assert loaded["a"]["b"]["weight"] == pytest.approx(1.0)
     assert loader.get_synergy_cluster("a", threshold=0.5) == {"a", "b"}
+
+
+# ---------------------------------------------------------------------------
+# Configuration handling
+
+
+def test_config_overrides(tmp_path: Path):
+    cfg = {"coefficients": {"import": 0.2}}
+    grapher = ModuleSynergyGrapher(config=cfg)
+    assert grapher.coefficients["import"] == 0.2
+
+    json_path = tmp_path / "cfg.json"
+    json_path.write_text(json.dumps({"coefficients": {"structure": 0.3}}))
+    grapher = ModuleSynergyGrapher(config=json_path)
+    assert grapher.coefficients["structure"] == 0.3
+
+    toml_path = tmp_path / "cfg.toml"
+    toml_path.write_text('coefficients = {cooccurrence = 0.4}')
+    grapher = ModuleSynergyGrapher(config=toml_path)
+    assert grapher.coefficients["cooccurrence"] == 0.4
 
 
 # ---------------------------------------------------------------------------
