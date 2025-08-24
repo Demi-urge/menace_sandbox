@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .auto_link import auto_link
-from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence, Iterator
+from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence, Iterator, Literal
 
 from .unified_event_bus import EventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
@@ -40,6 +40,7 @@ from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from vector_service import EmbeddableDBMixin
+from .db_scope import Scope, build_scope_clause
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager
@@ -341,20 +342,21 @@ class ErrorDB(EmbeddableDBMixin):
             (menace_id, message, datetime.utcnow().isoformat()),
         )
         self.conn.commit()
-        self._publish("discrepancies:new", {"message": message})
+        self._publish(
+            "discrepancies:new", {"message": message, "source_menace_id": menace_id}
+        )
 
     def discrepancies(
         self,
         *,
         source_menace_id: str | None = None,
-        all_instances: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> pd.DataFrame:
         menace_id = self._menace_id(source_menace_id)
+        clause, params = build_scope_clause("discrepancies", Scope(scope), menace_id)
         query = "SELECT message, ts FROM discrepancies"
-        params: list[object] = []
-        if not all_instances:
-            query += " WHERE source_menace_id=?"
-            params.append(menace_id)
+        if clause:
+            query += f" {clause}"
         return pd.read_sql(query, self.conn, params=params)
 
     def log_preemptive_patch(
@@ -411,14 +413,17 @@ class ErrorDB(EmbeddableDBMixin):
         message: str,
         source_menace_id: str | None = None,
         *,
-        all_instances: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> Optional[int]:
         menace_id = self._menace_id(source_menace_id)
-        query = "SELECT id FROM errors WHERE message = ?"
-        params: list[object] = [message]
-        if not all_instances:
-            query += " AND source_menace_id = ?"
-            params.append(menace_id)
+        clause, params = build_scope_clause("errors", Scope(scope), menace_id)
+        query = "SELECT id FROM errors"
+        if clause:
+            query += f" {clause} AND message = ?"
+            params.append(message)
+        else:
+            query += " WHERE message = ?"
+            params.append(message)
         cur = self.conn.execute(query, params)
         row = cur.fetchone()
         return int(row[0]) if row else None
@@ -474,6 +479,7 @@ class ErrorDB(EmbeddableDBMixin):
                 "type": type_,
                 "description": description or message,
                 "resolution": resolution,
+                "source_menace_id": menace_id,
             },
         )
         self._publish("embedding:backfill", {"db": self.__class__.__name__})
@@ -487,15 +493,14 @@ class ErrorDB(EmbeddableDBMixin):
         self,
         *,
         source_menace_id: str | None = None,
-        all_instances: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> Iterator[tuple[int, dict[str, Any], str]]:
         """Yield error and telemetry rows for embedding backfill."""
         menace_id = self._menace_id(source_menace_id)
+        clause, params = build_scope_clause("errors", Scope(scope), menace_id)
         query = "SELECT id, message FROM errors"
-        params: list[object] = []
-        if not all_instances:
-            query += " WHERE source_menace_id=?"
-            params.append(menace_id)
+        if clause:
+            query += f" {clause}"
         cur = self.conn.execute(query, params)
         for row in cur.fetchall():
             yield row["id"], {"message": row["message"]}, "error"
@@ -527,8 +532,14 @@ class ErrorDB(EmbeddableDBMixin):
             (menace_id, bot_id, err_id),
         )
         self.conn.commit()
-        self._publish("error_bot:new", {"error_id": err_id, "bot_id": bot_id})
-        self._publish("bot_error:new", {"bot_id": bot_id, "error_id": err_id})
+        self._publish(
+            "error_bot:new",
+            {"error_id": err_id, "bot_id": bot_id, "source_menace_id": menace_id},
+        )
+        self._publish(
+            "bot_error:new",
+            {"bot_id": bot_id, "error_id": err_id, "source_menace_id": menace_id},
+        )
 
     def link_code(self, err_id: int, code_id: int) -> None:
         self.conn.execute(
@@ -543,16 +554,19 @@ class ErrorDB(EmbeddableDBMixin):
         err_id: int,
         *,
         source_menace_id: str | None = None,
-        all_instances: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> int:
         """Return recorded recurrence frequency for ``err_id``."""
 
         menace_id = self._menace_id(source_menace_id)
-        query = "SELECT frequency FROM errors WHERE id=?"
-        params: list[object] = [err_id]
-        if not all_instances:
-            query += " AND source_menace_id=?"
-            params.append(menace_id)
+        clause, params = build_scope_clause("errors", Scope(scope), menace_id)
+        query = "SELECT frequency FROM errors"
+        if clause:
+            query += f" {clause} AND id=?"
+            params.append(err_id)
+        else:
+            query += " WHERE id=?"
+            params.append(err_id)
         cur = self.conn.execute(query, params)
         row = cur.fetchone()
         return int(row["frequency"]) if row and row["frequency"] is not None else 0
@@ -659,11 +673,12 @@ class ErrorDB(EmbeddableDBMixin):
         top_k: int = 5,
         *,
         source_menace_id: str | None = None,
-        all_instances: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> list[dict[str, object]]:
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
         results: list[dict[str, object]] = []
         menace_id = self._menace_id(source_menace_id)
+        clause, base_params = build_scope_clause("errors", Scope(scope), menace_id)
         for rec_id, dist in matches:
             rid = int(rec_id)
             row = self.conn.execute(
@@ -679,16 +694,16 @@ class ErrorDB(EmbeddableDBMixin):
                     }
                 )
                 continue
-            q = "SELECT message FROM errors WHERE id=?"
-            params: list[object] = [rid]
-            if not all_instances:
-                q += " AND source_menace_id=?"
-                params.append(menace_id)
+            q = "SELECT message FROM errors"
+            params = list(base_params)
+            if clause:
+                q += f" {clause} AND id=?"
+            else:
+                q += " WHERE id=?"
+            params.append(rid)
             row = self.conn.execute(q, params).fetchone()
             if row:
-                results.append(
-                    {"id": rid, "message": row[0], "_distance": dist}
-                )
+                results.append({"id": rid, "message": row[0], "_distance": dist})
         return results
 
     def fetch_error_stats(self) -> list[dict[str, int | str | None]]:
@@ -952,13 +967,27 @@ class ErrorBot(AdminBotBase):
                 if error_bot_exceptions:
                     error_bot_exceptions.inc()
 
-    def _start_prompt_rewriter(self, err_id: int) -> None:
+    def _start_prompt_rewriter(
+        self,
+        err_id: int,
+        *,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
+    ) -> None:
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self.prompt_rewriter_daemon(err_id))
+            loop.create_task(
+                self.prompt_rewriter_daemon(
+                    err_id, source_menace_id=source_menace_id, scope=scope
+                )
+            )
         except RuntimeError:
             threading.Thread(
-                target=lambda: asyncio.run(self.prompt_rewriter_daemon(err_id)),
+                target=lambda: asyncio.run(
+                    self.prompt_rewriter_daemon(
+                        err_id, source_menace_id=source_menace_id, scope=scope
+                    )
+                ),
                 daemon=True,
             ).start()
 
@@ -987,17 +1016,19 @@ class ErrorBot(AdminBotBase):
         err_id: int,
         *,
         source_menace_id: str | None = None,
-        all_instances: bool = False,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> None:
         if not self.enhancement_db:
             return
         menace_id = self.db._menace_id(source_menace_id)
         with self.db.router.get_connection("errors") as conn:
-            q = "SELECT message FROM errors WHERE id=?"
-            params: list[object] = [err_id]
-            if not all_instances:
-                q += " AND source_menace_id=?"
-                params.append(menace_id)
+            clause, params = build_scope_clause("errors", Scope(scope), menace_id)
+            q = "SELECT message FROM errors"
+            if clause:
+                q += f" {clause} AND id=?"
+            else:
+                q += " WHERE id=?"
+            params.append(err_id)
             row = conn.execute(q, params).fetchone()
         if not row:
             return

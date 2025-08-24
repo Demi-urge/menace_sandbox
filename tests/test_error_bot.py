@@ -44,6 +44,18 @@ def test_handle_unknown(tmp_path):
     assert len(df) == 1
 
 
+def test_discrepancies_scope(tmp_path):
+    e = eb.ErrorDB(tmp_path / "e.db")
+    e.log_discrepancy("local", source_menace_id="a")
+    e.log_discrepancy("remote", source_menace_id="b")
+    df_local = e.discrepancies(source_menace_id="a", scope="local")
+    assert list(df_local["message"]) == ["local"]
+    df_global = e.discrepancies(source_menace_id="a", scope="global")
+    assert list(df_global["message"]) == ["remote"]
+    df_all = e.discrepancies(source_menace_id="a", scope="all")
+    assert set(df_all["message"]) == {"local", "remote"}
+
+
 def test_monitor_logs(tmp_path):
     mdb = make_metrics(tmp_path)
     e = eb.ErrorDB(tmp_path / "e.db")
