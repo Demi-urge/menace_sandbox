@@ -1074,10 +1074,9 @@ class UniversalRetriever:
         if not self.error_db:
             return 0.0
         try:
-            menace_id = (
-                getattr(self.error_db.router, "menace_id", None)
-                or os.getenv("MENACE_ID", "")
-            )
+            menace_id = getattr(self.error_db.router, "menace_id", None)
+            if menace_id is None:
+                menace_id = os.getenv("MENACE_ID", "")
             cur = self.error_db.conn.execute(
                 "SELECT frequency FROM errors WHERE id=? AND source_menace_id=?",
                 (error_id, menace_id),
