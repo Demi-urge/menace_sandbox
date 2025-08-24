@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 import logging
@@ -92,8 +93,14 @@ class TrialMonitor:
         for trial in trials:
             bot_id = trial["bot_id"]
             deploy_id = trial["deploy_id"]
+            menace_id = getattr(
+                getattr(self.deployer.bot_db, "router", None),
+                "menace_id",
+                None,
+            ) or os.getenv("MENACE_ID", "")
             row = self.deployer.bot_db.conn.execute(
-                "SELECT name FROM bots WHERE id=?", (bot_id,)
+                "SELECT name FROM bots WHERE id=? AND source_menace_id=?",
+                (bot_id, menace_id),
             ).fetchone()
             name = row[0] if row else str(bot_id)
             roi = self.optimizer._roi(name)
