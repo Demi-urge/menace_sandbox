@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import List, Tuple
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from scope_utils import Scope, build_scope_clause, apply_scope
 
 
 @dataclass
@@ -48,6 +49,7 @@ class EvolutionHistoryDB:
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS evolution_history(
+                source_menace_id TEXT NOT NULL,
                 action TEXT,
                 before_metric REAL,
                 after_metric REAL,
@@ -69,6 +71,15 @@ class EvolutionHistoryDB:
             """
         )
         cols = [r[1] for r in self.conn.execute("PRAGMA table_info(evolution_history)").fetchall()]
+        if "source_menace_id" not in cols:
+            self.conn.execute(
+                "ALTER TABLE evolution_history ADD COLUMN "
+                "source_menace_id TEXT NOT NULL DEFAULT ''",
+            )
+            self.conn.execute(
+                "UPDATE evolution_history SET source_menace_id='' "
+                "WHERE source_menace_id IS NULL",
+            )
         if "efficiency" not in cols:
             self.conn.execute("ALTER TABLE evolution_history ADD COLUMN efficiency REAL DEFAULT 0")
         if "bottleneck" not in cols:
@@ -106,12 +117,26 @@ class EvolutionHistoryDB:
             self.conn.execute(
                 "ALTER TABLE evolution_history ADD COLUMN actual_class TEXT"
             )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS "
+            "idx_evolution_history_source_menace_id ON evolution_history("
+            "source_menace_id)",
+        )
         self.conn.commit()
 
-    def add(self, event: EvolutionEvent) -> int:
+    def _current_menace_id(self, source_menace_id: str | None) -> str:
+        return source_menace_id or (self.router.menace_id if self.router else "")
+
+    def add(self, event: EvolutionEvent, *, source_menace_id: str | None = None) -> int:
+        menace_id = self._current_menace_id(source_menace_id)
         cur = self.conn.execute(
-            'INSERT INTO evolution_history(action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            "INSERT INTO evolution_history("
+            "source_menace_id, action, before_metric, after_metric, roi, "
+            "predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, "
+            'trending_topic, reason, "trigger", performance, parent_event_id, '
+            "predicted_class, actual_class) VALUES(" + ",".join("?" for _ in range(18)) + ")",
             (
+                menace_id,
                 event.action,
                 event.before_metric,
                 event.after_metric,
@@ -142,7 +167,11 @@ class EvolutionHistoryDB:
         self.conn.commit()
 
     def fetch(
-        self, limit: int = 50
+        self,
+        limit: int = 50,
+        *,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
     ) -> List[
         Tuple[
             str,
@@ -164,14 +193,28 @@ class EvolutionHistoryDB:
             str,
         ]
     ]:
-        cur = self.conn.execute(
-            'SELECT action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class FROM evolution_history ORDER BY ts DESC LIMIT ?',
-            (limit,),
+        base = (
+            "SELECT action, before_metric, after_metric, roi, predicted_roi, "
+            "efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, "
+            'reason, "trigger", performance, parent_event_id, predicted_class, '
+            "actual_class FROM evolution_history"
         )
+        menace_id = self._current_menace_id(source_menace_id)
+        clause, scope_params = build_scope_clause(
+            "evolution_history", Scope(scope), menace_id
+        )
+        base = apply_scope(base, clause)
+        base += " ORDER BY ts DESC LIMIT ?"
+        params = [*scope_params, limit]
+        cur = self.conn.execute(base, params)
         return cur.fetchall()
 
     def fetch_children(
-        self, parent_event_id: int
+        self,
+        parent_event_id: int,
+        *,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
     ) -> List[
         Tuple[
             int,
@@ -194,15 +237,28 @@ class EvolutionHistoryDB:
             str,
         ]
     ]:
-        cur = self.conn.execute(
-            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class FROM evolution_history WHERE parent_event_id=?',
-            (parent_event_id,),
+        menace_id = self._current_menace_id(source_menace_id)
+        clause, scope_params = build_scope_clause(
+            "evolution_history", Scope(scope), menace_id
         )
+        query = (
+            "SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, "
+            "efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, "
+            'reason, "trigger", performance, parent_event_id, predicted_class, actual_class '
+            "FROM evolution_history WHERE parent_event_id=?"
+        )
+        query = apply_scope(query, clause)
+        params = [parent_event_id, *scope_params]
+        cur = self.conn.execute(query, params)
         return cur.fetchall()
 
     # ------------------------------------------------------------------
     def children(
-        self, parent_event_id: int
+        self,
+        parent_event_id: int,
+        *,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
     ) -> List[
         Tuple[
             int,
@@ -227,11 +283,17 @@ class EvolutionHistoryDB:
     ]:
         """Alias for :meth:`fetch_children` for backwards compatibility."""
 
-        return self.fetch_children(parent_event_id)
+        return self.fetch_children(
+            parent_event_id, scope=scope, source_menace_id=source_menace_id
+        )
 
     # ------------------------------------------------------------------
     def ancestors(
-        self, event_id: int
+        self,
+        event_id: int,
+        *,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
     ) -> List[
         Tuple[
             int,
@@ -256,24 +318,36 @@ class EvolutionHistoryDB:
     ]:
         """Return lineage from root to ``event_id``."""
 
+        menace_id = self._current_menace_id(source_menace_id)
+        clause, scope_params = build_scope_clause(
+            "evolution_history", Scope(scope), menace_id
+        )
+        query = (
+            "SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, "
+            "efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, "
+            'reason, "trigger", performance, parent_event_id, predicted_class, actual_class '
+            "FROM evolution_history WHERE rowid=?"
+        )
+        query = apply_scope(query, clause)
+
         rows = []
-        row = self.conn.execute(
-            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class FROM evolution_history WHERE rowid=?',
-            (event_id,),
-        ).fetchone()
+        row = self.conn.execute(query, (event_id, *scope_params)).fetchone()
         while row:
             rows.append(row)
             parent = row[-1]
             if parent is None:
                 break
-            row = self.conn.execute(
-                'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class FROM evolution_history WHERE rowid=?',
-                (parent,),
-            ).fetchone()
+            row = self.conn.execute(query, (parent, *scope_params)).fetchone()
         return list(reversed(rows))
 
     # ------------------------------------------------------------------
-    def subtree(self, event_id: int) -> dict | None:
+    def subtree(
+        self,
+        event_id: int,
+        *,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
+    ) -> dict | None:
         """Return the mutation subtree rooted at ``event_id``."""
 
         fields = [
@@ -299,14 +373,24 @@ class EvolutionHistoryDB:
 
         def build(row: Tuple) -> dict:
             node = dict(zip(fields, row))
-            kids = self.fetch_children(row[0])
+            kids = self.fetch_children(
+                row[0], scope=scope, source_menace_id=source_menace_id
+            )
             node["children"] = [build(child) for child in kids]
             return node
 
-        row = self.conn.execute(
-            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class FROM evolution_history WHERE rowid=?',
-            (event_id,),
-        ).fetchone()
+        menace_id = self._current_menace_id(source_menace_id)
+        clause, scope_params = build_scope_clause(
+            "evolution_history", Scope(scope), menace_id
+        )
+        query = (
+            "SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, "
+            "efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, "
+            'reason, "trigger", performance, parent_event_id, predicted_class, actual_class '
+            "FROM evolution_history WHERE rowid=?"
+        )
+        query = apply_scope(query, clause)
+        row = self.conn.execute(query, (event_id, *scope_params)).fetchone()
         if not row:
             return None
         return build(row)
@@ -339,7 +423,14 @@ class EvolutionHistoryDB:
         )
         return self.add(event)
 
-    def record_outcome(self, event_id: int, *, after_metric: float, roi: float, performance: float) -> None:
+    def record_outcome(
+        self,
+        event_id: int,
+        *,
+        after_metric: float,
+        roi: float,
+        performance: float,
+    ) -> None:
         """Update outcome metrics for an evolution event."""
 
         self.conn.execute(
@@ -348,11 +439,25 @@ class EvolutionHistoryDB:
         )
         self.conn.commit()
 
-    def lineage_tree(self, workflow_id: int) -> List[dict]:
-        cur = self.conn.execute(
-            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class FROM evolution_history WHERE workflow_id=?',
-            (workflow_id,),
+    def lineage_tree(
+        self,
+        workflow_id: int,
+        *,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
+    ) -> List[dict]:
+        menace_id = self._current_menace_id(source_menace_id)
+        clause, scope_params = build_scope_clause(
+            "evolution_history", Scope(scope), menace_id
         )
+        query = (
+            "SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, "
+            "efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, "
+            'reason, "trigger", performance, parent_event_id, predicted_class, actual_class '
+            "FROM evolution_history WHERE workflow_id=?"
+        )
+        query = apply_scope(query, clause)
+        cur = self.conn.execute(query, (workflow_id, *scope_params))
         rows = cur.fetchall()
         by_parent: dict[int | None, list] = {}
         for row in rows:
@@ -388,9 +493,15 @@ class EvolutionHistoryDB:
 
         return build(None)
 
-    def summary(self, limit: int = 50) -> dict[str, float]:
+    def summary(
+        self,
+        limit: int = 50,
+        *,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
+    ) -> dict[str, float]:
         """Return simple stats for recent evolution events."""
-        rows = self.fetch(limit)
+        rows = self.fetch(limit, scope=scope, source_menace_id=source_menace_id)
         if not rows:
             return {"count": 0, "avg_roi": 0.0, "avg_delta": 0.0}
         count = len(rows)
@@ -410,4 +521,3 @@ class EvolutionHistoryDB:
 
 
 __all__ = ["EvolutionEvent", "EvolutionHistoryDB"]
-
