@@ -305,6 +305,17 @@ class DeploymentBot:
             except Exception as exc:
                 _log_exception(self.logger, "subscribe memory manager", exc)
 
+    def errors_for(self, deploy_id: int) -> List[int]:
+        """Return IDs of errors for ``deploy_id`` limited to this menace."""
+        router = getattr(self.db, "router", None) or self.db_router
+        menace_id = router.menace_id if router else os.getenv("MENACE_ID", "")
+        conn = router.get_connection("errors")
+        rows = conn.execute(
+            "SELECT id FROM errors WHERE deploy_id=? AND source_menace_id=?",
+            (deploy_id, menace_id),
+        ).fetchall()
+        return [r[0] for r in rows]
+
     # ------------------------------------------------------------------
     # Utility helpers
     # ------------------------------------------------------------------
