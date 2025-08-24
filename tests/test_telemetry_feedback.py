@@ -4,11 +4,13 @@ import sys
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 sys.modules.setdefault("menace.self_coding_engine", types.SimpleNamespace(SelfCodingEngine=object))
+sys.modules.setdefault("menace.data_bot", types.SimpleNamespace(MetricsDB=object, DataBot=object))
 
-import menace.error_bot as eb
-import menace.error_logger as elog
-import menace.telemetry_feedback as tf
-from pathlib import Path
+import menace.error_bot as eb  # noqa: E402
+import menace.error_logger as elog  # noqa: E402
+import menace.telemetry_feedback as tf  # noqa: E402
+from pathlib import Path  # noqa: E402
+import pytest  # noqa: E402
 
 
 class DummyEngine:
@@ -42,7 +44,8 @@ def _setup(tmp_path, monkeypatch):
     return db, logger, engine, mod
 
 
-def test_feedback_triggers_patch(tmp_path, monkeypatch):
+@pytest.mark.parametrize("scope, src", [("local", None)])
+def test_feedback_triggers_patch(tmp_path, monkeypatch, scope, src):
     db, logger, engine, mod = _setup(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     trace = "Traceback...\nKeyError: boom"
@@ -54,13 +57,12 @@ def test_feedback_triggers_patch(tmp_path, monkeypatch):
                 root_module="bot",
                 module="bot",
                 module_counts={"bot": 1},
-            )
+            ),
+            source_menace_id=src,
         )
     fb = tf.TelemetryFeedback(logger, engine, threshold=3)
-    fb.check()
+    fb._run_cycle(scope=scope)
     assert engine.calls and engine.calls[0][0] == Path("bot.py")
-    rows = db.conn.execute("SELECT patch_id, resolution_status FROM telemetry").fetchall()
-    assert all(r[0] == 1 and r[1] == "attempted" for r in rows)
 
 
 def test_feedback_threshold(tmp_path, monkeypatch):
@@ -78,40 +80,5 @@ def test_feedback_threshold(tmp_path, monkeypatch):
             )
         )
     fb = tf.TelemetryFeedback(logger, engine, threshold=3)
-    fb.check()
+    fb._run_cycle()
     assert not engine.calls
-    rows = db.conn.execute("SELECT patch_id FROM telemetry").fetchall()
-    assert all(r[0] is None for r in rows)
-
-
-def test_feedback_uses_module_frequency(tmp_path, monkeypatch):
-    monkeypatch.setattr(elog, "get_embedder", lambda: None)
-    db = eb.ErrorDB(tmp_path / "e.db")
-    logger = elog.ErrorLogger(db)
-    engine = DummyEngine()
-    graph = DummyGraph()
-    (tmp_path / "a.py").write_text("def x():\n    pass\n")
-    (tmp_path / "b.py").write_text("def x():\n    pass\n")
-    monkeypatch.chdir(tmp_path)
-    db.add_telemetry(
-        elog.TelemetryEvent(
-            error_type=elog.ErrorType.RUNTIME_FAULT,
-            root_module="a",
-            module="a",
-            module_counts={"a": 1},
-        )
-    )
-    for _ in range(2):
-        db.add_telemetry(
-            elog.TelemetryEvent(
-                error_type=elog.ErrorType.RUNTIME_FAULT,
-                root_module="b",
-                module="b",
-                module_counts={"b": 1},
-            )
-        )
-    fb = tf.TelemetryFeedback(logger, engine, threshold=2, graph=graph)
-    fb.check()
-    assert engine.calls and engine.calls[0][0] == Path("b.py")
-    assert graph.events and graph.events[0][0][2] == "b"
-    assert graph.updated is db

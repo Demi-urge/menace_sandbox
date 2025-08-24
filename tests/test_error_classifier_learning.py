@@ -1,13 +1,24 @@
+import os
+import sys
+import types
 import yaml
 from datetime import datetime
 
-import menace.error_logger as elog
-from menace.error_logger import ErrorClassifier, TelemetryEvent
-from menace.error_ontology import ErrorType
-from menace.error_bot import ErrorDB
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+sys.modules.setdefault(
+    "menace.data_bot", types.SimpleNamespace(MetricsDB=object, DataBot=object)
+)
+
+import menace.error_logger as elog  # noqa: E402
+from menace.error_logger import ErrorClassifier, TelemetryEvent  # noqa: E402
+from menace.error_ontology import ErrorType  # noqa: E402
+from menace.error_bot import ErrorDB  # noqa: E402
+
+import pytest  # noqa: E402
 
 
-def test_classifier_updates_from_db(tmp_path, monkeypatch):
+@pytest.mark.parametrize("scope, src", [("local", None)])
+def test_classifier_updates_from_db(tmp_path, monkeypatch, scope, src):
     monkeypatch.setattr(elog, "get_embedder", lambda: None)
     db = ErrorDB(path=tmp_path / "errors.db")
     cfg_path = tmp_path / "rules.yaml"
@@ -31,12 +42,11 @@ def test_classifier_updates_from_db(tmp_path, monkeypatch):
     )
 
     for _ in range(5):
-        db.add_telemetry(event)
+        db.add_telemetry(event, source_menace_id=src)
 
     assert "special failure" not in clf.semantic_map
-    clf.update_rules_from_db(db, min_count=3)
+    clf.learn_error_phrases(db, min_count=3, scope=scope)
     assert "special failure" in clf.semantic_map
 
     data = yaml.safe_load(cfg_path.read_text())
     assert "special failure" in data["SemanticBug"]["semantic"]
-

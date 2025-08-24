@@ -1,6 +1,15 @@
-import menace.error_logger as elog
-from menace.error_logger import ErrorLogger
-from menace.error_bot import ErrorDB
+import os
+import sys
+import types
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+sys.modules.setdefault(
+    "menace.data_bot", types.SimpleNamespace(MetricsDB=object, DataBot=object)
+)
+
+import menace.error_logger as elog  # noqa: E402
+from menace.error_logger import ErrorLogger  # noqa: E402
+from menace.error_bot import ErrorDB  # noqa: E402
 
 
 def test_error_logger_triggers_rule_update(monkeypatch, tmp_path):
@@ -10,13 +19,12 @@ def test_error_logger_triggers_rule_update(monkeypatch, tmp_path):
 
     called: list[bool] = []
 
-    def fake_update(db_obj):
+    def fake_update(db_obj, **kwargs):
         called.append(True)
 
-    monkeypatch.setattr(logger.classifier, "update_rules_from_db", fake_update)
+    monkeypatch.setattr(logger.classifier, "learn_error_phrases", fake_update)
 
     for _ in range(logger._update_threshold):
         logger.log(Exception("boom"), None, None)
 
     assert called
-
