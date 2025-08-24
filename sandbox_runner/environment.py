@@ -171,7 +171,6 @@ from .input_history_db import InputHistoryDB
 from collections import Counter
 from error_logger import ErrorLogger
 from knowledge_graph import KnowledgeGraph
-import sqlite3
 
 from db_router import GLOBAL_ROUTER, init_db_router
 
@@ -6592,7 +6591,8 @@ def try_integrate_into_workflows(
 
     passed_set = {Path(p).resolve().as_posix() for p in passed}
 
-    conn = (router or wf_db.router or GLOBAL_ROUTER).get_connection("workflows")
+    router = router or wf_db.router or GLOBAL_ROUTER
+    conn = router.get_connection("workflows")
     for wf in workflows:
         mods = [
             m
@@ -6658,7 +6658,8 @@ def append_orphan_modules_to_workflows(
     wf_db = WorkflowDB(Path(workflows_db), router=router)
     workflows = wf_db.fetch(limit=1000)
     updated: list[int] = []
-    conn = (router or wf_db.router or GLOBAL_ROUTER).get_connection("workflows")
+    router = router or wf_db.router or GLOBAL_ROUTER
+    conn = router.get_connection("workflows")
     for wf in workflows:
         changed = False
         existing = set(wf.workflow)
@@ -7492,7 +7493,8 @@ def auto_include_modules(
         else:
             low_roi_mods.append(mod)
             try:
-                conn = (router or GLOBAL_ROUTER).get_connection("workflows")
+                router = router or GLOBAL_ROUTER
+                conn = router.get_connection("workflows")
                 for wid in ids:
                     conn.execute("DELETE FROM workflows WHERE id=?", (wid,))
                 conn.commit()
