@@ -9,13 +9,13 @@ queries:
 - ``"global"`` – records from other menace instances
 - ``"all"`` – no menace ID filtering
 
-Use :func:`build_scope_clause` to generate a ``WHERE`` fragment enforcing the
+Use :func:`build_scope_clause` to generate a filter fragment enforcing the
 selected scope. Examples::
 
     >>> build_scope_clause("bots", Scope.LOCAL, "alpha")
-    ('WHERE bots.source_menace_id = ?', ['alpha'])
+    ('bots.source_menace_id = ?', ['alpha'])
     >>> build_scope_clause("bots", Scope.GLOBAL, "alpha")
-    ('WHERE bots.source_menace_id != ?', ['alpha'])
+    ('bots.source_menace_id <> ?', ['alpha'])
     >>> build_scope_clause("bots", Scope.ALL, "alpha")
     ('', [])
 
@@ -24,7 +24,7 @@ flags with a single ``scope`` parameter.
 """
 
 from enum import Enum
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 
 class Scope(str, Enum):
@@ -39,23 +39,32 @@ class Scope(str, Enum):
 
 
 def build_scope_clause(
-    table_alias: str, scope: Scope | str, menace_id: str
-) -> Tuple[str, List[str]]:
-    """Return SQL fragment and parameters enforcing ``scope`` for ``menace_id``.
+    table_name: str, scope: Scope | str, menace_id: Any
+) -> Tuple[str, List[Any]]:
+    """Return a SQL clause and parameter list enforcing ``scope``.
 
-    ``scope`` controls menace visibility:
-
-    - ``Scope.LOCAL`` – only rows from ``menace_id``
-    - ``Scope.GLOBAL`` – rows from other Menace instances
-    - ``Scope.ALL`` – no menace ID filtering
+    The returned clause does **not** include a ``WHERE``/``AND`` prefix, making it
+    easy to splice into existing queries. ``scope`` can be passed either as a
+    :class:`Scope` value or one of the strings ``"local"``, ``"global"`` or
+    ``"all"``.
     """
 
     scope = Scope(scope)
     if scope is Scope.LOCAL:
-        return f"WHERE {table_alias}.source_menace_id = ?", [menace_id]
+        return f"{table_name}.source_menace_id = ?", [menace_id]
     if scope is Scope.GLOBAL:
-        return f"WHERE {table_alias}.source_menace_id != ?", [menace_id]
+        return f"{table_name}.source_menace_id <> ?", [menace_id]
     return "", []
 
 
-__all__ = ["Scope", "build_scope_clause"]
+def apply_scope(query: str, clause: str) -> str:
+    """Prepend ``clause`` to ``query`` with ``WHERE`` or ``AND`` as needed."""
+
+    if not clause:
+        return query
+    if "where" in query.lower():
+        return f"{query} AND {clause}"
+    return f"{query} WHERE {clause}"
+
+
+__all__ = ["Scope", "build_scope_clause", "apply_scope"]
