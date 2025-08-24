@@ -145,6 +145,179 @@ class ModuleSynergyGrapher:
 
         self._load_weights()
 
+    def learn_coefficients(
+        self, root_path: str | Path, *, weights_file: str | Path | None = None
+    ) -> Dict[str, float]:
+        """Fit coefficient weights from historical synergy records.
+
+        The function loads past synergy observations from ``synergy_history.db``
+        and fits a simple linear regression model that predicts those known
+        synergistic links using the available heuristic signals (imports,
+        structure, workflow co-occurrence and docstring embeddings).  Learned
+        weights are written to ``weights_file`` and applied to
+        ``self.coefficients``.
+        """
+
+        try:
+            import numpy as np  # type: ignore
+        except Exception:  # pragma: no cover - numpy optional
+            return self.coefficients
+
+        root = Path(root_path)
+        self.root = root
+
+        import_graph = build_import_graph(root)
+        modules = list(import_graph.nodes)
+
+        # Reuse cached AST details and embeddings where possible
+        cache_path = root / "sandbox_data" / "synergy_cache.json"
+        cache: Dict[str, Dict[str, object]] = {}
+        if cache_path.exists():
+            try:
+                cache = json.loads(cache_path.read_text())
+            except Exception:  # pragma: no cover - corrupt cache
+                cache = {}
+
+        (
+            vars_,
+            funcs,
+            classes,
+            bases,
+            docs,
+            embeddings,
+            cache,
+            updated,
+        ) = self._collect_ast_info(root, modules, cache, use_cache=True)
+
+        # Fetch missing embeddings if any docstrings are present
+        missing = [m for m in modules if m not in embeddings and docs.get(m)]
+        if missing:
+            class _EmbedDB:
+                def try_add_embedding(self, record_id: str, text: str, kind: str = "doc"):
+                    try:
+                        return governed_embed(text) or []
+                    except Exception:
+                        return []
+
+            embed_db = _EmbedDB()
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_mod = {
+                    executor.submit(
+                        embed_db.try_add_embedding, mod, docs.get(mod, ""), "module_doc"
+                    ): mod
+                    for mod in missing
+                }
+                for fut in as_completed(future_to_mod):
+                    mod = future_to_mod[fut]
+                    vec = fut.result()
+                    if vec:
+                        embeddings[mod] = vec
+                        cache.setdefault(mod, {})["embedding"] = vec
+            updated = True
+
+        if updated:
+            cache_path.parent.mkdir(exist_ok=True)
+            try:
+                cache_path.write_text(json.dumps(cache))
+            except Exception:  # pragma: no cover - disk issues
+                pass
+
+        # Build feature matrices
+        direct: Dict[Tuple[str, str], float] = {}
+        for a, b, data in import_graph.edges(data=True):
+            direct[(a, b)] = float(data.get("weight", 1.0))
+        max_direct = max(direct.values(), default=0.0)
+        direct_norm = {k: v / max_direct for k, v in direct.items()} if max_direct else {}
+
+        deps = {m: set(import_graph.successors(m)) for m in modules}
+        shared: Dict[Tuple[str, str], float] = {}
+        for a in modules:
+            for b in modules:
+                if a == b:
+                    continue
+                score = self._jaccard(deps.get(a, set()), deps.get(b, set()))
+                if score:
+                    shared[(a, b)] = score
+
+        structure: Dict[Tuple[str, str], float] = {}
+        for a in modules:
+            for b in modules:
+                if a == b:
+                    continue
+                v = self._jaccard(vars_.get(a, set()), vars_.get(b, set()))
+                f = self._jaccard(funcs.get(a, set()), funcs.get(b, set()))
+                c = self._jaccard(classes.get(a, set()), classes.get(b, set()))
+                if v or f or c:
+                    structure[(a, b)] = (v + f + c) / 3
+
+        wf_counts = self._workflow_pairs(root, set(modules))
+        max_wf = max(wf_counts.values(), default=0)
+        wf_norm = {k: v / max_wf for k, v in wf_counts.items()} if max_wf else {}
+
+        hist_counts = self._history_pairs(root, set(modules))
+        max_hist = max(hist_counts.values(), default=0.0)
+        hist_norm = {k: v / max_hist for k, v in hist_counts.items()} if max_hist else {}
+
+        # Embedding similarities
+        embed_sim: Dict[Tuple[str, str], float] = {}
+        thr = self.embedding_threshold
+        for a in modules:
+            va = embeddings.get(a)
+            if not va:
+                continue
+            for b in modules:
+                if a == b:
+                    continue
+                vb = embeddings.get(b)
+                if not vb:
+                    continue
+                sim = cosine_similarity(va, vb)
+                if sim >= thr:
+                    embed_sim[(a, b)] = sim
+
+        if not hist_norm:
+            return self.coefficients
+
+        X: list[list[float]] = []
+        y: list[float] = []
+        for pair, target in hist_norm.items():
+            import_score = min(1.0, direct_norm.get(pair, 0.0) + shared.get(pair, 0.0))
+            struct_score = structure.get(pair, 0.0)
+            wf_score = wf_norm.get(pair, 0.0)
+            emb_score = embed_sim.get(pair, 0.0)
+            X.append([import_score, struct_score, wf_score, emb_score])
+            y.append(target)
+
+        if not X:
+            return self.coefficients
+
+        A = np.array(X)
+        b = np.array(y)
+        try:
+            coeffs, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+        except Exception:  # pragma: no cover - regression failure
+            return self.coefficients
+
+        new_coeffs = {
+            "import": max(0.0, float(coeffs[0])),
+            "structure": max(0.0, float(coeffs[1])),
+            "cooccurrence": max(0.0, float(coeffs[2])),
+            "embedding": max(0.0, float(coeffs[3])),
+        }
+
+        self.coefficients.update(new_coeffs)
+
+        # Persist learned weights
+        path = Path(weights_file) if weights_file else None
+        self._load_weights(path)
+        out = self.weights_file or (root / "sandbox_data" / "synergy_weights.json")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            out.write_text(json.dumps(self.coefficients))
+        except Exception:  # pragma: no cover - disk issues
+            pass
+        return self.coefficients
+
     # ------------------------------------------------------------------
     @staticmethod
     def _jaccard(a: Iterable[str], b: Iterable[str]) -> float:
@@ -494,9 +667,8 @@ class ModuleSynergyGrapher:
                 v = self._jaccard(vars_.get(a, set()), vars_.get(b, set()))
                 f = self._jaccard(funcs.get(a, set()), funcs.get(b, set()))
                 c = self._jaccard(classes.get(a, set()), classes.get(b, set()))
-                i = self._jaccard(bases.get(a, set()), bases.get(b, set()))
-                if v or f or c or i:
-                    structure[(a, b)] = (v + f + c + i) / 4
+                if v or f or c:
+                    structure[(a, b)] = (v + f + c) / 3
 
         # Co-occurrence data
         workflow_counts = self._workflow_pairs(root, set(modules))
@@ -703,20 +875,17 @@ class ModuleSynergyGrapher:
             va = set(vars_.get(a, set()))
             fa = set(funcs.get(a, set()))
             ca = set(classes.get(a, set()))
-            ia = set(bases.get(a, set()))
             for b in all_modules:
                 if a == b:
                     continue
                 vb = set(self.graph.nodes[b].get("vars", []))
                 fb = set(self.graph.nodes[b].get("funcs", []))
                 cb = set(self.graph.nodes[b].get("classes", []))
-                ib = set(self.graph.nodes[b].get("bases", []))
                 v = self._jaccard(va, vb)
                 f = self._jaccard(fa, fb)
                 c = self._jaccard(ca, cb)
-                i = self._jaccard(ia, ib)
-                if v or f or c or i:
-                    s = (v + f + c + i) / 4
+                if v or f or c:
+                    s = (v + f + c) / 3
                     structure[(a, b)] = s
                     structure[(b, a)] = s
 
@@ -898,6 +1067,11 @@ def _main(argv: Iterable[str] | None = None) -> int:
         default=4,
         help="number of threads for embedding retrieval",
     )
+    parser.add_argument(
+        "--auto-tune",
+        action="store_true",
+        help="recompute coefficient weights from synergy history before rebuilding",
+    )
 
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -907,6 +1081,8 @@ def _main(argv: Iterable[str] | None = None) -> int:
 
     grapher = ModuleSynergyGrapher(config=args.config)
     if args.build:
+        if args.auto_tune:
+            grapher.learn_coefficients(Path.cwd())
         grapher.build_graph(
             Path.cwd(), use_cache=not args.no_cache, embed_workers=args.embed_workers
         )
