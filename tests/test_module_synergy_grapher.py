@@ -1,6 +1,42 @@
-from pathlib import Path
+from __future__ import annotations
 
+from pathlib import Path
+import sqlite3
+
+import networkx as nx
+import pytest
+
+import module_synergy_grapher as msg
 from module_synergy_grapher import ModuleSynergyGrapher, get_synergy_cluster
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+
+
+@pytest.fixture(autouse=True)
+def _stub_embeddings(monkeypatch):
+    """Replace heavy embedding machinery with in-memory stubs."""
+
+    class DummyEmbeddableDB:
+        def __init__(self, *args, **kwargs):
+            self._vectors: dict[str, list[float]] = {}
+
+        def get_vector(self, key: str):
+            return self._vectors.get(key)
+
+        def try_add_embedding(self, key: str, record: str, kind: str):
+            vec = self.vector(record)
+            self._vectors[key] = vec
+            return True
+
+    # Default embeddings disabled
+    monkeypatch.setattr(msg, "EmbeddableDBMixin", DummyEmbeddableDB)
+    monkeypatch.setattr(msg, "governed_embed", lambda text: [])
+
+
+# ---------------------------------------------------------------------------
+# Helpers
 
 
 def _build_sample_graph(tmp_path: Path):
@@ -16,6 +52,10 @@ def _build_sample_graph(tmp_path: Path):
     return graph, path
 
 
+# ---------------------------------------------------------------------------
+# Graph construction
+
+
 def test_build_graph_basic(tmp_path: Path):
     graph, path = _build_sample_graph(tmp_path)
     assert set(graph.nodes) == {"a", "b"}
@@ -24,8 +64,73 @@ def test_build_graph_basic(tmp_path: Path):
     assert path.exists()
 
 
+# ---------------------------------------------------------------------------
+# Heuristic components
+
+
+def test_structure_similarity(tmp_path: Path):
+    (tmp_path / "c.py").write_text("x = 1\n")
+    (tmp_path / "d.py").write_text("x = 2\n")
+    graph = ModuleSynergyGrapher().build_graph(tmp_path)
+    assert graph.has_edge("c", "d")
+    assert graph["c"]["d"]["weight"] == pytest.approx(1 / 3)
+
+
+def test_workflow_cooccurrence(tmp_path: Path, monkeypatch):
+    (tmp_path / "wfa.py").write_text("print('a')\n")
+    (tmp_path / "wfb.py").write_text("print('b')\n")
+
+    db_path = tmp_path / "workflows.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE workflows (workflow TEXT, task_sequence TEXT)")
+    conn.execute(
+        "INSERT INTO workflows (workflow, task_sequence) VALUES (?, ?)",
+        ("wfa,wfb", ""),
+    )
+    conn.commit()
+    conn.close()
+
+    class DummyWorkflowDB:
+        def __init__(self, path):
+            self.conn = sqlite3.connect(path)
+
+    monkeypatch.setattr(msg, "WorkflowDB", DummyWorkflowDB)
+    graph = ModuleSynergyGrapher().build_graph(tmp_path)
+    assert graph["wfa"]["wfb"]["weight"] == pytest.approx(1.0)
+
+
+def test_embedding_similarity(tmp_path: Path, monkeypatch):
+    (tmp_path / "e.py").write_text('"""alpha beta"""')
+    (tmp_path / "f.py").write_text('"""alpha beta"""')
+
+    def fake_embed(text: str) -> list[float]:
+        return [1.0, 0.0] if "alpha" in text else [0.0, 1.0]
+
+    monkeypatch.setattr(msg, "governed_embed", fake_embed)
+    graph = ModuleSynergyGrapher(embedding_threshold=0.5).build_graph(tmp_path)
+    assert graph["e"]["f"]["weight"] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Synergy clustering
+
+
 def test_get_synergy_cluster_thresholds(tmp_path: Path):
     _, path = _build_sample_graph(tmp_path)
     assert get_synergy_cluster("a", threshold=0.5, path=path) == {"a", "b"}
     assert get_synergy_cluster("a", threshold=1.1, path=path) == {"a"}
     assert get_synergy_cluster("b", threshold=0.5, path=path) == {"b"}
+
+
+def test_get_synergy_cluster_synthetic():
+    g = nx.DiGraph()
+    g.add_edge("a", "b", weight=0.4)
+    g.add_edge("b", "c", weight=0.4)
+    g.add_edge("a", "d", weight=0.2)
+
+    grapher = ModuleSynergyGrapher()
+    grapher.graph = g
+    assert grapher.get_synergy_cluster("a", threshold=0.7) == {"a", "c"}
+    assert grapher.get_synergy_cluster("a", threshold=0.7, bfs=True) == {"a", "c"}
+    assert grapher.get_synergy_cluster("a", threshold=0.3) == {"a", "b", "c"}
+

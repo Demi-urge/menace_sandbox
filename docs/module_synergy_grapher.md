@@ -35,11 +35,37 @@ grapher = ModuleSynergyGrapher(
 )
 ```
 
+The optional `embedding_threshold` parameter controls the minimum cosine
+similarity between module docstrings required before an embedding edge is
+added to the graph.
+
 Use the :meth:`save` method to serialise the graph in JSON or pickle format:
 
 ```python
 graph = grapher.build_graph(".")
 grapher.save(graph, format="pickle")
 ```
+
+## Data Sources
+
+Edges combine four heuristics:
+
+* **Imports and shared dependencies** – direct imports and overlap in imported
+  modules derived from the static import graph.
+* **Shared identifiers** – Jaccard similarity of variable, function and class
+  names extracted from each module's AST.
+* **Workflow co-occurrence** – pairs of modules that appear together in
+  `workflows.db` or in historical synergy records.
+* **Docstring embeddings** – cosine similarity of module docstring embeddings
+  stored in `sandbox_data/module_doc_embeddings.*`.
+
+## Limitations
+
+* Only static imports are analysed; dynamic or runtime imports are ignored.
+* Embedding generation relies on optional `sentence_transformers` models and may
+  be slow or unavailable in minimal environments.
+* Co-occurrence signals require populated `workflows.db` or
+  `synergy_history.db`; if these databases are absent the corresponding weights
+  are zero.
 
 
