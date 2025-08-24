@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterable, List, Dict, TYPE_CHECKING
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from .scope_utils import Scope, build_scope_clause, apply_scope
 
 from .unified_event_bus import UnifiedEventBus
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
@@ -135,7 +136,8 @@ class MetricsDB:
             cycle TEXT,
             metric TEXT,
             value REAL,
-            ts TEXT
+            ts TEXT,
+            source_menace_id TEXT NOT NULL
         )
         """
         )
@@ -257,6 +259,9 @@ class MetricsDB:
             "CREATE INDEX IF NOT EXISTS idx_eval_cycle ON eval_metrics(cycle)"
         )
         conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_eval_source ON eval_metrics(source_menace_id)"
+        )
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_embedding_ts ON embedding_metrics(ts)"
         )
         conn.execute(
@@ -308,6 +313,15 @@ class MetricsDB:
         }.items():
             if column not in cols:
                 conn.execute(stmt)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(eval_metrics)").fetchall()]
+        if "source_menace_id" not in cols:
+            conn.execute(
+                "ALTER TABLE eval_metrics ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
+            )
+            conn.execute(
+                "UPDATE eval_metrics SET source_menace_id=? WHERE source_menace_id=''",
+                (self.router.menace_id,),
+            )
         cols = [
             r[1] for r in conn.execute("PRAGMA table_info(retriever_kpi)").fetchall()
         ]
@@ -528,11 +542,19 @@ class MetricsDB:
             )
             conn.commit()
 
-    def log_eval(self, cycle: str, metric: str, value: float) -> None:
+    def log_eval(
+        self,
+        cycle: str,
+        metric: str,
+        value: float,
+        *,
+        source_menace_id: object | None = None,
+    ) -> None:
         with self._connect() as conn:
+            menace_id = source_menace_id or self.router.menace_id
             conn.execute(
-                "INSERT INTO eval_metrics(cycle, metric, value, ts) VALUES(?,?,?,?)",
-                (cycle, metric, value, datetime.utcnow().isoformat()),
+                "INSERT INTO eval_metrics(cycle, metric, value, ts, source_menace_id) VALUES(?,?,?,?,?)",
+                (cycle, metric, value, datetime.utcnow().isoformat(), menace_id),
             )
             conn.commit()
 
@@ -772,12 +794,22 @@ class MetricsDB:
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to update vector metrics outcome")
 
-    def fetch_eval(self, cycle: str | None = None) -> List[tuple]:
+    def fetch_eval(
+        self,
+        cycle: str | None = None,
+        *,
+        source_menace_id: object | None = None,
+        scope: Scope | str = Scope.LOCAL,
+    ) -> List[tuple]:
         query = "SELECT cycle, metric, value, ts FROM eval_metrics"
-        params: tuple = ()
+        params: List[object] = []
+        menace_id = source_menace_id or self.router.menace_id
+        clause, scope_params = build_scope_clause("eval_metrics", scope, menace_id)
+        query = apply_scope(query, clause)
+        params.extend(scope_params)
         if cycle:
-            query += " WHERE cycle=?"
-            params = (cycle,)
+            query = apply_scope(query, "cycle=?")
+            params.append(cycle)
         with self._connect() as conn:
             cur = conn.execute(query, params)
             return cur.fetchall()

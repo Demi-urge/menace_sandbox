@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Helpers for cross database queries across Menace subsystems."""
 
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import sqlite3
 import logging
@@ -12,6 +12,7 @@ from .neuroplasticity import PathwayDB
 from .databases import MenaceDB
 from .research_aggregator_bot import InfoDB
 from gpt_memory_interface import GPTMemoryInterface
+from .scope_utils import Scope
 
 
 logger = logging.getLogger(__name__)
@@ -472,6 +473,8 @@ def workflow_roi_stats(
     metrics_db: MetricsDB,
     *,
     limit: int | None = 50,
+    source_menace_id: Any | None = None,
+    scope: Scope | str = Scope.LOCAL,
 ) -> Dict[str, float]:
     """Return aggregated ROI, CPU seconds and API cost for *workflow_name*.
 
@@ -491,7 +494,9 @@ def workflow_roi_stats(
         logger.warning("ROI history lookup failed for %s: %s", workflow_name, exc)
 
     try:
-        rows = metrics_db.fetch_eval(workflow_name)
+        rows = metrics_db.fetch_eval(
+            workflow_name, source_menace_id=source_menace_id, scope=scope
+        )
         for _, metric, value, _ in rows:
             if metric == "duration":
                 cpu_seconds += float(value)
@@ -505,13 +510,24 @@ def workflow_roi_stats(
 
 
 def rank_workflows(
-    workflows: Iterable[str], roi_db: ROIDB, metrics_db: MetricsDB
+    workflows: Iterable[str],
+    roi_db: ROIDB,
+    metrics_db: MetricsDB,
+    *,
+    source_menace_id: Any | None = None,
+    scope: Scope | str = Scope.LOCAL,
 ) -> List[tuple[str, float]]:
     """Return workflows ranked by ROI per CPU second."""
 
     scores = {}
     for wf in workflows:
-        stats = workflow_roi_stats(wf, roi_db, metrics_db)
+        stats = workflow_roi_stats(
+            wf,
+            roi_db,
+            metrics_db,
+            source_menace_id=source_menace_id,
+            scope=scope,
+        )
         cpu = stats["cpu_seconds"] or 1.0
         scores[wf] = stats["roi"] / cpu
     ordered = sorted(scores.items(), key=lambda x: x[1], reverse=True)
@@ -519,7 +535,13 @@ def rank_workflows(
 
 
 def bot_roi_stats(
-    bot_name: str, roi_db: ROIDB, metrics_db: MetricsDB, *, limit: int | None = 50
+    bot_name: str,
+    roi_db: ROIDB,
+    metrics_db: MetricsDB,
+    *,
+    limit: int | None = 50,
+    source_menace_id: Any | None = None,
+    scope: Scope | str = Scope.LOCAL,
 ) -> Dict[str, float]:
     """Return aggregated ROI, CPU seconds and API cost for ``bot_name``."""
 
@@ -534,7 +556,9 @@ def bot_roi_stats(
         logger.warning("ROI history lookup failed for bot %s: %s", bot_name, exc)
 
     try:
-        rows = metrics_db.fetch_eval(bot_name)
+        rows = metrics_db.fetch_eval(
+            bot_name, source_menace_id=source_menace_id, scope=scope
+        )
         for _, metric, value, _ in rows:
             if metric == "duration":
                 cpu_seconds += float(value)
@@ -548,13 +572,24 @@ def bot_roi_stats(
 
 
 def rank_bots(
-    bots: Iterable[str], roi_db: ROIDB, metrics_db: MetricsDB
+    bots: Iterable[str],
+    roi_db: ROIDB,
+    metrics_db: MetricsDB,
+    *,
+    source_menace_id: Any | None = None,
+    scope: Scope | str = Scope.LOCAL,
 ) -> List[tuple[str, float]]:
     """Return bots ranked by ROI per CPU second."""
 
     scores = {}
     for bot in bots:
-        stats = bot_roi_stats(bot, roi_db, metrics_db)
+        stats = bot_roi_stats(
+            bot,
+            roi_db,
+            metrics_db,
+            source_menace_id=source_menace_id,
+            scope=scope,
+        )
         cpu = stats["cpu_seconds"] or 1.0
         scores[bot] = stats["roi"] / cpu
     ordered = sorted(scores.items(), key=lambda x: x[1], reverse=True)
