@@ -3,6 +3,7 @@ from types import MethodType
 import pytest
 
 from menace.bot_database import BotDB, BotRecord
+import db_router
 
 
 @pytest.mark.parametrize("backend", ["annoy", "faiss"])
@@ -43,8 +44,8 @@ def test_embedding_workflow(tmp_path, backend):
 
     # insert record without embedding and backfill
     db.conn.execute(
-        "INSERT INTO bots(name, purpose, tags, toolchain) VALUES (?,?,?,?)",
-        ("B", "beta", "", ""),
+        "INSERT INTO bots(name, purpose, tags, toolchain, source_menace_id) VALUES (?,?,?,?,?)",
+        ("B", "beta", "", "", db_router.GLOBAL_ROUTER.menace_id),
     )
     db.conn.commit()
     new_id = db.conn.execute("SELECT id FROM bots WHERE name='B'").fetchone()[0]

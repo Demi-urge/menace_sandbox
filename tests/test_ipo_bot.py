@@ -15,12 +15,14 @@ def make_db(path: Path) -> Path:
     )
     conn = GLOBAL_ROUTER.get_connection("bots")
     cur = conn.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, keywords TEXT, reuse INTEGER)")
+    cur.execute("CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, keywords TEXT, reuse INTEGER, source_menace_id TEXT NOT NULL)")
     cur.execute(
-        "INSERT INTO bots (name, keywords, reuse) VALUES ('BotB', 'collect data scrape web', 1)"
+        "INSERT INTO bots (name, keywords, reuse, source_menace_id) VALUES ('BotB', 'collect data scrape web', 1, ?)"
+        (GLOBAL_ROUTER.menace_id,),
     )
     cur.execute(
-        "INSERT INTO bots (name, keywords, reuse) VALUES ('BotC', 'process results', 1)"
+        "INSERT INTO bots (name, keywords, reuse, source_menace_id) VALUES ('BotC', 'process results', 1, ?)"
+        (GLOBAL_ROUTER.menace_id,),
     )
     conn.commit()
     return path

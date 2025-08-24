@@ -179,7 +179,7 @@ class MenaceDB:
             Column("estimated_profit", Float, default=0.0),
             Column("source_menace_id", Text, nullable=False, server_default=""),
         )
-        Index("ix_bots_source_menace_id", self.bots.c.source_menace_id)
+        Index("idx_bots_source_menace_id", self.bots.c.source_menace_id)
 
         self.bot_models = Table(
             "bot_models",

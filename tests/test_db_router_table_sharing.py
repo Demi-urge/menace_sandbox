@@ -17,9 +17,12 @@ def test_shared_table_persists_across_instances(tmp_path):
     # Write to a shared table via router1
     with router1.get_connection("bots") as conn:
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT)"
+            "CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, source_menace_id TEXT NOT NULL)"
         )
-        conn.execute("INSERT INTO bots (name) VALUES (?)", ("alpha",))
+        conn.execute(
+            "INSERT INTO bots (name, source_menace_id) VALUES (?, ?)",
+            ("alpha", router1.menace_id),
+        )
         conn.commit()
 
     # Ensure router2 can read the data from the shared table
@@ -63,9 +66,12 @@ def test_shared_and_local_visibility_across_instances(tmp_path):
     # Populate a shared table via router1
     with router1.get_connection("bots") as conn:
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT)"
+            "CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, source_menace_id TEXT NOT NULL)"
         )
-        conn.execute("INSERT INTO bots (name) VALUES (?)", ("alpha",))
+        conn.execute(
+            "INSERT INTO bots (name, source_menace_id) VALUES (?, ?)",
+            ("alpha", router1.menace_id),
+        )
         conn.commit()
 
     # Router2 should observe the shared data
@@ -144,7 +150,9 @@ def test_threaded_shared_and_local_with_audit(tmp_path, monkeypatch):
     try:
         # Prepare shared and local tables
         with router.get_connection("bots", operation="write") as conn:
-            conn.execute("CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT)")
+            conn.execute(
+                "CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT, source_menace_id TEXT NOT NULL)"
+            )
             conn.commit()
         with router.get_connection("models", operation="write") as conn:
             conn.execute("CREATE TABLE models (id INTEGER PRIMARY KEY, name TEXT)")
@@ -157,7 +165,10 @@ def test_threaded_shared_and_local_with_audit(tmp_path, monkeypatch):
             try:
                 barrier.wait()
                 with router.get_connection("bots", operation="write") as conn:
-                    conn.execute("INSERT INTO bots (name) VALUES (?)", (f"bot{idx}",))
+                    conn.execute(
+                        "INSERT INTO bots (name, source_menace_id) VALUES (?, ?)",
+                        (f"bot{idx}", router.menace_id),
+                    )
                     conn.commit()
             except Exception as exc:  # pragma: no cover - capturing unexpected errors
                 errors.append(exc)
