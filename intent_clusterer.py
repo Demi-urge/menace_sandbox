@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List
 
 from governed_embeddings import governed_embed
 from universal_retriever import UniversalRetriever
+from vector_utils import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ class IntentClusterer:
 
     def __init__(self, retriever: UniversalRetriever) -> None:
         self.retriever = retriever
+        self.root: Path | None = None
+        self.cluster_map: Dict[str, int] = {}
 
     # ------------------------------------------------------------------
     def _collect_intent(self, module_path: Path) -> tuple[str, Dict[str, Any]]:
@@ -70,8 +73,27 @@ class IntentClusterer:
     # ------------------------------------------------------------------
     def index_repository(self, root_path: str | Path) -> None:
         """Embed and store intent vectors for modules under ``root_path``."""
-
         root = Path(root_path)
+        self.root = root
+        # determine cluster membership using module_graph_analyzer or synergy grapher
+        try:
+            from module_graph_analyzer import build_import_graph, cluster_modules
+            graph = build_import_graph(root)
+            self.cluster_map = cluster_modules(graph)
+        except Exception:
+            self.cluster_map = {}
+            try:  # pragma: no cover - optional dependency
+                from module_synergy_grapher import ModuleSynergyGrapher
+                from module_graph_analyzer import cluster_modules as _cluster
+                grapher = ModuleSynergyGrapher(root=root)
+                if grapher.graph is None:
+                    graph = build_import_graph(root)
+                else:
+                    graph = grapher.graph
+                self.cluster_map = _cluster(graph)
+            except Exception:
+                pass
+
         for file in root.rglob("*.py"):
             if any(part in {"tests", "test", "config", "configs"} for part in file.parts):
                 continue
@@ -83,19 +105,64 @@ class IntentClusterer:
             vector = governed_embed(intent_text)
             if vector is None:
                 continue
-            metadata["path"] = str(file.relative_to(root)) if file.is_relative_to(root) else str(file)
+            rel = file.relative_to(root) if file.is_relative_to(root) else file
+            metadata["path"] = rel.as_posix()
+            # map file to module name for cluster lookup
+            try:
+                rel_mod = rel.with_suffix("") if rel.name != "__init__.py" else rel.parent
+                mod_key = rel_mod.as_posix()
+            except Exception:
+                mod_key = rel.as_posix()
+            cid = self.cluster_map.get(mod_key)
+            if cid is not None:
+                metadata["cluster_id"] = cid
             try:
                 self.retriever.add_vector(vector, metadata)
             except Exception:  # pragma: no cover - best effort persistence
                 logger.exception("failed to store vector for %s", file)
 
     # ------------------------------------------------------------------
+    def get_cluster_intents(self, cluster_id: int) -> tuple[str, List[float] | None]:
+        """Return combined intent text and embedding for ``cluster_id``."""
+
+        if not self.root or not self.cluster_map:
+            return "", None
+        modules = [m for m, cid in self.cluster_map.items() if cid == cluster_id]
+        texts: List[str] = []
+        for mod in modules:
+            path = self.root / f"{mod}.py"
+            if not path.exists():
+                path = self.root / mod / "__init__.py"
+            if path.exists():
+                try:
+                    text, _meta = self._collect_intent(path)
+                    texts.append(text)
+                except Exception:  # pragma: no cover - best effort
+                    continue
+        combined = "\n".join(texts)
+        vector = governed_embed(combined) if combined else None
+        return combined, vector
+
+    # ------------------------------------------------------------------
     def find_modules_related_to(self, query: str, top_k: int = 10) -> List[Any]:
-        """Return modules with intent similar to ``query``."""
+        """Return modules or clusters with intent similar to ``query``."""
 
         vector = governed_embed(query)
         if vector is None:
             return []
+
+        q = query.lower()
+        if any(term in q for term in {"group", "cluster"}) and self.cluster_map:
+            results: List[Dict[str, Any]] = []
+            for cid in set(self.cluster_map.values()):
+                _text, cvec = self.get_cluster_intents(cid)
+                if not cvec:
+                    continue
+                score = cosine_similarity(vector, cvec)
+                results.append({"cluster_id": cid, "score": score})
+            results.sort(key=lambda x: x["score"], reverse=True)
+            return results[:top_k]
+
         try:
             search = getattr(self.retriever, "search")
             return list(search(vector, top_k=top_k))
