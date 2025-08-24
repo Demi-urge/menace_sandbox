@@ -1,5 +1,4 @@
 import sys
-import sqlite3
 
 import db_router
 
@@ -9,11 +8,9 @@ def test_sandbox_dashboard_initialises_router(monkeypatch):
 
     def fake_init(menace_id, *a, **k):
         calls.append(menace_id)
-        class Dummy:
-            def get_connection(self, *a, **k):
-                return sqlite3.connect(":memory:")
-        db_router.GLOBAL_ROUTER = Dummy()
-        return db_router.GLOBAL_ROUTER
+        router = db_router.DBRouter(menace_id, "./local.db", "./shared.db")
+        db_router.GLOBAL_ROUTER = router
+        return router
 
     monkeypatch.setattr(db_router, "init_db_router", fake_init)
     monkeypatch.setattr(db_router, "GLOBAL_ROUTER", None)
@@ -36,14 +33,14 @@ def test_error_ontology_dashboard_initialises_router(monkeypatch):
 
     def fake_init(menace_id, *a, **k):
         calls.append(menace_id)
-        class Dummy:
-            def get_connection(self, *a, **k):
-                return sqlite3.connect(":memory:")
-        db_router.GLOBAL_ROUTER = Dummy()
-        return db_router.GLOBAL_ROUTER
+        router = db_router.DBRouter(menace_id, "./local.db", "./shared.db")
+        db_router.GLOBAL_ROUTER = router
+        return router
 
     monkeypatch.setattr(db_router, "init_db_router", fake_init)
     monkeypatch.setattr(db_router, "GLOBAL_ROUTER", None)
+    import types
+    sys.modules['menace.data_bot'] = types.SimpleNamespace(MetricsDB=object, DataBot=object)
     for mod in [
         "menace.error_ontology_dashboard",
         "menace.error_bot",
