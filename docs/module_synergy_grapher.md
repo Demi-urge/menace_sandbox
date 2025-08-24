@@ -8,7 +8,7 @@ workflows and historical synergy records.  The resulting graph is saved to
 ## Building
 
 ```bash
-python module_synergy_grapher.py --build [--config config.toml]
+python module_synergy_grapher.py --build [--auto-tune] [--config config.toml]
 ```
 
 The graph is persisted to `sandbox_data/module_synergy_graph.json` and can be
@@ -60,6 +60,7 @@ get_synergy_cluster("a", threshold=0.5)
 * `--config PATH` – JSON/TOML file providing coefficient overrides.
 * `--no-cache` – recompute AST info and embeddings ignoring cached results.
 * `--embed-workers N` – number of threads used when fetching embeddings.
+* `--auto-tune` – learn coefficient weights from `synergy_history.db` before rebuilding.
 
 ## Configuration
 

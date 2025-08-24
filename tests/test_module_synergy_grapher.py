@@ -8,6 +8,7 @@ import pytest
 
 import module_synergy_grapher as msg
 from module_synergy_grapher import ModuleSynergyGrapher, get_synergy_cluster
+from menace import synergy_history_db as shd
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +109,30 @@ def test_config_overrides(tmp_path: Path):
     toml_path.write_text('coefficients = {cooccurrence = 0.4}')
     grapher = ModuleSynergyGrapher(config=toml_path)
     assert grapher.coefficients["cooccurrence"] == 0.4
+
+
+# ---------------------------------------------------------------------------
+# Coefficient learning
+
+
+def test_learn_coefficients_from_history(tmp_path: Path):
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("")
+
+    db_path = tmp_path / "synergy_history.db"
+    conn = shd.connect(db_path)
+    try:
+        shd.insert_entry(conn, {"a": 1.0, "b": 1.0})
+    finally:
+        conn.close()
+
+    grapher = ModuleSynergyGrapher(
+        coefficients={"import": 0.0, "structure": 0.0, "cooccurrence": 0.0, "embedding": 0.0}
+    )
+    grapher.learn_coefficients(tmp_path)
+    weights_path = tmp_path / "sandbox_data" / "synergy_weights.json"
+    assert weights_path.exists()
+    assert grapher.coefficients["import"] > 0
 
 
 # ---------------------------------------------------------------------------
