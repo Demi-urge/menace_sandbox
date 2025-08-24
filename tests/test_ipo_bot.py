@@ -1,9 +1,12 @@
 import pytest
-pytest.skip("optional dependencies not installed", allow_module_level=True)
 from pathlib import Path
 
 from db_router import GLOBAL_ROUTER, init_db_router
+from db_scope import Scope
 import menace.ipo_bot as ipb
+
+
+pytest.skip("optional dependencies not installed", allow_module_level=True)
 
 
 BLUEPRINT = "BotA collects data using BotB. BotC processes results after BotB."
@@ -15,13 +18,25 @@ def make_db(path: Path) -> Path:
     )
     conn = GLOBAL_ROUTER.get_connection("bots")
     cur = conn.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, keywords TEXT, reuse INTEGER, source_menace_id TEXT NOT NULL)")
     cur.execute(
-        "INSERT INTO bots (name, keywords, reuse, source_menace_id) VALUES ('BotB', 'collect data scrape web', 1, ?)"
+        (
+            "CREATE TABLE IF NOT EXISTS bots ("
+            "id INTEGER PRIMARY KEY, name TEXT, keywords TEXT, reuse INTEGER, "
+            "source_menace_id TEXT NOT NULL)"
+        )
+    )
+    cur.execute(
+        (
+            "INSERT INTO bots (name, keywords, reuse, source_menace_id) "
+            "VALUES ('BotB', 'collect data scrape web', 1, ?)"
+        ),
         (GLOBAL_ROUTER.menace_id,),
     )
     cur.execute(
-        "INSERT INTO bots (name, keywords, reuse, source_menace_id) VALUES ('BotC', 'process results', 1, ?)"
+        (
+            "INSERT INTO bots (name, keywords, reuse, source_menace_id) "
+            "VALUES ('BotC', 'process results', 1, ?)"
+        ),
         (GLOBAL_ROUTER.menace_id,),
     )
     conn.commit()
@@ -40,3 +55,10 @@ def test_generate_plan(tmp_path: Path):
     plan = bot.generate_plan(BLUEPRINT, "bp1")
     assert len(plan.actions) == 3
     assert plan.graph.number_of_nodes() == 3
+
+
+def test_search_scope(tmp_path: Path):
+    db = make_db(tmp_path / "models.db")
+    searcher = ipb.BotDatabaseSearcher(str(db))
+    results = searcher.search(["BotB"], Scope.LOCAL)
+    assert results and results[0].name == "BotB"
