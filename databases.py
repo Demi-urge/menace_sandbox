@@ -9,7 +9,7 @@ import os
 from typing import Literal
 
 from .env_config import DATABASE_URL
-from .db_scope import Scope, build_scope_clause
+from .db_scope import build_scope_clause, apply_scope
 try:
     from sqlalchemy import (
         Boolean,
@@ -39,7 +39,6 @@ except Exception:  # pragma: no cover - optional dependency
         create_engine,
     ) = (None,) * 11  # type: ignore
 from sqlalchemy.engine import Engine
-from .db_scope import Scope
 
 
 @dataclass
@@ -593,10 +592,8 @@ class MenaceDB:
             for tbl in tables:
                 try:
                     if "source_menace_id" in tbl.c:
-                        clause, params = build_scope_clause(tbl.name, Scope(scope), menace_id)
-                        query = f"SELECT * FROM {tbl.name}"
-                        if clause:
-                            query += f" {clause}"
+                        clause, params = build_scope_clause(tbl.name, scope, menace_id)
+                        query = apply_scope(f"SELECT * FROM {tbl.name}", clause)
                         rows = conn.exec_driver_sql(query, params).fetchall()
                     else:
                         rows = conn.execute(tbl.select()).fetchall()
@@ -656,12 +653,11 @@ class MenaceDB:
         """Insert a new error and return its id."""
         menace_id = self._current_menace_id(source_menace_id)
         with self.engine.begin() as conn:
-            clause, params = build_scope_clause("errors", Scope(scope), menace_id)
-            query = "SELECT error_id FROM errors"
-            if clause:
-                query += f" {clause} AND error_description = ?"
-            else:
-                query += " WHERE error_description = ?"
+            clause, params = build_scope_clause("errors", scope, menace_id)
+            query = apply_scope(
+                "SELECT error_id FROM errors WHERE error_description = ?",
+                clause,
+            )
             params.append(description)
             row = conn.exec_driver_sql(query, params).fetchone()
             if row:
