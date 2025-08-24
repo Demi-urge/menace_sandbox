@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import ast
 import io
+import json
 import logging
 import math
+import sqlite3
 import tokenize
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +37,9 @@ def _normalize(vec: Iterable[float]) -> List[float]:
     return [x / norm for x in lst] if norm else lst
 
 
+SCHEMA_VERSION = 2
+
+
 class IntentClusterer:
     """Index repository modules and search by high level intent.
 
@@ -49,6 +54,7 @@ class IntentClusterer:
         self.retriever = retriever
         self.root: Path | None = None
         self.cluster_map: Dict[str, int] = {}
+        self._index: Dict[str, Dict[str, Any]] = {}
 
     # ------------------------------------------------------------------
     def _collect_intent(self, module_path: Path) -> tuple[str, Dict[str, Any]]:
@@ -156,8 +162,16 @@ class IntentClusterer:
             except Exception:
                 pass
 
+        current_paths: set[str] = set()
         for file in root.rglob("*.py"):
             if any(part in {"tests", "test", "config", "configs"} for part in file.parts):
+                continue
+            rel = file.relative_to(root) if file.is_relative_to(root) else file
+            rel_path = rel.as_posix()
+            current_paths.add(rel_path)
+            mtime = file.stat().st_mtime
+            existing = self._index.get(rel_path)
+            if existing and existing.get("mtime", 0) >= mtime:
                 continue
             try:
                 intent_text, metadata = self._collect_intent(file)
@@ -167,14 +181,13 @@ class IntentClusterer:
             vector = governed_embed(intent_text)
             if vector is None:
                 continue
-            rel = file.relative_to(root) if file.is_relative_to(root) else file
-            metadata["path"] = rel.as_posix()
+            metadata["path"] = rel_path
             # map file to module name for cluster lookup
             try:
                 rel_mod = rel.with_suffix("") if rel.name != "__init__.py" else rel.parent
                 mod_key = rel_mod.as_posix()
             except Exception:
-                mod_key = rel.as_posix()
+                mod_key = rel_path
             cid = self.cluster_map.get(mod_key)
             if cid is not None:
                 metadata["cluster_id"] = cid
@@ -182,6 +195,120 @@ class IntentClusterer:
                 self.retriever.add_vector(vector, metadata)
             except Exception:  # pragma: no cover - best effort persistence
                 logger.exception("failed to store vector for %s", file)
+                continue
+            self._index[rel_path] = {
+                "vector": vector,
+                "metadata": metadata,
+                "mtime": mtime,
+            }
+
+        # drop entries for files that no longer exist
+        for stale in set(self._index) - current_paths:
+            self._index.pop(stale, None)
+
+    # ------------------------------------------------------------------
+    def save_index(self, path: str | Path) -> None:
+        """Persist the current intent index to ``path``."""
+
+        if not self._index:
+            return
+        p = Path(path)
+        conn = sqlite3.connect(p)
+        with conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS vectors (
+                    path TEXT PRIMARY KEY,
+                    vector TEXT,
+                    metadata TEXT,
+                    mtime REAL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS clusters (module TEXT PRIMARY KEY, cluster_id INTEGER)"
+            )
+            conn.execute("DELETE FROM vectors")
+            for mod_path, rec in self._index.items():
+                conn.execute(
+                    "INSERT OR REPLACE INTO vectors(path, vector, metadata, mtime) VALUES (?,?,?,?)",
+                    (
+                        mod_path,
+                        json.dumps(rec.get("vector")),
+                        json.dumps(rec.get("metadata")),
+                        float(rec.get("mtime", 0.0)),
+                    ),
+                )
+            conn.execute("DELETE FROM clusters")
+            conn.executemany(
+                "INSERT OR REPLACE INTO clusters(module, cluster_id) VALUES (?,?)",
+                list(self.cluster_map.items()),
+            )
+            conn.execute("DELETE FROM meta")
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES ('version', ?)",
+                (SCHEMA_VERSION,),
+            )
+            if self.root is not None:
+                conn.execute(
+                    "INSERT INTO meta(key, value) VALUES ('root', ?)",
+                    (self.root.as_posix(),),
+                )
+        conn.close()
+
+    # ------------------------------------------------------------------
+    def load_index(self, path: str | Path) -> None:
+        """Load an intent index previously stored via :meth:`save_index`."""
+
+        p = Path(path)
+        if not p.exists():
+            return
+        conn = sqlite3.connect(p)
+        with conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS vectors (path TEXT PRIMARY KEY, vector TEXT, metadata TEXT)"
+            )
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(vectors)")]
+            if "mtime" not in cols:
+                conn.execute("ALTER TABLE vectors ADD COLUMN mtime REAL DEFAULT 0")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS clusters (module TEXT PRIMARY KEY, cluster_id INTEGER)"
+            )
+            row = conn.execute("SELECT value FROM meta WHERE key='version'").fetchone()
+            version = int(row[0]) if row else 1
+            if version < SCHEMA_VERSION:
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES ('version', ?)",
+                    (SCHEMA_VERSION,),
+                )
+            root_row = conn.execute("SELECT value FROM meta WHERE key='root'").fetchone()
+            self.root = Path(root_row[0]) if root_row and root_row[0] else None
+            self.cluster_map = {
+                m: int(cid)
+                for m, cid in conn.execute("SELECT module, cluster_id FROM clusters")
+            }
+            self._index = {}
+            for rel_path, vec_json, meta_json, mtime in conn.execute(
+                "SELECT path, vector, metadata, mtime FROM vectors"
+            ):
+                try:
+                    vector = json.loads(vec_json) if vec_json else []
+                    metadata = json.loads(meta_json) if meta_json else {}
+                    self._index[rel_path] = {
+                        "vector": vector,
+                        "metadata": metadata,
+                        "mtime": float(mtime or 0.0),
+                    }
+                    self.retriever.add_vector(vector, metadata)
+                except Exception:  # pragma: no cover - best effort load
+                    logger.exception("failed to load vector for %s", rel_path)
+        conn.close()
 
     # ------------------------------------------------------------------
     def get_cluster_intents(self, cluster_id: int) -> tuple[str, List[float] | None]:
