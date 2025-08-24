@@ -4,7 +4,7 @@ from db_router import DBRouter
 from workflow_summary_db import WorkflowSummaryDB
 
 
-def test_workflow_summary_db_filters_by_menace_id(tmp_path):
+def test_workflow_summary_db_scope_filters(tmp_path):
     shared = tmp_path / "shared.db"
     router1 = DBRouter("one", str(tmp_path / "local1.db"), str(shared))
     db1 = WorkflowSummaryDB(router=router1)
@@ -17,4 +17,8 @@ def test_workflow_summary_db_filters_by_menace_id(tmp_path):
     assert db1.get_summary(1) == "alpha"
     assert db2.get_summary(2) == "beta"
     assert db1.get_summary(2) is None
-    assert db1.get_summary(2, source_menace_id="two") == "beta"
+    assert db1.get_summary(2, scope="global") == "beta"
+
+    assert [s.workflow_id for s in db1.all_summaries()] == [1]
+    assert {s.workflow_id for s in db1.all_summaries(scope="global")} == {2}
+    assert {s.workflow_id for s in db1.all_summaries(scope="all")} == {1, 2}
