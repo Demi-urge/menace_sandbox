@@ -187,7 +187,10 @@ class EnhancementDB(EmbeddableDBMixin):
                     )
                 if "source_menace_id" not in cols:
                     conn.execute(
-                        "ALTER TABLE enhancements ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT """
+                        (
+                            "ALTER TABLE enhancements ADD COLUMN source_menace_id "
+                            "TEXT NOT NULL DEFAULT ''"
+                        )
                     )
                 idxs = [
                     r[1]
@@ -201,7 +204,10 @@ class EnhancementDB(EmbeddableDBMixin):
                     )
                 if "idx_enhancements_source_menace_id" not in idxs:
                     conn.execute(
-                        "CREATE INDEX idx_enhancements_source_menace_id ON enhancements(source_menace_id)",
+                        (
+                            "CREATE INDEX idx_enhancements_source_menace_id "
+                            "ON enhancements(source_menace_id)"
+                        )
                     )
                 conn.execute(
                     """
@@ -270,7 +276,7 @@ class EnhancementDB(EmbeddableDBMixin):
         tags = ",".join(enh.tags)
         assigned = ",".join(enh.assigned_bots)
         assoc = ",".join(enh.associated_bots)
-        menace_id = self.router.menace_id if self.router else ""
+        menace_id = self._current_menace_id(None)
         try:
             with self._connect() as conn:
                 cur = conn.execute(
