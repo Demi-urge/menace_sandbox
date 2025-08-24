@@ -72,7 +72,8 @@ Passing `DB_ROUTER` to components is optional; modules can also access
 ## Scope filtering
 
 Queries against shared tables accept a ``scope`` argument to control cross-
-instance visibility. The parameter accepts:
+instance visibility. ``global`` retrieves entries from other Menace instances,
+while ``all`` removes filtering entirely. The parameter accepts:
 
 - ``"local"`` – only records created by the current menace
 - ``"global"`` – records from other menace instances

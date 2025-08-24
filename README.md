@@ -43,7 +43,8 @@
     summarised with `analysis/db_router_log_analysis.py`.
   - Read helpers accept a `scope` parameter (`"local"`, `"global"`, `"all"`)
     to filter records by menace ID, replacing `include_cross_instance` and
-    `all_instances` flags. For example:
+    `all_instances` flags. `global` retrieves entries from other Menace instances,
+    while `all` removes filtering entirely. For example:
 
     ```python
     from workflow_summary_db import WorkflowSummaryDB

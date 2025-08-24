@@ -6,7 +6,11 @@ This module persists short textual summaries for workflows in a shared
 ``workflow_summaries`` table. Records are tagged with the originating
 ``menace_id`` so multiple Menace instances can safely share the same
 storage. Read operations respect a ``scope`` parameter (``"local"`` by
-default) to control which menace IDs are visible.
+default) to control which menace IDs are visible:
+
+- ``"local"`` – only records created by the current menace
+- ``"global"`` – records from other Menace instances
+- ``"all"`` – no menace ID filtering
 
 Examples::
 
