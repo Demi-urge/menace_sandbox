@@ -12,6 +12,7 @@ can be serialised for telemetry logging.
 
 from typing import TYPE_CHECKING, Dict, List, Tuple
 import json
+from .db_scope import Scope
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
     from .roi_tracker import ROITracker
@@ -153,9 +154,12 @@ class ReadinessIndex:
         self,
         tracker: "ROITracker" | None = None,
         telemetry: "TelemetryBackend" | None = None,
+        *,
+        scope: Scope | str = "local",
     ) -> None:
         self.tracker = tracker
         self.telemetry = telemetry
+        self.scope = scope
         self.history: List[Dict[str, float]] = []
 
     # ------------------------------------------------------------------
@@ -189,7 +193,7 @@ class ReadinessIndex:
             return raroi, reliability, safety, resilience
 
         if self.telemetry is not None:
-            history = self.telemetry.fetch_history(workflow_id)
+            history = self.telemetry.fetch_history(workflow_id, scope=self.scope)
             if history:
                 last = history[-1]
                 raroi = float(last.get("actual") or 0.0)

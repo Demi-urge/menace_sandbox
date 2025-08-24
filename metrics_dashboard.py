@@ -3,9 +3,8 @@ from __future__ import annotations
 """Simple monitoring dashboard using Flask."""
 
 import logging
-import sqlite3
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, TYPE_CHECKING
 import json
 from io import BytesIO
 import queue
@@ -19,6 +18,11 @@ from flask import Flask, jsonify, send_file, request
 import sys
 from types import ModuleType
 
+from .telemetry_backend import TelemetryBackend, get_table_access_counts
+
+if TYPE_CHECKING:  # pragma: no cover - used for type checking only
+    from .roi_tracker import ROITracker
+
 try:  # pragma: no cover - allow running as script
     from .db_router import init_db_router  # type: ignore
 except Exception:  # pragma: no cover - fallback when executed directly
@@ -28,8 +32,6 @@ MENACE_ID = uuid.uuid4().hex
 LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
 SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
-
-from .telemetry_backend import TelemetryBackend, get_table_access_counts
 
 router = GLOBAL_ROUTER
 
@@ -230,7 +232,9 @@ class MetricsDashboard:
 
             flags = rr_flagged()
             impacts: dict[str, float] = {}
-            metrics_path = Path(__file__).resolve().parent / "sandbox_data" / "relevancy_metrics.json"
+            metrics_path = (
+                Path(__file__).resolve().parent / "sandbox_data" / "relevancy_metrics.json"
+            )
             try:
                 data = json.loads(metrics_path.read_text())
                 if isinstance(data, dict):
@@ -269,7 +273,8 @@ class MetricsDashboard:
         """Pull latest telemetry and readiness stats and notify listeners."""
         try:
             tb = TelemetryBackend()
-            history = tb.fetch_history()
+            scope = request.args.get("scope") or "local"
+            history = tb.fetch_history(scope=scope)
         except Exception:
             history = []
         readiness: dict[str, float] = {}
@@ -444,7 +449,8 @@ class MetricsDashboard:
         history: list[dict] = []
         try:
             tb = TelemetryBackend()
-            history = tb.fetch_history()
+            scope = request.args.get("scope") or "local"
+            history = tb.fetch_history(scope=scope)
         except Exception:
             history = []
 
@@ -542,11 +548,13 @@ class MetricsDashboard:
         scenario_name = request.args.get("scenario")
         start = request.args.get("start")
         end = request.args.get("end")
+        scope = request.args.get("scope") or "local"
         history = tb.fetch_history(
             workflow_id,
             scenario=scenario_name,
             start_ts=start,
             end_ts=end,
+            scope=scope,
         )
 
         labels: List[str] = []
@@ -610,7 +618,7 @@ class MetricsDashboard:
             for m in tracker.metrics_history
             if m.startswith("synergy_")
             and (
-                m[len("synergy_") :] not in base_metrics
+                m[len("synergy_"):] not in base_metrics
                 or m
                 in {
                     "synergy_profitability",
@@ -694,7 +702,8 @@ class MetricsDashboard:
 
         try:
             tb = TelemetryBackend()
-            history = tb.fetch_history()
+            scope = request.args.get("scope") or "local"
+            history = tb.fetch_history(scope=scope)
             values = [h["readiness"] for h in history if h.get("readiness") is not None]
         except Exception:
             values = []
@@ -740,7 +749,12 @@ class MetricsDashboard:
             thresh = mean_err + 2 * stdev_err
             outliers = [i for i, e in enumerate(errors) if e > thresh]
             if outliers:
-                ax_err.scatter(outliers, [errors[i] for i in outliers], color="red", label="outlier")
+                ax_err.scatter(
+                    outliers,
+                    [errors[i] for i in outliers],
+                    color="red",
+                    label="outlier",
+                )
                 for i in outliers:
                     ax_err.annotate(f"{errors[i]:.2f}", (i, errors[i]))
         ax_err.set_title("Prediction Error Over Time")
@@ -767,23 +781,49 @@ class MetricsDashboard:
         ax_conf.plot(confidences, label="confidence")
         for i, flag in enumerate(drift_flags[: len(confidences)]):
             if flag:
-                ax_conf.axvspan(i - 0.5, i + 0.5, color="orange", alpha=0.3, label="drift" if i == 0 else "")
+                ax_conf.axvspan(
+                    i - 0.5,
+                    i + 0.5,
+                    color="orange",
+                    alpha=0.3,
+                    label="drift" if i == 0 else "",
+                )
         decay_start = None
         for i in range(1, len(confidences)):
             if confidences[i] < confidences[i - 1]:
                 if decay_start is None:
                     decay_start = i - 1
             elif decay_start is not None:
-                ax_conf.axvspan(decay_start, i - 1, color="red", alpha=0.1, label="decay" if decay_start == 0 else "")
+                ax_conf.axvspan(
+                    decay_start,
+                    i - 1,
+                    color="red",
+                    alpha=0.1,
+                    label="decay" if decay_start == 0 else "",
+                )
                 decay_start = None
         if decay_start is not None and len(confidences) - 1 > decay_start:
-            ax_conf.axvspan(decay_start, len(confidences) - 1, color="red", alpha=0.1, label="decay" if decay_start == 0 else "")
+            ax_conf.axvspan(
+                decay_start,
+                len(confidences) - 1,
+                color="red",
+                alpha=0.1,
+                label="decay" if decay_start == 0 else "",
+            )
         if len(confidences) >= 2:
             mean_conf = statistics.mean(confidences)
             stdev_conf = statistics.stdev(confidences)
-            low_conf = [i for i, c in enumerate(confidences) if c < mean_conf - 2 * stdev_conf]
+            low_conf = [
+                i for i, c in enumerate(confidences) if c < mean_conf - 2 * stdev_conf
+            ]
             if low_conf:
-                ax_conf.scatter(low_conf, [confidences[i] for i in low_conf], color="red", marker="x", label="outlier")
+                ax_conf.scatter(
+                    low_conf,
+                    [confidences[i] for i in low_conf],
+                    color="red",
+                    marker="x",
+                    label="outlier",
+                )
         ax_conf.set_title("Confidence Scores Over Time")
         ax_conf.set_xlabel("Iteration")
         ax_conf.set_ylabel("Confidence")
