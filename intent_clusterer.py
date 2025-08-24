@@ -5,7 +5,9 @@ from __future__ import annotations
 import ast
 import io
 import logging
+import math
 import tokenize
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
@@ -14,6 +16,23 @@ from universal_retriever import UniversalRetriever
 from vector_utils import cosine_similarity
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class IntentMatch:
+    """Structured search result."""
+
+    path: str | None
+    similarity: float
+    cluster_ids: List[int]
+
+
+def _normalize(vec: Iterable[float]) -> List[float]:
+    """Return unit normalized copy of ``vec``."""
+
+    lst = list(vec)
+    norm = math.sqrt(sum(x * x for x in lst))
+    return [x / norm for x in lst] if norm else lst
 
 
 class IntentClusterer:
@@ -170,5 +189,68 @@ class IntentClusterer:
             hits, *_rest = self.retriever.retrieve(vector, top_k=top_k)
             return list(hits)
 
+    # ------------------------------------------------------------------
+    def query(
+        self,
+        query_text: str,
+        *,
+        include_clusters: bool = True,
+        threshold: float = 0.5,
+    ) -> List[IntentMatch]:
+        """Return ranked intent matches for ``query_text``.
 
-__all__ = ["IntentClusterer"]
+        The method embeds and normalises ``query_text`` before computing
+        cosine similarity with stored module vectors.  If no module level
+        matches meet ``threshold`` and ``include_clusters`` is ``True`` a
+        secondary pass over cluster summaries is performed.
+        """
+
+        vector = governed_embed(query_text)
+        if vector is None:
+            return []
+        qvec = _normalize(vector)
+
+        try:
+            search = getattr(self.retriever, "search")
+            candidates = list(search(qvec, top_k=20))
+        except AttributeError:
+            hits, *_rest = self.retriever.retrieve(qvec, top_k=20)
+            candidates = list(hits)
+
+        results: List[IntentMatch] = []
+        for cand in candidates:
+            meta = cand.get("metadata", cand)
+            cvec = cand.get("vector") or meta.get("vector")
+            if cvec is not None:
+                score = sum(x * y for x, y in zip(qvec, _normalize(cvec)))
+            else:
+                score = cand.get("score")
+            if score is None or score < threshold:
+                continue
+            path = meta.get("path")
+            cid = meta.get("cluster_id")
+            clusters = [cid] if include_clusters and cid is not None else []
+            results.append(IntentMatch(path=path, similarity=score, cluster_ids=clusters))
+
+        if results:
+            results.sort(key=lambda r: r.similarity, reverse=True)
+            return results
+
+        if include_clusters and self.cluster_map:
+            cluster_results: List[IntentMatch] = []
+            for cid in set(self.cluster_map.values()):
+                _text, cvec = self.get_cluster_intents(cid)
+                if not cvec:
+                    continue
+                score = sum(x * y for x, y in zip(qvec, _normalize(cvec)))
+                if score >= threshold:
+                    cluster_results.append(
+                        IntentMatch(path=None, similarity=score, cluster_ids=[cid])
+                    )
+            cluster_results.sort(key=lambda r: r.similarity, reverse=True)
+            return cluster_results
+
+        return []
+
+
+__all__ = ["IntentClusterer", "IntentMatch"]
