@@ -25,11 +25,12 @@ from .task_handoff_bot import WorkflowDB
 from .database_manager import DB_PATH, update_model, init_db
 from .prediction_manager_bot import PredictionManager
 from .unified_event_bus import UnifiedEventBus
-from .db_router import DBRouter, GLOBAL_ROUTER
+from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 try:  # pragma: no cover - optional dependency
     from .adaptive_roi_predictor import AdaptiveROIPredictor
 except Exception:  # pragma: no cover - predictor missing
     AdaptiveROIPredictor = None  # type: ignore
+
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ class PreExecutionROIBot:
         self,
         history: ROIHistoryDB | None = None,
         *,
-        router: DBRouter | None = GLOBAL_ROUTER,
+        router: DBRouter | None = None,
         models_db: Path | str = DB_PATH,
         workflows_db: Path | str = "workflows.db",
         enhancements_db: Path | str = "enhancements.db",
@@ -134,7 +135,7 @@ class PreExecutionROIBot:
         event_bus: UnifiedEventBus | None = None,
     ) -> None:
         self.history = history or ROIHistoryDB()
-        self.router = router or GLOBAL_ROUTER
+        self.router = router or GLOBAL_ROUTER or init_db_router("pre_execution_roi")
         self.models_db = Path(models_db)
         self.workflows_db = Path(workflows_db)
         self.enhancements_db = Path(enhancements_db)

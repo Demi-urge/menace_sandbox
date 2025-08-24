@@ -4,7 +4,6 @@ db_router.py
 failure_learning_system.py
 learning_engine.py
 operational_monitor_bot.py
-pre_execution_roi_bot.py
 sandbox_runner/environment.py
 scripts/check_sqlite_connections.py
 scripts/new_db.py
