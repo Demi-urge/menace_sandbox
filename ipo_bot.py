@@ -92,14 +92,21 @@ class BotDatabaseSearcher:
     def __init__(self, db_path: str = "models.db") -> None:
         self.db_path = db_path
 
-    def search(self, keywords: Iterable[str]) -> List[BotCandidate]:
+    def search(self, keywords: Iterable[str], menace_id: Optional[str] = None) -> List[BotCandidate]:
         router = GLOBAL_ROUTER or init_db_router("ipo_bot", shared_db_path=self.db_path)
-        menace_id = router.menace_id
+        menace_id = menace_id or router.menace_id
         conn = router.get_connection("bots")
         cur = conn.cursor()
         key = "%" + "%".join(keywords) + "%"
         cur.execute(
-            "CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, keywords TEXT, reuse INTEGER)"
+            (
+                "CREATE TABLE IF NOT EXISTS bots ("
+                "id INTEGER PRIMARY KEY, name TEXT, keywords TEXT, reuse INTEGER, "
+                "source_menace_id TEXT NOT NULL)"
+            )
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bots_source_menace_id ON bots(source_menace_id)"
         )
         cur.execute(
             "SELECT name, keywords, reuse FROM bots WHERE (name LIKE ? OR keywords LIKE ?) AND source_menace_id=?",
