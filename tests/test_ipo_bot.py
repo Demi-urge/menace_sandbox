@@ -2,7 +2,6 @@ import pytest
 from pathlib import Path
 
 from db_router import GLOBAL_ROUTER, init_db_router
-from db_scope import Scope
 import menace.ipo_bot as ipb
 
 
@@ -60,5 +59,5 @@ def test_generate_plan(tmp_path: Path):
 def test_search_scope(tmp_path: Path):
     db = make_db(tmp_path / "models.db")
     searcher = ipb.BotDatabaseSearcher(str(db))
-    results = searcher.search(["BotB"], Scope.LOCAL)
+    results = searcher.search(["BotB"], "local")
     assert results and results[0].name == "BotB"

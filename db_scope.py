@@ -18,10 +18,11 @@ class Scope(str, Enum):
 
 
 def build_scope_clause(
-    table_alias: str, scope: Scope, menace_id: str
+    table_alias: str, scope: Scope | str, menace_id: str
 ) -> Tuple[str, List[str]]:
     """Return SQL fragment and parameters enforcing ``scope`` for ``menace_id``."""
 
+    scope = Scope(scope)
     if scope is Scope.LOCAL:
         return f"WHERE {table_alias}.source_menace_id = ?", [menace_id]
     if scope is Scope.GLOBAL:

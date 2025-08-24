@@ -11,3 +11,13 @@ def test_build_scope_clause():
         ["1"],
     )
     assert build_scope_clause("t", Scope.ALL, "1") == ("", [])
+    # string inputs also supported
+    assert build_scope_clause("t", "local", "1") == (
+        "WHERE t.source_menace_id = ?",
+        ["1"],
+    )
+    assert build_scope_clause("t", "global", "1") == (
+        "WHERE t.source_menace_id != ?",
+        ["1"],
+    )
+    assert build_scope_clause("t", "all", "1") == ("", [])

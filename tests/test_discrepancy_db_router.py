@@ -2,7 +2,6 @@ import sys
 import types
 
 import pytest
-from db_scope import Scope
 
 # Stub vector_service to avoid heavy model loading
 
@@ -42,10 +41,10 @@ def test_discrepancy_db_scope(tmp_path):
         db2 = DiscrepancyDB(router=router2, vector_index_path=tmp_path / "i2.index")
         rec = DiscrepancyRecord(message="oops")
         rid = db1.add(rec)
-        fetched = db2.get(rid, scope=Scope.ALL)
+        fetched = db2.get(rid, scope="all")
         assert fetched and fetched.message == "oops"
-        assert db2.get(rid, scope=Scope.GLOBAL)
-        assert db2.get(rid, scope=Scope.LOCAL) is None
+        assert db2.get(rid, scope="global")
+        assert db2.get(rid, scope="local") is None
     finally:
         router1.close()
         router2.close()
