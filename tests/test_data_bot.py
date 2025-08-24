@@ -83,3 +83,15 @@ def test_collect_additional_fields(tmp_path):
         "flexibility",
         "projected_lucrativity",
     }.issubset(df.columns)
+
+
+def test_fetch_eval_scope(tmp_path):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    mdb.log_eval("c", "m", 1.0)
+    mdb.log_eval("c", "m", 2.0, source_menace_id="other")
+    local = mdb.fetch_eval("c")
+    assert len(local) == 1 and local[0][2] == 1.0
+    remote = mdb.fetch_eval("c", scope="global")
+    assert len(remote) == 1 and remote[0][2] == 2.0
+    all_rows = mdb.fetch_eval("c", scope="all")
+    assert len(all_rows) == 2
