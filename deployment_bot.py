@@ -166,41 +166,19 @@ class DeploymentDB:
             except Exception as exc:
                 _log_exception(self.logger, "publish errors:new", exc)
 
-    def errors_for(
-        self,
-        deploy_id: int,
-        source_menace_id: str | None = None,
-        include_cross_instance: bool = False,
-    ) -> List[int]:
+    def errors_for(self, deploy_id: int) -> List[int]:
         """Return IDs of errors logged for a deployment.
 
-        Parameters
-        ----------
-        deploy_id:
-            Deployment identifier.
-        source_menace_id:
-            Optional menace instance ID to filter by. If not provided, the
-            active menace ID from the router (or ``MENACE_ID`` env var) is
-            used.
-        include_cross_instance:
-            When ``True``, return errors across all menace instances. When
-            ``False`` (default), results are filtered to the active menace
-            instance.
+        Errors are filtered to the active menace instance based on the menace
+        ID provided by the database router or the ``MENACE_ID`` environment
+        variable.
         """
         conn = self.router.get_connection("errors")
-        query = "SELECT id FROM errors WHERE deploy_id=?"
-        params: list[Any] = [deploy_id]
-
-        if not include_cross_instance:
-            menace_id = (
-                source_menace_id
-                if source_menace_id is not None
-                else (self.router.menace_id if self.router else os.getenv("MENACE_ID", ""))
-            )
-            query += " AND source_menace_id=?"
-            params.append(menace_id)
-
-        rows = conn.execute(query, params).fetchall()
+        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        rows = conn.execute(
+            "SELECT id FROM errors WHERE deploy_id=? AND source_menace_id=?",
+            (deploy_id, menace_id),
+        ).fetchall()
         return [r[0] for r in rows]
 
     def get(self, deploy_id: int) -> Dict[str, Any]:
