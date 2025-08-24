@@ -54,8 +54,16 @@ class IntentClusterer:
     def _collect_intent(self, module_path: Path) -> tuple[str, Dict[str, Any]]:
         """Return intent text and metadata for ``module_path``."""
 
-        source = module_path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        try:
+            with tokenize.open(module_path) as fh:
+                source = fh.read()
+        except OSError:
+            return "", {"path": str(module_path), "names": []}
+
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return "", {"path": str(module_path), "names": []}
 
         docstrings: List[str] = []
         names: List[str] = []
@@ -64,19 +72,54 @@ class IntentClusterer:
         if mod_doc:
             docstrings.append(mod_doc)
 
+        # collect comment-only lines and track code lines
+        comment_map: dict[int, list[str]] = {}
+        code_lines: set[int] = set()
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+            toknum, tokval, start, _end, _line = tok
+            lineno = start[0]
+            if toknum == tokenize.COMMENT:
+                if lineno not in code_lines:
+                    text = tokval.lstrip("#").strip()
+                    if "coding:" in text:
+                        continue
+                    if text:
+                        comment_map.setdefault(lineno, []).append(text)
+            elif toknum not in {
+                tokenize.NL,
+                tokenize.NEWLINE,
+                tokenize.INDENT,
+                tokenize.DEDENT,
+                tokenize.ENDMARKER,
+                tokenize.ENCODING,
+            }:
+                code_lines.add(lineno)
+
+        comments: List[str] = []
+        lines = source.splitlines()
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 names.append(node.name)
                 doc = ast.get_docstring(node)
                 if doc:
                     docstrings.append(doc)
-
-        comments: List[str] = []
-        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
-            if tok.type == tokenize.COMMENT:
-                comment = tok.string.lstrip("#").strip()
-                if comment:
-                    comments.append(comment)
+                # gather preceding comment-only lines
+                collected: List[str] = []
+                line = node.lineno - 1
+                while line > 0:
+                    if line in code_lines:
+                        break
+                    if line in comment_map:
+                        parts = [" ".join(c.split()) for c in comment_map[line]]
+                        collected.insert(0, " ".join(parts))
+                        line -= 1
+                        continue
+                    if lines[line - 1].strip() == "":
+                        line -= 1
+                        continue
+                    break
+                if collected:
+                    comments.append(" ".join(collected).strip())
 
         intent_text = "\n".join(docstrings + names + comments)
         metadata = {
