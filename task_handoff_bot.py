@@ -15,6 +15,7 @@ from .unified_event_bus import UnifiedEventBus
 from .workflow_graph import WorkflowGraph
 from vector_service import EmbeddableDBMixin
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from db_dedup import insert_if_unique
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -292,37 +293,54 @@ class WorkflowDB(EmbeddableDBMixin):
 
     # --------------------------------------------------------------
     # insert/fetch
-    def add(self, wf: WorkflowRecord) -> int:
-        cur = self.conn.execute(
-            """
-            INSERT INTO workflows(
-                workflow, action_chains, argument_strings, assigned_bots, enhancements, title, description,
-                task_sequence, tags, category, type, status,
-                rejection_reason, workflow_duration, performance_data, estimated_profit_per_bot, timestamp
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                ",".join(wf.workflow),
-                ",".join(wf.action_chains),
-                ",".join(wf.argument_strings),
-                ",".join(wf.assigned_bots),
-                ",".join(wf.enhancements),
-                wf.title,
-                wf.description,
-                ",".join(wf.task_sequence),
-                ",".join(wf.tags),
-                wf.category,
-                wf.type_,
-                wf.status,
-                wf.rejection_reason,
-                wf.workflow_duration,
-                wf.performance_data,
-                wf.estimated_profit_per_bot,
-                wf.timestamp,
-            ),
+    def add(self, wf: WorkflowRecord, source_menace_id: str = "") -> int:
+        values = {
+            "workflow": ",".join(wf.workflow),
+            "action_chains": ",".join(wf.action_chains),
+            "argument_strings": ",".join(wf.argument_strings),
+            "assigned_bots": ",".join(wf.assigned_bots),
+            "enhancements": ",".join(wf.enhancements),
+            "title": wf.title,
+            "description": wf.description,
+            "task_sequence": ",".join(wf.task_sequence),
+            "tags": ",".join(wf.tags),
+            "category": wf.category,
+            "type": wf.type_,
+            "status": wf.status,
+            "rejection_reason": wf.rejection_reason,
+            "workflow_duration": wf.workflow_duration,
+            "performance_data": wf.performance_data,
+            "estimated_profit_per_bot": wf.estimated_profit_per_bot,
+            "timestamp": wf.timestamp,
+        }
+        hash_fields = [
+            "workflow",
+            "action_chains",
+            "argument_strings",
+            "title",
+            "description",
+            "task_sequence",
+        ]
+        inserted = insert_if_unique(
+            "workflows",
+            values,
+            hash_fields,
+            source_menace_id,
+            self.router,
         )
-        self.conn.commit()
-        wf.wid = cur.lastrowid
+        cur = self.conn.execute(
+            "SELECT id FROM workflows WHERE content_hash=?",
+            (values["content_hash"],),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise RuntimeError("failed to retrieve workflow id")
+        wf.wid = int(row["id"])
+        if not inserted:
+            logger.warning(
+                "duplicate workflow detected; skipping embedding generation"
+            )
+            return wf.wid
 
         try:
             self.add_embedding(wf.wid, wf, "workflow", source_id=str(wf.wid))
