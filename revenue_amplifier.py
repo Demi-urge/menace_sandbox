@@ -1,3 +1,4 @@
+# flake8: noqa
 """Revenue Signal Amplifier and tracking components."""
 
 from __future__ import annotations
@@ -8,11 +9,12 @@ from dataclasses import dataclass
 import dataclasses
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import Any, List, Tuple, Optional
 
 from .unified_event_bus import UnifiedEventBus
 from .retry_utils import publish_with_retry
 from .db_router import GLOBAL_ROUTER, init_db_router
+from .scope_utils import Scope, build_scope_clause
 
 router = GLOBAL_ROUTER or init_db_router("revenue_amplifier")
 
@@ -142,6 +144,7 @@ class ChurnDB:
             """
             CREATE TABLE IF NOT EXISTS churn(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_menace_id TEXT NOT NULL,
                 model_id TEXT,
                 user_id TEXT,
                 reason TEXT,
@@ -149,25 +152,52 @@ class ChurnDB:
             )
             """
         )
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(churn)")]
+        if "source_menace_id" not in cols:
+            self.conn.execute(
+                "ALTER TABLE churn ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
+            )
+            self.conn.execute(
+                "UPDATE churn SET source_menace_id=? WHERE source_menace_id=''",
+                (router.menace_id,),
+            )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_churn_source_menace_id ON churn(source_menace_id)"
+        )
         self.conn.commit()
 
-    def add(self, ev: ChurnEvent) -> int:
+    def add(self, ev: ChurnEvent, *, source_menace_id: str | None = None) -> int:
+        menace_id = source_menace_id or router.menace_id
         cur = self.conn.execute(
-            "INSERT INTO churn(model_id, user_id, reason, ts) VALUES(?,?,?,?)",
-            (ev.model_id, ev.user_id, ev.reason, ev.ts),
+            "INSERT INTO churn(source_menace_id, model_id, user_id, reason, ts) VALUES(?,?,?,?,?)",
+            (menace_id, ev.model_id, ev.user_id, ev.reason, ev.ts),
         )
         self.conn.commit()
         cid = int(cur.lastrowid)
         if self.event_bus:
-            if not publish_with_retry(self.event_bus, "churn:new", dataclasses.asdict(ev) | {"id": cid}):
+            payload = dataclasses.asdict(ev) | {"id": cid, "source_menace_id": menace_id}
+            if not publish_with_retry(self.event_bus, "churn:new", payload):
                 logger.exception("failed to publish churn:new event")
         return cid
 
-    def fetch_recent(self, model_id: str, limit: int = 20) -> List[Tuple[str, str, str, str]]:
-        cur = self.conn.execute(
-            "SELECT model_id, user_id, reason, ts FROM churn WHERE model_id=? ORDER BY id DESC LIMIT ?",
-            (model_id, limit),
-        )
+    def fetch_recent(
+        self,
+        model_id: str,
+        limit: int = 20,
+        *,
+        scope: Scope | str = Scope.ALL,
+        source_menace_id: Any | None = None,
+    ) -> List[Tuple[str, str, str, str]]:
+        menace_id = source_menace_id or router.menace_id
+        clause, params = build_scope_clause("churn", scope, menace_id)
+        sql = "SELECT model_id, user_id, reason, ts FROM churn WHERE model_id=?"
+        query_params: list[Any] = [model_id]
+        if clause:
+            sql += f" AND {clause}"
+            query_params.extend(params)
+        sql += " ORDER BY id DESC LIMIT ?"
+        query_params.append(limit)
+        cur = self.conn.execute(sql, query_params)
         return cur.fetchall()
 
 class LeadDB:
