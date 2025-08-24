@@ -7,13 +7,18 @@ initialises the router with the identifier ``"synergy_history_db"``.
 import json
 import sqlite3
 from pathlib import Path
-from typing import Dict, Iterator, List, Tuple
+from typing import Dict, Iterator, List, Tuple, Literal
 from contextlib import contextmanager
 import logging
 from filelock import FileLock
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from . import RAISE_ERRORS
+
+try:  # pragma: no cover - package context
+    from .scope_utils import Scope, build_scope_clause, apply_scope
+except Exception:  # pragma: no cover - fallback for script usage
+    from scope_utils import Scope, build_scope_clause, apply_scope  # type: ignore
 
 router = GLOBAL_ROUTER or init_db_router("synergy_history_db")
 
@@ -23,14 +28,20 @@ logger = logging.getLogger(__name__)
 class HistoryParseError(RuntimeError):
     """Raised when synergy history parsing fails."""
 
+
 CREATE_TABLE = (
     "CREATE TABLE IF NOT EXISTS synergy_history ("
     "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    " source_menace_id TEXT NOT NULL,"
     " entry TEXT NOT NULL)"
 )
 
 
-def connect(path: str | Path | None = None, *, router: DBRouter | None = None) -> sqlite3.Connection:
+def connect(
+    path: str | Path | None = None,
+    *,
+    router: DBRouter | None = None,
+) -> sqlite3.Connection:
     """Return a connection to the synergy history database.
 
     When ``path`` is provided a temporary router pointing at that file is
@@ -50,12 +61,31 @@ def connect(path: str | Path | None = None, *, router: DBRouter | None = None) -
     conn = r.get_connection("synergy_history")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(CREATE_TABLE)
+    cols = [
+        row[1]
+        for row in conn.execute("PRAGMA table_info(synergy_history)").fetchall()
+    ]
+    if "source_menace_id" not in cols:
+        conn.execute(
+            "ALTER TABLE synergy_history ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
+        )
+        conn.execute(
+            "UPDATE synergy_history SET source_menace_id='' WHERE source_menace_id IS NULL"
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_synergy_history_source_menace_id "
+        "ON synergy_history(source_menace_id)"
+    )
     conn.commit()
     return conn
 
 
 @contextmanager
-def connect_locked(path: str | Path | None = None, *, router: DBRouter | None = None) -> Iterator[sqlite3.Connection]:
+def connect_locked(
+    path: str | Path | None = None,
+    *,
+    router: DBRouter | None = None,
+) -> Iterator[sqlite3.Connection]:
     """Yield a connection with an exclusive lock on the database file."""
 
     if path is not None:
@@ -70,7 +100,11 @@ def connect_locked(path: str | Path | None = None, *, router: DBRouter | None = 
         yield conn
 
 
-def load_history(path: str | Path | None = None, *, router: DBRouter | None = None) -> List[Dict[str, float]]:
+def load_history(
+    path: str | Path | None = None,
+    *,
+    router: DBRouter | None = None,
+) -> List[Dict[str, float]]:
     """Return synergy history entries from the SQLite database."""
     if path is not None and not Path(path).exists():
         return []
@@ -97,28 +131,37 @@ def load_history(path: str | Path | None = None, *, router: DBRouter | None = No
         return []
 
 
-def insert_entry(conn: sqlite3.Connection, entry: Dict[str, float]) -> None:
+def insert_entry(
+    conn: sqlite3.Connection, entry: Dict[str, float], *, source_menace_id: str | None = None
+) -> None:
+    menace_id = source_menace_id or getattr(globals().get("router"), "menace_id", "")
     path = None
     try:
         path = conn.execute("PRAGMA database_list").fetchone()[2]
     except Exception:
         pass
+    sql = "INSERT INTO synergy_history(source_menace_id, entry) VALUES (?, ?)"
+    params = (menace_id, json.dumps(entry))
     if path:
         lock = FileLock(str(path) + ".lock")
         with lock:
-            conn.execute(
-                "INSERT INTO synergy_history(entry) VALUES (?)", (json.dumps(entry),)
-            )
+            conn.execute(sql, params)
             conn.commit()
     else:
-        conn.execute(
-            "INSERT INTO synergy_history(entry) VALUES (?)", (json.dumps(entry),)
-        )
+        conn.execute(sql, params)
         conn.commit()
 
 
-def fetch_all(conn: sqlite3.Connection) -> List[Dict[str, float]]:
-    rows = conn.execute("SELECT entry FROM synergy_history ORDER BY id").fetchall()
+def fetch_all(
+    conn: sqlite3.Connection,
+    *,
+    scope: Literal["local", "global", "all"] = "local",
+    source_menace_id: str | None = None,
+) -> List[Dict[str, float]]:
+    menace_id = source_menace_id or getattr(globals().get("router"), "menace_id", "")
+    clause, params = build_scope_clause("synergy_history", Scope(scope), menace_id)
+    query = apply_scope("SELECT entry FROM synergy_history", clause) + " ORDER BY id"
+    rows = conn.execute(query, params).fetchall()
     out: List[Dict[str, float]] = []
     for (text,) in rows:
         try:
@@ -130,12 +173,21 @@ def fetch_all(conn: sqlite3.Connection) -> List[Dict[str, float]]:
     return out
 
 
-def fetch_after(conn: sqlite3.Connection, last_id: int) -> List[Tuple[int, Dict[str, float]]]:
+def fetch_after(
+    conn: sqlite3.Connection,
+    last_id: int,
+    *,
+    scope: Literal["local", "global", "all"] = "local",
+    source_menace_id: str | None = None,
+) -> List[Tuple[int, Dict[str, float]]]:
     """Return entries with ``id`` greater than ``last_id``."""
-    rows = conn.execute(
-        "SELECT id, entry FROM synergy_history WHERE id > ? ORDER BY id",
-        (int(last_id),),
-    ).fetchall()
+    menace_id = source_menace_id or getattr(globals().get("router"), "menace_id", "")
+    clause, scope_params = build_scope_clause("synergy_history", Scope(scope), menace_id)
+    query = apply_scope(
+        "SELECT id, entry FROM synergy_history WHERE id > ?", clause
+    ) + " ORDER BY id"
+    params = [int(last_id), *scope_params]
+    rows = conn.execute(query, params).fetchall()
     out: List[Tuple[int, Dict[str, float]]] = []
     for row_id, text in rows:
         try:
@@ -151,10 +203,16 @@ def fetch_after(conn: sqlite3.Connection, last_id: int) -> List[Tuple[int, Dict[
     return out
 
 
-def fetch_latest(conn: sqlite3.Connection) -> Dict[str, float]:
-    row = conn.execute(
-        "SELECT entry FROM synergy_history ORDER BY id DESC LIMIT 1"
-    ).fetchone()
+def fetch_latest(
+    conn: sqlite3.Connection,
+    *,
+    scope: Literal["local", "global", "all"] = "local",
+    source_menace_id: str | None = None,
+) -> Dict[str, float]:
+    menace_id = source_menace_id or getattr(globals().get("router"), "menace_id", "")
+    clause, params = build_scope_clause("synergy_history", Scope(scope), menace_id)
+    query = apply_scope("SELECT entry FROM synergy_history", clause) + " ORDER BY id DESC LIMIT 1"
+    row = conn.execute(query, params).fetchone()
     if not row:
         return {}
     try:
@@ -187,10 +245,15 @@ def migrate_json_to_db(json_path: str | Path, db_path: str | Path | None = None)
             insert_entry(conn, {str(k): float(v) for k, v in entry.items()})
 
 
-def record(entry: Dict[str, float], path: str | Path | None = None) -> None:
+def record(
+    entry: Dict[str, float],
+    path: str | Path | None = None,
+    *,
+    source_menace_id: str | None = None,
+) -> None:
     """Append ``entry`` to the history database."""
     conn = connect(path)
-    insert_entry(conn, entry)
+    insert_entry(conn, entry, source_menace_id=source_menace_id)
 
 
 __all__ = [
