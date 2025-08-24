@@ -32,8 +32,8 @@ def test_embedding_workflow(tmp_path, backend):
     assert res1 and res1[0]["summary"] == "alpha"
 
     db.conn.execute(
-        "INSERT INTO information(data_type, summary, keywords) VALUES (?,?,?)",
-        ("news", "beta", ""),
+        "INSERT INTO information(data_type, summary, keywords, source_menace_id) VALUES (?,?,?,?)",
+        ("news", "beta", "", db.router.menace_id),
     )
     db.conn.commit()
     new_id = db.conn.execute("SELECT info_id FROM information WHERE summary='beta'").fetchone()[0]
