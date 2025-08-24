@@ -46,6 +46,7 @@ from .evaluation_manager import EvaluationManager
 from .roi_tracker import ROITracker
 from .telemetry_backend import TelemetryBackend
 from .violation_logger import load_persisted_alignment_warnings
+from .db_scope import Scope
 
 GOVERNANCE_LOG = Path("sandbox_data/governance_outcomes.jsonl")
 
@@ -191,7 +192,7 @@ class EvaluationDashboard:
 
         total = len(tracker.predicted_roi)
         preds = tracker.predicted_roi[-window:] if window else tracker.predicted_roi
-        acts = tracker.actual_roi[-len(preds) :]
+        acts = tracker.actual_roi[-len(preds):]
         start = total - len(preds)
         labels = list(range(start, start + len(preds)))
         return {"labels": labels, "predicted": preds, "actual": acts}
@@ -255,6 +256,8 @@ class EvaluationDashboard:
         telemetry: TelemetryBackend,
         workflow_id: str | None = None,
         window: int | None = None,
+        *,
+        scope: Scope | str = "local",
     ) -> Dict[str, Any]:
         """Return readiness index values over time.
 
@@ -273,7 +276,7 @@ class EvaluationDashboard:
             Dictionary with ``labels`` (timestamps) and ``readiness`` values.
         """
 
-        history = telemetry.fetch_history(workflow_id)
+        history = telemetry.fetch_history(workflow_id, scope=scope)
         records = [rec for rec in history if rec.get("readiness") is not None]
         if window is not None:
             records = records[-window:]
@@ -283,11 +286,15 @@ class EvaluationDashboard:
 
     # ------------------------------------------------------------------
     def readiness_distribution_panel(
-        self, telemetry: TelemetryBackend, workflow_id: str | None = None
+        self,
+        telemetry: TelemetryBackend,
+        workflow_id: str | None = None,
+        *,
+        scope: Scope | str = "local",
     ) -> Dict[str, List[float]]:
         """Return distributions for readiness and prediction errors."""
 
-        history = telemetry.fetch_history(workflow_id)
+        history = telemetry.fetch_history(workflow_id, scope=scope)
         readiness = [
             float(rec["readiness"])
             for rec in history
@@ -311,9 +318,9 @@ class EvaluationDashboard:
         if window is not None:
             instability = instability[-window:]
         if len(instability) > len(drift_flags):
-            instability = instability[-len(drift_flags) :]
+            instability = instability[-len(drift_flags):]
         elif len(drift_flags) > len(instability):
-            drift_flags = drift_flags[-len(instability) :]
+            drift_flags = drift_flags[-len(instability):]
         labels = list(range(len(drift_flags)))
         return {
             "labels": labels,
@@ -414,6 +421,7 @@ def refresh_dashboard(
     *,
     history: str = "roi_history.json",
     telemetry_db: str = "telemetry.db",
+    scope: Scope | str = "local",
 ) -> Path:
     """Rebuild dashboard data and persist to ``output``.
 
@@ -429,8 +437,8 @@ def refresh_dashboard(
     telemetry = TelemetryBackend(telemetry_db)
     dash = EvaluationDashboard(EvaluationManager())
     data = {
-        "readiness_over_time": dash.readiness_chart(telemetry),
-        "readiness_distribution": dash.readiness_distribution_panel(telemetry),
+        "readiness_over_time": dash.readiness_chart(telemetry, scope=scope),
+        "readiness_distribution": dash.readiness_distribution_panel(telemetry, scope=scope),
         "drift_instability": dash.drift_instability_panel(tracker),
     }
     out = Path(output)
@@ -445,9 +453,13 @@ def main() -> None:  # pragma: no cover - CLI hook
     parser.add_argument("--output", default="evaluation_dashboard.json")
     parser.add_argument("--history", default="roi_history.json")
     parser.add_argument("--telemetry", default="telemetry.db")
+    parser.add_argument("--scope", default="local")
     args = parser.parse_args()
     path = refresh_dashboard(
-        args.output, history=args.history, telemetry_db=args.telemetry
+        args.output,
+        history=args.history,
+        telemetry_db=args.telemetry,
+        scope=args.scope,
     )
     print(f"dashboard refreshed: {path}")
 
