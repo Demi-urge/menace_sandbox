@@ -69,6 +69,27 @@ service = Service(router=DB_ROUTER)  # or rely on GLOBAL_ROUTER
 Passing `DB_ROUTER` to components is optional; modules can also access
 `GLOBAL_ROUTER` directly when explicit dependency injection is unnecessary.
 
+## Scope filtering
+
+Queries against shared tables accept a ``scope`` argument to control cross-
+instance visibility. The parameter accepts:
+
+- ``"local"`` – only records created by the current menace
+- ``"global"`` – records from other menace instances
+- ``"all"`` – no menace ID filtering
+
+```python
+from workflow_summary_db import WorkflowSummaryDB
+
+db = WorkflowSummaryDB()
+db.get_summary(1, scope="local")   # current menace only
+db.get_summary(1, scope="global")  # other menace instances
+db.get_summary(1, scope="all")     # all records
+```
+
+This ``scope`` parameter replaces the older ``include_cross_instance`` and
+``all_instances`` flags.
+
 ## Shared vs. local tables
 
 Tables listed in `SHARED_TABLES` are written to the shared database while

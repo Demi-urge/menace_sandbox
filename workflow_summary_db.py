@@ -7,6 +7,16 @@ This module persists short textual summaries for workflows in a shared
 ``menace_id`` so multiple Menace instances can safely share the same
 storage. Read operations respect a ``scope`` parameter (``"local"`` by
 default) to control which menace IDs are visible.
+
+Examples::
+
+    db = WorkflowSummaryDB()
+    db.get_summary(1, scope="local")   # current menace only
+    db.get_summary(1, scope="global")  # summaries from other menaces
+    db.all_summaries(scope="all")      # no menace filtering
+
+The ``scope`` parameter replaces the deprecated ``include_cross_instance`` and
+``all_instances`` flags.
 """
 
 from dataclasses import dataclass

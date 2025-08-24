@@ -1,6 +1,23 @@
 from __future__ import annotations
 
-"""Helpers for constructing menace scope-aware SQL clauses."""
+"""Helpers for constructing menace scope-aware SQL clauses.
+
+The :class:`Scope` enum defines three visibility levels for cross-instance
+queries:
+
+- ``"local"`` – records created by the current menace
+- ``"global"`` – records from other menace instances
+- ``"all"`` – no menace ID filtering
+
+Use :func:`build_scope_clause` to generate a ``WHERE`` fragment enforcing the
+selected scope::
+
+    >>> build_scope_clause("bots", Scope.LOCAL, "alpha")
+    ('WHERE bots.source_menace_id = ?', ['alpha'])
+
+This replaces the deprecated ``include_cross_instance`` and ``all_instances``
+flags with a single ``scope`` parameter.
+"""
 
 from enum import Enum
 from typing import List, Tuple
@@ -31,4 +48,3 @@ def build_scope_clause(
 
 
 __all__ = ["Scope", "build_scope_clause"]
-
