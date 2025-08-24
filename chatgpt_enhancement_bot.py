@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable, List, Optional, Iterator, Sequence, Literal
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from db_dedup import insert_if_unique
 from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
@@ -293,44 +294,50 @@ class EnhancementDB(EmbeddableDBMixin):
         assigned = ",".join(enh.assigned_bots)
         assoc = ",".join(enh.associated_bots)
         menace_id = self._current_menace_id(None)
+        values = {
+            "source_menace_id": menace_id,
+            "idea": enh.idea,
+            "rationale": enh.rationale,
+            "summary": enh.summary,
+            "score": enh.score,
+            "timestamp": enh.timestamp,
+            "context": enh.context,
+            "before_code": enh.before_code,
+            "after_code": enh.after_code,
+            "title": enh.title,
+            "description": enh.description,
+            "tags": tags,
+            "type": enh.type_,
+            "assigned_bots": assigned,
+            "rejection_reason": enh.rejection_reason,
+            "cost_estimate": enh.cost_estimate,
+            "category": enh.category,
+            "associated_bots": assoc,
+            "triggered_by": enh.triggered_by,
+        }
+        inserted = insert_if_unique(
+            "enhancements",
+            values,
+            [
+                "idea",
+                "rationale",
+                "summary",
+                "before_code",
+                "after_code",
+                "description",
+            ],
+            self.router.menace_id if self.router else "",
+            self.router,
+        )
+        if not inserted:
+            logger.warning("duplicate enhancement detected; skipping embedding generation")
+            return -1
         try:
-            with self._connect() as conn:
-                cur = conn.execute(
-                    """
-                    INSERT INTO enhancements(
-                        source_menace_id,
-                        idea, rationale, summary, score, timestamp, context,
-                        before_code, after_code, title, description, tags, type, assigned_bots,
-                        rejection_reason, cost_estimate, category, associated_bots,
-                        triggered_by
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        menace_id,
-                        enh.idea,
-                        enh.rationale,
-                        enh.summary,
-                        enh.score,
-                        enh.timestamp,
-                        enh.context,
-                        enh.before_code,
-                        enh.after_code,
-                        enh.title,
-                        enh.description,
-                        tags,
-                        enh.type_,
-                        assigned,
-                        enh.rejection_reason,
-                        enh.cost_estimate,
-                        enh.category,
-                        assoc,
-                        enh.triggered_by,
-                    ),
-                )
-                conn.commit()
-                enh_id = int(cur.lastrowid)
+            enh_id = int(
+                self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            )
         except sqlite3.Error as exc:
-            logger.exception("failed to add enhancement: %s", exc)
+            logger.exception("failed to retrieve enhancement id: %s", exc)
             if RAISE_ERRORS:
                 raise
             return -1
