@@ -41,6 +41,7 @@ from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from vector_service import EmbeddableDBMixin
 from .scope_utils import build_scope_clause, Scope, apply_scope
+from db_dedup import insert_if_unique
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager
@@ -494,46 +495,43 @@ class ErrorDB(EmbeddableDBMixin):
     ) -> int:
         """Insert a new error if not already present and return its id."""
         menace_id = self._menace_id(source_menace_id)
-        found = self.find_error(message, source_menace_id=menace_id, scope=scope)
-        if found is not None:
+        values = {
+            "source_menace_id": menace_id,
+            "message": message,
+            "type": type_,
+            "description": description or message,
+            "resolution": resolution,
+            "ts": datetime.utcnow().isoformat(),
+        }
+        hash_fields = ["message", "type", "description", "resolution"]
+        inserted = insert_if_unique("errors", values, hash_fields, menace_id, self.router)
+        cur = self.conn.execute(
+            "SELECT id FROM errors WHERE content_hash=?",
+            (values["content_hash"],),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise RuntimeError("failed to retrieve error id")
+        err_id = int(row["id"])
+        if inserted:
             try:
                 self.add_embedding(
-                    found, {"message": message}, kind="error", source_id=str(found)
+                    err_id, {"message": message}, kind="error", source_id=str(err_id)
                 )
             except Exception as exc:  # pragma: no cover - best effort
-                logger.exception("embedding hook failed for %s: %s", found, exc)
-            return found
-        cur = self.conn.execute(
-            "INSERT INTO errors(source_menace_id, message, type, description, resolution, ts) VALUES (?,?,?,?,?,?)",
-            (
-                menace_id,
-                message,
-                type_,
-                description or message,
-                resolution,
-                datetime.utcnow().isoformat(),
-            ),
-        )
-        self.conn.commit()
-        err_id = int(cur.lastrowid)
-        try:
-            self.add_embedding(
-                err_id, {"message": message}, kind="error", source_id=str(err_id)
+                logger.exception("embedding hook failed for %s: %s", err_id, exc)
+            self._publish(
+                "errors:new",
+                {
+                    "id": err_id,
+                    "message": message,
+                    "type": type_,
+                    "description": description or message,
+                    "resolution": resolution,
+                    "source_menace_id": menace_id,
+                },
             )
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.exception("embedding hook failed for %s: %s", err_id, exc)
-        self._publish(
-            "errors:new",
-            {
-                "id": err_id,
-                "message": message,
-                "type": type_,
-                "description": description or message,
-                "resolution": resolution,
-                "source_menace_id": menace_id,
-            },
-        )
-        self._publish("embedding:backfill", {"db": self.__class__.__name__})
+            self._publish("embedding:backfill", {"db": self.__class__.__name__})
         return err_id
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
