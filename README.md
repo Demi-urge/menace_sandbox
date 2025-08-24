@@ -1695,7 +1695,7 @@ python module_synergy_grapher.py cluster <module> --threshold 0.8
 Use `--out` to choose an output file when building, `--path` to point at an
 existing graph when querying and `--threshold` to control cluster expansion.
 The `ModuleSynergyGrapher` constructor accepts a `coefficients` mapping to tune
-how `import`, `structure`, `workflow` and `semantic` signals contribute to edge
+how `import`, `structure` and `cooccurrence` signals contribute to edge
 weights.
 
 ## Vector Analytics
