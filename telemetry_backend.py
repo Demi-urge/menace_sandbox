@@ -1,4 +1,9 @@
-"""Simple telemetry backend for ROI predictions and drift metrics."""
+"""Simple telemetry backend for ROI predictions and drift metrics.
+
+Most fetch helpers accept a ``scope`` argument controlling menace visibility:
+``"local"`` returns only records from the current menace, ``"global"`` exposes
+entries from other menaces and ``"all"`` disables filtering entirely.
+"""
 
 from __future__ import annotations
 
@@ -109,18 +114,23 @@ class TelemetryBackend:
                         scenario_deltas TEXT,
                         drift_flag INTEGER,
                         readiness REAL,
-                        ts DATETIME DEFAULT CURRENT_TIMESTAMP
+                        ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        source_menace_id TEXT NOT NULL
                     )
                     """
                 )
             for stmt in (
                 "ALTER TABLE roi_telemetry ADD COLUMN readiness REAL",
                 "ALTER TABLE roi_telemetry ADD COLUMN scenario TEXT",
+                "ALTER TABLE roi_telemetry ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''",
             ):
                 try:
                     conn.execute(stmt)
                 except sqlite3.OperationalError:
                     pass
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_roi_telemetry_source_menace_id ON roi_telemetry(source_menace_id)"
+            )
 
     # ------------------------------------------------------------------
     def log_prediction(
@@ -148,15 +158,16 @@ class TelemetryBackend:
                 json.dumps(scenario_deltas or {}),
                 int(bool(drift_flag)),
                 None if readiness is None else float(readiness),
+                self.router.menace_id,
             )
             if ts is None:
                 conn.execute(
-                    "INSERT INTO roi_telemetry (workflow_id, predicted, actual, confidence, scenario, scenario_deltas, drift_flag, readiness) VALUES (?,?,?,?,?,?,?,?)",
+                    "INSERT INTO roi_telemetry (workflow_id, predicted, actual, confidence, scenario, scenario_deltas, drift_flag, readiness, source_menace_id) VALUES (?,?,?,?,?,?,?,?,?)",
                     params,
                 )
             else:
                 conn.execute(
-                    "INSERT INTO roi_telemetry (workflow_id, predicted, actual, confidence, scenario, scenario_deltas, drift_flag, readiness, ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO roi_telemetry (workflow_id, predicted, actual, confidence, scenario, scenario_deltas, drift_flag, readiness, source_menace_id, ts) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     params + (ts,),
                 )
 
@@ -170,7 +181,12 @@ class TelemetryBackend:
         end_ts: str | None = None,
         scope: Scope | str = "local",
     ) -> List[Dict[str, Any]]:
-        """Return logged prediction history filtered by workflow or scenario."""
+        """Return logged prediction history filtered by workflow or scenario.
+
+        ``scope`` controls menace visibility: ``"local"`` returns records created
+        by this menace, ``"global"`` shows entries from other menaces and
+        ``"all"`` disables filtering entirely.
+        """
 
         conn = self.router.get_connection("roi_telemetry")
         cur = conn.cursor()
@@ -265,7 +281,8 @@ def _init_roi_events_db(router: DBRouter | None = None) -> None:
                     predicted_horizons TEXT,
                     actual_horizons TEXT,
                     predicted_categories TEXT,
-                    actual_categories TEXT
+                    actual_categories TEXT,
+                    source_menace_id TEXT NOT NULL
                 )
                 """
             )
@@ -278,11 +295,15 @@ def _init_roi_events_db(router: DBRouter | None = None) -> None:
             "ALTER TABLE roi_prediction_events ADD COLUMN actual_categories TEXT",
             "ALTER TABLE roi_prediction_events ADD COLUMN scenario_deltas TEXT",
             "ALTER TABLE roi_prediction_events ADD COLUMN drift_flag INTEGER",
+            "ALTER TABLE roi_prediction_events ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''",
         ):
             try:
                 conn.execute(stmt)
             except sqlite3.OperationalError:
                 pass
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_roi_prediction_events_source_menace_id ON roi_prediction_events(source_menace_id)"
+        )
 
 
 def log_roi_event(
@@ -310,22 +331,23 @@ def log_roi_event(
     conn = router.get_connection("roi_prediction_events")
     with conn:
         conn.execute(
-            "INSERT INTO roi_prediction_events (workflow_id, predicted_roi, actual_roi, confidence, scenario_deltas, drift_flag, predicted_class, actual_class, predicted_horizons, actual_horizons, predicted_categories, actual_categories) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO roi_prediction_events (workflow_id, predicted_roi, actual_roi, confidence, scenario_deltas, drift_flag, predicted_class, actual_class, predicted_horizons, actual_horizons, predicted_categories, actual_categories, source_menace_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 workflow_id,
-                    None if predicted_roi is None else float(predicted_roi),
-                    None if actual_roi is None else float(actual_roi),
-                    None if confidence is None else float(confidence),
-                    json.dumps(scenario_deltas or {}),
-                    int(bool(drift_flag)),
-                    predicted_class,
-                    actual_class,
-                    json.dumps([float(x) for x in (predicted_horizons or [])]),
-                    json.dumps([float(x) for x in (actual_horizons or [])]),
-                    json.dumps(predicted_categories or []),
-                    json.dumps(actual_categories or []),
-                ),
-            )
+                None if predicted_roi is None else float(predicted_roi),
+                None if actual_roi is None else float(actual_roi),
+                None if confidence is None else float(confidence),
+                json.dumps(scenario_deltas or {}),
+                int(bool(drift_flag)),
+                predicted_class,
+                actual_class,
+                json.dumps([float(x) for x in (predicted_horizons or [])]),
+                json.dumps([float(x) for x in (actual_horizons or [])]),
+                json.dumps(predicted_categories or []),
+                json.dumps(actual_categories or []),
+                router.menace_id,
+            ),
+        )
 
 
 def fetch_roi_events(
