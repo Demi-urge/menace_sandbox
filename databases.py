@@ -9,6 +9,7 @@ import os
 from typing import Literal
 
 from .env_config import DATABASE_URL
+from .db_scope import Scope, build_scope_clause
 try:
     from sqlalchemy import (
         Boolean,
@@ -580,7 +581,6 @@ class MenaceDB:
         """Return rows from key tables containing *term*."""
         term_l = term.lower()
         menace_id = self._current_menace_id(source_menace_id)
-        scope_enum = Scope(scope)
         results: list[dict] = []
         tables = [
             self.models,
@@ -592,13 +592,14 @@ class MenaceDB:
         with self.engine.begin() as conn:
             for tbl in tables:
                 try:
-                    stmt = tbl.select()
                     if "source_menace_id" in tbl.c:
-                        if scope_enum is Scope.LOCAL:
-                            stmt = stmt.where(tbl.c.source_menace_id == menace_id)
-                        elif scope_enum is Scope.GLOBAL:
-                            stmt = stmt.where(tbl.c.source_menace_id != menace_id)
-                    rows = conn.execute(stmt).fetchall()
+                        clause, params = build_scope_clause(tbl.name, Scope(scope), menace_id)
+                        query = f"SELECT * FROM {tbl.name}"
+                        if clause:
+                            query += f" {clause}"
+                        rows = conn.exec_driver_sql(query, params).fetchall()
+                    else:
+                        rows = conn.execute(tbl.select()).fetchall()
                 except Exception:
                     continue
                 for row in rows:
@@ -654,18 +655,17 @@ class MenaceDB:
     ) -> int:
         """Insert a new error and return its id."""
         menace_id = self._current_menace_id(source_menace_id)
-        scope_enum = Scope(scope)
         with self.engine.begin() as conn:
-            stmt = self.errors.select().where(
-                self.errors.c.error_description == description
-            )
-            if scope_enum is Scope.LOCAL:
-                stmt = stmt.where(self.errors.c.source_menace_id == menace_id)
-            elif scope_enum is Scope.GLOBAL:
-                stmt = stmt.where(self.errors.c.source_menace_id != menace_id)
-            row = conn.execute(stmt).fetchone()
+            clause, params = build_scope_clause("errors", Scope(scope), menace_id)
+            query = "SELECT error_id FROM errors"
+            if clause:
+                query += f" {clause} AND error_description = ?"
+            else:
+                query += " WHERE error_description = ?"
+            params.append(description)
+            row = conn.exec_driver_sql(query, params).fetchone()
             if row:
-                return int(row["error_id"])
+                return int(row[0])
             res = conn.execute(
                 self.errors.insert().values(
                     timestamp=datetime.utcnow().isoformat(),
