@@ -13,13 +13,13 @@ def test_get_connection_routing(tmp_path):
     router = db_router.DBRouter("test", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
 
     # Create tables in respective databases
-    router.shared_conn.execute("CREATE TABLE bots(id INTEGER)")
+    router.shared_conn.execute("CREATE TABLE bots(id INTEGER, source_menace_id TEXT NOT NULL)")
     router.local_conn.execute("CREATE TABLE models(id INTEGER)")
     router.shared_conn.commit()
     router.local_conn.commit()
 
     shared_conn = router.get_connection("bots", "write")
-    shared_conn.execute("INSERT INTO bots(id) VALUES (1)")
+    shared_conn.execute("INSERT INTO bots(id, source_menace_id) VALUES (1, ?)", (router.menace_id,))
     shared_conn.commit()
     local_conn = router.get_connection("models", "write")
     local_conn.execute("INSERT INTO models(id) VALUES (1)")
@@ -46,14 +46,24 @@ def test_get_connection_thread_safety(tmp_path):
     router = db_router.DBRouter("test", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
     router.shared_conn.isolation_level = None
     router.local_conn.isolation_level = None
-    router.shared_conn.execute("CREATE TABLE bots(id INTEGER)")
+    router.shared_conn.execute("CREATE TABLE bots(id INTEGER, source_menace_id TEXT NOT NULL)")
     router.local_conn.execute("CREATE TABLE models(id INTEGER)")
 
     def worker(table, value):
         conn = router.get_connection(table, "write")
         cur = conn.cursor()
-        cur.execute(f"INSERT INTO {table}(id) VALUES (?)", (value,))
-        cur.execute(f"SELECT id FROM {table} WHERE id=?", (value,))
+        if table == "bots":
+            cur.execute(
+                "INSERT INTO bots(id, source_menace_id) VALUES (?, ?)",
+                (value, router.menace_id),
+            )
+            cur.execute(
+                "SELECT id FROM bots WHERE id=? AND source_menace_id=?",
+                (value, router.menace_id),
+            )
+        else:
+            cur.execute(f"INSERT INTO {table}(id) VALUES (?)", (value,))
+            cur.execute(f"SELECT id FROM {table} WHERE id=?", (value,))
         assert cur.fetchone()[0] == value
         cur.close()
 

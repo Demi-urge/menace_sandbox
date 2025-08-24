@@ -23,10 +23,12 @@ def test_threaded_access_shared_and_local(tmp_path):
     try:
         # Prepare tables with sample data
         with router.get_connection("bots", operation="write") as conn:
-            conn.execute("CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT)")
+            conn.execute(
+                "CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT, source_menace_id TEXT NOT NULL)"
+            )
             conn.executemany(
-                "INSERT INTO bots (name) VALUES (?)",
-                [(f"bot{i}",) for i in range(5)],
+                "INSERT INTO bots (name, source_menace_id) VALUES (?, ?)",
+                [(f"bot{i}", router.menace_id) for i in range(5)],
             )
             conn.commit()
         with router.get_connection("models", operation="write") as conn:
@@ -87,7 +89,9 @@ def test_concurrent_writes_shared_and_local(tmp_path):
 
     try:
         with router.get_connection("bots", operation="write") as conn:
-            conn.execute("CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT)")
+            conn.execute(
+                "CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT, source_menace_id TEXT NOT NULL)"
+            )
             conn.commit()
         with router.get_connection("models", operation="write") as conn:
             conn.execute("CREATE TABLE models (id INTEGER PRIMARY KEY, name TEXT)")
@@ -103,7 +107,10 @@ def test_concurrent_writes_shared_and_local(tmp_path):
                 for _ in range(5):
                     try:
                         with router.get_connection("bots", operation="write") as conn:
-                            conn.execute("INSERT INTO bots (name) VALUES (?)", (f"bot{idx}",))
+                            conn.execute(
+                                "INSERT INTO bots (name, source_menace_id) VALUES (?, ?)",
+                                (f"bot{idx}", router.menace_id),
+                            )
                             conn.commit()
                         success = True
                         break
@@ -158,14 +165,16 @@ def test_threaded_isolation_between_menace_ids(tmp_path):
     try:
         # Populate shared and local tables
         with router1.get_connection("bots", operation="write") as conn:
-            conn.execute("CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT)")
-            conn.executemany(
-                "INSERT INTO bots (name) VALUES (?)",
-                [(f"one_bot{i}",) for i in range(5)],
+            conn.execute(
+                "CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT, source_menace_id TEXT NOT NULL)"
             )
             conn.executemany(
-                "INSERT INTO bots (name) VALUES (?)",
-                [(f"two_bot{i}",) for i in range(5)],
+                "INSERT INTO bots (name, source_menace_id) VALUES (?, ?)",
+                [(f"one_bot{i}", router1.menace_id) for i in range(5)],
+            )
+            conn.executemany(
+                "INSERT INTO bots (name, source_menace_id) VALUES (?, ?)",
+                [(f"two_bot{i}", router1.menace_id) for i in range(5)],
             )
             conn.commit()
         for idx in range(5):

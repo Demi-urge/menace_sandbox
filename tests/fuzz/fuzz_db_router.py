@@ -26,8 +26,13 @@ def test_dbrouter_execute_query_fuzz(tmp_path, name):
     """Fuzz simple INSERT/SELECT operations through DBRouter."""
     router = DBRouter("fuzz", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
     conn = router.get_connection("bots")
-    conn.execute("CREATE TABLE IF NOT EXISTS bots (name TEXT)")
-    conn.execute("INSERT INTO bots(name) VALUES (?)", (name,))
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bots (name TEXT, source_menace_id TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO bots(name, source_menace_id) VALUES (?, ?)",
+        (name, router.menace_id),
+    )
     conn.commit()
     rows = conn.execute("SELECT name FROM bots WHERE name=?", (name,)).fetchall()
     router.close()
