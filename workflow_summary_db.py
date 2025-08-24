@@ -3,18 +3,22 @@ from __future__ import annotations
 """SQLite-backed store for workflow summaries.
 
 This module persists short textual summaries for workflows in a shared
-``workflow_summaries`` table.  Records are tagged with the originating
+``workflow_summaries`` table. Records are tagged with the originating
 ``menace_id`` so multiple Menace instances can safely share the same
-storage.  Read operations filter by ``source_menace_id`` by default.
+storage. Read operations respect a ``scope`` parameter (``"local"`` by
+default) to control which menace IDs are visible.
 """
 
 from dataclasses import dataclass
 import sqlite3
+from typing import Literal
 
 try:  # pragma: no cover - import available in package context
     from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+    from .db_scope import Scope, build_scope_clause
 except Exception:  # pragma: no cover - fallback for tests
     from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+    from db_scope import Scope, build_scope_clause
 
 MENACE_ID = "workflow_summary_db"
 DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
@@ -54,7 +58,7 @@ class WorkflowSummaryDB:
         self.conn.commit()
 
     # ------------------------------------------------------------------
-    def _current_menace_id(self, source_menace_id: str | None) -> str:
+    def _current_menace_id(self, source_menace_id: str | None = None) -> str:
         return source_menace_id or (self.router.menace_id if self.router else "")
 
     # ------------------------------------------------------------------
@@ -81,36 +85,43 @@ class WorkflowSummaryDB:
 
     # ------------------------------------------------------------------
     def get_summary(
-        self, workflow_id: int, *, source_menace_id: str | None = None
+        self,
+        workflow_id: int,
+        *,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> str | None:
-        """Return the summary for ``workflow_id`` filtered by menace id."""
+        """Return the summary for ``workflow_id`` filtered by ``scope``."""
 
-        menace_id = self._current_menace_id(source_menace_id)
-        conn = self.router.get_connection("workflow_summaries")
-        cur = conn.execute(
-            """
-            SELECT summary FROM workflow_summaries
-            WHERE workflow_id=? AND source_menace_id=?
-            """,
-            (workflow_id, menace_id),
+        menace_id = self._current_menace_id()
+        clause, params = build_scope_clause(
+            "workflow_summaries", Scope(scope), menace_id
         )
+        conn = self.router.get_connection("workflow_summaries")
+        query = "SELECT summary FROM workflow_summaries"
+        if clause:
+            query += f" {clause} AND workflow_id=?"
+        else:
+            query += " WHERE workflow_id=?"
+        params.append(workflow_id)
+        cur = conn.execute(query, params)
         row = cur.fetchone()
         return row["summary"] if row else None
 
     # ------------------------------------------------------------------
     def all_summaries(
-        self, *, source_menace_id: str | None = None
+        self, *, scope: Literal["local", "global", "all"] = "local"
     ) -> list[WorkflowSummary]:
-        """Return all summaries for the current menace instance."""
+        """Return all summaries visible under the selected ``scope``."""
 
-        menace_id = self._current_menace_id(source_menace_id)
-        conn = self.router.get_connection("workflow_summaries")
-        cur = conn.execute(
-            """
-            SELECT workflow_id, summary, source_menace_id
-            FROM workflow_summaries
-            WHERE source_menace_id=?
-            """,
-            (menace_id,),
+        menace_id = self._current_menace_id()
+        clause, params = build_scope_clause(
+            "workflow_summaries", Scope(scope), menace_id
         )
+        conn = self.router.get_connection("workflow_summaries")
+        query = (
+            "SELECT workflow_id, summary, source_menace_id FROM workflow_summaries"
+        )
+        if clause:
+            query += f" {clause}"
+        cur = conn.execute(query, params)
         return [WorkflowSummary(**dict(row)) for row in cur.fetchall()]
