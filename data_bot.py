@@ -94,7 +94,7 @@ class MetricsDB:
         )
         conn = self.router.get_connection("metrics")
         conn.execute(
-                """
+            """
             CREATE TABLE IF NOT EXISTS metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 bot TEXT,
@@ -129,301 +129,301 @@ class MetricsDB:
             )
             """
             )
-            conn.execute(
-                """
-            CREATE TABLE IF NOT EXISTS eval_metrics(
-                cycle TEXT,
-                metric TEXT,
-                value REAL,
-                ts TEXT
-            )
+        conn.execute(
             """
-            )
-            conn.execute(
-                """
-            CREATE TABLE IF NOT EXISTS embedding_metrics(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                record_id TEXT,
-                tokens INTEGER,
-                wall_time REAL,
-                index_latency REAL,
-                source TEXT,
-                ts TEXT DEFAULT CURRENT_TIMESTAMP
-            )
+        CREATE TABLE IF NOT EXISTS eval_metrics(
+            cycle TEXT,
+            metric TEXT,
+            value REAL,
+            ts TEXT
+        )
+        """
+        )
+        conn.execute(
             """
-            )
-            conn.execute(
-                """
-            CREATE TABLE IF NOT EXISTS embedding_staleness(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                origin_db TEXT,
-                record_id TEXT,
-                stale_seconds REAL,
-                ts TEXT DEFAULT CURRENT_TIMESTAMP
-            )
+        CREATE TABLE IF NOT EXISTS embedding_metrics(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            record_id TEXT,
+            tokens INTEGER,
+            wall_time REAL,
+            index_latency REAL,
+            source TEXT,
+            ts TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+        )
+        conn.execute(
             """
-            )
-            conn.execute(
-                """
-            CREATE TABLE IF NOT EXISTS retrieval_metrics(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                origin_db TEXT,
-                record_id TEXT,
-                rank INTEGER,
-                hit INTEGER,
-                tokens INTEGER,
-                score REAL,
-                ts TEXT DEFAULT CURRENT_TIMESTAMP
-            )
+        CREATE TABLE IF NOT EXISTS embedding_staleness(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin_db TEXT,
+            record_id TEXT,
+            stale_seconds REAL,
+            ts TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+        )
+        conn.execute(
             """
-            )
-            conn.execute(
-                """
-            CREATE TABLE IF NOT EXISTS retriever_kpi(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                origin_db TEXT,
-                win_rate REAL,
-                regret_rate REAL,
-                stale_penalty REAL,
-                sample_count REAL DEFAULT 0,
-                roi REAL DEFAULT 0,
-                ts TEXT DEFAULT CURRENT_TIMESTAMP
-            )
+        CREATE TABLE IF NOT EXISTS retrieval_metrics(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin_db TEXT,
+            record_id TEXT,
+            rank INTEGER,
+            hit INTEGER,
+            tokens INTEGER,
+            score REAL,
+            ts TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+        )
+        conn.execute(
             """
-            )
-            conn.execute(
-                """
-            CREATE TABLE IF NOT EXISTS patch_outcomes(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                patch_id TEXT,
-                session_id TEXT,
-                origin_db TEXT,
-                vector_id TEXT,
-                success INTEGER,
-                reverted INTEGER DEFAULT 0,
-                label TEXT,
-                ts TEXT DEFAULT CURRENT_TIMESTAMP
-            )
+        CREATE TABLE IF NOT EXISTS retriever_kpi(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin_db TEXT,
+            win_rate REAL,
+            regret_rate REAL,
+            stale_penalty REAL,
+            sample_count REAL DEFAULT 0,
+            roi REAL DEFAULT 0,
+            ts TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+        )
+        conn.execute(
             """
-            )
-            conn.execute(
-                """
-            CREATE TABLE IF NOT EXISTS retriever_stats(
-                origin_db TEXT PRIMARY KEY,
-                wins INTEGER DEFAULT 0,
-                regrets INTEGER DEFAULT 0
-            )
+        CREATE TABLE IF NOT EXISTS patch_outcomes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            patch_id TEXT,
+            session_id TEXT,
+            origin_db TEXT,
+            vector_id TEXT,
+            success INTEGER,
+            reverted INTEGER DEFAULT 0,
+            label TEXT,
+            ts TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+        )
+        conn.execute(
             """
-            )
-            conn.execute(
-                """
-            CREATE TABLE IF NOT EXISTS embedding_stats(
-                db_name TEXT,
-                tokens INTEGER,
-                wall_ms REAL,
-                store_ms REAL,
-                patch_id TEXT,
-                db_source TEXT,
-                ts TEXT DEFAULT CURRENT_TIMESTAMP
-            )
+        CREATE TABLE IF NOT EXISTS retriever_stats(
+            origin_db TEXT PRIMARY KEY,
+            wins INTEGER DEFAULT 0,
+            regrets INTEGER DEFAULT 0
+        )
+        """
+        )
+        conn.execute(
             """
-            )
-            conn.execute(
-                """
-            CREATE TABLE IF NOT EXISTS retrieval_stats(
-                session_id TEXT,
-                origin_db TEXT,
-                record_id TEXT,
-                vector_id TEXT,
-                db_type TEXT,
-                rank INTEGER,
-                hit INTEGER,
-                hit_rate REAL,
-                tokens_injected INTEGER,
-                contribution REAL,
-                patch_id TEXT,
-                db_source TEXT,
-                age REAL,
-                similarity REAL,
-                frequency REAL,
-                roi_delta REAL,
-                usage REAL,
-                prior_hits INTEGER,
-                ts TEXT DEFAULT CURRENT_TIMESTAMP
-            )
+        CREATE TABLE IF NOT EXISTS embedding_stats(
+            db_name TEXT,
+            tokens INTEGER,
+            wall_ms REAL,
+            store_ms REAL,
+            patch_id TEXT,
+            db_source TEXT,
+            ts TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+        )
+        conn.execute(
             """
-            )
+        CREATE TABLE IF NOT EXISTS retrieval_stats(
+            session_id TEXT,
+            origin_db TEXT,
+            record_id TEXT,
+            vector_id TEXT,
+            db_type TEXT,
+            rank INTEGER,
+            hit INTEGER,
+            hit_rate REAL,
+            tokens_injected INTEGER,
+            contribution REAL,
+            patch_id TEXT,
+            db_source TEXT,
+            age REAL,
+            similarity REAL,
+            frequency REAL,
+            roi_delta REAL,
+            usage REAL,
+            prior_hits INTEGER,
+            ts TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_eval_cycle ON eval_metrics(cycle)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_embedding_ts ON embedding_metrics(ts)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_embedding_stale_ts ON embedding_staleness(ts)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_retrieval_ts ON retrieval_metrics(ts)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_retriever_kpi_ts ON retriever_kpi(ts)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_patch_outcomes_ts ON patch_outcomes(ts)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_patch_outcomes_origin ON patch_outcomes(origin_db)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_embedding_stats_ts ON embedding_stats(ts)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_retrieval_stats_ts ON retrieval_stats(ts)"
+        )
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(embedding_stats)").fetchall()]
+        if "patch_id" not in cols:
+            conn.execute("ALTER TABLE embedding_stats ADD COLUMN patch_id TEXT")
+        if "db_source" not in cols:
+            conn.execute("ALTER TABLE embedding_stats ADD COLUMN db_source TEXT")
+        if "ts" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_eval_cycle ON eval_metrics(cycle)"
+                "ALTER TABLE embedding_stats ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP"
             )
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(retrieval_stats)").fetchall()]
+        for column, stmt in {
+            "patch_id": "ALTER TABLE retrieval_stats ADD COLUMN patch_id TEXT",
+            "db_source": "ALTER TABLE retrieval_stats ADD COLUMN db_source TEXT",
+            "hit_rate": "ALTER TABLE retrieval_stats ADD COLUMN hit_rate REAL",
+            "tokens_injected": "ALTER TABLE retrieval_stats ADD COLUMN tokens_injected INTEGER",
+            "contribution": "ALTER TABLE retrieval_stats ADD COLUMN contribution REAL",
+            "vector_id": "ALTER TABLE retrieval_stats ADD COLUMN vector_id TEXT",
+            "db_type": "ALTER TABLE retrieval_stats ADD COLUMN db_type TEXT",
+            "age": "ALTER TABLE retrieval_stats ADD COLUMN age REAL",
+            "similarity": "ALTER TABLE retrieval_stats ADD COLUMN similarity REAL",
+            "frequency": "ALTER TABLE retrieval_stats ADD COLUMN frequency REAL",
+            "roi_delta": "ALTER TABLE retrieval_stats ADD COLUMN roi_delta REAL",
+            "usage": "ALTER TABLE retrieval_stats ADD COLUMN usage REAL",
+            "prior_hits": "ALTER TABLE retrieval_stats ADD COLUMN prior_hits INTEGER",
+            "ts": "ALTER TABLE retrieval_stats ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP",
+        }.items():
+            if column not in cols:
+                conn.execute(stmt)
+        cols = [
+            r[1] for r in conn.execute("PRAGMA table_info(retriever_kpi)").fetchall()
+        ]
+        if "roi" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_embedding_ts ON embedding_metrics(ts)"
+                "ALTER TABLE retriever_kpi ADD COLUMN roi REAL DEFAULT 0"
             )
+        if "sample_count" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_embedding_stale_ts ON embedding_staleness(ts)"
+                "ALTER TABLE retriever_kpi ADD COLUMN sample_count REAL DEFAULT 0"
             )
+        cols = [
+            r[1] for r in conn.execute("PRAGMA table_info(embedding_metrics)").fetchall()
+        ]
+        if "ts" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_retrieval_ts ON retrieval_metrics(ts)"
+                "ALTER TABLE embedding_metrics ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP"
             )
+        cols = [
+            r[1] for r in conn.execute("PRAGMA table_info(retrieval_metrics)").fetchall()
+        ]
+        if "ts" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_retriever_kpi_ts ON retriever_kpi(ts)"
+                "ALTER TABLE retrieval_metrics ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP"
             )
+        cols = [
+            r[1] for r in conn.execute("PRAGMA table_info(patch_outcomes)").fetchall()
+        ]
+        if "session_id" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_patch_outcomes_ts ON patch_outcomes(ts)"
+                "ALTER TABLE patch_outcomes ADD COLUMN session_id TEXT"
             )
+        if "origin_db" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_patch_outcomes_origin ON patch_outcomes(origin_db)"
+                "ALTER TABLE patch_outcomes ADD COLUMN origin_db TEXT"
             )
+        if "vector_id" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_embedding_stats_ts ON embedding_stats(ts)"
+                "ALTER TABLE patch_outcomes ADD COLUMN vector_id TEXT"
             )
+        if "reverted" not in cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_retrieval_stats_ts ON retrieval_stats(ts)"
+                "ALTER TABLE patch_outcomes ADD COLUMN reverted INTEGER DEFAULT 0",
             )
-            cols = [r[1] for r in conn.execute("PRAGMA table_info(embedding_stats)").fetchall()]
-            if "patch_id" not in cols:
-                conn.execute("ALTER TABLE embedding_stats ADD COLUMN patch_id TEXT")
-            if "db_source" not in cols:
-                conn.execute("ALTER TABLE embedding_stats ADD COLUMN db_source TEXT")
-            if "ts" not in cols:
-                conn.execute(
-                    "ALTER TABLE embedding_stats ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP"
-                )
-            cols = [r[1] for r in conn.execute("PRAGMA table_info(retrieval_stats)").fetchall()]
-            for column, stmt in {
-                "patch_id": "ALTER TABLE retrieval_stats ADD COLUMN patch_id TEXT",
-                "db_source": "ALTER TABLE retrieval_stats ADD COLUMN db_source TEXT",
-                "hit_rate": "ALTER TABLE retrieval_stats ADD COLUMN hit_rate REAL",
-                "tokens_injected": "ALTER TABLE retrieval_stats ADD COLUMN tokens_injected INTEGER",
-                "contribution": "ALTER TABLE retrieval_stats ADD COLUMN contribution REAL",
-                "vector_id": "ALTER TABLE retrieval_stats ADD COLUMN vector_id TEXT",
-                "db_type": "ALTER TABLE retrieval_stats ADD COLUMN db_type TEXT",
-                "age": "ALTER TABLE retrieval_stats ADD COLUMN age REAL",
-                "similarity": "ALTER TABLE retrieval_stats ADD COLUMN similarity REAL",
-                "frequency": "ALTER TABLE retrieval_stats ADD COLUMN frequency REAL",
-                "roi_delta": "ALTER TABLE retrieval_stats ADD COLUMN roi_delta REAL",
-                "usage": "ALTER TABLE retrieval_stats ADD COLUMN usage REAL",
-                "prior_hits": "ALTER TABLE retrieval_stats ADD COLUMN prior_hits INTEGER",
-                "ts": "ALTER TABLE retrieval_stats ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP",
-            }.items():
-                if column not in cols:
-                    conn.execute(stmt)
-            cols = [
-                r[1] for r in conn.execute("PRAGMA table_info(retriever_kpi)").fetchall()
-            ]
-            if "roi" not in cols:
-                conn.execute(
-                    "ALTER TABLE retriever_kpi ADD COLUMN roi REAL DEFAULT 0"
-                )
-            if "sample_count" not in cols:
-                conn.execute(
-                    "ALTER TABLE retriever_kpi ADD COLUMN sample_count REAL DEFAULT 0"
-                )
-            cols = [
-                r[1] for r in conn.execute("PRAGMA table_info(embedding_metrics)").fetchall()
-            ]
-            if "ts" not in cols:
-                conn.execute(
-                    "ALTER TABLE embedding_metrics ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP"
-                )
-            cols = [
-                r[1] for r in conn.execute("PRAGMA table_info(retrieval_metrics)").fetchall()
-            ]
-            if "ts" not in cols:
-                conn.execute(
-                    "ALTER TABLE retrieval_metrics ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP"
-                )
-            cols = [
-                r[1] for r in conn.execute("PRAGMA table_info(patch_outcomes)").fetchall()
-            ]
-            if "session_id" not in cols:
-                conn.execute(
-                    "ALTER TABLE patch_outcomes ADD COLUMN session_id TEXT"
-                )
-            if "origin_db" not in cols:
-                conn.execute(
-                    "ALTER TABLE patch_outcomes ADD COLUMN origin_db TEXT"
-                )
-            if "vector_id" not in cols:
-                conn.execute(
-                    "ALTER TABLE patch_outcomes ADD COLUMN vector_id TEXT"
-                )
-            if "reverted" not in cols:
-                conn.execute(
-                    "ALTER TABLE patch_outcomes ADD COLUMN reverted INTEGER DEFAULT 0",
-                )
-            if "label" not in cols:
-                conn.execute(
-                    "ALTER TABLE patch_outcomes ADD COLUMN label TEXT",
-                )
-            cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
-            if "revenue" not in cols:
-                conn.execute("ALTER TABLE metrics ADD COLUMN revenue REAL DEFAULT 0")
-            if "expense" not in cols:
-                conn.execute("ALTER TABLE metrics ADD COLUMN expense REAL DEFAULT 0")
-            if "security_score" not in cols:
-                conn.execute("ALTER TABLE metrics ADD COLUMN security_score REAL DEFAULT 0")
-            if "safety_rating" not in cols:
-                conn.execute("ALTER TABLE metrics ADD COLUMN safety_rating REAL DEFAULT 0")
-            if "adaptability" not in cols:
-                conn.execute("ALTER TABLE metrics ADD COLUMN adaptability REAL DEFAULT 0")
-            if "antifragility" not in cols:
-                conn.execute("ALTER TABLE metrics ADD COLUMN antifragility REAL DEFAULT 0")
-            if "shannon_entropy" not in cols:
-                conn.execute("ALTER TABLE metrics ADD COLUMN shannon_entropy REAL DEFAULT 0")
-            if "efficiency" not in cols:
-                conn.execute("ALTER TABLE metrics ADD COLUMN efficiency REAL DEFAULT 0")
-            if "flexibility" not in cols:
-                conn.execute("ALTER TABLE metrics ADD COLUMN flexibility REAL DEFAULT 0")
-            if "gpu_usage" not in cols:
-                conn.execute("ALTER TABLE metrics ADD COLUMN gpu_usage REAL DEFAULT 0")
-            if "projected_lucrativity" not in cols:
-                conn.execute(
-                    "ALTER TABLE metrics ADD COLUMN projected_lucrativity REAL DEFAULT 0"
-                )
-            if "profitability" not in cols:
-                conn.execute(
-                    "ALTER TABLE metrics ADD COLUMN profitability REAL DEFAULT 0"
-                )
-            if "patch_complexity" not in cols:
-                conn.execute(
-                    "ALTER TABLE metrics ADD COLUMN patch_complexity REAL DEFAULT 0"
-                )
-            if "patch_entropy" not in cols:
-                conn.execute(
-                    "ALTER TABLE metrics ADD COLUMN patch_entropy REAL DEFAULT 0"
-                )
-            if "energy_consumption" not in cols:
-                conn.execute(
-                    "ALTER TABLE metrics ADD COLUMN energy_consumption REAL DEFAULT 0"
-                )
-            if "resilience" not in cols:
-                conn.execute(
-                    "ALTER TABLE metrics ADD COLUMN resilience REAL DEFAULT 0"
-                )
-            if "network_latency" not in cols:
-                conn.execute(
-                    "ALTER TABLE metrics ADD COLUMN network_latency REAL DEFAULT 0"
-                )
-            if "throughput" not in cols:
-                conn.execute(
-                    "ALTER TABLE metrics ADD COLUMN throughput REAL DEFAULT 0"
-                )
-            if "risk_index" not in cols:
-                conn.execute(
-                    "ALTER TABLE metrics ADD COLUMN risk_index REAL DEFAULT 0"
-                )
-            if "maintainability" not in cols:
-                conn.execute(
-                    "ALTER TABLE metrics ADD COLUMN maintainability REAL DEFAULT 0"
-                )
-            if "code_quality" not in cols:
-                conn.execute(
-                    "ALTER TABLE metrics ADD COLUMN code_quality REAL DEFAULT 0"
-                )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_bot ON metrics(bot)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts)")
-            conn.commit()
+        if "label" not in cols:
+            conn.execute(
+                "ALTER TABLE patch_outcomes ADD COLUMN label TEXT",
+            )
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
+        if "revenue" not in cols:
+            conn.execute("ALTER TABLE metrics ADD COLUMN revenue REAL DEFAULT 0")
+        if "expense" not in cols:
+            conn.execute("ALTER TABLE metrics ADD COLUMN expense REAL DEFAULT 0")
+        if "security_score" not in cols:
+            conn.execute("ALTER TABLE metrics ADD COLUMN security_score REAL DEFAULT 0")
+        if "safety_rating" not in cols:
+            conn.execute("ALTER TABLE metrics ADD COLUMN safety_rating REAL DEFAULT 0")
+        if "adaptability" not in cols:
+            conn.execute("ALTER TABLE metrics ADD COLUMN adaptability REAL DEFAULT 0")
+        if "antifragility" not in cols:
+            conn.execute("ALTER TABLE metrics ADD COLUMN antifragility REAL DEFAULT 0")
+        if "shannon_entropy" not in cols:
+            conn.execute("ALTER TABLE metrics ADD COLUMN shannon_entropy REAL DEFAULT 0")
+        if "efficiency" not in cols:
+            conn.execute("ALTER TABLE metrics ADD COLUMN efficiency REAL DEFAULT 0")
+        if "flexibility" not in cols:
+            conn.execute("ALTER TABLE metrics ADD COLUMN flexibility REAL DEFAULT 0")
+        if "gpu_usage" not in cols:
+            conn.execute("ALTER TABLE metrics ADD COLUMN gpu_usage REAL DEFAULT 0")
+        if "projected_lucrativity" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN projected_lucrativity REAL DEFAULT 0"
+            )
+        if "profitability" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN profitability REAL DEFAULT 0"
+            )
+        if "patch_complexity" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN patch_complexity REAL DEFAULT 0"
+            )
+        if "patch_entropy" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN patch_entropy REAL DEFAULT 0"
+            )
+        if "energy_consumption" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN energy_consumption REAL DEFAULT 0"
+            )
+        if "resilience" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN resilience REAL DEFAULT 0"
+            )
+        if "network_latency" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN network_latency REAL DEFAULT 0"
+            )
+        if "throughput" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN throughput REAL DEFAULT 0"
+            )
+        if "risk_index" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN risk_index REAL DEFAULT 0"
+            )
+        if "maintainability" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN maintainability REAL DEFAULT 0"
+            )
+        if "code_quality" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN code_quality REAL DEFAULT 0"
+            )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_bot ON metrics(bot)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts)")
+        conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
         return self.router.get_connection("metrics")
@@ -431,7 +431,7 @@ class MetricsDB:
     def add(self, rec: MetricRecord) -> int:
         with self._connect() as conn:
             cur = conn.execute(
-                """
+            """
             INSERT INTO metrics(
                 bot, cpu, memory, response_time, disk_io, net_io, errors,
                 revenue, expense,
@@ -491,7 +491,7 @@ class MetricsDB:
 
         with self._connect() as conn:
             conn.execute(
-                """
+            """
             INSERT INTO embedding_metrics(
                 record_id, tokens, wall_time, index_latency, source, ts
             ) VALUES(?,?,?,?,?,?)
@@ -514,7 +514,7 @@ class MetricsDB:
 
         with self._connect() as conn:
             conn.execute(
-                """
+            """
             INSERT INTO embedding_staleness(
                 origin_db, record_id, stale_seconds, ts
             ) VALUES(?,?,?,?)
@@ -549,7 +549,7 @@ class MetricsDB:
 
         with self._connect() as conn:
             conn.execute(
-                """
+            """
             INSERT INTO retrieval_metrics(
                 origin_db, record_id, rank, hit, tokens, score, ts
             ) VALUES(?,?,?,?,?,?,?)
@@ -580,7 +580,7 @@ class MetricsDB:
 
         with self._connect() as conn:
             conn.execute(
-                """
+            """
             INSERT INTO embedding_stats(
                 db_name, tokens, wall_ms, store_ms, patch_id, db_source, ts
             ) VALUES(?,?,?,?,?,?,?)
@@ -615,7 +615,7 @@ class MetricsDB:
 
         with self._connect() as conn:
             conn.execute(
-                """
+            """
             INSERT INTO retrieval_stats(
                 session_id, origin_db, record_id, rank, hit, hit_rate,
                 tokens_injected, contribution, patch_id, db_source, ts
@@ -650,7 +650,7 @@ class MetricsDB:
 
         with self._connect() as conn:
             conn.execute(
-                """
+            """
             INSERT INTO retriever_kpi(origin_db, win_rate, regret_rate, stale_penalty, sample_count, roi, ts)
             VALUES(?,?,?,?,?,?,?)
             """,
@@ -677,7 +677,7 @@ class MetricsDB:
 
         with self._connect() as conn:
             cur = conn.execute(
-                """
+            """
                 SELECT origin_db, win_rate, regret_rate, stale_penalty, sample_count
                 FROM (
                     SELECT origin_db, win_rate, regret_rate, stale_penalty, sample_count, ts
@@ -685,7 +685,7 @@ class MetricsDB:
                     ORDER BY ts DESC
                 )
                 GROUP BY origin_db
-                """
+            """
             )
             rows = cur.fetchall()
 
@@ -746,7 +746,7 @@ class MetricsDB:
                     """
                 INSERT INTO patch_outcomes(patch_id, session_id, origin_db, vector_id, success, reverted, label, ts)
                 VALUES(?,?,?,?,?,?,?,?)
-                """,
+            """,
                     (
                         patch_id,
                         session_id,
