@@ -504,15 +504,10 @@ class ErrorDB(EmbeddableDBMixin):
             "ts": datetime.utcnow().isoformat(),
         }
         hash_fields = ["message", "type", "description", "resolution"]
-        inserted = insert_if_unique("errors", values, hash_fields, menace_id, self.router)
-        cur = self.conn.execute(
-            "SELECT id FROM errors WHERE content_hash=?",
-            (values["content_hash"],),
-        )
-        row = cur.fetchone()
-        if row is None:
-            raise RuntimeError("failed to retrieve error id")
-        err_id = int(row["id"])
+        with self.router.get_connection("errors", "write") as conn:
+            err_id, inserted = insert_if_unique(
+                conn, "errors", values, hash_fields, menace_id
+            )
         if inserted:
             try:
                 self.add_embedding(

@@ -315,31 +315,25 @@ class EnhancementDB(EmbeddableDBMixin):
             "associated_bots": assoc,
             "triggered_by": enh.triggered_by,
         }
-        inserted = insert_if_unique(
-            "enhancements",
-            values,
-            [
-                "idea",
-                "rationale",
-                "summary",
-                "before_code",
-                "after_code",
-                "description",
-            ],
-            self.router.menace_id if self.router else "",
-            self.router,
-        )
-        if not inserted:
-            logger.warning("duplicate enhancement detected; skipping embedding generation")
-            return -1
-        try:
-            enh_id = int(
-                self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        with self._connect() as conn:
+            enh_id, inserted = insert_if_unique(
+                conn,
+                "enhancements",
+                values,
+                [
+                    "idea",
+                    "rationale",
+                    "summary",
+                    "before_code",
+                    "after_code",
+                    "description",
+                ],
+                self.router.menace_id if self.router else "",
             )
-        except sqlite3.Error as exc:
-            logger.exception("failed to retrieve enhancement id: %s", exc)
-            if RAISE_ERRORS:
-                raise
+        if not inserted:
+            logger.warning(
+                "duplicate enhancement detected; skipping embedding generation"
+            )
             return -1
         # generate vector embedding for the newly inserted record
         try:
