@@ -36,6 +36,12 @@ from datetime import datetime
 from .database_manager import DB_PATH, update_model
 from vector_service.cognition_layer import CognitionLayer
 from roi_tracker import ROITracker
+try:  # pragma: no cover - allow flat imports
+    from .intent_clusterer import IntentClusterer
+    from .universal_retriever import UniversalRetriever
+except Exception:  # pragma: no cover - fallback for flat layout
+    from intent_clusterer import IntentClusterer  # type: ignore
+    from universal_retriever import UniversalRetriever  # type: ignore
 
 
 @dataclass
@@ -73,6 +79,7 @@ class BotCreationBot(AdminBotBase):
         safety_monitor: SafetyMonitor | None = None,
         workflow_bot: "WorkflowEvolutionBot" | None = None,
         trending_scraper: "TrendingScraper" | None = None,
+        intent_clusterer: IntentClusterer | None = None,
     ) -> None:
         super().__init__(db_router=db_router)
         self.metrics_db = metrics_db or MetricsDB()
@@ -92,6 +99,7 @@ class BotCreationBot(AdminBotBase):
         self.analysis_bot = analysis_bot
         self.workflow_bot = workflow_bot
         self.trending_scraper = trending_scraper
+        self.intent_clusterer = intent_clusterer or IntentClusterer(UniversalRetriever())
         self.assigned_prediction_bots = []
         if self.prediction_manager:
             try:
@@ -229,6 +237,33 @@ class BotCreationBot(AdminBotBase):
         ordered = priority + [c for c in chunks if c not in priority]
 
         for chunk in ordered:
+            if self.intent_clusterer:
+                try:
+                    matches = self.intent_clusterer.find_modules_related_to(" ".join(chunk))
+                    paths = [
+                        m.get("path")
+                        for m in matches
+                        if isinstance(m, dict) and m.get("path")
+                    ]
+                    clusters = [
+                        m.get("cluster_id")
+                        for m in matches
+                        if isinstance(m, dict) and m.get("cluster_id") is not None
+                    ]
+                    if paths:
+                        self.logger.info(
+                            "intent matches for %s: %s", chunk, paths
+                        )
+                        for p in paths:
+                            name = Path(p).stem
+                            if name not in chunk:
+                                chunk.append(name)
+                    if clusters:
+                        self.logger.info(
+                            "intent clusters for %s: %s", chunk, clusters
+                        )
+                except Exception as exc:
+                    self.logger.error("intent cluster search failed: %s", exc)
             self.query(" ".join(chunk))
             rec = WorkflowRecord(
                 workflow=chunk,

@@ -143,6 +143,14 @@ try:  # pragma: no cover - allow flat imports
     from .relevancy_metrics_db import RelevancyMetricsDB
 except Exception:  # pragma: no cover - fallback for flat layout
     from relevancy_metrics_db import RelevancyMetricsDB  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .intent_clusterer import IntentClusterer
+except Exception:  # pragma: no cover - fallback for flat layout
+    from intent_clusterer import IntentClusterer  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .universal_retriever import UniversalRetriever
+except Exception:  # pragma: no cover - fallback for flat layout
+    from universal_retriever import UniversalRetriever  # type: ignore
 try:  # pragma: no cover - optional dependency
     from sandbox_runner.orphan_discovery import append_orphan_classifications
 except Exception:  # pragma: no cover - best effort fallback
@@ -158,7 +166,13 @@ from .audit_logger import log_event as audit_log_event, get_recent_events
 from .violation_logger import log_violation
 from .alignment_review_agent import AlignmentReviewAgent
 from .governance import check_veto, load_rules
-from .evaluation_dashboard import append_governance_result
+try:  # pragma: no cover - allow flat imports
+    from .evaluation_dashboard import append_governance_result
+except Exception:  # pragma: no cover - fallback for flat layout or missing deps
+    try:
+        from evaluation_dashboard import append_governance_result  # type: ignore
+    except Exception:  # pragma: no cover - best effort fallback
+        append_governance_result = lambda *a, **k: None  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .deployment_governance import evaluate as deployment_evaluate
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -711,6 +725,7 @@ class SelfImprovementEngine:
         gpt_memory: GPTMemoryInterface | None = None,
         knowledge_service: GPTKnowledgeService | None = None,
         relevancy_radar: RelevancyRadar | None = None,
+        intent_clusterer: IntentClusterer | None = None,
         tau: float = 0.5,
         **kwargs: Any,
     ) -> None:
@@ -755,6 +770,12 @@ class SelfImprovementEngine:
             except Exception:
                 self.metrics_db = None
         self.auto_refresh_map = bool(auto_refresh_map)
+        self.intent_clusterer = intent_clusterer
+        if self.intent_clusterer is None:
+            try:
+                self.intent_clusterer = IntentClusterer(UniversalRetriever())
+            except Exception:
+                self.intent_clusterer = None
         self.pre_roi_bot = pre_roi_bot
         self.pre_roi_scale = (
             pre_roi_scale if pre_roi_scale is not None else PRE_ROI_SCALE
@@ -3663,6 +3684,34 @@ class SelfImprovementEngine:
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("dependency expansion failed: %s", exc)
             expanded = set(candidates)
+
+        if self.intent_clusterer:
+            related: set[str] = set()
+            for rel in list(expanded):
+                try:
+                    matches = self.intent_clusterer.find_modules_related_to(rel)
+                    paths = [
+                        m.get("path")
+                        for m in matches
+                        if isinstance(m, dict) and m.get("path")
+                    ]
+                    clusters = [
+                        m.get("cluster_id")
+                        for m in matches
+                        if isinstance(m, dict) and m.get("cluster_id") is not None
+                    ]
+                    if paths:
+                        self.logger.info(
+                            "intent matches for %s: %s", rel, paths
+                        )
+                    if clusters:
+                        self.logger.info(
+                            "intent clusters for %s: %s", rel, clusters
+                        )
+                    related.update(paths)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("intent search failed for %s: %s", rel, exc)
+            expanded.update(related)
 
         try:
             settings = SandboxSettings()
