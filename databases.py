@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import os
 import json
 
 from .env_config import DATABASE_URL
@@ -19,10 +18,23 @@ try:
         String,
         Table,
         Text,
+        Index,
         create_engine,
     )  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
-    Boolean = Column = Float = ForeignKey = Integer = MetaData = String = Table = Text = create_engine = None  # type: ignore
+    (
+        Boolean,
+        Column,
+        Float,
+        ForeignKey,
+        Integer,
+        MetaData,
+        String,
+        Table,
+        Text,
+        Index,
+        create_engine,
+    ) = (None,) * 11  # type: ignore
 from sqlalchemy.engine import Engine
 
 
@@ -91,6 +103,18 @@ class MenaceDB:
             Column("bot_id", Integer, ForeignKey("bots.bot_id"), primary_key=True),
         )
 
+        self.workflow_summaries = Table(
+            "workflow_summaries",
+            self.meta,
+            Column("workflow_id", Integer, primary_key=True),
+            Column("summary", Text),
+            Column("source_menace_id", Text, nullable=False, server_default=""),
+        )
+        Index(
+            "ix_workflow_summaries_source_menace_id",
+            self.workflow_summaries.c.source_menace_id,
+        )
+
         self.information = Table(
             "information",
             self.meta,
@@ -152,7 +176,9 @@ class MenaceDB:
             Column("status", String),
             Column("version", String),
             Column("estimated_profit", Float, default=0.0),
+            Column("source_menace_id", Text, nullable=False, server_default=""),
         )
+        Index("ix_bots_source_menace_id", self.bots.c.source_menace_id)
 
         self.bot_models = Table(
             "bot_models",
@@ -171,15 +197,35 @@ class MenaceDB:
         self.bot_enhancements = Table(
             "bot_enhancements",
             self.meta,
-            Column("bot_id", Integer, ForeignKey("bots.bot_id"), primary_key=True),
-            Column("enhancement_id", Integer, ForeignKey("enhancements.enhancement_id"), primary_key=True),
+            Column(
+                "bot_id",
+                Integer,
+                ForeignKey("bots.bot_id"),
+                primary_key=True,
+            ),
+            Column(
+                "enhancement_id",
+                Integer,
+                ForeignKey("enhancements.enhancement_id"),
+                primary_key=True,
+            ),
         )
 
         self.bot_errors = Table(
             "bot_errors",
             self.meta,
-            Column("bot_id", Integer, ForeignKey("bots.bot_id"), primary_key=True),
-            Column("error_id", Integer, ForeignKey("errors.error_id"), primary_key=True),
+            Column(
+                "bot_id",
+                Integer,
+                ForeignKey("bots.bot_id"),
+                primary_key=True,
+            ),
+            Column(
+                "error_id",
+                Integer,
+                ForeignKey("errors.error_id"),
+                primary_key=True,
+            ),
         )
 
         self.enhancements = Table(
@@ -191,27 +237,59 @@ class MenaceDB:
             Column("performance_delta", Float),
             Column("timestamp", String),
             Column("triggered_by", String),
+            Column("source_menace_id", Text, nullable=False, server_default=""),
         )
+        Index("ix_enhancements_source_menace_id", self.enhancements.c.source_menace_id)
 
         self.enhancement_models = Table(
             "enhancement_models",
             self.meta,
-            Column("enhancement_id", Integer, ForeignKey("enhancements.enhancement_id"), primary_key=True),
-            Column("model_id", Integer, ForeignKey("models.model_id"), primary_key=True),
+            Column(
+                "enhancement_id",
+                Integer,
+                ForeignKey("enhancements.enhancement_id"),
+                primary_key=True,
+            ),
+            Column(
+                "model_id",
+                Integer,
+                ForeignKey("models.model_id"),
+                primary_key=True,
+            ),
         )
 
         self.enhancement_bots = Table(
             "enhancement_bots",
             self.meta,
-            Column("enhancement_id", Integer, ForeignKey("enhancements.enhancement_id"), primary_key=True),
-            Column("bot_id", Integer, ForeignKey("bots.bot_id"), primary_key=True),
+            Column(
+                "enhancement_id",
+                Integer,
+                ForeignKey("enhancements.enhancement_id"),
+                primary_key=True,
+            ),
+            Column(
+                "bot_id",
+                Integer,
+                ForeignKey("bots.bot_id"),
+                primary_key=True,
+            ),
         )
 
         self.enhancement_workflows = Table(
             "enhancement_workflows",
             self.meta,
-            Column("enhancement_id", Integer, ForeignKey("enhancements.enhancement_id"), primary_key=True),
-            Column("workflow_id", Integer, ForeignKey("workflows.workflow_id"), primary_key=True),
+            Column(
+                "enhancement_id",
+                Integer,
+                ForeignKey("enhancements.enhancement_id"),
+                primary_key=True,
+            ),
+            Column(
+                "workflow_id",
+                Integer,
+                ForeignKey("workflows.workflow_id"),
+                primary_key=True,
+            ),
         )
 
         self.code = Table(
@@ -223,7 +301,9 @@ class MenaceDB:
             Column("version", String),
             Column("complexity_score", Float),
             Column("code_summary", Text),
+            Column("source_menace_id", Text, nullable=False, server_default=""),
         )
+        Index("ix_code_source_menace_id", self.code.c.source_menace_id)
 
         self.code_bots = Table(
             "code_bots",
@@ -235,15 +315,35 @@ class MenaceDB:
         self.code_enhancements = Table(
             "code_enhancements",
             self.meta,
-            Column("code_id", Integer, ForeignKey("code.code_id"), primary_key=True),
-            Column("enhancement_id", Integer, ForeignKey("enhancements.enhancement_id"), primary_key=True),
+            Column(
+                "code_id",
+                Integer,
+                ForeignKey("code.code_id"),
+                primary_key=True,
+            ),
+            Column(
+                "enhancement_id",
+                Integer,
+                ForeignKey("enhancements.enhancement_id"),
+                primary_key=True,
+            ),
         )
 
         self.code_errors = Table(
             "code_errors",
             self.meta,
-            Column("code_id", Integer, ForeignKey("code.code_id"), primary_key=True),
-            Column("error_id", Integer, ForeignKey("errors.error_id"), primary_key=True),
+            Column(
+                "code_id",
+                Integer,
+                ForeignKey("code.code_id"),
+                primary_key=True,
+            ),
+            Column(
+                "error_id",
+                Integer,
+                ForeignKey("errors.error_id"),
+                primary_key=True,
+            ),
         )
 
         self.errors = Table(
@@ -254,13 +354,25 @@ class MenaceDB:
             Column("error_type", String),
             Column("error_description", Text),
             Column("resolution_status", String),
+            Column("source_menace_id", Text, nullable=False, server_default=""),
         )
+        Index("ix_errors_source_menace_id", self.errors.c.source_menace_id)
 
         self.error_bots = Table(
             "error_bots",
             self.meta,
-            Column("error_id", Integer, ForeignKey("errors.error_id"), primary_key=True),
-            Column("bot_id", Integer, ForeignKey("bots.bot_id"), primary_key=True),
+            Column(
+                "error_id",
+                Integer,
+                ForeignKey("errors.error_id"),
+                primary_key=True,
+            ),
+            Column(
+                "bot_id",
+                Integer,
+                ForeignKey("bots.bot_id"),
+                primary_key=True,
+            ),
         )
 
         self.error_models = Table(
@@ -280,15 +392,35 @@ class MenaceDB:
         self.error_codes = Table(
             "error_codes",
             self.meta,
-            Column("error_id", Integer, ForeignKey("errors.error_id"), primary_key=True),
-            Column("code_id", Integer, ForeignKey("code.code_id"), primary_key=True),
+            Column(
+                "error_id",
+                Integer,
+                ForeignKey("errors.error_id"),
+                primary_key=True,
+            ),
+            Column(
+                "code_id",
+                Integer,
+                ForeignKey("code.code_id"),
+                primary_key=True,
+            ),
         )
 
         self.error_discrepancies = Table(
             "error_discrepancies",
             self.meta,
-            Column("error_id", Integer, ForeignKey("errors.error_id"), primary_key=True),
-            Column("discrepancy_id", Integer, ForeignKey("discrepancies.discrepancy_id"), primary_key=True),
+            Column(
+                "error_id",
+                Integer,
+                ForeignKey("errors.error_id"),
+                primary_key=True,
+            ),
+            Column(
+                "discrepancy_id",
+                Integer,
+                ForeignKey("discrepancies.discrepancy_id"),
+                primary_key=True,
+            ),
         )
 
         self.discrepancies = Table(
@@ -297,41 +429,93 @@ class MenaceDB:
             Column("discrepancy_id", Integer, primary_key=True),
             Column("description", Text),
             Column("resolution_notes", Text),
+            Column("source_menace_id", Text, nullable=False, server_default=""),
         )
+        Index("ix_discrepancies_source_menace_id", self.discrepancies.c.source_menace_id)
 
         self.discrepancy_bots = Table(
             "discrepancy_bots",
             self.meta,
-            Column("discrepancy_id", Integer, ForeignKey("discrepancies.discrepancy_id"), primary_key=True),
-            Column("bot_id", Integer, ForeignKey("bots.bot_id"), primary_key=True),
+            Column(
+                "discrepancy_id",
+                Integer,
+                ForeignKey("discrepancies.discrepancy_id"),
+                primary_key=True,
+            ),
+            Column(
+                "bot_id",
+                Integer,
+                ForeignKey("bots.bot_id"),
+                primary_key=True,
+            ),
         )
 
         self.discrepancy_models = Table(
             "discrepancy_models",
             self.meta,
-            Column("discrepancy_id", Integer, ForeignKey("discrepancies.discrepancy_id"), primary_key=True),
-            Column("model_id", Integer, ForeignKey("models.model_id"), primary_key=True),
+            Column(
+                "discrepancy_id",
+                Integer,
+                ForeignKey("discrepancies.discrepancy_id"),
+                primary_key=True,
+            ),
+            Column(
+                "model_id",
+                Integer,
+                ForeignKey("models.model_id"),
+                primary_key=True,
+            ),
         )
 
         self.model_discrepancies = Table(
             "model_discrepancies",
             self.meta,
-            Column("model_id", Integer, ForeignKey("models.model_id"), primary_key=True),
-            Column("discrepancy_id", Integer, ForeignKey("discrepancies.discrepancy_id"), primary_key=True),
+            Column(
+                "model_id",
+                Integer,
+                ForeignKey("models.model_id"),
+                primary_key=True,
+            ),
+            Column(
+                "discrepancy_id",
+                Integer,
+                ForeignKey("discrepancies.discrepancy_id"),
+                primary_key=True,
+            ),
         )
 
         self.discrepancy_workflows = Table(
             "discrepancy_workflows",
             self.meta,
-            Column("discrepancy_id", Integer, ForeignKey("discrepancies.discrepancy_id"), primary_key=True),
-            Column("workflow_id", Integer, ForeignKey("workflows.workflow_id"), primary_key=True),
+            Column(
+                "discrepancy_id",
+                Integer,
+                ForeignKey("discrepancies.discrepancy_id"),
+                primary_key=True,
+            ),
+            Column(
+                "workflow_id",
+                Integer,
+                ForeignKey("workflows.workflow_id"),
+                primary_key=True,
+            ),
         )
 
         self.discrepancy_enhancements = Table(
             "discrepancy_enhancements",
             self.meta,
-            Column("discrepancy_id", Integer, ForeignKey("discrepancies.discrepancy_id"), primary_key=True),
-            Column("enhancement_id", Integer, ForeignKey("enhancements.enhancement_id"), primary_key=True),
+            Column(
+                "discrepancy_id",
+                Integer,
+                ForeignKey("discrepancies.discrepancy_id"),
+                primary_key=True,
+            ),
+            Column(
+                "enhancement_id",
+                Integer,
+                ForeignKey("enhancements.enhancement_id"),
+                primary_key=True,
+            ),
         )
 
         self.audit_log = Table(
