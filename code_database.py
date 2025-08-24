@@ -611,7 +611,12 @@ class CodeDB(EmbeddableDBMixin):
             if not publish_with_retry(self.event_bus, "code:update", payload):
                 logger.exception("failed to publish code:update event")
 
-    def fetch_all(self, source_menace_id: str | None = None) -> List[Dict[str, Any]]:
+    def fetch_all(
+        self,
+        *,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
+    ) -> List[Dict[str, Any]]:
         """Return all code records as a list of dictionaries."""
 
         menace_id = source_menace_id or _current_menace_id(self.router)
@@ -619,7 +624,11 @@ class CodeDB(EmbeddableDBMixin):
         def op(conn: Any) -> List[Dict[str, Any]]:
             if isinstance(conn, sqlite3.Connection):
                 conn.row_factory = sqlite3.Row
-            rows = self._execute(conn, SQL_SELECT_ALL, (menace_id,)).fetchall()
+            clause, params = build_scope_clause("code", Scope(scope), menace_id)
+            query = "SELECT * FROM code"
+            if clause:
+                query += f" {clause}"
+            rows = self._execute(conn, query, params).fetchall()
             return [dict(r) for r in rows]
 
         return self._with_retry(lambda: self._conn_wrapper(op))
@@ -630,6 +639,7 @@ class CodeDB(EmbeddableDBMixin):
         limit: int = 5,
         *,
         source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> List[Dict[str, Any]]:
         """Return code records sorted by complexity score."""
 
@@ -638,9 +648,15 @@ class CodeDB(EmbeddableDBMixin):
         def op(conn: Any) -> List[Dict[str, Any]]:
             if isinstance(conn, sqlite3.Connection):
                 conn.row_factory = sqlite3.Row
-            rows = self._execute(
-                conn, SQL_SELECT_BY_COMPLEXITY, (min_score, menace_id, limit)
-            ).fetchall()
+            clause, scope_params = build_scope_clause("code", Scope(scope), menace_id)
+            query = "SELECT * FROM code WHERE complexity >= ?"
+            params: list[Any] = [min_score]
+            if clause:
+                query += " AND " + clause.replace("WHERE ", "")
+            params.extend(scope_params)
+            query += " ORDER BY complexity DESC LIMIT ?"
+            params.append(limit)
+            rows = self._execute(conn, query, params).fetchall()
             return [dict(r) for r in rows]
 
         return self._with_retry(lambda: self._conn_wrapper(op))
