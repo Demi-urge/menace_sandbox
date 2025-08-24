@@ -258,6 +258,7 @@ def _prior_hit_count(origin_db: str, record_id: Any) -> int:
     except Exception:  # pragma: no cover - best effort
         return 0
 
+
 def _win_regret_rates(origin_db: str, record_id: Any) -> Tuple[float, float]:
     """Return historical win/regret rates for a vector."""
 
@@ -771,7 +772,7 @@ class UniversalRetriever:
                 stats = {}
         if not stats and MetricsDB is not None:
             try:
-                mdb = MetricsDB()
+                MetricsDB()
                 with router.get_connection("retriever_stats") as conn:
                     cur = conn.execute(
                         "SELECT origin_db, wins, regrets FROM retriever_stats"
@@ -891,7 +892,9 @@ class UniversalRetriever:
                 for m in matches:
                     rec_id = self._extract_id(m, self._id_fields[source])
                     dist = (
-                        m.get("_distance", 0.0) if isinstance(m, dict) else getattr(m, "_distance", 0.0)
+                        m.get("_distance", 0.0)
+                        if isinstance(m, dict)
+                        else getattr(m, "_distance", 0.0)
                     )
                     similarity = 1.0 / (1.0 + float(dist))
                     ctx_score, extra = self._context_score(source, m)
@@ -958,7 +961,11 @@ class UniversalRetriever:
                         "alignment_severity": severity,
                         "win": win_hist,
                         "regret": regret_hist,
-                        **{k: v for k, v in extra.items() if k not in {"alignment_severity", "win", "regret"}},
+                        **{
+                            k: v
+                            for k, v in extra.items()
+                            if k not in {"alignment_severity", "win", "regret"}
+                        },
                         "distance": dist,
                     }
                     base_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
@@ -1006,7 +1013,9 @@ class UniversalRetriever:
                 for m in matches:
                     rec_id = self._extract_id(m, ("id", "cid"))
                     dist = (
-                        m.get("_distance", 0.0) if isinstance(m, dict) else getattr(m, "_distance", 0.0)
+                        m.get("_distance", 0.0)
+                        if isinstance(m, dict)
+                        else getattr(m, "_distance", 0.0)
                     )
                     similarity = 1.0 / (1.0 + float(dist))
                     ctx_score, extra = self._context_score("code", m)
@@ -1074,7 +1083,11 @@ class UniversalRetriever:
         if not self.error_db:
             return 0.0
         try:
-            menace_id = getattr(self.error_db.router, "menace_id", None)
+            router = getattr(self.error_db, "router", None)
+            menace_id = getattr(router, "menace_id", None)
+            if menace_id is None:
+                config_obj = getattr(self, "config", None)
+                menace_id = getattr(config_obj, "menace_id", None)
             if menace_id is None:
                 menace_id = os.getenv("MENACE_ID", "")
             cur = self.error_db.conn.execute(
@@ -1362,8 +1375,6 @@ class UniversalRetriever:
                 bias_map = roi_tracker.retrieval_bias()
             except Exception:
                 bias_map = {}
-        SIM_WEIGHT = self.weights.similarity
-        CTX_WEIGHT = self.weights.context
         WIN_WEIGHT = self.weights.win
         REGRET_WEIGHT = self.weights.regret
         STALE_COST = self.weights.stale_cost
@@ -1420,7 +1431,11 @@ class UniversalRetriever:
                 severity = 0.0
                 try:
                     if isinstance(item, dict):
-                        severity = float(item.get("alignment_severity") or feats.get("alignment_severity") or 0.0)
+                        severity = float(
+                            item.get("alignment_severity")
+                            or feats.get("alignment_severity")
+                            or 0.0
+                        )
                     else:
                         severity = float(
                             getattr(item, "alignment_severity", 0.0)
