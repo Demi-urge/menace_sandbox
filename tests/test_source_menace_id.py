@@ -47,16 +47,19 @@ def test_inserts_populate_source_menace_id(multi_menace_db):
 def test_default_queries_return_only_current_menace(multi_menace_db):
     bdb.router = multi_menace_db["router_a"]
     db_a = multi_menace_db["db_a"]
-    names = [r["name"] for r in db_a.fetch_all()]
-    assert names == ["a"]
+    names = {r["name"] for r in db_a.fetch_all()}
+    assert names == {"a"}
 
 
-def test_cross_instance_filtering_can_be_overridden(multi_menace_db):
+def test_scope_selection(multi_menace_db):
     bdb.router = multi_menace_db["router_a"]
     db_a = multi_menace_db["db_a"]
 
-    all_names = {r["name"] for r in db_a.fetch_all(include_cross_instance=True)}
+    all_names = {r["name"] for r in db_a.fetch_all(scope="all")}
     assert all_names == {"a", "b"}
+
+    global_names = {r["name"] for r in db_a.fetch_all(scope="global")}
+    assert global_names == {"b"}
 
     beta_names = [r["name"] for r in db_a.fetch_all(source_menace_id="beta")]
     assert beta_names == ["b"]
