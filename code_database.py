@@ -537,11 +537,9 @@ class CodeDB(EmbeddableDBMixin):
         def op(conn: Any) -> None:
             menace_id = source_menace_id or _current_menace_id(self.router)
             if expected_revision is not None:
-                row = self._execute(
-                    conn,
-                    SQL_SELECT_REVISION,
-                    (code_id, menace_id),
-                ).fetchone()
+                clause, params = build_scope_clause("code", Scope.LOCAL, menace_id)
+                query = apply_scope(SQL_SELECT_REVISION, clause)
+                row = self._execute(conn, query, [code_id, *params]).fetchone()
                 if not row or row[0] != expected_revision:
                     raise RuntimeError("revision mismatch")
 
@@ -670,12 +668,9 @@ class CodeDB(EmbeddableDBMixin):
         menace_id = source_menace_id or _current_menace_id(self.router)
 
         def fallback(conn: Any) -> List[Any]:
-            clause, params = build_scope_clause("code", Scope(scope), menace_id)
-            query = apply_scope(
-                "SELECT * FROM code WHERE (summary LIKE ? COLLATE NOCASE OR code LIKE ? COLLATE NOCASE)",
-                clause,
-            )
-            params.extend([pattern, pattern])
+            clause, scope_params = build_scope_clause("code", Scope(scope), menace_id)
+            query = apply_scope(SQL_SEARCH_FALLBACK, clause)
+            params = [pattern, pattern, *scope_params]
             return self._execute(conn, query, params).fetchall()
 
         def op(conn: Any) -> List[Dict[str, Any]]:
@@ -685,11 +680,9 @@ class CodeDB(EmbeddableDBMixin):
                 self._maybe_init_fts(conn)
             if self.has_fts:
                 try:
-                    clause, params = build_scope_clause("c", Scope(scope), menace_id)
-                    base = "SELECT c.* FROM code AS c JOIN code_fts f ON f.rowid = c.id"
-                    query = apply_scope(base, clause)
-                    query += " AND code_fts MATCH ?" if clause else " WHERE code_fts MATCH ?"
-                    params.append(f"{term}*")
+                    clause, scope_params = build_scope_clause("c", Scope(scope), menace_id)
+                    query = apply_scope(SQL_SEARCH_FTS, clause)
+                    params = [f"{term}*", *scope_params]
                     rows = self._execute_fts(conn, query, params).fetchall()
                 except Exception as exc:
                     self.has_fts = False
@@ -723,12 +716,9 @@ class CodeDB(EmbeddableDBMixin):
         def op(conn: Any) -> List[Dict[str, Any]]:
             if isinstance(conn, sqlite3.Connection):
                 conn.row_factory = sqlite3.Row
-            clause, params = build_scope_clause("code", Scope(scope), menace_id)
-            query = apply_scope(
-                "SELECT * FROM code WHERE (summary LIKE ? COLLATE NOCASE OR code LIKE ? COLLATE NOCASE)",
-                clause,
-            )
-            params.extend([pattern, pattern])
+            clause, scope_params = build_scope_clause("code", Scope(scope), menace_id)
+            query = apply_scope(SQL_SEARCH_FALLBACK, clause)
+            params = [pattern, pattern, *scope_params]
             rows = self._execute(conn, query, params).fetchall()
             return [dict(r) for r in rows]
 
@@ -809,7 +799,9 @@ class CodeDB(EmbeddableDBMixin):
             tables = ["code_bots", "code_enhancements", "code_errors"]
             for table in tables:
                 self._execute(conn, SQL_DELETE_REL[table], (code_id,))
-            self._execute(conn, SQL_DELETE_CODE, (code_id, menace_id))
+            clause, params = build_scope_clause("code", Scope.LOCAL, menace_id)
+            query = apply_scope(SQL_DELETE_CODE, clause)
+            self._execute(conn, query, [code_id, *params])
             if not self.has_fts:
                 self._maybe_init_fts(conn)
             if self.has_fts:
