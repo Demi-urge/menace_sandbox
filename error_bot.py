@@ -270,6 +270,12 @@ class ErrorDB(EmbeddableDBMixin):
             backend=vector_backend,
         )
 
+    def _menace_id(self, override: str | None = None) -> str:
+        """Return the menace identifier, allowing an optional override."""
+        return override or (
+            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        )
+
     def _publish(self, topic: str, payload: object) -> None:
         if self.event_bus:
             try:
@@ -328,8 +334,8 @@ class ErrorDB(EmbeddableDBMixin):
         row = cur.fetchone()
         return row[0] if row else None
 
-    def log_discrepancy(self, message: str) -> None:
-        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+    def log_discrepancy(self, message: str, *, source_menace_id: str | None = None) -> None:
+        menace_id = self._menace_id(source_menace_id)
         self.conn.execute(
             "INSERT INTO discrepancies(message, ts, source_menace_id) VALUES (?, ?, ?)",
             (message, datetime.utcnow().isoformat(), menace_id),
@@ -337,13 +343,19 @@ class ErrorDB(EmbeddableDBMixin):
         self.conn.commit()
         self._publish("discrepancies:new", {"message": message})
 
-    def discrepancies(self) -> pd.DataFrame:
-        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
-        return pd.read_sql(
-            "SELECT message, ts FROM discrepancies WHERE source_menace_id=?",
-            self.conn,
-            params=(menace_id,),
-        )
+    def discrepancies(
+        self,
+        *,
+        source_menace_id: str | None = None,
+        all_instances: bool = False,
+    ) -> pd.DataFrame:
+        menace_id = self._menace_id(source_menace_id)
+        query = "SELECT message, ts FROM discrepancies"
+        params: list[object] = []
+        if not all_instances:
+            query += " WHERE source_menace_id=?"
+            params.append(menace_id)
+        return pd.read_sql(query, self.conn, params=params)
 
     def log_preemptive_patch(
         self, module: str, risk_score: float, patch_id: int | None
@@ -395,15 +407,19 @@ class ErrorDB(EmbeddableDBMixin):
     # ------------------------------------------------------------------
 
     def find_error(
-        self, message: str, source_menace_id: str | None = None
+        self,
+        message: str,
+        source_menace_id: str | None = None,
+        *,
+        all_instances: bool = False,
     ) -> Optional[int]:
-        menace_id = source_menace_id or (
-            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
-        )
-        cur = self.conn.execute(
-            "SELECT id FROM errors WHERE message = ? AND source_menace_id = ?",
-            (message, menace_id),
-        )
+        menace_id = self._menace_id(source_menace_id)
+        query = "SELECT id FROM errors WHERE message = ?"
+        params: list[object] = [message]
+        if not all_instances:
+            query += " AND source_menace_id = ?"
+            params.append(menace_id)
+        cur = self.conn.execute(query, params)
         row = cur.fetchone()
         return int(row[0]) if row else None
 
@@ -421,10 +437,8 @@ class ErrorDB(EmbeddableDBMixin):
         source_menace_id: str | None = None,
     ) -> int:
         """Insert a new error if not already present and return its id."""
-        menace_id = source_menace_id or (
-            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
-        )
-        found = self.find_error(message, menace_id)
+        menace_id = self._menace_id(source_menace_id)
+        found = self.find_error(message, source_menace_id=menace_id)
         if found is not None:
             try:
                 self.add_embedding(
@@ -469,9 +483,20 @@ class ErrorDB(EmbeddableDBMixin):
         """Delegate to :class:`EmbeddableDBMixin` for compatibility."""
         EmbeddableDBMixin.backfill_embeddings(self)
 
-    def iter_records(self) -> Iterator[tuple[int, dict[str, Any], str]]:
+    def iter_records(
+        self,
+        *,
+        source_menace_id: str | None = None,
+        all_instances: bool = False,
+    ) -> Iterator[tuple[int, dict[str, Any], str]]:
         """Yield error and telemetry rows for embedding backfill."""
-        cur = self.conn.execute("SELECT id, message FROM errors")
+        menace_id = self._menace_id(source_menace_id)
+        query = "SELECT id, message FROM errors"
+        params: list[object] = []
+        if not all_instances:
+            query += " WHERE source_menace_id=?"
+            params.append(menace_id)
+        cur = self.conn.execute(query, params)
         for row in cur.fetchall():
             yield row["id"], {"message": row["message"]}, "error"
         cur = self.conn.execute(
@@ -510,16 +535,22 @@ class ErrorDB(EmbeddableDBMixin):
         self.conn.commit()
         self._publish("error_code:new", {"error_id": err_id, "code_id": code_id})
 
-    def recurrence_frequency(self, err_id: int) -> int:
-        """Return recorded recurrence frequency for ``err_id``.
+    def recurrence_frequency(
+        self,
+        err_id: int,
+        *,
+        source_menace_id: str | None = None,
+        all_instances: bool = False,
+    ) -> int:
+        """Return recorded recurrence frequency for ``err_id``."""
 
-        Uses the ``errors.frequency`` column where available; if the
-        ``err_id`` is unknown or the column is NULL, ``0`` is returned.
-        """
-        cur = self.conn.execute(
-            "SELECT frequency FROM errors WHERE id=?",
-            (err_id,),
-        )
+        menace_id = self._menace_id(source_menace_id)
+        query = "SELECT frequency FROM errors WHERE id=?"
+        params: list[object] = [err_id]
+        if not all_instances:
+            query += " AND source_menace_id=?"
+            params.append(menace_id)
+        cur = self.conn.execute(query, params)
         row = cur.fetchone()
         return int(row["frequency"]) if row and row["frequency"] is not None else 0
 
@@ -620,10 +651,16 @@ class ErrorDB(EmbeddableDBMixin):
         )
 
     def search_by_vector(
-        self, vector: Sequence[float], top_k: int = 5
+        self,
+        vector: Sequence[float],
+        top_k: int = 5,
+        *,
+        source_menace_id: str | None = None,
+        all_instances: bool = False,
     ) -> list[dict[str, object]]:
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
         results: list[dict[str, object]] = []
+        menace_id = self._menace_id(source_menace_id)
         for rec_id, dist in matches:
             rid = int(rec_id)
             row = self.conn.execute(
@@ -639,9 +676,12 @@ class ErrorDB(EmbeddableDBMixin):
                     }
                 )
                 continue
-            row = self.conn.execute(
-                "SELECT message FROM errors WHERE id=?", (rid,)
-            ).fetchone()
+            q = "SELECT message FROM errors WHERE id=?"
+            params: list[object] = [rid]
+            if not all_instances:
+                q += " AND source_menace_id=?"
+                params.append(menace_id)
+            row = self.conn.execute(q, params).fetchone()
             if row:
                 results.append(
                     {"id": rid, "message": row[0], "_distance": dist}
@@ -939,13 +979,23 @@ class ErrorBot(AdminBotBase):
                 if error_bot_exceptions:
                     error_bot_exceptions.inc()
 
-    async def prompt_rewriter_daemon(self, err_id: int) -> None:
+    async def prompt_rewriter_daemon(
+        self,
+        err_id: int,
+        *,
+        source_menace_id: str | None = None,
+        all_instances: bool = False,
+    ) -> None:
         if not self.enhancement_db:
             return
+        menace_id = self.db._menace_id(source_menace_id)
         with self.db.router.get_connection("errors") as conn:
-            row = conn.execute(
-                "SELECT message FROM errors WHERE id=?", (err_id,)
-            ).fetchone()
+            q = "SELECT message FROM errors WHERE id=?"
+            params: list[object] = [err_id]
+            if not all_instances:
+                q += " AND source_menace_id=?"
+                params.append(menace_id)
+            row = conn.execute(q, params).fetchone()
         if not row:
             return
         fingerprint = row[0]
