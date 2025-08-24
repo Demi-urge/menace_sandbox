@@ -1,4 +1,5 @@
 import sys
+import sqlite3
 from pathlib import Path
 import menace.bot_testing_bot as btb
 
@@ -18,7 +19,7 @@ def hello(name: str = 'x'):
 
 def test_run_unit(tmp_path):
     name = create_dummy(tmp_path)
-    db = btb.TestingLogDB(tmp_path / "log.db")
+    db = btb.TestingLogDB(connection_factory=lambda: sqlite3.connect(tmp_path / "log.db"))
     bot = btb.BotTestingBot(db)
     results = bot.run_unit_tests([name], parallel=False)
     assert results
@@ -63,7 +64,7 @@ class LocalCls:
 
 def test_run_unit_skips_imports(tmp_path):
     name = create_imports(tmp_path)
-    db = btb.TestingLogDB(tmp_path / "log2.db")
+    db = btb.TestingLogDB(connection_factory=lambda: sqlite3.connect(tmp_path / "log2.db"))
     bot = btb.BotTestingBot(db)
     results = bot.run_unit_tests([name], parallel=False)
     assert results
