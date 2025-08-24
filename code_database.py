@@ -6,7 +6,7 @@ import logging
 import threading
 import hashlib
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Callable, Iterator, TypeVar, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Callable, Iterator, TypeVar, Sequence, Tuple, Literal
 import json
 from collections import deque, Counter
 import re
@@ -22,6 +22,7 @@ import license_detector
 from vector_service import EmbeddableDBMixin
 from embeddable_db_mixin import log_embedding_metrics
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from .db_scope import Scope, build_scope_clause
 
 try:  # optional dependency for future scalability
     from sqlalchemy.engine import Engine  # type: ignore
@@ -645,11 +646,25 @@ class CodeDB(EmbeddableDBMixin):
         return self._with_retry(lambda: self._conn_wrapper(op))
 
     def search(
-        self, term: str, *, source_menace_id: str | None = None
+        self,
+        term: str,
+        *,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> List[Dict[str, Any]]:
         """Search code records by summary or code."""
         pattern = f"%{term}%"
         menace_id = source_menace_id or _current_menace_id(self.router)
+
+        def fallback(conn: Any) -> List[Any]:
+            clause, params = build_scope_clause("code", Scope(scope), menace_id)
+            query = "SELECT * FROM code"
+            if clause:
+                query += f" {clause} AND (summary LIKE ? COLLATE NOCASE OR code LIKE ? COLLATE NOCASE)"
+            else:
+                query += " WHERE (summary LIKE ? COLLATE NOCASE OR code LIKE ? COLLATE NOCASE)"
+            params.extend([pattern, pattern])
+            return self._execute(conn, query, params).fetchall()
 
         def op(conn: Any) -> List[Dict[str, Any]]:
             if isinstance(conn, sqlite3.Connection):
@@ -658,11 +673,14 @@ class CodeDB(EmbeddableDBMixin):
                 self._maybe_init_fts(conn)
             if self.has_fts:
                 try:
-                    rows = self._execute_fts(
-                        conn,
-                        SQL_SEARCH_FTS,
-                        (f"{term}*", menace_id),
-                    ).fetchall()
+                    clause, params = build_scope_clause("c", Scope(scope), menace_id)
+                    query = "SELECT c.* FROM code AS c JOIN code_fts f ON f.rowid = c.id"
+                    if clause:
+                        query += f" {clause} AND code_fts MATCH ?"
+                    else:
+                        query += " WHERE code_fts MATCH ?"
+                    params.append(f"{term}*")
+                    rows = self._execute_fts(conn, query, params).fetchall()
                 except Exception as exc:
                     self.has_fts = False
                     self._fts_disabled_until = datetime.utcnow() + timedelta(minutes=5)
@@ -673,24 +691,20 @@ class CodeDB(EmbeddableDBMixin):
                         exc_info=True,
                     )
                     logger.info("falling back to non-fts search")
-                    rows = self._execute(
-                        conn,
-                        SQL_SEARCH_FALLBACK,
-                        (pattern, pattern, menace_id),
-                    ).fetchall()
+                    rows = fallback(conn)
             else:
                 logger.info("fts disabled, using fallback search")
-                rows = self._execute(
-                    conn,
-                    SQL_SEARCH_FALLBACK,
-                    (pattern, pattern, menace_id),
-                ).fetchall()
+                rows = fallback(conn)
             return [dict(r) for r in rows]
 
         return self._with_retry(lambda: self._conn_wrapper(op))
 
     def search_fallback(
-        self, term: str, *, source_menace_id: str | None = None
+        self,
+        term: str,
+        *,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> List[Dict[str, Any]]:
         """Search using the non-FTS fallback query directly."""
         pattern = f"%{term}%"
@@ -699,11 +713,14 @@ class CodeDB(EmbeddableDBMixin):
         def op(conn: Any) -> List[Dict[str, Any]]:
             if isinstance(conn, sqlite3.Connection):
                 conn.row_factory = sqlite3.Row
-            rows = self._execute(
-                conn,
-                SQL_SEARCH_FALLBACK,
-                (pattern, pattern, menace_id),
-            ).fetchall()
+            clause, params = build_scope_clause("code", Scope(scope), menace_id)
+            query = "SELECT * FROM code"
+            if clause:
+                query += f" {clause} AND (summary LIKE ? COLLATE NOCASE OR code LIKE ? COLLATE NOCASE)"
+            else:
+                query += " WHERE (summary LIKE ? COLLATE NOCASE OR code LIKE ? COLLATE NOCASE)"
+            params.extend([pattern, pattern])
+            rows = self._execute(conn, query, params).fetchall()
             return [dict(r) for r in rows]
 
         return self._with_retry(lambda: self._conn_wrapper(op))

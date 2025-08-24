@@ -440,10 +440,11 @@ class ErrorDB(EmbeddableDBMixin):
         bots: Iterable[str] | None = None,
         codes: Iterable[int] | None = None,
         source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> int:
         """Insert a new error if not already present and return its id."""
         menace_id = self._menace_id(source_menace_id)
-        found = self.find_error(message, source_menace_id=menace_id)
+        found = self.find_error(message, source_menace_id=menace_id, scope=scope)
         if found is not None:
             try:
                 self.add_embedding(
