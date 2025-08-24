@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import hashlib
 try:  # Python 3.11+
     import tomllib  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - fallback for older Pythons
@@ -155,29 +156,30 @@ class ModuleSynergyGrapher:
 
     # ------------------------------------------------------------------
     def _collect_ast_info(
-        self, root: Path, modules: Iterable[str], *, use_cache: bool = True
+        self,
+        root: Path,
+        modules: Iterable[str],
+        cache: Dict[str, Dict[str, object]] | None = None,
+        *,
+        use_cache: bool = True,
     ) -> Tuple[
         Dict[str, set[str]],
         Dict[str, set[str]],
         Dict[str, set[str]],
         Dict[str, str],
         Dict[str, list[float]],
+        Dict[str, Dict[str, object]],
+        bool,
     ]:
         """Return AST details and doc embeddings for ``modules``.
 
-        Results are cached under ``sandbox_data/module_ast_cache.json``.  On
-        subsequent calls, cached values are reused when the corresponding source
-        file's modification time is unchanged.  Setting ``use_cache`` to
-        ``False`` forces regeneration of all entries.
+        ``cache`` is a mapping of module names to previously computed details and
+        is persisted to ``sandbox_data/synergy_cache.json`` by the caller. When
+        ``use_cache`` is ``True`` the function reuses entries whose source file's
+        modification time and hash are unchanged.
         """
 
-        cache_path = root / "sandbox_data" / "module_ast_cache.json"
-        cache: Dict[str, Dict[str, object]] = {}
-        if use_cache and cache_path.exists():
-            try:
-                cache = json.loads(cache_path.read_text())
-            except Exception:  # pragma: no cover - corrupt cache
-                cache = {}
+        cache = {} if cache is None else dict(cache)
 
         vars_: Dict[str, set[str]] = {}
         funcs: Dict[str, set[str]] = {}
@@ -191,8 +193,13 @@ class ModuleSynergyGrapher:
             if not file.exists():
                 continue
             mtime = file.stat().st_mtime
+            try:
+                data = file.read_bytes()
+            except Exception:
+                continue
+            hash_ = hashlib.sha256(data).hexdigest()
             cached = cache.get(mod) if use_cache else None
-            if cached and cached.get("mtime") == mtime:
+            if cached and cached.get("mtime") == mtime and cached.get("hash") == hash_:
                 vars_[mod] = set(cached.get("vars", []))
                 funcs[mod] = set(cached.get("funcs", []))
                 classes[mod] = set(cached.get("classes", []))
@@ -203,7 +210,7 @@ class ModuleSynergyGrapher:
                 continue
 
             try:
-                tree = ast.parse(file.read_text())
+                tree = ast.parse(data.decode())
             except Exception:
                 continue
 
@@ -238,6 +245,7 @@ class ModuleSynergyGrapher:
 
             cache[mod] = {
                 "mtime": mtime,
+                "hash": hash_,
                 "vars": sorted(vnames),
                 "funcs": sorted(fnames),
                 "classes": sorted(cnames),
@@ -247,18 +255,10 @@ class ModuleSynergyGrapher:
             updated = True
 
         if not use_cache:
-            # Drop stale cache entries when forcing a rebuild.
             cache = {m: cache[m] for m in modules if m in cache}
             updated = True
 
-        if updated:
-            cache_path.parent.mkdir(exist_ok=True)
-            try:
-                cache_path.write_text(json.dumps(cache))
-            except Exception:  # pragma: no cover - disk issues
-                pass
-
-        return vars_, funcs, classes, docs, embeddings
+        return vars_, funcs, classes, docs, embeddings, cache, updated
 
     def _workflow_pairs(
         self, root: Path, modules: set[str]
@@ -369,9 +369,30 @@ class ModuleSynergyGrapher:
         # Refresh coefficient weights from disk before scoring
         self._load_weights()
 
-        vars_, funcs, classes, docs, embeddings = self._collect_ast_info(
-            root, modules, use_cache=use_cache
-        )
+        cache_path = root / "sandbox_data" / "synergy_cache.json"
+        cache: Dict[str, Dict[str, object]] = {}
+        if use_cache and cache_path.exists():
+            try:
+                cache = json.loads(cache_path.read_text())
+            except Exception:  # pragma: no cover - corrupt cache
+                cache = {}
+
+        (
+            vars_,
+            funcs,
+            classes,
+            docs,
+            embeddings,
+            cache,
+            updated,
+        ) = self._collect_ast_info(root, modules, cache, use_cache=use_cache)
+
+        if updated:
+            cache_path.parent.mkdir(exist_ok=True)
+            try:
+                cache_path.write_text(json.dumps(cache))
+            except Exception:  # pragma: no cover - disk issues
+                pass
 
         # Direct import scores
         direct: Dict[Tuple[str, str], float] = {}
@@ -506,9 +527,30 @@ class ModuleSynergyGrapher:
             self.save(self.graph, out_dir / "module_synergy_graph.json", format="json")
             return self.graph
 
-        vars_, funcs, classes, docs, new_embeddings = self._collect_ast_info(
-            root, changed, use_cache=False
-        )
+        cache_path = root / "sandbox_data" / "synergy_cache.json"
+        cache: Dict[str, Dict[str, object]] = {}
+        if cache_path.exists():
+            try:
+                cache = json.loads(cache_path.read_text())
+            except Exception:  # pragma: no cover - corrupt cache
+                cache = {}
+
+        (
+            vars_,
+            funcs,
+            classes,
+            docs,
+            new_embeddings,
+            cache,
+            updated_cache,
+        ) = self._collect_ast_info(root, changed, cache, use_cache=False)
+
+        if updated_cache:
+            cache_path.parent.mkdir(exist_ok=True)
+            try:
+                cache_path.write_text(json.dumps(cache))
+            except Exception:  # pragma: no cover - disk issues
+                pass
 
         embeddings: Dict[str, list[float]] = {}
         for mod in self.graph.nodes:
