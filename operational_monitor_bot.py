@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +22,7 @@ from .data_bot import DataBot, MetricsDB, MetricRecord
 from .database_steward_bot import ESIndex
 from .splunk_logger import SplunkHEC
 from .report_generation_bot import ReportGenerationBot, ReportOptions
-from .db_router import DBRouter
+from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .admin_bot_base import AdminBotBase
 from .advanced_error_management import (
     AnomalyEnsembleDetector,
@@ -47,8 +46,18 @@ class AnomalyRecord:
 class AnomalyDB:
     """SQLite-backed store for anomalies."""
 
-    def __init__(self, path: Path | str = "anomalies.db") -> None:
-        self.conn = sqlite3.connect(path)
+    def __init__(
+        self,
+        path: Path | str = "anomalies.db",
+        *,
+        router: DBRouter | None = None,
+    ) -> None:
+        LOCAL_TABLES.add("anomalies")
+        p = Path(path).resolve()
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "anomalies_db", str(p), str(p)
+        )
+        self.conn = self.router.get_connection("anomalies")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS anomalies(
@@ -58,7 +67,7 @@ class AnomalyDB:
                 severity REAL,
                 ts TEXT
             )
-            """
+            """,
         )
         self.conn.commit()
 
@@ -97,7 +106,7 @@ class OperationalMonitoringBot(AdminBotBase):
         self.data_bot = DataBot(self.db)
         self.es = es or ESIndex()
         self.splunk = splunk
-        self.anomaly_db = anomaly_db or AnomalyDB()
+        self.anomaly_db = anomaly_db or AnomalyDB(router=self.db_router)
         self.reporter = reporter or ReportGenerationBot(self.db)
         self.detector = AnomalyEnsembleDetector(self.db)
         self.playbook_generator = PlaybookGenerator()

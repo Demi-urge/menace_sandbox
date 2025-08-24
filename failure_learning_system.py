@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterator, List, Sequence
 import importlib
 
 from vector_service import EmbeddableDBMixin
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 try:
     import pandas as pd  # type: ignore
@@ -42,14 +43,17 @@ class DiscrepancyDB(EmbeddableDBMixin):
         self,
         path: Path | str = "failures.db",
         *,
+        router: DBRouter | None = None,
         vector_index_path: Path | str | None = None,
         embedding_version: int = 1,
         vector_backend: str = "annoy",
     ) -> None:
-        # allow the connection to be shared across threads because the
-        # failure learning system may be accessed by background workers
-        # running in different threads
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        p = Path(path).resolve()
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "failures_db", str(p), str(p)
+        )
+        self.conn = self.router.get_connection("failures")
+        self.dconn = self.router.get_connection("detections")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS failures(
@@ -65,7 +69,7 @@ class DiscrepancyDB(EmbeddableDBMixin):
             )
             """,
         )
-        self.conn.execute(
+        self.dconn.execute(
             """
             CREATE TABLE IF NOT EXISTS detections(
                 rule TEXT,
@@ -77,6 +81,7 @@ class DiscrepancyDB(EmbeddableDBMixin):
             """,
         )
         self.conn.commit()
+        self.dconn.commit()
         index_path = (
             Path(vector_index_path)
             if vector_index_path is not None
@@ -119,7 +124,7 @@ class DiscrepancyDB(EmbeddableDBMixin):
     def log_detection(
         self, rule: str, severity: float, message: str, workflow: str | None = None
     ) -> None:
-        cur = self.conn.execute(
+        cur = self.dconn.execute(
             "INSERT INTO detections(rule, message, severity, workflow, ts) VALUES(?,?,?,?,?)",
             (
                 rule,
@@ -129,7 +134,7 @@ class DiscrepancyDB(EmbeddableDBMixin):
                 datetime.utcnow().isoformat(),
             ),
         )
-        self.conn.commit()
+        self.dconn.commit()
         rid = f"d{int(cur.lastrowid)}"
         data = {
             "rule": rule,
@@ -145,7 +150,7 @@ class DiscrepancyDB(EmbeddableDBMixin):
     def fetch_detections(self, min_severity: float = 0.0) -> pd.DataFrame:
         return pd.read_sql(
             "SELECT rule, message, severity, workflow, ts FROM detections WHERE severity >= ?",
-            self.conn,
+            self.dconn,
             params=(min_severity,),
         )
 
@@ -178,7 +183,7 @@ class DiscrepancyDB(EmbeddableDBMixin):
             data = dict(row)
             rid = str(data.pop("rowid"))
             yield rid, data, "failure"
-        cur = self.conn.execute("SELECT rowid, * FROM detections")
+        cur = self.dconn.execute("SELECT rowid, * FROM detections")
         for row in cur.fetchall():
             data = dict(row)
             rid = "d" + str(data.pop("rowid"))
@@ -191,14 +196,17 @@ class DiscrepancyDB(EmbeddableDBMixin):
             if meta and "vector" in meta:
                 return meta["vector"]
             if rid.startswith("d"):
-                row = self.conn.execute(
+                row = self.dconn.execute(
                     "SELECT rule, message, severity, workflow FROM detections WHERE rowid=?",
                     (int(rid[1:]),),
                 ).fetchone()
             else:
                 try:
                     row = self.conn.execute(
-                        "SELECT model_id, cause, features, demographics, profitability, retention, cac, roi FROM failures WHERE rowid=?",
+                        (
+                            "SELECT model_id, cause, features, demographics, profitability, "
+                            "retention, cac, roi FROM failures WHERE rowid=?"
+                        ),
                         (int(rid),),
                     ).fetchone()
                 except ValueError:
@@ -224,13 +232,16 @@ class DiscrepancyDB(EmbeddableDBMixin):
         results: List[dict[str, Any]] = []
         for rid, dist in matches:
             if str(rid).startswith("d"):
-                row = self.conn.execute(
+                row = self.dconn.execute(
                     "SELECT rule, message, severity, workflow FROM detections WHERE rowid=?",
                     (int(str(rid)[1:]),),
                 ).fetchone()
             else:
                 row = self.conn.execute(
-                    "SELECT model_id, cause, features, demographics, profitability, retention, cac, roi FROM failures WHERE rowid=?",
+                    (
+                        "SELECT model_id, cause, features, demographics, profitability, "
+                        "retention, cac, roi FROM failures WHERE rowid=?"
+                    ),
                     (int(rid),),
                 ).fetchone()
             if row:

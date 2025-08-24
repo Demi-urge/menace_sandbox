@@ -31,9 +31,9 @@ __all__ = [
 # Tables stored in the shared database.  These tables are visible to every
 # Menace instance.  The container is mutated in-place on reload so existing
 # references (e.g. in tests) observe the updated contents.
-if "SHARED_TABLES" in globals():
-    SHARED_TABLES.clear()
-    SHARED_TABLES.update(
+if globals().get("SHARED_TABLES") is not None:
+    SHARED_TABLES.clear()  # noqa: F821
+    SHARED_TABLES.update(  # noqa: F821
         {
             "bots",
             "code",
@@ -62,9 +62,9 @@ else:
 # Tables stored in the local database.  These are private to a specific
 # ``menace_id`` instance.  The list is mutated in-place on reload to keep
 # references stable.
-if "LOCAL_TABLES" in globals():
-    LOCAL_TABLES.clear()
-    LOCAL_TABLES.update(
+if globals().get("LOCAL_TABLES") is not None:
+    LOCAL_TABLES.clear()  # noqa: F821
+    LOCAL_TABLES.update(  # noqa: F821
         {
             "events",
             "memory",
@@ -117,6 +117,8 @@ if "LOCAL_TABLES" in globals():
             "weight_override",
             "roi",
             "failures",
+            "detections",
+            "anomalies",
             "synergy_history",
             "feedback",
             "mirror_logs",
@@ -189,6 +191,8 @@ else:
         "weight_override",
         "roi",
         "failures",
+        "detections",
+        "anomalies",
         "synergy_history",
         "feedback",
         "mirror_logs",
@@ -210,9 +214,9 @@ else:
 
 # Tables explicitly denied even if present in the allow lists.  Also mutated
 # in-place on reload.
-if "DENY_TABLES" in globals():
-    DENY_TABLES.clear()
-    DENY_TABLES.update({"capital_ledger", "finance_logs"})
+if globals().get("DENY_TABLES") is not None:
+    DENY_TABLES.clear()  # noqa: F821
+    DENY_TABLES.update({"capital_ledger", "finance_logs"})  # noqa: F821
 else:
     DENY_TABLES: Set[str] = {"capital_ledger", "finance_logs"}
 
@@ -263,6 +267,7 @@ def _load_table_overrides() -> None:
     for table in deny_extra:
         SHARED_TABLES.discard(table)
         LOCAL_TABLES.discard(table)
+
 
 logger = logging.getLogger(__name__)
 _level_name = os.getenv("DB_ROUTER_LOG_LEVEL", "INFO").upper()
@@ -324,10 +329,10 @@ class DBRouter:
             else local_db_path
         )
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        self.local_conn = sqlite3.connect(local_path, check_same_thread=False)
+        self.local_conn = sqlite3.connect(local_path, check_same_thread=False)  # noqa: SQL001
 
         os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
-        self.shared_conn = sqlite3.connect(shared_db_path, check_same_thread=False)
+        self.shared_conn = sqlite3.connect(shared_db_path, check_same_thread=False)  # noqa: SQL001
 
         # ``threading.Lock`` protects against concurrent access when deciding
         # which connection to return.
@@ -516,5 +521,3 @@ def init_db_router(
 
     GLOBAL_ROUTER = DBRouter(menace_id, local_path, shared_path)
     return GLOBAL_ROUTER
-
-
