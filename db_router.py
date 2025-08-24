@@ -212,6 +212,9 @@ else:
         "workflows",
     }
 
+# Ensure evaluation results are stored locally
+LOCAL_TABLES.add("evaluation")
+
 # Tables explicitly denied even if present in the allow lists.  Also mutated
 # in-place on reload.
 if globals().get("DENY_TABLES") is not None:
