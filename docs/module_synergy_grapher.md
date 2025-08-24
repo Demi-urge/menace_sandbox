@@ -59,6 +59,7 @@ get_synergy_cluster("a", threshold=0.5)
 * `--threshold FLOAT` – minimum cumulative synergy required for inclusion (default `0.7`).
 * `--config PATH` – JSON/TOML file providing coefficient overrides.
 * `--no-cache` – recompute AST info and embeddings ignoring cached results.
+* `--embed-workers N` – number of threads used when fetching embeddings.
 
 ## Configuration
 

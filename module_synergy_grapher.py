@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import hashlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 try:  # Python 3.11+
     import tomllib  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - fallback for older Pythons
@@ -231,12 +232,6 @@ class ModuleSynergyGrapher:
                     cnames.add(node.name)
 
             doc = ast.get_docstring(tree) or ""
-            try:
-                vec = governed_embed(doc) if doc else []
-            except Exception:
-                vec = []
-            if vec:
-                embeddings[mod] = vec
 
             vars_[mod] = vnames
             funcs[mod] = fnames
@@ -250,7 +245,6 @@ class ModuleSynergyGrapher:
                 "funcs": sorted(fnames),
                 "classes": sorted(cnames),
                 "doc": doc,
-                "embedding": vec,
             }
             updated = True
 
@@ -358,7 +352,13 @@ class ModuleSynergyGrapher:
         return self.graph
 
     # ------------------------------------------------------------------
-    def build_graph(self, root_path: str | Path, *, use_cache: bool = True) -> nx.DiGraph:
+    def build_graph(
+        self,
+        root_path: str | Path,
+        *,
+        use_cache: bool = True,
+        embed_workers: int = 4,
+    ) -> nx.DiGraph:
         """Return and persist a synergy graph for modules under ``root_path``."""
 
         root = Path(root_path)
@@ -386,6 +386,32 @@ class ModuleSynergyGrapher:
             cache,
             updated,
         ) = self._collect_ast_info(root, modules, cache, use_cache=use_cache)
+
+        # Fetch missing embeddings concurrently
+        missing = [m for m in modules if m not in embeddings and docs.get(m)]
+        if missing:
+            class _EmbedDB:
+                def try_add_embedding(self, record_id: str, text: str, kind: str = "doc"):
+                    try:
+                        return governed_embed(text) or []
+                    except Exception:
+                        return []
+
+            embed_db = _EmbedDB()
+            with ThreadPoolExecutor(max_workers=embed_workers) as executor:
+                future_to_mod = {
+                    executor.submit(
+                        embed_db.try_add_embedding, mod, docs.get(mod, ""), "module_doc"
+                    ): mod
+                    for mod in missing
+                }
+                for fut in as_completed(future_to_mod):
+                    mod = future_to_mod[fut]
+                    vec = fut.result()
+                    if vec:
+                        embeddings[mod] = vec
+                        cache.setdefault(mod, {})["embedding"] = vec
+            updated = True
 
         if updated:
             cache_path.parent.mkdir(exist_ok=True)
@@ -494,7 +520,12 @@ class ModuleSynergyGrapher:
         return graph
 
     # ------------------------------------------------------------------
-    def update_graph(self, changed_modules: Iterable[str]) -> nx.DiGraph:
+    def update_graph(
+        self,
+        changed_modules: Iterable[str],
+        *,
+        embed_workers: int = 4,
+    ) -> nx.DiGraph:
         """Refresh graph data for ``changed_modules`` only.
 
         AST details, embeddings and edge weights touching the specified
@@ -544,6 +575,31 @@ class ModuleSynergyGrapher:
             cache,
             updated_cache,
         ) = self._collect_ast_info(root, changed, cache, use_cache=False)
+
+        missing = [m for m in changed if m not in new_embeddings and docs.get(m)]
+        if missing:
+            class _EmbedDB:
+                def try_add_embedding(self, record_id: str, text: str, kind: str = "doc"):
+                    try:
+                        return governed_embed(text) or []
+                    except Exception:
+                        return []
+
+            embed_db = _EmbedDB()
+            with ThreadPoolExecutor(max_workers=embed_workers) as executor:
+                future_to_mod = {
+                    executor.submit(
+                        embed_db.try_add_embedding, mod, docs.get(mod, ""), "module_doc"
+                    ): mod
+                    for mod in missing
+                }
+                for fut in as_completed(future_to_mod):
+                    mod = future_to_mod[fut]
+                    vec = fut.result()
+                    if vec:
+                        new_embeddings[mod] = vec
+                        cache.setdefault(mod, {})["embedding"] = vec
+            updated_cache = True
 
         if updated_cache:
             cache_path.parent.mkdir(exist_ok=True)
@@ -782,6 +838,12 @@ def _main(argv: Iterable[str] | None = None) -> int:
         action="store_true",
         help="recompute AST info and embeddings ignoring any caches",
     )
+    parser.add_argument(
+        "--embed-workers",
+        type=int,
+        default=4,
+        help="number of threads for embedding retrieval",
+    )
 
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -791,7 +853,9 @@ def _main(argv: Iterable[str] | None = None) -> int:
 
     grapher = ModuleSynergyGrapher(config=args.config)
     if args.build:
-        grapher.build_graph(Path.cwd(), use_cache=not args.no_cache)
+        grapher.build_graph(
+            Path.cwd(), use_cache=not args.no_cache, embed_workers=args.embed_workers
+        )
 
     if args.cluster:
         cluster = grapher.get_synergy_cluster(args.cluster, threshold=args.threshold)
