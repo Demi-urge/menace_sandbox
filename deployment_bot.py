@@ -427,7 +427,7 @@ class DeploymentBot:
         """Extract & de‑duplicate code segments, then link to registry tables."""
         from difflib import SequenceMatcher
 
-        existing = self.code_db.fetch_all()
+        existing = self.code_db.fetch_all(scope="all")
 
         for bot_name, bot_id in bot_map.items():
             path = Path(f"{bot_name}.py")
@@ -810,7 +810,7 @@ class DeploymentBot:
         from difflib import SequenceMatcher
 
         bot_map: Dict[str, str] = {}
-        existing_entries = self.bot_db.fetch_all()
+        existing_entries = self.bot_db.fetch_all(scope="all")
 
         hierarchy_chain = {
             "L1": "L2",

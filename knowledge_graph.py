@@ -462,7 +462,7 @@ class KnowledgeGraph:
         """Load all bots from ``bot_db``."""
 
         try:
-            rows = bot_db.fetch_all()
+            rows = bot_db.fetch_all(scope="all")
         except Exception:
             rows = []
         for row in rows:
