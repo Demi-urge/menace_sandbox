@@ -55,4 +55,3 @@ tests/test_synergy_history_migration.py
 tests/test_visual_agent_concurrency.py
 tests/test_visual_agent_queue_validation.py
 tests/test_db_initialization.py
-unified_learning_engine.py

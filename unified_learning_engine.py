@@ -436,12 +436,13 @@ class UnifiedLearningEngine:
         self.roi_db = roi_db
         self.evaluation_history: List[Dict[str, float]] = []
         self.persist_path = Path(persist_path) if persist_path else None
-        p = str(self.persist_path) if self.persist_path else None
-        self.router = router or GLOBAL_ROUTER or init_db_router(
-            "unified_learning_engine", p, p
-        )
         self._persist_conn: sqlite3.Connection | None = None
+        self.router: DBRouter | None = router or GLOBAL_ROUTER
         if self.persist_path and self.persist_path.suffix not in {".json", ".jsonl"}:
+            if not self.router:
+                self.router = init_db_router(
+                    "evaluation", str(self.persist_path), str(self.persist_path)
+                )
             try:
                 self._persist_conn = self.router.get_connection("evaluation")
                 self._persist_conn.execute(
@@ -878,11 +879,9 @@ def load_score_history(path: str | Path, router: DBRouter | None = None) -> List
                 return [json.loads(line) for line in fh if line.strip()]
         except Exception:
             return []
-    router = router or GLOBAL_ROUTER or init_db_router(
-        "unified_learning_engine", str(p), str(p)
-    )
+    rtr = router or GLOBAL_ROUTER or init_db_router("evaluation", str(p), str(p))
     try:
-        conn = router.get_connection("evaluation")
+        conn = rtr.get_connection("evaluation")
         cur = conn.execute("SELECT ts, cv_score, holdout_score FROM evaluation ORDER BY ts")
         rows = cur.fetchall()
     except Exception:
