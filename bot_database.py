@@ -25,6 +25,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 from db_router import GLOBAL_ROUTER as router
 from .scope_utils import Scope, build_scope_clause, apply_scope
+from db_dedup import insert_if_unique
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .deployment_bot import DeploymentDB
@@ -382,69 +383,76 @@ class BotDB(EmbeddableDBMixin):
         source_menace_id: str | None = None,
     ) -> int:
         menace_id = self._current_menace_id(source_menace_id)
+        values = {
+            "source_menace_id": menace_id,
+            "name": rec.name,
+            "type": rec.type_,
+            "tasks": _serialize_list(rec.tasks),
+            "parent_id": rec.parent_id,
+            "dependencies": _serialize_list(rec.dependencies),
+            "resources": _safe_json_dumps(rec.resources),
+            "hierarchy_level": rec.hierarchy_level,
+            "purpose": rec.purpose,
+            "tags": _serialize_list(rec.tags),
+            "toolchain": _serialize_list(rec.toolchain),
+            "creation_date": rec.creation_date,
+            "last_modification_date": rec.last_modification_date,
+            "status": rec.status,
+            "version": rec.version,
+            "estimated_profit": rec.estimated_profit,
+        }
+        hash_fields = [
+            "name",
+            "type",
+            "tasks",
+            "dependencies",
+            "purpose",
+            "tags",
+            "toolchain",
+            "version",
+        ]
+        inserted = insert_if_unique("bots", values, hash_fields, menace_id, self.router)
         cur = self.conn.execute(
-            """
-            INSERT INTO bots(
-                source_menace_id,
-                name, type, tasks, parent_id, dependencies,
-                resources, hierarchy_level, purpose, tags, toolchain,
-                creation_date, last_modification_date, status,
-                version, estimated_profit
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                menace_id,
-                rec.name,
-                rec.type_,
-                _serialize_list(rec.tasks),
-                rec.parent_id,
-                _serialize_list(rec.dependencies),
-                _safe_json_dumps(rec.resources),
-                rec.hierarchy_level,
-                rec.purpose,
-                _serialize_list(rec.tags),
-                _serialize_list(rec.toolchain),
-                rec.creation_date,
-                rec.last_modification_date,
-                rec.status,
-                rec.version,
-                rec.estimated_profit,
-            ),
+            "SELECT id FROM bots WHERE content_hash=?",
+            (values["content_hash"],),
         )
-        rec.bid = int(cur.lastrowid)
-        self.conn.commit()
-        self._embed_record_on_write(rec.bid, rec)
-        if self.menace_db:
-            try:
-                self._insert_menace(
-                    rec,
-                    models or [],
-                    workflows or [],
-                    enhancements or [],
-                    source_menace_id=source_menace_id or self.router.menace_id,
-                )
-            except Exception as exc:
-                logger.exception("MenaceDB insert failed: %s", exc)
-                self.failed_menace.append(
-                    FailedMenace(
+        row = cur.fetchone()
+        if row is None:
+            raise RuntimeError("failed to retrieve bot id")
+        rec.bid = int(row["id"])
+        if inserted:
+            self._embed_record_on_write(rec.bid, rec)
+            if self.menace_db:
+                try:
+                    self._insert_menace(
                         rec,
                         models or [],
                         workflows or [],
                         enhancements or [],
-                        self.router.menace_id,
+                        source_menace_id=source_menace_id or self.router.menace_id,
                     )
-                )
-        if self.event_bus:
-            payload = dataclasses.asdict(rec)
-            if not publish_with_retry(self.event_bus, "bot:new", payload):
-                logger.exception("failed to publish bot:new event")
-                self.failed_events.append(FailedEvent("bot:new", payload))
-            else:
-                publish_with_retry(
-                    self.event_bus,
-                    "embedding:backfill",
-                    {"db": self.__class__.__name__},
-                )
+                except Exception as exc:
+                    logger.exception("MenaceDB insert failed: %s", exc)
+                    self.failed_menace.append(
+                        FailedMenace(
+                            rec,
+                            models or [],
+                            workflows or [],
+                            enhancements or [],
+                            self.router.menace_id,
+                        )
+                    )
+            if self.event_bus:
+                payload = dataclasses.asdict(rec)
+                if not publish_with_retry(self.event_bus, "bot:new", payload):
+                    logger.exception("failed to publish bot:new event")
+                    self.failed_events.append(FailedEvent("bot:new", payload))
+                else:
+                    publish_with_retry(
+                        self.event_bus,
+                        "embedding:backfill",
+                        {"db": self.__class__.__name__},
+                    )
         return rec.bid
 
     def update_bot(
