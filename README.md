@@ -1682,6 +1682,22 @@ python self_improvement_engine.py fit-truth-adapter live.npz shadow.npz
 See [docs/truth_adapter.md](docs/truth_adapter.md) for details and additional
 configuration options.
 
+
+## Module Synergy Grapher
+
+Builds a weighted graph of module relationships and queries related modules.
+
+```bash
+python module_synergy_grapher.py build .
+python module_synergy_grapher.py cluster <module> --threshold 0.8
+```
+
+Use `--out` to choose an output file when building, `--path` to point at an
+existing graph when querying and `--threshold` to control cluster expansion.
+The `ModuleSynergyGrapher` constructor accepts a `coefficients` mapping to tune
+how `import`, `structure`, `workflow` and `semantic` signals contribute to edge
+weights.
+
 ## Vector Analytics
 
 `vector_metrics_analytics` surfaces stored vector metrics for quick
