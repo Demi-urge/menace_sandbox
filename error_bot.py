@@ -153,10 +153,10 @@ class ErrorDB(EmbeddableDBMixin):
             "CREATE TABLE IF NOT EXISTS error_model(error_id INTEGER, model_id INTEGER)"
         )
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS error_bot(error_id INTEGER, bot_id INTEGER)"
+            "CREATE TABLE IF NOT EXISTS error_bot(source_menace_id TEXT, error_id INTEGER, bot_id INTEGER)"
         )
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS bot_error(bot_id INTEGER, error_id INTEGER)"
+            "CREATE TABLE IF NOT EXISTS bot_error(source_menace_id TEXT, bot_id INTEGER, error_id INTEGER)"
         )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS error_code(error_id INTEGER, code_id INTEGER)"
@@ -337,8 +337,8 @@ class ErrorDB(EmbeddableDBMixin):
     def log_discrepancy(self, message: str, *, source_menace_id: str | None = None) -> None:
         menace_id = self._menace_id(source_menace_id)
         self.conn.execute(
-            "INSERT INTO discrepancies(message, ts, source_menace_id) VALUES (?, ?, ?)",
-            (message, datetime.utcnow().isoformat(), menace_id),
+            "INSERT INTO discrepancies(source_menace_id, message, ts) VALUES (?, ?, ?)",
+            (menace_id, message, datetime.utcnow().isoformat()),
         )
         self.conn.commit()
         self._publish("discrepancies:new", {"message": message})
@@ -448,14 +448,14 @@ class ErrorDB(EmbeddableDBMixin):
                 logger.exception("embedding hook failed for %s: %s", found, exc)
             return found
         cur = self.conn.execute(
-            "INSERT INTO errors(message, type, description, resolution, ts, source_menace_id) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO errors(source_menace_id, message, type, description, resolution, ts) VALUES (?,?,?,?,?,?)",
             (
+                menace_id,
                 message,
                 type_,
                 description or message,
                 resolution,
                 datetime.utcnow().isoformat(),
-                menace_id,
             ),
         )
         self.conn.commit()
@@ -514,14 +514,17 @@ class ErrorDB(EmbeddableDBMixin):
         self.conn.commit()
         self._publish("error_model:new", {"error_id": err_id, "model_id": model_id})
 
-    def link_bot(self, err_id: int, bot_id: str) -> None:
+    def link_bot(
+        self, err_id: int, bot_id: str, *, source_menace_id: str | None = None
+    ) -> None:
+        menace_id = source_menace_id or self.router.menace_id
         self.conn.execute(
-            "INSERT INTO error_bot(error_id, bot_id) VALUES (?, ?)",
-            (err_id, bot_id),
+            "INSERT INTO error_bot(source_menace_id, error_id, bot_id) VALUES (?, ?, ?)",
+            (menace_id, err_id, bot_id),
         )
         self.conn.execute(
-            "INSERT INTO bot_error(bot_id, error_id) VALUES (?, ?)",
-            (bot_id, err_id),
+            "INSERT INTO bot_error(source_menace_id, bot_id, error_id) VALUES (?, ?, ?)",
+            (menace_id, bot_id, err_id),
         )
         self.conn.commit()
         self._publish("error_bot:new", {"error_id": err_id, "bot_id": bot_id})

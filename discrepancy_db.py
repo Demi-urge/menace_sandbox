@@ -174,8 +174,8 @@ class DiscrepancyDB(EmbeddableDBMixin):
     def add(self, rec: DiscrepancyRecord, *, source_menace_id: str | None = None) -> int:
         menace_id = self._current_menace_id(source_menace_id)
         cur = self.conn.execute(
-            "INSERT INTO discrepancies(message, metadata, ts, source_menace_id) VALUES (?,?,?,?)",
-            (rec.message, json.dumps(rec.metadata), rec.ts, menace_id),
+            "INSERT INTO discrepancies(source_menace_id, message, metadata, ts) VALUES (?,?,?,?)",
+            (menace_id, rec.message, json.dumps(rec.metadata), rec.ts),
         )
         self.conn.commit()
         rec.id = int(cur.lastrowid)

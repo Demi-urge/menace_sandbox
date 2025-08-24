@@ -282,13 +282,15 @@ class EnhancementDB(EmbeddableDBMixin):
                 cur = conn.execute(
                     """
                     INSERT INTO enhancements(
+                        source_menace_id,
                         idea, rationale, summary, score, timestamp, context,
                         before_code, after_code, title, description, tags, type, assigned_bots,
                         rejection_reason, cost_estimate, category, associated_bots,
-                        triggered_by, source_menace_id
+                        triggered_by
                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
+                        menace_id,
                         enh.idea,
                         enh.rationale,
                         enh.summary,
@@ -307,7 +309,6 @@ class EnhancementDB(EmbeddableDBMixin):
                         enh.category,
                         assoc,
                         enh.triggered_by,
-                        menace_id,
                     ),
                 )
                 conn.commit()
