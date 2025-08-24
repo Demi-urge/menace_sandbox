@@ -496,6 +496,126 @@ class KnowledgeGraph:
 
         self.link_code_to_bot(code_db, bot_db)
 
+    @classmethod
+    def from_db(
+        cls,
+        bot_db: object | None = None,
+        err_db: object | None = None,
+        code_db: object | None = None,
+    ) -> "KnowledgeGraph":
+        """Construct a graph from existing databases.
+
+        The method loads bots and errors from the provided databases.  All
+        queries against the ``bots`` or ``errors`` tables are restricted to the
+        current menace instance via the ``source_menace_id`` column.  The menace
+        ID is sourced from the respective database router when available, falling
+        back to the ``MENACE_ID`` environment variable.
+        """
+
+        kg = cls()
+        menace_id = ""
+        if bot_db and getattr(bot_db, "router", None):
+            menace_id = getattr(bot_db.router, "menace_id", "")
+        elif err_db and getattr(err_db, "router", None):
+            menace_id = getattr(err_db.router, "menace_id", "")
+        else:
+            menace_id = os.getenv("MENACE_ID", "")
+
+        if bot_db is not None:
+            try:
+                rows = bot_db.conn.execute(
+                    "SELECT name FROM bots WHERE source_menace_id=?",
+                    (menace_id,),
+                ).fetchall()
+            except Exception:
+                rows = []
+            for (name,) in rows:
+                kg.add_bot(bot_db, str(name))
+
+        if err_db is not None:
+            cur = err_db.conn
+            try:
+                errs = cur.execute(
+                    "SELECT id, message FROM errors WHERE source_menace_id=?",
+                    (menace_id,),
+                ).fetchall()
+            except Exception:
+                errs = []
+            for eid, msg in errs:
+                bots: List[str] = []
+                try:
+                    bot_rows = cur.execute(
+                        "SELECT bot_id FROM error_bot WHERE error_id=? AND source_menace_id=?",
+                        (eid, menace_id),
+                    ).fetchall()
+                except Exception:
+                    bot_rows = []
+                for (bid,) in bot_rows:
+                    if bot_db is None:
+                        bots.append(str(bid))
+                        continue
+                    try:
+                        b_row = bot_db.conn.execute(
+                            "SELECT name FROM bots WHERE id=? AND source_menace_id=?",
+                            (int(bid), menace_id),
+                        ).fetchone()
+                        bots.append(b_row[0] if b_row else str(bid))
+                    except Exception:
+                        bots.append(str(bid))
+
+                try:
+                    models = [
+                        r[0]
+                        for r in cur.execute(
+                            (
+                                "SELECT model_id FROM error_model "
+                                "WHERE error_id=? AND source_menace_id=?"
+                            ),
+                            (eid, menace_id),
+                        ).fetchall()
+                    ]
+                except Exception:
+                    models = []
+
+                try:
+                    codes = [
+                        r[0]
+                        for r in cur.execute(
+                            (
+                                "SELECT code_id FROM error_code "
+                                "WHERE error_id=? AND source_menace_id=?"
+                            ),
+                            (eid, menace_id),
+                        ).fetchall()
+                    ]
+                except Exception:
+                    codes = []
+
+                summary_lookup: Callable[[int], str] | None = None
+                if code_db is not None:
+                    def _lookup(cid: int, cdb=code_db, mid=menace_id) -> str:
+                        try:
+                            row = cdb.conn.execute(
+                                "SELECT summary FROM code WHERE id=? AND source_menace_id=?",
+                                (cid, mid),
+                            ).fetchone()
+                            return row[0] if row else str(cid)
+                        except Exception:
+                            return str(cid)
+
+                    summary_lookup = _lookup
+
+                kg.add_error(
+                    int(eid),
+                    str(msg),
+                    bots=bots,
+                    models=models,
+                    codes=codes,
+                    summary_lookup=summary_lookup,
+                )
+
+        return kg
+
     def related(self, key: str, depth: int = 1) -> list[str]:
         if self.graph is None:
             return []
@@ -1039,7 +1159,17 @@ class KnowledgeGraph:
             return []
         rev = self.graph.reverse(copy=False)
         nodes = nx.single_source_shortest_path_length(rev, bnode, cutoff=hops).keys()
-        return [n for n in nodes if n != bnode and (n.startswith("error:") or n.startswith("error_type:") or n.startswith("code:") or n.startswith("model:"))]
+        return [
+            n
+            for n in nodes
+            if n != bnode
+            and (
+                n.startswith("error:")
+                or n.startswith("error_type:")
+                or n.startswith("code:")
+                or n.startswith("model:")
+            )
+        ]
 
     def suggest_root_cause(
         self,
@@ -1086,7 +1216,12 @@ class KnowledgeGraph:
         else:
             clusters[0] = causes
 
-        return [nodes for _, nodes in sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True)]
+        return [
+            nodes
+            for _, nodes in sorted(
+                clusters.items(), key=lambda x: len(x[1]), reverse=True
+            )
+        ]
 
     # ------------------------------------------------------------------
     def add_trending_item(self, name: str) -> None:
