@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import logging
 
 import networkx as nx
 import pytest
@@ -181,6 +182,46 @@ def test_embedding_similarity(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(msg, "governed_embed", fake_embed)
     graph = ModuleSynergyGrapher(embedding_threshold=0.5).build_graph(tmp_path)
     assert graph["e"]["f"]["weight"] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Error logging
+
+
+def test_reload_weights_logs_error(tmp_path: Path, caplog):
+    bad = tmp_path / "weights.json"
+    bad.write_text("{broken")
+    grapher = ModuleSynergyGrapher(weights_file=bad)
+    with caplog.at_level(logging.ERROR):
+        grapher.reload_weights()
+    assert "Failed to load synergy weights" in caplog.text
+
+
+def test_workflow_pairs_logs_error(tmp_path: Path, monkeypatch, caplog):
+    (tmp_path / "workflows.db").touch()
+
+    class BoomDB:
+        def __init__(self, path):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(msg, "WorkflowDB", BoomDB)
+    with caplog.at_level(logging.ERROR):
+        counts = ModuleSynergyGrapher()._workflow_pairs(tmp_path, {"a"})
+    assert counts == {}
+    assert "Failed to read workflow pairs" in caplog.text
+
+
+def test_history_pairs_logs_error(tmp_path: Path, monkeypatch, caplog):
+    (tmp_path / "synergy_history.db").touch()
+
+    def boom_load_history(path):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(msg.shd, "load_history", boom_load_history)
+    with caplog.at_level(logging.ERROR):
+        counts = ModuleSynergyGrapher()._history_pairs(tmp_path, {"a"})
+    assert counts == {}
+    assert "Failed to read synergy history" in caplog.text
 
 
 # ---------------------------------------------------------------------------

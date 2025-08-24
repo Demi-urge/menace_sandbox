@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import hashlib
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 try:  # Python 3.11+
     import tomllib  # type: ignore
@@ -38,6 +39,8 @@ except Exception:  # pragma: no cover - fallback to package import
         from menace.task_handoff_bot import WorkflowDB  # type: ignore
     except Exception:  # pragma: no cover - final fallback
         WorkflowDB = None  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 
 def save_graph(graph: nx.Graph, path: str | Path) -> None:
@@ -138,7 +141,7 @@ class ModuleSynergyGrapher:
                 if isinstance(data, dict):
                     self.coefficients.update({k: float(v) for k, v in data.items()})
         except Exception:  # pragma: no cover - ignore malformed files
-            pass
+            logger.exception("Failed to load synergy weights from %s", path)
 
     def reload_weights(self) -> None:
         """Reload coefficient weights from ``self.weights_file``."""
@@ -220,7 +223,7 @@ class ModuleSynergyGrapher:
             try:
                 cache_path.write_text(json.dumps(cache))
             except Exception:  # pragma: no cover - disk issues
-                pass
+                logger.exception("Failed to write cache to %s", cache_path)
 
         # Build feature matrices
         direct: Dict[Tuple[str, str], float] = {}
@@ -315,7 +318,7 @@ class ModuleSynergyGrapher:
         try:
             out.write_text(json.dumps(self.coefficients))
         except Exception:  # pragma: no cover - disk issues
-            pass
+            logger.exception("Failed to write weights to %s", out)
         return self.coefficients
 
     # ------------------------------------------------------------------
@@ -496,7 +499,7 @@ class ModuleSynergyGrapher:
                     counts[(a, b)] = counts.get((a, b), 0) + 1
                     counts[(b, a)] = counts.get((b, a), 0) + 1
         except Exception:
-            pass
+            logger.exception("Failed to read workflow pairs from %s", db_path)
         return counts
 
     def _history_pairs(
@@ -519,7 +522,7 @@ class ModuleSynergyGrapher:
                     counts[(a, b)] = counts.get((a, b), 0.0) + val
                     counts[(b, a)] = counts.get((b, a), 0.0) + val
         except Exception:
-            pass
+            logger.exception("Failed to read synergy history from %s", db_path)
         return counts
 
     # ------------------------------------------------------------------
@@ -638,7 +641,7 @@ class ModuleSynergyGrapher:
             try:
                 cache_path.write_text(json.dumps(cache))
             except Exception:  # pragma: no cover - disk issues
-                pass
+                logger.exception("Failed to write cache to %s", cache_path)
 
         # Direct import scores
         direct: Dict[Tuple[str, str], float] = {}
@@ -828,7 +831,7 @@ class ModuleSynergyGrapher:
             try:
                 cache_path.write_text(json.dumps(cache))
             except Exception:  # pragma: no cover - disk issues
-                pass
+                logger.exception("Failed to write cache to %s", cache_path)
 
         embeddings: Dict[str, list[float]] = {}
         for mod in self.graph.nodes:
