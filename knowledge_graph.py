@@ -6,6 +6,7 @@ from typing import Iterable, Optional, Callable, List, Dict, TYPE_CHECKING
 import logging
 from pathlib import Path
 import atexit
+import os
 
 from db_router import GLOBAL_ROUTER
 
@@ -681,8 +682,26 @@ class KnowledgeGraph:
         for cnode, weight in cause_totals.items():
             self.graph.nodes[cnode]["weight"] = weight
 
-    def ingest_error_db(self, err_db: object, code_db: object | None = None) -> None:
-        """Load errors and telemetry from ``err_db``."""
+    def ingest_error_db(
+        self,
+        err_db: object,
+        code_db: object | None = None,
+        *,
+        include_all: bool = False,
+    ) -> None:
+        """Load errors and telemetry from ``err_db``.
+
+        Parameters
+        ----------
+        err_db:
+            Database holding error information.
+        code_db:
+            Optional code database used for summary lookups.
+        include_all:
+            If ``True`` the function processes errors from all menace
+            instances. Otherwise only entries matching the current menace ID
+            are ingested.
+        """
 
         if self.graph is None:
             return
@@ -709,15 +728,74 @@ class KnowledgeGraph:
             except Exception:
                 return str(cid)
 
+        menace_id = (
+            err_db.router.menace_id
+            if getattr(err_db, "router", None)
+            else os.getenv("MENACE_ID", "")
+        )
         try:
-            errs = cur.execute("SELECT id, message FROM errors").fetchall()
+            if include_all:
+                errs = cur.execute("SELECT id, message FROM errors").fetchall()
+            else:
+                errs = cur.execute(
+                    "SELECT id, message FROM errors WHERE source_menace_id=?",
+                    (menace_id,),
+                ).fetchall()
         except Exception:
             errs = []
         for eid, msg in errs:
-            bots = [r[0] for r in cur.execute("SELECT bot_id FROM error_bot WHERE error_id=?", (eid,)).fetchall()]
-            models = [r[0] for r in cur.execute("SELECT model_id FROM error_model WHERE error_id=?", (eid,)).fetchall()]
-            codes = [r[0] for r in cur.execute("SELECT code_id FROM error_code WHERE error_id=?", (eid,)).fetchall()]
-            self.add_error(eid, msg, bots=bots, models=models, codes=codes, summary_lookup=_summary)
+            if include_all:
+                bots = [
+                    r[0]
+                    for r in cur.execute(
+                        "SELECT bot_id FROM error_bot WHERE error_id=?",
+                        (eid,),
+                    ).fetchall()
+                ]
+                models = [
+                    r[0]
+                    for r in cur.execute(
+                        "SELECT model_id FROM error_model WHERE error_id=?",
+                        (eid,),
+                    ).fetchall()
+                ]
+                codes = [
+                    r[0]
+                    for r in cur.execute(
+                        "SELECT code_id FROM error_code WHERE error_id=?",
+                        (eid,),
+                    ).fetchall()
+                ]
+            else:
+                bots = [
+                    r[0]
+                    for r in cur.execute(
+                        "SELECT bot_id FROM error_bot WHERE error_id=? AND source_menace_id=?",
+                        (eid, menace_id),
+                    ).fetchall()
+                ]
+                models = [
+                    r[0]
+                    for r in cur.execute(
+                        "SELECT model_id FROM error_model WHERE error_id=? AND source_menace_id=?",
+                        (eid, menace_id),
+                    ).fetchall()
+                ]
+                codes = [
+                    r[0]
+                    for r in cur.execute(
+                        "SELECT code_id FROM error_code WHERE error_id=? AND source_menace_id=?",
+                        (eid, menace_id),
+                    ).fetchall()
+                ]
+            self.add_error(
+                eid,
+                msg,
+                bots=bots,
+                models=models,
+                codes=codes,
+                summary_lookup=_summary,
+            )
 
         has_patch = has_deploy = has_category = False
         has_module = has_cause = has_freq = False
