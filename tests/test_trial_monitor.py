@@ -6,7 +6,10 @@ from menace.trial_monitor import TrialMonitor, TrialConfig
 
 class DummyDeployer:
     db = types.SimpleNamespace(trials=lambda status: [])
-    bot_db = types.SimpleNamespace(conn=types.SimpleNamespace(execute=lambda *a, **k: [("bot",)]))
+    bot_db = types.SimpleNamespace(
+        conn=types.SimpleNamespace(execute=lambda *a, **k: [("bot",)]),
+        router=types.SimpleNamespace(menace_id="test"),
+    )
 
 class DummyOptimizer:
     pass
@@ -23,7 +26,13 @@ def _stop_after_first(mon: TrialMonitor):
 
 
 def test_loop_logs_exception(monkeypatch, caplog):
-    mon = TrialMonitor(DummyDeployer(), DummyOptimizer(), DummyDataBot(), config=TrialConfig(interval=0))
+    mon = TrialMonitor(
+        DummyDeployer(),
+        DummyOptimizer(),
+        DummyDataBot(),
+        history_db=types.SimpleNamespace(),
+        config=TrialConfig(interval=0),
+    )
     mon.running = True
     monkeypatch.setattr(mon, "check_trials", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr("menace.trial_monitor.asyncio.sleep", _stop_after_first(mon))

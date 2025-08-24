@@ -95,9 +95,8 @@ class TrialMonitor:
         for trial in trials:
             bot_id = trial["bot_id"]
             deploy_id = trial["deploy_id"]
-            menace_id = (
-                GLOBAL_ROUTER.menace_id if GLOBAL_ROUTER else os.getenv("MENACE_ID", "")
-            )
+            router = getattr(self.deployer.bot_db, "router", GLOBAL_ROUTER)
+            menace_id = getattr(router, "menace_id", os.getenv("MENACE_ID", ""))
             row = self.deployer.bot_db.conn.execute(
                 "SELECT name FROM bots WHERE id=? AND source_menace_id=?",
                 (bot_id, menace_id),
