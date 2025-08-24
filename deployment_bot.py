@@ -166,15 +166,16 @@ class DeploymentDB:
             except Exception as exc:
                 _log_exception(self.logger, "publish errors:new", exc)
 
-    def errors_for(self, deploy_id: int) -> List[int]:
+    def errors_for(self, deploy_id: int, menace_id: str | None = None) -> List[int]:
         """Return IDs of errors logged for a deployment.
 
-        Errors are filtered to the active menace instance based on the menace
-        ID provided by the database router or the ``MENACE_ID`` environment
-        variable.
+        Errors are limited to the menace instance specified by ``menace_id``.
+        When not provided, the menace ID defaults to the router's menace ID or
+        the ``MENACE_ID`` environment variable.
         """
         conn = self.router.get_connection("errors")
-        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        if menace_id is None:
+            menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
         rows = conn.execute(
             "SELECT id FROM errors WHERE deploy_id=? AND source_menace_id=?",
             (deploy_id, menace_id),
