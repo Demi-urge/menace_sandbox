@@ -57,7 +57,9 @@ class TelemetryFeedback:
             time.sleep(self.interval)
 
     def check(self) -> None:
-        info = self.logger.db.top_error_module(unresolved_only=True)
+        info = self.logger.db.top_error_module(
+            unresolved_only=True, scope="local"
+        )
         if not info:
             return
         error_type, module, mods, count, sample_bot = info

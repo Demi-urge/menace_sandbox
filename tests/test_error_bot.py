@@ -56,6 +56,55 @@ def test_discrepancies_scope(tmp_path):
     assert set(df_all["message"]) == {"local", "remote"}
 
 
+def test_top_error_module_scope(tmp_path):
+    err_db = eb.ErrorDB(tmp_path / "e.db")
+    # Insert telemetry for two menace instances
+    err_db.conn.execute(
+        "INSERT INTO telemetry(bot_id, error_type, module_counts, resolution_status, source_menace_id) VALUES (?,?,?,?,?)",
+        ("b1", "E", json.dumps({"m1": 2}), "unresolved", "a"),
+    )
+    err_db.conn.execute(
+        "INSERT INTO telemetry(bot_id, error_type, module_counts, resolution_status, source_menace_id) VALUES (?,?,?,?,?)",
+        ("b2", "E", json.dumps({"m2": 3}), "unresolved", "b"),
+    )
+    err_db.conn.commit()
+
+    local = err_db.top_error_module(scope="local", source_menace_id="a")
+    assert local and local[1] == "m1"
+
+    global_scope = err_db.top_error_module(scope="global", source_menace_id="a")
+    assert global_scope and global_scope[1] == "m2"
+
+    all_scope = err_db.top_error_module(scope="all", source_menace_id="a")
+    assert all_scope and all_scope[1] == "m2" and all_scope[3] == 3
+
+
+def test_summarize_telemetry_scope(tmp_path):
+    err_db = eb.ErrorDB(tmp_path / "e.db")
+    metrics = make_metrics(tmp_path)
+    bot = eb.ErrorBot(err_db, metrics)
+    # Insert telemetry with different menace ids
+    err_db.conn.execute(
+        "INSERT INTO telemetry(error_type, resolution_status, source_menace_id) VALUES (?,?,?)",
+        ("L", "successful", "a"),
+    )
+    err_db.conn.execute(
+        "INSERT INTO telemetry(error_type, resolution_status, source_menace_id) VALUES (?,?,?)",
+        ("G", "unresolved", "b"),
+    )
+    err_db.conn.commit()
+
+    local = bot.summarize_telemetry(limit=10, scope="local", source_menace_id="a")
+    assert local == [{"error_type": "L", "count": 1.0, "success_rate": 1.0}]
+
+    global_res = bot.summarize_telemetry(limit=10, scope="global", source_menace_id="a")
+    assert global_res == [{"error_type": "G", "count": 1.0, "success_rate": 0.0}]
+
+    all_res = bot.summarize_telemetry(limit=10, scope="all", source_menace_id="a")
+    mapping = {r["error_type"]: r for r in all_res}
+    assert set(mapping) == {"L", "G"}
+
+
 def test_monitor_logs(tmp_path):
     mdb = make_metrics(tmp_path)
     e = eb.ErrorDB(tmp_path / "e.db")

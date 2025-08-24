@@ -253,7 +253,7 @@ class QuickFixEngine:
         self, bot: str
     ) -> Tuple[str, str, dict[str, int], int] | None:
         try:
-            info = self.db.top_error_module(bot)
+            info = self.db.top_error_module(bot, scope="local")
         except Exception:
             return None
         if not info:
