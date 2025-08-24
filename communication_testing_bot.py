@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, List, Tuple
 import asyncio
+import sqlite3
 
 try:
     import pandas as pd  # type: ignore
@@ -21,6 +22,7 @@ from .mirror_bot import MirrorBot
 from .comm_testing_config import SETTINGS
 from .logging_utils import get_logger
 from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from .scope_utils import Scope, build_scope_clause
 
 
 def _default_db_path() -> Path:
@@ -55,6 +57,7 @@ class CommTestResult:
     passed: bool
     details: str
     timestamp: str = datetime.now(timezone.utc).isoformat()
+    source_menace_id: str = ""
 
 
 class CommTestDB:
@@ -75,7 +78,14 @@ class CommTestDB:
                 """,
                 "CREATE INDEX IF NOT EXISTS idx_results_name ON results(name)",
             ],
-        )
+        ),
+        (
+            2,
+            [
+                "ALTER TABLE results ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''",
+                "CREATE INDEX IF NOT EXISTS idx_results_source_menace_id ON results(source_menace_id)",
+            ],
+        ),
     ]
     SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -83,9 +93,21 @@ class CommTestDB:
         self, path: Path | str | None = None, *, router: DBRouter | None = None
     ) -> None:
         p = Path(path or _default_db_path())
-        self.router = router or GLOBAL_ROUTER or init_db_router(
-            "comm_test", str(p), str(p)
-        )
+        if str(p) == ":memory:" and router is None:
+            class _MemRouter:
+                menace_id = "memory"
+
+                def __init__(self) -> None:
+                    self.conn = sqlite3.connect(":memory:", check_same_thread=False)
+
+                def get_connection(self, table_name: str, operation: str = "read"):
+                    return self.conn
+
+            self.router = _MemRouter()
+        else:
+            self.router = router or GLOBAL_ROUTER or init_db_router(
+                "comm_test", str(p), str(p)
+            )
         LOCAL_TABLES.add("results")
         self._ensure_schema()
 
@@ -101,45 +123,73 @@ class CommTestDB:
                 cur.execute(f"PRAGMA user_version = {version}")
         conn.commit()
 
-    def log(self, result: CommTestResult) -> None:
+    def log(self, result: CommTestResult, *, source_menace_id: str | None = None) -> None:
         conn = self.router.get_connection("results")
+        menace_id = source_menace_id or result.source_menace_id or self.router.menace_id
         conn.execute(
-            "INSERT INTO results(name, passed, details, ts) VALUES (?, ?, ?, ?)",
-            (result.name, int(result.passed), result.details, result.timestamp),
+            "INSERT INTO results(name, passed, details, ts, source_menace_id) VALUES (?, ?, ?, ?, ?)",
+            (result.name, int(result.passed), result.details, result.timestamp, menace_id),
         )
         conn.commit()
+        result.source_menace_id = menace_id
 
     def fetch(self) -> List[CommTestResult]:
         conn = self.router.get_connection("results")
         cur = conn.execute(
-            "SELECT name, passed, details, ts FROM results ORDER BY id"
+            "SELECT name, passed, details, ts, source_menace_id FROM results ORDER BY id"
         )
         rows = cur.fetchall()
         return [
-            CommTestResult(name=r[0], passed=bool(r[1]), details=r[2], timestamp=r[3])
+            CommTestResult(
+                name=r[0],
+                passed=bool(r[1]),
+                details=r[2],
+                timestamp=r[3],
+                source_menace_id=r[4],
+            )
             for r in rows
         ]
 
-    def fetch_failed(self) -> List[CommTestResult]:
+    def fetch_failed(
+        self,
+        *,
+        scope: Scope | str = Scope.LOCAL,
+        source_menace_id: str | None = None,
+    ) -> List[CommTestResult]:
         conn = self.router.get_connection("results")
-        cur = conn.execute(
-            "SELECT name, passed, details, ts FROM results WHERE passed=0 ORDER BY id"
-        )
+        menace_id = source_menace_id or self.router.menace_id
+        clause, params = build_scope_clause("results", scope, menace_id)
+        query = "SELECT name, passed, details, ts, source_menace_id FROM results WHERE passed=0"
+        if clause:
+            query += f" AND {clause}"
+        query += " ORDER BY id"
+        cur = conn.execute(query, params)
         rows = cur.fetchall()
         return [
-            CommTestResult(name=r[0], passed=False, details=r[2], timestamp=r[3])
+            CommTestResult(name=r[0], passed=False, details=r[2], timestamp=r[3], source_menace_id=r[4])
             for r in rows
         ]
 
-    def fetch_by_name(self, name: str) -> List[CommTestResult]:
+    def fetch_by_name(
+        self,
+        name: str,
+        *,
+        scope: Scope | str = Scope.LOCAL,
+        source_menace_id: str | None = None,
+    ) -> List[CommTestResult]:
         conn = self.router.get_connection("results")
-        cur = conn.execute(
-            "SELECT name, passed, details, ts FROM results WHERE name=? ORDER BY id",
-            (name,),
-        )
+        menace_id = source_menace_id or self.router.menace_id
+        clause, scope_params = build_scope_clause("results", scope, menace_id)
+        query = "SELECT name, passed, details, ts, source_menace_id FROM results WHERE name=?"
+        params: list[object] = [name]
+        if clause:
+            query += f" AND {clause}"
+            params.extend(scope_params)
+        query += " ORDER BY id"
+        cur = conn.execute(query, params)
         rows = cur.fetchall()
         return [
-            CommTestResult(name=r[0], passed=bool(r[1]), details=r[2], timestamp=r[3])
+            CommTestResult(name=r[0], passed=bool(r[1]), details=r[2], timestamp=r[3], source_menace_id=r[4])
             for r in rows
         ]
 
