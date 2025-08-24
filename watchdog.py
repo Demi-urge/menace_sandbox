@@ -9,10 +9,11 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from email.message import EmailMessage
-from typing import Iterable, Callable
+from typing import Iterable, Callable, TYPE_CHECKING
 
 from . import RAISE_ERRORS
 from db_router import GLOBAL_ROUTER
+from .db_scope import Scope, build_scope_clause, apply_scope
 
 try:
     import pandas as pd  # type: ignore
@@ -38,6 +39,16 @@ from .error_bot import ErrorDB
 from .resource_allocation_optimizer import ROIDB
 from .data_bot import MetricsDB
 from .chaos_tester import ChaosTester
+from .knowledge_graph import KnowledgeGraph
+from .advanced_error_management import SelfHealingOrchestrator, PlaybookGenerator
+from .bot_registry import BotRegistry
+from .escalation_protocol import EscalationProtocol, EscalationLevel
+from .unified_event_bus import UnifiedEventBus
+from .retry_utils import retry
+
+if TYPE_CHECKING:
+    from .replay_engine import ReplayValidator
+    from .menace_orchestrator import MenaceOrchestrator
 
 
 def _default_auto_handler() -> AutoEscalationManager | None:
@@ -46,12 +57,6 @@ def _default_auto_handler() -> AutoEscalationManager | None:
     except Exception:
         logging.exception("auto handler init failed")
         return None
-from .knowledge_graph import KnowledgeGraph
-from .advanced_error_management import SelfHealingOrchestrator, PlaybookGenerator
-from .bot_registry import BotRegistry
-from .escalation_protocol import EscalationProtocol, EscalationLevel
-from .unified_event_bus import UnifiedEventBus
-from .retry_utils import retry
 
 
 @dataclass
@@ -257,14 +262,25 @@ class Watchdog:
             _loop()
 
     # ------------------------------------------------------------------
-    def _consecutive_failures(self) -> int:
+    def _consecutive_failures(
+        self,
+        *,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
+    ) -> int:
         router = GLOBAL_ROUTER
         if router is None:
             raise RuntimeError("Database router is not initialised")
+        menace_id = self.error_db._menace_id(source_menace_id)
+        clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+        query = apply_scope(
+            "SELECT stack_trace FROM telemetry",
+            clause,
+        ) + " ORDER BY id DESC LIMIT ?"
         conn = router.get_connection("errors")
         rows = conn.execute(
-            "SELECT stack_trace FROM telemetry ORDER BY id DESC LIMIT ?",
-            (self.thresholds.consecutive_failures,),
+            query,
+            [*params, self.thresholds.consecutive_failures],
         ).fetchall()
         return len(rows)
 
@@ -372,16 +388,25 @@ class Watchdog:
             def __init__(self, db: ErrorDB) -> None:
                 self.db = db
 
-            def recent_errors(self, limit: int = 5) -> list[str]:
+            def recent_errors(
+                self,
+                limit: int = 5,
+                *,
+                scope: Scope | str = "local",
+                source_menace_id: str | None = None,
+            ) -> list[str]:
                 router = GLOBAL_ROUTER
                 if router is None:
                     raise RuntimeError("Database router is not initialised")
+                menace_id = self.db._menace_id(source_menace_id)
+                clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+                query = apply_scope(
+                    "SELECT stack_trace FROM telemetry",
+                    clause,
+                ) + " ORDER BY id DESC LIMIT ?"
                 conn = router.get_connection("errors")
-                rows = conn.execute(
-                    "SELECT stack_trace FROM telemetry ORDER BY id DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
-                return [str(r[0]) for r in rows]
+                cur = conn.execute(query, [*params, limit])
+                return [str(r[0]) for r in cur.fetchall()]
 
         try:
             from .automated_debugger import AutomatedDebugger
@@ -449,11 +474,14 @@ class Watchdog:
         router = GLOBAL_ROUTER
         if router is None:
             raise RuntimeError("Database router is not initialised")
+        menace_id = self.error_db._menace_id(None)
+        clause, params = build_scope_clause("telemetry", Scope.LOCAL, menace_id)
+        query = apply_scope(
+            "SELECT bot_id, stack_trace FROM telemetry",
+            clause,
+        ) + " ORDER BY id DESC LIMIT ?"
         conn = router.get_connection("errors")
-        rows = conn.execute(
-            "SELECT bot_id, stack_trace FROM telemetry ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        rows = conn.execute(query, [*params, limit]).fetchall()
         traces = []
         for bot, trace in rows:
             traces.append(trace)

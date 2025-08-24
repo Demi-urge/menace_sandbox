@@ -11,12 +11,13 @@ from pathlib import Path
 from .conversation_manager_bot import ConversationManagerBot, ChatGPTClient
 from .env_config import OPENAI_API_KEY
 from .menace_memory_manager import MenaceMemoryManager
-from .report_generation_bot import ReportGenerationBot, ReportOptions
+from .report_generation_bot import ReportGenerationBot
 from .error_bot import ErrorBot
 from .bot_database import BotDB
 from .resources_bot import ROIHistoryDB
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
+from .db_scope import Scope, build_scope_clause, apply_scope
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -250,20 +251,25 @@ class MenaceGUI(tk.Tk):
                 )
         self.chain_text.configure(state="disabled")
 
-    def _bot_telemetry(self, bot: str) -> list[dict[str, float]]:
-        cur = self.error_bot.db.conn.execute(
-            """
-            SELECT error_type,
-                   COUNT(*) as c,
-                   AVG(CASE WHEN resolution_status='successful' THEN 1.0 ELSE 0.0 END) as rate
-            FROM telemetry
-            WHERE bot_id=?
-            GROUP BY error_type
-            ORDER BY c DESC
-            LIMIT 5
-            """,
-            (bot,),
+    def _bot_telemetry(
+        self,
+        bot: str,
+        *,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
+    ) -> list[dict[str, float]]:
+        menace_id = self.error_bot.db._menace_id(source_menace_id)
+        clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+        base = (
+            "SELECT error_type,"
+            "       COUNT(*) as c,"
+            "       AVG(CASE WHEN resolution_status='successful' THEN 1.0 ELSE 0.0 END) as rate"
+            " FROM telemetry"
+            " WHERE bot_id=?"
         )
+        query = apply_scope(base, clause)
+        query += " GROUP BY error_type ORDER BY c DESC LIMIT 5"
+        cur = self.error_bot.db.conn.execute(query, [bot, *params])
         rows = cur.fetchall()
         return [
             {

@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import json
 import queue
-from typing import Iterable, Optional
+from typing import Iterable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +17,7 @@ from .evolution_history_db import EvolutionHistoryDB
 from .error_bot import ErrorDB
 from .report_generation_bot import ReportGenerationBot, ReportOptions
 from .lineage_tracker import LineageTracker
+from .db_scope import Scope, build_scope_clause, apply_scope
 
 try:  # optional dependency
     from .unified_event_bus import UnifiedEventBus  # type: ignore
@@ -130,9 +131,15 @@ def MonitoringDashboard(
         return jsonify({'labels': labels, 'roi': roi}), 200
 
     def error_data() -> tuple[str, int]:
-        cur = dash.error_db.conn.execute(
-            "SELECT error_type, COUNT(*) FROM telemetry GROUP BY error_type"
-        )
+        scope = request.args.get('scope', 'local')
+        source_menace_id = request.args.get('source_menace_id')
+        menace_id = dash.error_db._menace_id(source_menace_id)
+        clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+        query = apply_scope(
+            "SELECT error_type, COUNT(*) FROM telemetry",
+            clause,
+        ) + " GROUP BY error_type"
+        cur = dash.error_db.conn.execute(query, params)
         rows = cur.fetchall()
         labels = [r[0] if r[0] is not None else '' for r in rows]
         count = [int(r[1]) for r in rows]
