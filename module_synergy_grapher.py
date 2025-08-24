@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import pickle
 import sqlite3
 from dataclasses import dataclass, field
 from itertools import combinations
@@ -15,6 +16,36 @@ from networkx.readwrite import json_graph
 
 from module_graph_analyzer import build_import_graph
 from vector_service import SharedVectorService
+
+
+def save_graph(graph: nx.Graph, path: str | Path) -> None:
+    """Persist ``graph`` to ``path`` in JSON or pickle format."""
+
+    path = Path(path)
+    if path.suffix == ".json":
+        data = json_graph.node_link_data(graph)
+        path.write_text(json.dumps(data))
+    elif path.suffix in {".pkl", ".pickle"}:
+        with path.open("wb") as fh:
+            pickle.dump(graph, fh)
+    else:
+        raise ValueError(f"Unsupported graph format: {path.suffix}")
+
+
+def load_graph(path: str | Path) -> nx.Graph:
+    """Load a graph previously persisted with :func:`save_graph`."""
+
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(path)
+    if path.suffix == ".json":
+        data = json.loads(path.read_text())
+        return json_graph.node_link_graph(data)
+    elif path.suffix in {".pkl", ".pickle"}:
+        with path.open("rb") as fh:
+            return pickle.load(fh)
+    else:
+        raise ValueError(f"Unsupported graph format: {path.suffix}")
 
 
 @dataclass
@@ -186,9 +217,72 @@ class ModuleSynergyGrapher:
         out_dir = root / "sandbox_data"
         out_dir.mkdir(exist_ok=True)
         out_file = out_dir / "module_synergy_graph.json"
-        data = json_graph.node_link_data(graph)
-        out_file.write_text(json.dumps(data))
+        save_graph(graph, out_file)
         return graph
 
 
-__all__ = ["ModuleSynergyGrapher"]
+def get_synergy_cluster(
+    module_name: str,
+    threshold: float = 0.7,
+    path: str | Path | None = None,
+) -> set[str]:
+    """Return modules reachable from ``module_name`` with edge weight ≥ ``threshold``."""
+
+    path = Path(path) if path else Path("sandbox_data/module_synergy_graph.json")
+    graph = load_graph(path)
+    if module_name not in graph:
+        return set()
+    cluster: set[str] = {module_name}
+    stack = [module_name]
+    while stack:
+        node = stack.pop()
+        for neigh, data in graph[node].items():
+            if data.get("weight", 0.0) >= threshold and neigh not in cluster:
+                cluster.add(neigh)
+                stack.append(neigh)
+    return cluster
+
+
+def _main(argv: Iterable[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Module Synergy Grapher")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    b = sub.add_parser("build", help="rebuild synergy graph")
+    b.add_argument("root", nargs="?", default=".", help="root path for modules")
+    b.add_argument("--out", default=None, help="output file (json or pickle)")
+
+    c = sub.add_parser("cluster", help="query synergy cluster")
+    c.add_argument("module", help="module name to query")
+    c.add_argument("--threshold", type=float, default=0.7)
+    c.add_argument("--path", default=None, help="path to saved graph")
+
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    if args.cmd == "build":
+        graph = ModuleSynergyGrapher().build_graph(args.root)
+        if args.out:
+            save_graph(graph, args.out)
+    elif args.cmd == "cluster":
+        cluster = get_synergy_cluster(args.module, args.threshold, args.path)
+        for mod in sorted(cluster):
+            print(mod)
+    return 0
+
+
+def main() -> int:  # pragma: no cover - thin wrapper
+    return _main()
+
+
+__all__ = [
+    "ModuleSynergyGrapher",
+    "save_graph",
+    "load_graph",
+    "get_synergy_cluster",
+    "main",
+]
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry
+    raise SystemExit(main())
