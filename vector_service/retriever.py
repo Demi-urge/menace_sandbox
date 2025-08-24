@@ -19,16 +19,16 @@ from redaction_utils import redact_dict as pii_redact_dict, redact_text as pii_r
 from governed_retrieval import govern_retrieval, redact, redact_dict
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 try:  # pragma: no cover - optional dependency for metrics
-    from . import metrics_exporter as _me  # type: ignore
+    from . import metrics_exporter as _me  # noqa: F401  # type: ignore
 except Exception:  # pragma: no cover - fallback when running as script
-    import metrics_exporter as _me  # type: ignore
+    import metrics_exporter as _me  # noqa: F401  # type: ignore
 
 from .patch_logger import _VECTOR_RISK  # type: ignore
 from patch_safety import PatchSafety
-
-_DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
+
+_DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 
 
 try:  # pragma: no cover - optional dependency
@@ -314,11 +314,13 @@ class Retriever:
         for attempt in range(attempts):
             try:
                 if dbs is None and hasattr(retriever, "retrieve_with_confidence"):
-                    hits, confidence, _ = retriever.retrieve_with_confidence(  # type: ignore[attr-defined]
+                    hits, confidence, _ = retriever.retrieve_with_confidence(
                         query, top_k=k
-                    )
+                    )  # type: ignore[attr-defined]
                 else:
-                    hits, _, _ = retriever.retrieve(query, top_k=k, dbs=dbs)  # type: ignore[arg-type]
+                    hits, _, _ = retriever.retrieve(  # type: ignore[arg-type]
+                        query, top_k=k, dbs=dbs
+                    )
                     confidence = (
                         max(getattr(h, "score", 0.0) for h in hits) if hits else 0.0
                     )
@@ -412,11 +414,11 @@ class Retriever:
         )
 
     # ------------------------------------------------------------------
-    def error_frequency(self, error_id: int) -> float:
+    def error_frequency(self, error_id: int, scope: str | None = None) -> float:
         """Expose raw error frequency metric from the underlying service."""
 
         try:
-            return float(self._get_retriever()._error_frequency(int(error_id)))
+            return float(self._get_retriever()._error_frequency(int(error_id), scope))
         except Exception:
             return 0.0
 
@@ -439,12 +441,16 @@ class Retriever:
             return 0.0
 
     # ------------------------------------------------------------------
-    def search_bots(self, query: str, *, top_k: int | None = None) -> List[Dict[str, Any]] | FallbackResult:
+    def search_bots(
+        self, query: str, *, top_k: int | None = None
+    ) -> List[Dict[str, Any]] | FallbackResult:
         """Convenience wrapper to search only bot definitions."""
 
         return self.search(query, top_k=top_k, dbs=["bot"])
 
-    def search_workflows(self, query: str, *, top_k: int | None = None) -> List[Dict[str, Any]] | FallbackResult:
+    def search_workflows(
+        self, query: str, *, top_k: int | None = None
+    ) -> List[Dict[str, Any]] | FallbackResult:
         """Convenience wrapper to search only workflow specifications."""
 
         return self.search(query, top_k=top_k, dbs=["workflow"])
@@ -456,7 +462,9 @@ class Retriever:
 
         return self.search(query, top_k=top_k, dbs=["enhancement"])
 
-    def search_errors(self, query: str, *, top_k: int | None = None) -> List[Dict[str, Any]] | FallbackResult:
+    def search_errors(
+        self, query: str, *, top_k: int | None = None
+    ) -> List[Dict[str, Any]] | FallbackResult:
         """Search only error telemetry entries."""
 
         return self.search(query, top_k=top_k, dbs=["error"])
@@ -487,4 +495,3 @@ def fts_search(
 
 
 __all__ = ["Retriever", "FallbackResult", "fts_search"]
-
