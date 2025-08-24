@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Iterable, List, Sequence, Iterator
 from pathlib import Path
-import json
 import sqlite3
 import logging
 
@@ -14,8 +13,10 @@ from vector_service import EmbeddableDBMixin
 from .unified_event_bus import UnifiedEventBus
 try:  # pragma: no cover - import available in package context
     from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+    from .db_scope import Scope, build_scope_clause
 except Exception:  # pragma: no cover - fallback for top-level imports
     from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+    from db_scope import Scope, build_scope_clause
 
 
 logger = logging.getLogger(__name__)
@@ -72,9 +73,23 @@ class InformationDB(EmbeddableDBMixin):
                 validated INTEGER,
                 validation_notes TEXT,
                 keywords TEXT,
-                data_depth_score REAL
+                data_depth_score REAL,
+                source_menace_id TEXT NOT NULL
             )
             """,
+        )
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(information)")]
+        if "source_menace_id" not in cols:
+            self.conn.execute(
+                "ALTER TABLE information ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
+            )
+            self.conn.execute(
+                "UPDATE information SET source_menace_id=? WHERE source_menace_id=''",
+                (self.router.menace_id,),
+            )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_information_source_menace_id "
+            "ON information(source_menace_id)"
         )
         self.conn.commit()
         meta_path = Path(vector_index_path).with_suffix(".json")
@@ -144,8 +159,8 @@ class InformationDB(EmbeddableDBMixin):
         cur = self.conn.execute(
             """
             INSERT INTO information(data_type, source_url, date_collected, summary, validated,
-                                     validation_notes, keywords, data_depth_score)
-            VALUES (?,?,?,?,?,?,?,?)
+                                     validation_notes, keywords, data_depth_score, source_menace_id)
+            VALUES (?,?,?,?,?,?,?,?,?)
             """,
             (
                 rec.data_type,
@@ -156,6 +171,7 @@ class InformationDB(EmbeddableDBMixin):
                 rec.validation_notes,
                 keywords,
                 rec.data_depth_score,
+                self.router.menace_id,
             ),
         )
         self.conn.commit()
@@ -187,14 +203,30 @@ class InformationDB(EmbeddableDBMixin):
         """Delegate to :class:`EmbeddableDBMixin` for compatibility."""
         EmbeddableDBMixin.backfill_embeddings(self)
 
-    def iter_records(self) -> Iterator[tuple[int, dict[str, Any], str]]:
+    def iter_records(
+        self,
+        *,
+        scope: Scope | str = Scope.ALL,
+        source_menace_id: Any | None = None,
+    ) -> Iterator[tuple[int, dict[str, Any], str]]:
         """Yield information rows for embedding backfill."""
-        cur = self.conn.execute("SELECT * FROM information")
+        menace_id = source_menace_id or self.router.menace_id
+        clause, params = build_scope_clause("information", scope, menace_id)
+        sql = "SELECT * FROM information"
+        if clause:
+            sql += f" WHERE {clause}"
+        cur = self.conn.execute(sql, params)
         for row in cur.fetchall():
             yield row["info_id"], dict(row), "info"
 
     # ------------------------------------------------------------------
-    def vector(self, rec: Any) -> List[float] | None:
+    def vector(
+        self,
+        rec: Any,
+        *,
+        scope: Scope | str = Scope.ALL,
+        source_menace_id: Any | None = None,
+    ) -> List[float] | None:
         if isinstance(rec, (int, str)):
             rid = str(rec)
             meta = self._metadata.get(rid)
@@ -204,9 +236,14 @@ class InformationDB(EmbeddableDBMixin):
                 rec_id = int(rec)
             except (TypeError, ValueError):
                 return None
-            row = self.conn.execute(
-                "SELECT * FROM information WHERE info_id=?", (rec_id,)
-            ).fetchone()
+            menace_id = source_menace_id or self.router.menace_id
+            clause, params = build_scope_clause("information", scope, menace_id)
+            sql = "SELECT * FROM information WHERE info_id=?"
+            query_params = [rec_id]
+            if clause:
+                sql += f" AND {clause}"
+                query_params.extend(params)
+            row = self.conn.execute(sql, query_params).fetchone()
             if not row:
                 return None
             text = self._embed_text(dict(row))
@@ -218,13 +255,25 @@ class InformationDB(EmbeddableDBMixin):
         """Encode ``text`` to a vector (overridable for tests)."""
         return self.encode_text(text)
 
-    def search_by_vector(self, vector: Sequence[float], top_k: int = 5) -> List[dict[str, Any]]:
+    def search_by_vector(
+        self,
+        vector: Sequence[float],
+        top_k: int = 5,
+        *,
+        scope: Scope | str = Scope.ALL,
+        source_menace_id: Any | None = None,
+    ) -> List[dict[str, Any]]:
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
         results: List[dict[str, Any]] = []
+        menace_id = source_menace_id or self.router.menace_id
+        clause, params = build_scope_clause("information", scope, menace_id)
         for rec_id, dist in matches:
-            row = self.conn.execute(
-                "SELECT * FROM information WHERE info_id=?", (rec_id,)
-            ).fetchone()
+            sql = "SELECT * FROM information WHERE info_id=?"
+            query_params = [rec_id]
+            if clause:
+                sql += f" AND {clause}"
+                query_params.extend(params)
+            row = self.conn.execute(sql, query_params).fetchone()
             if row:
                 rec = dict(row)
                 rec["_distance"] = dist
