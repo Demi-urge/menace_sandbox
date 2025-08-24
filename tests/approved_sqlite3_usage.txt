@@ -1,6 +1,5 @@
 bot_testing_bot.py
 db_router.py
-sandbox_runner/environment.py
 scripts/check_sqlite_connections.py
 scripts/new_db.py
 scripts/new_db_template.py
