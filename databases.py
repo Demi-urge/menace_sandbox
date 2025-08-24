@@ -238,9 +238,12 @@ class MenaceDB:
             Column("performance_delta", Float),
             Column("timestamp", String),
             Column("triggered_by", String),
-            Column("source_menace_id", Text, nullable=False, server_default=""),
+            Column("source_menace_id", Text, nullable=False),
         )
-        Index("ix_enhancements_source_menace_id", self.enhancements.c.source_menace_id)
+        Index(
+            "idx_enhancements_source_menace_id",
+            self.enhancements.c.source_menace_id,
+        )
 
         self.enhancement_models = Table(
             "enhancement_models",

@@ -143,6 +143,7 @@ def test_roi_discrepancy_links(tmp_path):
                 performance_delta=0.0,
                 timestamp="t",
                 triggered_by="x",
+                source_menace_id="",
             )
         )
 

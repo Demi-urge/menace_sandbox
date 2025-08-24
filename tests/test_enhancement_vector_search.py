@@ -31,11 +31,14 @@ def test_embedding_workflow(tmp_path, backend):
 
     # insert enhancement without embedding and backfill
     db.conn.execute(
-        "INSERT INTO enhancements(idea, rationale, summary, before_code, after_code) VALUES (?,?,?,?,?)",
-        ("i2", "r2", "beta", "x", "y"),
+        "INSERT INTO enhancements(idea, rationale, summary, before_code, after_code, source_menace_id) VALUES (?,?,?,?,?,?)",
+        ("i2", "r2", "beta", "x", "y", db.router.menace_id),
     )
     db.conn.commit()
-    new_id = db.conn.execute("SELECT id FROM enhancements WHERE summary='beta'").fetchone()[0]
+    new_id = db.conn.execute(
+        "SELECT id FROM enhancements WHERE summary='beta' AND source_menace_id=?",
+        (db.router.menace_id,),
+    ).fetchone()[0]
     assert str(new_id) not in db._metadata
     db.backfill_embeddings()
     assert str(new_id) in db._metadata

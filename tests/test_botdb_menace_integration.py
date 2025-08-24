@@ -11,7 +11,13 @@ def test_botdb_menace_insert(tmp_path):
     with mdb.engine.begin() as conn:
         conn.execute(mdb.models.insert().values(model_id=1, model_name="m"))
         conn.execute(mdb.workflows.insert().values(workflow_id=2, workflow_name="w"))
-        conn.execute(mdb.enhancements.insert().values(enhancement_id=3, description_of_change="d"))
+        conn.execute(
+            mdb.enhancements.insert().values(
+                enhancement_id=3,
+                description_of_change="d",
+                source_menace_id="",
+            )
+        )
     db = bdbm.BotDB(tmp_path / "b.db", menace_db=mdb)
     rec = bdbm.BotRecord(name="b", bid=1)
     db.add_bot(rec, models=[1], workflows=[2], enhancements=[3])

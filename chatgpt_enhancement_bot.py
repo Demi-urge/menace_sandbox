@@ -125,7 +125,7 @@ class EnhancementDB(EmbeddableDBMixin):
 
     def _current_menace_id(self, source_menace_id: str | None) -> str:
         return source_menace_id or (
-            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+            self.router.menace_id if self.router else ""
         )
 
     def _connect(self) -> sqlite3.Connection:  # pragma: no cover - simple wrapper
@@ -162,8 +162,8 @@ class EnhancementDB(EmbeddableDBMixin):
                         cost_estimate REAL,
                         category TEXT,
                         associated_bots TEXT,
-                        triggered_by TEXT
-                        source_menace_id TEXT DEFAULT ''
+                        triggered_by TEXT,
+                        source_menace_id TEXT NOT NULL
                     )
                     """
                 )
@@ -187,7 +187,21 @@ class EnhancementDB(EmbeddableDBMixin):
                     )
                 if "source_menace_id" not in cols:
                     conn.execute(
-                        "ALTER TABLE enhancements ADD COLUMN source_menace_id TEXT DEFAULT ''"
+                        "ALTER TABLE enhancements ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT """
+                    )
+                idxs = [
+                    r[1]
+                    for r in conn.execute(
+                        "PRAGMA index_list(enhancements)"
+                    ).fetchall()
+                ]
+                if "ix_enhancements_source_menace_id" in idxs:
+                    conn.execute(
+                        "DROP INDEX ix_enhancements_source_menace_id",
+                    )
+                if "idx_enhancements_source_menace_id" not in idxs:
+                    conn.execute(
+                        "CREATE INDEX idx_enhancements_source_menace_id ON enhancements(source_menace_id)",
                     )
                 conn.execute(
                     """
@@ -256,7 +270,7 @@ class EnhancementDB(EmbeddableDBMixin):
         tags = ",".join(enh.tags)
         assigned = ",".join(enh.assigned_bots)
         assoc = ",".join(enh.associated_bots)
-        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        menace_id = self.router.menace_id if self.router else ""
         try:
             with self._connect() as conn:
                 cur = conn.execute(
