@@ -29,10 +29,10 @@ from typing import Literal
 
 try:  # pragma: no cover - import available in package context
     from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-    from .db_scope import Scope, build_scope_clause
+    from .db_scope import Scope, build_scope_clause, apply_scope
 except Exception:  # pragma: no cover - fallback for tests
     from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-    from db_scope import Scope, build_scope_clause
+    from db_scope import Scope, build_scope_clause, apply_scope
 
 MENACE_ID = "workflow_summary_db"
 DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
@@ -111,12 +111,11 @@ class WorkflowSummaryDB:
             "workflow_summaries", Scope(scope), menace_id
         )
         conn = self.router.get_connection("workflow_summaries")
-        query = "SELECT summary FROM workflow_summaries"
-        if clause:
-            query += f" {clause} AND workflow_id=?"
-        else:
-            query += " WHERE workflow_id=?"
-        params.append(workflow_id)
+        query = apply_scope(
+            "SELECT summary FROM workflow_summaries WHERE workflow_id=?",
+            clause,
+        )
+        params = [workflow_id] + params
         cur = conn.execute(query, params)
         row = cur.fetchone()
         return row["summary"] if row else None
@@ -132,10 +131,9 @@ class WorkflowSummaryDB:
             "workflow_summaries", Scope(scope), menace_id
         )
         conn = self.router.get_connection("workflow_summaries")
-        query = (
-            "SELECT workflow_id, summary, source_menace_id FROM workflow_summaries"
+        query = apply_scope(
+            "SELECT workflow_id, summary, source_menace_id FROM workflow_summaries",
+            clause,
         )
-        if clause:
-            query += f" {clause}"
         cur = conn.execute(query, params)
         return [WorkflowSummary(**dict(row)) for row in cur.fetchall()]
