@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable, List, Tuple
+from typing import Callable, Iterable, List, Tuple, Literal
 import asyncio
 import tempfile
 
@@ -131,12 +131,12 @@ class CommTestDB:
     def fetch(
         self,
         *,
-        scope: Scope | str = Scope.LOCAL,
+        scope: Literal["local", "global", "all"] = "local",
         source_menace_id: str | None = None,
     ) -> List[CommTestResult]:
         conn = self.router.get_connection("results")
         menace_id = source_menace_id or self.router.menace_id
-        clause, params = build_scope_clause("results", scope, menace_id)
+        clause, params = build_scope_clause("results", Scope(scope), menace_id)
         query = apply_scope(
             "SELECT name, passed, details, ts, source_menace_id FROM results", clause
         )
