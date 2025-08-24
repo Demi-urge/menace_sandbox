@@ -1686,6 +1686,8 @@ configuration options.
 ## Module Synergy Grapher
 
 Builds a weighted graph of module relationships and queries related modules.
+See [docs/module_synergy_grapher.md](docs/module_synergy_grapher.md) for graph
+metrics, CLI options and sample cluster output.
 
 ```bash
 python module_synergy_grapher.py --build [--config cfg.toml]

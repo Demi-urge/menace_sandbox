@@ -22,6 +22,34 @@ python module_synergy_grapher.py --cluster <module> --threshold 0.8
 
 The `--threshold` flag filters edges by weight when expanding the cluster.
 
+## Example `get_synergy_cluster` Output
+
+After building the graph a module's neighbourhood can be inspected from the CLI:
+
+```bash
+$ python module_synergy_grapher.py --cluster a --threshold 0.5
+a
+b
+```
+
+The function form mirrors the CLI:
+
+```python
+from module_synergy_grapher import get_synergy_cluster
+get_synergy_cluster("a", threshold=0.5)
+# {'a', 'b'}
+```
+
+## CLI Options
+
+`module_synergy_grapher.py` exposes the following commands:
+
+* `--build` – regenerate the synergy graph for the current repository.
+* `--cluster MODULE` – print synergistic neighbours for `MODULE`.
+* `--threshold FLOAT` – minimum cumulative synergy required for inclusion (default `0.7`).
+* `--config PATH` – JSON/TOML file providing coefficient overrides.
+* `--no-cache` – recompute AST info and embeddings ignoring cached results.
+
 ## Configuration
 
 The `ModuleSynergyGrapher` constructor accepts either a `coefficients` mapping
@@ -59,6 +87,22 @@ Edges combine four heuristics:
   `workflows.db` or in historical synergy records.
 * **Docstring embeddings** – cosine similarity of module docstring embeddings
   stored in `sandbox_data/module_doc_embeddings.*`.
+
+## Graph Metrics
+
+The resulting graph is weighted and directed. Each edge's `weight` captures the
+combined import, structural, co-occurrence and embedding signals. Standard
+NetworkX routines can then surface relationships:
+
+* **Weighted degree** – `graph.degree(node, weight="weight")` highlights how
+  strongly a module is connected overall.
+* **In/out degree** – `graph.in_degree(node, weight="weight")` /
+  `graph.out_degree(node, weight="weight")` distinguish inbound and outbound
+  synergy.
+* **Clustering coefficient** – `nx.clustering(graph.to_undirected(), node, weight="weight")`
+  measures how tightly neighbours interact.
+* **PageRank** – `nx.pagerank(graph, weight="weight")` surfaces globally
+  influential modules.
 
 ## Limitations
 
