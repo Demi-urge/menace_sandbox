@@ -75,6 +75,7 @@ class ModuleSynergyGrapher:
     graph: nx.DiGraph | None = None
     embedding_threshold: float = 0.8
     root: Path | None = None
+    weights_file: Path | None = None
 
     def __init__(
         self,
@@ -84,6 +85,7 @@ class ModuleSynergyGrapher:
         graph: nx.DiGraph | None = None,
         embedding_threshold: float = 0.8,
         root: Path | None = None,
+        weights_file: Path | None = None,
     ) -> None:
         self.coefficients = {
             "import": 1.0,
@@ -115,6 +117,31 @@ class ModuleSynergyGrapher:
         self.graph = graph
         self.embedding_threshold = embedding_threshold
         self.root = root
+        self.weights_file = weights_file
+
+    # ------------------------------------------------------------------
+    def _load_weights(self, weights_file: Path | None = None) -> None:
+        """Update ``self.coefficients`` from ``weights_file`` if it exists."""
+
+        path = weights_file or self.weights_file
+        if path is None:
+            base = self.root if self.root is not None else Path.cwd()
+            path = base / "sandbox_data" / "synergy_weights.json"
+        else:
+            path = Path(path)
+        self.weights_file = path
+        try:
+            if path.exists():
+                data = json.loads(path.read_text())
+                if isinstance(data, dict):
+                    self.coefficients.update({k: float(v) for k, v in data.items()})
+        except Exception:  # pragma: no cover - ignore malformed files
+            pass
+
+    def reload_weights(self) -> None:
+        """Reload coefficient weights from ``self.weights_file``."""
+
+        self._load_weights()
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -338,6 +365,9 @@ class ModuleSynergyGrapher:
         self.root = root
         import_graph = build_import_graph(root)
         modules = list(import_graph.nodes)
+
+        # Refresh coefficient weights from disk before scoring
+        self._load_weights()
 
         vars_, funcs, classes, docs, embeddings = self._collect_ast_info(
             root, modules, use_cache=use_cache
