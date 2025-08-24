@@ -145,6 +145,58 @@ class ModuleSynergyGrapher:
 
         self._load_weights()
 
+    def compute_optimal_weights(
+        self, root_path: str | Path, *, weights_file: str | Path | None = None
+    ) -> Dict[str, float]:
+        """Learn coefficient weights from ``synergy_history.db``.
+
+        This lightweight learner aggregates the historical contribution of each
+        synergy signal and normalises the totals so that the resulting weights
+        sum to one.  The weights are written to ``weights_file`` (defaulting to
+        ``sandbox_data/synergy_weights.json``) and merged into
+        ``self.coefficients``.
+        """
+
+        root = Path(root_path)
+        self.root = root
+        db_path = root / "synergy_history.db"
+        if not db_path.exists():
+            db_path = root / "sandbox_data" / "synergy_history.db"
+        if not db_path.exists() or shd is None:  # type: ignore[truthy-bool]
+            return self.coefficients
+
+        try:
+            history = shd.load_history(db_path)  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - DB failure
+            return self.coefficients
+
+        totals: Dict[str, float] = {k: 0.0 for k in self.coefficients}
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+            for key in totals:
+                try:
+                    totals[key] += float(entry.get(key, 0.0))
+                except Exception:
+                    continue
+
+        denom = sum(totals.values())
+        if denom <= 0:
+            return self.coefficients
+
+        new_coeffs = {k: v / denom for k, v in totals.items()}
+        self.coefficients.update(new_coeffs)
+
+        path = Path(weights_file) if weights_file else None
+        self._load_weights(path)
+        out = self.weights_file or (root / "sandbox_data" / "synergy_weights.json")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            out.write_text(json.dumps(self.coefficients))
+        except Exception:  # pragma: no cover - disk issues
+            pass
+        return self.coefficients
+
     def learn_coefficients(
         self, root_path: str | Path, *, weights_file: str | Path | None = None
     ) -> Dict[str, float]:
