@@ -40,7 +40,7 @@ from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from vector_service import EmbeddableDBMixin
-from .db_scope import Scope, build_scope_clause
+from .db_scope import build_scope_clause
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager
@@ -353,11 +353,41 @@ class ErrorDB(EmbeddableDBMixin):
         scope: Literal["local", "global", "all"] = "local",
     ) -> pd.DataFrame:
         menace_id = self._menace_id(source_menace_id)
-        clause, params = build_scope_clause("discrepancies", Scope(scope), menace_id)
+        clause, params = build_scope_clause("discrepancies", scope, menace_id)
         query = "SELECT message, ts FROM discrepancies"
         if clause:
-            query += f" {clause}"
+            query += f" WHERE {clause}"
         return pd.read_sql(query, self.conn, params=params)
+
+    def errors(
+        self,
+        *,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
+    ) -> pd.DataFrame:
+        menace_id = self._menace_id(source_menace_id)
+        clause, params = build_scope_clause("errors", scope, menace_id)
+        query = (
+            "SELECT id, message, type, description, resolution, ts, "
+            "category, cause, frequency FROM errors"
+        )
+        if clause:
+            query += f" WHERE {clause}"
+        return pd.read_sql(query, self.conn, params=params)
+
+    def list_errors(
+        self,
+        *,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
+    ) -> List[str]:
+        menace_id = self._menace_id(source_menace_id)
+        clause, params = build_scope_clause("errors", scope, menace_id)
+        query = "SELECT message FROM errors"
+        if clause:
+            query += f" WHERE {clause}"
+        cur = self.conn.execute(query, params)
+        return [r[0] for r in cur.fetchall()]
 
     def log_preemptive_patch(
         self, module: str, risk_score: float, patch_id: int | None
@@ -416,10 +446,10 @@ class ErrorDB(EmbeddableDBMixin):
         scope: Literal["local", "global", "all"] = "local",
     ) -> Optional[int]:
         menace_id = self._menace_id(source_menace_id)
-        clause, params = build_scope_clause("errors", Scope(scope), menace_id)
+        clause, params = build_scope_clause("errors", scope, menace_id)
         query = "SELECT id FROM errors"
         if clause:
-            query += f" {clause} AND message = ?"
+            query += f" WHERE {clause} AND message = ?"
             params.append(message)
         else:
             query += " WHERE message = ?"
@@ -498,10 +528,10 @@ class ErrorDB(EmbeddableDBMixin):
     ) -> Iterator[tuple[int, dict[str, Any], str]]:
         """Yield error and telemetry rows for embedding backfill."""
         menace_id = self._menace_id(source_menace_id)
-        clause, params = build_scope_clause("errors", Scope(scope), menace_id)
+        clause, params = build_scope_clause("errors", scope, menace_id)
         query = "SELECT id, message FROM errors"
         if clause:
-            query += f" {clause}"
+            query += f" WHERE {clause}"
         cur = self.conn.execute(query, params)
         for row in cur.fetchall():
             yield row["id"], {"message": row["message"]}, "error"
@@ -560,10 +590,10 @@ class ErrorDB(EmbeddableDBMixin):
         """Return recorded recurrence frequency for ``err_id``."""
 
         menace_id = self._menace_id(source_menace_id)
-        clause, params = build_scope_clause("errors", Scope(scope), menace_id)
+        clause, params = build_scope_clause("errors", scope, menace_id)
         query = "SELECT frequency FROM errors"
         if clause:
-            query += f" {clause} AND id=?"
+            query += f" WHERE {clause} AND id=?"
             params.append(err_id)
         else:
             query += " WHERE id=?"
@@ -679,7 +709,7 @@ class ErrorDB(EmbeddableDBMixin):
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
         results: list[dict[str, object]] = []
         menace_id = self._menace_id(source_menace_id)
-        clause, base_params = build_scope_clause("errors", Scope(scope), menace_id)
+        clause, base_params = build_scope_clause("errors", scope, menace_id)
         for rec_id, dist in matches:
             rid = int(rec_id)
             row = self.conn.execute(
@@ -698,7 +728,7 @@ class ErrorDB(EmbeddableDBMixin):
             q = "SELECT message FROM errors"
             params = list(base_params)
             if clause:
-                q += f" {clause} AND id=?"
+                q += f" WHERE {clause} AND id=?"
             else:
                 q += " WHERE id=?"
             params.append(rid)
@@ -716,12 +746,12 @@ class ErrorDB(EmbeddableDBMixin):
         """Return aggregated error counts grouped by category, module and cause."""
         menace_id = self._menace_id(source_menace_id)
         try:
-            clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+            clause, params = build_scope_clause("telemetry", scope, menace_id)
             query = (
                 "SELECT category, module, cause, COUNT(*) AS cnt FROM telemetry"
             )
             if clause:
-                query += f" {clause} GROUP BY category, module, cause"
+                query += f" WHERE {clause} GROUP BY category, module, cause"
             else:
                 query += " GROUP BY category, module, cause"
             cur = self.conn.execute(query, params)
@@ -740,10 +770,10 @@ class ErrorDB(EmbeddableDBMixin):
         except Exception:
             pass
 
-        clause, params = build_scope_clause("error_stats", Scope(scope), menace_id)
+        clause, params = build_scope_clause("error_stats", scope, menace_id)
         query = "SELECT category, module, count FROM error_stats"
         if clause:
-            query += f" {clause}"
+            query += f" WHERE {clause}"
         cur = self.conn.execute(query, params)
         return [
             {
@@ -1038,10 +1068,10 @@ class ErrorBot(AdminBotBase):
             return
         menace_id = self.db._menace_id(source_menace_id)
         with self.db.router.get_connection("errors") as conn:
-            clause, params = build_scope_clause("errors", Scope(scope), menace_id)
+            clause, params = build_scope_clause("errors", scope, menace_id)
             q = "SELECT message FROM errors"
             if clause:
-                q += f" {clause} AND id=?"
+                q += f" WHERE {clause} AND id=?"
             else:
                 q += " WHERE id=?"
             params.append(err_id)
