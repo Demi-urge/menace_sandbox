@@ -1,15 +1,14 @@
 import os
 import shutil
-import sqlite3
 
 import pytest
-
-pytest.importorskip("sqlalchemy")
 
 import menace.deployment_bot as db
 import menace.chatgpt_enhancement_bot as ceb
 import menace.contrarian_db as cdb
 import menace.menace as mn
+
+pytest.importorskip("sqlalchemy")
 
 
 def test_links_and_status(tmp_path):
@@ -91,9 +90,12 @@ def test_contrarian_new_strategy_links(tmp_path):
     eid = enh_db.add(ceb.Enhancement(idea="i", rationale="r"))
 
     err_db = db.ErrorDB(tmp_path / "err.db")
+    menace_id = (
+        err_db.router.menace_id if getattr(err_db, "router", None) else os.getenv("MENACE_ID", "")
+    )
     cur = err_db.conn.execute(
-        "INSERT INTO discrepancies(message, ts) VALUES (?, ?)",
-        ("err", "2020"),
+        "INSERT INTO discrepancies(message, ts, source_menace_id) VALUES (?, ?, ?)",
+        ("err", "2020", menace_id),
     )
     err_id = cur.lastrowid
     err_db.conn.commit()

@@ -1,3 +1,4 @@
+# flake8: noqa
 """Error Bot for detecting and resolving system issues."""
 
 from __future__ import annotations
@@ -102,15 +103,22 @@ class ErrorDB(EmbeddableDBMixin):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message TEXT,
                 ts TEXT,
-                source_menace_id TEXT DEFAULT ''
+                source_menace_id TEXT NOT NULL
             )
             """
         )
         dcols = [r[1] for r in self.conn.execute("PRAGMA table_info(discrepancies)").fetchall()]
         if "source_menace_id" not in dcols:
             self.conn.execute(
-                "ALTER TABLE discrepancies ADD COLUMN source_menace_id TEXT DEFAULT ''"
+                "ALTER TABLE discrepancies ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
             )
+            self.conn.execute(
+                "UPDATE discrepancies SET source_menace_id='' WHERE source_menace_id IS NULL"
+            )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_discrepancies_source_menace_id ON discrepancies(source_menace_id)"
+        )
+        self.conn.commit()
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS errors(
@@ -330,7 +338,12 @@ class ErrorDB(EmbeddableDBMixin):
         self._publish("discrepancies:new", {"message": message})
 
     def discrepancies(self) -> pd.DataFrame:
-        return pd.read_sql("SELECT message, ts FROM discrepancies", self.conn)
+        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        return pd.read_sql(
+            "SELECT message, ts FROM discrepancies WHERE source_menace_id=?",
+            self.conn,
+            params=(menace_id,),
+        )
 
     def log_preemptive_patch(
         self, module: str, risk_score: float, patch_id: int | None

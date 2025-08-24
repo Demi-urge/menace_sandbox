@@ -435,7 +435,10 @@ class MenaceDB:
             Column("resolution_notes", Text),
             Column("source_menace_id", Text, nullable=False, server_default=""),
         )
-        Index("ix_discrepancies_source_menace_id", self.discrepancies.c.source_menace_id)
+        Index(
+            "idx_discrepancies_source_menace_id",
+            self.discrepancies.c.source_menace_id,
+        )
 
         self.discrepancy_bots = Table(
             "discrepancy_bots",
