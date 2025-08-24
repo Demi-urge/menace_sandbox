@@ -364,32 +364,33 @@ class ModuleSynergyGrapher:
         embeddings: Dict[str, list[float]] = {}
 
         updated = False
-        for mod in modules:
+
+        def _worker(mod: str) -> tuple[str, dict[str, object] | None, dict[str, object] | None, bool]:
             file = root / f"{mod}.py"
             if not file.exists():
-                continue
+                return mod, None, None, False
             mtime = file.stat().st_mtime
             try:
                 data = file.read_bytes()
             except Exception:
-                continue
+                return mod, None, None, False
             hash_ = hashlib.sha256(data).hexdigest()
             cached = cache.get(mod) if use_cache else None
             if cached and cached.get("mtime") == mtime and cached.get("hash") == hash_:
-                vars_[mod] = set(cached.get("vars", []))
-                funcs[mod] = set(cached.get("funcs", []))
-                classes[mod] = set(cached.get("classes", []))
-                bases[mod] = set(cached.get("bases", []))
-                docs[mod] = str(cached.get("doc", ""))
-                emb = cached.get("embedding")
-                if emb:
-                    embeddings[mod] = emb  # type: ignore[assignment]
-                continue
+                info = {
+                    "vars": set(cached.get("vars", [])),
+                    "funcs": set(cached.get("funcs", [])),
+                    "classes": set(cached.get("classes", [])),
+                    "bases": set(cached.get("bases", [])),
+                    "doc": str(cached.get("doc", "")),
+                    "embedding": cached.get("embedding"),
+                }
+                return mod, info, None, True
 
             try:
                 tree = ast.parse(data.decode())
             except Exception:
-                continue
+                return mod, None, None, False
 
             vnames: set[str] = set()
             fnames: set[str] = set()
@@ -450,13 +451,16 @@ class ModuleSynergyGrapher:
 
             doc = ast.get_docstring(tree) or ""
 
-            vars_[mod] = vnames
-            funcs[mod] = fnames
-            classes[mod] = cnames
-            bases[mod] = cbases
-            docs[mod] = doc
+            info = {
+                "vars": vnames,
+                "funcs": fnames,
+                "classes": cnames,
+                "bases": cbases,
+                "doc": doc,
+                "embedding": None,
+            }
 
-            cache[mod] = {
+            cache_entry = {
                 "mtime": mtime,
                 "hash": hash_,
                 "vars": sorted(vnames),
@@ -465,7 +469,26 @@ class ModuleSynergyGrapher:
                 "bases": sorted(cbases),
                 "doc": doc,
             }
-            updated = True
+            return mod, info, cache_entry, False
+
+        with ThreadPoolExecutor() as ex:
+            futures = [ex.submit(_worker, mod) for mod in modules]
+            for fut in as_completed(futures):
+                mod, info, cache_entry, from_cache = fut.result()
+                if info is None:
+                    continue
+                vars_[mod] = info["vars"]  # type: ignore[assignment]
+                funcs[mod] = info["funcs"]  # type: ignore[assignment]
+                classes[mod] = info["classes"]  # type: ignore[assignment]
+                bases[mod] = info["bases"]  # type: ignore[assignment]
+                docs[mod] = info["doc"]  # type: ignore[assignment]
+                emb = info.get("embedding")
+                if emb:
+                    embeddings[mod] = emb  # type: ignore[assignment]
+                if cache_entry is not None:
+                    cache[mod] = cache_entry
+                if not from_cache:
+                    updated = True
 
         if not use_cache:
             cache = {m: cache[m] for m in modules if m in cache}
