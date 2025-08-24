@@ -8,7 +8,7 @@ import json
 import sqlite3
 from pathlib import Path
 import logging
-from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 logger = logging.getLogger(__name__)
 
