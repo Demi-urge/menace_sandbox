@@ -707,16 +707,24 @@ class ErrorDB(EmbeddableDBMixin):
                 results.append({"id": rid, "message": row[0], "_distance": dist})
         return results
 
-    def fetch_error_stats(self) -> list[dict[str, int | str | None]]:
+    def fetch_error_stats(
+        self,
+        *,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
+    ) -> list[dict[str, int | str | None]]:
         """Return aggregated error counts grouped by category, module and cause."""
+        menace_id = self._menace_id(source_menace_id)
         try:
-            cur = self.conn.execute(
-                """
-                SELECT category, module, cause, COUNT(*) AS cnt
-                FROM telemetry
-                GROUP BY category, module, cause
-                """
+            clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+            query = (
+                "SELECT category, module, cause, COUNT(*) AS cnt FROM telemetry"
             )
+            if clause:
+                query += f" {clause} GROUP BY category, module, cause"
+            else:
+                query += " GROUP BY category, module, cause"
+            cur = self.conn.execute(query, params)
             rows = cur.fetchall()
             if rows:
                 return [
@@ -732,9 +740,11 @@ class ErrorDB(EmbeddableDBMixin):
         except Exception:
             pass
 
-        cur = self.conn.execute(
-            "SELECT category, module, count FROM error_stats"
-        )
+        clause, params = build_scope_clause("error_stats", Scope(scope), menace_id)
+        query = "SELECT category, module, count FROM error_stats"
+        if clause:
+            query += f" {clause}"
+        cur = self.conn.execute(query, params)
         return [
             {
                 "error_type": row[0],
@@ -746,9 +756,14 @@ class ErrorDB(EmbeddableDBMixin):
             for row in cur.fetchall()
         ]
 
-    def get_error_stats(self) -> list[dict[str, int | str | None]]:
+    def get_error_stats(
+        self,
+        *,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
+    ) -> list[dict[str, int | str | None]]:
         """Backward compatible wrapper for ``fetch_error_stats``."""
-        return self.fetch_error_stats()
+        return self.fetch_error_stats(source_menace_id=source_menace_id, scope=scope)
 
     def record_error_occurrence(self, category: str, module: str) -> None:
         """Increment the occurrence count for a ``(category, module)`` pair."""
