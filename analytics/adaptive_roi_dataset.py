@@ -8,7 +8,7 @@ from typing import Iterable
 
 import pandas as pd
 
-from db_router import GLOBAL_ROUTER, init_db_router
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from evaluation_history_db import EvaluationHistoryDB
 
 
@@ -21,10 +21,13 @@ class DatasetRecord:
     gpt_score: float
 
 
-router = GLOBAL_ROUTER or init_db_router("analytics")
+def _get_router(router: DBRouter | None = None) -> DBRouter:
+    """Return an initialised :class:`DBRouter` instance."""
+
+    return router or GLOBAL_ROUTER or init_db_router("analytics")
 
 
-def _load_roi_events() -> pd.DataFrame:
+def _load_roi_events(router: DBRouter) -> pd.DataFrame:
     """Return ROI deltas per module."""
 
     conn = router.get_connection("roi_events")
@@ -39,7 +42,7 @@ def _load_roi_events() -> pd.DataFrame:
     return df[["module", "ts", "roi_delta"]]
 
 
-def _load_performance() -> pd.DataFrame:
+def _load_performance(router: DBRouter) -> pd.DataFrame:
     """Return performance deltas based on profitability per module."""
 
     conn = router.get_connection("metrics")
@@ -55,10 +58,10 @@ def _load_performance() -> pd.DataFrame:
     return df[["module", "ts", "performance_delta"]]
 
 
-def _load_eval_scores(path: str | Path) -> pd.DataFrame:
+def _load_eval_scores(router: DBRouter) -> pd.DataFrame:
     """Return GPT evaluation scores per module."""
 
-    db = EvaluationHistoryDB(path)
+    db = EvaluationHistoryDB(router=router)
     rows: list[dict[str, object]] = []
     for eng in db.engines():
         for score, ts, _passed, _err in db.history(eng, limit=1_000_000):
@@ -68,20 +71,26 @@ def _load_eval_scores(path: str | Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def build_dataset(
-    *,
-    evaluation_path: str | Path = "evaluation_history.db",
-) -> pd.DataFrame:
+def build_dataset(*, router: DBRouter | None = None) -> pd.DataFrame:
     """Load, merge and normalise ROI, performance and evaluation data.
 
-    Returns a :class:`~pandas.DataFrame` with columns ``module``, ``ts``,
-    ``roi_delta``, ``performance_delta`` and ``gpt_score``. Numerical columns are
-    normalised to zero mean and unit variance.
+    Parameters
+    ----------
+    router:
+        Optional :class:`DBRouter` instance. Falls back to the global router
+        when not provided.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Columns ``module``, ``ts``, ``roi_delta``, ``performance_delta`` and
+        ``gpt_score`` normalised to zero mean and unit variance.
     """
 
-    roi_df = _load_roi_events()
-    perf_df = _load_performance()
-    eval_df = _load_eval_scores(evaluation_path)
+    router = _get_router(router)
+    roi_df = _load_roi_events(router)
+    perf_df = _load_performance(router)
+    eval_df = _load_eval_scores(router)
 
     if roi_df.empty or perf_df.empty or eval_df.empty:
         return pd.DataFrame(columns=["module", "ts", "roi_delta", "performance_delta", "gpt_score"])

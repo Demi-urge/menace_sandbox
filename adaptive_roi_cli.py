@@ -19,6 +19,7 @@ from .adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
 from .adaptive_roi_dataset import build_dataset
 from .roi_tracker import ROITracker
 from .truth_adapter import TruthAdapter
+import db_router
 
 
 # ---------------------------------------------------------------------------
@@ -34,10 +35,12 @@ def _train(args: argparse.Namespace) -> None:
                 selected = [str(s) for s in sel]
         except Exception:
             selected = None
+    router = db_router.DBRouter(
+        "adaptive_cli", str(args.evaluation_db), str(args.evaluation_db)
+    )
     X, y, g, names = build_dataset(
         args.evolution_db,
-        args.roi_db,
-        args.evaluation_db,
+        router=router,
         selected_features=selected,
         return_feature_names=True,
     )
@@ -151,15 +154,18 @@ def _refresh(args: argparse.Namespace) -> None:
     tracker = ROITracker()
     if args.history:
         tracker.load_history(args.history)
+    router = db_router.DBRouter(
+        "adaptive_cli", str(args.evaluation_db), str(args.evaluation_db)
+    )
 
     while True:
         try:
             load_training_data(
                 tracker,
                 evolution_path=args.evolution_db,
-                evaluation_path=args.evaluation_db,
                 roi_events_path=args.roi_events_db,
                 output_path=args.output_csv,
+                router=router,
             )
             print(f"dataset refreshed -> {args.output_csv}")
         except Exception as exc:  # pragma: no cover
@@ -206,6 +212,10 @@ def _schedule(args: argparse.Namespace) -> None:
     if args.history:
         tracker.load_history(args.history)
 
+    router = db_router.DBRouter(
+        "adaptive_cli", str(args.evaluation_db), str(args.evaluation_db)
+    )
+
     param_grid: Dict[str, Dict[str, Any]] | None = None
     if args.param_grid:
         param_grid = json.loads(args.param_grid)
@@ -226,15 +236,14 @@ def _schedule(args: argparse.Namespace) -> None:
             load_training_data(
                 tracker,
                 evolution_path=args.evolution_db,
-                evaluation_path=args.evaluation_db,
                 roi_events_path=args.roi_events_db,
                 output_path=args.output_csv,
+                router=router,
             )
             logger.info("training data loaded")
             X, y, g, names = build_dataset(
                 args.evolution_db,
-                args.roi_db,
-                args.evaluation_db,
+                router=router,
                 roi_events_path=args.roi_events_db,
                 selected_features=selected,
                 return_feature_names=True,

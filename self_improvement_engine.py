@@ -2582,15 +2582,15 @@ class SelfImprovementEngine:
             >= self.adaptive_roi_train_interval
         ):
             try:
-                load_training_data(tracker)
+                load_training_data(tracker, router=router)
                 self.logger.info("adaptive roi training data loaded")
                 selected = getattr(self.roi_predictor, "selected_features", None)
                 X, y, g, names = build_dataset(
                     evolution_path="evolution_history.db",
                     roi_path="roi.db",
-                    evaluation_path="evaluation_history.db",
                     selected_features=selected,
                     return_feature_names=True,
+                    router=router,
                 )
                 dataset = (X, y, g)
                 self.roi_predictor.train(

@@ -342,7 +342,8 @@ def _label_growth(values: Sequence[float]) -> str:
 # ---------------------------------------------------------------------------
 def load_adaptive_roi_dataset(
     evolution_path: str | Path = "evolution_history.db",
-    evaluation_path: str | Path = "evaluation_history.db",
+    *,
+    router: DBRouter | None = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load and normalise ROI training data including growth labels.
 
@@ -350,8 +351,8 @@ def load_adaptive_roi_dataset(
     ----------
     evolution_path:
         Path to the evolution history database.
-    evaluation_path:
-        Path to the evaluation history database.
+    router:
+        Optional :class:`DBRouter` for accessing evaluation history.
 
     Returns
     -------
@@ -365,7 +366,7 @@ def load_adaptive_roi_dataset(
     """
 
     evo_db = EvolutionHistoryDB(evolution_path)
-    eval_db = EvaluationHistoryDB(evaluation_path)
+    eval_db = EvaluationHistoryDB(router=_get_router(router))
 
     events = _collect_events(evo_db)
 
@@ -426,11 +427,11 @@ def load_adaptive_roi_dataset(
 def build_dataset(
     evolution_path: str | Path = "evolution_history.db",
     roi_path: str | Path = "roi.db",
-    evaluation_path: str | Path = "evaluation_history.db",
     roi_events_path: str | Path = "roi_events.db",
     errors_path: str | Path = "errors.db",
     horizons: Sequence[int] = (1, 3, 5),
     *,
+    router: DBRouter | None = None,
     ema_span: int | None = 3,
     selected_features: Sequence[str] | None = None,
     return_feature_names: bool = False,
@@ -444,8 +445,6 @@ def build_dataset(
         Path to the evolution history SQLite database.
     roi_path:
         Path to the ROI history database (``action_roi`` table).
-    evaluation_path:
-        Path to the evaluation history database containing GPT scores.
     roi_events_path:
         Path to the ROI prediction events database used to augment the
         training features.
@@ -456,6 +455,8 @@ def build_dataset(
         default ``(1, 3, 5)`` yields targets ``roi_{t+1}``, ``roi_{t+3}`` and
         ``roi_{t+5}``.  All listed horizons must be available for a row to be
         included.
+    router:
+        Optional :class:`DBRouter` instance for database access.
     ema_span:
         Optional span for an exponential moving average of ROI values up to the
         current cycle.  When provided an additional target column ``roi_ema`` is
@@ -514,8 +515,8 @@ def build_dataset(
             selected_features = None
 
     evo_db = EvolutionHistoryDB(evolution_path)
-    eval_db = EvaluationHistoryDB(evaluation_path)
-    router = _get_router()
+    router = _get_router(router)
+    eval_db = EvaluationHistoryDB(router=router)
     roi_conn = router.get_connection("action_roi")
 
     roi_hist = _collect_roi_history(roi_conn)
