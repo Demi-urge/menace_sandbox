@@ -1005,8 +1005,13 @@ class ROITracker:
         limit: int | None = None,
         path: str = "roi_events.db",
         scope: Scope | str = "local",
+        source_menace_id: str | None = None,
     ) -> List[Dict[str, Any]]:
-        """Return persisted prediction events with telemetry details."""
+        """Return persisted prediction events with telemetry details.
+
+        ``source_menace_id`` overrides the current menace identifier when
+        querying shared databases.
+        """
 
         conn = router.get_connection("roi_prediction_events")
         try:
@@ -1015,8 +1020,9 @@ class ROITracker:
                 "SELECT workflow_id, predicted_roi, actual_roi, confidence, "
                 "scenario_deltas, drift_flag, ts FROM roi_prediction_events"
             )
+            menace_id = source_menace_id or router.menace_id
             clause, scope_params = build_scope_clause(
-                "roi_prediction_events", scope, router.menace_id
+                "roi_prediction_events", scope, menace_id
             )
             base = apply_scope(base, clause)
             params: List[Any] = [*scope_params]
@@ -1060,15 +1066,21 @@ class ROITracker:
         limit: int | None = None,
         path: str = "roi_events.db",
         scope: Scope | str = "local",
+        source_menace_id: str | None = None,
     ) -> List[Dict[str, Any]]:
-        """Return drift scores and flags for dashboards."""
+        """Return drift scores and flags for dashboards.
+
+        ``source_menace_id`` overrides the current menace identifier when
+        querying shared databases.
+        """
 
         conn = router.get_connection("roi_prediction_events")
         try:
             cur = conn.cursor()
             base = "SELECT drift_flag, ts FROM roi_prediction_events"
+            menace_id = source_menace_id or router.menace_id
             clause, scope_params = build_scope_clause(
-                "roi_prediction_events", scope, router.menace_id
+                "roi_prediction_events", scope, menace_id
             )
             base = apply_scope(base, clause)
             params: List[Any] = [*scope_params]
@@ -1096,11 +1108,19 @@ class ROITracker:
         limit: int | None = None,
         path: str = "roi_events.db",
         scope: Scope | str = "local",
+        source_menace_id: str | None = None,
     ) -> List[Dict[str, Any]]:
-        """Wrapper around :func:`telemetry_backend.fetch_roi_events`."""
+        """Wrapper around :func:`telemetry_backend.fetch_roi_events`.
+
+        ``source_menace_id`` forwards to the underlying fetch helper.
+        """
 
         return tb.fetch_roi_events(
-            workflow_id=workflow_id, limit=limit, db_path=path, scope=scope
+            workflow_id=workflow_id,
+            limit=limit,
+            db_path=path,
+            scope=scope,
+            source_menace_id=source_menace_id,
         )
 
     # ------------------------------------------------------------------
