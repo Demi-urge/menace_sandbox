@@ -63,6 +63,25 @@ def test_build_graph_basic(tmp_path: Path):
     assert path.exists()
 
 
+def test_update_graph(tmp_path: Path):
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("")
+    grapher = ModuleSynergyGrapher()
+    grapher.build_graph(tmp_path)
+    assert ("a", "b") in grapher.graph.edges
+
+    # Change module ``a`` to remove import, edge should disappear
+    (tmp_path / "a.py").write_text("")
+    grapher.update_graph(["a"])
+    assert ("a", "b") not in grapher.graph.edges
+
+    # Add new module and ensure connections are added
+    (tmp_path / "c.py").write_text("import a\n")
+    grapher.update_graph(["c"])
+    assert "c" in grapher.graph
+    assert ("c", "a") in grapher.graph.edges
+
+
 def test_build_save_load_cluster(tmp_path: Path):
     """End-to-end test covering graph build, save/load and clustering."""
 
