@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import ast
 import json
+try:  # Python 3.11+
+    import tomllib  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - fallback for older Pythons
+    import toml as tomllib  # type: ignore
 import pickle
 from dataclasses import dataclass, field
 from itertools import combinations
@@ -68,18 +72,50 @@ def load_graph(path: str | Path) -> nx.Graph:
 @dataclass
 class ModuleSynergyGrapher:
     """Build a synergy graph combining structural and historical signals."""
+    coefficients: Dict[str, float] = field(default_factory=dict)
+    graph: nx.DiGraph | None = None
+    embedding_threshold: float = 0.8
+    root: Path | None = None
 
-    coefficients: Dict[str, float] = field(
-        default_factory=lambda: {
+    def __init__(
+        self,
+        coefficients: Dict[str, float] | None = None,
+        *,
+        config: Dict[str, float] | str | Path | None = None,
+        graph: nx.DiGraph | None = None,
+        embedding_threshold: float = 0.8,
+        root: Path | None = None,
+    ) -> None:
+        self.coefficients = {
             "import": 1.0,
             "structure": 1.0,
             "cooccurrence": 1.0,
             "embedding": 1.0,
         }
-    )
-    graph: nx.DiGraph | None = None
-    embedding_threshold: float = 0.8
-    root: Path | None = None
+        if coefficients:
+            self.coefficients.update(coefficients)
+        if config is not None:
+            data: Dict[str, float] | Dict[str, Dict[str, float]]
+            if isinstance(config, (str, Path)):
+                path = Path(config)
+                text = path.read_text()
+                if path.suffix.lower() == ".json":
+                    data = json.loads(text)
+                elif path.suffix.lower() in {".toml", ".tml"}:
+                    data = tomllib.loads(text)
+                else:  # pragma: no cover - defensive
+                    raise ValueError(f"Unsupported config format: {path.suffix}")
+            else:
+                data = config
+            if isinstance(data, dict) and "coefficients" in data and isinstance(
+                data["coefficients"], dict
+            ):
+                data = data["coefficients"]  # type: ignore[assignment]
+            if isinstance(data, dict):
+                self.coefficients.update({k: float(v) for k, v in data.items()})
+        self.graph = graph
+        self.embedding_threshold = embedding_threshold
+        self.root = root
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -638,6 +674,11 @@ def _main(argv: Iterable[str] | None = None) -> int:
         default=0.7,
         help="minimum cumulative synergy required for inclusion",
     )
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        help="JSON/TOML file providing coefficient overrides",
+    )
 
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -645,7 +686,7 @@ def _main(argv: Iterable[str] | None = None) -> int:
         parser.print_help()
         return 1
 
-    grapher = ModuleSynergyGrapher()
+    grapher = ModuleSynergyGrapher(config=args.config)
     if args.build:
         grapher.build_graph(Path.cwd())
 
