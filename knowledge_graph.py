@@ -9,6 +9,7 @@ import atexit
 import os
 
 from db_router import GLOBAL_ROUTER
+from db_scope import Scope, build_scope_clause, apply_scope
 
 logger = logging.getLogger(__name__)
 
@@ -409,10 +410,9 @@ class KnowledgeGraph:
         cur = conn.cursor()
         menace_id = router.menace_id if router else os.getenv("MENACE_ID", "")
         try:
-            rows = cur.execute(
-                "SELECT id, summary FROM code WHERE source_menace_id=?",
-                (menace_id,),
-            ).fetchall()
+            clause, params = build_scope_clause("code", Scope.LOCAL, menace_id)
+            query = apply_scope("SELECT id, summary FROM code", clause)
+            rows = cur.execute(query, params).fetchall()
         except Exception:
             return
         for cid, summary in rows:
@@ -422,9 +422,11 @@ class KnowledgeGraph:
             ).fetchall()
             for (bid,) in bots:
                 try:
+                    clause, b_params = build_scope_clause("bots", Scope.LOCAL, menace_id)
+                    query = apply_scope("SELECT name FROM bots WHERE id=?", clause)
                     b_row = bot_db.conn.execute(
-                        "SELECT name FROM bots WHERE id=? AND source_menace_id=?",
-                        (int(bid), menace_id),
+                        query,
+                        (int(bid), *b_params),
                     ).fetchone()
                     bname = b_row[0] if b_row else str(bid)
                 except Exception:
@@ -502,14 +504,16 @@ class KnowledgeGraph:
         bot_db: object | None = None,
         err_db: object | None = None,
         code_db: object | None = None,
+        *,
+        scope: str = "local",
     ) -> "KnowledgeGraph":
         """Construct a graph from existing databases.
 
-        The method loads bots and errors from the provided databases.  All
-        queries against the ``bots`` or ``errors`` tables are restricted to the
-        current menace instance via the ``source_menace_id`` column.  The menace
-        ID is sourced from the respective database router when available, falling
-        back to the ``MENACE_ID`` environment variable.
+        Records are filtered according to ``scope`` using the Menace ``scope``
+        API. ``local`` restricts queries to the current menace, ``global``
+        selects records from other instances and ``all`` removes filtering.
+        The menace ID is sourced from the respective database router when
+        available, falling back to the ``MENACE_ID`` environment variable.
         """
 
         kg = cls()
@@ -523,10 +527,9 @@ class KnowledgeGraph:
 
         if bot_db is not None:
             try:
-                rows = bot_db.conn.execute(
-                    "SELECT name FROM bots WHERE source_menace_id=?",
-                    (menace_id,),
-                ).fetchall()
+                clause, params = build_scope_clause("bots", Scope(scope), menace_id)
+                query = apply_scope("SELECT name FROM bots", clause)
+                rows = bot_db.conn.execute(query, params).fetchall()
             except Exception:
                 rows = []
             for (name,) in rows:
@@ -535,19 +538,20 @@ class KnowledgeGraph:
         if err_db is not None:
             cur = err_db.conn
             try:
-                errs = cur.execute(
-                    "SELECT id, message FROM errors WHERE source_menace_id=?",
-                    (menace_id,),
-                ).fetchall()
+                clause, params = build_scope_clause("errors", Scope(scope), menace_id)
+                query = apply_scope("SELECT id, message FROM errors", clause)
+                errs = cur.execute(query, params).fetchall()
             except Exception:
                 errs = []
             for eid, msg in errs:
                 bots: List[str] = []
                 try:
-                    bot_rows = cur.execute(
-                        "SELECT bot_id FROM error_bot WHERE error_id=? AND source_menace_id=?",
-                        (eid, menace_id),
-                    ).fetchall()
+                    clause, eb_params = build_scope_clause("error_bot", Scope(scope), menace_id)
+                    query = apply_scope(
+                        "SELECT bot_id FROM error_bot WHERE error_id=?",
+                        clause,
+                    )
+                    bot_rows = cur.execute(query, (eid, *eb_params)).fetchall()
                 except Exception:
                     bot_rows = []
                 for (bid,) in bot_rows:
@@ -555,49 +559,52 @@ class KnowledgeGraph:
                         bots.append(str(bid))
                         continue
                     try:
+                        clause, b_params = build_scope_clause("bots", Scope(scope), menace_id)
+                        query = apply_scope("SELECT name FROM bots WHERE id=?", clause)
                         b_row = bot_db.conn.execute(
-                            "SELECT name FROM bots WHERE id=? AND source_menace_id=?",
-                            (int(bid), menace_id),
+                            query,
+                            (int(bid), *b_params),
                         ).fetchone()
                         bots.append(b_row[0] if b_row else str(bid))
                     except Exception:
                         bots.append(str(bid))
 
                 try:
-                    models = [
-                        r[0]
-                        for r in cur.execute(
-                            (
-                                "SELECT model_id FROM error_model "
-                                "WHERE error_id=? AND source_menace_id=?"
-                            ),
-                            (eid, menace_id),
-                        ).fetchall()
-                    ]
+                    clause, em_params = build_scope_clause(
+                        "error_model", Scope(scope), menace_id
+                    )
+                    query = apply_scope(
+                        "SELECT model_id FROM error_model WHERE error_id=?",
+                        clause,
+                    )
+                    models = [r[0] for r in cur.execute(query, (eid, *em_params)).fetchall()]
                 except Exception:
                     models = []
 
                 try:
-                    codes = [
-                        r[0]
-                        for r in cur.execute(
-                            (
-                                "SELECT code_id FROM error_code "
-                                "WHERE error_id=? AND source_menace_id=?"
-                            ),
-                            (eid, menace_id),
-                        ).fetchall()
-                    ]
+                    clause, ec_params = build_scope_clause(
+                        "error_code", Scope(scope), menace_id
+                    )
+                    query = apply_scope(
+                        "SELECT code_id FROM error_code WHERE error_id=?",
+                        clause,
+                    )
+                    codes = [r[0] for r in cur.execute(query, (eid, *ec_params)).fetchall()]
                 except Exception:
                     codes = []
 
                 summary_lookup: Callable[[int], str] | None = None
                 if code_db is not None:
-                    def _lookup(cid: int, cdb=code_db, mid=menace_id) -> str:
+
+                    def _lookup(cid: int, cdb=code_db, mid=menace_id, sc=scope) -> str:
                         try:
+                            clause, params = build_scope_clause("code", Scope(sc), mid)
+                            query = apply_scope(
+                                "SELECT summary FROM code WHERE id=?", clause
+                            )
                             row = cdb.conn.execute(
-                                "SELECT summary FROM code WHERE id=? AND source_menace_id=?",
-                                (cid, mid),
+                                query,
+                                (cid, *params),
                             ).fetchone()
                             return row[0] if row else str(cid)
                         except Exception:
@@ -840,10 +847,11 @@ class KnowledgeGraph:
                     if getattr(code_db, "router", None)
                     else os.getenv("MENACE_ID", "")
                 )
-                row = code_db.conn.execute(
-                    "SELECT summary FROM code WHERE id=? AND source_menace_id=?",
-                    (cid, menace_id),
-                ).fetchone()
+                clause, params = build_scope_clause(
+                    "code", Scope.ALL if include_all else Scope.LOCAL, menace_id
+                )
+                query = apply_scope("SELECT summary FROM code WHERE id=?", clause)
+                row = code_db.conn.execute(query, (cid, *params)).fetchone()
                 return row[0] if row else str(cid)
             except Exception:
                 return str(cid)
@@ -853,58 +861,25 @@ class KnowledgeGraph:
             if getattr(err_db, "router", None)
             else os.getenv("MENACE_ID", "")
         )
+        scope_val = Scope.ALL if include_all else Scope.LOCAL
         try:
-            errs = cur.execute(
-                "SELECT id, message FROM errors WHERE source_menace_id=?",
-                (menace_id,),
-            ).fetchall()
+            clause, params = build_scope_clause("errors", scope_val, menace_id)
+            query = apply_scope("SELECT id, message FROM errors", clause)
+            errs = cur.execute(query, params).fetchall()
         except Exception:
             errs = []
         for eid, msg in errs:
-            if include_all:
-                bots = [
-                    r[0]
-                    for r in cur.execute(
-                        "SELECT bot_id FROM error_bot WHERE error_id=?",
-                        (eid,),
-                    ).fetchall()
-                ]
-                models = [
-                    r[0]
-                    for r in cur.execute(
-                        "SELECT model_id FROM error_model WHERE error_id=?",
-                        (eid,),
-                    ).fetchall()
-                ]
-                codes = [
-                    r[0]
-                    for r in cur.execute(
-                        "SELECT code_id FROM error_code WHERE error_id=?",
-                        (eid,),
-                    ).fetchall()
-                ]
-            else:
-                bots = [
-                    r[0]
-                    for r in cur.execute(
-                        "SELECT bot_id FROM error_bot WHERE error_id=? AND source_menace_id=?",
-                        (eid, menace_id),
-                    ).fetchall()
-                ]
-                models = [
-                    r[0]
-                    for r in cur.execute(
-                        "SELECT model_id FROM error_model WHERE error_id=? AND source_menace_id=?",
-                        (eid, menace_id),
-                    ).fetchall()
-                ]
-                codes = [
-                    r[0]
-                    for r in cur.execute(
-                        "SELECT code_id FROM error_code WHERE error_id=? AND source_menace_id=?",
-                        (eid, menace_id),
-                    ).fetchall()
-                ]
+            clause, eb_params = build_scope_clause("error_bot", scope_val, menace_id)
+            query = apply_scope("SELECT bot_id FROM error_bot WHERE error_id=?", clause)
+            bots = [r[0] for r in cur.execute(query, (eid, *eb_params)).fetchall()]
+
+            clause, em_params = build_scope_clause("error_model", scope_val, menace_id)
+            query = apply_scope("SELECT model_id FROM error_model WHERE error_id=?", clause)
+            models = [r[0] for r in cur.execute(query, (eid, *em_params)).fetchall()]
+
+            clause, ec_params = build_scope_clause("error_code", scope_val, menace_id)
+            query = apply_scope("SELECT code_id FROM error_code WHERE error_id=?", clause)
+            codes = [r[0] for r in cur.execute(query, (eid, *ec_params)).fetchall()]
             self.add_error(
                 eid,
                 msg,

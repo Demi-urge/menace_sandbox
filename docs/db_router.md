@@ -91,6 +91,16 @@ db.get_summary(1, scope="all")     # all records
 This ``scope`` parameter replaces the older ``include_cross_instance`` and
 ``all_instances`` flags.
 
+Lower-level SQL helpers are available for custom queries:
+
+```python
+from db_scope import Scope, build_scope_clause, apply_scope
+
+clause, params = build_scope_clause("bots", Scope.GLOBAL, router.menace_id)
+sql = apply_scope("SELECT * FROM bots", clause)
+rows = conn.execute(sql, params).fetchall()
+```
+
 ## Shared vs. local tables
 
 Tables listed in `SHARED_TABLES` are written to the shared database while

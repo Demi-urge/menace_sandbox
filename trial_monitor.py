@@ -7,6 +7,7 @@ from typing import Optional, TYPE_CHECKING
 import logging
 
 from db_router import GLOBAL_ROUTER
+from db_scope import Scope, build_scope_clause, apply_scope
 
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .borderline_bucket import BorderlineBucket
@@ -97,9 +98,11 @@ class TrialMonitor:
             deploy_id = trial["deploy_id"]
             router = getattr(self.deployer.bot_db, "router", GLOBAL_ROUTER)
             menace_id = getattr(router, "menace_id", os.getenv("MENACE_ID", ""))
+            clause, params = build_scope_clause("bots", Scope.LOCAL, menace_id)
+            query = apply_scope("SELECT name FROM bots WHERE id=?", clause)
             row = self.deployer.bot_db.conn.execute(
-                "SELECT name FROM bots WHERE id=? AND source_menace_id=?",
-                (bot_id, menace_id),
+                query,
+                (bot_id, *params),
             ).fetchone()
             name = row[0] if row else str(bot_id)
             roi = self.optimizer._roi(name)
