@@ -1,7 +1,8 @@
 import sys
-import sqlite3
 from pathlib import Path
+
 import menace.bot_testing_bot as btb
+import db_router
 
 
 def create_dummy(tmp_path: Path) -> str:
@@ -19,7 +20,12 @@ def hello(name: str = 'x'):
 
 def test_run_unit(tmp_path):
     name = create_dummy(tmp_path)
-    db = btb.TestingLogDB(connection_factory=lambda: sqlite3.connect(tmp_path / "log.db"))
+    router = db_router.init_db_router(
+        "bot_testing",
+        local_db_path=str(tmp_path / "local.db"),
+        shared_db_path=str(tmp_path / "shared.db"),
+    )
+    db = btb.TestingLogDB(connection_factory=lambda: router.get_connection("results"))
     bot = btb.BotTestingBot(db)
     results = bot.run_unit_tests([name], parallel=False)
     assert results
@@ -64,7 +70,12 @@ class LocalCls:
 
 def test_run_unit_skips_imports(tmp_path):
     name = create_imports(tmp_path)
-    db = btb.TestingLogDB(connection_factory=lambda: sqlite3.connect(tmp_path / "log2.db"))
+    router = db_router.init_db_router(
+        "bot_testing2",
+        local_db_path=str(tmp_path / "local2.db"),
+        shared_db_path=str(tmp_path / "shared2.db"),
+    )
+    db = btb.TestingLogDB(connection_factory=lambda: router.get_connection("results"))
     bot = btb.BotTestingBot(db)
     results = bot.run_unit_tests([name], parallel=False)
     assert results
