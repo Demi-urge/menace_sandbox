@@ -4,7 +4,6 @@ scripts/new_db.py
 scripts/new_db_template.py
 scripts/new_vector_module.py
 scripts/scaffold_db.py
-session_vault.py
 tests/stress/test_autonomous_extended_run.py
 tests/stress/test_autonomous_long_run.py
 tests/test_adaptive_roi_dataset.py
