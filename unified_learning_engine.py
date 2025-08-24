@@ -9,6 +9,8 @@ import sqlite3
 from pathlib import Path
 import logging
 
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+
 from .metrics_exporter import (
     learning_cv_score,
     learning_holdout_score,
@@ -426,6 +428,7 @@ class UnifiedLearningEngine:
         model: str | LogisticRegression | GradientBoostingClassifier | None = None,
         *,
         persist_path: str | Path | None = None,
+        router: DBRouter | None = None,
     ) -> None:
         self.pathway_db = pathway_db
         self.memory_mgr = memory_mgr
@@ -433,10 +436,14 @@ class UnifiedLearningEngine:
         self.roi_db = roi_db
         self.evaluation_history: List[Dict[str, float]] = []
         self.persist_path = Path(persist_path) if persist_path else None
+        p = str(self.persist_path) if self.persist_path else None
+        self.router = router or GLOBAL_ROUTER or init_db_router(
+            "unified_learning_engine", p, p
+        )
         self._persist_conn: sqlite3.Connection | None = None
         if self.persist_path and self.persist_path.suffix not in {".json", ".jsonl"}:
             try:
-                self._persist_conn = sqlite3.connect(self.persist_path)
+                self._persist_conn = self.router.get_connection("evaluation")
                 self._persist_conn.execute(
                     "CREATE TABLE IF NOT EXISTS evaluation(ts REAL, cv_score REAL, holdout_score REAL)"
                 )
@@ -723,7 +730,7 @@ class UnifiedLearningEngine:
         conn = self._persist_conn
         if conn is None:
             try:
-                conn = sqlite3.connect(self.persist_path)
+                conn = self.router.get_connection("evaluation")
                 conn.execute(
                     "CREATE TABLE IF NOT EXISTS evaluation(ts REAL, cv_score REAL, holdout_score REAL)"
                 )
@@ -862,7 +869,7 @@ class UnifiedLearningEngine:
         return True
 
 
-def load_score_history(path: str | Path) -> List[Dict[str, float]]:
+def load_score_history(path: str | Path, router: DBRouter | None = None) -> List[Dict[str, float]]:
     """Load persisted evaluation results from *path*."""
     p = Path(path)
     if p.suffix in {".json", ".jsonl"}:
@@ -871,11 +878,13 @@ def load_score_history(path: str | Path) -> List[Dict[str, float]]:
                 return [json.loads(line) for line in fh if line.strip()]
         except Exception:
             return []
+    router = router or GLOBAL_ROUTER or init_db_router(
+        "unified_learning_engine", str(p), str(p)
+    )
     try:
-        conn = sqlite3.connect(p)
+        conn = router.get_connection("evaluation")
         cur = conn.execute("SELECT ts, cv_score, holdout_score FROM evaluation ORDER BY ts")
         rows = cur.fetchall()
-        conn.close()
     except Exception:
         return []
     return [
