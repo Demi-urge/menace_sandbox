@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Callable, Tuple, cast
+from typing import Dict, Iterable, List, Optional, Callable, Tuple, cast, Literal
 from enum import Enum
 import os
 import threading
@@ -17,7 +16,7 @@ import asyncio
 import statistics
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-from scope_utils import Scope, build_scope_clause
+from scope_utils import Scope, build_scope_clause, apply_scope
 
 try:  # pragma: no cover - optional dependency
     from dotenv import load_dotenv
@@ -55,6 +54,7 @@ def _get_router(router: DBRouter | None = None) -> DBRouter:
     """Return an initialised :class:`DBRouter` instance."""
 
     return router or GLOBAL_ROUTER or init_db_router("capital")
+
 
 # ---------------------------------------------------------------------------
 # Configuration defaults can be overridden via environment variables. The
@@ -109,7 +109,12 @@ DYN_NORM_FACTOR = float(
 
 # Path to a JSON file containing fallback metric values. If the file does not
 # exist or cannot be parsed the defaults below are used instead.
-METRIC_FALLBACK_PATH = Path(os.environ.get("CM_METRIC_FALLBACK_PATH", "config/capital_metrics_fallbacks.json"))
+METRIC_FALLBACK_PATH = Path(
+    os.environ.get(
+        "CM_METRIC_FALLBACK_PATH",
+        "config/capital_metrics_fallbacks.json",
+    )
+)
 try:
     if METRIC_FALLBACK_PATH.exists():
         import json as _json
@@ -143,21 +148,19 @@ def fetch_metric_from_db(
     error_bot: "ErrorBot" | None = None,
     webhook_url: str | None = None,
     router: DBRouter | None = None,
-    scope: Scope | str = Scope.LOCAL,
+    scope: Literal["local", "global", "all"] = "local",
     source_menace_id: str | None = None,
 ) -> float:
     """Fetch the latest metric value from a SQLite database."""
     try:
         router = _get_router(router)
-        if source_menace_id is None:
-            source_menace_id = router.menace_id
-        clause, scope_params = build_scope_clause("metrics", scope, source_menace_id)
+        menace_id = source_menace_id or router.menace_id
+        clause, scope_params = build_scope_clause("metrics", Scope(scope), menace_id)
         sql = "SELECT value FROM metrics WHERE name=?"
-        params = [metric_name]
-        if clause:
-            sql += f" AND {clause}"
-            params.extend(scope_params)
+        sql = apply_scope(sql, clause)
         sql += " ORDER BY ts DESC LIMIT 1"
+        params = [metric_name]
+        params.extend(scope_params)
 
         conn = router.get_connection("metrics")
         cur = conn.execute(sql, params)
@@ -271,6 +274,8 @@ async def fetch_capital_metrics_async(
     fallbacks: Optional[Dict[str, float]] = None,
     error_bot: "ErrorBot" | None = None,
     webhook_url: str | None = None,
+    scope: Literal["local", "global", "all"] = "local",
+    source_menace_id: str | None = None,
 ) -> Dict[str, float]:
     """Asynchronously fetch capital metrics from the database."""
     metric_names = list(
@@ -295,6 +300,8 @@ async def fetch_capital_metrics_async(
             default=cache.get(name, fallbacks.get(name)),
             error_bot=error_bot,
             webhook_url=webhook_url,
+            scope=scope,
+            source_menace_id=source_menace_id,
         )
         cache[name] = float(val)
         return name, float(val)
@@ -560,7 +567,11 @@ class SummaryHistoryDB:
             return
         try:
             self.conn.execute(
-                "INSERT INTO capital_summary(run_id, capital, trend, energy, message, ts) VALUES(?,?,?,?,?,?)",
+                (
+                    "INSERT INTO capital_summary("  # noqa: E501
+                    "run_id, capital, trend, energy, message, ts"
+                    ") VALUES(?,?,?,?,?,?)"
+                ),
                 (rec.run_id, rec.capital, rec.trend, rec.energy, rec.message, rec.ts),
             )
             self.conn.commit()
@@ -574,12 +585,17 @@ class SummaryHistoryDB:
         except Exception as exc:
             logger.exception("failed to log summary: %s", exc)
 
-    def fetch(self, limit: int = SUMMARY_FETCH_LIMIT) -> List[Tuple[str, float, float, float, str, str]]:
+    def fetch(
+        self, limit: int = SUMMARY_FETCH_LIMIT
+    ) -> List[Tuple[str, float, float, float, str, str]]:
         if self.conn is None:
             return []
         try:
             cur = self.conn.execute(
-                "SELECT run_id, capital, trend, energy, message, ts FROM capital_summary ORDER BY ts DESC LIMIT ?",
+                (
+                    "SELECT run_id, capital, trend, energy, message, ts "
+                    "FROM capital_summary ORDER BY ts DESC LIMIT ?"
+                ),
                 (limit,),
             )
             return cur.fetchall()
@@ -910,8 +926,8 @@ class EnergyScoreEngine:
             self.feature_history.append(list(feats.values()))
             self.reward_history.append(reward)
             if len(self.feature_history) > self.history_limit:
-                self.feature_history = self.feature_history[-self.history_limit :]
-                self.reward_history = self.reward_history[-self.history_limit :]
+                self.feature_history = self.feature_history[-self.history_limit:]
+                self.reward_history = self.reward_history[-self.history_limit:]
             self._train_model()
             self._save_state()
 
@@ -1614,7 +1630,10 @@ class CapitalManagementBot:
         )
         result = self.engine._clamp((result + hist_adjust) / 2.0)
         logger.debug(
-            "energy_score run_id=%s capital=%s trend=%s load=%s succ=%s eff=%s fail=%s ext=%s result=%s",
+            (
+                "energy_score run_id=%s capital=%s trend=%s load=%s "
+                "succ=%s eff=%s fail=%s ext=%s result=%s"
+            ),
             self.run_id,
             capital,
             trend,
