@@ -24,7 +24,7 @@ except Exception:  # pragma: no cover - optional dependency
     warnings.warn("MenaceDB unavailable, Menace integration disabled.")
 
 from db_router import GLOBAL_ROUTER as router
-from .db_scope import Scope, build_scope_clause
+from .db_scope import Scope, build_scope_clause, apply_scope
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .deployment_bot import DeploymentDB
@@ -207,13 +207,11 @@ class BotDB(EmbeddableDBMixin):
         scope: Literal["local", "global", "all"] = "local",
     ) -> Optional[Dict[str, Any]]:
         menace_id = self._current_menace_id(source_menace_id)
-        clause, params = build_scope_clause("bots", Scope(scope), menace_id)
-        query = "SELECT * FROM bots"
-        if clause:
-            query += f" {clause} AND LOWER(name)=LOWER(?)"
-        else:
-            query += " WHERE LOWER(name)=LOWER(?)"
-        params.append(name)
+        clause, scope_params = build_scope_clause("bots", Scope(scope), menace_id)
+        query = apply_scope(
+            "SELECT * FROM bots WHERE LOWER(name)=LOWER(?)", clause
+        )
+        params = [name, *scope_params]
         cur = self.conn.execute(query, params)
         row = cur.fetchone()
         return dict(row) if row else None
@@ -225,11 +223,9 @@ class BotDB(EmbeddableDBMixin):
         scope: Literal["local", "global", "all"] = "local",
     ) -> list[Dict[str, Any]]:
         menace_id = self._current_menace_id(source_menace_id)
-        clause, params = build_scope_clause("bots", Scope(scope), menace_id)
-        query = "SELECT * FROM bots"
-        if clause:
-            query += f" {clause}"
-        cur = self.conn.execute(query, params)
+        clause, scope_params = build_scope_clause("bots", Scope(scope), menace_id)
+        query = apply_scope("SELECT * FROM bots", clause)
+        cur = self.conn.execute(query, scope_params)
         return [dict(r) for r in cur.fetchall()]
 
     def by_level(
@@ -240,13 +236,11 @@ class BotDB(EmbeddableDBMixin):
         scope: Literal["local", "global", "all"] = "local",
     ) -> list[Dict[str, Any]]:
         menace_id = self._current_menace_id(source_menace_id)
-        clause, params = build_scope_clause("bots", Scope(scope), menace_id)
-        query = "SELECT * FROM bots"
-        if clause:
-            query += f" {clause} AND hierarchy_level=?"
-        else:
-            query += " WHERE hierarchy_level=?"
-        params.append(level)
+        clause, scope_params = build_scope_clause("bots", Scope(scope), menace_id)
+        query = apply_scope(
+            "SELECT * FROM bots WHERE hierarchy_level=?", clause
+        )
+        params = [level, *scope_params]
         cur = self.conn.execute(query, params)
         return [dict(r) for r in cur.fetchall()]
 
@@ -264,13 +258,11 @@ class BotDB(EmbeddableDBMixin):
         deployment attempt. This helper simply counts rows for the given bot.
         """
         menace_id = self._current_menace_id(source_menace_id)
-        clause, params = build_scope_clause("bot_trials", Scope(scope), menace_id)
-        query = "SELECT COUNT(*) FROM bot_trials"
-        if clause:
-            query += f" {clause} AND bot_id=?"
-        else:
-            query += " WHERE bot_id=?"
-        params.append(bot_id)
+        clause, scope_params = build_scope_clause("bot_trials", Scope(scope), menace_id)
+        query = apply_scope(
+            "SELECT COUNT(*) FROM bot_trials WHERE bot_id= ?", clause
+        )
+        params = [bot_id, *scope_params]
         cur = dep_db.conn.execute(query, params)
         row = cur.fetchone()
         return int(row[0]) if row else 0
@@ -332,13 +324,11 @@ class BotDB(EmbeddableDBMixin):
     ) -> str | None:
         menace_id = self._current_menace_id(source_menace_id)
         if isinstance(rec, (int, str)):
-            clause, params = build_scope_clause("bots", Scope(scope), menace_id)
-            query = "SELECT purpose, tags, toolchain FROM bots"
-            if clause:
-                query += f" {clause} AND id=?"
-            else:
-                query += " WHERE id=?"
-            params.append(rec)
+            clause, scope_params = build_scope_clause("bots", Scope(scope), menace_id)
+            query = apply_scope(
+                "SELECT purpose, tags, toolchain FROM bots WHERE id=?", clause
+            )
+            params = [rec, *scope_params]
             row = self.conn.execute(query, params).fetchone()
             if not row:
                 return None
@@ -473,23 +463,14 @@ class BotDB(EmbeddableDBMixin):
         sets = ", ".join(f"{k}=?" for k in fields)
         menace_id = self._current_menace_id(source_menace_id)
         clause, scope_params = build_scope_clause("bots", Scope(scope), menace_id)
-        params = list(fields.values())
-        query = f"UPDATE bots SET {sets}"
-        if clause:
-            query += f" {clause} AND id=?"
-            params.extend(scope_params)
-        else:
-            query += " WHERE id=?"
-        params.append(bot_id)
+        params = list(fields.values()) + [bot_id]
+        query = apply_scope(f"UPDATE bots SET {sets} WHERE id=?", clause)
+        params.extend(scope_params)
         self.conn.execute(query, params)
         self.conn.commit()
-        sel_q = "SELECT * FROM bots"
         sel_clause, sel_params = build_scope_clause("bots", Scope(scope), menace_id)
-        if sel_clause:
-            sel_q += f" {sel_clause} AND id=?"
-        else:
-            sel_q += " WHERE id=?"
-        sel_params.append(bot_id)
+        sel_q = apply_scope("SELECT * FROM bots WHERE id=?", sel_clause)
+        sel_params = [bot_id, *sel_params]
         row = self.conn.execute(sel_q, sel_params).fetchone()
         if row:
             self._embed_record_on_write(bot_id, dict(row))
@@ -507,11 +488,9 @@ class BotDB(EmbeddableDBMixin):
         scope: Literal["local", "global", "all"] = "local",
     ) -> Iterable[tuple[Any, Any, str]]:
         menace_id = self._current_menace_id(source_menace_id)
-        clause, params = build_scope_clause("bots", Scope(scope), menace_id)
-        query = "SELECT * FROM bots"
-        if clause:
-            query += f" {clause}"
-        cur = self.conn.execute(query, params)
+        clause, scope_params = build_scope_clause("bots", Scope(scope), menace_id)
+        query = apply_scope("SELECT * FROM bots", clause)
+        cur = self.conn.execute(query, scope_params)
         for row in cur.fetchall():
             yield row["id"], dict(row), "bot"
 
@@ -527,13 +506,11 @@ class BotDB(EmbeddableDBMixin):
     ) -> list[float]:
         menace_id = self._current_menace_id(source_menace_id)
         if isinstance(rec, (int, str)):
-            clause, params = build_scope_clause("bots", Scope(scope), menace_id)
-            query = "SELECT purpose, tags, toolchain FROM bots"
-            if clause:
-                query += f" {clause} AND id=?"
-            else:
-                query += " WHERE id=?"
-            params.append(rec)
+            clause, scope_params = build_scope_clause("bots", Scope(scope), menace_id)
+            query = apply_scope(
+                "SELECT purpose, tags, toolchain FROM bots WHERE id=?", clause
+            )
+            params = [rec, *scope_params]
             row = self.conn.execute(query, params).fetchone()
             if not row:
                 raise ValueError("record not found")
@@ -574,13 +551,8 @@ class BotDB(EmbeddableDBMixin):
         results: list[Dict[str, Any]] = []
         clause, base_params = build_scope_clause("bots", Scope(scope), menace_id)
         for rec_id, dist in matches:
-            query = "SELECT * FROM bots"
-            params = list(base_params)
-            if clause:
-                query += f" {clause} AND id=?"
-            else:
-                query += " WHERE id=?"
-            params.append(rec_id)
+            query = apply_scope("SELECT * FROM bots WHERE id=?", clause)
+            params = [rec_id, *base_params]
             row = self.conn.execute(query, params).fetchone()
             if row:
                 rec = dict(row)
