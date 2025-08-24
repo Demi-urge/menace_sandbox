@@ -9,16 +9,16 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterator, List
+from typing import Any, Dict, Iterator, List, Literal
 
 from vector_service import EmbeddableDBMixin
 
 try:  # pragma: no cover - package and top-level imports
     from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-    from .db_scope import Scope, build_scope_clause
+    from .db_scope import build_scope_clause
 except Exception:  # pragma: no cover - fallback for tests
     from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-    from db_scope import Scope, build_scope_clause
+    from db_scope import build_scope_clause
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ class DiscrepancyDB(EmbeddableDBMixin):
         rec: Any,
         *,
         source_menace_id: str | None = None,
-        scope: Scope = Scope.LOCAL,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> str | None:
         if isinstance(rec, DiscrepancyRecord):
             return rec.message
@@ -122,7 +122,7 @@ class DiscrepancyDB(EmbeddableDBMixin):
             params = list(params)
             query = "SELECT message FROM discrepancies"
             if clause:
-                query += f" {clause} AND discrepancies.id=?"
+                query += f" WHERE {clause} AND discrepancies.id=?"
             else:
                 query += " WHERE discrepancies.id=?"
             params.append(rid)
@@ -137,7 +137,7 @@ class DiscrepancyDB(EmbeddableDBMixin):
         rec: Any,
         *,
         source_menace_id: str | None = None,
-        scope: Scope = Scope.LOCAL,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> List[float] | None:
         if isinstance(rec, DiscrepancyRecord):
             text = self._embed_text(rec.message, rec.metadata)
@@ -157,7 +157,7 @@ class DiscrepancyDB(EmbeddableDBMixin):
             params = list(params)
             query = "SELECT message, metadata FROM discrepancies"
             if clause:
-                query += f" {clause} AND discrepancies.id=?"
+                query += f" WHERE {clause} AND discrepancies.id=?"
             else:
                 query += " WHERE discrepancies.id=?"
             params.append(rid)
@@ -195,14 +195,14 @@ class DiscrepancyDB(EmbeddableDBMixin):
         rec_id: int,
         *,
         source_menace_id: str | None = None,
-        scope: Scope = Scope.LOCAL,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> DiscrepancyRecord | None:
         menace_id = self._current_menace_id(source_menace_id)
         clause, params = build_scope_clause("discrepancies", scope, menace_id)
         params = list(params)
         query = "SELECT id, message, metadata, ts FROM discrepancies"
         if clause:
-            query += f" {clause} AND discrepancies.id=?"
+            query += f" WHERE {clause} AND discrepancies.id=?"
         else:
             query += " WHERE discrepancies.id=?"
         params.append(rec_id)
@@ -221,7 +221,7 @@ class DiscrepancyDB(EmbeddableDBMixin):
         message: str | None = None,
         metadata: Dict[str, Any] | None = None,
         source_menace_id: str | None = None,
-        scope: Scope = Scope.LOCAL,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> None:
         existing = self.get(
             rec_id,
@@ -244,7 +244,7 @@ class DiscrepancyDB(EmbeddableDBMixin):
         clause, scope_params = build_scope_clause("discrepancies", scope, menace_id)
         params.extend(scope_params)
         if clause:
-            query += f" {clause} AND discrepancies.id=?"
+            query += f" WHERE {clause} AND discrepancies.id=?"
         else:
             query += " WHERE discrepancies.id=?"
         params.append(rec_id)
@@ -257,14 +257,14 @@ class DiscrepancyDB(EmbeddableDBMixin):
         rec_id: int,
         *,
         source_menace_id: str | None = None,
-        scope: Scope = Scope.LOCAL,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> None:
         menace_id = self._current_menace_id(source_menace_id)
         query = "DELETE FROM discrepancies"
         clause, params = build_scope_clause("discrepancies", scope, menace_id)
         params = list(params)
         if clause:
-            query += f" {clause} AND discrepancies.id=?"
+            query += f" WHERE {clause} AND discrepancies.id=?"
         else:
             query += " WHERE discrepancies.id=?"
         params.append(rec_id)
@@ -283,14 +283,14 @@ class DiscrepancyDB(EmbeddableDBMixin):
         self,
         *,
         source_menace_id: str | None = None,
-        scope: Scope = Scope.LOCAL,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> Iterator[tuple[int, dict[str, Any], str]]:
         menace_id = self._current_menace_id(source_menace_id)
         query = "SELECT id, message, metadata FROM discrepancies"
         clause, params = build_scope_clause("discrepancies", scope, menace_id)
         params = list(params)
         if clause:
-            query += f" {clause}"
+            query += f" WHERE {clause}"
         cur = self.conn.execute(query, params)
         for row in cur.fetchall():
             meta = json.loads(row["metadata"] or "{}")
