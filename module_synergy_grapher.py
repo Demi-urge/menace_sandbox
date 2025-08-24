@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 try:  # Python 3.11+
@@ -22,6 +23,7 @@ from networkx.readwrite import json_graph
 from governed_embeddings import governed_embed
 from module_graph_analyzer import build_import_graph
 from vector_utils import cosine_similarity
+from retry_utils import with_retry
 
 try:  # synergy history DB may need package import
     import synergy_history_db as shd  # type: ignore
@@ -38,6 +40,9 @@ except Exception:  # pragma: no cover - fallback to package import
         from menace.task_handoff_bot import WorkflowDB  # type: ignore
     except Exception:  # pragma: no cover - final fallback
         WorkflowDB = None  # type: ignore
+
+
+logger = logging.getLogger(__name__)
 
 
 def save_graph(graph: nx.Graph, path: str | Path) -> None:
@@ -88,6 +93,8 @@ class ModuleSynergyGrapher:
         embedding_threshold: float = 0.8,
         root: Path | None = None,
         weights_file: Path | None = None,
+        retry_attempts: int = 3,
+        retry_delay: float = 1.0,
     ) -> None:
         self.coefficients = {
             "import": 1.0,
@@ -120,6 +127,8 @@ class ModuleSynergyGrapher:
         self.embedding_threshold = embedding_threshold
         self.root = root
         self.weights_file = weights_file
+        self.retry_attempts = retry_attempts
+        self.retry_delay = retry_delay
 
     # ------------------------------------------------------------------
     def _load_weights(self, weights_file: Path | None = None) -> None:
@@ -145,6 +154,23 @@ class ModuleSynergyGrapher:
 
         self._load_weights()
 
+    def _embed_doc(self, mod: str, text: str) -> list[float]:
+        """Return embedding for ``text`` with retry and logging."""
+
+        def _call() -> list[float]:
+            return governed_embed(text) or []
+
+        try:
+            return with_retry(
+                _call,
+                attempts=self.retry_attempts,
+                delay=self.retry_delay,
+                logger=logger,
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("embedding failed for %s: %s", mod, exc)
+            return []
+
     def compute_optimal_weights(
         self, root_path: str | Path, *, weights_file: str | Path | None = None
     ) -> Dict[str, float]:
@@ -166,8 +192,14 @@ class ModuleSynergyGrapher:
             return self.coefficients
 
         try:
-            history = shd.load_history(db_path)  # type: ignore[attr-defined]
-        except Exception:  # pragma: no cover - DB failure
+            history = with_retry(
+                lambda: shd.load_history(db_path),  # type: ignore[attr-defined]
+                attempts=self.retry_attempts,
+                delay=self.retry_delay,
+                logger=logger,
+            )
+        except Exception as exc:  # pragma: no cover - DB failure
+            logger.exception("failed to load synergy history from %s: %s", db_path, exc)
             return self.coefficients
 
         totals: Dict[str, float] = {k: 0.0 for k in self.coefficients}
@@ -244,19 +276,9 @@ class ModuleSynergyGrapher:
         # Fetch missing embeddings if any docstrings are present
         missing = [m for m in modules if m not in embeddings and docs.get(m)]
         if missing:
-            class _EmbedDB:
-                def try_add_embedding(self, record_id: str, text: str, kind: str = "doc"):
-                    try:
-                        return governed_embed(text) or []
-                    except Exception:
-                        return []
-
-            embed_db = _EmbedDB()
             with ThreadPoolExecutor(max_workers=4) as executor:
                 future_to_mod = {
-                    executor.submit(
-                        embed_db.try_add_embedding, mod, docs.get(mod, ""), "module_doc"
-                    ): mod
+                    executor.submit(self._embed_doc, mod, docs.get(mod, "")): mod
                     for mod in missing
                 }
                 for fut in as_completed(future_to_mod):
@@ -555,12 +577,22 @@ class ModuleSynergyGrapher:
         db_path = root / "workflows.db"
         if not db_path.exists():
             return counts
-        try:
-            if WorkflowDB is None:
-                return counts
+        if WorkflowDB is None:
+            return counts
+
+        def _fetch() -> list[tuple[str, str]]:
             wfdb = WorkflowDB(db_path)  # type: ignore[call-arg]
             cur = wfdb.conn.execute("SELECT workflow, task_sequence FROM workflows")
-            for workflow, sequence in cur.fetchall():
+            return cur.fetchall()
+
+        try:
+            rows = with_retry(
+                _fetch,
+                attempts=self.retry_attempts,
+                delay=self.retry_delay,
+                logger=logger,
+            )
+            for workflow, sequence in rows:
                 mods: set[str] = set()
                 for col in (workflow, sequence):
                     if col:
@@ -570,8 +602,8 @@ class ModuleSynergyGrapher:
                 for a, b in combinations(sorted(mods), 2):
                     counts[(a, b)] = counts.get((a, b), 0) + 1
                     counts[(b, a)] = counts.get((b, a), 0) + 1
-        except Exception:
-            pass
+        except Exception as exc:  # pragma: no cover - DB failure
+            logger.exception("failed to read WorkflowDB at %s: %s", db_path, exc)
         return counts
 
     def _history_pairs(
@@ -584,7 +616,12 @@ class ModuleSynergyGrapher:
         if not db_path.exists() or shd is None:  # type: ignore[operator]
             return counts
         try:
-            history = shd.load_history(db_path)  # type: ignore[call-arg]
+            history = with_retry(
+                lambda: shd.load_history(db_path),  # type: ignore[call-arg]
+                attempts=self.retry_attempts,
+                delay=self.retry_delay,
+                logger=logger,
+            )
             for entry in history:
                 keys = [k for k in entry if k in modules]
                 for a, b in combinations(sorted(keys), 2):
@@ -593,8 +630,8 @@ class ModuleSynergyGrapher:
                         val = 1.0
                     counts[(a, b)] = counts.get((a, b), 0.0) + val
                     counts[(b, a)] = counts.get((b, a), 0.0) + val
-        except Exception:
-            pass
+        except Exception as exc:  # pragma: no cover - DB failure
+            logger.exception("failed to load synergy history from %s: %s", db_path, exc)
         return counts
 
     # ------------------------------------------------------------------
@@ -685,19 +722,9 @@ class ModuleSynergyGrapher:
         # Fetch missing embeddings concurrently
         missing = [m for m in modules if m not in embeddings and docs.get(m)]
         if missing:
-            class _EmbedDB:
-                def try_add_embedding(self, record_id: str, text: str, kind: str = "doc"):
-                    try:
-                        return governed_embed(text) or []
-                    except Exception:
-                        return []
-
-            embed_db = _EmbedDB()
             with ThreadPoolExecutor(max_workers=embed_workers) as executor:
                 future_to_mod = {
-                    executor.submit(
-                        embed_db.try_add_embedding, mod, docs.get(mod, ""), "module_doc"
-                    ): mod
+                    executor.submit(self._embed_doc, mod, docs.get(mod, "")): mod
                     for mod in missing
                 }
                 for fut in as_completed(future_to_mod):
@@ -875,19 +902,9 @@ class ModuleSynergyGrapher:
 
         missing = [m for m in changed if m not in new_embeddings and docs.get(m)]
         if missing:
-            class _EmbedDB:
-                def try_add_embedding(self, record_id: str, text: str, kind: str = "doc"):
-                    try:
-                        return governed_embed(text) or []
-                    except Exception:
-                        return []
-
-            embed_db = _EmbedDB()
             with ThreadPoolExecutor(max_workers=embed_workers) as executor:
                 future_to_mod = {
-                    executor.submit(
-                        embed_db.try_add_embedding, mod, docs.get(mod, ""), "module_doc"
-                    ): mod
+                    executor.submit(self._embed_doc, mod, docs.get(mod, "")): mod
                     for mod in missing
                 }
                 for fut in as_completed(future_to_mod):
