@@ -155,13 +155,21 @@ class IPOEnhancementsDB:
         self.conn = self.router.get_connection("enhancements")
         c = self.conn.cursor()
         c.execute(
-            "CREATE TABLE IF NOT EXISTS enhancements (id INTEGER PRIMARY KEY, blueprint_id TEXT, bot TEXT, action TEXT, reason TEXT, source_menace_id TEXT DEFAULT '')"
+            (
+                "CREATE TABLE IF NOT EXISTS enhancements ("
+                "id INTEGER PRIMARY KEY, "
+                "blueprint_id TEXT, bot TEXT, action TEXT, reason TEXT, "
+                "source_menace_id TEXT NOT NULL)"
+            )
         )
         cols = [r[1] for r in c.execute("PRAGMA table_info(enhancements)").fetchall()]
         if "source_menace_id" not in cols:
             c.execute(
-                "ALTER TABLE enhancements ADD COLUMN source_menace_id TEXT DEFAULT ''"
+                "ALTER TABLE enhancements ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
             )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_enhancements_source_menace_id ON enhancements(source_menace_id)"
+        )
         self.conn.commit()
 
     def log(self, blueprint_id: str, bot: str, action: str, reason: str) -> None:
