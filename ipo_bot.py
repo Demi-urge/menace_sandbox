@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Dict, Iterable, Optional
+from typing import Iterable, List, Optional
 
 from db_router import GLOBAL_ROUTER, init_db_router
+from db_scope import Scope, build_scope_clause
 
 import networkx as nx
 try:
@@ -92,7 +91,12 @@ class BotDatabaseSearcher:
     def __init__(self, db_path: str = "models.db") -> None:
         self.db_path = db_path
 
-    def search(self, keywords: Iterable[str], menace_id: Optional[str] = None) -> List[BotCandidate]:
+    def search(
+        self,
+        keywords: Iterable[str],
+        scope: Scope,
+        menace_id: Optional[str] = None,
+    ) -> List[BotCandidate]:
         router = GLOBAL_ROUTER or init_db_router("ipo_bot", shared_db_path=self.db_path)
         menace_id = menace_id or router.menace_id
         conn = router.get_connection("bots")
@@ -108,10 +112,14 @@ class BotDatabaseSearcher:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_bots_source_menace_id ON bots(source_menace_id)"
         )
-        cur.execute(
-            "SELECT name, keywords, reuse FROM bots WHERE (name LIKE ? OR keywords LIKE ?) AND source_menace_id=?",
-            (key, key, menace_id),
-        )
+        clause, params = build_scope_clause("bots", scope, menace_id)
+        query = "SELECT name, keywords, reuse FROM bots"
+        if clause:
+            query += f" {clause} AND (name LIKE ? OR keywords LIKE ?)"
+        else:
+            query += " WHERE (name LIKE ? OR keywords LIKE ?)"
+        params.extend([key, key])
+        cur.execute(query, params)
         rows = cur.fetchall()
         return [BotCandidate(name=r[0], keywords=r[1], reuse=bool(r[2])) for r in rows]
 
@@ -176,14 +184,20 @@ class IPOEnhancementsDB:
                 "ALTER TABLE enhancements ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
             )
         c.execute(
-            "CREATE INDEX IF NOT EXISTS idx_enhancements_source_menace_id ON enhancements(source_menace_id)"
+            (
+                "CREATE INDEX IF NOT EXISTS idx_enhancements_source_menace_id "
+                "ON enhancements(source_menace_id)"
+            )
         )
         self.conn.commit()
 
     def log(self, blueprint_id: str, bot: str, action: str, reason: str) -> None:
         menace_id = self.router.menace_id if self.router else ""
         self.conn.execute(
-            "INSERT INTO enhancements (source_menace_id, blueprint_id, bot, action, reason) VALUES (?,?,?,?,?)",
+            (
+                "INSERT INTO enhancements (source_menace_id, blueprint_id, bot, action, reason) "
+                "VALUES (?,?,?,?,?)"
+            ),
             (menace_id, blueprint_id, bot, action, reason),
         )
         self.conn.commit()
@@ -219,7 +233,7 @@ class IPOBot:
         actions: List[PlanAction] = []
         for task in blueprint.tasks:
             words = re.findall(r"\w+", task.name)
-            cands = self.searcher.search(words)
+            cands = self.searcher.search(words, Scope.LOCAL)
             cand = self.decider.rank(task, cands)
             decision = self.decider.decision(task, cand)
             self.db.log(blueprint_id, task.name, decision, f"score={cand.score:.1f}")
