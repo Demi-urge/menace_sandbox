@@ -8,19 +8,19 @@ workflows and historical synergy records.  The resulting graph is saved to
 ## Building
 
 ```bash
-python module_synergy_grapher.py build <root>
+python module_synergy_grapher.py --build
 ```
 
-Use `--out` to choose a custom output path.
+The graph is persisted to `sandbox_data/module_synergy_graph.json` and can be
+rebuilt via `make synergy-graph` in automation contexts.
 
 ## Querying
 
 ```bash
-python module_synergy_grapher.py cluster <module> --threshold 0.8 --path sandbox_data/module_synergy_graph.json
+python module_synergy_grapher.py --cluster <module> --threshold 0.8
 ```
 
-The `--threshold` flag filters edges by weight when expanding the cluster, and
-`--path` points to an alternate graph file.
+The `--threshold` flag filters edges by weight when expanding the cluster.
 
 ## Configuration
 
