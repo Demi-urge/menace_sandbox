@@ -1,5 +1,4 @@
 bot_testing_bot.py
-competitive_intelligence_bot.py
 db_router.py
 failure_learning_system.py
 sandbox_runner/environment.py
