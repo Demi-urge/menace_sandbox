@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import List, Tuple
 
 from db_router import GLOBAL_ROUTER, init_db_router
+from scope_utils import Scope, build_scope_clause, apply_scope
 
 MENACE_ID = "experiment_history_db"
 DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
@@ -78,17 +79,31 @@ class ExperimentHistoryDB:
     def add_test(self, rec: TestLog) -> None:
         conn = self.router.get_connection("experiment_tests")
         conn.execute(
-            "INSERT INTO experiment_tests(variant_a, variant_b, t_stat, p_value, ts) VALUES(?,?,?,?,?)",
+            (
+                "INSERT INTO experiment_tests(variant_a, variant_b, t_stat, p_value, ts)"
+                " VALUES(?,?,?,?,?)"
+            ),
             (rec.variant_a, rec.variant_b, rec.t_stat, rec.p_value, rec.ts),
         )
         conn.commit()
 
-    def fetch(self, limit: int = 50) -> List[Tuple[str, float, float, float, str]]:
+    def fetch(
+        self, limit: int = 50, *, scope: Scope | str = "local"
+    ) -> List[Tuple[str, float, float, float, str]]:
+        """Return experiment logs filtered by menace ``scope``."""
+
         conn = self.router.get_connection("experiment_history")
-        cur = conn.execute(
-            "SELECT variant, roi, cpu, memory, ts FROM experiment_history ORDER BY ts DESC LIMIT ?",
-            (limit,),
+        cur = conn.cursor()
+        base = (
+            "SELECT variant, roi, cpu, memory, ts FROM experiment_history"
         )
+        clause, scope_params = build_scope_clause(
+            "experiment_history", scope, self.router.menace_id
+        )
+        base = apply_scope(base, clause)
+        base += " ORDER BY ts DESC LIMIT ?"
+        params = [*scope_params, limit]
+        cur.execute(base, params)
         return cur.fetchall()
 
     def variant_stats(self, variant: str) -> Tuple[int, float]:
