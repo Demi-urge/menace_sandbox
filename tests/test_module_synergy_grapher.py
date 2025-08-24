@@ -71,6 +71,23 @@ def test_update_graph(tmp_path: Path):
     assert ("c", "a") in grapher.graph.edges
 
 
+def test_update_graph_removed_module(tmp_path: Path):
+    """Modules deleted from disk should be pruned from the graph."""
+
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("")
+    grapher = ModuleSynergyGrapher()
+    grapher.build_graph(tmp_path)
+    assert "b" in grapher.graph
+
+    # Remove module ``b`` entirely
+    (tmp_path / "b.py").unlink()
+    grapher.update_graph(["b"])
+
+    assert "b" not in grapher.graph
+    assert ("a", "b") not in grapher.graph.edges
+
+
 def test_build_save_load_cluster(tmp_path: Path):
     """End-to-end test covering graph build, save/load and clustering."""
 
