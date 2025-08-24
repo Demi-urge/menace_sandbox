@@ -17,7 +17,8 @@ class _EmbeddableStub:
 
 
 sys.modules.setdefault(
-    "vector_service", types.SimpleNamespace(EmbeddableDBMixin=_EmbeddableStub)
+    "vector_service",
+    types.SimpleNamespace(EmbeddableDBMixin=_EmbeddableStub, CognitionLayer=object),
 )
 sys.modules.setdefault(
     "auto_link", types.SimpleNamespace(auto_link=lambda *_a, **_k: (lambda f: f))
@@ -144,3 +145,21 @@ def test_iter_records_scopes(tmp_path):
     assert local == {"A"}
     assert global_ == {"B"}
     assert all_ == {"A", "B"}
+
+def test_by_complexity_min_score_scope(tmp_path):
+    ctx = _setup_code_db(tmp_path)
+    db_a = ctx["db_a"]
+    # min_score above local record complexity returns no local rows
+    assert db_a.by_complexity(min_score=1.5, scope="local") == []
+    assert [r["summary"] for r in db_a.by_complexity(min_score=1.5, scope="global")] == ["B"]
+    assert [r["summary"] for r in db_a.by_complexity(min_score=1.5, scope="all")] == ["B"]
+
+
+def test_search_fallback_scope_filters(tmp_path):
+    ctx = _setup_code_db(tmp_path)
+    db_a = ctx["db_a"]
+    # term matches only the global record
+    assert db_a.search_fallback("b", scope="local") == []
+    assert [r["summary"] for r in db_a.search_fallback("b", scope="global")] == ["B"]
+    assert [r["summary"] for r in db_a.search_fallback("b", scope="all")] == ["B"]
+
