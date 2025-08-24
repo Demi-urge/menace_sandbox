@@ -1,1 +1,1 @@
-SELECT * FROM code
+SELECT * FROM code WHERE source_menace_id=?

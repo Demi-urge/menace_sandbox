@@ -406,8 +406,12 @@ class KnowledgeGraph:
         except Exception:
             return
         cur = conn.cursor()
+        menace_id = router.menace_id if router else os.getenv("MENACE_ID", "")
         try:
-            rows = cur.execute("SELECT id, summary FROM code").fetchall()
+            rows = cur.execute(
+                "SELECT id, summary FROM code WHERE source_menace_id=?",
+                (menace_id,),
+            ).fetchall()
         except Exception:
             return
         for cid, summary in rows:
@@ -692,7 +696,15 @@ class KnowledgeGraph:
             if not code_db:
                 return str(cid)
             try:
-                row = code_db.conn.execute("SELECT summary FROM code WHERE id=?", (cid,)).fetchone()
+                menace_id = (
+                    code_db.router.menace_id
+                    if getattr(code_db, "router", None)
+                    else os.getenv("MENACE_ID", "")
+                )
+                row = code_db.conn.execute(
+                    "SELECT summary FROM code WHERE id=? AND source_menace_id=?",
+                    (cid, menace_id),
+                ).fetchone()
                 return row[0] if row else str(cid)
             except Exception:
                 return str(cid)
