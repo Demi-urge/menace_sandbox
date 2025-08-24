@@ -37,7 +37,7 @@ from .deployment_governance import evaluate_scorecard
 from .borderline_bucket import BorderlineBucket
 from .rollback_manager import RollbackManager
 from .audit_logger import log_event as audit_log_event
-from .db_scope import Scope, build_scope_clause, apply_scope
+from .scope_utils import Scope, build_scope_clause, apply_scope
 
 # ---------------------------------------------------------------------------
 # SQLite layer for deployment & error tracking

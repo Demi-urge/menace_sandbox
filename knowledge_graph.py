@@ -9,7 +9,7 @@ import atexit
 import os
 
 from db_router import GLOBAL_ROUTER
-from db_scope import Scope, build_scope_clause, apply_scope
+from scope_utils import Scope, build_scope_clause, apply_scope
 
 logger = logging.getLogger(__name__)
 

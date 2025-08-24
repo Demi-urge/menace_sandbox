@@ -13,7 +13,7 @@ from .db_router import (
     SHARED_TABLES,
     init_db_router,
 )
-from .db_scope import Scope, build_scope_clause, apply_scope
+from .scope_utils import Scope, build_scope_clause, apply_scope
 
 from .error_logger import ErrorLogger
 from .self_coding_engine import SelfCodingEngine

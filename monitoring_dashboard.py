@@ -17,7 +17,7 @@ from .evolution_history_db import EvolutionHistoryDB
 from .error_bot import ErrorDB
 from .report_generation_bot import ReportGenerationBot, ReportOptions
 from .lineage_tracker import LineageTracker
-from .db_scope import Scope, build_scope_clause, apply_scope
+from .scope_utils import Scope, build_scope_clause, apply_scope
 
 try:  # optional dependency
     from .unified_event_bus import UnifiedEventBus  # type: ignore

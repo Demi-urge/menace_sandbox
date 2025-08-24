@@ -16,7 +16,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from db_router import init_db_router
-from db_scope import Scope, build_scope_clause, apply_scope
+from scope_utils import Scope, build_scope_clause, apply_scope
 
 # Initialise a router for this process with a unique menace_id so
 # ``GLOBAL_ROUTER`` becomes available to imported modules.  Import modules that

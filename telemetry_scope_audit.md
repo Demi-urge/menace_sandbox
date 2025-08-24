@@ -6,7 +6,7 @@ The repository was searched for SQL queries touching the shared `telemetry` tabl
 rg "FROM telemetry"
 ```
 
-All matching locations were reviewed. Functions lacking menace scope filtering were updated to use the `db_scope` helpers. The following files required changes:
+All matching locations were reviewed. Functions lacking menace scope filtering were updated to use the `scope_utils` helpers. The following files required changes:
 
 - `monitoring_dashboard.py` – `error_data` route now accepts scope parameters.
 - `menace_gui.py` – `_bot_telemetry` now supports scope.

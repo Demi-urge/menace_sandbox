@@ -4,7 +4,7 @@ from db_router import DBRouter
 from workflow_summary_db import WorkflowSummaryDB
 
 
-def test_workflow_summary_db_scope_filters(tmp_path):
+def test_workflow_summary_scope_utils_filters(tmp_path):
     shared = tmp_path / "shared.db"
     router1 = DBRouter("one", str(tmp_path / "local1.db"), str(shared))
     db1 = WorkflowSummaryDB(router=router1)

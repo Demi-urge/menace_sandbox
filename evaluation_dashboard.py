@@ -46,7 +46,7 @@ from .evaluation_manager import EvaluationManager
 from .roi_tracker import ROITracker
 from .telemetry_backend import TelemetryBackend
 from .violation_logger import load_persisted_alignment_warnings
-from .db_scope import Scope
+from .scope_utils import Scope
 
 GOVERNANCE_LOG = Path("sandbox_data/governance_outcomes.jsonl")
 

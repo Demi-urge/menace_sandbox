@@ -16,7 +16,7 @@ from datetime import datetime
 from governed_retrieval import govern_retrieval
 import joblib
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-from db_scope import build_scope_clause
+from scope_utils import build_scope_clause
 
 _ALIASES = (
     "universal_retriever",

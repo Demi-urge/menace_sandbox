@@ -13,7 +13,7 @@ from flask import jsonify, render_template_string, request
 from db_router import init_db_router
 from .metrics_dashboard import MetricsDashboard
 from .knowledge_graph import KnowledgeGraph
-from .db_scope import Scope, build_scope_clause, apply_scope
+from .scope_utils import Scope, build_scope_clause, apply_scope
 from typing import TYPE_CHECKING
 
 try:  # pragma: no cover - optional predictor dependency

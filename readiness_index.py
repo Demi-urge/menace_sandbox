@@ -12,7 +12,7 @@ can be serialised for telemetry logging.
 
 from typing import TYPE_CHECKING, Dict, List, Tuple
 import json
-from .db_scope import Scope
+from .scope_utils import Scope
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
     from .roi_tracker import ROITracker

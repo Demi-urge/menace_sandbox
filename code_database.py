@@ -23,7 +23,7 @@ import license_detector
 from vector_service import EmbeddableDBMixin
 from embeddable_db_mixin import log_embedding_metrics
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-from .db_scope import Scope, build_scope_clause, apply_scope
+from .scope_utils import Scope, build_scope_clause, apply_scope
 
 try:  # optional dependency for future scalability
     from sqlalchemy.engine import Engine  # type: ignore

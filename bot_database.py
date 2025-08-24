@@ -24,7 +24,7 @@ except Exception:  # pragma: no cover - optional dependency
     warnings.warn("MenaceDB unavailable, Menace integration disabled.")
 
 from db_router import GLOBAL_ROUTER as router
-from .db_scope import Scope, build_scope_clause, apply_scope
+from .scope_utils import Scope, build_scope_clause, apply_scope
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .deployment_bot import DeploymentDB

@@ -9,7 +9,7 @@ import os
 from typing import Literal
 
 from .env_config import DATABASE_URL
-from .db_scope import build_scope_clause, apply_scope
+from .scope_utils import build_scope_clause, apply_scope
 try:
     from sqlalchemy import (
         Boolean,
