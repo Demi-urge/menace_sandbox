@@ -32,7 +32,7 @@ from discrepancy_db import DiscrepancyDB, DiscrepancyRecord  # noqa: E402
 from db_router import DBRouter, DENY_TABLES  # noqa: E402
 
 
-def test_discrepancy_db_scope(tmp_path):
+def test_discrepancy_scope_utils(tmp_path):
     shared_db = tmp_path / "shared.db"
     router1 = DBRouter("one", str(tmp_path / "one.db"), str(shared_db))
     router2 = DBRouter("two", str(tmp_path / "two.db"), str(shared_db))

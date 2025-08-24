@@ -31,7 +31,7 @@ import sqlite3
 import numpy as np
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-from db_scope import Scope, build_scope_clause, apply_scope
+from scope_utils import Scope, build_scope_clause, apply_scope
 
 from .evolution_history_db import EvolutionHistoryDB
 from .evaluation_history_db import EvaluationHistoryDB

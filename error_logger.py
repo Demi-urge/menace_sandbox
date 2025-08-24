@@ -18,7 +18,7 @@ from functools import wraps
 from typing import Any, Callable, Optional
 
 from .db_router import GLOBAL_ROUTER, init_db_router
-from .db_scope import Scope, build_scope_clause, apply_scope
+from .scope_utils import Scope, build_scope_clause, apply_scope
 
 try:
     from .sentry_client import SentryClient

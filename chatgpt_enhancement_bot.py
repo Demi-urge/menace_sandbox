@@ -32,7 +32,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 from vector_service import EmbeddableDBMixin
 from .unified_event_bus import UnifiedEventBus
-from .db_scope import Scope, build_scope_clause
+from .scope_utils import Scope, build_scope_clause
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)

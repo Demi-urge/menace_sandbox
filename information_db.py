@@ -13,10 +13,10 @@ from vector_service import EmbeddableDBMixin
 from .unified_event_bus import UnifiedEventBus
 try:  # pragma: no cover - import available in package context
     from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-    from .db_scope import Scope, build_scope_clause
+    from .scope_utils import Scope, build_scope_clause
 except Exception:  # pragma: no cover - fallback for top-level imports
     from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-    from db_scope import Scope, build_scope_clause
+    from scope_utils import Scope, build_scope_clause
 
 
 logger = logging.getLogger(__name__)

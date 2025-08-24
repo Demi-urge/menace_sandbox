@@ -40,7 +40,7 @@ from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from vector_service import EmbeddableDBMixin
-from .db_scope import build_scope_clause, Scope, apply_scope
+from .scope_utils import build_scope_clause, Scope, apply_scope
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager

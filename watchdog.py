@@ -13,7 +13,7 @@ from typing import Iterable, Callable, TYPE_CHECKING
 
 from . import RAISE_ERRORS
 from db_router import GLOBAL_ROUTER
-from .db_scope import Scope, build_scope_clause, apply_scope
+from .scope_utils import Scope, build_scope_clause, apply_scope
 
 try:
     import pandas as pd  # type: ignore

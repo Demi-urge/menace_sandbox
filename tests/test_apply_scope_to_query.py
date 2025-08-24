@@ -1,4 +1,4 @@
-from db_scope import Scope, build_scope_clause, apply_scope_to_query
+from scope_utils import Scope, build_scope_clause, apply_scope_to_query
 
 
 def test_build_scope_clause():

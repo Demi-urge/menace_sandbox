@@ -15,10 +15,10 @@ from vector_service import EmbeddableDBMixin
 
 try:  # pragma: no cover - package and top-level imports
     from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-    from .db_scope import build_scope_clause
+    from .scope_utils import build_scope_clause
 except Exception:  # pragma: no cover - fallback for tests
     from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-    from db_scope import build_scope_clause
+    from scope_utils import build_scope_clause
 
 logger = logging.getLogger(__name__)
 

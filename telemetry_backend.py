@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .metrics_exporter import Gauge
-from .db_scope import Scope, build_scope_clause, apply_scope
+from .scope_utils import Scope, build_scope_clause, apply_scope
 
 ROI_EVENTS_DB = "roi_events.db"
 

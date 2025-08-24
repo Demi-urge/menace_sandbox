@@ -29,10 +29,10 @@ from typing import Literal
 
 try:  # pragma: no cover - import available in package context
     from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-    from .db_scope import Scope, build_scope_clause, apply_scope
+    from .scope_utils import Scope, build_scope_clause, apply_scope
 except Exception:  # pragma: no cover - fallback for tests
     from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-    from db_scope import Scope, build_scope_clause, apply_scope
+    from scope_utils import Scope, build_scope_clause, apply_scope
 
 MENACE_ID = "workflow_summary_db"
 DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)

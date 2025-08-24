@@ -105,7 +105,7 @@ else:  # pragma: no cover - metrics optional
 logger = get_logger(__name__)
 
 from db_router import GLOBAL_ROUTER, init_db_router
-from db_scope import Scope, build_scope_clause, apply_scope
+from scope_utils import Scope, build_scope_clause, apply_scope
 
 # Reuse a pre-configured router when available, otherwise create a local one
 # for standalone execution.

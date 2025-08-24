@@ -1,5 +1,5 @@
 import pytest
-from db_scope import Scope, build_scope_clause, apply_scope
+from scope_utils import Scope, build_scope_clause, apply_scope
 
 
 @pytest.mark.parametrize(

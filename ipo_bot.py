@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 from db_router import GLOBAL_ROUTER, init_db_router
-from db_scope import Scope, build_scope_clause
+from scope_utils import Scope, build_scope_clause
 
 import networkx as nx
 try:

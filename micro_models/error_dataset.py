@@ -14,10 +14,10 @@ from pathlib import Path
 from typing import Iterable
 
 try:  # pragma: no cover - allow execution from package root
-    from ..db_scope import Scope, apply_scope, build_scope_clause
+    from ..scope_utils import Scope, apply_scope, build_scope_clause
     from ..error_bot import ErrorDB
 except Exception:  # pragma: no cover - flat layout fallback
-    from db_scope import Scope, apply_scope, build_scope_clause  # type: ignore
+    from scope_utils import Scope, apply_scope, build_scope_clause  # type: ignore
     from error_bot import ErrorDB  # type: ignore
 
 

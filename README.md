@@ -57,7 +57,7 @@
     Scoping can also be applied manually when building SQL queries:
 
     ```python
-    from db_scope import Scope, build_scope_clause, apply_scope
+    from scope_utils import Scope, build_scope_clause, apply_scope
 
     clause, params = build_scope_clause("bots", Scope.GLOBAL, "alpha")
     sql = apply_scope("SELECT * FROM bots", clause)

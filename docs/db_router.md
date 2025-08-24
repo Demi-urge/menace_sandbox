@@ -94,7 +94,7 @@ This ``scope`` parameter replaces the older ``include_cross_instance`` and
 Lower-level SQL helpers are available for custom queries:
 
 ```python
-from db_scope import Scope, build_scope_clause, apply_scope
+from scope_utils import Scope, build_scope_clause, apply_scope
 
 clause, params = build_scope_clause("bots", Scope.GLOBAL, router.menace_id)
 sql = apply_scope("SELECT * FROM bots", clause)
