@@ -14,6 +14,16 @@ python module_synergy_grapher.py --build [--config config.toml]
 The graph is persisted to `sandbox_data/module_synergy_graph.json` and can be
 rebuilt via `make synergy-graph` in automation contexts.
 
+## Caching
+
+To speed up subsequent runs, AST-derived identifiers and docstring embeddings
+for each module are cached in `sandbox_data/synergy_cache.json`.  Each cache
+entry stores the source file's modification time and a SHA256 hash.  During
+`build_graph` these values are compared against the current file; modules with
+unchanged metadata reuse cached details while others are recomputed.  Deleting
+or touching the source file invalidates its cache entry, and passing
+`--no-cache` rebuilds all entries from scratch.
+
 ## Querying
 
 ```bash
