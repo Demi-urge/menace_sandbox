@@ -17,6 +17,7 @@ import os
 import uuid
 
 from db_router import init_db_router
+from db_scope import Scope, build_scope_clause, apply_scope
 
 MENACE_ID = uuid.uuid4().hex
 LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
@@ -109,17 +110,35 @@ def debug_and_deploy(repo: Path, *, jobs: int = 1, override_veto: bool = False) 
         def __init__(self, db: ErrorDB) -> None:
             self.db = db
 
-        def recent_errors(self, limit: int = 5) -> list[str]:
-            cur = self.db.conn.execute(
-                "SELECT stack_trace FROM telemetry ORDER BY id DESC LIMIT ?",
-                (limit,),
-            )
+        def recent_errors(
+            self,
+            limit: int = 5,
+            *,
+            scope: Scope | str = "local",
+            source_menace_id: str | None = None,
+        ) -> list[str]:
+            menace_id = self.db._menace_id(source_menace_id)
+            clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+            query = apply_scope(
+                "SELECT stack_trace FROM telemetry",
+                clause,
+            ) + " ORDER BY id DESC LIMIT ?"
+            cur = self.db.conn.execute(query, [*params, limit])
             return [str(r[0]) for r in cur.fetchall()]
 
-        def patterns(self) -> dict[str, int]:
-            cur = self.db.conn.execute(
-                "SELECT root_module, COUNT(*) FROM telemetry GROUP BY root_module"
-            )
+        def patterns(
+            self,
+            *,
+            scope: Scope | str = "local",
+            source_menace_id: str | None = None,
+        ) -> dict[str, int]:
+            menace_id = self.db._menace_id(source_menace_id)
+            clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+            query = apply_scope(
+                "SELECT root_module, COUNT(*) FROM telemetry",
+                clause,
+            ) + " GROUP BY root_module"
+            cur = self.db.conn.execute(query, params)
             return {str(r[0]): int(r[1]) for r in cur.fetchall()}
 
     global SelfDebuggerSandbox

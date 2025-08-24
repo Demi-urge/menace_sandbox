@@ -31,6 +31,7 @@ import sqlite3
 import numpy as np
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from db_scope import Scope, build_scope_clause, apply_scope
 
 from .evolution_history_db import EvolutionHistoryDB
 from .evaluation_history_db import EvaluationHistoryDB
@@ -237,16 +238,25 @@ def _collect_resource_metrics(tracker: ROITracker) -> dict[str, list[float]]:
 
 # ---------------------------------------------------------------------------
 def _collect_error_history(
-    path: str | Path, router: DBRouter | None = None
+    path: str | Path,
+    router: DBRouter | None = None,
+    *,
+    scope: Scope | str = "local",
+    source_menace_id: str | None = None,
 ) -> list[tuple[datetime, int, int]]:
     """Return cumulative error and repair counts ordered by timestamp."""
 
     records: list[tuple[datetime, int, int]] = []
     try:
-        conn = _get_router(router).get_connection("telemetry")
-        cur = conn.execute(
-            "SELECT ts, resolution_status FROM telemetry ORDER BY ts"
-        )
+        rtr = _get_router(router)
+        menace_id = source_menace_id or rtr.menace_id
+        clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+        query = apply_scope(
+            "SELECT ts, resolution_status FROM telemetry",
+            clause,
+        ) + " ORDER BY ts"
+        conn = rtr.get_connection("telemetry")
+        cur = conn.execute(query, params)
         err_cnt = 0
         rep_cnt = 0
         for ts, status in cur.fetchall():

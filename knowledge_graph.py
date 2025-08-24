@@ -915,8 +915,14 @@ class KnowledgeGraph:
                 sel.append("cause")
             if has_freq:
                 sel.append("frequency")
-            query = f"SELECT {', '.join(sel)} FROM telemetry"
-            telemetry = cur.execute(query).fetchall()
+            clause, t_params = build_scope_clause(
+                "telemetry", scope_val, menace_id
+            )
+            query = apply_scope(
+                f"SELECT {', '.join(sel)} FROM telemetry",
+                clause,
+            )
+            telemetry = cur.execute(query, t_params).fetchall()
         except Exception:
             telemetry = []
         for row in telemetry:
