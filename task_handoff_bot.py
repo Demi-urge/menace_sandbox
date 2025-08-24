@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Callable, Any, Iterable, Optional, Sequence, Iterator
+from typing import List, Dict, Callable, Any, Iterable, Optional, Iterator
 import logging
 
 import sqlite3
@@ -79,7 +79,6 @@ class WorkflowRecord:
     wid: int = 0
 
 
-
 class WorkflowDB(EmbeddableDBMixin):
     """SQLite storage for generated workflows with vector search."""
 
@@ -143,7 +142,8 @@ class WorkflowDB(EmbeddableDBMixin):
                     "ALTER TABLE workflows ADD COLUMN content_hash TEXT"
                 )
         self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_workflows_content_hash ON workflows(content_hash)"
+            "CREATE UNIQUE INDEX IF NOT EXISTS "
+            "idx_workflows_content_hash ON workflows(content_hash)"
         )
         self.conn.commit()
         EmbeddableDBMixin.__init__(
@@ -321,24 +321,13 @@ class WorkflowDB(EmbeddableDBMixin):
             "description",
             "task_sequence",
         ]
-        inserted = insert_if_unique(
-            "workflows",
-            values,
-            hash_fields,
-            source_menace_id,
-            self.router,
-        )
-        cur = self.conn.execute(
-            "SELECT id FROM workflows WHERE content_hash=?",
-            (values["content_hash"],),
-        )
-        row = cur.fetchone()
-        if row is None:
-            raise RuntimeError("failed to retrieve workflow id")
-        wf.wid = int(row["id"])
+        with self.router.get_connection("workflows", "write") as conn:
+            wf.wid, inserted = insert_if_unique(
+                conn, "workflows", values, hash_fields, source_menace_id
+            )
         if not inserted:
             logger.warning(
-                "duplicate workflow detected; skipping embedding generation"
+                "duplicate workflow detected; skipping embedding generation",
             )
             return wf.wid
 
@@ -586,7 +575,7 @@ class TaskHandoffBot:
         while size > min_size:
             size = max(min_size, size // 2)
             for i in range(0, len(names), size):
-                chunk = names[i : i + size]
+                chunk = names[i:i + size]
                 if chunk and chunk not in chunks:
                     chunks.append(chunk)
         return chunks
@@ -635,7 +624,12 @@ class TaskHandoffBot:
     def send_package(self, package: TaskPackage) -> None:
         data = package.to_json()
         try:
-            requests.post(self.api_url, data=data, headers={"Content-Type": "application/json"}, timeout=3)
+            requests.post(
+                self.api_url,
+                data=data,
+                headers={"Content-Type": "application/json"},
+                timeout=3,
+            )
         except Exception as exc:
             logger.warning("primary handoff failed: %s", exc)
             if self.channel:

@@ -411,15 +411,10 @@ class BotDB(EmbeddableDBMixin):
             "toolchain",
             "version",
         ]
-        inserted = insert_if_unique("bots", values, hash_fields, menace_id, self.router)
-        cur = self.conn.execute(
-            "SELECT id FROM bots WHERE content_hash=?",
-            (values["content_hash"],),
-        )
-        row = cur.fetchone()
-        if row is None:
-            raise RuntimeError("failed to retrieve bot id")
-        rec.bid = int(row["id"])
+        with self.router.get_connection("bots", "write") as conn:
+            rec.bid, inserted = insert_if_unique(
+                conn, "bots", values, hash_fields, menace_id
+            )
         if inserted:
             self._embed_record_on_write(rec.bid, rec)
             if self.menace_db:
