@@ -5,6 +5,7 @@ from menace.analytics.adaptive_roi_dataset import build_dataset
 from menace.capital_management_bot import ROIEventDB, ROIEvent
 from menace.data_bot import MetricsDB, MetricRecord
 from menace.evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
+import db_router
 
 
 def test_dataset_dataframe_and_csv(tmp_path):
@@ -14,25 +15,25 @@ def test_dataset_dataframe_and_csv(tmp_path):
     t1 = "2024-01-01T01:00:00"
     t2 = "2024-01-01T02:00:00"
 
-    roi_db_path = tmp_path / "roi.db"
-    roi_db = ROIEventDB(roi_db_path)
+    router = db_router.DBRouter(
+        "analytics", str(tmp_path / "analytics.sqlite"), str(tmp_path / "analytics.sqlite")
+    )
+    roi_db = ROIEventDB(router=router)
     tracker.update(1.0, 1.1, ["mod"])
     roi_db.add(ROIEvent("mod", 1.0, 1.1, ts=t1))
     tracker.update(1.1, 0.9, ["mod"])
     roi_db.add(ROIEvent("mod", 1.1, 0.9, ts=t2))
 
-    metrics_db_path = tmp_path / "metrics.db"
-    mdb = MetricsDB(metrics_db_path)
+    mdb = MetricsDB(router=router)
     mdb.add(MetricRecord("mod", 0, 0, 0, 0, 0, 0, profitability=10.0, ts=t0))
     mdb.add(MetricRecord("mod", 0, 0, 0, 0, 0, 0, profitability=12.0, ts=t1))
     mdb.add(MetricRecord("mod", 0, 0, 0, 0, 0, 0, profitability=11.0, ts=t2))
 
-    eval_db_path = tmp_path / "eval.db"
-    eva = EvaluationHistoryDB(eval_db_path)
+    eva = EvaluationHistoryDB(router=router)
     eva.add(EvaluationRecord(engine="mod", cv_score=0.8, ts=t1, passed=True))
     eva.add(EvaluationRecord(engine="mod", cv_score=0.4, ts=t2, passed=True))
 
-    df = build_dataset(roi_path=roi_db_path, metrics_path=metrics_db_path, evaluation_path=eval_db_path)
+    df = build_dataset(router=router)
 
     assert list(df.columns) == ["module", "ts", "roi_delta", "performance_delta", "gpt_score"]
     assert len(df) == 2

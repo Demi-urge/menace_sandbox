@@ -38,6 +38,7 @@ kg_mod.KnowledgeGraph = _KG
 sys.modules["menace.knowledge_graph"] = kg_mod
 
 from menace.evaluation_history_db import EvaluationHistoryDB
+import db_router
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -132,7 +133,10 @@ def test_evaluation_failure_logged(tmp_path, caplog):
         def evaluate(self):
             raise RuntimeError("boom")
 
-    db = EvaluationHistoryDB(tmp_path / "hist.db")
+    router = db_router.DBRouter(
+        "log", str(tmp_path / "hist.db"), str(tmp_path / "hist.db")
+    )
+    db = EvaluationHistoryDB(router=router)
     mgr = EvaluationManager(learning_engine=BadEngine(), history_db=db)
     caplog.set_level(logging.ERROR)
     mgr.evaluate_all()

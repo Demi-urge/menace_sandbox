@@ -1,20 +1,22 @@
 import numpy as np
-import sqlite3
 import json
 
 from menace.adaptive_roi_dataset import build_dataset, load_adaptive_roi_dataset
 from menace.evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
 from menace.evolution_history_db import EvolutionEvent, EvolutionHistoryDB
 from menace.roi_tracker import ROITracker
+import db_router
 import types
 import sys
 
 
 def test_dataset_aggregation(tmp_path):
     evo_db_path = tmp_path / "evo.db"
-    eval_db_path = tmp_path / "eval.db"
+    router = db_router.DBRouter(
+        "eval", str(tmp_path / "db.sqlite"), str(tmp_path / "db.sqlite")
+    )
     evo = EvolutionHistoryDB(evo_db_path)
-    eva = EvaluationHistoryDB(eval_db_path)
+    eva = EvaluationHistoryDB(router=router)
 
     # create two evolution events for one engine
     evo.add(EvolutionEvent(action="engine", before_metric=0.2, after_metric=0.5, roi=0.3))
@@ -23,7 +25,7 @@ def test_dataset_aggregation(tmp_path):
     # one evaluation record tied to the engine
     eva.add(EvaluationRecord(engine="engine", cv_score=0.8, passed=True))
 
-    X, y, passed, g = load_adaptive_roi_dataset(evo_db_path, eval_db_path)
+    X, y, passed, g = load_adaptive_roi_dataset(evo_db_path, router=router)
 
     assert X.shape == (1, 2)
     assert y.shape == (1,)
@@ -36,11 +38,12 @@ def test_dataset_aggregation(tmp_path):
 
 def test_build_dataset(tmp_path, monkeypatch):
     evo_db_path = tmp_path / "evo.db"
-    eval_db_path = tmp_path / "eval.db"
-    roi_db_path = tmp_path / "roi.db"
+    router = db_router.DBRouter(
+        "eval2", str(tmp_path / "db2.sqlite"), str(tmp_path / "db2.sqlite")
+    )
 
     evo = EvolutionHistoryDB(evo_db_path)
-    eva = EvaluationHistoryDB(eval_db_path)
+    eva = EvaluationHistoryDB(router=router)
 
     class DummyEmb:
         def __init__(self, *args, **kwargs):
@@ -74,7 +77,7 @@ def test_build_dataset(tmp_path, monkeypatch):
     )
     eva.conn.commit()
 
-    conn = sqlite3.connect(roi_db_path)
+    conn = router.get_connection("action_roi")
     conn.execute(
         """
         CREATE TABLE action_roi(
@@ -108,7 +111,7 @@ def test_build_dataset(tmp_path, monkeypatch):
     conn.commit()
 
     X, y, g, names = build_dataset(
-        evo_db_path, roi_db_path, eval_db_path, return_feature_names=True
+        evo_db_path, router=router, return_feature_names=True
     )
 
     assert X.shape == (1, len(names))
@@ -120,11 +123,12 @@ def test_build_dataset(tmp_path, monkeypatch):
 
 def test_build_dataset_horizon(tmp_path):
     evo_db_path = tmp_path / "evo.db"
-    eval_db_path = tmp_path / "eval.db"
-    roi_db_path = tmp_path / "roi.db"
+    router = db_router.DBRouter(
+        "horizon", str(tmp_path / "horizon.sqlite"), str(tmp_path / "horizon.sqlite")
+    )
 
     evo = EvolutionHistoryDB(evo_db_path)
-    eva = EvaluationHistoryDB(eval_db_path)
+    eva = EvaluationHistoryDB(router=router)
 
     ts0 = "2024-01-01T00:00:00"
     evo.add(
@@ -142,7 +146,7 @@ def test_build_dataset_horizon(tmp_path):
         )
     )
 
-    conn = sqlite3.connect(roi_db_path)
+    conn = router.get_connection("action_roi")
     conn.execute(
         """
         CREATE TABLE action_roi(
@@ -170,20 +174,19 @@ def test_build_dataset_horizon(tmp_path):
     )
     conn.commit()
 
-    X, y, g = build_dataset(
-        evo_db_path, roi_db_path, eval_db_path, horizons=[1, 2]
-    )
+    X, y, g = build_dataset(evo_db_path, router=router, horizons=[1, 2])
     assert y.shape == (1, 3)
     assert y.tolist() == [[12.0, 16.0, 10.0]]
 
 
 def test_build_dataset_selected_features(tmp_path):
     evo_db_path = tmp_path / "evo.db"
-    eval_db_path = tmp_path / "eval.db"
-    roi_db_path = tmp_path / "roi.db"
+    router = db_router.DBRouter(
+        "sel", str(tmp_path / "sel.sqlite"), str(tmp_path / "sel.sqlite")
+    )
 
     evo = EvolutionHistoryDB(evo_db_path)
-    eva = EvaluationHistoryDB(eval_db_path)
+    eva = EvaluationHistoryDB(router=router)
 
     ts0 = "2024-01-01T00:00:00"
     evo.add(
@@ -201,7 +204,7 @@ def test_build_dataset_selected_features(tmp_path):
         )
     )
 
-    conn = sqlite3.connect(roi_db_path)
+    conn = router.get_connection("action_roi")
     conn.execute(
         """
         CREATE TABLE action_roi(
@@ -227,8 +230,7 @@ def test_build_dataset_selected_features(tmp_path):
 
     X, y, g, names = build_dataset(
         evo_db_path,
-        roi_db_path,
-        eval_db_path,
+        router=router,
         horizons=[1],
         selected_features=["before_metric", "after_metric"],
         return_feature_names=True,
@@ -239,11 +241,12 @@ def test_build_dataset_selected_features(tmp_path):
 
 def test_build_dataset_auto_selected_features(tmp_path, monkeypatch):
     evo_db_path = tmp_path / "evo.db"
-    eval_db_path = tmp_path / "eval.db"
-    roi_db_path = tmp_path / "roi.db"
+    router = db_router.DBRouter(
+        "auto", str(tmp_path / "auto.sqlite"), str(tmp_path / "auto.sqlite")
+    )
 
     evo = EvolutionHistoryDB(evo_db_path)
-    eva = EvaluationHistoryDB(eval_db_path)
+    eva = EvaluationHistoryDB(router=router)
 
     ts0 = "2024-01-01T00:00:00"
     evo.add(
@@ -261,7 +264,7 @@ def test_build_dataset_auto_selected_features(tmp_path, monkeypatch):
         )
     )
 
-    conn = sqlite3.connect(roi_db_path)
+    conn = router.get_connection("action_roi")
     conn.execute(
         """
         CREATE TABLE action_roi(
@@ -292,8 +295,7 @@ def test_build_dataset_auto_selected_features(tmp_path, monkeypatch):
 
     X, y, g, names = build_dataset(
         evo_db_path,
-        roi_db_path,
-        eval_db_path,
+        router=router,
         horizons=[1],
         return_feature_names=True,
     )

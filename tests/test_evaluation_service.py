@@ -7,10 +7,14 @@ from fastapi.testclient import TestClient
 
 import menace.evaluation_service as svc
 from menace.evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
+import db_router
 
 
 def test_service_endpoints(tmp_path):
-    svc._db = EvaluationHistoryDB(tmp_path / "hist.db")
+    router = db_router.DBRouter(
+        "svc", str(tmp_path / "hist.db"), str(tmp_path / "hist.db")
+    )
+    svc._db = EvaluationHistoryDB(router=router)
     svc._db.add(EvaluationRecord(engine="a", cv_score=0.1))
     svc._db.add(EvaluationRecord(engine="b", cv_score=0.5))
 

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
-import sqlite3
 
-from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+
+# Ensure router recognises our tables
+LOCAL_TABLES.update({"evaluation_history", "weight_override"})
 
 
 @dataclass
@@ -25,15 +26,8 @@ class EvaluationRecord:
 class EvaluationHistoryDB:
     """SQLite-backed store of :class:`EvaluationRecord` values."""
 
-    def __init__(
-        self,
-        path: Path | str = "evaluation_history.db",
-        *,
-        router: DBRouter | None = None,
-    ) -> None:
-        self.router = router or GLOBAL_ROUTER or init_db_router(
-            "evaluation_history", str(path), str(path)
-        )
+    def __init__(self, *, router: DBRouter | None = None) -> None:
+        self.router = router or GLOBAL_ROUTER or init_db_router("evaluation_history")
         self.conn = self.router.get_connection("evaluation_history")
         self.conn.execute(
             """

@@ -76,7 +76,7 @@ from .roi_tracker import ROITracker
 from .evaluation_history_db import EvaluationHistoryDB
 from .evolution_history_db import EvolutionHistoryDB
 from .truth_adapter import TruthAdapter
-from db_router import GLOBAL_ROUTER, init_db_router
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 MENACE_ID = "adaptive_roi_predictor"
 DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
@@ -931,9 +931,10 @@ def predict(
 def load_training_data(
     tracker: ROITracker,
     evolution_path: str | Path = "evolution_history.db",
-    evaluation_path: str | Path = "evaluation_history.db",
     roi_events_path: str | Path = "roi_events.db",
     output_path: str | Path = "sandbox_data/adaptive_roi.csv",
+    *,
+    router: DBRouter | None = None,
 ) -> "pd.DataFrame":
     """Collect and normalise ROI training data.
 
@@ -943,12 +944,12 @@ def load_training_data(
         :class:`ROITracker` instance providing in-memory histories.
     evolution_path:
         Path to the evolution history database supplying ROI outcome labels.
-    evaluation_path:
-        Path to the evaluation history database with GPT scores.
     roi_events_path:
         Path to the ROI event log database used for additional ROI deltas.
     output_path:
         CSV file where the assembled dataset will be written.
+    router:
+        Optional :class:`DBRouter` instance for database access.
 
     Returns
     -------
@@ -988,7 +989,7 @@ def load_training_data(
     df = pd.DataFrame(data)
 
     # GPT evaluation scores -------------------------------------------------
-    eval_db = EvaluationHistoryDB(evaluation_path)
+    eval_db = EvaluationHistoryDB(router=router or GLOBAL_ROUTER or init_db_router("adaptive_roi"))
     recs: list[tuple[pd.Timestamp, float]] = []
     for eng in eval_db.engines():
         for score, ts, _passed, _err in eval_db.history(eng, limit=1_000_000):

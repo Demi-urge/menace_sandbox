@@ -8,7 +8,10 @@ from menace.evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
 
 
 def test_weights_and_history(tmp_path):
-    db = EvaluationHistoryDB(tmp_path / "hist.db")
+    router = db_router.DBRouter(
+        "hist", str(tmp_path / "hist.db"), str(tmp_path / "hist.db")
+    )
+    db = EvaluationHistoryDB(router=router)
     db.add(EvaluationRecord(engine="a", cv_score=0.1))
     db.add(EvaluationRecord(engine="a", cv_score=0.3))
     db.add(EvaluationRecord(engine="b", cv_score=0.5))

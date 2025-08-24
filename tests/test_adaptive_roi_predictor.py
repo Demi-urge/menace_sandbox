@@ -25,12 +25,13 @@ def test_build_dataset(tmp_path: Path, monkeypatch) -> None:
     """Dataset generation combines evolution, ROI and evaluation data."""
 
     evo_path = tmp_path / "evolution_history.db"
-    eval_path = tmp_path / "evaluation_history.db"
-    roi_path = tmp_path / "roi.db"
+    router = db_router.DBRouter(
+        "pred", str(tmp_path / "pred.sqlite"), str(tmp_path / "pred.sqlite")
+    )
 
     evo = EvolutionHistoryDB(evo_path)
-    eval_db = EvaluationHistoryDB(eval_path)
-    conn = sqlite3.connect(roi_path)
+    eval_db = EvaluationHistoryDB(router=router)
+    conn = router.get_connection("action_roi")
     conn.execute(
         "CREATE TABLE action_roi(action TEXT, revenue REAL, api_cost REAL, cpu_seconds REAL, success_rate REAL, ts TEXT)"
     )
@@ -83,7 +84,7 @@ def test_build_dataset(tmp_path: Path, monkeypatch) -> None:
     evo.conn.commit()
 
     X, y, g, names = build_dataset(
-        evo_path, roi_path, eval_path, return_feature_names=True
+        evo_path, router=router, return_feature_names=True
     )
     assert X.shape == (1, len(names))
     assert any(n.startswith("gpt_feedback_emb_") for n in names)
@@ -436,13 +437,15 @@ def test_build_dataset_missing_database(tmp_path: Path) -> None:
     """build_dataset raises when required tables are absent."""
 
     evo_path = tmp_path / "evolution_history.db"
-    eval_path = tmp_path / "evaluation_history.db"
     EvolutionHistoryDB(evo_path)
-    EvaluationHistoryDB(eval_path)
-    roi_path = tmp_path / "roi.db"  # no tables created
+    router = db_router.DBRouter(
+        "missing", str(tmp_path / "missing.sqlite"), str(tmp_path / "missing.sqlite")
+    )
+    EvaluationHistoryDB(router=router)
+    # no action_roi table created
 
     with pytest.raises(sqlite3.OperationalError):
-        build_dataset(evo_path, roi_path, eval_path)
+        build_dataset(evo_path, router=router)
 
 
 def test_corrupted_model_file(tmp_path: Path, monkeypatch) -> None:
@@ -489,12 +492,13 @@ def test_prediction_confidence_persisted_and_loaded(tmp_path, monkeypatch):
         actual_class="linear",
         confidence=0.77,
     )
+    EvaluationHistoryDB(router=db_router.GLOBAL_ROUTER)
     df = arp_mod.load_training_data(
         tracker,
         evolution_path=tmp_path / "evo.db",
-        evaluation_path=tmp_path / "eval.db",
         roi_events_path=tmp_path / "roi_events.db",
         output_path=tmp_path / "out.csv",
+        router=db_router.GLOBAL_ROUTER,
     )
     conn = db_router.GLOBAL_ROUTER.get_connection("roi_prediction_events")
     assert conn is not None

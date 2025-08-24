@@ -56,6 +56,7 @@ from menace.cross_model_comparator import CrossModelComparator
 from menace.unified_event_bus import UnifiedEventBus
 from menace.evaluation_worker import EvaluationWorker
 from menace.evaluation_history_db import EvaluationHistoryDB
+import db_router
 from menace.evaluation_manager import EvaluationManager
 
 
@@ -140,7 +141,10 @@ def test_scheduler_adds_job(monkeypatch):
 
 def test_multi_node_results_affect_weights(tmp_path):
     bus = UnifiedEventBus()
-    db = EvaluationHistoryDB(tmp_path / "hist.db")
+    router = db_router.DBRouter(
+        "mes", str(tmp_path / "hist.db"), str(tmp_path / "hist.db")
+    )
+    db = EvaluationHistoryDB(router=router)
     comparator = CrossModelComparator(pathways=None, history=db, deployer=None)
     manager = DummyManager()
     manager.engines = {"A": object(), "B": object()}

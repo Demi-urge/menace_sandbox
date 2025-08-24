@@ -1910,9 +1910,9 @@ def _sandbox_cycle_runner(
         load_training_data(
             tracker,
             evolution_path=ctx.repo / "evolution_history.db",
-            evaluation_path=ctx.repo / "evaluation_history.db",
             roi_events_path=ctx.repo / "roi_events.db",
             output_path=ctx.repo / "sandbox_data/adaptive_roi.csv",
+            router=router,
         )
     except Exception:
         logger.exception("adaptive roi data aggregation failed")
