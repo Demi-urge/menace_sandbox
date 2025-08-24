@@ -1,1 +1,1 @@
-SELECT * FROM code WHERE complexity >= ? AND source_menace_id=? ORDER BY complexity DESC LIMIT ?
+SELECT * FROM code WHERE complexity >= ? ORDER BY complexity DESC LIMIT ?
