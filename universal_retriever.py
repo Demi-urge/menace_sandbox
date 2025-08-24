@@ -16,6 +16,7 @@ from datetime import datetime
 from governed_retrieval import govern_retrieval
 import joblib
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from db_scope import build_scope_clause
 
 _ALIASES = (
     "universal_retriever",
@@ -1077,7 +1078,7 @@ class UniversalRetriever:
         return candidates[:top_k]
 
     # ------------------------------------------------------------------
-    def _error_frequency(self, error_id: int) -> float:
+    def _error_frequency(self, error_id: int, scope: str | None = None) -> float:
         """Return raw error frequency from ``ErrorDB`` filtered by menace ID."""
 
         if not self.error_db:
@@ -1090,10 +1091,11 @@ class UniversalRetriever:
                 menace_id = getattr(config_obj, "menace_id", None)
             if menace_id is None:
                 menace_id = os.getenv("MENACE_ID", "")
-            cur = self.error_db.conn.execute(
-                "SELECT frequency FROM errors WHERE id=? AND source_menace_id=?",
-                (error_id, menace_id),
-            ).fetchone()
+            clause, params = build_scope_clause("errors", scope or "local", menace_id)
+            query = "SELECT frequency FROM errors WHERE id=?"
+            if clause:
+                query += f" AND {clause}"
+            cur = self.error_db.conn.execute(query, (error_id, *params)).fetchone()
             if cur and cur[0] is not None:
                 return float(cur[0])
         except sqlite3.Error:
