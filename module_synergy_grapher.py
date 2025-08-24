@@ -17,7 +17,6 @@ from typing import Dict, Iterable, Tuple
 import networkx as nx
 from networkx.readwrite import json_graph
 
-from embeddable_db_mixin import EmbeddableDBMixin
 from governed_embeddings import governed_embed
 from module_graph_analyzer import build_import_graph
 from vector_utils import cosine_similarity
@@ -129,25 +128,58 @@ class ModuleSynergyGrapher:
 
     # ------------------------------------------------------------------
     def _collect_ast_info(
-        self, root: Path, modules: Iterable[str]
+        self, root: Path, modules: Iterable[str], *, use_cache: bool = True
     ) -> Tuple[
         Dict[str, set[str]],
         Dict[str, set[str]],
         Dict[str, set[str]],
         Dict[str, str],
+        Dict[str, list[float]],
     ]:
+        """Return AST details and doc embeddings for ``modules``.
+
+        Results are cached under ``sandbox_data/module_ast_cache.json``.  On
+        subsequent calls, cached values are reused when the corresponding source
+        file's modification time is unchanged.  Setting ``use_cache`` to
+        ``False`` forces regeneration of all entries.
+        """
+
+        cache_path = root / "sandbox_data" / "module_ast_cache.json"
+        cache: Dict[str, Dict[str, object]] = {}
+        if use_cache and cache_path.exists():
+            try:
+                cache = json.loads(cache_path.read_text())
+            except Exception:  # pragma: no cover - corrupt cache
+                cache = {}
+
         vars_: Dict[str, set[str]] = {}
         funcs: Dict[str, set[str]] = {}
         classes: Dict[str, set[str]] = {}
         docs: Dict[str, str] = {}
+        embeddings: Dict[str, list[float]] = {}
+
+        updated = False
         for mod in modules:
             file = root / f"{mod}.py"
             if not file.exists():
                 continue
+            mtime = file.stat().st_mtime
+            cached = cache.get(mod) if use_cache else None
+            if cached and cached.get("mtime") == mtime:
+                vars_[mod] = set(cached.get("vars", []))
+                funcs[mod] = set(cached.get("funcs", []))
+                classes[mod] = set(cached.get("classes", []))
+                docs[mod] = str(cached.get("doc", ""))
+                emb = cached.get("embedding")
+                if emb:
+                    embeddings[mod] = emb  # type: ignore[assignment]
+                continue
+
             try:
                 tree = ast.parse(file.read_text())
             except Exception:
                 continue
+
             vnames: set[str] = set()
             fnames: set[str] = set()
             cnames: set[str] = set()
@@ -163,11 +195,43 @@ class ModuleSynergyGrapher:
                     fnames.add(f"{node.name}({','.join(params)})")
                 elif isinstance(node, ast.ClassDef):
                     cnames.add(node.name)
+
+            doc = ast.get_docstring(tree) or ""
+            try:
+                vec = governed_embed(doc) if doc else []
+            except Exception:
+                vec = []
+            if vec:
+                embeddings[mod] = vec
+
             vars_[mod] = vnames
             funcs[mod] = fnames
             classes[mod] = cnames
-            docs[mod] = ast.get_docstring(tree) or ""
-        return vars_, funcs, classes, docs
+            docs[mod] = doc
+
+            cache[mod] = {
+                "mtime": mtime,
+                "vars": sorted(vnames),
+                "funcs": sorted(fnames),
+                "classes": sorted(cnames),
+                "doc": doc,
+                "embedding": vec,
+            }
+            updated = True
+
+        if not use_cache:
+            # Drop stale cache entries when forcing a rebuild.
+            cache = {m: cache[m] for m in modules if m in cache}
+            updated = True
+
+        if updated:
+            cache_path.parent.mkdir(exist_ok=True)
+            try:
+                cache_path.write_text(json.dumps(cache))
+            except Exception:  # pragma: no cover - disk issues
+                pass
+
+        return vars_, funcs, classes, docs, embeddings
 
     def _workflow_pairs(
         self, root: Path, modules: set[str]
@@ -267,7 +331,7 @@ class ModuleSynergyGrapher:
         return self.graph
 
     # ------------------------------------------------------------------
-    def build_graph(self, root_path: str | Path) -> nx.DiGraph:
+    def build_graph(self, root_path: str | Path, *, use_cache: bool = True) -> nx.DiGraph:
         """Return and persist a synergy graph for modules under ``root_path``."""
 
         root = Path(root_path)
@@ -275,31 +339,9 @@ class ModuleSynergyGrapher:
         import_graph = build_import_graph(root)
         modules = list(import_graph.nodes)
 
-        vars_, funcs, classes, docs = self._collect_ast_info(root, modules)
-
-        # Module docstring embeddings
-        embed_dir = root / "sandbox_data"
-        embed_dir.mkdir(exist_ok=True)
-
-        class _DocEmbedDB(EmbeddableDBMixin):
-            def vector(self, record: str) -> list[float]:
-                vec = governed_embed(record)
-                return vec or []
-
-        embed_db = _DocEmbedDB(
-            index_path=embed_dir / "module_doc_embeddings.ann",
-            metadata_path=embed_dir / "module_doc_embeddings.json",
+        vars_, funcs, classes, docs, embeddings = self._collect_ast_info(
+            root, modules, use_cache=use_cache
         )
-        embeddings: Dict[str, list[float]] = {}
-        for mod, doc in docs.items():
-            if not doc:
-                continue
-            vec = embed_db.get_vector(mod)
-            if vec is None:
-                embed_db.try_add_embedding(mod, doc, "module_doc")
-                vec = embed_db.get_vector(mod)
-            if vec:
-                embeddings[mod] = vec
 
         # Direct import scores
         direct: Dict[Tuple[str, str], float] = {}
@@ -434,19 +476,8 @@ class ModuleSynergyGrapher:
             self.save(self.graph, out_dir / "module_synergy_graph.json", format="json")
             return self.graph
 
-        vars_, funcs, classes, docs = self._collect_ast_info(root, changed)
-
-        embed_dir = root / "sandbox_data"
-        embed_dir.mkdir(exist_ok=True)
-
-        class _DocEmbedDB(EmbeddableDBMixin):
-            def vector(self, record: str) -> list[float]:
-                vec = governed_embed(record)
-                return vec or []
-
-        embed_db = _DocEmbedDB(
-            index_path=embed_dir / "module_doc_embeddings.ann",
-            metadata_path=embed_dir / "module_doc_embeddings.json",
+        vars_, funcs, classes, docs, new_embeddings = self._collect_ast_info(
+            root, changed, use_cache=False
         )
 
         embeddings: Dict[str, list[float]] = {}
@@ -455,14 +486,9 @@ class ModuleSynergyGrapher:
             if vec:
                 embeddings[mod] = vec  # existing vectors
 
+        embeddings.update(new_embeddings)
         for mod in changed:
-            doc = docs.get(mod, "")
-            if doc:
-                embed_db.try_add_embedding(mod, doc, "module_doc")
-                vec = embed_db.get_vector(mod)
-                if vec:
-                    embeddings[mod] = vec
-            else:
+            if mod not in new_embeddings:
                 embeddings.pop(mod, None)
 
         for mod in changed:
@@ -679,6 +705,11 @@ def _main(argv: Iterable[str] | None = None) -> int:
         metavar="PATH",
         help="JSON/TOML file providing coefficient overrides",
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="recompute AST info and embeddings ignoring any caches",
+    )
 
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -688,7 +719,7 @@ def _main(argv: Iterable[str] | None = None) -> int:
 
     grapher = ModuleSynergyGrapher(config=args.config)
     if args.build:
-        grapher.build_graph(Path.cwd())
+        grapher.build_graph(Path.cwd(), use_cache=not args.no_cache)
 
     if args.cluster:
         cluster = grapher.get_synergy_cluster(args.cluster, threshold=args.threshold)
