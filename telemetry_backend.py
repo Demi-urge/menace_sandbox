@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .metrics_exporter import Gauge
+from .db_scope import Scope, build_scope_clause, apply_scope
 
 ROI_EVENTS_DB = "roi_events.db"
 
@@ -167,6 +168,7 @@ class TelemetryBackend:
         scenario: str | None = None,
         start_ts: str | None = None,
         end_ts: str | None = None,
+        scope: Scope | str = "local",
     ) -> List[Dict[str, Any]]:
         """Return logged prediction history filtered by workflow or scenario."""
 
@@ -176,22 +178,23 @@ class TelemetryBackend:
             "SELECT workflow_id, predicted, actual, confidence, scenario, "
             "scenario_deltas, drift_flag, readiness, ts FROM roi_telemetry"
         )
-        clauses: List[str] = []
-        params: List[Any] = []
+        clause, scope_params = build_scope_clause(
+            "roi_telemetry", scope, self.router.menace_id
+        )
+        base = apply_scope(base, clause)
+        params: List[Any] = [*scope_params]
         if workflow_id is not None:
-            clauses.append("workflow_id = ?")
+            base = apply_scope(base, "workflow_id = ?")
             params.append(workflow_id)
         if scenario is not None:
-            clauses.append("scenario = ?")
+            base = apply_scope(base, "scenario = ?")
             params.append(scenario)
         if start_ts is not None:
-            clauses.append("ts >= ?")
+            base = apply_scope(base, "ts >= ?")
             params.append(start_ts)
         if end_ts is not None:
-            clauses.append("ts <= ?")
+            base = apply_scope(base, "ts <= ?")
             params.append(end_ts)
-        if clauses:
-            base += " WHERE " + " AND ".join(clauses)
         base += " ORDER BY ts"
         cur.execute(base, params)
         rows = cur.fetchall()
@@ -213,18 +216,23 @@ class TelemetryBackend:
         return result
 
     # ------------------------------------------------------------------
-    def fetch_drift_metrics(self, workflow_id: str | None = None) -> Dict[str, Any]:
+    def fetch_drift_metrics(
+        self, workflow_id: str | None = None, *, scope: Scope | str = "local"
+    ) -> Dict[str, Any]:
         """Return summary drift statistics for ``workflow_id``."""
 
         conn = self.router.get_connection("roi_telemetry")
         cur = conn.cursor()
-        if workflow_id is None:
-            cur.execute("SELECT drift_flag FROM roi_telemetry")
-        else:
-            cur.execute(
-                "SELECT drift_flag FROM roi_telemetry WHERE workflow_id = ?",
-                (workflow_id,),
-            )
+        base = "SELECT drift_flag FROM roi_telemetry"
+        clause, scope_params = build_scope_clause(
+            "roi_telemetry", scope, self.router.menace_id
+        )
+        base = apply_scope(base, clause)
+        params: List[Any] = [*scope_params]
+        if workflow_id is not None:
+            base = apply_scope(base, "workflow_id = ?")
+            params.append(workflow_id)
+        cur.execute(base, params)
         flags = [bool(x[0]) for x in cur.fetchall()]
         total = len(flags)
         drifted = sum(flags)
@@ -327,6 +335,7 @@ def fetch_roi_events(
     end_ts: str | None = None,
     limit: int | None = None,
     router: DBRouter | None = None,
+    scope: Scope | str = "local",
 ) -> List[Dict[str, Any]]:
     """Return persisted ROI prediction events for dashboards."""
 
@@ -340,19 +349,20 @@ def fetch_roi_events(
         "SELECT ts, workflow_id, predicted_roi, actual_roi, confidence, scenario_deltas, drift_flag "
         "FROM roi_prediction_events"
     )
-    clauses: List[str] = []
-    params: List[Any] = []
+    clause, scope_params = build_scope_clause(
+        "roi_prediction_events", scope, router.menace_id
+    )
+    base = apply_scope(base, clause)
+    params: List[Any] = [*scope_params]
     if workflow_id is not None:
-        clauses.append("workflow_id = ?")
+        base = apply_scope(base, "workflow_id = ?")
         params.append(workflow_id)
     if start_ts is not None:
-        clauses.append("ts >= ?")
+        base = apply_scope(base, "ts >= ?")
         params.append(start_ts)
     if end_ts is not None:
-        clauses.append("ts <= ?")
+        base = apply_scope(base, "ts <= ?")
         params.append(end_ts)
-    if clauses:
-        base += " WHERE " + " AND ".join(clauses)
     base += " ORDER BY ts"
     if limit is not None:
         base += " LIMIT ?"
