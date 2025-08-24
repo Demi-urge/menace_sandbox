@@ -180,3 +180,17 @@ def test_get_synergy_cluster_synthetic():
     assert grapher.get_synergy_cluster("a", threshold=0.7) == {"a", "c"}
     assert grapher.get_synergy_cluster("a", threshold=0.7, bfs=True) == {"a", "c"}
     assert grapher.get_synergy_cluster("a", threshold=0.3) == {"a", "b", "c"}
+
+
+def test_get_synergy_cluster_cycle_terminates():
+    """Graphs with cycles should not cause infinite loops during search."""
+
+    g = nx.DiGraph()
+    g.add_edge("a", "b", weight=0.6)
+    g.add_edge("b", "a", weight=0.6)  # cycle with positive weight
+
+    grapher = ModuleSynergyGrapher()
+    grapher.graph = g
+
+    assert grapher.get_synergy_cluster("a", threshold=0.5) == {"a", "b"}
+    assert grapher.get_synergy_cluster("a", threshold=0.5, bfs=True) == {"a", "b"}

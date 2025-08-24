@@ -790,36 +790,36 @@ class ModuleSynergyGrapher:
     ) -> set[str]:
         """Return modules whose cumulative synergy from ``module_name`` meets ``threshold``.
 
-        Ensures the graph is loaded before traversal.  When ``bfs`` is ``True`` a
-        breadth-first search is used, otherwise a depth-first search is
-        performed.
+        A Dijkstra-style search is used that explores highest scoring paths first
+        and finalises each node once its maximum cumulative score is known.  This
+        prevents infinite exploration on graphs containing cycles.  The ``bfs``
+        parameter is retained for backwards compatibility but has no effect on
+        the search order.
         """
 
         graph = self.graph or self.load()
         if module_name not in graph:
             return set()
 
-        from collections import deque
+        from heapq import heappop, heappush
 
-        container: deque[tuple[str, float]] | list[tuple[str, float]]
-        if bfs:
-            container = deque([(module_name, 0.0)])
-            pop = container.popleft
-            push = container.append
-        else:
-            container = [(module_name, 0.0)]
-            pop = container.pop
-            push = container.append
-
+        # ``score`` values are negated so ``heapq`` acts as a max-heap.
+        heap: list[tuple[float, str]] = [(-0.0, module_name)]
         best: Dict[str, float] = {module_name: 0.0}
-        while container:
-            node, score = pop()
+        finalised: set[str] = set()
+
+        while heap:
+            neg_score, node = heappop(heap)
+            score = -neg_score
+            if node in finalised:
+                continue
+            finalised.add(node)
             for neigh, data in graph[node].items():
                 weight = float(data.get("weight", 0.0))
                 new_score = score + weight
-                if new_score > best.get(neigh, float("-inf")):
+                if neigh not in finalised and new_score > best.get(neigh, float("-inf")):
                     best[neigh] = new_score
-                    push((neigh, new_score))
+                    heappush(heap, (-new_score, neigh))
 
         cluster = {module_name}
         cluster.update(n for n, s in best.items() if n != module_name and s >= threshold)
