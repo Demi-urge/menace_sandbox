@@ -11,17 +11,27 @@ from io import BytesIO
 import queue
 import statistics
 from collections import defaultdict
+import os
+import uuid
 
 from flask import Flask, jsonify, send_file, request
 
 import sys
 from types import ModuleType
 
+try:  # pragma: no cover - allow running as script
+    from .db_router import init_db_router  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from db_router import init_db_router  # type: ignore
+
+MENACE_ID = uuid.uuid4().hex
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
+
 from .telemetry_backend import TelemetryBackend, get_table_access_counts
-from .db_router import GLOBAL_ROUTER, init_db_router
 
-
-router = GLOBAL_ROUTER or init_db_router("metrics_dashboard")
+router = GLOBAL_ROUTER
 
 
 def _get_metrics_exporter() -> ModuleType | None:

@@ -20,7 +20,13 @@ from typing import Any, Callable, Iterable, Mapping
 import threading
 import inspect
 import subprocess
-from db_router import GLOBAL_ROUTER, init_db_router
+
+from db_router import init_db_router
+
+MENACE_ID = uuid.uuid4().hex
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from orphan_analyzer import classify_module
 from sandbox_settings import SandboxSettings
@@ -63,7 +69,7 @@ orphan_modules_reclassified_total = _me.orphan_modules_reclassified_total
 orphan_modules_redundant_total = _me.orphan_modules_redundant_total
 orphan_modules_legacy_total = _me.orphan_modules_legacy_total
 
-router = GLOBAL_ROUTER or init_db_router("self_test_service")
+router = GLOBAL_ROUTER
 
 self_test_passed_total = _me.Gauge(
     "self_test_passed_total", "Total number of passed self tests"

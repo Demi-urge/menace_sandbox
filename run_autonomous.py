@@ -29,7 +29,7 @@ from typing import Callable, List
 import math
 import uuid
 from scipy.stats import t
-from db_router import GLOBAL_ROUTER, init_db_router
+from db_router import init_db_router
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ _verify_required_dependencies()
 MENACE_ID = uuid.uuid4().hex
 LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
 SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
-DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
+GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from gpt_memory import GPTMemoryManager
 from memory_maintenance import MemoryMaintenance, _load_retention_rules
