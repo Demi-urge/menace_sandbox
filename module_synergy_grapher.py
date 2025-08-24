@@ -209,6 +209,27 @@ class ModuleSynergyGrapher:
         return path
 
     # ------------------------------------------------------------------
+    def load(self, path: str | Path | None = None) -> nx.DiGraph:
+        """Hydrate ``self.graph`` from a previously persisted graph file.
+
+        Parameters
+        ----------
+        path:
+            Optional location of the saved graph.  If omitted, the default
+            ``sandbox_data/module_synergy_graph.json`` is used.
+
+        Returns
+        -------
+        ``networkx.DiGraph``
+            The loaded graph which is also stored in ``self.graph``.
+        """
+
+        if path is None:
+            path = Path("sandbox_data/module_synergy_graph.json")
+        self.graph = load_graph(path)
+        return self.graph
+
+    # ------------------------------------------------------------------
     def build_graph(self, root_path: str | Path) -> nx.DiGraph:
         """Return and persist a synergy graph for modules under ``root_path``."""
 
@@ -333,27 +354,78 @@ class ModuleSynergyGrapher:
         self.save(graph, out_dir / "module_synergy_graph.json", format="json")
         return graph
 
+    # ------------------------------------------------------------------
+    def get_synergy_cluster(
+        self,
+        module_name: str,
+        threshold: float = 0.7,
+        *,
+        bfs: bool = False,
+    ) -> set[str]:
+        """Return modules whose cumulative synergy from ``module_name`` meets ``threshold``.
+
+        Ensures the graph is loaded before traversal.  When ``bfs`` is ``True`` a
+        breadth-first search is used, otherwise a depth-first search is
+        performed.
+        """
+
+        graph = self.graph or self.load()
+        if module_name not in graph:
+            return set()
+
+        from collections import deque
+
+        container: deque[tuple[str, float]] | list[tuple[str, float]]
+        if bfs:
+            container = deque([(module_name, 0.0)])
+            pop = container.popleft
+            push = container.append
+        else:
+            container = [(module_name, 0.0)]
+            pop = container.pop
+            push = container.append
+
+        best: Dict[str, float] = {module_name: 0.0}
+        while container:
+            node, score = pop()
+            for neigh, data in graph[node].items():
+                weight = float(data.get("weight", 0.0))
+                new_score = score + weight
+                if new_score > best.get(neigh, float("-inf")):
+                    best[neigh] = new_score
+                    push((neigh, new_score))
+
+        cluster = {module_name}
+        cluster.update(n for n, s in best.items() if n != module_name and s >= threshold)
+        return cluster
+
 
 def get_synergy_cluster(
     module_name: str,
     threshold: float = 0.7,
     path: str | Path | None = None,
+    *,
+    bfs: bool = False,
 ) -> set[str]:
-    """Return modules reachable from ``module_name`` with edge weight ≥ ``threshold``."""
+    """Convenience wrapper around :class:`ModuleSynergyGrapher`.
 
-    path = Path(path) if path else Path("sandbox_data/module_synergy_graph.json")
-    graph = load_graph(path)
-    if module_name not in graph:
-        return set()
-    cluster: set[str] = {module_name}
-    stack = [module_name]
-    while stack:
-        node = stack.pop()
-        for neigh, data in graph[node].items():
-            if data.get("weight", 0.0) >= threshold and neigh not in cluster:
-                cluster.add(neigh)
-                stack.append(neigh)
-    return cluster
+    Parameters
+    ----------
+    module_name:
+        Starting module for the cluster search.
+    threshold:
+        Minimum cumulative synergy score required for inclusion.
+    path:
+        Optional path to the persisted graph.  When omitted the default
+        location is used.
+    bfs:
+        If ``True`` a breadth-first traversal is used, otherwise depth-first.
+    """
+
+    grapher = ModuleSynergyGrapher()
+    if path is not None:
+        grapher.load(path)
+    return grapher.get_synergy_cluster(module_name, threshold, bfs=bfs)
 
 
 def _main(argv: Iterable[str] | None = None) -> int:
@@ -370,6 +442,7 @@ def _main(argv: Iterable[str] | None = None) -> int:
     c.add_argument("module", help="module name to query")
     c.add_argument("--threshold", type=float, default=0.7)
     c.add_argument("--path", default=None, help="path to saved graph")
+    c.add_argument("--bfs", action="store_true", help="use BFS traversal")
 
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -378,7 +451,9 @@ def _main(argv: Iterable[str] | None = None) -> int:
         if args.out:
             ModuleSynergyGrapher().save(graph, args.out)
     elif args.cmd == "cluster":
-        cluster = get_synergy_cluster(args.module, args.threshold, args.path)
+        cluster = get_synergy_cluster(
+            args.module, args.threshold, args.path, bfs=args.bfs
+        )
         for mod in sorted(cluster):
             print(mod)
     return 0
