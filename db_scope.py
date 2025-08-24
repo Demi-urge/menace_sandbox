@@ -10,10 +10,14 @@ queries:
 - ``"all"`` – no menace ID filtering
 
 Use :func:`build_scope_clause` to generate a ``WHERE`` fragment enforcing the
-selected scope::
+selected scope. Examples::
 
     >>> build_scope_clause("bots", Scope.LOCAL, "alpha")
     ('WHERE bots.source_menace_id = ?', ['alpha'])
+    >>> build_scope_clause("bots", Scope.GLOBAL, "alpha")
+    ('WHERE bots.source_menace_id != ?', ['alpha'])
+    >>> build_scope_clause("bots", Scope.ALL, "alpha")
+    ('', [])
 
 This replaces the deprecated ``include_cross_instance`` and ``all_instances``
 flags with a single ``scope`` parameter.
@@ -37,7 +41,14 @@ class Scope(str, Enum):
 def build_scope_clause(
     table_alias: str, scope: Scope | str, menace_id: str
 ) -> Tuple[str, List[str]]:
-    """Return SQL fragment and parameters enforcing ``scope`` for ``menace_id``."""
+    """Return SQL fragment and parameters enforcing ``scope`` for ``menace_id``.
+
+    ``scope`` controls menace visibility:
+
+    - ``Scope.LOCAL`` – only rows from ``menace_id``
+    - ``Scope.GLOBAL`` – rows from other Menace instances
+    - ``Scope.ALL`` – no menace ID filtering
+    """
 
     scope = Scope(scope)
     if scope is Scope.LOCAL:
