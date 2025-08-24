@@ -54,6 +54,16 @@
     db.get_summary(1, scope="global")  # other menace instances
     db.get_summary(1, scope="all")     # all records
     ```
+    Scoping can also be applied manually when building SQL queries:
+
+    ```python
+    from db_scope import Scope, build_scope_clause, apply_scope
+
+    clause, params = build_scope_clause("bots", Scope.GLOBAL, "alpha")
+    sql = apply_scope("SELECT * FROM bots", clause)
+    # sql == "SELECT * FROM bots WHERE bots.source_menace_id <> ?"
+    # params == ["alpha"]
+    ```
 - Change Data Capture events published to `UnifiedEventBus`
 - Vector embedding search via `EmbeddableDBMixin` for bots, workflows,
   errors, enhancements and research items. Each database stores its own

@@ -19,6 +19,12 @@ selected scope. Examples::
     >>> build_scope_clause("bots", Scope.ALL, "alpha")
     ('', [])
 
+Combine with :func:`apply_scope` to prefix clauses as needed::
+
+    >>> clause, params = build_scope_clause("bots", Scope.LOCAL, "alpha")
+    >>> apply_scope("SELECT * FROM bots", clause)
+    'SELECT * FROM bots WHERE bots.source_menace_id = ?'
+
 This replaces the deprecated ``include_cross_instance`` and ``all_instances``
 flags with a single ``scope`` parameter.
 """

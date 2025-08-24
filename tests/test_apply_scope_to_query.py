@@ -1,26 +1,26 @@
-from db_scope import build_scope_clause, apply_scope_to_query
+from db_scope import Scope, build_scope_clause, apply_scope_to_query
 
 
 def test_build_scope_clause():
-    assert build_scope_clause("t", "local", "1") == (
+    assert build_scope_clause("t", Scope.LOCAL, "1") == (
         "t.source_menace_id = ?",
         ["1"],
     )
-    assert build_scope_clause("t", "global", "1") == (
+    assert build_scope_clause("t", Scope.GLOBAL, "1") == (
         "t.source_menace_id <> ?",
         ["1"],
     )
-    assert build_scope_clause("t", "all", "1") == ("", [])
+    assert build_scope_clause("t", Scope.ALL, "1") == ("", [])
 
 
 def test_apply_scope_to_query():
-    sql, params = apply_scope_to_query("SELECT * FROM bots", "local", "1")
+    sql, params = apply_scope_to_query("SELECT * FROM bots", Scope.LOCAL, "1")
     assert sql == "SELECT * FROM bots WHERE bots.source_menace_id = ?"
     assert params == ["1"]
 
     sql, params = apply_scope_to_query(
         "SELECT * FROM bots WHERE bots.type=?",
-        "global",
+        Scope.GLOBAL,
         "2",
         params=["test"],
     )
