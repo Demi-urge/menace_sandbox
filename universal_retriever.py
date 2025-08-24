@@ -1068,16 +1068,47 @@ class UniversalRetriever:
         return candidates[:top_k]
 
     # ------------------------------------------------------------------
-    def _error_frequency(self, error_id: int) -> float:
-        """Return raw error frequency from ``ErrorDB``."""
+    def _error_frequency(
+        self,
+        error_id: int,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> float:
+        """Return raw error frequency from ``ErrorDB``.
+
+        Parameters
+        ----------
+        error_id:
+            Identifier of the error record.
+        source_menace_id:
+            Optional menace identifier to query.  Defaults to this instance's
+            menace ID.
+        include_cross_instance:
+            When ``True`` the ``source_menace_id`` filter is omitted allowing
+            results from all instances.
+        """
 
         if not self.error_db:
             return 0.0
         try:
-            cur = self.error_db.conn.execute(
-                "SELECT frequency FROM errors WHERE id=?",
-                (error_id,),
-            ).fetchone()
+            menace_id = (
+                source_menace_id
+                if source_menace_id is not None
+                else getattr(self.error_db.router, "menace_id", None)
+                or os.getenv("MENACE_ID")
+                or ""
+            )
+            if include_cross_instance:
+                cur = self.error_db.conn.execute(
+                    "SELECT frequency FROM errors WHERE id=?",
+                    (error_id,),
+                ).fetchone()
+            else:
+                cur = self.error_db.conn.execute(
+                    "SELECT frequency FROM errors WHERE id=? AND source_menace_id=?",
+                    (error_id, menace_id),
+                ).fetchone()
             if cur and cur[0] is not None:
                 return float(cur[0])
         except sqlite3.Error:
