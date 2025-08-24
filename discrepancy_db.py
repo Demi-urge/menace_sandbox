@@ -94,7 +94,18 @@ class DiscrepancyDB(EmbeddableDBMixin):
                 parts.append(f"{k}={v}")
         return " ".join(parts)
 
-    def license_text(self, rec: Any) -> str | None:
+    def _current_menace_id(self, source_menace_id: str | None) -> str:
+        return source_menace_id or (
+            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        )
+
+    def license_text(
+        self,
+        rec: Any,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> str | None:
         if isinstance(rec, DiscrepancyRecord):
             return rec.message
         if isinstance(rec, dict):
@@ -104,19 +115,25 @@ class DiscrepancyDB(EmbeddableDBMixin):
                 rid = int(rec)
             except Exception:
                 return str(rec)
-            menace_id = (
-                self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
-            )
-            row = self.conn.execute(
-                "SELECT message FROM discrepancies WHERE id=? AND source_menace_id=?",
-                (rid, menace_id),
-            ).fetchone()
+            menace_id = self._current_menace_id(source_menace_id)
+            query = "SELECT message FROM discrepancies WHERE id=?"
+            params: list[Any] = [rid]
+            if not include_cross_instance:
+                query += " AND source_menace_id=?"
+                params.append(menace_id)
+            row = self.conn.execute(query, params).fetchone()
             return row["message"] if row else None
         if isinstance(rec, str):
             return rec
         return None
 
-    def vector(self, rec: Any) -> List[float] | None:
+    def vector(
+        self,
+        rec: Any,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> List[float] | None:
         if isinstance(rec, DiscrepancyRecord):
             text = self._embed_text(rec.message, rec.metadata)
             return self.encode_text(text)
@@ -130,13 +147,13 @@ class DiscrepancyDB(EmbeddableDBMixin):
                 rid = int(rec)
             except Exception:
                 return self.encode_text(str(rec))
-            menace_id = (
-                self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
-            )
-            row = self.conn.execute(
-                "SELECT message, metadata FROM discrepancies WHERE id=? AND source_menace_id=?",
-                (rid, menace_id),
-            ).fetchone()
+            menace_id = self._current_menace_id(source_menace_id)
+            query = "SELECT message, metadata FROM discrepancies WHERE id=?"
+            params: list[Any] = [rid]
+            if not include_cross_instance:
+                query += " AND source_menace_id=?"
+                params.append(menace_id)
+            row = self.conn.execute(query, params).fetchone()
             if not row:
                 return None
             meta = json.loads(row["metadata"] or "{}")
@@ -154,8 +171,8 @@ class DiscrepancyDB(EmbeddableDBMixin):
         except Exception as exc:  # pragma: no cover - best effort
             logger.exception("embedding hook failed for %s: %s", rec_id, exc)
 
-    def add(self, rec: DiscrepancyRecord) -> int:
-        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+    def add(self, rec: DiscrepancyRecord, *, source_menace_id: str | None = None) -> int:
+        menace_id = self._current_menace_id(source_menace_id)
         cur = self.conn.execute(
             "INSERT INTO discrepancies(message, metadata, ts, source_menace_id) VALUES (?,?,?,?)",
             (rec.message, json.dumps(rec.metadata), rec.ts, menace_id),
@@ -165,14 +182,22 @@ class DiscrepancyDB(EmbeddableDBMixin):
         self._embed_record_on_write(rec.id, rec)
         return rec.id
 
-    def get(self, rec_id: int) -> DiscrepancyRecord | None:
-        menace_id = (
-            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+    def get(
+        self,
+        rec_id: int,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> DiscrepancyRecord | None:
+        menace_id = self._current_menace_id(source_menace_id)
+        query = (
+            "SELECT id, message, metadata, ts FROM discrepancies WHERE id=?"
         )
-        row = self.conn.execute(
-            "SELECT id, message, metadata, ts FROM discrepancies WHERE id=? AND source_menace_id=?",
-            (rec_id, menace_id),
-        ).fetchone()
+        params: list[Any] = [rec_id]
+        if not include_cross_instance:
+            query += " AND source_menace_id=?"
+            params.append(menace_id)
+        row = self.conn.execute(query, params).fetchone()
         if not row:
             return None
         meta = json.loads(row["metadata"] or "{}")
@@ -186,39 +211,49 @@ class DiscrepancyDB(EmbeddableDBMixin):
         *,
         message: str | None = None,
         metadata: Dict[str, Any] | None = None,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
     ) -> None:
-        existing = self.get(rec_id)
+        existing = self.get(
+            rec_id,
+            source_menace_id=source_menace_id,
+            include_cross_instance=include_cross_instance,
+        )
         if not existing:
             return
         if message is not None:
             existing.message = message
         if metadata is not None:
             existing.metadata = metadata
-        menace_id = (
-            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
-        )
-        self.conn.execute(
-            "UPDATE discrepancies SET message=?, metadata=?, ts=? "
-            "WHERE id=? AND source_menace_id=?",
-            (
-                existing.message,
-                json.dumps(existing.metadata),
-                existing.ts,
-                rec_id,
-                menace_id,
-            ),
-        )
+        menace_id = self._current_menace_id(source_menace_id)
+        query = "UPDATE discrepancies SET message=?, metadata=?, ts=? WHERE id=?"
+        params: list[Any] = [
+            existing.message,
+            json.dumps(existing.metadata),
+            existing.ts,
+            rec_id,
+        ]
+        if not include_cross_instance:
+            query += " AND source_menace_id=?"
+            params.append(menace_id)
+        self.conn.execute(query, params)
         self.conn.commit()
         self._embed_record_on_write(rec_id, existing)
 
-    def delete(self, rec_id: int) -> None:
-        menace_id = (
-            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
-        )
-        self.conn.execute(
-            "DELETE FROM discrepancies WHERE id=? AND source_menace_id=?",
-            (rec_id, menace_id),
-        )
+    def delete(
+        self,
+        rec_id: int,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> None:
+        menace_id = self._current_menace_id(source_menace_id)
+        query = "DELETE FROM discrepancies WHERE id=?"
+        params: list[Any] = [rec_id]
+        if not include_cross_instance:
+            query += " AND source_menace_id=?"
+            params.append(menace_id)
+        self.conn.execute(query, params)
         self.conn.commit()
         rid = str(rec_id)
         if rid in self._metadata:
@@ -229,14 +264,19 @@ class DiscrepancyDB(EmbeddableDBMixin):
                 pass
 
     # ------------------------------------------------------------------
-    def iter_records(self) -> Iterator[tuple[int, dict[str, Any], str]]:
-        menace_id = (
-            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
-        )
-        cur = self.conn.execute(
-            "SELECT id, message, metadata FROM discrepancies WHERE source_menace_id=?",
-            (menace_id,),
-        )
+    def iter_records(
+        self,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> Iterator[tuple[int, dict[str, Any], str]]:
+        menace_id = self._current_menace_id(source_menace_id)
+        query = "SELECT id, message, metadata FROM discrepancies"
+        params: list[Any] = []
+        if not include_cross_instance:
+            query += " WHERE source_menace_id=?"
+            params.append(menace_id)
+        cur = self.conn.execute(query, params)
         for row in cur.fetchall():
             meta = json.loads(row["metadata"] or "{}")
             data = {"message": row["message"], **meta}
