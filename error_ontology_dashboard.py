@@ -4,24 +4,39 @@ from __future__ import annotations
 
 import os
 import uuid
-
-from db_router import init_db_router
-
-MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
-GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
-
+import json
 from pathlib import Path
 from typing import Optional
-import json
 
-from flask import jsonify, render_template_string
+from flask import jsonify, render_template_string, request
 
+from db_router import init_db_router
 from .metrics_dashboard import MetricsDashboard
-from .error_bot import ErrorDB
 from .knowledge_graph import KnowledgeGraph
-from .error_cluster_predictor import ErrorClusterPredictor
+from .db_scope import Scope, build_scope_clause, apply_scope
+from typing import TYPE_CHECKING
+
+try:  # pragma: no cover - optional predictor dependency
+    from .error_cluster_predictor import ErrorClusterPredictor
+except Exception:  # pragma: no cover - fallback for tests
+    class ErrorClusterPredictor:  # type: ignore
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def predict_high_risk_modules(
+            self, *, min_cluster_size: int = 2, top_n: int = 5
+        ) -> list[str]:
+            return []
+
+if TYPE_CHECKING:  # pragma: no cover - for type checking
+    from .error_bot import ErrorDB
+
+MENACE_ID = uuid.uuid4().hex
+LOCAL_DB_PATH = os.getenv(
+    "MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db"
+)
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 
 _TEMPLATE = """
@@ -44,11 +59,27 @@ async function load(){
   const k = await fetch('/cause_data').then(r=>r.json());
   const s = await fetch('/category_success').then(r=>r.json());
   const p = await fetch('/predicted_modules').then(r=>r.json());
-  new Chart(document.getElementById('by_category'), {type:'bar',data:{labels:c.labels,datasets:[{label:'Count',data:c.count}]}});
-  new Chart(document.getElementById('by_module'), {type:'bar',data:{labels:m.labels,datasets:[{label:'Count',data:m.count}]}});
-  new Chart(document.getElementById('by_cause'), {type:'bar',data:{labels:k.labels,datasets:[{label:'Count',data:k.count}]}});
-  new Chart(document.getElementById('success_by_category'), {type:'bar',data:{labels:s.labels,datasets:[{label:'Success Rate',data:s.rate}]},options:{scales:{y:{beginAtZero:true,max:1}}}});
-  new Chart(document.getElementById('predicted_modules'), {type:'bar',data:{labels:p.labels,datasets:[{label:'Risk Rank',data:p.rank}]}});
+  new Chart(document.getElementById('by_category'), {
+    type:'bar',
+    data:{labels:c.labels,datasets:[{label:'Count',data:c.count}]}
+  });
+  new Chart(document.getElementById('by_module'), {
+    type:'bar',
+    data:{labels:m.labels,datasets:[{label:'Count',data:m.count}]}
+  });
+  new Chart(document.getElementById('by_cause'), {
+    type:'bar',
+    data:{labels:k.labels,datasets:[{label:'Count',data:k.count}]}
+  });
+  new Chart(document.getElementById('success_by_category'), {
+    type:'bar',
+    data:{labels:s.labels,datasets:[{label:'Success Rate',data:s.rate}]},
+    options:{scales:{y:{beginAtZero:true,max:1}}}
+  });
+  new Chart(document.getElementById('predicted_modules'), {
+    type:'bar',
+    data:{labels:p.labels,datasets:[{label:'Risk Rank',data:p.rank}]}
+  });
 }
 load();
 </script>
@@ -62,13 +93,16 @@ class ErrorOntologyDashboard(MetricsDashboard):
 
     def __init__(
         self,
-        error_db: Optional[ErrorDB] = None,
+        error_db: 'ErrorDB | None' = None,
         graph: Optional[KnowledgeGraph] = None,
         *,
         history_file: str | Path = "roi_history.json",
     ) -> None:
         super().__init__(history_file)
-        self.error_db = error_db or ErrorDB()
+        if error_db is None:
+            from .error_bot import ErrorDB as _ErrorDB
+            error_db = _ErrorDB()
+        self.error_db = error_db
         self.graph = graph or KnowledgeGraph()
         self.predictor = ErrorClusterPredictor(self.graph, self.error_db)
         self.app.add_url_rule('/', 'index', self.index)
@@ -82,37 +116,80 @@ class ErrorOntologyDashboard(MetricsDashboard):
     def index(self) -> tuple[str, int]:
         return render_template_string(_TEMPLATE), 200
 
-    def category_data(self) -> tuple[str, int]:
-        cur = self.error_db.conn.execute(
-            'SELECT COALESCE(category, ""), COUNT(*) FROM telemetry GROUP BY category'
+    def category_data(
+        self,
+        scope: str | None = None,
+        source_menace_id: str | None = None,
+    ) -> tuple[str, int]:
+        scope = scope or request.args.get("scope", "local")
+        source_menace_id = source_menace_id or request.args.get("source_menace_id")
+        menace_id = self.error_db._menace_id(source_menace_id)
+        clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+        query = apply_scope(
+            'SELECT COALESCE(category, ""), COUNT(*) FROM telemetry', clause
         )
+        query += ' GROUP BY category'
+        cur = self.error_db.conn.execute(query, params)
         rows = cur.fetchall()
         labels = [r[0] for r in rows]
         count = [int(r[1]) for r in rows]
         return jsonify({'labels': labels, 'count': count}), 200
 
-    def module_data(self) -> tuple[str, int]:
-        cur = self.error_db.conn.execute(
-            'SELECT COALESCE(module, ""), COUNT(*) FROM telemetry GROUP BY module'
+    def module_data(
+        self,
+        scope: str | None = None,
+        source_menace_id: str | None = None,
+    ) -> tuple[str, int]:
+        scope = scope or request.args.get("scope", "local")
+        source_menace_id = source_menace_id or request.args.get("source_menace_id")
+        menace_id = self.error_db._menace_id(source_menace_id)
+        clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+        query = apply_scope(
+            'SELECT COALESCE(module, ""), COUNT(*) FROM telemetry', clause
         )
+        query += ' GROUP BY module'
+        cur = self.error_db.conn.execute(query, params)
         rows = cur.fetchall()
         labels = [r[0] for r in rows]
         count = [int(r[1]) for r in rows]
         return jsonify({'labels': labels, 'count': count}), 200
 
-    def cause_data(self) -> tuple[str, int]:
-        cur = self.error_db.conn.execute(
-            'SELECT COALESCE(cause, ""), COUNT(*) FROM telemetry GROUP BY cause'
+    def cause_data(
+        self,
+        scope: str | None = None,
+        source_menace_id: str | None = None,
+    ) -> tuple[str, int]:
+        scope = scope or request.args.get("scope", "local")
+        source_menace_id = source_menace_id or request.args.get("source_menace_id")
+        menace_id = self.error_db._menace_id(source_menace_id)
+        clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+        query = apply_scope(
+            'SELECT COALESCE(cause, ""), COUNT(*) FROM telemetry', clause
         )
+        query += ' GROUP BY cause'
+        cur = self.error_db.conn.execute(query, params)
         rows = cur.fetchall()
         labels = [r[0] for r in rows]
         count = [int(r[1]) for r in rows]
         return jsonify({'labels': labels, 'count': count}), 200
 
-    def category_success(self) -> tuple[str, int]:
-        cur = self.error_db.conn.execute(
-            "SELECT COALESCE(category, ''), AVG(CASE WHEN resolution_status='successful' THEN 1.0 ELSE 0.0 END) FROM telemetry GROUP BY category"
+    def category_success(
+        self,
+        scope: str | None = None,
+        source_menace_id: str | None = None,
+    ) -> tuple[str, int]:
+        scope = scope or request.args.get("scope", "local")
+        source_menace_id = source_menace_id or request.args.get("source_menace_id")
+        menace_id = self.error_db._menace_id(source_menace_id)
+        clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+        query = apply_scope(
+            "SELECT COALESCE(category, ''), "
+            "AVG(CASE WHEN resolution_status='successful' "
+            "THEN 1.0 ELSE 0.0 END) FROM telemetry",
+            clause,
         )
+        query += ' GROUP BY category'
+        cur = self.error_db.conn.execute(query, params)
         rows = cur.fetchall()
         labels = [r[0] for r in rows]
         rate = [float(r[1] or 0.0) for r in rows]
@@ -123,25 +200,40 @@ class ErrorOntologyDashboard(MetricsDashboard):
         rank = list(range(len(modules), 0, -1))
         return jsonify({'labels': modules, 'rank': rank}), 200
 
-    def generate_report(self, path: str | Path = 'error_ontology_report.json') -> Path:
+    def generate_report(
+        self,
+        path: str | Path = 'error_ontology_report.json',
+        *,
+        scope: str = 'local',
+        source_menace_id: str | None = None,
+    ) -> Path:
         """Generate a JSON report of error counts."""
         # Keep graph in sync with latest stats
         try:
             self.graph.update_error_stats(self.error_db)
         except Exception:
             pass
-        cur = self.error_db.conn.execute(
-            'SELECT COALESCE(category, "") as category, COALESCE(module, "") as module, COUNT(*) as count\n'
-            'FROM telemetry GROUP BY category, module'
+        menace_id = self.error_db._menace_id(source_menace_id)
+        clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+        query = apply_scope(
+            'SELECT COALESCE(category, "") as category, '
+            'COALESCE(module, "") as module, '
+            'COUNT(*) as count FROM telemetry',
+            clause,
         )
+        query += ' GROUP BY category, module'
+        cur = self.error_db.conn.execute(query, params)
         rows = cur.fetchall()
         data = [
             {"category": r[0], "module": r[1], "count": int(r[2])}
             for r in rows
         ]
-        cause_cur = self.error_db.conn.execute(
-            'SELECT COALESCE(cause, "") as cause, COUNT(*) as count FROM telemetry GROUP BY cause'
+        cause_query = apply_scope(
+            'SELECT COALESCE(cause, "") as cause, COUNT(*) as count FROM telemetry',
+            clause,
         )
+        cause_query += ' GROUP BY cause'
+        cause_cur = self.error_db.conn.execute(cause_query, params)
         cause_rows = cause_cur.fetchall()
         causes = [
             {"cause": r[0], "count": int(r[1])}
@@ -163,10 +255,16 @@ def cli(argv: list[str] | None = None) -> None:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', default='error_ontology_report.json')
+    parser.add_argument('--scope', default='local', choices=[s.value for s in Scope])
+    parser.add_argument('--source-menace-id')
     args = parser.parse_args(argv)
 
     dash = ErrorOntologyDashboard()
-    dash.generate_report(args.output)
+    dash.generate_report(
+        args.output,
+        scope=args.scope,
+        source_menace_id=args.source_menace_id,
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
