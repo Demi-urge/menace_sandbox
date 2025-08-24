@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 import logging
 
+from db_router import GLOBAL_ROUTER
+
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .borderline_bucket import BorderlineBucket
 from . import RAISE_ERRORS
@@ -93,11 +95,9 @@ class TrialMonitor:
         for trial in trials:
             bot_id = trial["bot_id"]
             deploy_id = trial["deploy_id"]
-            menace_id = getattr(
-                getattr(self.deployer.bot_db, "router", None),
-                "menace_id",
-                None,
-            ) or os.getenv("MENACE_ID", "")
+            menace_id = (
+                GLOBAL_ROUTER.menace_id if GLOBAL_ROUTER else os.getenv("MENACE_ID", "")
+            )
             row = self.deployer.bot_db.conn.execute(
                 "SELECT name FROM bots WHERE id=? AND source_menace_id=?",
                 (bot_id, menace_id),
