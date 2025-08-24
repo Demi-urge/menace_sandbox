@@ -17,6 +17,7 @@ import asyncio
 import statistics
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from scope_utils import Scope, build_scope_clause
 
 try:  # pragma: no cover - optional dependency
     from dotenv import load_dotenv
@@ -27,12 +28,24 @@ else:  # pragma: no cover - load env if library present
 
 from .alert_dispatcher import send_discord_alert
 
-from .data_bot import DataBot
+try:  # pragma: no cover - optional dependency
+    from .data_bot import DataBot
+except Exception:  # pragma: no cover - fallback when data_bot is unavailable
+    DataBot = None  # type: ignore
 from .database_manager import DB_PATH
 from .neuroplasticity import PathwayDB
-from .prediction_manager_bot import PredictionManager
-from .trend_predictor import TrendPredictor
-from .error_bot import ErrorBot
+try:  # pragma: no cover - optional dependency
+    from .prediction_manager_bot import PredictionManager
+except Exception:  # pragma: no cover - fallback when unavailable
+    PredictionManager = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .trend_predictor import TrendPredictor
+except Exception:  # pragma: no cover - fallback when unavailable
+    TrendPredictor = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .error_bot import ErrorBot
+except Exception:  # pragma: no cover - fallback when unavailable
+    ErrorBot = None  # type: ignore
 from .retry_utils import retry
 
 logger = logging.getLogger(__name__)
@@ -130,14 +143,24 @@ def fetch_metric_from_db(
     error_bot: "ErrorBot" | None = None,
     webhook_url: str | None = None,
     router: DBRouter | None = None,
+    scope: Scope | str = Scope.LOCAL,
+    source_menace_id: str | None = None,
 ) -> float:
     """Fetch the latest metric value from a SQLite database."""
     try:
-        conn = _get_router(router).get_connection("metrics")
-        cur = conn.execute(
-            "SELECT value FROM metrics WHERE name=? ORDER BY ts DESC LIMIT 1",
-            (metric_name,),
-        )
+        router = _get_router(router)
+        if source_menace_id is None:
+            source_menace_id = router.menace_id
+        clause, scope_params = build_scope_clause("metrics", scope, source_menace_id)
+        sql = "SELECT value FROM metrics WHERE name=?"
+        params = [metric_name]
+        if clause:
+            sql += f" AND {clause}"
+            params.extend(scope_params)
+        sql += " ORDER BY ts DESC LIMIT 1"
+
+        conn = router.get_connection("metrics")
+        cur = conn.execute(sql, params)
         row = cur.fetchone()
         if row is None:
             if default is None:
