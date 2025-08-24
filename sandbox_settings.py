@@ -101,6 +101,11 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_USE_MEMORY",
         description="Enable GPT memory integration during sandbox runs.",
     )
+    use_module_synergy: bool = Field(
+        False,
+        env="SANDBOX_USE_MODULE_SYNERGY",
+        description="Enable module synergy suggestions during workflow simulation and replacement.",
+    )
     enable_truth_calibration: bool = Field(
         True,
         env="ENABLE_TRUTH_CALIBRATION",

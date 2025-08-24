@@ -65,6 +65,10 @@ from pathlib import Path
 from typing import Mapping
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
+try:  # pragma: no cover - allow flat imports
+    from .module_synergy_grapher import get_synergy_cluster
+except Exception:  # pragma: no cover - fallback for flat layout
+    from module_synergy_grapher import get_synergy_cluster  # type: ignore
 try:
     from . import security_auditor
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -4902,21 +4906,38 @@ class SelfImprovementEngine:
                 except Exception:
                     self.logger.exception("orphan classification failed")
         replace_mods = [m for m, status in flags.items() if status == "replace"]
+        try:
+            use_synergy = SandboxSettings().use_module_synergy
+        except Exception:
+            use_synergy = False
         for mod in replace_mods:
+            cluster: set[str] = set()
+            if use_synergy:
+                try:
+                    cluster = get_synergy_cluster(mod)
+                except Exception:
+                    self.logger.exception(
+                        "synergy cluster lookup failed",
+                        extra=log_record(module=mod),
+                    )
             task_id: int | None = None
             if self.self_coding_engine:
                 try:
-                    task_id = generate_patch(mod, self.self_coding_engine)
+                    context = {"synergy_cluster": list(cluster)} if cluster else None
+                    task_id = generate_patch(
+                        mod, self.self_coding_engine, context=context
+                    )
                 except Exception:
                     self.logger.exception(
                         "replacement generation failed",
                         extra=log_record(module=mod),
                     )
             if self.event_bus:
+                event = {"module": mod, "task_id": task_id}
+                if cluster:
+                    event["synergy_cluster"] = list(cluster)
                 try:
-                    self.event_bus.publish(
-                        "relevancy:replace", {"module": mod, "task_id": task_id}
-                    )
+                    self.event_bus.publish("relevancy:replace", event)
                 except Exception:
                     self.logger.exception(
                         "relevancy replace event publish failed",
