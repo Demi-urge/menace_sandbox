@@ -849,15 +849,18 @@ class CodeDB(EmbeddableDBMixin):
         *,
         source_id: str = "",
         source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> None:
         """Embed ``record`` and store the vector and metadata."""
         if not isinstance(record, (CodeRecord, dict)):
             menace_id = source_menace_id or _current_menace_id(self.router)
+            clause, params = build_scope_clause("code", Scope(scope), menace_id)
+            query = apply_scope(
+                "SELECT summary, code, template_type, language FROM code WHERE id= ?",
+                clause,
+            )
             with self._connect() as conn:
-                row = conn.execute(
-                    "SELECT summary, code, template_type, language FROM code WHERE id=? AND source_menace_id=?",
-                    (record_id, menace_id),
-                ).fetchone()
+                row = conn.execute(query, [record_id, *params]).fetchone()
             if not row:
                 return
             record = (
@@ -879,15 +882,19 @@ class CodeDB(EmbeddableDBMixin):
         EmbeddableDBMixin.backfill_embeddings(self)
 
     def iter_records(
-        self, source_menace_id: str | None = None
+        self,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> Iterator[tuple[int, dict[str, Any], str]]:
         """Yield code rows for embedding backfill."""
         menace_id = source_menace_id or _current_menace_id(self.router)
+        clause, params = build_scope_clause("code", Scope(scope), menace_id)
+        query = apply_scope(
+            "SELECT id, summary, code, template_type, language FROM code",
+            clause,
+        )
         with self._connect() as conn:
-            cur = conn.execute(
-                "SELECT id, summary, code, template_type, language FROM code WHERE source_menace_id=?",
-                (menace_id,),
-            )
+            cur = conn.execute(query, params)
             rows = cur.fetchall()
         for row in rows:
             data = dict(row) if isinstance(row, sqlite3.Row) else {

@@ -1,5 +1,6 @@
 import db_router
 import menace.code_database as cdb
+from embeddable_db_mixin import EmbeddableDBMixin
 
 
 def _setup_code_db(tmp_path):
@@ -21,6 +22,8 @@ def _setup_code_db(tmp_path):
         "router_b": router_b,
         "db_a": db_a,
         "db_b": db_b,
+        "id_a": id_a,
+        "id_b": id_b,
     }
 
 
@@ -59,3 +62,38 @@ def test_codes_for_bot_scopes(tmp_path):
     ids_global = set(db_a.codes_for_bot("shared", scope="global"))
     ids_all = set(db_a.codes_for_bot("shared", scope="all"))
     assert ids_all == ids_local | ids_global
+
+
+def test_add_embedding_scopes(tmp_path, monkeypatch):
+    ctx = _setup_code_db(tmp_path)
+    db_a = ctx["db_a"]
+    id_a = ctx["id_a"]
+    id_b = ctx["id_b"]
+
+    calls: list[int] = []
+
+    def fake_add(self, record_id, record, kind, *, source_id=""):
+        calls.append(int(record_id))
+
+    monkeypatch.setattr(EmbeddableDBMixin, "add_embedding", fake_add)
+
+    db_a.add_embedding(id_a, object(), "code", scope="local")
+    db_a.add_embedding(id_b, object(), "code", scope="local")
+    db_a.add_embedding(id_b, object(), "code", scope="global")
+    db_a.add_embedding(id_a, object(), "code", scope="all")
+    db_a.add_embedding(id_b, object(), "code", scope="all")
+
+    assert calls == [id_a, id_b, id_a, id_b]
+
+
+def test_iter_records_scopes(tmp_path):
+    ctx = _setup_code_db(tmp_path)
+    db_a = ctx["db_a"]
+
+    local = {rec["summary"] for _, rec, _ in db_a.iter_records(scope="local")}
+    global_ = {rec["summary"] for _, rec, _ in db_a.iter_records(scope="global")}
+    all_ = {rec["summary"] for _, rec, _ in db_a.iter_records(scope="all")}
+
+    assert local == {"A"}
+    assert global_ == {"B"}
+    assert all_ == {"A", "B"}
