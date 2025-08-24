@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Iterable, Optional
@@ -150,18 +151,24 @@ class IPOEnhancementsDB:
 
     def __init__(self, path: Path = Path("enhancements.db")) -> None:
         self.path = path
-        router = GLOBAL_ROUTER or init_db_router("ipo_bot", shared_db_path=str(path))
-        self.conn = router.get_connection("enhancements")
+        self.router = GLOBAL_ROUTER or init_db_router("ipo_bot", shared_db_path=str(path))
+        self.conn = self.router.get_connection("enhancements")
         c = self.conn.cursor()
         c.execute(
-            "CREATE TABLE IF NOT EXISTS enhancements (id INTEGER PRIMARY KEY, blueprint_id TEXT, bot TEXT, action TEXT, reason TEXT)"
+            "CREATE TABLE IF NOT EXISTS enhancements (id INTEGER PRIMARY KEY, blueprint_id TEXT, bot TEXT, action TEXT, reason TEXT, source_menace_id TEXT DEFAULT '')"
         )
+        cols = [r[1] for r in c.execute("PRAGMA table_info(enhancements)").fetchall()]
+        if "source_menace_id" not in cols:
+            c.execute(
+                "ALTER TABLE enhancements ADD COLUMN source_menace_id TEXT DEFAULT ''"
+            )
         self.conn.commit()
 
     def log(self, blueprint_id: str, bot: str, action: str, reason: str) -> None:
+        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
         self.conn.execute(
-            "INSERT INTO enhancements (blueprint_id, bot, action, reason) VALUES (?,?,?,?)",
-            (blueprint_id, bot, action, reason),
+            "INSERT INTO enhancements (blueprint_id, bot, action, reason, source_menace_id) VALUES (?,?,?,?,?)",
+            (blueprint_id, bot, action, reason, menace_id),
         )
         self.conn.commit()
 

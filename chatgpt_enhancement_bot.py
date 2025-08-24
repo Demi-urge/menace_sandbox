@@ -158,6 +158,7 @@ class EnhancementDB(EmbeddableDBMixin):
                         category TEXT,
                         associated_bots TEXT,
                         triggered_by TEXT
+                        source_menace_id TEXT DEFAULT ''
                     )
                     """
                 )
@@ -178,6 +179,10 @@ class EnhancementDB(EmbeddableDBMixin):
                 if "triggered_by" not in cols:
                     conn.execute(
                         "ALTER TABLE enhancements ADD COLUMN triggered_by TEXT"
+                    )
+                if "source_menace_id" not in cols:
+                    conn.execute(
+                        "ALTER TABLE enhancements ADD COLUMN source_menace_id TEXT DEFAULT ''"
                     )
                 conn.execute(
                     """
@@ -246,6 +251,7 @@ class EnhancementDB(EmbeddableDBMixin):
         tags = ",".join(enh.tags)
         assigned = ",".join(enh.assigned_bots)
         assoc = ",".join(enh.associated_bots)
+        menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
         try:
             with self._connect() as conn:
                 cur = conn.execute(
@@ -254,8 +260,8 @@ class EnhancementDB(EmbeddableDBMixin):
                         idea, rationale, summary, score, timestamp, context,
                         before_code, after_code, title, description, tags, type, assigned_bots,
                         rejection_reason, cost_estimate, category, associated_bots,
-                        triggered_by
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        triggered_by, source_menace_id
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         enh.idea,
@@ -276,6 +282,7 @@ class EnhancementDB(EmbeddableDBMixin):
                         enh.category,
                         assoc,
                         enh.triggered_by,
+                        menace_id,
                     ),
                 )
                 conn.commit()
