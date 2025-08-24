@@ -13,7 +13,10 @@ from typing import Dict, Iterable, Tuple
 import networkx as nx
 from networkx.readwrite import json_graph
 
+from embeddable_db_mixin import EmbeddableDBMixin
+from governed_embeddings import governed_embed
 from module_graph_analyzer import build_import_graph
+from vector_utils import cosine_similarity
 
 try:  # synergy history DB may need package import
     import synergy_history_db as shd  # type: ignore
@@ -71,9 +74,11 @@ class ModuleSynergyGrapher:
             "import": 1.0,
             "structure": 1.0,
             "cooccurrence": 1.0,
+            "embedding": 1.0,
         }
     )
     graph: nx.DiGraph | None = None
+    embedding_threshold: float = 0.8
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -88,10 +93,16 @@ class ModuleSynergyGrapher:
     # ------------------------------------------------------------------
     def _collect_ast_info(
         self, root: Path, modules: Iterable[str]
-    ) -> Tuple[Dict[str, set[str]], Dict[str, set[str]], Dict[str, set[str]]]:
+    ) -> Tuple[
+        Dict[str, set[str]],
+        Dict[str, set[str]],
+        Dict[str, set[str]],
+        Dict[str, str],
+    ]:
         vars_: Dict[str, set[str]] = {}
         funcs: Dict[str, set[str]] = {}
         classes: Dict[str, set[str]] = {}
+        docs: Dict[str, str] = {}
         for mod in modules:
             file = root / f"{mod}.py"
             if not file.exists():
@@ -118,7 +129,8 @@ class ModuleSynergyGrapher:
             vars_[mod] = vnames
             funcs[mod] = fnames
             classes[mod] = cnames
-        return vars_, funcs, classes
+            docs[mod] = ast.get_docstring(tree) or ""
+        return vars_, funcs, classes, docs
 
     def _workflow_pairs(
         self, root: Path, modules: set[str]
@@ -128,14 +140,10 @@ class ModuleSynergyGrapher:
         if not db_path.exists():
             return counts
         try:
-            if WorkflowDB is not None:
-                wfdb = WorkflowDB(db_path)  # type: ignore[call-arg]
-                cur = wfdb.conn.execute("SELECT workflow, task_sequence FROM workflows")
-            else:  # pragma: no cover - fallback if WorkflowDB unavailable
-                import sqlite3
-
-                conn = sqlite3.connect(db_path)
-                cur = conn.execute("SELECT workflow, task_sequence FROM workflows")
+            if WorkflowDB is None:
+                return counts
+            wfdb = WorkflowDB(db_path)  # type: ignore[call-arg]
+            cur = wfdb.conn.execute("SELECT workflow, task_sequence FROM workflows")
             for workflow, sequence in cur.fetchall():
                 mods: set[str] = set()
                 for col in (workflow, sequence):
@@ -146,8 +154,6 @@ class ModuleSynergyGrapher:
                 for a, b in combinations(sorted(mods), 2):
                     counts[(a, b)] = counts.get((a, b), 0) + 1
                     counts[(b, a)] = counts.get((b, a), 0) + 1
-            if WorkflowDB is None:
-                conn.close()  # type: ignore[name-defined]
         except Exception:
             pass
         return counts
@@ -210,7 +216,31 @@ class ModuleSynergyGrapher:
         import_graph = build_import_graph(root)
         modules = list(import_graph.nodes)
 
-        vars_, funcs, classes = self._collect_ast_info(root, modules)
+        vars_, funcs, classes, docs = self._collect_ast_info(root, modules)
+
+        # Module docstring embeddings
+        embed_dir = root / "sandbox_data"
+        embed_dir.mkdir(exist_ok=True)
+
+        class _DocEmbedDB(EmbeddableDBMixin):
+            def vector(self, record: str) -> list[float]:
+                vec = governed_embed(record)
+                return vec or []
+
+        embed_db = _DocEmbedDB(
+            index_path=embed_dir / "module_doc_embeddings.ann",
+            metadata_path=embed_dir / "module_doc_embeddings.json",
+        )
+        embeddings: Dict[str, list[float]] = {}
+        for mod, doc in docs.items():
+            if not doc:
+                continue
+            vec = embed_db.get_vector(mod)
+            if vec is None:
+                embed_db.try_add_embedding(mod, doc, "module_doc")
+                vec = embed_db.get_vector(mod)
+            if vec:
+                embeddings[mod] = vec
 
         # Direct import scores
         direct: Dict[Tuple[str, str], float] = {}
@@ -258,6 +288,23 @@ class ModuleSynergyGrapher:
                 if score:
                     co_occ[(a, b)] = min(1.0, score)
 
+        # Docstring embedding similarities
+        embed_sim: Dict[Tuple[str, str], float] = {}
+        thr = self.embedding_threshold
+        for a in modules:
+            va = embeddings.get(a)
+            if not va:
+                continue
+            for b in modules:
+                if a == b:
+                    continue
+                vb = embeddings.get(b)
+                if not vb:
+                    continue
+                sim = cosine_similarity(va, vb)
+                if sim >= thr:
+                    embed_sim[(a, b)] = sim
+
         # Combine metrics
         graph = nx.DiGraph()
         graph.add_nodes_from(modules)
@@ -270,10 +317,12 @@ class ModuleSynergyGrapher:
                 )
                 struct_score = structure.get((a, b), 0.0)
                 co_score = co_occ.get((a, b), 0.0)
+                emb_score = embed_sim.get((a, b), 0.0)
                 total = (
                     self.coefficients.get("import", 1.0) * import_score
                     + self.coefficients.get("structure", 1.0) * struct_score
                     + self.coefficients.get("cooccurrence", 1.0) * co_score
+                    + self.coefficients.get("embedding", 1.0) * emb_score
                 )
                 if total > 0:
                     graph.add_edge(a, b, weight=total)
@@ -346,8 +395,5 @@ __all__ = [
     "get_synergy_cluster",
     "main",
 ]
-
-
 if __name__ == "__main__":  # pragma: no cover - CLI entry
     raise SystemExit(main())
-
