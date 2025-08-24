@@ -119,7 +119,8 @@ class BotDB(EmbeddableDBMixin):
     ) -> None:
         if not router:
             raise RuntimeError("Database router is not initialised")
-        self.conn = router.get_connection("bots")
+        self.router = router
+        self.conn = self.router.get_connection("bots")
         self.event_bus = event_bus
         self.menace_db = menace_db
         self.failed_events: list[FailedEvent] = []
@@ -144,7 +145,7 @@ class BotDB(EmbeddableDBMixin):
                 status TEXT,
                 version TEXT,
                 estimated_profit REAL,
-                source_menace_id TEXT DEFAULT ''
+                source_menace_id TEXT NOT NULL
             )
             """
         )
@@ -163,12 +164,14 @@ class BotDB(EmbeddableDBMixin):
             self.conn.execute("ALTER TABLE bots ADD COLUMN estimated_profit REAL")
         if "source_menace_id" not in cols:
             self.conn.execute(
-                "ALTER TABLE bots ADD COLUMN source_menace_id TEXT DEFAULT ''"
+                "ALTER TABLE bots ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
             )
         idxs = [r[1] for r in self.conn.execute("PRAGMA index_list('bots')").fetchall()]
         if "ix_bots_source_menace_id" in idxs:
             self.conn.execute("DROP INDEX IF EXISTS ix_bots_source_menace_id")
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_bots_source_menace_id ON bots(source_menace_id)")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bots_source_menace_id ON bots(source_menace_id)"
+        )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS bot_model(bot_id INTEGER, model_id INTEGER)"
         )
@@ -192,9 +195,7 @@ class BotDB(EmbeddableDBMixin):
 
     # basic helpers -----------------------------------------------------
     def _current_menace_id(self, source_menace_id: str | None) -> str:
-        return source_menace_id or (
-            router.menace_id if router else os.getenv("MENACE_ID", "")
-        )
+        return source_menace_id or self.router.menace_id
 
     def find_by_name(
         self,
@@ -408,8 +409,7 @@ class BotDB(EmbeddableDBMixin):
                     models or [],
                     workflows or [],
                     enhancements or [],
-                    source_menace_id=source_menace_id
-                    or (router.menace_id if router else None),
+                    source_menace_id=source_menace_id or self.router.menace_id,
                 )
             except Exception as exc:
                 logger.exception("MenaceDB insert failed: %s", exc)
@@ -419,7 +419,7 @@ class BotDB(EmbeddableDBMixin):
                         models or [],
                         workflows or [],
                         enhancements or [],
-                        router.menace_id if router else os.getenv("MENACE_ID", ""),
+                        self.router.menace_id,
                     )
                 )
         if self.event_bus:
@@ -603,9 +603,7 @@ class BotDB(EmbeddableDBMixin):
             return
         mdb = self.menace_db
         bot_id = rec.bid
-        menace_id = source_menace_id or (
-            router.menace_id if router else os.getenv("MENACE_ID", "")
-        )
+        menace_id = source_menace_id or self.router.menace_id
         with mdb.engine.begin() as conn:
             conn.execute(
                 mdb.bots.insert().values(
@@ -698,8 +696,7 @@ class BotDB(EmbeddableDBMixin):
                     mids,
                     wids,
                     eids,
-                    source_menace_id=row.get("source_menace_id")
-                    or (router.menace_id if router else None),
+                    source_menace_id=row.get("source_menace_id") or self.router.menace_id,
                 )
             except Exception as exc:
                 logger.exception("MenaceDB insert failed for %s: %s", rec.name, exc)
@@ -709,7 +706,7 @@ class BotDB(EmbeddableDBMixin):
                         mids,
                         wids,
                         eids,
-                        router.menace_id if router else os.getenv("MENACE_ID", ""),
+                        self.router.menace_id,
                     )
                 )
 
