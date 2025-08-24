@@ -1,8 +1,12 @@
 import sys
 import types
+
 import pytest
+from db_scope import Scope
 
 # Stub vector_service to avoid heavy model loading
+
+
 class DummyMixin:
     def __init__(self, *a, **k):
         pass
@@ -22,13 +26,14 @@ class DummyMixin:
     def search_by_vector(self, *a, **k):
         return []
 
+
 sys.modules.setdefault("vector_service", types.SimpleNamespace(EmbeddableDBMixin=DummyMixin))
 
-from discrepancy_db import DiscrepancyDB, DiscrepancyRecord
-from db_router import DBRouter, DENY_TABLES
+from discrepancy_db import DiscrepancyDB, DiscrepancyRecord  # noqa: E402
+from db_router import DBRouter, DENY_TABLES  # noqa: E402
 
 
-def test_discrepancy_db_uses_shared_database(tmp_path):
+def test_discrepancy_db_scope(tmp_path):
     shared_db = tmp_path / "shared.db"
     router1 = DBRouter("one", str(tmp_path / "one.db"), str(shared_db))
     router2 = DBRouter("two", str(tmp_path / "two.db"), str(shared_db))
@@ -37,8 +42,10 @@ def test_discrepancy_db_uses_shared_database(tmp_path):
         db2 = DiscrepancyDB(router=router2, vector_index_path=tmp_path / "i2.index")
         rec = DiscrepancyRecord(message="oops")
         rid = db1.add(rec)
-        fetched = db2.get(rid, include_cross_instance=True)
+        fetched = db2.get(rid, scope=Scope.ALL)
         assert fetched and fetched.message == "oops"
+        assert db2.get(rid, scope=Scope.GLOBAL)
+        assert db2.get(rid, scope=Scope.LOCAL) is None
     finally:
         router1.close()
         router2.close()
