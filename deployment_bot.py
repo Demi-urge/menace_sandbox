@@ -37,6 +37,7 @@ from .deployment_governance import evaluate_scorecard
 from .borderline_bucket import BorderlineBucket
 from .rollback_manager import RollbackManager
 from .audit_logger import log_event as audit_log_event
+from .db_scope import Scope, build_scope_clause, apply_scope
 
 # ---------------------------------------------------------------------------
 # SQLite layer for deployment & error tracking
@@ -166,20 +167,31 @@ class DeploymentDB:
             except Exception as exc:
                 _log_exception(self.logger, "publish errors:new", exc)
 
-    def errors_for(self, deploy_id: int, menace_id: str | None = None) -> List[int]:
-        """Return IDs of errors logged for a deployment.
+    def errors_for(
+        self,
+        deploy_id: int,
+        *,
+        source_menace_id: str | None = None,
+        scope: str = "local",
+    ) -> List[int]:
+        """Return IDs of errors logged for ``deploy_id``.
 
-        Errors are limited to the menace instance specified by ``menace_id``.
-        When not provided, the menace ID defaults to the router's menace ID or
-        the ``MENACE_ID`` environment variable.
+        The ``scope`` parameter controls menace visibility:
+
+        - ``"local"`` – only errors from the current menace
+        - ``"global"`` – errors from other menace instances
+        - ``"all"`` – no menace filtering
+
+        ``source_menace_id`` overrides the router's menace ID when provided.
         """
+
         conn = self.router.get_connection("errors")
-        if menace_id is None:
-            menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
-        rows = conn.execute(
-            "SELECT id FROM errors WHERE deploy_id=? AND source_menace_id=?",
-            (deploy_id, menace_id),
-        ).fetchall()
+        menace_id = source_menace_id or (
+            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        )
+        clause, params = build_scope_clause("errors", Scope(scope), menace_id)
+        query = apply_scope("SELECT id FROM errors WHERE deploy_id=?", clause)
+        rows = conn.execute(query, (deploy_id, *params)).fetchall()
         return [r[0] for r in rows]
 
     def get(self, deploy_id: int) -> Dict[str, Any]:
@@ -306,16 +318,9 @@ class DeploymentBot:
             except Exception as exc:
                 _log_exception(self.logger, "subscribe memory manager", exc)
 
-    def errors_for(self, deploy_id: int) -> List[int]:
-        """Return IDs of errors for ``deploy_id`` limited to this menace."""
-        router = getattr(self.db, "router", None) or self.db_router
-        menace_id = router.menace_id if router else os.getenv("MENACE_ID", "")
-        conn = router.get_connection("errors")
-        rows = conn.execute(
-            "SELECT id FROM errors WHERE deploy_id=? AND source_menace_id=?",
-            (deploy_id, menace_id),
-        ).fetchall()
-        return [r[0] for r in rows]
+    def errors_for(self, deploy_id: int, *, scope: str = "local") -> List[int]:
+        """Delegate to :class:`DeploymentDB.errors_for` with ``scope``."""
+        return self.db.errors_for(deploy_id, scope=scope)
 
     # ------------------------------------------------------------------
     # Utility helpers
