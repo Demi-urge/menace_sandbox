@@ -167,6 +167,7 @@ class ModuleSynergyGrapher:
         Dict[str, set[str]],
         Dict[str, set[str]],
         Dict[str, set[str]],
+        Dict[str, set[str]],
         Dict[str, str],
         Dict[str, list[float]],
         Dict[str, Dict[str, object]],
@@ -185,6 +186,7 @@ class ModuleSynergyGrapher:
         vars_: Dict[str, set[str]] = {}
         funcs: Dict[str, set[str]] = {}
         classes: Dict[str, set[str]] = {}
+        bases: Dict[str, set[str]] = {}
         docs: Dict[str, str] = {}
         embeddings: Dict[str, list[float]] = {}
 
@@ -204,6 +206,7 @@ class ModuleSynergyGrapher:
                 vars_[mod] = set(cached.get("vars", []))
                 funcs[mod] = set(cached.get("funcs", []))
                 classes[mod] = set(cached.get("classes", []))
+                bases[mod] = set(cached.get("bases", []))
                 docs[mod] = str(cached.get("doc", ""))
                 emb = cached.get("embedding")
                 if emb:
@@ -218,6 +221,8 @@ class ModuleSynergyGrapher:
             vnames: set[str] = set()
             fnames: set[str] = set()
             cnames: set[str] = set()
+            cbases: set[str] = set()
+
             for node in ast.walk(tree):
                 if isinstance(node, ast.Assign):
                     for tgt in node.targets:
@@ -226,16 +231,56 @@ class ModuleSynergyGrapher:
                 elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
                     vnames.add(node.target.id)
                 elif isinstance(node, ast.FunctionDef):
-                    params = [arg.arg for arg in node.args.args]
-                    fnames.add(f"{node.name}({','.join(params)})")
+                    # Build parameter signatures including types and defaults
+                    def _format_arg(arg: ast.arg, default: ast.expr | None) -> str:
+                        ann = (
+                            f":{ast.unparse(arg.annotation)}"
+                            if getattr(arg, "annotation", None)
+                            else ""
+                        )
+                        if default is not None:
+                            return f"{arg.arg}{ann}={ast.unparse(default)}"
+                        return f"{arg.arg}{ann}"
+
+                    pos_args = list(node.args.posonlyargs) + list(node.args.args)
+                    pos_defaults = [None] * (
+                        len(pos_args) - len(node.args.defaults)
+                    ) + list(node.args.defaults)
+                    params = [
+                        _format_arg(a, d) for a, d in zip(pos_args, pos_defaults)
+                    ]
+                    if node.args.vararg:
+                        params.append("*" + _format_arg(node.args.vararg, None))
+                    for a, d in zip(node.args.kwonlyargs, node.args.kw_defaults):
+                        params.append(_format_arg(a, d))
+                    if node.args.kwarg:
+                        params.append("**" + _format_arg(node.args.kwarg, None))
+                    ret = (
+                        f" -> {ast.unparse(node.returns)}"
+                        if getattr(node, "returns", None)
+                        else ""
+                    )
+                    fnames.add(f"{node.name}({', '.join(params)}){ret}")
                 elif isinstance(node, ast.ClassDef):
-                    cnames.add(node.name)
+                    base_names: list[str] = []
+                    for base in node.bases:
+                        try:
+                            base_names.append(ast.unparse(base))
+                        except Exception:
+                            if isinstance(base, ast.Name):
+                                base_names.append(base.id)
+                    if base_names:
+                        cnames.add(f"{node.name}({','.join(base_names)})")
+                        cbases.update(base_names)
+                    else:
+                        cnames.add(node.name)
 
             doc = ast.get_docstring(tree) or ""
 
             vars_[mod] = vnames
             funcs[mod] = fnames
             classes[mod] = cnames
+            bases[mod] = cbases
             docs[mod] = doc
 
             cache[mod] = {
@@ -244,6 +289,7 @@ class ModuleSynergyGrapher:
                 "vars": sorted(vnames),
                 "funcs": sorted(fnames),
                 "classes": sorted(cnames),
+                "bases": sorted(cbases),
                 "doc": doc,
             }
             updated = True
@@ -252,7 +298,7 @@ class ModuleSynergyGrapher:
             cache = {m: cache[m] for m in modules if m in cache}
             updated = True
 
-        return vars_, funcs, classes, docs, embeddings, cache, updated
+        return vars_, funcs, classes, bases, docs, embeddings, cache, updated
 
     def _workflow_pairs(
         self, root: Path, modules: set[str]
@@ -381,6 +427,7 @@ class ModuleSynergyGrapher:
             vars_,
             funcs,
             classes,
+            bases,
             docs,
             embeddings,
             cache,
@@ -447,8 +494,9 @@ class ModuleSynergyGrapher:
                 v = self._jaccard(vars_.get(a, set()), vars_.get(b, set()))
                 f = self._jaccard(funcs.get(a, set()), funcs.get(b, set()))
                 c = self._jaccard(classes.get(a, set()), classes.get(b, set()))
-                if v or f or c:
-                    structure[(a, b)] = (v + f + c) / 3
+                i = self._jaccard(bases.get(a, set()), bases.get(b, set()))
+                if v or f or c or i:
+                    structure[(a, b)] = (v + f + c + i) / 4
 
         # Co-occurrence data
         workflow_counts = self._workflow_pairs(root, set(modules))
@@ -491,6 +539,7 @@ class ModuleSynergyGrapher:
                 vars=sorted(vars_.get(mod, set())),
                 funcs=sorted(funcs.get(mod, set())),
                 classes=sorted(classes.get(mod, set())),
+                bases=sorted(bases.get(mod, set())),
                 doc=docs.get(mod, ""),
                 embedding=embeddings.get(mod),
             )
@@ -570,6 +619,7 @@ class ModuleSynergyGrapher:
             vars_,
             funcs,
             classes,
+            bases,
             docs,
             new_embeddings,
             cache,
@@ -624,6 +674,7 @@ class ModuleSynergyGrapher:
             self.graph.nodes[mod]["vars"] = sorted(vars_.get(mod, set()))
             self.graph.nodes[mod]["funcs"] = sorted(funcs.get(mod, set()))
             self.graph.nodes[mod]["classes"] = sorted(classes.get(mod, set()))
+            self.graph.nodes[mod]["bases"] = sorted(bases.get(mod, set()))
             self.graph.nodes[mod]["doc"] = docs.get(mod, "")
             self.graph.nodes[mod]["embedding"] = embeddings.get(mod)
 
@@ -652,17 +703,20 @@ class ModuleSynergyGrapher:
             va = set(vars_.get(a, set()))
             fa = set(funcs.get(a, set()))
             ca = set(classes.get(a, set()))
+            ia = set(bases.get(a, set()))
             for b in all_modules:
                 if a == b:
                     continue
                 vb = set(self.graph.nodes[b].get("vars", []))
                 fb = set(self.graph.nodes[b].get("funcs", []))
                 cb = set(self.graph.nodes[b].get("classes", []))
+                ib = set(self.graph.nodes[b].get("bases", []))
                 v = self._jaccard(va, vb)
                 f = self._jaccard(fa, fb)
                 c = self._jaccard(ca, cb)
-                if v or f or c:
-                    s = (v + f + c) / 3
+                i = self._jaccard(ia, ib)
+                if v or f or c or i:
+                    s = (v + f + c + i) / 4
                     structure[(a, b)] = s
                     structure[(b, a)] = s
 
