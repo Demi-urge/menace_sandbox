@@ -37,7 +37,7 @@ def test_discrepancy_db_uses_shared_database(tmp_path):
         db2 = DiscrepancyDB(router=router2, vector_index_path=tmp_path / "i2.index")
         rec = DiscrepancyRecord(message="oops")
         rid = db1.add(rec)
-        fetched = db2.get(rid)
+        fetched = db2.get(rid, include_cross_instance=True)
         assert fetched and fetched.message == "oops"
     finally:
         router1.close()
