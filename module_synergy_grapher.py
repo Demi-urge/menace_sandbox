@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import json
 import pickle
-import sqlite3
 from dataclasses import dataclass, field
 from itertools import combinations
 from pathlib import Path
@@ -15,7 +14,22 @@ import networkx as nx
 from networkx.readwrite import json_graph
 
 from module_graph_analyzer import build_import_graph
-from vector_service import SharedVectorService
+
+try:  # synergy history DB may need package import
+    import synergy_history_db as shd  # type: ignore
+except Exception:  # pragma: no cover - fallback
+    try:
+        import menace.synergy_history_db as shd  # type: ignore
+    except Exception:  # pragma: no cover - final fallback
+        shd = None  # type: ignore
+
+try:  # task_handoff_bot may rely on package context
+    from task_handoff_bot import WorkflowDB  # type: ignore
+except Exception:  # pragma: no cover - fallback to package import
+    try:  # pragma: no cover - alternative package structure
+        from menace.task_handoff_bot import WorkflowDB  # type: ignore
+    except Exception:  # pragma: no cover - final fallback
+        WorkflowDB = None  # type: ignore
 
 
 def save_graph(graph: nx.Graph, path: str | Path) -> None:
@@ -56,11 +70,10 @@ class ModuleSynergyGrapher:
         default_factory=lambda: {
             "import": 1.0,
             "structure": 1.0,
-            "workflow": 1.0,
-            "semantic": 1.0,
+            "cooccurrence": 1.0,
         }
     )
-    vector_service: SharedVectorService | None = None
+    graph: nx.DiGraph | None = None
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -72,30 +85,13 @@ class ModuleSynergyGrapher:
         union = len(sa | sb)
         return inter / union if union else 0.0
 
-    @staticmethod
-    def _cosine(a: Iterable[float], b: Iterable[float]) -> float:
-        import math
-
-        la = list(a)
-        lb = list(b)
-        dot = sum(x * y for x, y in zip(la, lb))
-        na = math.sqrt(sum(x * x for x in la))
-        nb = math.sqrt(sum(y * y for y in lb))
-        if not na or not nb:
-            return 0.0
-        return dot / (na * nb)
-
     # ------------------------------------------------------------------
-    def _collect_ast_info(self, root: Path, modules: Iterable[str]) -> Tuple[
-        Dict[str, set[str]],
-        Dict[str, set[str]],
-        Dict[str, set[str]],
-        Dict[str, str],
-    ]:
+    def _collect_ast_info(
+        self, root: Path, modules: Iterable[str]
+    ) -> Tuple[Dict[str, set[str]], Dict[str, set[str]], Dict[str, set[str]]]:
         vars_: Dict[str, set[str]] = {}
         funcs: Dict[str, set[str]] = {}
         classes: Dict[str, set[str]] = {}
-        docs: Dict[str, str] = {}
         for mod in modules:
             file = root / f"{mod}.py"
             if not file.exists():
@@ -122,29 +118,89 @@ class ModuleSynergyGrapher:
             vars_[mod] = vnames
             funcs[mod] = fnames
             classes[mod] = cnames
-            docs[mod] = ast.get_docstring(tree) or ""
-        return vars_, funcs, classes, docs
+        return vars_, funcs, classes
 
-    def _workflow_pairs(self, root: Path, modules: set[str]) -> Dict[Tuple[str, str], int]:
+    def _workflow_pairs(
+        self, root: Path, modules: set[str]
+    ) -> Dict[Tuple[str, str], int]:
         counts: Dict[Tuple[str, str], int] = {}
         db_path = root / "workflows.db"
         if not db_path.exists():
             return counts
         try:
-            conn = sqlite3.connect(db_path)
-            cur = conn.execute("SELECT workflow, task_sequence FROM workflows")
+            if WorkflowDB is not None:
+                wfdb = WorkflowDB(db_path)  # type: ignore[call-arg]
+                cur = wfdb.conn.execute("SELECT workflow, task_sequence FROM workflows")
+            else:  # pragma: no cover - fallback if WorkflowDB unavailable
+                import sqlite3
+
+                conn = sqlite3.connect(db_path)
+                cur = conn.execute("SELECT workflow, task_sequence FROM workflows")
             for workflow, sequence in cur.fetchall():
                 mods: set[str] = set()
                 for col in (workflow, sequence):
                     if col:
-                        mods.update(m.strip() for m in col.split(",") if m.strip() in modules)
+                        mods.update(
+                            m.strip() for m in col.split(",") if m.strip() in modules
+                        )
                 for a, b in combinations(sorted(mods), 2):
                     counts[(a, b)] = counts.get((a, b), 0) + 1
                     counts[(b, a)] = counts.get((b, a), 0) + 1
-            conn.close()
+            if WorkflowDB is None:
+                conn.close()  # type: ignore[name-defined]
         except Exception:
             pass
         return counts
+
+    def _history_pairs(
+        self, root: Path, modules: set[str]
+    ) -> Dict[Tuple[str, str], float]:
+        counts: Dict[Tuple[str, str], float] = {}
+        db_path = root / "synergy_history.db"
+        if not db_path.exists():
+            db_path = root / "sandbox_data" / "synergy_history.db"
+        if not db_path.exists() or shd is None:  # type: ignore[operator]
+            return counts
+        try:
+            history = shd.load_history(db_path)  # type: ignore[call-arg]
+            for entry in history:
+                keys = [k for k in entry if k in modules]
+                for a, b in combinations(sorted(keys), 2):
+                    val = min(float(entry.get(a, 0.0)), float(entry.get(b, 0.0)))
+                    if val <= 0:
+                        val = 1.0
+                    counts[(a, b)] = counts.get((a, b), 0.0) + val
+                    counts[(b, a)] = counts.get((b, a), 0.0) + val
+        except Exception:
+            pass
+        return counts
+
+    # ------------------------------------------------------------------
+    def save(
+        self,
+        graph: nx.DiGraph | None = None,
+        path: str | Path | None = None,
+        *,
+        format: str = "pickle",
+    ) -> Path:
+        """Persist ``graph`` to ``path`` in the requested ``format``."""
+
+        graph = graph or self.graph
+        if graph is None:
+            raise ValueError("graph not built")
+
+        fmt = format.lower()
+        ext = ".json" if fmt == "json" else ".pkl"
+        if path is None:
+            path = Path("sandbox_data") / f"module_synergy_graph{ext}"
+        else:
+            path = Path(path)
+            if not path.suffix:
+                path = path.with_suffix(ext)
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        save_graph(graph, path)
+        return path
 
     # ------------------------------------------------------------------
     def build_graph(self, root_path: str | Path) -> nx.DiGraph:
@@ -154,7 +210,25 @@ class ModuleSynergyGrapher:
         import_graph = build_import_graph(root)
         modules = list(import_graph.nodes)
 
-        vars_, funcs, classes, docs = self._collect_ast_info(root, modules)
+        vars_, funcs, classes = self._collect_ast_info(root, modules)
+
+        # Direct import scores
+        direct: Dict[Tuple[str, str], float] = {}
+        for a, b, data in import_graph.edges(data=True):
+            direct[(a, b)] = float(data.get("weight", 1.0))
+        max_direct = max(direct.values(), default=0.0)
+        direct_norm = {k: v / max_direct for k, v in direct.items()} if max_direct else {}
+
+        # Shared dependencies
+        deps = {m: set(import_graph.successors(m)) for m in modules}
+        shared: Dict[Tuple[str, str], float] = {}
+        for a in modules:
+            for b in modules:
+                if a == b:
+                    continue
+                score = self._jaccard(deps.get(a, set()), deps.get(b, set()))
+                if score:
+                    shared[(a, b)] = score
 
         # Structural similarity
         structure: Dict[Tuple[str, str], float] = {}
@@ -168,29 +242,21 @@ class ModuleSynergyGrapher:
                 if v or f or c:
                     structure[(a, b)] = (v + f + c) / 3
 
-        # Workflow co-occurrences
+        # Co-occurrence data
         workflow_counts = self._workflow_pairs(root, set(modules))
-        max_count = max(workflow_counts.values(), default=0)
-        workflow = {
-            k: (v / max_count if max_count else 0.0) for k, v in workflow_counts.items()
-        }
-
-        # Semantic similarity via embeddings
-        svc = self.vector_service or SharedVectorService()
-        embeds: Dict[str, Iterable[float]] = {}
-        for mod, doc in docs.items():
-            if not doc.strip():
-                continue
-            try:
-                embeds[mod] = svc.vectorise("text", {"text": doc})
-            except Exception:
-                continue
-        semantic: Dict[Tuple[str, str], float] = {}
-        for a in embeds:
-            for b in embeds:
+        history_counts = self._history_pairs(root, set(modules))
+        max_wf = max(workflow_counts.values(), default=0)
+        wf_norm = {k: v / max_wf for k, v in workflow_counts.items()} if max_wf else {}
+        max_hist = max(history_counts.values(), default=0.0)
+        hist_norm = {k: v / max_hist for k, v in history_counts.items()} if max_hist else {}
+        co_occ: Dict[Tuple[str, str], float] = {}
+        for a in modules:
+            for b in modules:
                 if a == b:
                     continue
-                semantic[(a, b)] = self._cosine(embeds[a], embeds[b])
+                score = wf_norm.get((a, b), 0.0) + hist_norm.get((a, b), 0.0)
+                if score:
+                    co_occ[(a, b)] = min(1.0, score)
 
         # Combine metrics
         graph = nx.DiGraph()
@@ -199,25 +265,23 @@ class ModuleSynergyGrapher:
             for b in modules:
                 if a == b:
                     continue
-                imp = (
-                    import_graph[a][b]["weight"]
-                    if import_graph.has_edge(a, b)
-                    else 0.0
+                import_score = min(
+                    1.0, direct_norm.get((a, b), 0.0) + shared.get((a, b), 0.0)
                 )
+                struct_score = structure.get((a, b), 0.0)
+                co_score = co_occ.get((a, b), 0.0)
                 total = (
-                    self.coefficients.get("import", 1.0) * imp
-                    + self.coefficients.get("structure", 1.0) * structure.get((a, b), 0.0)
-                    + self.coefficients.get("workflow", 1.0) * workflow.get((a, b), 0.0)
-                    + self.coefficients.get("semantic", 1.0) * semantic.get((a, b), 0.0)
+                    self.coefficients.get("import", 1.0) * import_score
+                    + self.coefficients.get("structure", 1.0) * struct_score
+                    + self.coefficients.get("cooccurrence", 1.0) * co_score
                 )
                 if total > 0:
                     graph.add_edge(a, b, weight=total)
 
-        # Persist graph
+        self.graph = graph
         out_dir = root / "sandbox_data"
         out_dir.mkdir(exist_ok=True)
-        out_file = out_dir / "module_synergy_graph.json"
-        save_graph(graph, out_file)
+        self.save(graph, out_dir / "module_synergy_graph.json", format="json")
         return graph
 
 
@@ -263,7 +327,7 @@ def _main(argv: Iterable[str] | None = None) -> int:
     if args.cmd == "build":
         graph = ModuleSynergyGrapher().build_graph(args.root)
         if args.out:
-            save_graph(graph, args.out)
+            ModuleSynergyGrapher().save(graph, args.out)
     elif args.cmd == "cluster":
         cluster = get_synergy_cluster(args.module, args.threshold, args.path)
         for mod in sorted(cluster):
@@ -286,3 +350,4 @@ __all__ = [
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
     raise SystemExit(main())
+
