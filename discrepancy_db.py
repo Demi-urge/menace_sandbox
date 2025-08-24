@@ -55,15 +55,22 @@ class DiscrepancyDB(EmbeddableDBMixin):
                 message TEXT,
                 metadata TEXT,
                 ts TEXT,
-                source_menace_id TEXT DEFAULT ''
+                source_menace_id TEXT NOT NULL
             )
             """
         )
         cols = [r[1] for r in self.conn.execute("PRAGMA table_info(discrepancies)").fetchall()]
         if "source_menace_id" not in cols:
             self.conn.execute(
-                "ALTER TABLE discrepancies ADD COLUMN source_menace_id TEXT DEFAULT ''"
+                "ALTER TABLE discrepancies ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
             )
+            self.conn.execute(
+                "UPDATE discrepancies SET source_menace_id='' WHERE source_menace_id IS NULL"
+            )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_discrepancies_source_menace_id "
+            "ON discrepancies(source_menace_id)"
+        )
         self.conn.commit()
         index_path = (
             Path(vector_index_path)
@@ -97,8 +104,12 @@ class DiscrepancyDB(EmbeddableDBMixin):
                 rid = int(rec)
             except Exception:
                 return str(rec)
+            menace_id = (
+                self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+            )
             row = self.conn.execute(
-                "SELECT message FROM discrepancies WHERE id=?", (rid,)
+                "SELECT message FROM discrepancies WHERE id=? AND source_menace_id=?",
+                (rid, menace_id),
             ).fetchone()
             return row["message"] if row else None
         if isinstance(rec, str):
@@ -119,8 +130,12 @@ class DiscrepancyDB(EmbeddableDBMixin):
                 rid = int(rec)
             except Exception:
                 return self.encode_text(str(rec))
+            menace_id = (
+                self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+            )
             row = self.conn.execute(
-                "SELECT message, metadata FROM discrepancies WHERE id=?", (rid,)
+                "SELECT message, metadata FROM discrepancies WHERE id=? AND source_menace_id=?",
+                (rid, menace_id),
             ).fetchone()
             if not row:
                 return None
@@ -151,9 +166,12 @@ class DiscrepancyDB(EmbeddableDBMixin):
         return rec.id
 
     def get(self, rec_id: int) -> DiscrepancyRecord | None:
+        menace_id = (
+            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        )
         row = self.conn.execute(
-            "SELECT id, message, metadata, ts FROM discrepancies WHERE id=?",
-            (rec_id,),
+            "SELECT id, message, metadata, ts FROM discrepancies WHERE id=? AND source_menace_id=?",
+            (rec_id, menace_id),
         ).fetchone()
         if not row:
             return None
@@ -176,15 +194,31 @@ class DiscrepancyDB(EmbeddableDBMixin):
             existing.message = message
         if metadata is not None:
             existing.metadata = metadata
+        menace_id = (
+            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        )
         self.conn.execute(
-            "UPDATE discrepancies SET message=?, metadata=?, ts=? WHERE id=?",
-            (existing.message, json.dumps(existing.metadata), existing.ts, rec_id),
+            "UPDATE discrepancies SET message=?, metadata=?, ts=? "
+            "WHERE id=? AND source_menace_id=?",
+            (
+                existing.message,
+                json.dumps(existing.metadata),
+                existing.ts,
+                rec_id,
+                menace_id,
+            ),
         )
         self.conn.commit()
         self._embed_record_on_write(rec_id, existing)
 
     def delete(self, rec_id: int) -> None:
-        self.conn.execute("DELETE FROM discrepancies WHERE id=?", (rec_id,))
+        menace_id = (
+            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        )
+        self.conn.execute(
+            "DELETE FROM discrepancies WHERE id=? AND source_menace_id=?",
+            (rec_id, menace_id),
+        )
         self.conn.commit()
         rid = str(rec_id)
         if rid in self._metadata:
@@ -196,7 +230,13 @@ class DiscrepancyDB(EmbeddableDBMixin):
 
     # ------------------------------------------------------------------
     def iter_records(self) -> Iterator[tuple[int, dict[str, Any], str]]:
-        cur = self.conn.execute("SELECT id, message, metadata FROM discrepancies")
+        menace_id = (
+            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        )
+        cur = self.conn.execute(
+            "SELECT id, message, metadata FROM discrepancies WHERE source_menace_id=?",
+            (menace_id,),
+        )
         for row in cur.fetchall():
             meta = json.loads(row["metadata"] or "{}")
             data = {"message": row["message"], **meta}
