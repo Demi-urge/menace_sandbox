@@ -180,12 +180,14 @@ class TelemetryBackend:
         start_ts: str | None = None,
         end_ts: str | None = None,
         scope: Scope | str = "local",
+        source_menace_id: str | None = None,
     ) -> List[Dict[str, Any]]:
         """Return logged prediction history filtered by workflow or scenario.
 
         ``scope`` controls menace visibility: ``"local"`` returns records created
         by this menace, ``"global"`` shows entries from other menaces and
-        ``"all"`` disables filtering entirely.
+        ``"all"`` disables filtering entirely. ``source_menace_id`` overrides the
+        current menace identifier when querying shared databases.
         """
 
         conn = self.router.get_connection("roi_telemetry")
@@ -194,8 +196,9 @@ class TelemetryBackend:
             "SELECT workflow_id, predicted, actual, confidence, scenario, "
             "scenario_deltas, drift_flag, readiness, ts FROM roi_telemetry"
         )
+        menace_id = source_menace_id or self.router.menace_id
         clause, scope_params = build_scope_clause(
-            "roi_telemetry", scope, self.router.menace_id
+            "roi_telemetry", scope, menace_id
         )
         base = apply_scope(base, clause)
         params: List[Any] = [*scope_params]
@@ -233,15 +236,24 @@ class TelemetryBackend:
 
     # ------------------------------------------------------------------
     def fetch_drift_metrics(
-        self, workflow_id: str | None = None, *, scope: Scope | str = "local"
+        self,
+        workflow_id: str | None = None,
+        *,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
     ) -> Dict[str, Any]:
-        """Return summary drift statistics for ``workflow_id``."""
+        """Return summary drift statistics for ``workflow_id``.
+
+        ``scope`` controls menace visibility while ``source_menace_id`` allows
+        querying records created by other menaces.
+        """
 
         conn = self.router.get_connection("roi_telemetry")
         cur = conn.cursor()
         base = "SELECT drift_flag FROM roi_telemetry"
+        menace_id = source_menace_id or self.router.menace_id
         clause, scope_params = build_scope_clause(
-            "roi_telemetry", scope, self.router.menace_id
+            "roi_telemetry", scope, menace_id
         )
         base = apply_scope(base, clause)
         params: List[Any] = [*scope_params]
@@ -358,8 +370,13 @@ def fetch_roi_events(
     limit: int | None = None,
     router: DBRouter | None = None,
     scope: Scope | str = "local",
+    source_menace_id: str | None = None,
 ) -> List[Dict[str, Any]]:
-    """Return persisted ROI prediction events for dashboards."""
+    """Return persisted ROI prediction events for dashboards.
+
+    ``source_menace_id`` allows querying records created by a different menace
+    when combined with an appropriate ``scope``.
+    """
 
     router = router or GLOBAL_ROUTER
     if router is None:  # pragma: no cover - defensive
@@ -371,8 +388,9 @@ def fetch_roi_events(
         "SELECT ts, workflow_id, predicted_roi, actual_roi, confidence, scenario_deltas, drift_flag "
         "FROM roi_prediction_events"
     )
+    menace_id = source_menace_id or router.menace_id
     clause, scope_params = build_scope_clause(
-        "roi_prediction_events", scope, router.menace_id
+        "roi_prediction_events", scope, menace_id
     )
     base = apply_scope(base, clause)
     params: List[Any] = [*scope_params]
