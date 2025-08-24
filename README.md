@@ -1688,15 +1688,14 @@ configuration options.
 Builds a weighted graph of module relationships and queries related modules.
 
 ```bash
-python module_synergy_grapher.py build .
-python module_synergy_grapher.py cluster <module> --threshold 0.8
+python module_synergy_grapher.py --build
+python module_synergy_grapher.py --cluster <module> --threshold 0.8
 ```
 
-Use `--out` to choose an output file when building, `--path` to point at an
-existing graph when querying and `--threshold` to control cluster expansion.
-The `ModuleSynergyGrapher` constructor accepts a `coefficients` mapping to tune
+The `--threshold` flag controls cluster expansion.  The
+`ModuleSynergyGrapher` constructor accepts a `coefficients` mapping to tune
 how `import`, `structure` and `cooccurrence` signals contribute to edge
-weights.
+weights.  `make synergy-graph` can be used in automation to refresh the graph.
 
 ## Vector Analytics
 

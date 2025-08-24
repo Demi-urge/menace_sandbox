@@ -429,33 +429,49 @@ def get_synergy_cluster(
 
 
 def _main(argv: Iterable[str] | None = None) -> int:
+    """Command line interface for :mod:`module_synergy_grapher`.
+
+    ``--build`` rebuilds the synergy graph for the current repository while
+    ``--cluster`` prints modules whose cumulative synergy with the supplied
+    module meets the ``--threshold`` value.
+    """
+
     import argparse
+    from pathlib import Path
 
-    parser = argparse.ArgumentParser(description="Module Synergy Grapher")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    b = sub.add_parser("build", help="rebuild synergy graph")
-    b.add_argument("root", nargs="?", default=".", help="root path for modules")
-    b.add_argument("--out", default=None, help="output file (json or pickle)")
-
-    c = sub.add_parser("cluster", help="query synergy cluster")
-    c.add_argument("module", help="module name to query")
-    c.add_argument("--threshold", type=float, default=0.7)
-    c.add_argument("--path", default=None, help="path to saved graph")
-    c.add_argument("--bfs", action="store_true", help="use BFS traversal")
+    parser = argparse.ArgumentParser(description="Module Synergy Grapher CLI")
+    parser.add_argument(
+        "--build",
+        action="store_true",
+        help="regenerate the synergy graph for the current repository",
+    )
+    parser.add_argument(
+        "--cluster",
+        metavar="MODULE",
+        help="module name whose synergistic neighbours should be printed",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.7,
+        help="minimum cumulative synergy required for inclusion",
+    )
 
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    if args.cmd == "build":
-        graph = ModuleSynergyGrapher().build_graph(args.root)
-        if args.out:
-            ModuleSynergyGrapher().save(graph, args.out)
-    elif args.cmd == "cluster":
-        cluster = get_synergy_cluster(
-            args.module, args.threshold, args.path, bfs=args.bfs
-        )
+    if not args.build and not args.cluster:
+        parser.print_help()
+        return 1
+
+    grapher = ModuleSynergyGrapher()
+    if args.build:
+        grapher.build_graph(Path.cwd())
+
+    if args.cluster:
+        cluster = grapher.get_synergy_cluster(args.cluster, threshold=args.threshold)
         for mod in sorted(cluster):
             print(mod)
+
     return 0
 
 
