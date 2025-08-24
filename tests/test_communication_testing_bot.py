@@ -1,7 +1,6 @@
 import pytest
 import sys
 from pathlib import Path
-
 import menace.communication_testing_bot as ctb
 import menace.mirror_bot as mb
 import menace.db_router as db_router
@@ -17,7 +16,10 @@ def create_dummy(tmp_path: Path) -> str:
 def test_functional(tmp_path):
     name = create_dummy(tmp_path)
     ctb.register_module(name)
-    db = ctb.CommTestDB(tmp_path / "log.db")
+    router = db_router.DBRouter(
+        "ct", str(tmp_path / "log.db"), str(tmp_path / "log.db")
+    )
+    db = ctb.CommTestDB(tmp_path / "log.db", router=router)
     bot = ctb.CommunicationTestingBot(db=db)
     results = bot.functional_tests([name])
     assert results and results[0].name
@@ -52,18 +54,28 @@ def test_integration():
 
 def test_benchmark_mirror(tmp_path):
     pytest.importorskip("pandas")
-    router = db_router.init_db_router("mirror", str(tmp_path / "m.db"), str(tmp_path / "m.db"))
+    router = db_router.init_db_router(
+        "mirror", str(tmp_path / "m.db"), str(tmp_path / "m.db")
+    )
     mdb = mb.MirrorDB(router=router)
     mirror = mb.MirrorBot(mdb)
     mirror.log_interaction("u", "hi", "great")
     mirror.update_style("buddy")
-    bot = ctb.CommunicationTestingBot(db=ctb.CommTestDB(":memory:"))
+    db_router_obj = db_router.DBRouter(
+        "ct", str(tmp_path / "log.db"), str(tmp_path / "log.db")
+    )
+    bot = ctb.CommunicationTestingBot(
+        db=ctb.CommTestDB(tmp_path / "log.db", router=db_router_obj)
+    )
     df = bot.benchmark_mirror(mirror, [("hello", "buddy")])
     assert not df.empty and df.iloc[0]["accuracy"] == 1.0
 
 
 def test_fetch_scope(tmp_path):
-    db = ctb.CommTestDB(tmp_path / "log.db")
+    router = db_router.DBRouter(
+        "ct", str(tmp_path / "log.db"), str(tmp_path / "log.db")
+    )
+    db = ctb.CommTestDB(tmp_path / "log.db", router=router)
     local = ctb.CommTestResult(name="local", passed=True, details="ok")
     db.log(local)
     foreign = ctb.CommTestResult(name="foreign", passed=False, details="no")
