@@ -95,3 +95,36 @@ def test_fetch_eval_scope(tmp_path):
     assert len(remote) == 1 and remote[0][2] == 2.0
     all_rows = mdb.fetch_eval("c", scope="all")
     assert len(all_rows) == 2
+
+
+def test_fetch_scope(tmp_path):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    mdb.add(
+        db.MetricRecord(
+            bot="a",
+            cpu=0.0,
+            memory=0.0,
+            response_time=0.0,
+            disk_io=0.0,
+            net_io=0.0,
+            errors=0,
+        )
+    )
+    mdb.add(
+        db.MetricRecord(
+            bot="b",
+            cpu=0.0,
+            memory=0.0,
+            response_time=0.0,
+            disk_io=0.0,
+            net_io=0.0,
+            errors=0,
+        ),
+        source_menace_id="other",
+    )
+    local = mdb.fetch(limit=None)
+    assert len(local) == 1 and local.iloc[0]["bot"] == "a"
+    remote = mdb.fetch(limit=None, scope="global")
+    assert len(remote) == 1 and remote.iloc[0]["bot"] == "b"
+    all_rows = mdb.fetch(limit=None, scope="all")
+    assert len(all_rows) == 2

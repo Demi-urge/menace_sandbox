@@ -126,7 +126,8 @@ class MetricsDB:
                 risk_index REAL DEFAULT 0,
                 maintainability REAL DEFAULT 0,
                 code_quality REAL DEFAULT 0,
-                ts TEXT
+                ts TEXT,
+                source_menace_id TEXT NOT NULL
             )
             """
             )
@@ -371,6 +372,10 @@ class MetricsDB:
                 "ALTER TABLE patch_outcomes ADD COLUMN label TEXT",
             )
         cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
+        if "source_menace_id" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
+            )
         if "revenue" not in cols:
             conn.execute("ALTER TABLE metrics ADD COLUMN revenue REAL DEFAULT 0")
         if "expense" not in cols:
@@ -437,26 +442,34 @@ class MetricsDB:
             )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_bot ON metrics(bot)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_metrics_menace ON metrics(source_menace_id)"
+        )
         conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
         return self.router.get_connection("metrics")
 
-    def add(self, rec: MetricRecord) -> int:
+    def add(
+        self, rec: MetricRecord, *, source_menace_id: object | None = None
+    ) -> int:
         with self._connect() as conn:
+            menace_id = source_menace_id or self.router.menace_id
             cur = conn.execute(
-            """
-            INSERT INTO metrics(
-                bot, cpu, memory, response_time, disk_io, net_io, errors,
-                revenue, expense,
-                security_score, safety_rating, adaptability,
-                antifragility, shannon_entropy, efficiency,
-                flexibility, gpu_usage, projected_lucrativity,
-                profitability, patch_complexity, patch_entropy, energy_consumption,
-                resilience, network_latency, throughput, risk_index,
-                maintainability, code_quality, ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+                """
+                INSERT INTO metrics(
+                    bot, cpu, memory, response_time, disk_io, net_io, errors,
+                    revenue, expense,
+                    security_score, safety_rating, adaptability,
+                    antifragility, shannon_entropy, efficiency,
+                    flexibility, gpu_usage, projected_lucrativity,
+                    profitability, patch_complexity, patch_entropy, energy_consumption,
+                    resilience, network_latency, throughput, risk_index,
+                    maintainability, code_quality, ts, source_menace_id)
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                """,
                 (
                     rec.bot,
                     rec.cpu,
@@ -487,6 +500,7 @@ class MetricsDB:
                     rec.maintainability,
                     rec.code_quality,
                     rec.ts,
+                    menace_id,
                 ),
             )
             conn.commit()
@@ -820,8 +834,10 @@ class MetricsDB:
         *,
         start: str | None = None,
         end: str | None = None,
+        source_menace_id: object | None = None,
+        scope: Scope | str = Scope.LOCAL,
     ) -> object:
-        """Return metrics optionally filtered by a timestamp range.
+        """Return metrics optionally filtered by timestamp range and scope.
 
         Falls back to a list of dictionaries when pandas is unavailable.
         """
@@ -833,8 +849,15 @@ class MetricsDB:
             " energy_consumption, resilience, network_latency, throughput,"
             " risk_index, maintainability, code_quality, ts FROM metrics"
         )
-        params = []
-        clauses = []
+        params: List[object] = []
+        clauses: List[str] = []
+        menace_id = source_menace_id or self.router.menace_id
+        scope_clause, scope_params = build_scope_clause(
+            "metrics", Scope(scope), menace_id
+        )
+        if scope_clause:
+            clauses.append(scope_clause)
+            params.extend(scope_params)
         if start:
             clauses.append("ts >= ?")
             params.append(start)
