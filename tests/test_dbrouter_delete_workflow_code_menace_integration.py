@@ -65,6 +65,12 @@ def test_delete_workflow_and_code_mirrors_to_menace(tmp_path):
 
     router.delete_code(cid)
     with sqlite3.connect(router.code_db.path) as conn:
-        assert conn.execute("SELECT * FROM code").fetchone() is None
+        assert (
+            conn.execute(
+                "SELECT * FROM code WHERE source_menace_id=?",
+                (router.menace_id,),
+            ).fetchone()
+            is None
+        )
     with mdb.engine.connect() as conn:
         assert conn.execute(mdb.code.select()).fetchone() is None

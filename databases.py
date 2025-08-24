@@ -307,7 +307,7 @@ class MenaceDB:
             Column("code_summary", Text),
             Column("source_menace_id", Text, nullable=False, server_default=""),
         )
-        Index("ix_code_source_menace_id", self.code.c.source_menace_id)
+        Index("idx_code_source_menace_id", self.code.c.source_menace_id)
 
         self.code_bots = Table(
             "code_bots",
