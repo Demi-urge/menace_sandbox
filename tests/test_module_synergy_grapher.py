@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import sqlite3
 
 import networkx as nx
 import pytest
@@ -64,6 +63,26 @@ def test_build_graph_basic(tmp_path: Path):
     assert path.exists()
 
 
+def test_build_save_load_cluster(tmp_path: Path):
+    """End-to-end test covering graph build, save/load and clustering."""
+
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("")
+
+    grapher = ModuleSynergyGrapher()
+    graph = grapher.build_graph(tmp_path)
+    pkl_path = tmp_path / "graph.pkl"
+    grapher.save(graph, pkl_path)
+
+    loader = ModuleSynergyGrapher()
+    loaded = loader.load(pkl_path)
+
+    assert set(loaded.nodes) == {"a", "b"}
+    assert set(loaded.edges) == {("a", "b")}
+    assert loaded["a"]["b"]["weight"] == pytest.approx(1.0)
+    assert loader.get_synergy_cluster("a", threshold=0.5) == {"a", "b"}
+
+
 # ---------------------------------------------------------------------------
 # Heuristic components
 
@@ -81,18 +100,19 @@ def test_workflow_cooccurrence(tmp_path: Path, monkeypatch):
     (tmp_path / "wfb.py").write_text("print('b')\n")
 
     db_path = tmp_path / "workflows.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute("CREATE TABLE workflows (workflow TEXT, task_sequence TEXT)")
-    conn.execute(
-        "INSERT INTO workflows (workflow, task_sequence) VALUES (?, ?)",
-        ("wfa,wfb", ""),
-    )
-    conn.commit()
-    conn.close()
+    db_path.touch()
 
     class DummyWorkflowDB:
-        def __init__(self, path):
-            self.conn = sqlite3.connect(path)
+        def __init__(self, path):  # pragma: no cover - simple stub
+            class Conn:
+                def execute(self, _query):
+                    class Cur:
+                        def fetchall(self):
+                            return [("wfa,wfb", "")]
+
+                    return Cur()
+
+            self.conn = Conn()
 
     monkeypatch.setattr(msg, "WorkflowDB", DummyWorkflowDB)
     graph = ModuleSynergyGrapher().build_graph(tmp_path)
@@ -133,4 +153,3 @@ def test_get_synergy_cluster_synthetic():
     assert grapher.get_synergy_cluster("a", threshold=0.7) == {"a", "c"}
     assert grapher.get_synergy_cluster("a", threshold=0.7, bfs=True) == {"a", "c"}
     assert grapher.get_synergy_cluster("a", threshold=0.3) == {"a", "b", "c"}
-
