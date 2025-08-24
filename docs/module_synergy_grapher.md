@@ -32,7 +32,7 @@ python module_synergy_grapher.py --cluster <module> --threshold 0.8
 
 The `--threshold` flag filters edges by weight when expanding the cluster.
 
-## Example `get_synergy_cluster` Output
+## `get_synergy_cluster` API
 
 After building the graph a module's neighbourhood can be inspected from the CLI:
 
@@ -42,12 +42,24 @@ a
 b
 ```
 
-The function form mirrors the CLI:
+Programmatic access is available via :func:`get_synergy_cluster`:
 
 ```python
 from module_synergy_grapher import get_synergy_cluster
-get_synergy_cluster("a", threshold=0.5)
+cluster = get_synergy_cluster("a", threshold=0.5)
 # {'a', 'b'}
+```
+
+The returned set can seed basic workflow construction.  One approach is to
+expand a seed module with its synergistic neighbours and execute each step in
+sequence:
+
+```python
+seed = "a"
+cluster = get_synergy_cluster(seed, threshold=0.5)
+workflow = [seed] + [m for m in cluster if m != seed]
+for module in workflow:
+    run_module(module)  # application-specific helper
 ```
 
 ## CLI Options
@@ -87,18 +99,23 @@ graph = grapher.build_graph(".")
 grapher.save(graph, format="pickle")
 ```
 
-## Data Sources
+## Graph Components & Scoring
 
-Edges combine four heuristics:
+Edges combine four signals that are weighted and summed to produce the final
+synergy score:
 
-* **Imports and shared dependencies** – direct imports and overlap in imported
-  modules derived from the static import graph.
-* **Shared identifiers** – Jaccard similarity of variable, function and class
-  names extracted from each module's AST.
-* **Workflow co-occurrence** – pairs of modules that appear together in
-  `workflows.db` or in historical synergy records.
-* **Docstring embeddings** – cosine similarity of module docstring embeddings
-  stored in `sandbox_data/module_doc_embeddings.*`.
+1. **Imports and shared dependencies** – direct imports and overlap in imported
+   modules derived from the static import graph.
+2. **Shared identifiers** – Jaccard similarity of variable, function and class
+   names extracted from each module's AST.
+3. **Workflow co-occurrence** – pairs of modules that appear together in
+   `workflows.db` or in historical synergy records.
+4. **Docstring embeddings** – cosine similarity of module docstring embeddings
+   stored in `sandbox_data/module_doc_embeddings.*`.
+
+Each component's contribution can be tuned via configuration coefficients.  The
+edge `weight` is computed as the weighted sum of these components, providing a
+single metric for ranking relationships.
 
 ## Graph Metrics
 
