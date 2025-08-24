@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from scope_utils import Scope, build_scope_clause, apply_scope
 
-from .data_bot import MetricsDB, MetricRecord
+from .data_bot import MetricsDB
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
 from .neuroplasticity import PathwayDB
@@ -66,10 +66,15 @@ class DecisionLedger:
         )
         self.conn.commit()
 
-    def fetch(self) -> List[Tuple[str, float, bool, str]]:
-        cur = self.conn.execute(
-            "SELECT bot, priority, active, ts FROM decisions"
-        )
+    def fetch(
+        self, *, scope: Scope | str = "local"
+    ) -> List[Tuple[str, float, bool, str]]:
+        """Return decision records filtered by menace ``scope``."""
+
+        base = "SELECT bot, priority, active, ts FROM decisions"
+        clause, params = build_scope_clause("decisions", scope, self.router.menace_id)
+        base = apply_scope(base, clause)
+        cur = self.conn.execute(base, params)
         rows = cur.fetchall()
         return [(r[0], float(r[1]), bool(r[2]), r[3]) for r in rows]
 

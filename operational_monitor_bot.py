@@ -23,6 +23,7 @@ from .database_steward_bot import ESIndex
 from .splunk_logger import SplunkHEC
 from .report_generation_bot import ReportGenerationBot, ReportOptions
 from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from scope_utils import Scope, build_scope_clause, apply_scope
 from .admin_bot_base import AdminBotBase
 from .advanced_error_management import (
     AnomalyEnsembleDetector,
@@ -78,10 +79,15 @@ class AnomalyDB:
         )
         self.conn.commit()
 
-    def fetch(self) -> List[Tuple[str, str, float, float, str]]:
-        cur = self.conn.execute(
-            "SELECT bot, metric, value, severity, ts FROM anomalies"
-        )
+    def fetch(
+        self, *, scope: Scope | str = "local"
+    ) -> List[Tuple[str, str, float, float, str]]:
+        """Return stored anomalies filtered by menace ``scope``."""
+
+        base = "SELECT bot, metric, value, severity, ts FROM anomalies"
+        clause, params = build_scope_clause("anomalies", scope, self.router.menace_id)
+        base = apply_scope(base, clause)
+        cur = self.conn.execute(base, params)
         return cur.fetchall()
 
 

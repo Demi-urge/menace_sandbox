@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +48,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from memory_aware_gpt_client import ask_with_memory  # type: ignore
 
 from db_router import GLOBAL_ROUTER, init_db_router
+from scope_utils import Scope, build_scope_clause, apply_scope
 
 DB_PATH = Path(__file__).parent / "news.db"
 
@@ -117,13 +117,21 @@ class NewsDB:
         conn.commit()
         return int(cur.lastrowid)
 
-    def fetch(self, limit: int = 100) -> List[Event]:
+    def fetch(
+        self, limit: int = 100, *, scope: Scope | str = "local"
+    ) -> List[Event]:
+        """Return stored events filtered by menace ``scope``."""
+
         conn = self.router.get_connection("events")
-        rows = conn.execute(
+        base = (
             "SELECT title, summary, source, timestamp, categories, sentiment,"
-            " exploration_depth, impact FROM events ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+            " exploration_depth, impact FROM events"
+        )
+        clause, scope_params = build_scope_clause("events", scope, self.router.menace_id)
+        base = apply_scope(base, clause)
+        base += " ORDER BY id DESC LIMIT ?"
+        params = [*scope_params, limit]
+        rows = conn.execute(base, params).fetchall()
         events = []
         for row in rows:
             events.append(
