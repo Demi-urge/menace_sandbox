@@ -11,6 +11,7 @@ import importlib
 
 from vector_service import EmbeddableDBMixin
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from scope_utils import Scope, build_scope_clause
 
 try:
     import pandas as pd  # type: ignore
@@ -76,9 +77,21 @@ class DiscrepancyDB(EmbeddableDBMixin):
                 message TEXT,
                 severity REAL,
                 workflow TEXT,
+                source_menace_id TEXT NOT NULL,
                 ts TEXT
             )
             """,
+        )
+        cols = [r[1] for r in self.dconn.execute("PRAGMA table_info(detections)").fetchall()]
+        if "source_menace_id" not in cols:
+            self.dconn.execute(
+                "ALTER TABLE detections ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
+            )
+            self.dconn.execute(
+                "UPDATE detections SET source_menace_id='' WHERE source_menace_id IS NULL"
+            )
+        self.dconn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_detections_source_menace_id ON detections(source_menace_id)"
         )
         self.conn.commit()
         self.dconn.commit()
@@ -122,15 +135,23 @@ class DiscrepancyDB(EmbeddableDBMixin):
         return pd.read_sql("SELECT * FROM failures", self.conn)
 
     def log_detection(
-        self, rule: str, severity: float, message: str, workflow: str | None = None
+        self,
+        rule: str,
+        severity: float,
+        message: str,
+        workflow: str | None = None,
+        *,
+        source_menace_id: str | None = None,
     ) -> None:
+        menace_id = source_menace_id or getattr(self.router, "menace_id", "")
         cur = self.dconn.execute(
-            "INSERT INTO detections(rule, message, severity, workflow, ts) VALUES(?,?,?,?,?)",
+            "INSERT INTO detections(rule, message, severity, workflow, source_menace_id, ts) VALUES(?,?,?,?,?,?)",
             (
                 rule,
                 message,
                 severity,
                 workflow or "",
+                menace_id,
                 datetime.utcnow().isoformat(),
             ),
         )
@@ -141,18 +162,30 @@ class DiscrepancyDB(EmbeddableDBMixin):
             "message": message,
             "severity": severity,
             "workflow": workflow or "",
+            "source_menace_id": menace_id,
         }
         try:
             self.add_embedding(rid, data, "detection", source_id=str(rid))
         except Exception:  # pragma: no cover - best effort
             pass
 
-    def fetch_detections(self, min_severity: float = 0.0) -> pd.DataFrame:
-        return pd.read_sql(
-            "SELECT rule, message, severity, workflow, ts FROM detections WHERE severity >= ?",
-            self.dconn,
-            params=(min_severity,),
+    def fetch_detections(
+        self,
+        min_severity: float = 0.0,
+        *,
+        scope: Scope | str = Scope.LOCAL,
+        source_menace_id: str | None = None,
+    ) -> pd.DataFrame:
+        menace_id = source_menace_id or getattr(self.router, "menace_id", "")
+        clause, scope_params = build_scope_clause("detections", scope, menace_id)
+        sql = (
+            "SELECT rule, message, severity, workflow, ts FROM detections WHERE severity >= ?"
         )
+        params = [min_severity]
+        if clause:
+            sql += f" AND {clause}"
+            params.extend(scope_params)
+        return pd.read_sql(sql, self.dconn, params=params)
 
     # ------------------------------------------------------------------
     def _embed_text(self, data: dict[str, Any]) -> str:
