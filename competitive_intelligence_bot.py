@@ -18,9 +18,7 @@ from security.secret_redactor import redact
 import license_detector
 from analysis.semantic_diff_filter import find_semantic_risks
 from governed_embeddings import governed_embed
-from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
-
-LOCAL_TABLES.update({"intel_records", "intel_metrics"})
+from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 logger = logging.getLogger(__name__)
 try:
@@ -237,14 +235,13 @@ class IntelligenceDB:
     def __init__(
         self, path: Path | str = Path("intelligence.db"), *, router: DBRouter | None = None
     ) -> None:
-        self.path = str(path)
         self.router = router or GLOBAL_ROUTER or init_db_router(
-            "intelligence_db", local_db_path=self.path, shared_db_path=self.path
+            "updates", local_db_path=str(path), shared_db_path=str(path)
         )
         self._init()
 
     def _get_conn(self) -> sqlite3.Connection:
-        return self.router.get_connection("intel_records")
+        return self.router.get_connection("updates")
 
     def _init(self) -> None:
         conn = self._get_conn()
@@ -262,7 +259,7 @@ class IntelligenceDB:
     def _create_v1_schema(self, conn: sqlite3.Connection) -> None:
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS intel_records (
+            CREATE TABLE IF NOT EXISTS updates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT,
                 content TEXT,
@@ -276,18 +273,15 @@ class IntelligenceDB:
             """
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_intel_records_ts ON intel_records(timestamp)"
+            "CREATE INDEX IF NOT EXISTS idx_updates_ts ON updates(timestamp)"
         )
 
     def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
-        """Add ``category`` column to ``intel_records`` table."""
-        cols = [
-            r[1]
-            for r in conn.execute("PRAGMA table_info(intel_records)").fetchall()
-        ]
+        """Add ``category`` column to ``updates`` table."""
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(updates)").fetchall()]
         if "category" not in cols:
             conn.execute(
-                "ALTER TABLE intel_records ADD COLUMN category TEXT DEFAULT ''"
+                "ALTER TABLE updates ADD COLUMN category TEXT DEFAULT ''"
             )
         conn.commit()
 
@@ -313,7 +307,7 @@ class IntelligenceDB:
         conn = self._get_conn()
         norm_ts = _normalize_timestamp(update.timestamp)
         cur = conn.execute(
-            "SELECT id FROM intel_records WHERE title=? AND content=? AND timestamp=? LIMIT 1",
+            "SELECT id FROM updates WHERE title=? AND content=? AND timestamp=? LIMIT 1",
             (update.title, update.content, norm_ts),
         )
         row = cur.fetchone()
@@ -321,7 +315,7 @@ class IntelligenceDB:
             return int(row[0])
         cur = conn.execute(
             """
-            INSERT INTO intel_records
+            INSERT INTO updates
                 (title, content, source, timestamp, sentiment, entities, ai_signals, category)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -343,7 +337,7 @@ class IntelligenceDB:
         conn = self._get_conn()
         rows = conn.execute(
             "SELECT title, content, source, timestamp, sentiment, entities, ai_signals, category"
-            " FROM intel_records ORDER BY id DESC LIMIT ?",
+            " FROM updates ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
         results: List[CompetitorUpdate] = []
@@ -367,10 +361,14 @@ class IntelligenceDB:
         cutoff = datetime.utcnow() - timedelta(days=older_than_days)
         conn = self._get_conn()
         cur = conn.execute(
-            "DELETE FROM intel_records WHERE timestamp < ?", (cutoff.isoformat(),)
+            "DELETE FROM updates WHERE timestamp < ?", (cutoff.isoformat(),)
         )
         conn.commit()
         return int(cur.rowcount)
+
+    def close_all(self) -> None:
+        """Close underlying database connections."""
+        self.router.close()
 
 
 def fetch_updates(url: str) -> List[CompetitorUpdate]:
