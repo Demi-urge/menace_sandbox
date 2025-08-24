@@ -79,6 +79,7 @@ class ModuleSynergyGrapher:
     )
     graph: nx.DiGraph | None = None
     embedding_threshold: float = 0.8
+    root: Path | None = None
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -234,6 +235,7 @@ class ModuleSynergyGrapher:
         """Return and persist a synergy graph for modules under ``root_path``."""
 
         root = Path(root_path)
+        self.root = root
         import_graph = build_import_graph(root)
         modules = list(import_graph.nodes)
 
@@ -328,7 +330,15 @@ class ModuleSynergyGrapher:
 
         # Combine metrics
         graph = nx.DiGraph()
-        graph.add_nodes_from(modules)
+        for mod in modules:
+            graph.add_node(
+                mod,
+                vars=sorted(vars_.get(mod, set())),
+                funcs=sorted(funcs.get(mod, set())),
+                classes=sorted(classes.get(mod, set())),
+                doc=docs.get(mod, ""),
+                embedding=embeddings.get(mod),
+            )
         for a in modules:
             for b in modules:
                 if a == b:
@@ -353,6 +363,178 @@ class ModuleSynergyGrapher:
         out_dir.mkdir(exist_ok=True)
         self.save(graph, out_dir / "module_synergy_graph.json", format="json")
         return graph
+
+    # ------------------------------------------------------------------
+    def update_graph(self, changed_modules: Iterable[str]) -> nx.DiGraph:
+        """Refresh graph data for ``changed_modules`` only.
+
+        AST details, embeddings and edge weights touching the specified
+        modules are recomputed and merged into ``self.graph`` which is then
+        persisted.  ``changed_modules`` should contain module names relative to
+        ``self.root``.
+        """
+
+        if self.graph is None:
+            raise ValueError("graph not built")
+
+        root = self.root or Path.cwd()
+        changed: set[str] = {m for m in changed_modules}
+        if not changed:
+            return self.graph
+
+        import_graph = build_import_graph(root)
+        modules = set(import_graph.nodes)
+
+        # Remove modules that disappeared from the codebase
+        for mod in list(changed):
+            if mod not in modules:
+                if self.graph.has_node(mod):
+                    self.graph.remove_node(mod)
+                changed.remove(mod)
+
+        if not changed:
+            out_dir = root / "sandbox_data"
+            out_dir.mkdir(exist_ok=True)
+            self.save(self.graph, out_dir / "module_synergy_graph.json", format="json")
+            return self.graph
+
+        vars_, funcs, classes, docs = self._collect_ast_info(root, changed)
+
+        embed_dir = root / "sandbox_data"
+        embed_dir.mkdir(exist_ok=True)
+
+        class _DocEmbedDB(EmbeddableDBMixin):
+            def vector(self, record: str) -> list[float]:
+                vec = governed_embed(record)
+                return vec or []
+
+        embed_db = _DocEmbedDB(
+            index_path=embed_dir / "module_doc_embeddings.ann",
+            metadata_path=embed_dir / "module_doc_embeddings.json",
+        )
+
+        embeddings: Dict[str, list[float]] = {}
+        for mod in self.graph.nodes:
+            vec = self.graph.nodes[mod].get("embedding")
+            if vec:
+                embeddings[mod] = vec  # existing vectors
+
+        for mod in changed:
+            doc = docs.get(mod, "")
+            if doc:
+                embed_db.try_add_embedding(mod, doc, "module_doc")
+                vec = embed_db.get_vector(mod)
+                if vec:
+                    embeddings[mod] = vec
+            else:
+                embeddings.pop(mod, None)
+
+        for mod in changed:
+            self.graph.add_node(mod)
+            self.graph.nodes[mod]["vars"] = sorted(vars_.get(mod, set()))
+            self.graph.nodes[mod]["funcs"] = sorted(funcs.get(mod, set()))
+            self.graph.nodes[mod]["classes"] = sorted(classes.get(mod, set()))
+            self.graph.nodes[mod]["doc"] = docs.get(mod, "")
+            self.graph.nodes[mod]["embedding"] = embeddings.get(mod)
+
+        all_modules = set(self.graph.nodes)
+        deps = {m: set(import_graph.successors(m)) for m in modules}
+
+        direct: Dict[Tuple[str, str], float] = {}
+        for a, b, data in import_graph.edges(data=True):
+            if a in changed or b in changed:
+                direct[(a, b)] = float(data.get("weight", 1.0))
+        max_direct = max(direct.values(), default=0.0)
+        direct_norm = {k: v / max_direct for k, v in direct.items()} if max_direct else {}
+
+        shared: Dict[Tuple[str, str], float] = {}
+        for a in changed:
+            for b in modules:
+                if a == b:
+                    continue
+                score = self._jaccard(deps.get(a, set()), deps.get(b, set()))
+                if score:
+                    shared[(a, b)] = score
+                    shared[(b, a)] = score
+
+        structure: Dict[Tuple[str, str], float] = {}
+        for a in changed:
+            va = set(vars_.get(a, set()))
+            fa = set(funcs.get(a, set()))
+            ca = set(classes.get(a, set()))
+            for b in all_modules:
+                if a == b:
+                    continue
+                vb = set(self.graph.nodes[b].get("vars", []))
+                fb = set(self.graph.nodes[b].get("funcs", []))
+                cb = set(self.graph.nodes[b].get("classes", []))
+                v = self._jaccard(va, vb)
+                f = self._jaccard(fa, fb)
+                c = self._jaccard(ca, cb)
+                if v or f or c:
+                    s = (v + f + c) / 3
+                    structure[(a, b)] = s
+                    structure[(b, a)] = s
+
+        workflow_counts = self._workflow_pairs(root, all_modules)
+        history_counts = self._history_pairs(root, all_modules)
+        max_wf = max(workflow_counts.values(), default=0)
+        wf_norm = {k: v / max_wf for k, v in workflow_counts.items()} if max_wf else {}
+        max_hist = max(history_counts.values(), default=0.0)
+        hist_norm = {k: v / max_hist for k, v in history_counts.items()} if max_hist else {}
+        co_occ: Dict[Tuple[str, str], float] = {}
+        for a in changed:
+            for b in all_modules:
+                if a == b:
+                    continue
+                score = wf_norm.get((a, b), 0.0) + hist_norm.get((a, b), 0.0)
+                if score:
+                    co_occ[(a, b)] = min(1.0, score)
+                    co_occ[(b, a)] = co_occ[(a, b)]
+
+        embed_sim: Dict[Tuple[str, str], float] = {}
+        thr = self.embedding_threshold
+        for a in changed:
+            va = embeddings.get(a)
+            if not va:
+                continue
+            for b in all_modules:
+                if a == b:
+                    continue
+                vb = embeddings.get(b)
+                if not vb:
+                    continue
+                sim = cosine_similarity(va, vb)
+                if sim >= thr:
+                    embed_sim[(a, b)] = sim
+                    embed_sim[(b, a)] = sim
+
+        for a in all_modules:
+            for b in all_modules:
+                if a == b:
+                    continue
+                if a in changed or b in changed:
+                    import_score = min(
+                        1.0, direct_norm.get((a, b), 0.0) + shared.get((a, b), 0.0)
+                    )
+                    struct_score = structure.get((a, b), 0.0)
+                    co_score = co_occ.get((a, b), 0.0)
+                    emb_score = embed_sim.get((a, b), 0.0)
+                    total = (
+                        self.coefficients.get("import", 1.0) * import_score
+                        + self.coefficients.get("structure", 1.0) * struct_score
+                        + self.coefficients.get("cooccurrence", 1.0) * co_score
+                        + self.coefficients.get("embedding", 1.0) * emb_score
+                    )
+                    if total > 0:
+                        self.graph.add_edge(a, b, weight=total)
+                    elif self.graph.has_edge(a, b):
+                        self.graph.remove_edge(a, b)
+
+        out_dir = root / "sandbox_data"
+        out_dir.mkdir(exist_ok=True)
+        self.save(self.graph, out_dir / "module_synergy_graph.json", format="json")
+        return self.graph
 
     # ------------------------------------------------------------------
     def get_synergy_cluster(
