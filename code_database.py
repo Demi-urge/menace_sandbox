@@ -95,8 +95,8 @@ SQL_CREATE_INDEX_CODE_ERRORS_CODE = _load_sql("create_index_code_errors_code.sql
 SQL_CREATE_INDEX_CODE_ERRORS_ERROR = _load_sql("create_index_code_errors_error.sql")
 SQL_CREATE_INDEX_CODE_SUMMARY = _load_sql("create_index_code_summary.sql")
 SQL_CREATE_INDEX_CODE_BODY = _load_sql("create_index_code_body.sql")
-SQL_CREATE_INDEX_CODE_SOURCE_MENACE_ID = _load_sql(
-    "create_index_code_source_menace_id.sql"
+SQL_CREATE_INDEX_CODE_SOURCE_MENACE = _load_sql(
+    "create_index_code_source_menace.sql"
 )
 
 SQL_CREATE_FTS = _load_sql("create_fts.sql")
@@ -181,7 +181,7 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
         6,
         [
             "ALTER TABLE code ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''",
-            SQL_CREATE_INDEX_CODE_SOURCE_MENACE_ID,
+            SQL_CREATE_INDEX_CODE_SOURCE_MENACE,
         ],
     ),
 ]

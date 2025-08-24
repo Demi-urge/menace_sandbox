@@ -77,15 +77,18 @@ class DeploymentDB:
                 deploy_id  INTEGER,
                 message    TEXT,
                 ts         TEXT,
-                source_menace_id TEXT DEFAULT ''
+                source_menace_id TEXT NOT NULL
             )
             """
         )
         cols = [r[1] for r in conn.execute("PRAGMA table_info(errors)").fetchall()]
         if "source_menace_id" not in cols:
             conn.execute(
-                "ALTER TABLE errors ADD COLUMN source_menace_id TEXT DEFAULT ''"
+                "ALTER TABLE errors ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
             )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_errors_source_menace_id ON errors(source_menace_id)"
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS bot_trials(

@@ -112,7 +112,7 @@ class MenaceDB:
             Column("source_menace_id", Text, nullable=False, server_default=""),
         )
         Index(
-            "ix_workflow_summaries_source_menace_id",
+            "idx_workflow_summaries_source_menace_id",
             self.workflow_summaries.c.source_menace_id,
         )
 
@@ -182,9 +182,9 @@ class MenaceDB:
                 Text,
                 nullable=False,
                 server_default="",
-                index=True,
             ),
         )
+        Index("idx_bots_source_menace_id", self.bots.c.source_menace_id)
 
         self.bot_models = Table(
             "bot_models",
@@ -243,7 +243,11 @@ class MenaceDB:
             Column("performance_delta", Float),
             Column("timestamp", String),
             Column("triggered_by", String),
-            Column("source_menace_id", Text, nullable=False, index=True),
+            Column("source_menace_id", Text, nullable=False),
+        )
+        Index(
+            "idx_enhancements_source_menace_id",
+            self.enhancements.c.source_menace_id,
         )
 
         self.enhancement_models = Table(
@@ -306,14 +310,9 @@ class MenaceDB:
             Column("version", String),
             Column("complexity_score", Float),
             Column("code_summary", Text),
-            Column(
-                "source_menace_id",
-                Text,
-                nullable=False,
-                server_default="",
-                index=True,
-            ),
+            Column("source_menace_id", Text, nullable=False, server_default=""),
         )
+        Index("idx_code_source_menace_id", self.code.c.source_menace_id)
 
         self.code_bots = Table(
             "code_bots",
@@ -364,14 +363,9 @@ class MenaceDB:
             Column("error_type", String),
             Column("error_description", Text),
             Column("resolution_status", String),
-            Column(
-                "source_menace_id",
-                Text,
-                nullable=False,
-                server_default="",
-                index=True,
-            ),
+            Column("source_menace_id", Text, nullable=False, server_default=""),
         )
+        Index("idx_errors_source_menace_id", self.errors.c.source_menace_id)
 
         self.error_bots = Table(
             "error_bots",
@@ -444,13 +438,11 @@ class MenaceDB:
             Column("discrepancy_id", Integer, primary_key=True),
             Column("description", Text),
             Column("resolution_notes", Text),
-            Column(
-                "source_menace_id",
-                Text,
-                nullable=False,
-                server_default="",
-                index=True,
-            ),
+            Column("source_menace_id", Text, nullable=False, server_default=""),
+        )
+        Index(
+            "idx_discrepancies_source_menace_id",
+            self.discrepancies.c.source_menace_id,
         )
 
         self.discrepancy_bots = Table(
