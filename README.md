@@ -41,6 +41,18 @@
     Menace ID.
   - Audit logs include the menace ID for cross‑Menace monitoring and can be
     summarised with `analysis/db_router_log_analysis.py`.
+  - Read helpers accept a `scope` parameter (`"local"`, `"global"`, `"all"`)
+    to filter records by menace ID, replacing `include_cross_instance` and
+    `all_instances` flags. For example:
+
+    ```python
+    from workflow_summary_db import WorkflowSummaryDB
+
+    db = WorkflowSummaryDB()
+    db.get_summary(1, scope="local")   # current menace only
+    db.get_summary(1, scope="global")  # other menace instances
+    db.get_summary(1, scope="all")     # all records
+    ```
 - Change Data Capture events published to `UnifiedEventBus`
 - Vector embedding search via `EmbeddableDBMixin` for bots, workflows,
   errors, enhancements and research items. Each database stores its own
