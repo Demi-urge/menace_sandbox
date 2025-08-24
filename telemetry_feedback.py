@@ -7,7 +7,13 @@ import threading
 import time
 from typing import Optional, List, Tuple
 
-from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, SHARED_TABLES, init_db_router
+from .db_router import (
+    DBRouter,
+    GLOBAL_ROUTER,
+    SHARED_TABLES,
+    init_db_router,
+)
+from .db_scope import Scope, build_scope_clause, apply_scope
 
 from .error_logger import ErrorLogger
 from .self_coding_engine import SelfCodingEngine
@@ -32,7 +38,12 @@ class TelemetryFeedback:
         self.threshold = threshold
         self.interval = interval
         self.graph = graph
-        self.router = router or GLOBAL_ROUTER or init_db_router("telemetry_fb")
+        self.router = (
+            router
+            or getattr(logger.db, "router", None)
+            or GLOBAL_ROUTER
+            or init_db_router("telemetry_fb")
+        )
         SHARED_TABLES.add("telemetry")
         self.running = False
         self._thread: Optional[threading.Thread] = None
@@ -53,12 +64,25 @@ class TelemetryFeedback:
     # --------------------------------------------------------------
     def _loop(self) -> None:
         while self.running:
-            self.check()
+            self._run_cycle()
             time.sleep(self.interval)
 
-    def check(self) -> None:
+    def check(
+        self,
+        *,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
+    ) -> None:
+        self._run_cycle(scope=scope, source_menace_id=source_menace_id)
+
+    def _run_cycle(
+        self,
+        *,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
+    ) -> None:
         info = self.logger.db.top_error_module(
-            unresolved_only=True, scope="local"
+            unresolved_only=True, scope=scope, source_menace_id=source_menace_id
         )
         if not info:
             return
@@ -78,24 +102,31 @@ class TelemetryFeedback:
             )
         except Exception:
             patch_id = None
-        ids = [
-            int(r[0])
-            for r in self.logger.db.conn.execute(
-                "SELECT id FROM telemetry WHERE error_type=? AND module=? AND resolution_status='unresolved'",
-                (error_type, module),
-            ).fetchall()
-        ]
+        menace_id = self.logger.db._menace_id(source_menace_id)
+        clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
+        query = apply_scope(
+            (
+                "SELECT id FROM telemetry "
+                "WHERE error_type=? AND module=? "
+                "AND resolution_status='unresolved'"
+            ),
+            clause,
+        )
+        cur = self.logger.db.conn.execute(query, [error_type, module, *params])
+        ids = [int(r[0]) for r in cur.fetchall()]
         events = [(i, error_type, "", module) for i in ids]
         self._mark_attempt(events, patch_id)
         if self.graph:
             try:
-                self.graph.add_telemetry_event(sample_bot, error_type, module, mods, patch_id=patch_id)
+                self.graph.add_telemetry_event(
+                    sample_bot, error_type, module, mods, patch_id=patch_id
+                )
                 self.graph.update_error_stats(self.logger.db)
             except Exception:
                 pass
 
     def _mark_attempt(self, events: List[Tuple[int, str, str, str]], patch_id: int | None) -> None:
-        conn = self.router.get_connection("telemetry")
+        conn = self.logger.db.conn
         for ev in events:
             conn.execute(
                 "UPDATE telemetry SET patch_id=?, resolution_status='attempted' WHERE id=?",

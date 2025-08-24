@@ -18,6 +18,7 @@ from functools import wraps
 from typing import Any, Callable, Optional
 
 from .db_router import GLOBAL_ROUTER, init_db_router
+from .db_scope import Scope, build_scope_clause, apply_scope
 
 try:
     from .sentry_client import SentryClient
@@ -59,6 +60,8 @@ except Exception:
     except Exception:
         generate_patch = None  # type: ignore
 
+from governed_embeddings import governed_embed, get_embedder
+
 # Backwards compatibility with legacy imports
 ErrorType = ErrorCategory
 
@@ -73,8 +76,6 @@ try:
 except Exception:  # pragma: no cover - optional
     util = None  # type: ignore
 
-from governed_embeddings import governed_embed, get_embedder
-
 
 def _cosine(a: list[float], b: list[float]) -> float:
     """Return cosine similarity between two vectors."""
@@ -82,6 +83,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
     return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
+
 
 try:  # pragma: no cover - optional micro model
     from .micro_models.error_classifier import classify_error
@@ -254,30 +256,42 @@ class ErrorClassifier:
             config = self._load_config()
             self._build_maps(config)
 
-    def update_rules_from_db(
-        self, db: "ErrorDB", *, min_count: int = 5
+    def learn_error_phrases(
+        self,
+        db: "ErrorDB",
+        *,
+        min_count: int = 5,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
     ) -> None:
         """Learn frequent error phrases from telemetry and persist rules.
 
         Parameters:
             db: ``ErrorDB`` instance providing a ``conn`` attribute.
             min_count: minimum occurrences required before adding a rule.
+            scope: menace visibility for telemetry selection.
+            source_menace_id: override menace identifier used for scoping.
         """
+
+        menace_id = db._menace_id(source_menace_id)
+        clause, scope_params = build_scope_clause("telemetry", Scope(scope), menace_id)
 
         # First, allow the micro-model to annotate telemetry with high confidence
         # predictions so that subsequent heuristic learning has richer data.
         if classify_error is not None:
             try:
-                cur = db.conn.execute(
-                    (
-                        "SELECT id, stack_trace FROM telemetry "
-                        "WHERE (category IS NULL OR TRIM(category) = '' OR category = 'Unknown') "
-                        "AND stack_trace IS NOT NULL AND TRIM(stack_trace) != ''"
-                    )
+                query = (
+                    "SELECT id, stack_trace FROM telemetry "
+                    "WHERE (category IS NULL OR TRIM(category) = '' OR category = 'Unknown') "
+                    "AND stack_trace IS NOT NULL AND TRIM(stack_trace) != ''"
                 )
+                query = apply_scope(query, clause)
+                cur = db.conn.execute(query, scope_params)
                 rows = cur.fetchall()
                 for row in rows:
-                    category, fix, conf = classify_error(row["stack_trace"])  # type: ignore[arg-type]
+                    category, fix, conf = classify_error(
+                        row["stack_trace"]
+                    )  # type: ignore[arg-type]
                     prompt = inject_prefix(
                         row["stack_trace"],
                         f"Error Category: {category}\nSuggested Fix: {fix}",
@@ -296,16 +310,14 @@ class ErrorClassifier:
                 self.logger.debug("micro-model classification skipped: %s", exc)
 
         try:
-            cur = db.conn.execute(
-                (
-                    "SELECT category, COALESCE(cause, inferred_cause) AS phrase, "
-                    "COUNT(*) AS c FROM telemetry "
-                    "WHERE COALESCE(cause, inferred_cause) IS NOT NULL "
-                    "AND TRIM(COALESCE(cause, inferred_cause)) != '' "
-                    "GROUP BY category, phrase HAVING c >= ?"
-                ),
-                (min_count,),
+            base = (
+                "SELECT category, COALESCE(cause, inferred_cause) AS phrase, COUNT(*) AS c "
+                "FROM telemetry WHERE COALESCE(cause, inferred_cause) IS NOT NULL "
+                "AND TRIM(COALESCE(cause, inferred_cause)) != ''"
             )
+            base = apply_scope(base, clause)
+            query = f"{base} GROUP BY category, phrase HAVING c >= ?"
+            cur = db.conn.execute(query, [*scope_params, min_count])
             rows = cur.fetchall()
         except Exception as exc:  # pragma: no cover - db failures
             self.logger.warning("rule learning failed: %s", exc)
@@ -356,6 +368,21 @@ class ErrorClassifier:
 
         if updated:
             self.logger.info("learned %d new error rules", len(rows))
+
+    def update_rules_from_db(
+        self,
+        db: "ErrorDB",
+        *,
+        min_count: int = 5,
+        scope: Scope | str = "local",
+        source_menace_id: str | None = None,
+    ) -> None:  # pragma: no cover - backward compatibility
+        self.learn_error_phrases(
+            db,
+            min_count=min_count,
+            scope=scope,
+            source_menace_id=source_menace_id,
+        )
 
     def classify(self, stack: str, exc: Exception | None = None) -> ErrorCategory:
         """Classify a stack trace, prioritising ontology categories."""
@@ -529,7 +556,7 @@ class ErrorLogger:
             self._unknown_counter += 1
             if self._unknown_counter >= self._update_threshold:
                 try:
-                    self.classifier.update_rules_from_db(self.db)
+                    self.classifier.learn_error_phrases(self.db)
                 except Exception as e:
                     self.logger.warning("rule update failed: %s", e)
                 self._unknown_counter = 0
