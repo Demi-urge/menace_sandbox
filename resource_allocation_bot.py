@@ -138,16 +138,19 @@ class ResourceAllocationBot:
             with self.menace_db.engine.begin() as conn:
                 menace_id = router.menace_id
                 res = conn.execute(
-                    self.menace_db.enhancements.insert().values(
-                        description_of_change=f"Model {model_id} upgraded via contrarian strategy",
-                        reason_for_change=reason,
-                        performance_delta=delta,
-                        timestamp=datetime.utcnow().isoformat(),
-                        triggered_by=triggered_by,
-                        source_menace_id=menace_id,
-                    )
+                    "INSERT INTO enhancements("
+                    "source_menace_id, description_of_change, reason_for_change, performance_delta, timestamp, triggered_by"
+                    ") VALUES (?,?,?,?,?,?)",
+                    (
+                        menace_id,
+                        f"Model {model_id} upgraded via contrarian strategy",
+                        reason,
+                        delta,
+                        datetime.utcnow().isoformat(),
+                        triggered_by,
+                    ),
                 )
-                enh_id = int(res.inserted_primary_key[0])
+                enh_id = int(res.lastrowid if hasattr(res, "lastrowid") else res.inserted_primary_key[0])
                 conn.execute(
                     self.menace_db.enhancement_models.insert().values(
                         enhancement_id=enh_id,

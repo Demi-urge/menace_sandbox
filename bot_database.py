@@ -179,7 +179,7 @@ class BotDB(EmbeddableDBMixin):
             "CREATE TABLE IF NOT EXISTS bot_workflow(bot_id INTEGER, workflow_id INTEGER)"
         )
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS bot_enhancement(bot_id INTEGER, enhancement_id INTEGER)"
+            "CREATE TABLE IF NOT EXISTS bot_enhancement(source_menace_id TEXT, bot_id INTEGER, enhancement_id INTEGER)"
         )
         self.conn.commit()
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_bots_name ON bots(name)")
@@ -374,13 +374,15 @@ class BotDB(EmbeddableDBMixin):
         cur = self.conn.execute(
             """
             INSERT INTO bots(
+                source_menace_id,
                 name, type, tasks, parent_id, dependencies,
                 resources, hierarchy_level, purpose, tags, toolchain,
                 creation_date, last_modification_date, status,
-                version, estimated_profit, source_menace_id
+                version, estimated_profit
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
+                menace_id,
                 rec.name,
                 rec.type_,
                 _serialize_list(rec.tasks),
@@ -396,7 +398,6 @@ class BotDB(EmbeddableDBMixin):
                 rec.status,
                 rec.version,
                 rec.estimated_profit,
-                menace_id,
             ),
         )
         rec.bid = int(cur.lastrowid)
@@ -583,10 +584,13 @@ class BotDB(EmbeddableDBMixin):
         )
         self.conn.commit()
 
-    def link_enhancement(self, bot_id: int, enhancement_id: int) -> None:
+    def link_enhancement(
+        self, bot_id: int, enhancement_id: int, *, source_menace_id: str | None = None
+    ) -> None:
+        menace_id = source_menace_id or self.router.menace_id
         self.conn.execute(
-            "INSERT INTO bot_enhancement(bot_id, enhancement_id) VALUES (?, ?)",
-            (bot_id, enhancement_id),
+            "INSERT INTO bot_enhancement(source_menace_id, bot_id, enhancement_id) VALUES (?, ?, ?)",
+            (menace_id, bot_id, enhancement_id),
         )
         self.conn.commit()
 
@@ -644,7 +648,9 @@ class BotDB(EmbeddableDBMixin):
                 ).fetchone()
                 if row:
                     conn.execute(
-                        mdb.bot_enhancements.insert().values(bot_id=bot_id, enhancement_id=enh)
+                        mdb.bot_enhancements.insert().values(
+                            source_menace_id=menace_id, bot_id=bot_id, enhancement_id=enh
+                        )
                     )
                 else:
                     warnings.warn(f"invalid enhancement_id {enh}")

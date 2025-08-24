@@ -175,8 +175,8 @@ class IPOEnhancementsDB:
     def log(self, blueprint_id: str, bot: str, action: str, reason: str) -> None:
         menace_id = self.router.menace_id if self.router else ""
         self.conn.execute(
-            "INSERT INTO enhancements (blueprint_id, bot, action, reason, source_menace_id) VALUES (?,?,?,?,?)",
-            (blueprint_id, bot, action, reason, menace_id),
+            "INSERT INTO enhancements (source_menace_id, blueprint_id, bot, action, reason) VALUES (?,?,?,?,?)",
+            (menace_id, blueprint_id, bot, action, reason),
         )
         self.conn.commit()
 

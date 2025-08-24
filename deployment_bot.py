@@ -152,8 +152,8 @@ class DeploymentDB:
         conn = self.router.get_connection("errors")
         menace_id = self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
         conn.execute(
-            "INSERT INTO errors(deploy_id, message, ts, source_menace_id) VALUES (?,?,?,?)",
-            (deploy_id, message, datetime.utcnow().isoformat(), menace_id),
+            "INSERT INTO errors(source_menace_id, deploy_id, message, ts) VALUES (?,?,?,?)",
+            (menace_id, deploy_id, message, datetime.utcnow().isoformat()),
         )
         conn.commit()
         if self.event_bus:

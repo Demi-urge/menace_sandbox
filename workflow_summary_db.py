@@ -71,11 +71,11 @@ class WorkflowSummaryDB:
         conn = self.router.get_connection("workflow_summaries")
         conn.execute(
             """
-            INSERT INTO workflow_summaries(workflow_id, summary, source_menace_id)
+            INSERT INTO workflow_summaries(source_menace_id, workflow_id, summary)
             VALUES(?,?,?)
             ON CONFLICT(workflow_id) DO UPDATE SET summary=excluded.summary
             """,
-            (workflow_id, summary, menace_id),
+            (menace_id, workflow_id, summary),
         )
         conn.commit()
 

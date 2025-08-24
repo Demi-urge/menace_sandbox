@@ -726,27 +726,41 @@ class CodeDB(EmbeddableDBMixin):
         return self._with_retry(lambda: self._conn_wrapper(op))
 
     # linking -----------------------------------------------------------
-    def link_bot(self, code_id: int, bot_id: str) -> None:
+    def link_bot(
+        self, code_id: int, bot_id: str, *, source_menace_id: str | None = None
+    ) -> None:
         """Associate a code record with a bot."""
 
+        menace_id = source_menace_id or self.router.menace_id
+
         def op(conn: Any) -> None:
-            self._insert(conn, SQL_INSERT_CODE_BOT, (code_id, bot_id))
+            self._insert(conn, SQL_INSERT_CODE_BOT, (menace_id, code_id, bot_id))
 
         self._with_retry(lambda: self._conn_wrapper(op))
 
-    def link_enhancement(self, code_id: int, enh_id: int) -> None:
+    def link_enhancement(
+        self, code_id: int, enh_id: int, *, source_menace_id: str | None = None
+    ) -> None:
         """Associate a code record with an enhancement."""
 
+        menace_id = source_menace_id or self.router.menace_id
+
         def op(conn: Any) -> None:
-            self._insert(conn, SQL_INSERT_CODE_ENHANCEMENT, (code_id, enh_id))
+            self._insert(
+                conn, SQL_INSERT_CODE_ENHANCEMENT, (menace_id, code_id, enh_id)
+            )
 
         self._with_retry(lambda: self._conn_wrapper(op))
 
-    def link_error(self, code_id: int, err_id: int) -> None:
+    def link_error(
+        self, code_id: int, err_id: int, *, source_menace_id: str | None = None
+    ) -> None:
         """Associate a code record with an error."""
 
+        menace_id = source_menace_id or self.router.menace_id
+
         def op(conn: Any) -> None:
-            self._insert(conn, SQL_INSERT_CODE_ERROR, (code_id, err_id))
+            self._insert(conn, SQL_INSERT_CODE_ERROR, (menace_id, code_id, err_id))
 
         self._with_retry(lambda: self._conn_wrapper(op))
 
