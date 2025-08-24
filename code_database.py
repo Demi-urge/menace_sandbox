@@ -23,7 +23,7 @@ import license_detector
 from vector_service import EmbeddableDBMixin
 from embeddable_db_mixin import log_embedding_metrics
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-from .db_scope import Scope, build_scope_clause
+from .db_scope import Scope, build_scope_clause, apply_scope
 
 try:  # optional dependency for future scalability
     from sqlalchemy.engine import Engine  # type: ignore
@@ -626,9 +626,7 @@ class CodeDB(EmbeddableDBMixin):
             if isinstance(conn, sqlite3.Connection):
                 conn.row_factory = sqlite3.Row
             clause, params = build_scope_clause("code", Scope(scope), menace_id)
-            query = "SELECT * FROM code"
-            if clause:
-                query += f" {clause}"
+            query = apply_scope("SELECT * FROM code", clause)
             rows = self._execute(conn, query, params).fetchall()
             return [dict(r) for r in rows]
 
@@ -650,13 +648,11 @@ class CodeDB(EmbeddableDBMixin):
             if isinstance(conn, sqlite3.Connection):
                 conn.row_factory = sqlite3.Row
             clause, scope_params = build_scope_clause("code", Scope(scope), menace_id)
-            query = "SELECT * FROM code WHERE complexity >= ?"
-            params: list[Any] = [min_score]
-            if clause:
-                query += " AND " + clause.replace("WHERE ", "")
-            params.extend(scope_params)
+            query = apply_scope(
+                "SELECT * FROM code WHERE complexity >= ?", clause
+            )
+            params: list[Any] = [min_score, *scope_params, limit]
             query += " ORDER BY complexity DESC LIMIT ?"
-            params.append(limit)
             rows = self._execute(conn, query, params).fetchall()
             return [dict(r) for r in rows]
 
@@ -675,11 +671,10 @@ class CodeDB(EmbeddableDBMixin):
 
         def fallback(conn: Any) -> List[Any]:
             clause, params = build_scope_clause("code", Scope(scope), menace_id)
-            query = "SELECT * FROM code"
-            if clause:
-                query += f" {clause} AND (summary LIKE ? COLLATE NOCASE OR code LIKE ? COLLATE NOCASE)"
-            else:
-                query += " WHERE (summary LIKE ? COLLATE NOCASE OR code LIKE ? COLLATE NOCASE)"
+            query = apply_scope(
+                "SELECT * FROM code WHERE (summary LIKE ? COLLATE NOCASE OR code LIKE ? COLLATE NOCASE)",
+                clause,
+            )
             params.extend([pattern, pattern])
             return self._execute(conn, query, params).fetchall()
 
@@ -691,11 +686,9 @@ class CodeDB(EmbeddableDBMixin):
             if self.has_fts:
                 try:
                     clause, params = build_scope_clause("c", Scope(scope), menace_id)
-                    query = "SELECT c.* FROM code AS c JOIN code_fts f ON f.rowid = c.id"
-                    if clause:
-                        query += f" {clause} AND code_fts MATCH ?"
-                    else:
-                        query += " WHERE code_fts MATCH ?"
+                    base = "SELECT c.* FROM code AS c JOIN code_fts f ON f.rowid = c.id"
+                    query = apply_scope(base, clause)
+                    query += " AND code_fts MATCH ?" if clause else " WHERE code_fts MATCH ?"
                     params.append(f"{term}*")
                     rows = self._execute_fts(conn, query, params).fetchall()
                 except Exception as exc:
@@ -731,11 +724,10 @@ class CodeDB(EmbeddableDBMixin):
             if isinstance(conn, sqlite3.Connection):
                 conn.row_factory = sqlite3.Row
             clause, params = build_scope_clause("code", Scope(scope), menace_id)
-            query = "SELECT * FROM code"
-            if clause:
-                query += f" {clause} AND (summary LIKE ? COLLATE NOCASE OR code LIKE ? COLLATE NOCASE)"
-            else:
-                query += " WHERE (summary LIKE ? COLLATE NOCASE OR code LIKE ? COLLATE NOCASE)"
+            query = apply_scope(
+                "SELECT * FROM code WHERE (summary LIKE ? COLLATE NOCASE OR code LIKE ? COLLATE NOCASE)",
+                clause,
+            )
             params.extend([pattern, pattern])
             rows = self._execute(conn, query, params).fetchall()
             return [dict(r) for r in rows]
@@ -743,18 +735,20 @@ class CodeDB(EmbeddableDBMixin):
         return self._with_retry(lambda: self._conn_wrapper(op))
 
     def codes_for_bot(
-        self, bot_id: str, *, source_menace_id: str | None = None
+        self,
+        bot_id: str,
+        *,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
     ) -> List[int]:
         """Return IDs of code templates associated with a bot."""
 
         menace_id = source_menace_id or _current_menace_id(self.router)
 
         def op(conn: Any) -> List[int]:
-            rows = self._execute(
-                conn,
-                SQL_SELECT_CODE_BOTS,
-                (bot_id, menace_id),
-            ).fetchall()
+            clause, params = build_scope_clause("c", Scope(scope), menace_id)
+            query = apply_scope(SQL_SELECT_CODE_BOTS, clause)
+            rows = self._execute(conn, query, [bot_id, *params]).fetchall()
             return [int(r[0]) for r in rows]
 
         return self._with_retry(lambda: self._conn_wrapper(op))
