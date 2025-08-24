@@ -1,4 +1,3 @@
-import os
 import sys
 import types
 import pytest
@@ -32,6 +31,9 @@ for name, attrs in mods.items():
     sys.modules.setdefault(name, module)
 
 import menace.chatgpt_enhancement_bot as ceb  # noqa: E402
+import embeddable_db_mixin  # noqa: E402
+
+embeddable_db_mixin.MetricsDB = mods["metrics_db"]["MetricsDB"]
 
 
 @pytest.mark.parametrize("backend", ["annoy", "faiss"])
@@ -67,7 +69,7 @@ def test_embedding_workflow(tmp_path, backend):
     res1 = db.search_by_vector([1.0, 0.0], top_k=1, scope="local")
     assert res1 and res1[0].summary == "alpha"
 
-    # insert cross-instance enhancement without embedding and backfill
+    # insert cross-instance enhancement and embed manually
     db.conn.execute(
         (
             "INSERT INTO enhancements(idea, rationale, summary, before_code, after_code, "
@@ -81,9 +83,12 @@ def test_embedding_workflow(tmp_path, backend):
         ("other",),
     ).fetchone()[0]
     assert str(new_id) not in db._metadata
-    os.environ["MENACE_ID"] = "other"
-    db.backfill_embeddings()
-    os.environ["MENACE_ID"] = ""
+    db.add_embedding(
+        new_id,
+        ceb.Enhancement(idea="", rationale="", summary="beta", before_code="x", after_code="y"),
+        "enhancement",
+        source_id=str(new_id),
+    )
     assert str(new_id) in db._metadata
     res2 = db.search_by_vector([0.0, 1.0], top_k=1, scope="global")
     assert res2 and res2[0].summary == "beta"

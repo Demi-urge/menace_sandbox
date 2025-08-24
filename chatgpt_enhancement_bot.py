@@ -419,7 +419,7 @@ class EnhancementDB(EmbeddableDBMixin):
         clause, params = build_scope_clause("enhancements", Scope(scope), menace_id)
         query = "SELECT * FROM enhancements"
         if clause:
-            query += f" {clause}"
+            query += f" WHERE {clause}"
         cur = self.conn.execute(query, params)
         for row in cur.fetchall():
             yield row["id"], row, "enhancement"
@@ -463,13 +463,30 @@ class EnhancementDB(EmbeddableDBMixin):
             if RAISE_ERRORS:
                 raise
 
-    def models_for(self, enhancement_id: int) -> List[int]:
+    def models_for(
+        self,
+        enhancement_id: int,
+        *,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
+    ) -> List[int]:
+        menace_id = self._current_menace_id(source_menace_id)
         try:
             with self._connect() as conn:
-                rows = conn.execute(
-                    "SELECT model_id FROM enhancement_models WHERE enhancement_id=?",
-                    (enhancement_id,),
-                ).fetchall()
+                clause, params = build_scope_clause(
+                    "enhancements", Scope(scope), menace_id
+                )
+                query = (
+                    "SELECT model_id FROM enhancement_models "
+                    "JOIN enhancements ON enhancement_models.enhancement_id = enhancements.id"
+                )
+                params = list(params)
+                if clause:
+                    query += f" WHERE {clause} AND enhancement_id=?"
+                else:
+                    query += " WHERE enhancement_id=?"
+                params.append(enhancement_id)
+                rows = conn.execute(query, params).fetchall()
             return [r[0] for r in rows]
         except sqlite3.Error as exc:
             logger.exception("fetch models failed: %s", exc)
@@ -477,13 +494,30 @@ class EnhancementDB(EmbeddableDBMixin):
                 raise
             return []
 
-    def bots_for(self, enhancement_id: int) -> List[int]:
+    def bots_for(
+        self,
+        enhancement_id: int,
+        *,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
+    ) -> List[int]:
+        menace_id = self._current_menace_id(source_menace_id)
         try:
             with self._connect() as conn:
-                rows = conn.execute(
-                    "SELECT bot_id FROM enhancement_bots WHERE enhancement_id=?",
-                    (enhancement_id,),
-                ).fetchall()
+                clause, params = build_scope_clause(
+                    "enhancements", Scope(scope), menace_id
+                )
+                query = (
+                    "SELECT bot_id FROM enhancement_bots "
+                    "JOIN enhancements ON enhancement_bots.enhancement_id = enhancements.id"
+                )
+                params = list(params)
+                if clause:
+                    query += f" WHERE {clause} AND enhancement_id=?"
+                else:
+                    query += " WHERE enhancement_id=?"
+                params.append(enhancement_id)
+                rows = conn.execute(query, params).fetchall()
             return [r[0] for r in rows]
         except sqlite3.Error as exc:
             logger.exception("fetch bots failed: %s", exc)
@@ -491,13 +525,30 @@ class EnhancementDB(EmbeddableDBMixin):
                 raise
             return []
 
-    def workflows_for(self, enhancement_id: int) -> List[int]:
+    def workflows_for(
+        self,
+        enhancement_id: int,
+        *,
+        source_menace_id: str | None = None,
+        scope: Literal["local", "global", "all"] = "local",
+    ) -> List[int]:
+        menace_id = self._current_menace_id(source_menace_id)
         try:
             with self._connect() as conn:
-                rows = conn.execute(
-                    "SELECT workflow_id FROM enhancement_workflows WHERE enhancement_id=?",
-                    (enhancement_id,),
-                ).fetchall()
+                clause, params = build_scope_clause(
+                    "enhancements", Scope(scope), menace_id
+                )
+                query = (
+                    "SELECT workflow_id FROM enhancement_workflows "
+                    "JOIN enhancements ON enhancement_workflows.enhancement_id = enhancements.id"
+                )
+                params = list(params)
+                if clause:
+                    query += f" WHERE {clause} AND enhancement_id=?"
+                else:
+                    query += " WHERE enhancement_id=?"
+                params.append(enhancement_id)
+                rows = conn.execute(query, params).fetchall()
             return [r[0] for r in rows]
         except sqlite3.Error as exc:
             logger.exception("fetch workflows failed: %s", exc)
@@ -522,7 +573,7 @@ class EnhancementDB(EmbeddableDBMixin):
                 query = "SELECT score FROM enhancements"
                 params = list(params)
                 if clause:
-                    query += f" {clause} AND id=?"
+                    query += f" WHERE {clause} AND id=?"
                 else:
                     query += " WHERE id=?"
                 params.append(enhancement_id)
@@ -550,26 +601,22 @@ class EnhancementDB(EmbeddableDBMixin):
                 )
                 query = "SELECT * FROM enhancements"
                 if clause:
-                    query += f" {clause}"
+                    query += f" WHERE {clause}"
                 query += " ORDER BY id DESC LIMIT ?"
                 params.append(limit)
                 rows = conn.execute(query, params).fetchall()
             results: List[Enhancement] = []
             for row in rows:
                 e_id = row["id"]
-                with self._connect() as conn:
-                    m_rows = conn.execute(
-                        "SELECT model_id FROM enhancement_models WHERE enhancement_id=?",
-                        (e_id,),
-                    ).fetchall()
-                    b_rows = conn.execute(
-                        "SELECT bot_id FROM enhancement_bots WHERE enhancement_id=?",
-                        (e_id,),
-                    ).fetchall()
-                    w_rows = conn.execute(
-                        "SELECT workflow_id FROM enhancement_workflows WHERE enhancement_id=?",
-                        (e_id,),
-                    ).fetchall()
+                models = self.models_for(
+                    e_id, source_menace_id=source_menace_id, scope=scope
+                )
+                bots = self.bots_for(
+                    e_id, source_menace_id=source_menace_id, scope=scope
+                )
+                workflows = self.workflows_for(
+                    e_id, source_menace_id=source_menace_id, scope=scope
+                )
                 results.append(
                     Enhancement(
                         idea=row["idea"],
@@ -598,9 +645,9 @@ class EnhancementDB(EmbeddableDBMixin):
                             else []
                         ),
                         triggered_by=row["triggered_by"] or "",
-                        model_ids=[r[0] for r in m_rows],
-                        bot_ids=[r[0] for r in b_rows],
-                        workflow_ids=[r[0] for r in w_rows],
+                        model_ids=models,
+                        bot_ids=bots,
+                        workflow_ids=workflows,
                     )
                 )
             return results
@@ -632,7 +679,7 @@ class EnhancementDB(EmbeddableDBMixin):
             )
             params = list(params)
             if clause:
-                query += f" {clause} AND id=?"
+                query += f" WHERE {clause} AND id=?"
             else:
                 query += " WHERE id=?"
             params.append(int(rec))
@@ -703,7 +750,7 @@ class EnhancementDB(EmbeddableDBMixin):
             query = "SELECT * FROM enhancements"
             params = list(base_params)
             if clause:
-                query += f" {clause} AND id=?"
+                query += f" WHERE {clause} AND id=?"
             else:
                 query += " WHERE id=?"
             params.append(rec_id)
@@ -736,9 +783,15 @@ class EnhancementDB(EmbeddableDBMixin):
                         else []
                     ),
                     triggered_by=row["triggered_by"] or "",
-                    model_ids=self.models_for(rec_id),
-                    bot_ids=self.bots_for(rec_id),
-                    workflow_ids=self.workflows_for(rec_id),
+                    model_ids=self.models_for(
+                        rec_id, source_menace_id=source_menace_id, scope=scope
+                    ),
+                    bot_ids=self.bots_for(
+                        rec_id, source_menace_id=source_menace_id, scope=scope
+                    ),
+                    workflow_ids=self.workflows_for(
+                        rec_id, source_menace_id=source_menace_id, scope=scope
+                    ),
                 )
                 setattr(enh, "id", rec_id)
                 setattr(enh, "_distance", dist)
