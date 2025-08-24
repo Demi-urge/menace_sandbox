@@ -21,7 +21,7 @@ import hashlib
 import time
 
 from .bot_testing_config import BotTestingSettings
-from .db_router import DBRouter
+from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 logger = logging.getLogger("BotTester")
 
@@ -87,7 +87,7 @@ class TestingLogDB:
     def __init__(
         self,
         path: Path | str | None = None,
-        connect_func: Callable[..., Any] | None = None,
+        connection_factory: Callable[[], Any] | None = None,
         *,
         backend: str = "sqlite",
         settings: BotTestingSettings | None = None,
@@ -97,20 +97,19 @@ class TestingLogDB:
         self.lock = threading.Lock()
         backend = os.environ.get("BOT_TESTING_DB_BACKEND", self.settings.db_backend)
         if backend == "sqlite":
-            if router is not None:
-                self.conn = router.get_connection("results")
+            if connection_factory is not None:
+                self.conn = connection_factory()
             else:
-                db_path = path or os.environ.get(
-                    "BOT_TESTING_DB_PATH", self.settings.db_path
-                )
-                connector = connect_func or sqlite3.connect
-                self.conn = connector(db_path, timeout=30, check_same_thread=False)
+                router = router or GLOBAL_ROUTER or init_db_router("bot_testing_bot")
+                self.conn = router.get_connection("results")
         elif backend == "postgres":  # pragma: no cover - optional backend
             import psycopg2  # type: ignore
 
             dsn = path or os.environ.get("BOT_TESTING_DB_DSN", self.settings.db_dsn)
-            connector = connect_func or psycopg2.connect
-            self.conn = connector(dsn)
+            if connection_factory is not None:
+                self.conn = connection_factory()
+            else:
+                self.conn = psycopg2.connect(dsn)
         else:
             raise ValueError(f"Unsupported backend: {backend}")
 

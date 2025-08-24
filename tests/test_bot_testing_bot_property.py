@@ -1,4 +1,5 @@
 import sys
+import sqlite3
 from pathlib import Path
 from hypothesis import given, strategies as st, settings, HealthCheck
 import menace.bot_testing_bot as btb
@@ -10,7 +11,7 @@ def test_run_unit_random_module(tmp_path, name):
     mod = tmp_path / f"{name}.py"
     mod.write_text("""def hello(name='x'):\n    return f'hi {name}'\n""")
     sys.path.insert(0, str(tmp_path))
-    db = btb.TestingLogDB(tmp_path / 'log.db')
+    db = btb.TestingLogDB(connection_factory=lambda: sqlite3.connect(tmp_path / 'log.db'))
     bot = btb.BotTestingBot(db)
     results = bot.run_unit_tests([name], parallel=False)
     assert results and all(r.passed for r in results)
