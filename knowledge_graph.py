@@ -423,8 +423,8 @@ class KnowledgeGraph:
             for (bid,) in bots:
                 try:
                     b_row = bot_db.conn.execute(
-                        "SELECT name FROM bots WHERE id=?",
-                        (int(bid),),
+                        "SELECT name FROM bots WHERE id=? AND source_menace_id=?",
+                        (int(bid), menace_id),
                     ).fetchone()
                     bname = b_row[0] if b_row else str(bid)
                 except Exception:
@@ -734,13 +734,10 @@ class KnowledgeGraph:
             else os.getenv("MENACE_ID", "")
         )
         try:
-            if include_all:
-                errs = cur.execute("SELECT id, message FROM errors").fetchall()
-            else:
-                errs = cur.execute(
-                    "SELECT id, message FROM errors WHERE source_menace_id=?",
-                    (menace_id,),
-                ).fetchall()
+            errs = cur.execute(
+                "SELECT id, message FROM errors WHERE source_menace_id=?",
+                (menace_id,),
+            ).fetchall()
         except Exception:
             errs = []
         for eid, msg in errs:
