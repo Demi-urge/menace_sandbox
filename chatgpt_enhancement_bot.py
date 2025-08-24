@@ -123,6 +123,11 @@ class EnhancementDB(EmbeddableDBMixin):
             backend=vector_backend,
         )
 
+    def _current_menace_id(self, source_menace_id: str | None) -> str:
+        return source_menace_id or (
+            self.router.menace_id if self.router else os.getenv("MENACE_ID", "")
+        )
+
     def _connect(self) -> sqlite3.Connection:  # pragma: no cover - simple wrapper
         return self.conn
 
@@ -317,10 +322,11 @@ class EnhancementDB(EmbeddableDBMixin):
                 conn.execute(
                     """
                     UPDATE enhancements SET
-                        idea=?, rationale=?, summary=?, score=?, timestamp=?, context=?, before_code=?, after_code=?,
-                        title=?, description=?, tags=?, type=?, assigned_bots=?,
-                        rejection_reason=?, cost_estimate=?, category=?, associated_bots=?,
-                        triggered_by=?
+                        idea=?, rationale=?, summary=?, score=?, timestamp=?, context=?,
+                        before_code=?, after_code=?, title=?, description=?, tags=?,
+                        type=?, assigned_bots=?,
+                        rejection_reason=?, cost_estimate=?, category=?,
+                        associated_bots=?, triggered_by=?
                     WHERE id=?
                     """,
                     (
@@ -380,9 +386,20 @@ class EnhancementDB(EmbeddableDBMixin):
         """Delegate to :class:`EmbeddableDBMixin` for compatibility."""
         EmbeddableDBMixin.backfill_embeddings(self)
 
-    def iter_records(self) -> Iterator[tuple[int, sqlite3.Row, str]]:
+    def iter_records(
+        self,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> Iterator[tuple[int, sqlite3.Row, str]]:
         """Yield enhancement rows for embedding backfill."""
-        cur = self.conn.execute("SELECT * FROM enhancements")
+        menace_id = self._current_menace_id(source_menace_id)
+        query = "SELECT * FROM enhancements"
+        params: list[Any] = []
+        if not include_cross_instance:
+            query += " WHERE source_menace_id=?"
+            params.append(menace_id)
+        cur = self.conn.execute(query, params)
         for row in cur.fetchall():
             yield row["id"], row, "enhancement"
 
@@ -467,14 +484,23 @@ class EnhancementDB(EmbeddableDBMixin):
                 raise
             return []
 
-    def roi_uplift(self, enhancement_id: int) -> float | None:
+    def roi_uplift(
+        self,
+        enhancement_id: int,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> float | None:
         """Return ROI uplift score for ``enhancement_id`` from ``enhancements.score``."""
+        menace_id = self._current_menace_id(source_menace_id)
         try:
             with self._connect() as conn:
-                row = conn.execute(
-                    "SELECT score FROM enhancements WHERE id=?",
-                    (enhancement_id,),
-                ).fetchone()
+                query = "SELECT score FROM enhancements WHERE id=?"
+                params: list[Any] = [enhancement_id]
+                if not include_cross_instance:
+                    query += " AND source_menace_id=?"
+                    params.append(menace_id)
+                row = conn.execute(query, params).fetchone()
             return float(row["score"]) if row else None
         except sqlite3.Error as exc:
             logger.exception("fetch roi uplift failed: %s", exc)
@@ -482,14 +508,25 @@ class EnhancementDB(EmbeddableDBMixin):
                 raise
             return None
 
-    def fetch(self, limit: int = DEFAULT_FETCH_LIMIT) -> List[Enhancement]:
+    def fetch(
+        self,
+        limit: int = DEFAULT_FETCH_LIMIT,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> List[Enhancement]:
         try:
+            menace_id = self._current_menace_id(source_menace_id)
             with self._connect() as conn:
                 conn.row_factory = sqlite3.Row
-                rows = conn.execute(
-                    "SELECT * FROM enhancements ORDER BY id DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
+                query = "SELECT * FROM enhancements"
+                params: list[Any] = []
+                if not include_cross_instance:
+                    query += " WHERE source_menace_id=?"
+                    params.append(menace_id)
+                query += " ORDER BY id DESC LIMIT ?"
+                params.append(limit)
+                rows = conn.execute(query, params).fetchall()
             results: List[Enhancement] = []
             for row in rows:
                 e_id = row["id"]
@@ -520,11 +557,19 @@ class EnhancementDB(EmbeddableDBMixin):
                         description=row["description"] or "",
                         tags=row["tags"].split(",") if row["tags"] else [],
                         type_=row["type"] or "",
-                        assigned_bots=row["assigned_bots"].split(",") if row["assigned_bots"] else [],
+                        assigned_bots=(
+                            row["assigned_bots"].split(",")
+                            if row["assigned_bots"]
+                            else []
+                        ),
                         rejection_reason=row["rejection_reason"] or "",
                         cost_estimate=row["cost_estimate"] or 0.0,
                         category=row["category"] or "",
-                        associated_bots=row["associated_bots"].split(",") if row["associated_bots"] else [],
+                        associated_bots=(
+                            row["associated_bots"].split(",")
+                            if row["associated_bots"]
+                            else []
+                        ),
                         triggered_by=row["triggered_by"] or "",
                         model_ids=[r[0] for r in m_rows],
                         bot_ids=[r[0] for r in b_rows],
@@ -540,15 +585,26 @@ class EnhancementDB(EmbeddableDBMixin):
 
     # --------------------------------------------------------------
     # embedding/search helpers
-    def vector(self, rec: Any) -> list[float] | None:
+    def vector(
+        self,
+        rec: Any,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> list[float] | None:
         """Return an embedding vector for ``rec`` or ``rec`` id."""
 
+        menace_id = self._current_menace_id(source_menace_id)
         # allow passing a record identifier
         if isinstance(rec, (int, str)) and str(rec).isdigit():
-            row = self.conn.execute(
-                "SELECT before_code, after_code, summary, context FROM enhancements WHERE id=?",
-                (int(rec),),
-            ).fetchone()
+            query = (
+                "SELECT before_code, after_code, summary, context FROM enhancements WHERE id=?"
+            )
+            params: list[Any] = [int(rec)]
+            if not include_cross_instance:
+                query += " AND source_menace_id=?"
+                params.append(menace_id)
+            row = self.conn.execute(query, params).fetchone()
             if not row:
                 return None
             rec = row
@@ -597,14 +653,24 @@ class EnhancementDB(EmbeddableDBMixin):
         except Exception:
             return None
 
-    def search_by_vector(self, vector: Iterable[float], top_k: int = 5) -> List[Enhancement]:
+    def search_by_vector(
+        self,
+        vector: Iterable[float],
+        top_k: int = 5,
+        *,
+        source_menace_id: str | None = None,
+        include_cross_instance: bool = False,
+    ) -> List[Enhancement]:
+        menace_id = self._current_menace_id(source_menace_id)
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
         results: List[Enhancement] = []
         for rec_id, dist in matches:
-            row = self.conn.execute(
-                "SELECT * FROM enhancements WHERE id=?",
-                (rec_id,),
-            ).fetchone()
+            query = "SELECT * FROM enhancements WHERE id=?"
+            params: list[Any] = [rec_id]
+            if not include_cross_instance:
+                query += " AND source_menace_id=?"
+                params.append(menace_id)
+            row = self.conn.execute(query, params).fetchone()
             if row:
                 enh = Enhancement(
                     idea=row["idea"],
@@ -619,11 +685,19 @@ class EnhancementDB(EmbeddableDBMixin):
                     description=row["description"] or "",
                     tags=row["tags"].split(",") if row["tags"] else [],
                     type_=row["type"] or "",
-                    assigned_bots=row["assigned_bots"].split(",") if row["assigned_bots"] else [],
+                    assigned_bots=(
+                        row["assigned_bots"].split(",")
+                        if row["assigned_bots"]
+                        else []
+                    ),
                     rejection_reason=row["rejection_reason"] or "",
                     cost_estimate=row["cost_estimate"] or 0.0,
                     category=row["category"] or "",
-                    associated_bots=row["associated_bots"].split(",") if row["associated_bots"] else [],
+                    associated_bots=(
+                        row["associated_bots"].split(",")
+                        if row["associated_bots"]
+                        else []
+                    ),
                     triggered_by=row["triggered_by"] or "",
                     model_ids=self.models_for(rec_id),
                     bot_ids=self.bots_for(rec_id),
@@ -640,7 +714,11 @@ class EnhancementDB(EmbeddableDBMixin):
         try:
             with self._connect() as conn:
                 cur = conn.execute(
-                    "INSERT INTO prompt_history(error_fingerprint, prompt, fix, success, ts) VALUES (?,?,?,?,?)",
+                    """
+                    INSERT INTO prompt_history(
+                        error_fingerprint, prompt, fix, success, ts
+                    ) VALUES (?,?,?,?,?)
+                    """,
                     (
                         fingerprint,
                         prompt,
@@ -714,7 +792,8 @@ class EnhancementDB(EmbeddableDBMixin):
             with self._connect() as conn:
                 conn.row_factory = sqlite3.Row
                 rows = conn.execute(
-                    "SELECT file_path, original_hash, enhanced_hash, metric_delta, author_bot, ts FROM enhancement_history ORDER BY id DESC LIMIT ?",
+                    "SELECT file_path, original_hash, enhanced_hash, metric_delta, author_bot, ts "
+                    "FROM enhancement_history ORDER BY id DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
             return [EnhancementHistory(**dict(r)) for r in rows]
