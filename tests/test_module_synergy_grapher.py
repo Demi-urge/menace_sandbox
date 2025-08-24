@@ -16,22 +16,9 @@ from module_synergy_grapher import ModuleSynergyGrapher, get_synergy_cluster
 
 @pytest.fixture(autouse=True)
 def _stub_embeddings(monkeypatch):
-    """Replace heavy embedding machinery with in-memory stubs."""
-
-    class DummyEmbeddableDB:
-        def __init__(self, *args, **kwargs):
-            self._vectors: dict[str, list[float]] = {}
-
-        def get_vector(self, key: str):
-            return self._vectors.get(key)
-
-        def try_add_embedding(self, key: str, record: str, kind: str):
-            vec = self.vector(record)
-            self._vectors[key] = vec
-            return True
+    """Replace heavy embedding machinery with fast stubs."""
 
     # Default embeddings disabled
-    monkeypatch.setattr(msg, "EmbeddableDBMixin", DummyEmbeddableDB)
     monkeypatch.setattr(msg, "governed_embed", lambda text: [])
 
 
