@@ -5,6 +5,17 @@ import sqlite3
 from pathlib import Path
 from typing import List, Dict
 import os
+import uuid
+
+try:  # pragma: no cover - allow running as script
+    from .db_router import init_db_router  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from db_router import init_db_router  # type: ignore
+
+MENACE_ID = uuid.uuid4().hex
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 try:
     import pandas as pd  # type: ignore
@@ -29,9 +40,7 @@ except Exception:  # pragma: no cover - fallback when running as script
 try:
     from .data_bot import MetricsDB  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
-    MetricsDB = None  # type: ignore
-
-from .db_router import GLOBAL_ROUTER, init_db_router
+    from data_bot import MetricsDB  # type: ignore
 
 _RETRIEVER_WIN_GAUGE = _me.Gauge(
     "retriever_win_rate", "Win rate of retrieved patches", ["origin_db"]
@@ -72,7 +81,7 @@ _RETR_COUNT_GAUGE = _me.Gauge(
 )
 
 
-router = GLOBAL_ROUTER or init_db_router("metrics_aggregator")
+router = GLOBAL_ROUTER
 
 
 def compute_retriever_stats(

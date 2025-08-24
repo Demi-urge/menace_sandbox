@@ -9,15 +9,20 @@ from datetime import datetime
 from pathlib import Path
 import sqlite3
 from typing import Iterable, Dict, Tuple, List
+import os
+import uuid
+
+from db_router import init_db_router
+
+MENACE_ID = uuid.uuid4().hex
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from analytics.session_roi import per_origin_stats
 from vector_metrics_db import VectorMetricsDB
 
-from db_router import GLOBAL_ROUTER, init_db_router
-
-# Use existing router when available, falling back to a local initialisation
-# when the module runs standalone.
-router = GLOBAL_ROUTER or init_db_router("vector_metrics_aggregator")
+router = GLOBAL_ROUTER
 
 
 class VectorMetricsAggregator:

@@ -46,7 +46,7 @@ from menace.db_router import init_db_router
 MENACE_ID = os.getenv("MENACE_ID", uuid.uuid4().hex)
 LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
 SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
-DB_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
+GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from menace.unified_config_store import UnifiedConfigStore
 from menace.dependency_self_check import self_check
