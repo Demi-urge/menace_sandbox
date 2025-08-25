@@ -115,44 +115,93 @@ def insert_if_unique(
     values["content_hash"] = content_hash
 
     if engine is not None:
-        try:
-            with engine.begin() as eng_conn:
-                result = eng_conn.execute(table.insert().values(**values))  # type: ignore[arg-type]
-            return result.inserted_primary_key[0]
-        except SAIntegrityError as exc:
-            msg = str(getattr(exc, "orig", exc))
-            if "content_hash" not in msg:
-                raise
-            logger.warning(
-                "Duplicate insert ignored for %s (menace_id=%s)", table.name, menace_id
-            )
-            from sqlalchemy import select  # type: ignore
+        columns = ", ".join(values.keys())
+        placeholders = ", ".join(f":{k}" for k in values)
+        from sqlalchemy import select, text  # type: ignore
 
-            with engine.begin() as eng_conn:
-                pk_col = list(table.primary_key.columns)[0]
+        with engine.begin() as eng_conn:
+            if engine.dialect.name == "sqlite":
+                version = sqlite3.sqlite_version_info
+                if version >= (3, 35, 0):
+                    sql = (
+                        f"INSERT INTO {table.name} ({columns}) VALUES ({placeholders}) "
+                        "ON CONFLICT(content_hash) DO NOTHING RETURNING id"
+                    )
+                    row = eng_conn.execute(text(sql), values).fetchone()
+                    if row:
+                        return row[0]
+                else:
+                    sql = (
+                        f"INSERT OR IGNORE INTO {table.name} ({columns}) VALUES ({placeholders})"
+                    )
+                    result = eng_conn.execute(text(sql), values)
+                    if result.rowcount:
+                        return result.lastrowid
+
+                logger.warning(
+                    "Duplicate insert ignored for %s (menace_id=%s)",
+                    table.name,
+                    menace_id,
+                )
+                row = eng_conn.execute(
+                    text(
+                        f"SELECT id FROM {table.name} WHERE content_hash=:hash"
+                    ),
+                    {"hash": content_hash},
+                ).fetchone()
+                return row[0] if row else None
+
+            pk_col = list(table.primary_key.columns)[0]
+            stmt = table.insert().values(**values)
+            if hasattr(stmt, "on_conflict_do_nothing"):
+                stmt = stmt.on_conflict_do_nothing(
+                    index_elements=["content_hash"]
+                ).returning(pk_col)
+                row = eng_conn.execute(stmt).fetchone()
+                if row:
+                    return row[0]
+                logger.warning(
+                    "Duplicate insert ignored for %s (menace_id=%s)",
+                    table.name,
+                    menace_id,
+                )
                 row = eng_conn.execute(
                     select(pk_col).where(table.c.content_hash == content_hash)
                 ).fetchone()
-            return row[0] if row else None
+                return row[0] if row else None
+            raise TypeError(
+                "Unsupported engine dialect without conflict handling"
+            )
 
     if conn is not None:
         columns = ", ".join(values.keys())
         placeholders = ", ".join("?" for _ in values)
-        try:
+        version = sqlite3.sqlite_version_info
+        if version >= (3, 35, 0):
             cur = conn.execute(
-                f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
+                f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) "
+                "ON CONFLICT(content_hash) DO NOTHING RETURNING id",
                 tuple(values.values()),
             )
-            return int(cur.lastrowid)
-        except sqlite3.IntegrityError:
-            logger.warning(
-                "Duplicate insert ignored for %s (menace_id=%s)", table, menace_id
-            )
-            cur = conn.execute(
-                f"SELECT id FROM {table} WHERE content_hash=?",
-                (content_hash,),
-            )
             row = cur.fetchone()
-            return int(row[0]) if row else None
+            if row:
+                return int(row[0])
+        else:
+            cur = conn.execute(
+                f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ({placeholders})",
+                tuple(values.values()),
+            )
+            if cur.rowcount:
+                return int(cur.lastrowid)
+
+        logger.warning(
+            "Duplicate insert ignored for %s (menace_id=%s)", table, menace_id
+        )
+        cur = conn.execute(
+            f"SELECT id FROM {table} WHERE content_hash=?",
+            (content_hash,),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else None
 
     raise TypeError("Either 'engine' or 'conn' must be provided")
