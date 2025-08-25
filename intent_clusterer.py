@@ -43,6 +43,44 @@ except Exception:  # pragma: no cover - fallback when sklearn is absent
 
 logger = get_logger(__name__)
 
+CANONICAL_CATEGORIES: List[str] = [
+    "scraping",
+    "cleaning",
+    "formatting",
+    "automation",
+    "decision-making",
+    "authentication",
+    "payment",
+]
+_CATEGORY_VECTORS: Dict[str, List[float]] = {}
+
+
+def _categorise(label: str | None, summary: str | None) -> str | None:
+    """Map ``label`` and ``summary`` to the closest canonical category."""
+
+    text = " ".join(part for part in [label, summary] if part)
+    if not text:
+        return None
+    vec = governed_embed(text)
+    if not vec:
+        return None
+    norm = sqrt(sum(x * x for x in vec)) or 1.0
+    vec = [x / norm for x in vec]
+    best: tuple[str | None, float] = (None, -1.0)
+    for cat in CANONICAL_CATEGORIES:
+        cvec = _CATEGORY_VECTORS.get(cat)
+        if not cvec:
+            cvec = governed_embed(cat)
+            _CATEGORY_VECTORS[cat] = list(cvec) if cvec else []
+        if not cvec:
+            continue
+        cnorm = sqrt(sum(x * x for x in cvec)) or 1.0
+        cvec_norm = [x / cnorm for x in cvec]
+        sim = sum(a * b for a, b in zip(vec, cvec_norm))
+        if sim > best[1]:
+            best = (cat, sim)
+    return best[0]
+
 
 @dataclass
 class IntentMatch:
@@ -53,6 +91,7 @@ class IntentMatch:
     origin: str | None = None
     members: List[str] | None = None
     summary: str | None = None
+    category: str | None = None
     intent_text: str | None = None
 
 
@@ -417,6 +456,7 @@ class IntentClusterer:
                     continue
             label, summary = derive_cluster_label(texts)
             text = "\n".join(texts)
+            category = _categorise(label, summary)
 
             meta = {
                 "members": sorted(members),
@@ -426,6 +466,7 @@ class IntentClusterer:
                 "path": entry,
                 "label": label,
                 "summary": summary,
+                "category": category,
                 "text": text,
                 "intent_text": text,
             }
@@ -461,6 +502,7 @@ class IntentClusterer:
                     "cluster_ids": [int(gid)],
                     "label": label,
                     "summary": summary,
+                    "category": category,
                     "text": text,
                     "intent_text": text,
                 }
@@ -470,7 +512,7 @@ class IntentClusterer:
                 )
             try:
                 persist_embedding(
-                    "intent",
+                    "intent", 
                     entry,
                     mean,
                     origin_db="intent",
@@ -479,6 +521,7 @@ class IntentClusterer:
                         "cluster_id": int(gid),
                         "members": sorted(members),
                         "intent_text": text,
+                        "category": category,
                     },
                 )
             except TypeError:  # pragma: no cover - backwards compatibility
@@ -843,6 +886,39 @@ class IntentClusterer:
         return None
 
     # ------------------------------------------------------------------
+    def _get_cluster_category(self, cluster_id: int) -> str | None:
+        """Return persisted category for ``cluster_id`` if available."""
+
+        entry = f"cluster:{int(cluster_id)}"
+        meta = getattr(self.db, "_metadata", {}).get(entry)
+        if meta:
+            cat = meta.get("category")
+            if not cat:
+                cat = _categorise(meta.get("label"), meta.get("summary"))
+                if cat:
+                    meta["category"] = cat
+            if cat:
+                return str(cat)
+        try:
+            row = self.conn.execute(
+                "SELECT metadata FROM intent_embeddings WHERE module_path = ?",
+                (entry,),
+            ).fetchone()
+        except Exception:
+            row = None
+        if row:
+            try:
+                data = json.loads(row[0] or "{}")
+                cat = data.get("category")
+                if not cat:
+                    cat = _categorise(data.get("label"), data.get("summary"))
+                if cat:
+                    return str(cat)
+            except Exception:
+                return None
+        return None
+
+    # ------------------------------------------------------------------
     def cluster_label(self, cluster_id: int) -> tuple[str, str]:
         """Return ``(label, summary)`` for ``cluster_id``.
 
@@ -890,6 +966,7 @@ class IntentClusterer:
         for item in hits:
             meta = item.get("metadata", {})
             label = meta.get("label")
+            category = meta.get("category")
             target_vec: Sequence[float] = item.get("vector", [])
             tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
             target_vec = [x / tnorm for x in target_vec]
@@ -909,9 +986,15 @@ class IntentClusterer:
                     cluster_ids = [int(c) for c in cids]
                 if label is None and cluster_ids:
                     label = self._get_cluster_label(cluster_ids[0])
+                if category is None and cluster_ids:
+                    category = self._get_cluster_category(cluster_ids[0])
                 results.append(
                     IntentMatch(
-                        path=None, similarity=sim, cluster_ids=cluster_ids, label=label
+                        path=None,
+                        similarity=sim,
+                        cluster_ids=cluster_ids,
+                        label=label,
+                        category=category,
                     )
                 )
                 continue
@@ -935,16 +1018,25 @@ class IntentClusterer:
                         cluster_ids = [cid for cid, _ in cluster_hits]
                         if cluster_ids:
                             label = self._get_cluster_label(cluster_ids[0])
+                            category = self._get_cluster_category(cluster_ids[0])
             if sim < threshold:
                 continue
             if include_clusters and not cluster_ids and cids:
                 cluster_ids = [int(c) for c in cids]
                 if label is None and cluster_ids:
                     label = self._get_cluster_label(cluster_ids[0])
+                if category is None and cluster_ids:
+                    category = self._get_cluster_category(cluster_ids[0])
             elif not include_clusters and cids and len(cids) > 1:
                 cluster_ids = [int(c) for c in cids]
             results.append(
-                IntentMatch(path=path, similarity=sim, cluster_ids=cluster_ids, label=label)
+                IntentMatch(
+                    path=path,
+                    similarity=sim,
+                    cluster_ids=cluster_ids,
+                    label=label,
+                    category=category,
+                )
             )
         return results
 
@@ -983,6 +1075,11 @@ class IntentClusterer:
                 label = meta.get("label")
                 summary = meta.get("summary")
                 intent_text = meta.get("intent_text")
+                category = meta.get("category")
+                if category is None and cluster_ids:
+                    category = self._get_cluster_category(cluster_ids[0])
+                if category is None:
+                    category = _categorise(label, summary)
                 target_vec: Sequence[float] = item.get("vector", [])
                 tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
                 target_vec = [x / tnorm for x in target_vec]
@@ -997,6 +1094,7 @@ class IntentClusterer:
                             origin=str(origin) if origin else None,
                             members=list(members) if members else None,
                             summary=str(summary) if summary is not None else None,
+                            category=str(category) if category else None,
                             intent_text=str(intent_text) if intent_text else None,
                         )
                     )
@@ -1037,6 +1135,11 @@ class IntentClusterer:
             label = meta.get("label")
             summary = meta.get("summary")
             intent_text = meta.get("intent_text")
+            category = meta.get("category")
+            if category is None and cluster_ids:
+                category = self._get_cluster_category(cluster_ids[0])
+            if category is None:
+                category = _categorise(label, summary)
             origin = meta.get("kind") or meta.get("source_id") or path
             if path or members:
                 score = 1.0 / (1.0 + float(dist))
@@ -1049,6 +1152,7 @@ class IntentClusterer:
                         origin=str(origin) if origin else None,
                         members=list(members) if members else None,
                         summary=str(summary) if summary is not None else None,
+                        category=str(category) if category else None,
                         intent_text=str(intent_text) if intent_text else None,
                     )
                 )

@@ -214,6 +214,7 @@ def test_cluster_lookup_uses_synergy_groups(
     assert cluster_items[0].path.startswith("cluster:1")
     assert cluster_items[0].label and "auth" in cluster_items[0].label.lower()
     assert cluster_items[0].summary is not None
+    assert cluster_items[0].category == "authentication"
     # ``cluster_label`` should expose the persisted label and summary
     label, summary = clusterer.cluster_label(1)
     assert label and "auth" in label.lower()
@@ -245,6 +246,7 @@ def test_cluster_intents_adds_cluster_metadata(
         ci["metadata"].get("label")
         and ci["metadata"].get("intent_text")
         and ci["metadata"].get("summary") is not None
+        and ci["metadata"].get("category")
         for ci in cluster_items
     )
     # Metadata should also be persisted in the SQLite table
@@ -256,6 +258,7 @@ def test_cluster_intents_adds_cluster_metadata(
     meta = json.loads(row[0])
     assert meta.get("intent_text")
     assert meta.get("summary") is not None
+    assert meta.get("category")
     assert set(meta.get("members", [])) == set(cluster_items[0]["metadata"]["members"])
     # Labels should also be retrievable via ``cluster_label``
     cid = cluster_items[0]["metadata"].get("cluster_id")
@@ -282,6 +285,7 @@ def test_query_and_find_helpers_respect_thresholds(
 
     res = clustered_clusterer.query("authentication help", threshold=0.1)
     assert res and res[0].path and res[0].cluster_ids
+    assert res[0].category == "authentication"
 
     # High threshold filters out even perfect matches
     assert clustered_clusterer.query("authentication help", threshold=0.99) == []
@@ -291,11 +295,13 @@ def test_query_and_find_helpers_respect_thresholds(
     )
     mod_entry = next(m for m in mods if m.path)
     assert mod_entry.cluster_ids
+    assert mod_entry.category == "authentication"
     cluster_entry = next(m for m in mods if m.origin == "cluster")
     assert cluster_entry.cluster_ids
+    assert cluster_entry.category == "authentication"
 
     clusters = clustered_clusterer.find_clusters_related_to("authentication help", top_k=5)
-    assert clusters and clusters[0].origin == "cluster"
+    assert clusters and clusters[0].origin == "cluster" and clusters[0].category == "authentication"
 
 
 def test_mixed_intent_module_gets_multiple_cluster_ids(
