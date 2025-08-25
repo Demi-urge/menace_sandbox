@@ -119,6 +119,57 @@ def extract_intent_text(path: Path) -> str:
     return "\n".join(docstrings + names + comments)
 
 
+def derive_cluster_label(texts: List[str], top_k: int = 3) -> str:
+    """Return a concise label summarising ``texts``.
+
+    The helper extracts the ``top_k`` keywords using a TF‑IDF weighting
+    scheme.  When ``scikit-learn`` is unavailable a simple frequency based
+    fallback is employed.  The resulting keywords are space separated to form
+    a short label representing the cluster's intent.
+    """
+
+    if not texts:
+        return ""
+    try:  # pragma: no cover - optional dependency
+        from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
+
+        vec = TfidfVectorizer(stop_words="english")
+        matrix = vec.fit_transform(texts)
+        scores = matrix.sum(axis=0).A1
+        terms = vec.get_feature_names_out()
+        top = scores.argsort()[-top_k:][::-1]
+        return " ".join(terms[i] for i in top if scores[i] > 0)
+    except Exception:
+        import re
+        from collections import Counter
+
+        words = re.findall(r"[A-Za-z][A-Za-z0-9_]+", " ".join(texts).lower())
+        stop = {
+            "the",
+            "and",
+            "for",
+            "with",
+            "that",
+            "from",
+            "this",
+            "are",
+            "was",
+            "but",
+            "not",
+            "use",
+            "used",
+            "using",
+            "into",
+            "over",
+            "there",
+            "their",
+        }
+        words = [w for w in words if w not in stop]
+        if not words:
+            return ""
+        return " ".join(w for w, _ in Counter(words).most_common(top_k))
+
+
 class ModuleVectorDB(EmbeddableDBMixin):
     """Minimal vector DB for module intent embeddings."""
 
@@ -269,11 +320,23 @@ class IntentClusterer:
                     agg[i] += float(val)
             mean = [v / len(vectors) for v in agg]
             entry = f"cluster:{gid}"
+
+            texts: List[str] = []
+            for m in members:
+                try:
+                    txt = extract_intent_text(Path(m))
+                    if txt:
+                        texts.append(txt)
+                except Exception:
+                    continue
+            label = derive_cluster_label(texts)
+
             meta = {
                 "members": sorted(members),
                 "kind": "cluster",
                 "cluster_ids": [int(gid)],
                 "path": entry,
+                "label": label,
             }
             try:
                 blob = sqlite3.Binary(pickle.dumps(mean))
@@ -304,6 +367,7 @@ class IntentClusterer:
                     "members": sorted(members),
                     "path": entry,
                     "cluster_ids": [int(gid)],
+                    "label": label,
                 }
                 self.db._rebuild_index()  # type: ignore[attr-defined]
                 self.db.save_index()  # type: ignore[attr-defined]
@@ -630,6 +694,7 @@ class IntentClusterer:
                 members = meta.get("members")
                 origin = meta.get("kind") or meta.get("source_id") or path
                 cluster_ids = meta.get("cluster_ids")
+                label = meta.get("label")
                 target_vec: Sequence[float] = item.get("vector", [])
                 tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
                 target_vec = [x / tnorm for x in target_vec]
@@ -642,6 +707,8 @@ class IntentClusterer:
                         entry["members"] = list(members)
                     if cluster_ids:
                         entry["cluster_ids"] = [int(c) for c in cluster_ids]
+                    if label:
+                        entry["label"] = str(label)
                     results.append(entry)
             if results:
                 return results[:top_k]
@@ -674,6 +741,7 @@ class IntentClusterer:
                 path = meta.get("path")
             members = meta.get("members")
             cluster_ids = meta.get("cluster_ids")
+            label = meta.get("label")
             origin = meta.get("kind") or meta.get("source_id") or path
             if path or members:
                 score = 1.0 / (1.0 + float(dist))
@@ -684,6 +752,8 @@ class IntentClusterer:
                     entry["members"] = list(members)
                 if cluster_ids:
                     entry["cluster_ids"] = [int(c) for c in cluster_ids]
+                if label:
+                    entry["label"] = str(label)
                 results.append(entry)
         return results[:top_k]
 
