@@ -11,21 +11,23 @@ These sources are available out of the box:
 - **discrepancy** – discrepancy reports with confidence scores from `DiscrepancyDB`.
 - **workflow** – stored workflows from `task_handoff_bot.WorkflowDB`.
 
-## Sorting and embeddings
+## Sorting, scope and embeddings
 
 All helpers accept:
 
 - `sort_by` – `"confidence"`, `"outcome_score"` or `"timestamp"` determine ordering.
 - `limit` – number of rows to fetch per source.
 - `include_embeddings` – when `True`, attach embedding vectors via the respective database's `vector(id)` API.
+- `scope` – restrict records to a menace instance. Accepts `Scope` values or
+  `"local"`, `"global"` or `"all"` (default).
 
 ## Example
 
 ```python
-from codex_db_helpers import aggregate_samples
+from codex_db_helpers import aggregate_samples, Scope
 import openai
 
-samples = aggregate_samples(sort_by="outcome_score", limit=10)
+samples = aggregate_samples(sort_by="outcome_score", limit=10, scope=Scope.LOCAL)
 
 prompt = "Examples:\n" + "\n\n".join(
     f"{s.source}: {s.content} (score={s.outcome_score})" for s in samples

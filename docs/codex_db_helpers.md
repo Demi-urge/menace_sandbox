@@ -26,19 +26,22 @@ All helpers share the following keyword arguments:
 - `limit` – maximum number of rows to return (defaults to `100`).
 - `include_embeddings` – attach vector embeddings via `db.vector(id)` when
   available.
+- `scope` – menace query scope. Accepts `Scope` values or the strings
+  `"local"`, `"global"` or `"all"` (default).
 
 ## Scope
 
-Queries apply `Scope.ALL` via `build_scope_clause`, so records from every Menace
-instance participate in fleetwide Codex training. Switching to `Scope.LOCAL` or
-`Scope.GLOBAL` restricts the results to a single instance or global templates.
+Queries default to `Scope.ALL` via `build_scope_clause`, so records from every
+Menace instance participate in fleetwide Codex training. Passing
+`scope="local"` or `scope=Scope.GLOBAL` restricts the results to a single
+instance or global templates.
 
 ## Example
 
 ```python
-from codex_db_helpers import aggregate_samples
+from codex_db_helpers import aggregate_samples, Scope
 
-records = aggregate_samples(sort_by="timestamp", limit=5)
+records = aggregate_samples(sort_by="timestamp", limit=5, scope=Scope.LOCAL)
 
 prompt = "Examples:\n" + "\n\n".join(
     f"{r.source}: {r.content}" for r in records

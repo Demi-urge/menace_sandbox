@@ -33,6 +33,7 @@ class Scope(str, Enum):
 
 
 def build_scope_clause(table, scope, menace_id):
+    assert isinstance(scope, Scope)
     return "", []
 
 
@@ -161,13 +162,19 @@ def test_fetch_enhancements(monkeypatch, tmp_path):
     ]
     _setup_enh_db(tmp_path, monkeypatch, rows)
 
-    all_rows = helpers.fetch_enhancements(sort_by="timestamp", limit=10)
+    all_rows = helpers.fetch_enhancements(
+        sort_by="timestamp", limit=10, scope="local"
+    )
     assert [s.content for s in all_rows] == ["b", "a"]
 
-    top = helpers.fetch_enhancements(sort_by="confidence", limit=1)
+    top = helpers.fetch_enhancements(
+        sort_by="confidence", limit=1, scope=helpers.Scope.ALL
+    )
     assert top[0].confidence == 0.8
 
-    emb = helpers.fetch_enhancements(include_embeddings=True, limit=1)
+    emb = helpers.fetch_enhancements(
+        include_embeddings=True, limit=1, scope="local"
+    )
     assert emb[0].embedding and len(emb[0].embedding) > 0
 
 
@@ -178,14 +185,16 @@ def test_fetch_summaries(monkeypatch, tmp_path):
     ]
     _setup_ws_db(tmp_path, monkeypatch, rows)
 
-    all_rows = helpers.fetch_summaries(limit=10)
+    all_rows = helpers.fetch_summaries(limit=10, scope=helpers.Scope.ALL)
     assert [s.content for s in all_rows] == ["s2", "s1"]
 
-    limited = helpers.fetch_summaries(limit=1)
+    limited = helpers.fetch_summaries(limit=1, scope="local")
     assert limited[0].content == "s2"
     assert limited[0].timestamp == "2023-01-02"
 
-    emb = helpers.fetch_summaries(include_embeddings=True, limit=1)
+    emb = helpers.fetch_summaries(
+        include_embeddings=True, limit=1, scope=helpers.Scope.ALL
+    )
     assert emb[0].embedding and len(emb[0].embedding) > 0
 
 
@@ -196,13 +205,19 @@ def test_fetch_discrepancies(monkeypatch, tmp_path):
     ]
     _setup_disc_db(tmp_path, monkeypatch, rows)
 
-    all_rows = helpers.fetch_discrepancies(sort_by="timestamp", limit=10)
+    all_rows = helpers.fetch_discrepancies(
+        sort_by="timestamp", limit=10, scope="local"
+    )
     assert [s.content for s in all_rows] == ["d2", "d1"]
 
-    top = helpers.fetch_discrepancies(sort_by="outcome_score", limit=1)
+    top = helpers.fetch_discrepancies(
+        sort_by="outcome_score", limit=1, scope=helpers.Scope.ALL
+    )
     assert top[0].outcome_score == 0.9
 
-    emb = helpers.fetch_discrepancies(include_embeddings=True, limit=1)
+    emb = helpers.fetch_discrepancies(
+        include_embeddings=True, limit=1, scope="local"
+    )
     assert emb[0].embedding and len(emb[0].embedding) > 0
 
 
@@ -213,13 +228,19 @@ def test_fetch_workflows(monkeypatch, tmp_path):
     ]
     _setup_wf_db(tmp_path, monkeypatch, rows)
 
-    all_rows = helpers.fetch_workflows(sort_by="timestamp", limit=10)
+    all_rows = helpers.fetch_workflows(
+        sort_by="timestamp", limit=10, scope=helpers.Scope.ALL
+    )
     assert [s.content for s in all_rows] == ["w2", "w1"]
 
-    fallback = helpers.fetch_workflows(sort_by="outcome_score", limit=2)
+    fallback = helpers.fetch_workflows(
+        sort_by="outcome_score", limit=2, scope="local"
+    )
     assert [s.content for s in fallback] == ["w2", "w1"]
 
-    emb = helpers.fetch_workflows(include_embeddings=True, limit=1)
+    emb = helpers.fetch_workflows(
+        include_embeddings=True, limit=1, scope=helpers.Scope.ALL
+    )
     assert emb[0].embedding and len(emb[0].embedding) > 0
 
 
@@ -229,7 +250,9 @@ def test_aggregate_samples(monkeypatch, tmp_path):
     _setup_disc_db(tmp_path, monkeypatch, [(1, "d1", "{}", 0.1, 0.9, "2023-01-03", "A")])
     _setup_wf_db(tmp_path, monkeypatch, [(1, "w1", "2023-01-01", "A")])
 
-    results = helpers.aggregate_samples(sort_by="timestamp", limit=3)
+    results = helpers.aggregate_samples(
+        sort_by="timestamp", limit=3, scope="local"
+    )
     assert [s.content for s in results] == ["d1", "a", "s1"]
 
 
@@ -261,8 +284,10 @@ def test_bot_development_bot_uses_codex_samples(monkeypatch, tmp_path):
         helpers.TrainingSample(source="workflow", content="ex2"),
     ]
 
-    def fake_aggregate_samples(*, sort_by, limit, include_embeddings):
-        calls["args"] = (sort_by, limit, include_embeddings)
+    def fake_aggregate_samples(
+        *, sort_by, limit, include_embeddings, scope=helpers.Scope.ALL
+    ):
+        calls["args"] = (sort_by, limit, include_embeddings, scope)
         return samples
 
     monkeypatch.setattr(bdb.cdh, "aggregate_samples", fake_aggregate_samples)
@@ -279,14 +304,14 @@ def test_bot_development_bot_uses_codex_samples(monkeypatch, tmp_path):
 
     assert "### Training Examples" in prompt
     assert "ex1" in prompt and "ex2" in prompt
-    assert calls["args"] == ("confidence", 2, True)
+    assert calls["args"] == ("confidence", 2, True, helpers.Scope.ALL)
 
 
 def test_aggregate_samples_warns_when_fetcher_fails(monkeypatch, caplog):
-    def ok_fetcher(*, sort_by, limit, include_embeddings):
+    def ok_fetcher(*, sort_by, limit, include_embeddings, scope):
         return [helpers.TrainingSample(source="x", content="ok", timestamp="t")]
 
-    def bad_fetcher(*, sort_by, limit, include_embeddings):
+    def bad_fetcher(*, sort_by, limit, include_embeddings, scope):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(helpers, "fetch_enhancements", ok_fetcher)
@@ -295,7 +320,7 @@ def test_aggregate_samples_warns_when_fetcher_fails(monkeypatch, caplog):
     monkeypatch.setattr(helpers, "fetch_workflows", ok_fetcher)
 
     caplog.set_level("WARNING", logger=helpers.__name__)
-    results = helpers.aggregate_samples(limit=5)
+    results = helpers.aggregate_samples(limit=5, scope="local")
 
     assert len(results) == 3
     assert "fetch_summaries" in caplog.text
