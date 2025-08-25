@@ -53,7 +53,6 @@ DEFAULT_PROPOSE_RATIO = float(os.environ.get("PROPOSE_SUMMARY_RATIO", "0.3"))
 # Fields used to compute the deduplication content hash for enhancements
 _ENHANCEMENT_HASH_FIELDS = [
     "idea",
-    "rationale",
     "summary",
     "before_code",
     "after_code",
@@ -205,8 +204,11 @@ class EnhancementDB(EmbeddableDBMixin):
                         )
                     )
                 if "content_hash" not in cols:
+                    # SQLite does not allow adding a column with a UNIQUE constraint via
+                    # ALTER TABLE, so add the column and create a unique index
+                    # separately below.
                     conn.execute(
-                        "ALTER TABLE enhancements ADD COLUMN content_hash TEXT UNIQUE"
+                        "ALTER TABLE enhancements ADD COLUMN content_hash TEXT"
                     )
                 idxs = [
                     r[1]
