@@ -182,32 +182,25 @@
 
 ### Codex database helpers
 
-The `codex_db_helpers` module pulls training samples from multiple Menace
-databases. Each fetch helper accepts:
+The `codex_db_helpers` module gathers training samples from Menace's
+enhancement, workflow summary, discrepancy and workflow databases. Each helper
+supports:
 
-- `scope` – record visibility (`"local"`, `"global"` or `"all"`, default).
-- `sort_by` – order column (`"score"`, `"roi"`, `"confidence"` or `"ts"`).
+- `sort_by` – one of `"confidence"`, `"outcome_score"` or `"timestamp"`.
 - `limit` – maximum number of records to return.
-- `with_embeddings` – attach vector embeddings when available.
+- `include_embeddings` – attach vector embeddings when available.
 
-Tables are expected to expose `id`, a text field (`summary`, `message` or
-`details`), and the numeric fields `score`, `roi`, `confidence` and `ts`.
+All queries run fleetwide by applying `Scope.ALL` via `build_scope_clause`.
 
 ```python
 from codex_db_helpers import aggregate_samples
 
-records = aggregate_samples(
-    sources=["enhancement", "workflow_summary"],
-    limit_per_source=5,
-    sort_by="outcome_score",
-    with_vectors=False,
-)
-
-prompt = "\n\n".join(r["summary"] for r in records)
+samples = aggregate_samples(sort_by="timestamp", limit=20)
+prompt = "\n\n".join(s.content for s in samples)
 ```
 
-To support additional data types, implement a `fetch_*` helper returning the
-standard columns and register it with `aggregate_samples`. See
+To support additional data types, implement a `fetch_*` helper that returns a
+list of `TrainingSample` objects and register it with `aggregate_samples`. See
 [docs/codex_db_helpers.md](docs/codex_db_helpers.md) for more details and
 [docs/codex_training_data.md](docs/codex_training_data.md) for a tour of the
 available sources and prompt-building examples.

@@ -9,15 +9,15 @@ These sources are available out of the box:
 - **enhancement** – summaries and outcome scores from `EnhancementDB`.
 - **workflow_summary** – short workflow descriptions from `WorkflowSummaryDB`.
 - **discrepancy** – discrepancy reports with confidence scores from `DiscrepancyDB`.
-- **evolution** – evolution history entries containing ROI and performance metrics from `EvolutionHistoryDB`.
+- **workflow** – stored workflows from `task_handoff_bot.WorkflowDB`.
 
 ## Sorting and embeddings
 
 All helpers accept:
 
-- `sort_by` – `"confidence"`, `"outcome_score"`, `"ts"`/`"timestamp"` determine ordering.
+- `sort_by` – `"confidence"`, `"outcome_score"` or `"timestamp"` determine ordering.
 - `limit` – number of rows to fetch per source.
-- `with_vectors` – when `True`, attach embedding vectors via the respective database's `vector(id)` API.
+- `include_embeddings` – when `True`, attach embedding vectors via the respective database's `vector(id)` API.
 
 ## Example
 
@@ -25,15 +25,10 @@ All helpers accept:
 from codex_db_helpers import aggregate_samples
 import openai
 
-samples = aggregate_samples(
-    sources=["enhancement", "workflow_summary", "evolution"],
-    limit_per_source=10,
-    sort_by="outcome_score",
-    with_vectors=False,
-)
+samples = aggregate_samples(sort_by="outcome_score", limit=10)
 
 prompt = "Examples:\n" + "\n\n".join(
-    f"{s.source}: {s.text} (score={s.score})" for s in samples
+    f"{s.source}: {s.content} (score={s.outcome_score})" for s in samples
 )
 
 completion = openai.Completion.create(
