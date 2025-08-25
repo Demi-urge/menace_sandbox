@@ -8,17 +8,14 @@ and outputs to resolve dependency order and emits small workflow candidates.
 
 ```python
 from workflow_synthesizer import WorkflowSynthesizer
-from workflow_spec import to_spec, save
 
 synth = WorkflowSynthesizer()
-steps = synth.generate_workflows("module_a", problem="summarise data")[0]
-
-spec = to_spec([
-    {"name": s["module"], "bot": s["module"], "args": s["inputs"]}
-    for s in steps
-])
-save(spec)  # writes module_a.workflow.json and registers it with WorkflowDB
+steps = synth.synthesize(start_module="module_a", problem="summarise data")
+for step in steps:
+    print(step["module"], step["args"], "->", step["provides"])
 ```
 
-Workflows serialised with :func:`workflow_spec.save` are compatible with
-``WorkflowDB`` and can be ingested directly.
+The :meth:`WorkflowSynthesizer.synthesize` method returns a structured list of
+steps where each entry describes the module name, unresolved arguments and the
+values it provides.  These steps can be transformed into a workflow
+specification or executed directly.

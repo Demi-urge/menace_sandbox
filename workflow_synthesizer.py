@@ -257,13 +257,16 @@ class WorkflowSynthesizer:
         start_module: str | None = None,
         problem: str | None = None,
         limit: int = 10,
-    ) -> List[str]:
-        """Return a list of module names relevant to ``start_module`` and ``problem``.
+        overrides: Dict[str, Set[str]] | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Return a greedy chain of modules.
 
-        The method first loads the synergy graph from ``synergy_graph_path`` and,
-        if ``start_module`` is provided, expands the cluster around that module.
-        When a textual ``problem`` is supplied, semantic matches from
-        :class:`IntentClusterer` are merged with the synergy set.
+        Modules are gathered using synergy graph expansion and optional intent
+        search.  They are then ordered greedily by matching outputs of previous
+        modules to inputs of subsequent modules.  When no direct match exists the
+        module with the smallest number of unresolved inputs is chosen as a
+        fallback.  ``overrides`` allows callers to mark specific arguments as
+        satisfied externally.
         """
 
         modules: Set[str] = set()
@@ -298,7 +301,53 @@ class WorkflowSynthesizer:
             except Exception:  # pragma: no cover - ignore search failures
                 pass
 
-        return sorted(modules)[:limit]
+        if start_module:
+            modules.add(start_module)
+
+        # Greedily order modules based on IO overlap
+        analyzer = ModuleIOAnalyzer()
+        remaining = [m for m in sorted(modules) if m != start_module]
+        provided: Set[str] = set()
+        workflow: List[Dict[str, Any]] = []
+
+        def _append(mod: str) -> None:
+            io = analyzer.analyze(Path(mod.replace(".", "/")).with_suffix(".py"))
+            inputs = set(io.get("inputs", []))
+            outputs = set(io.get("outputs", []))
+            unresolved = [i for i in inputs if i not in provided]
+            if overrides and mod in overrides:
+                unresolved = [i for i in unresolved if i not in overrides[mod]]
+            workflow.append(
+                {"module": mod, "args": unresolved, "provides": sorted(outputs)}
+            )
+            provided.update(outputs)
+
+        if start_module:
+            _append(start_module)
+
+        while remaining and len(workflow) < limit:
+            best = None
+            best_overlap = -1
+            best_missing = None
+            for mod in remaining:
+                io = analyzer.analyze(Path(mod.replace(".", "/")).with_suffix(".py"))
+                ins = set(io.get("inputs", []))
+                overlap = len(ins & provided)
+                missing = len(ins - provided)
+                if (
+                    overlap > best_overlap
+                    or (overlap == best_overlap and (best_missing is None or missing < best_missing))
+                ):
+                    best = mod
+                    best_overlap = overlap
+                    best_missing = missing
+
+            if best is None:
+                break
+            _append(best)
+            remaining.remove(best)
+
+        return workflow
 
     # ------------------------------------------------------------------
     def generate_workflows(
@@ -334,7 +383,8 @@ class WorkflowSynthesizer:
         import networkx as nx
 
         # gather candidate modules via synergy + intent expansion
-        modules = set(self.synthesize(start_module=start_module, problem=problem, limit=50))
+        steps = self.synthesize(start_module=start_module, problem=problem, limit=50)
+        modules = {s["module"] for s in steps}
         modules.add(start_module)
 
         # Inspect modules to gather IO information
