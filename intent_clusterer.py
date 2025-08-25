@@ -313,6 +313,31 @@ class IntentClusterer:
     def _index_clusters(self, groups: Dict[str, List[str]]) -> None:
         """Aggregate embeddings for ``groups`` and persist as cluster entries."""
 
+        desired = {f"cluster:{gid}" for gid in groups}
+        try:
+            existing = {
+                rid
+                for rid in getattr(self.db, "_metadata", {})  # type: ignore[attr-defined]
+                if str(rid).startswith("cluster:")
+            }
+        except Exception:
+            existing = set()
+
+        stale = existing - desired
+        for rid in list(stale):
+            try:
+                with self.conn:
+                    self.conn.execute(
+                        "DELETE FROM intent_embeddings WHERE module_path = ?",
+                        (rid,),
+                    )
+                if rid in self.db._metadata:  # type: ignore[attr-defined]
+                    del self.db._metadata[rid]  # type: ignore[attr-defined]
+                if rid in getattr(self.db, "_id_map", []):  # type: ignore[attr-defined]
+                    self.db._id_map.remove(rid)  # type: ignore[attr-defined]
+            except Exception as exc:
+                logger.warning("failed to remove stale cluster %s: %s", rid, exc)
+
         for gid, members in groups.items():
             vectors = [self.vectors.get(m) for m in members if self.vectors.get(m)]
             if not vectors:
@@ -358,7 +383,7 @@ class IntentClusterer:
                 logger.exception("failed to persist cluster %s: %s", gid, exc)
             if hasattr(self.retriever, "add_vector"):
                 try:
-                    self.retriever.add_vector(mean, {"path": entry, **meta})
+                    self.retriever.add_vector(mean, meta)
                 except Exception as exc:
                     logger.warning("failed to add cluster %s to retriever: %s", gid, exc)
             try:
@@ -378,12 +403,16 @@ class IntentClusterer:
                     "label": label,
                     "text": text,
                 }
-                self.db._rebuild_index()  # type: ignore[attr-defined]
-                self.db.save_index()  # type: ignore[attr-defined]
             except Exception as exc:
                 logger.warning(
                     "failed to update vector DB for cluster %s: %s", gid, exc
                 )
+
+        try:
+            self.db._rebuild_index()  # type: ignore[attr-defined]
+            self.db.save_index()  # type: ignore[attr-defined]
+        except Exception as exc:
+            logger.warning("failed to rebuild cluster index: %s", exc)
 
     def _ensure_table(self) -> None:
         """Create or migrate the ``intent_embeddings`` table."""
@@ -528,6 +557,9 @@ class IntentClusterer:
         centers = [list(c) for c in getattr(km, "cluster_centers_", [])]
 
         self.clusters = {}
+        cluster_members: Dict[str, List[str]] = {
+            str(i): [] for i in range(len(centers))
+        }
         for path, vec in self.vectors.items():
             sims: List[int] = []
             scores: List[float] = []
@@ -541,6 +573,8 @@ class IntentClusterer:
                 # Always associate with the closest cluster
                 sims = [int(max(range(len(scores)), key=lambda i: scores[i]))]
             self.clusters[path] = [int(cid) for cid in sims]
+            for cid in self.clusters[path]:
+                cluster_members.setdefault(str(cid), []).append(path)
             # Update retriever metadata with the assigned cluster identifiers
             if hasattr(self.retriever, "add_vector"):
                 try:
@@ -549,6 +583,7 @@ class IntentClusterer:
                     )
                 except Exception:
                     continue
+        self._index_clusters({k: v for k, v in cluster_members.items() if v})
         return dict(self.clusters)
 
     # ------------------------------------------------------------------
