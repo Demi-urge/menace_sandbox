@@ -229,7 +229,7 @@ class IntentClusterer:
     db: ModuleVectorDB
     module_ids: Dict[str, int]
     vectors: Dict[str, List[float]]
-    clusters: Dict[str, int]
+    clusters: Dict[str, List[int]]
     vector_service: Any | None
     router: Any
     conn: sqlite3.Connection
@@ -262,8 +262,8 @@ class IntentClusterer:
         self.db = db or intent_db or ModuleVectorDB()
         self.module_ids = {}
         self.vectors = {}
-        self.clusters = {}
-        self.cluster_map = self.clusters  # backward compatibility alias
+        self.clusters: Dict[str, List[int]] = {}
+        self.cluster_map: Dict[str, List[int]] = self.clusters  # backward compatibility alias
         self._cluster_cache = {}
 
         LOCAL_TABLES.add("intent_embeddings")
