@@ -412,7 +412,7 @@ class WorkflowSynthesizer:
     intent_db: "IntentDB" | None
     synergy_graph_path: Path
     intent_db_path: Path | None
-    generated_workflows: List[List[Dict[str, Any]]]
+    generated_workflows: List[List[WorkflowStep]]
     workflow_scores: List[float]
 
     # ------------------------------------------------------------------
@@ -779,7 +779,7 @@ class WorkflowSynthesizer:
         max_depth: int | None = None,
         synergy_weight: float = 1.0,
         intent_weight: float = 1.0,
-    ) -> List[List[Dict[str, Any]]]:
+    ) -> List[List[WorkflowStep]]:
         """Generate candidate workflows beginning at ``start_module``.
 
         The returned workflows are ordered using the same dependency resolution
@@ -820,30 +820,16 @@ class WorkflowSynthesizer:
             signatures.append(sig)
 
         try:
-            ordered = self.resolve_dependencies(signatures)
+            workflow = self.resolve_dependencies(signatures)
         except ValueError as exc:  # pragma: no cover - surface errors
             raise ValueError(f"Failed to resolve dependencies: {exc}") from exc
-
-        sig_map = {s.name: s for s in signatures}
-        workflow: List[Dict[str, Any]] = []
-        for step in ordered:
-            sig = sig_map[step.module]
-            fn = next(iter(sig.functions.keys()), None)
-            workflow.append(
-                {
-                    "module": step.module,
-                    "function": fn,
-                    "inputs": step.inputs,
-                    "outputs": step.outputs,
-                }
-            )
 
         # Retain a simple chain following synergy edges from the start module
         graph = getattr(self.module_synergy_grapher, "graph", None)
         if graph is not None and workflow:
-            chained: List[Dict[str, Any]] = [workflow[0]]
+            chained: List[WorkflowStep] = [workflow[0]]
             for prev, step in zip(workflow, workflow[1:]):
-                if graph.has_edge(prev["module"], step["module"]):
+                if graph.has_edge(prev.module, step.module):
                     chained.append(step)
                 else:
                     break
@@ -852,7 +838,7 @@ class WorkflowSynthesizer:
         # -------------------------------------------------------------- scoring
         synergy_score = 0.0
         graph = getattr(self.module_synergy_grapher, "graph", None)
-        modules_order = [step["module"] for step in workflow]
+        modules_order = [step.module for step in workflow]
         if graph is not None:
             for a, b in zip(modules_order, modules_order[1:]):
                 if graph.has_edge(a, b):
@@ -871,14 +857,14 @@ class WorkflowSynthesizer:
                         mod = Path(str(path)).stem
                         score_map[mod] = float(getattr(m, "score", 1.0))
                 for step in workflow:
-                    intent_score += score_map.get(step["module"], 0.0)
+                    intent_score += score_map.get(step.module, 0.0)
             except Exception:  # pragma: no cover - best effort
                 pass
 
         combined = synergy_weight * synergy_score + intent_weight * intent_score
         normalised = combined / max(len(workflow), 1)
 
-        entries: List[Tuple[float, List[Dict[str, Any]]]] = [(normalised, workflow)]
+        entries: List[Tuple[float, List[WorkflowStep]]] = [(normalised, workflow)]
         entries.sort(key=lambda x: x[0], reverse=True)
         self.workflow_scores = [score for score, _wf in entries][:limit]
         self.generated_workflows = [wf for _score, wf in entries][:limit]
@@ -886,7 +872,7 @@ class WorkflowSynthesizer:
         out_dir = Path("sandbox_data/generated_workflows")
         out_dir.mkdir(parents=True, exist_ok=True)
         for idx, wf in enumerate(self.generated_workflows):
-            name = wf[0]["module"].replace(".", "_") if wf else f"workflow_{idx}"
+            name = wf[0].module.replace(".", "_") if wf else f"workflow_{idx}"
             path = out_dir / f"{name}_{idx}.workflow.json"
             path.write_text(to_json(wf), encoding="utf-8")
 
@@ -940,28 +926,37 @@ class WorkflowSynthesizer:
 
 
 # ---------------------------------------------------------------------------
-def workflow_to_dict(workflow: List[Dict[str, Any]]) -> Dict[str, Any]:
+def workflow_to_dict(workflow: List[WorkflowStep] | List[Dict[str, Any]]) -> Dict[str, Any]:
     """Return ``workflow`` in the simplified serialisable format."""
 
-    return {
-        "steps": [
-            {
-                "module": step.get("module", ""),
-                "inputs": step.get("inputs") or step.get("args", []),
-                "outputs": step.get("outputs") or step.get("provides", []),
-            }
-            for step in workflow
-        ]
-    }
+    steps: List[Dict[str, Any]] = []
+    for step in workflow:
+        if isinstance(step, WorkflowStep):
+            steps.append(
+                {
+                    "module": step.module,
+                    "inputs": list(step.inputs),
+                    "outputs": list(step.outputs),
+                }
+            )
+        else:
+            steps.append(
+                {
+                    "module": step.get("module", ""),
+                    "inputs": step.get("inputs") or step.get("args", []),
+                    "outputs": step.get("outputs") or step.get("provides", []),
+                }
+            )
+    return {"steps": steps}
 
 
-def to_json(workflow: List[Dict[str, Any]]) -> str:
+def to_json(workflow: List[WorkflowStep] | List[Dict[str, Any]]) -> str:
     """Serialize ``workflow`` to a JSON string."""
 
     return json.dumps(workflow_to_dict(workflow), indent=2)
 
 
-def to_yaml(workflow: List[Dict[str, Any]]) -> str:
+def to_yaml(workflow: List[WorkflowStep] | List[Dict[str, Any]]) -> str:
     """Serialize ``workflow`` to a YAML string."""
 
     try:  # pragma: no cover - YAML optional
@@ -973,33 +968,48 @@ def to_yaml(workflow: List[Dict[str, Any]]) -> str:
 
 
 # ---------------------------------------------------------------------------
-def to_workflow_spec(workflow: List[Dict[str, Any]]) -> Dict[str, Any]:
+def to_workflow_spec(workflow: List[WorkflowStep] | List[Dict[str, Any]]) -> Dict[str, Any]:
     """Return a lightweight workflow specification.
 
     The synthesizer internally represents workflows as a sequence of
-    dictionaries containing at least the ``module`` name and optional ``inputs``
-    and ``outputs``.  This helper adapts that structure to the format produced
-    by :func:`workflow_spec.to_spec`.
+    :class:`WorkflowStep` objects.  This helper adapts that structure (and the
+    historical dictionary representation for backwards compatibility) to the
+    format produced by :func:`workflow_spec.to_spec`.
     """
 
     from workflow_spec import to_spec as _to_spec
 
-    steps = [
-        {
-            "module": step.get("module", ""),
-            "inputs": step.get("inputs", []),
-            "outputs": step.get("outputs", []),
-            "files": step.get("files", [])
-            or step.get("files_read", [])
-            + step.get("files_written", []),
-            "globals": step.get("globals", []),
-        }
-        for step in workflow
-    ]
+    steps: List[Dict[str, Any]] = []
+    for step in workflow:
+        if isinstance(step, WorkflowStep):
+            steps.append(
+                {
+                    "module": step.module,
+                    "inputs": list(step.inputs),
+                    "outputs": list(step.outputs),
+                    "files": [],
+                    "globals": [],
+                }
+            )
+        else:
+            steps.append(
+                {
+                    "module": step.get("module", ""),
+                    "inputs": step.get("inputs", []),
+                    "outputs": step.get("outputs", []),
+                    "files": step.get("files", [])
+                    or step.get("files_read", [])
+                    + step.get("files_written", []),
+                    "globals": step.get("globals", []),
+                }
+            )
     return _to_spec(steps)
 
 
-def save_workflow(workflow: List[Dict[str, Any]], path: Path | str | None = None) -> Path:
+def save_workflow(
+    workflow: List[WorkflowStep] | List[Dict[str, Any]],
+    path: Path | str | None = None,
+) -> Path:
     """Persist ``workflow`` using :func:`workflow_spec.save_spec`."""
 
     from workflow_spec import save_spec as _save_spec
