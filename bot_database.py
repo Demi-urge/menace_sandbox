@@ -62,11 +62,9 @@ _BOT_HASH_FIELDS = [
     "name",
     "type",
     "tasks",
-    "dependencies",
     "purpose",
     "tags",
     "toolchain",
-    "version",
 ]
 
 
