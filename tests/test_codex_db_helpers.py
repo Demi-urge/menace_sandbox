@@ -1,237 +1,244 @@
-import json
 import sqlite3
-from types import SimpleNamespace
-from unittest.mock import Mock
-import types
+from types import SimpleNamespace, ModuleType
+from pathlib import Path
 import sys
+import importlib
+from enum import Enum
 
-import pytest
+# Avoid executing the heavy package __init__ by inserting a lightweight
+# placeholder package for imports.
+root = Path(__file__).resolve().parents[1]
+pkg = ModuleType("menace_sandbox")
+pkg.__path__ = [str(root)]
+sys.modules.setdefault("menace_sandbox", pkg)
+sys.path.insert(0, str(root))
 
-for name, cls in [("chatgpt_enhancement_bot","EnhancementDB"),("workflow_summary_db","WorkflowSummaryDB"),("discrepancy_db","DiscrepancyDB"),("evolution_history_db","EvolutionHistoryDB")]:
-    mod = types.ModuleType(name)
-    setattr(mod, cls, object)
-    sys.modules[name] = mod
+# Provide lightweight stub modules required by codex_db_helpers to avoid
+# importing heavy dependencies during testing.
+for name, cls_name in [
+    ("chatgpt_enhancement_bot", "EnhancementDB"),
+    ("workflow_summary_db", "WorkflowSummaryDB"),
+    ("discrepancy_db", "DiscrepancyDB"),
+    ("evolution_history_db", "EvolutionHistoryDB"),
+]:
+    mod = ModuleType(f"menace_sandbox.{name}")
+    setattr(mod, cls_name, type(cls_name, (), {}))
+    sys.modules[f"menace_sandbox.{name}"] = mod
 
-import codex_db_helpers as helpers
-from scope_utils import Scope
+scope_mod = ModuleType("menace_sandbox.scope_utils")
+
+class Scope(str, Enum):
+    LOCAL = "local"
+    GLOBAL = "global"
+    ALL = "all"
 
 
+def build_scope_clause(table_name, scope, menace_id):
+    return "", []
 
-def make_enhancement_db():
-    rows = [
-        (1, "enh1", 0.3, "300", 0.1, 0.9),
-        (2, "enh2", 0.9, "100", 0.2, 0.6),
-        (3, "enh3", 0.5, "200", 0.3, 0.8),
-    ]
-    conn = sqlite3.connect(":memory:")
+
+scope_mod.Scope = Scope
+scope_mod.build_scope_clause = build_scope_clause
+sys.modules["menace_sandbox.scope_utils"] = scope_mod
+
+helpers = importlib.import_module("menace_sandbox.codex_db_helpers")
+
+
+def _setup_enh_db(tmp_path, monkeypatch, rows):
+    conn = sqlite3.connect(tmp_path / 'enh.db')
     conn.row_factory = sqlite3.Row
     conn.execute(
-        """CREATE TABLE enhancements(
-        id INTEGER PRIMARY KEY,
-        summary TEXT,
-        score REAL,
-        timestamp TEXT,
-        roi REAL,
-        confidence REAL
-    )"""
+        "CREATE TABLE enhancements("
+        "id INTEGER PRIMARY KEY,"
+        "summary TEXT,"
+        "confidence REAL,"
+        "outcome_score REAL,"
+        "timestamp TEXT,"
+        "source_menace_id TEXT)"
     )
     conn.executemany(
-        "INSERT INTO enhancements(id, summary, score, timestamp, roi, confidence) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO enhancements(id, summary, confidence, outcome_score, timestamp, source_menace_id)"
+        " VALUES (?,?,?,?,?,?)",
         rows,
     )
-    return SimpleNamespace(conn=conn, vector=Mock(side_effect=lambda i: [i]))
+    conn.commit()
+
+    class StubEnhancementDB:
+        def __init__(self):
+            self.conn = conn
+            self.router = SimpleNamespace(menace_id='m0')
+
+        def vector(self, rid):
+            return [float(rid)]
+
+    monkeypatch.setattr(helpers, 'EnhancementDB', StubEnhancementDB)
 
 
-
-def make_workflow_summary_db():
-    rows = [
-        (1, "ws1", 0.1, 0.7, "100"),
-        (3, "ws3", 0.2, 0.5, "300"),
-        (2, "ws2", 0.3, 0.6, "200"),
-    ]
-    conn = sqlite3.connect(":memory:")
+def _setup_ws_db(tmp_path, monkeypatch, rows):
+    conn = sqlite3.connect(tmp_path / 'ws.db')
     conn.row_factory = sqlite3.Row
     conn.execute(
-        """CREATE TABLE workflow_summaries(
-        workflow_id INTEGER PRIMARY KEY,
-        summary TEXT,
-        roi REAL,
-        confidence REAL,
-        ts TEXT
-    )"""
+        "CREATE TABLE workflow_summaries("
+        "workflow_id INTEGER PRIMARY KEY,"
+        "summary TEXT,"
+        "source_menace_id TEXT)"
     )
     conn.executemany(
-        "INSERT INTO workflow_summaries(workflow_id, summary, roi, confidence, ts) VALUES (?,?,?,?,?)",
+        "INSERT INTO workflow_summaries(workflow_id, summary, source_menace_id)"
+        " VALUES (?,?,?)",
         rows,
     )
-    return SimpleNamespace(conn=conn)
+    conn.commit()
+
+    class StubWSDB:
+        def __init__(self):
+            self.conn = conn
+            self.router = SimpleNamespace(menace_id='m1')
+
+        def vector(self, wid):
+            return [float(wid)]
+
+    monkeypatch.setattr(helpers, 'WorkflowSummaryDB', StubWSDB)
 
 
-
-def make_discrepancy_db():
-    rows = [
-        (1, "d1", json.dumps({"outcome_score": 0.2, "confidence": 0.9}), "200"),
-        (2, "d2", json.dumps({"outcome_score": 0.8, "confidence": 0.5}), "100"),
-        (3, "d3", json.dumps({"outcome_score": 0.6, "confidence": 0.8}), "300"),
-    ]
-    conn = sqlite3.connect(":memory:")
+def _setup_disc_db(tmp_path, monkeypatch, rows):
+    conn = sqlite3.connect(tmp_path / 'disc.db')
     conn.row_factory = sqlite3.Row
     conn.execute(
-        """CREATE TABLE discrepancies(
-        id INTEGER PRIMARY KEY,
-        message TEXT,
-        metadata TEXT,
-        ts TEXT
-    )"""
+        "CREATE TABLE discrepancies("
+        "id INTEGER PRIMARY KEY,"
+        "message TEXT,"
+        "metadata TEXT,"
+        "confidence REAL,"
+        "outcome_score REAL,"
+        "ts TEXT,"
+        "source_menace_id TEXT)"
     )
     conn.executemany(
-        "INSERT INTO discrepancies(id, message, metadata, ts) VALUES (?,?,?,?)",
+        "INSERT INTO discrepancies(id, message, metadata, confidence, outcome_score, ts, source_menace_id)"
+        " VALUES (?,?,?,?,?,?,?)",
         rows,
     )
-    return SimpleNamespace(conn=conn, vector=Mock(side_effect=lambda i: [i]))
+    conn.commit()
+
+    class StubDiscDB:
+        def __init__(self):
+            self.conn = conn
+            self.router = SimpleNamespace(menace_id='m2')
+
+        def vector(self, rid):
+            return [float(rid)]
+
+    monkeypatch.setattr(helpers, 'DiscrepancyDB', StubDiscDB)
 
 
-
-def make_evolution_db():
-    rows = [
-        ("e1", 0.4, 0.1, "100", 0, 0, 0, 0, "", "", "", "", "", "", 0, "", ""),
-        ("e2", 0.7, 0.2, "300", 0, 0, 0, 0, "", "", "", "", "", "", 0, "", ""),
-        ("e3", None, 0.9, "200", 0, 0, 0, 0, "", "", "", "", "", "", 0, "", ""),
-    ]
-    conn = sqlite3.connect(":memory:")
+def _setup_hist_db(tmp_path, monkeypatch, rows):
+    conn = sqlite3.connect(tmp_path / 'hist.db')
     conn.row_factory = sqlite3.Row
     conn.execute(
-        """CREATE TABLE evolution_history(
-        action TEXT,
-        roi REAL,
-        performance REAL,
-        ts TEXT,
-        before_metric REAL,
-        after_metric REAL,
-        predicted_roi REAL,
-        efficiency REAL,
-        bottleneck TEXT,
-        patch_id TEXT,
-        workflow_id TEXT,
-        trending_topic TEXT,
-        reason TEXT,
-        trigger TEXT,
-        parent_event_id INTEGER,
-        predicted_class TEXT,
-        actual_class TEXT
-    )"""
+        "CREATE TABLE evolution_history("
+        "action TEXT,"
+        "roi REAL,"
+        "performance REAL,"
+        "ts TEXT,"
+        "source_menace_id TEXT)"
     )
     conn.executemany(
-        "INSERT INTO evolution_history(action, roi, performance, ts, before_metric, after_metric, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, trending_topic, reason, trigger, parent_event_id, predicted_class, actual_class) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO evolution_history(action, roi, performance, ts, source_menace_id)"
+        " VALUES (?,?,?,?,?)",
         rows,
     )
-    return SimpleNamespace(conn=conn, vector=Mock(side_effect=lambda i: [i]))
+    conn.commit()
+
+    class StubHistDB:
+        def __init__(self):
+            self.conn = conn
+            self.router = SimpleNamespace(menace_id='m3')
+
+        def vector(self, rid):
+            return [float(rid)]
+
+    monkeypatch.setattr(helpers, 'EvolutionHistoryDB', StubHistDB)
 
 
+def test_fetch_enhancements(monkeypatch, tmp_path):
+    rows = [
+        (1, 'a', 0.2, 0.5, '2023-01-01T00:00:00', 'A'),
+        (2, 'b', 0.8, 0.3, '2023-01-02T00:00:00', 'B'),
+    ]
+    _setup_enh_db(tmp_path, monkeypatch, rows)
 
-@pytest.mark.parametrize(
-    "fetcher_name,db_factory,db_attr,expectations",
-    [
-        (
-            "fetch_enhancement_samples",
-            make_enhancement_db,
-            "EnhancementDB",
-            {
-                "timestamp": ["enh1", "enh3"],
-                "outcome_score": ["enh2", "enh3"],
-            },
-        ),
-        (
-            "fetch_workflow_summary_samples",
-            make_workflow_summary_db,
-            "WorkflowSummaryDB",
-            {"timestamp": ["ws3", "ws2"]},
-        ),
-        (
-            "fetch_discrepancy_samples",
-            make_discrepancy_db,
-            "DiscrepancyDB",
-            {
-                "timestamp": ["d3", "d1"],
-                "outcome_score": ["d2", "d3"],
-                "confidence": ["d1", "d3"],
-            },
-        ),
-        (
-            "fetch_evolution_samples",
-            make_evolution_db,
-            "EvolutionHistoryDB",
-            {
-                "timestamp": ["e2", "e3"],
-                "outcome_score": ["e3", "e2"],
-            },
-        ),
-    ],
-)
-def test_fetch_helpers_scope_sorting_and_vectors(monkeypatch, fetcher_name, db_factory, db_attr, expectations):
-    db = db_factory()
-    monkeypatch.setattr(helpers, db_attr, lambda: db)
+    all_rows = helpers.fetch_enhancements(order_by='timestamp', limit=10)
+    assert len(all_rows) == 2
+    assert [ex.metadata['id'] for ex in all_rows] == [2, 1]
 
-    scopes: list = []
+    top = helpers.fetch_enhancements(order_by='confidence', limit=1)
+    assert len(top) == 1 and top[0].confidence == 0.8
 
-    def fake_apply_scope(query, scope, menace_id, table_alias=None, params=None):
-        scopes.append(scope)
-        return query, list(params) if params else []
-
-    monkeypatch.setattr(helpers, "apply_scope_to_query", fake_apply_scope)
-
-    fetcher = getattr(helpers, fetcher_name)
-
-    for sort_by, expected_texts in expectations.items():
-        if hasattr(db, "vector"):
-            db.vector.reset_mock()
-        result = fetcher(limit=2, sort_by=sort_by, with_vectors=True)
-        assert [s.text for s in result] == expected_texts
-        if hasattr(db, "vector"):
-            assert db.vector.call_count == len(expected_texts)
-            assert all(s.vector is not None for s in result)
-        else:
-            assert all(s.vector is None for s in result)
-
-    assert scopes == [Scope.ALL] * len(expectations)
+    emb = helpers.fetch_enhancements(include_embeddings=True, limit=1)
+    assert emb[0].embedding and len(emb[0].embedding) > 0
 
 
-def test_aggregate_samples_merges_and_sorts(monkeypatch):
-    enh_db = make_enhancement_db()
-    wf_db = make_workflow_summary_db()
-    dis_db = make_discrepancy_db()
-    evo_db = make_evolution_db()
+def test_fetch_workflow_summaries(monkeypatch, tmp_path):
+    rows = [
+        (1, 's1', 'A'),
+        (2, 's2', 'B'),
+    ]
+    _setup_ws_db(tmp_path, monkeypatch, rows)
 
-    monkeypatch.setattr(helpers, "EnhancementDB", lambda: enh_db)
-    monkeypatch.setattr(helpers, "WorkflowSummaryDB", lambda: wf_db)
-    monkeypatch.setattr(helpers, "DiscrepancyDB", lambda: dis_db)
-    monkeypatch.setattr(helpers, "EvolutionHistoryDB", lambda: evo_db)
+    all_rows = helpers.fetch_workflow_summaries(limit=10)
+    assert len(all_rows) == 2
+    assert [ex.metadata['workflow_id'] for ex in all_rows] == [2, 1]
 
-    scopes: list = []
+    limited = helpers.fetch_workflow_summaries(limit=1)
+    assert len(limited) == 1 and limited[0].metadata['workflow_id'] == 2
 
-    def fake_apply_scope(query, scope, menace_id, table_alias=None, params=None):
-        scopes.append(scope)
-        return query, list(params) if params else []
+    emb = helpers.fetch_workflow_summaries(include_embeddings=True, limit=1)
+    assert emb[0].embedding and len(emb[0].embedding) > 0
 
-    monkeypatch.setattr(helpers, "apply_scope_to_query", fake_apply_scope)
 
-    result = helpers.aggregate_samples(
-        ["enhancement", "workflow_summary", "discrepancy", "evolution"],
-        limit_per_source=2,
-        sort_by="timestamp",
-        with_vectors=True,
-    )
+def test_fetch_discrepancies(monkeypatch, tmp_path):
+    rows = [
+        (1, 'd1', '{}', 0.1, 0.9, '2023-01-01', 'A'),
+        (2, 'd2', '{}', 0.9, 0.1, '2023-01-02', 'B'),
+    ]
+    _setup_disc_db(tmp_path, monkeypatch, rows)
 
-    assert len(result) == 8
-    ts_values = [s.ts or "" for s in result]
-    assert ts_values == sorted(ts_values, reverse=True)
-    assert enh_db.vector.call_count == 2
-    assert dis_db.vector.call_count == 2
-    assert evo_db.vector.call_count == 2
-    for sample in result:
-        if sample.source == "workflow_summary":
-            assert sample.vector is None
-        else:
-            assert sample.vector is not None
-    assert scopes == [Scope.ALL] * 4
+    all_rows = helpers.fetch_discrepancies(order_by='timestamp', limit=10)
+    assert len(all_rows) == 2
+    assert [ex.metadata['id'] for ex in all_rows] == [2, 1]
 
+    top = helpers.fetch_discrepancies(order_by='outcome_score', limit=1)
+    assert len(top) == 1 and top[0].outcome_score == 0.9
+
+    emb = helpers.fetch_discrepancies(include_embeddings=True, limit=1)
+    assert emb[0].embedding and len(emb[0].embedding) > 0
+
+
+def test_fetch_workflow_history(monkeypatch, tmp_path):
+    rows = [
+        ('h1', 1.0, None, '2023-01-01', 'A'),
+        ('h2', None, 2.0, '2023-01-02', 'B'),
+    ]
+    _setup_hist_db(tmp_path, monkeypatch, rows)
+
+    all_rows = helpers.fetch_workflow_history(order_by='timestamp', limit=10)
+    assert len(all_rows) == 2
+    assert [ex.metadata['id'] for ex in all_rows] == [2, 1]
+
+    top = helpers.fetch_workflow_history(order_by='outcome_score', limit=1)
+    assert len(top) == 1 and top[0].outcome_score == 2.0
+
+    emb = helpers.fetch_workflow_history(include_embeddings=True, limit=1)
+    assert emb[0].embedding and len(emb[0].embedding) > 0
+
+
+def test_aggregate_examples(monkeypatch, tmp_path):
+    _setup_enh_db(tmp_path, monkeypatch, [(1, 'a', 0.2, 0.5, '2023-01-02', 'A')])
+    _setup_ws_db(tmp_path, monkeypatch, [(1, 's1', 'A')])
+    _setup_disc_db(tmp_path, monkeypatch, [(1, 'd1', '{}', 0.1, 0.9, '2023-01-03', 'A')])
+    _setup_hist_db(tmp_path, monkeypatch, [('h1', 1.0, None, '2023-01-01', 'A')])
+
+    results = helpers.aggregate_examples(order_by='timestamp', limit=3)
+    timestamps = [ex.timestamp for ex in results]
+    assert timestamps == ['2023-01-03', '2023-01-02', '2023-01-01']
