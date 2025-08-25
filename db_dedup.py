@@ -4,14 +4,15 @@ from __future__ import annotations
 
 The :func:`insert_if_unique` function computes a ``content_hash`` for selected
 fields and attempts to insert a row into a table.  If a duplicate hash is
-detected via a ``UNIQUE`` constraint the insert is skipped.
+detected via a ``UNIQUE`` constraint the insert is skipped and the existing
+row's ID is returned.
 """
 
 from collections.abc import Iterable, Mapping
-import hashlib
-import json
 import sqlite3
 from typing import TYPE_CHECKING, Any
+
+from dedup_utils import compute_content_hash
 
 try:  # pragma: no cover - optional dependency
     from sqlalchemy.exc import IntegrityError as SAIntegrityError
@@ -26,18 +27,6 @@ if TYPE_CHECKING:  # pragma: no cover - type checking only
     from sqlalchemy.engine import Engine
 
 __all__ = ["compute_content_hash", "hash_fields", "insert_if_unique"]
-
-
-def compute_content_hash(data: Mapping[str, Any]) -> str:
-    """Return a SHA256 hex digest for ``data``.
-
-    The mapping is JSON encoded with keys sorted to ensure stable hashes for
-    logically equivalent inputs.
-    """
-
-    return hashlib.sha256(
-        json.dumps(data, sort_keys=True).encode("utf-8")
-    ).hexdigest()
 
 
 def hash_fields(data: Mapping[str, Any], fields: Iterable[str]) -> str:

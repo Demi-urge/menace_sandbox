@@ -5,6 +5,8 @@ import pytest
 
 import db_router
 from db_dedup import hash_fields, insert_if_unique
+from dedup_utils import insert_if_unique as insert_if_unique_sqlite
+import sqlite3
 
 
 @pytest.fixture
@@ -223,3 +225,37 @@ def test_insert_if_unique_missing_field_sqlite(tmp_path):
             conn=conn,
             logger=logger,
         )
+
+
+def test_dedup_utils_duplicate_returns_existing_id(tmp_path, caplog):
+    conn = sqlite3.connect(tmp_path / "dupe.sqlite")
+    conn.execute(
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, content_hash TEXT UNIQUE)"
+    )
+    logger = logging.getLogger(__name__)
+
+    id1 = insert_if_unique_sqlite(
+        "items",
+        {"name": "alpha"},
+        ["name"],
+        "m1",
+        conn=conn,
+        logger=logger,
+    )
+    assert id1 == 1
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        id2 = insert_if_unique_sqlite(
+            "items",
+            {"name": "alpha"},
+            ["name"],
+            "m1",
+            conn=conn,
+            logger=logger,
+        )
+    assert id2 == id1
+    assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
+    assert any(
+        "Duplicate insert ignored for items" in r.message for r in caplog.records
+    )
