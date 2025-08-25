@@ -25,6 +25,7 @@ __all__ = [
     "DENY_TABLES",
     "init_db_router",
     "GLOBAL_ROUTER",
+    "queue_insert",
 ]
 
 
@@ -304,6 +305,65 @@ def _record_audit(entry: dict[str, str]) -> None:
 # Global router instance used by modules that rely on a single router without
 # passing it around explicitly.  ``init_db_router`` populates this value.
 GLOBAL_ROUTER: "DBRouter" | None = None
+
+
+def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
+    """Queue an ``INSERT`` operation for *table*.
+
+    For tables listed in :data:`SHARED_TABLES` the record is appended to a
+    menace-specific queue file via :func:`db_write_queue.append_record`.  Local
+    table writes are applied synchronously using :data:`GLOBAL_ROUTER`.
+
+    The base directory for queue files defaults to the location used by
+    :mod:`db_write_queue` but may be overridden via the
+    ``DB_ROUTER_QUEUE_DIR`` environment variable.
+    """
+
+    if table in DENY_TABLES:
+        raise ValueError(f"Access to table '{table}' is denied")
+
+    queue_dir_env = os.getenv("DB_ROUTER_QUEUE_DIR")
+    queue_dir = Path(queue_dir_env) if queue_dir_env else None
+
+    if table in SHARED_TABLES:
+        from db_write_queue import append_record
+
+        append_record(table, record, menace_id, queue_dir=queue_dir)
+
+        timestamp = datetime.utcnow().isoformat()
+        entry = {
+            "menace_id": menace_id,
+            "table_name": table,
+            "operation": "queue_insert",
+            "timestamp": timestamp,
+        }
+        if _log_format == "kv":
+            msg = " ".join(f"{k}={v}" for k, v in entry.items())
+        else:
+            msg = json.dumps(entry)
+        logger.info(msg)
+        _record_audit(entry)
+    elif table in LOCAL_TABLES:
+        if GLOBAL_ROUTER is None:
+            raise RuntimeError("GLOBAL_ROUTER is not initialised")
+        conn = GLOBAL_ROUTER.get_connection(table, "write")
+        columns = ", ".join(record.keys())
+        placeholders = ", ".join(["?"] * len(record))
+        conn.execute(
+            f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
+            tuple(record.values()),
+        )
+        conn.commit()
+        _record_audit(
+            {
+                "menace_id": menace_id,
+                "table_name": table,
+                "operation": "insert",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        )
+    else:
+        raise ValueError(f"Unknown table: {table}")
 
 
 class DBRouter:
