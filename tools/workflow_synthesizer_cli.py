@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+"""CLI for generating workflow specifications."""
+
 from __future__ import annotations
 
 import argparse
@@ -24,22 +27,28 @@ def _interactive_edit(modules: List[str]) -> List[Dict[str, str]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Synthesize a workflow and interactively save a specification.")
-    parser.add_argument("--module", dest="module", help="Starting module for synthesis")
-    parser.add_argument("--problem", dest="problem", help="Problem description for intent search")
-    parser.add_argument("--out", dest="out", required=True, help="Output file for workflow spec")
+        description="Synthesize a workflow and interactively save a specification."
+    )
+    parser.add_argument(
+        "--start",
+        required=True,
+        help="Starting module name or free text problem description",
+    )
+    parser.add_argument("--out", required=True, help="Output file for workflow spec")
     args = parser.parse_args()
 
     synth = WorkflowSynthesizer()
 
-    if args.module:
-        workflows = synth.generate_workflows(start_module=args.module, problem=args.problem)
+    start = args.start
+    module_path = Path(start.replace(".", "/")).with_suffix(".py")
+    if module_path.exists():
+        workflows = synth.generate_workflows(start_module=start)
         if workflows:
             modules = [step.get("module", "") for step in workflows[0] if step.get("module")]
         else:
-            modules = [args.module]
+            modules = [start]
     else:
-        modules = synth.synthesize(start_module=None, problem=args.problem)
+        modules = synth.synthesize(start_module=None, problem=start)
 
     if not modules:
         print("No modules found")
