@@ -1,7 +1,4 @@
 import pytest
-
-pytest.importorskip("sqlalchemy")
-
 import menace.error_bot as eb
 import menace.data_bot as db
 import menace.prediction_manager_bot as pmb
@@ -11,11 +8,12 @@ import menace.menace as mn
 import menace.knowledge_graph as kg
 import menace.chatgpt_enhancement_bot as ceb
 import menace.chatgpt_idea_bot as cib
-import menace.conversation_manager_bot as convm
-import sqlite3
 import os
 import json
+import logging
 from pathlib import Path
+
+pytest.importorskip("sqlalchemy")
 
 
 def make_metrics(tmp_path):
@@ -25,6 +23,17 @@ def make_metrics(tmp_path):
     )
     mdb.add(rec)
     return mdb
+
+
+def test_add_error_duplicate(tmp_path, caplog, monkeypatch):
+    monkeypatch.setattr(eb.ErrorDB, "add_embedding", lambda *a, **k: None)
+    db = eb.ErrorDB(tmp_path / "e.db")
+    with caplog.at_level(logging.WARNING):
+        first = db.add_error("dup", type_="t")
+        second = db.add_error("dup", type_="t")
+    assert first == second
+    assert "duplicate error" in caplog.text.lower()
+    assert db.conn.execute("SELECT COUNT(*) FROM errors").fetchone()[0] == 1
 
 
 def test_handle_known(tmp_path):
@@ -60,11 +69,11 @@ def test_top_error_module_scope(tmp_path):
     err_db = eb.ErrorDB(tmp_path / "e.db")
     # Insert telemetry for two menace instances
     err_db.conn.execute(
-        "INSERT INTO telemetry(bot_id, error_type, module_counts, resolution_status, source_menace_id) VALUES (?,?,?,?,?)",
+        "INSERT INTO telemetry(bot_id, error_type, module_counts, resolution_status, source_menace_id) VALUES (?,?,?,?,?)",  # noqa: E501
         ("b1", "E", json.dumps({"m1": 2}), "unresolved", "a"),
     )
     err_db.conn.execute(
-        "INSERT INTO telemetry(bot_id, error_type, module_counts, resolution_status, source_menace_id) VALUES (?,?,?,?,?)",
+        "INSERT INTO telemetry(bot_id, error_type, module_counts, resolution_status, source_menace_id) VALUES (?,?,?,?,?)",  # noqa: E501
         ("b2", "E", json.dumps({"m2": 3}), "unresolved", "b"),
     )
     err_db.conn.commit()
@@ -237,15 +246,31 @@ def test_prompt_rewriter_daemon(tmp_path):
     bot.record_runtime_error("boom")
     import time
     time.sleep(0.1)
-    with sqlite3.connect(enh_db.path) as conn:
+    with enh_db._connect() as conn:
         row = conn.execute("SELECT prompt FROM prompt_history").fetchone()
     assert row is not None
 
 
 def test_safe_mode_activation(tmp_path):
+    import types
+    import sys
+
+    sys.modules.setdefault(
+        "neurosales",
+        types.SimpleNamespace(
+            add_message=lambda *a, **k: None,
+            get_recent_messages=lambda *a, **k: [],
+            push_chain=lambda *a, **k: None,
+            peek_chain=lambda *a, **k: None,
+            MessageEntry=object,
+            CTAChain=object,
+        ),
+    )
+    from menace.conversation_manager_bot import ConversationManagerBot
+
     err_db = eb.ErrorDB(tmp_path / "e.db")
     client = cib.ChatGPTClient("key")
-    conv = convm.ConversationManagerBot(client)
+    conv = ConversationManagerBot(client)
     metrics = make_metrics(tmp_path)
     bot = eb.ErrorBot(err_db, metrics, conversation_bot=conv)
     bot.record_runtime_error("fail", bot_ids=["DatabaseStewardBot"])
@@ -279,7 +304,7 @@ class DummyForecaster:
 
 def test_forecaster_safe_mode(tmp_path):
     mdb = db.MetricsDB(tmp_path / "m.db")
-    mdb.add(db.MetricRecord(bot="X", cpu=0.0, memory=0.0, response_time=0.0, disk_io=0.0, net_io=0.0, errors=1))
+    mdb.add(db.MetricRecord(bot="X", cpu=0.0, memory=0.0, response_time=0.0, disk_io=0.0, net_io=0.0, errors=1))  # noqa: E501
     fc = DummyForecaster()
     err_db = eb.ErrorDB(tmp_path / "e.db")
     bot = eb.ErrorBot(err_db, mdb, forecaster=fc)
@@ -290,11 +315,12 @@ def test_forecaster_safe_mode(tmp_path):
 def test_forecaster_cascade(tmp_path):
     pytest.importorskip("networkx")
     mdb = db.MetricsDB(tmp_path / "m.db")
-    mdb.add(db.MetricRecord(bot="A", cpu=0.0, memory=0.0, response_time=0.0, disk_io=0.0, net_io=0.0, errors=1))
+    mdb.add(db.MetricRecord(bot="A", cpu=0.0, memory=0.0, response_time=0.0, disk_io=0.0, net_io=0.0, errors=1))  # noqa: E501
     g = kg.KnowledgeGraph()
     g.graph.add_node("bot:A")
     g.graph.add_edge("bot:A", "model:1")
     g.graph.add_edge("model:1", "code:foo")
+
     class DummyPM:
         def assign_prediction_bots(self, _):
             return []
@@ -331,7 +357,7 @@ def test_forecaster_patch_rollback(tmp_path, monkeypatch):
             return 1, True, 0.0
 
     mdb = db.MetricsDB(tmp_path / "m.db")
-    mdb.add(db.MetricRecord(bot="Z", cpu=0.0, memory=0.0, response_time=0.0, disk_io=0.0, net_io=0.0, errors=1))
+    mdb.add(db.MetricRecord(bot="Z", cpu=0.0, memory=0.0, response_time=0.0, disk_io=0.0, net_io=0.0, errors=1))  # noqa: E501
     fc = DummyForecaster()
     engine = DummyEngine()
     err_db = eb.ErrorDB(tmp_path / "e.db")
@@ -361,7 +387,7 @@ def test_runbook_generation(tmp_path):
             return []
 
     mdb = db.MetricsDB(tmp_path / "m.db")
-    mdb.add(db.MetricRecord(bot="R", cpu=0.0, memory=0.0, response_time=0.0, disk_io=0.0, net_io=0.0, errors=1))
+    mdb.add(db.MetricRecord(bot="R", cpu=0.0, memory=0.0, response_time=0.0, disk_io=0.0, net_io=0.0, errors=1))  # noqa: E501
     g = kg.KnowledgeGraph()
     g.graph.add_node("bot:R")
     g.graph.add_edge("bot:R", "module:X")

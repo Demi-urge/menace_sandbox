@@ -1,12 +1,11 @@
 import json
-import pytest
-
-pytest.importorskip("zmq")
-
-import zmq
+import logging
 from types import SimpleNamespace
 
+import pytest
 import menace.task_handoff_bot as thb
+
+zmq = pytest.importorskip("zmq")
 
 
 def test_compile_to_json():
@@ -35,9 +34,15 @@ def test_send_package_fallback(monkeypatch):
             metadata={},
         )
     ])
-    monkeypatch.setattr(thb.requests, "post", lambda *a, **k: (_ for _ in ()).throw(Exception("fail")))
+    monkeypatch.setattr(
+        thb.requests,
+        "post",
+        lambda *a, **k: (_ for _ in ()).throw(Exception("fail")),
+    )  # noqa: E501
     sent = {}
-    bot.channel = SimpleNamespace(basic_publish=lambda exc, queue, body: sent.update({"body": body}))
+    bot.channel = SimpleNamespace(
+        basic_publish=lambda exc, queue, body: sent.update({"body": body})
+    )
     bot.send_package(pkg)
     assert sent["body"] == pkg.to_json()
     bot.close()
@@ -67,8 +72,31 @@ def test_workflowdb_add_fetch(tmp_path):
 def test_store_plan(tmp_path):
     db = thb.WorkflowDB(tmp_path / "wf.db")
     bot = thb.TaskHandoffBot(workflow_db=db)
-    tasks = [thb.TaskInfo(name=f"t{i}", dependencies=[], resources={}, schedule="", code="", metadata={}) for i in range(5)]
+    tasks = [
+        thb.TaskInfo(
+            name=f"t{i}",
+            dependencies=[],
+            resources={},
+            schedule="",
+            code="",
+            metadata={},
+        )
+        for i in range(5)
+    ]
     ids = bot.store_plan(tasks, enhancements=["e1"], title="Model", description="plan")
     assert ids
     stored = db.fetch()
     assert any(len(item.workflow) <= 3 for item in stored)
+
+
+def test_workflowdb_duplicate(tmp_path, caplog, monkeypatch):
+    router = thb.init_db_router("wfdup", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
+    monkeypatch.setattr(thb.WorkflowDB, "add_embedding", lambda *a, **k: None)
+    db = thb.WorkflowDB(tmp_path / "wf.db", router=router)
+    wf = thb.WorkflowRecord(workflow=["a"], title="T", description="d")
+    with caplog.at_level(logging.WARNING):
+        first = db.add(wf)
+        second = db.add(thb.WorkflowRecord(workflow=["a"], title="T", description="d"))
+    assert first == second
+    assert "duplicate workflow" in caplog.text.lower()
+    assert db.conn.execute("SELECT COUNT(*) FROM workflows").fetchone()[0] == 1
