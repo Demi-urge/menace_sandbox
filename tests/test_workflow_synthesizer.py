@@ -118,7 +118,7 @@ def test_generate_workflows_persist_and_rank(tmp_path, monkeypatch):
     workflows = synth.generate_workflows(start_module="mod_a", problem="finalise", limit=2)
     assert len(workflows) == 2
     assert [step.module for step in workflows[0]] == ["mod_a", "mod_b", "mod_c"]
-    assert [step.module for step in workflows[1]] == ["mod_a", "mod_c", "mod_b"]
+    assert [step.module for step in workflows[1]] == ["mod_a", "mod_b"]
 
     out_dir = Path("sandbox_data/generated_workflows")
     saved = sorted(out_dir.glob("*.workflow.json"))

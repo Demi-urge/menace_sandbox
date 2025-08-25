@@ -733,24 +733,32 @@ class WorkflowSynthesizer:
         except CycleError as exc:  # pragma: no cover - cycle detection
             raise ValueError(f"Cyclic dependency detected: {exc.args}") from exc
 
-        orders: List[List[str]] = []
-
-        def _dfs(order: List[str], remaining: Set[str]) -> None:
-            if not remaining:
-                orders.append(order.copy())
-                return
-            available = [m for m in remaining if deps[m].issubset(order)]
-            for mod in sorted(available):
-                order.append(mod)
-                remaining.remove(mod)
-                _dfs(order, remaining)
-                remaining.add(mod)
-                order.pop()
-
         if start_module not in step_map:
             raise ValueError(f"Start module {start_module!r} not found")
 
-        _dfs([start_module], set(step_map) - {start_module})
+        # Explore dependency‑resolved chains using a BFS that records all
+        # prefixes.  ``max_candidates`` prevents pathological explosions when
+        # many permutations are possible while still allowing richer exploration
+        # than the previous greedy approach.
+        orders: List[List[str]] = []
+        queue: deque[Tuple[List[str], Set[str]]] = deque()
+        queue.append(([start_module], set(step_map) - {start_module}))
+        seen: Set[Tuple[str, ...]] = set()
+        max_candidates = max(limit * 10, 10)
+
+        while queue and len(orders) < max_candidates:
+            order, remaining = queue.popleft()
+            key = tuple(order)
+            if key in seen:
+                continue
+            seen.add(key)
+            orders.append(order.copy())
+
+            available = [m for m in remaining if deps[m].issubset(order)]
+            for mod in sorted(available):
+                new_order = order + [mod]
+                new_remaining = remaining - {mod}
+                queue.append((new_order, new_remaining))
 
         graph = getattr(self.module_synergy_grapher, "graph", None)
 
