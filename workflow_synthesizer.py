@@ -6,6 +6,12 @@ This module exposes :class:`WorkflowSynthesizer` which combines structural
 signals from :class:`~module_synergy_grapher.ModuleSynergyGrapher` with
 semantic intent matches provided by :class:`~intent_clusterer.IntentClusterer`.
 
+Workflows are scored by blending edge weights from the synergy graph with
+intent match scores.  The :meth:`WorkflowSynthesizer.generate_workflows`
+method exposes ``synergy_weight`` and ``intent_weight`` parameters to control
+this blend.  Scores are normalised by the number of steps so longer workflows
+are not automatically favoured.
+
 The synthesizer is intentionally small and focuses on expanding an initial set
 of modules either by following the synergy graph around a starting module or by
 searching for modules related to a textual problem description.
@@ -407,6 +413,7 @@ class WorkflowSynthesizer:
     synergy_graph_path: Path
     intent_db_path: Path | None
     generated_workflows: List[List[Dict[str, Any]]]
+    workflow_scores: List[float]
 
     # ------------------------------------------------------------------
     def __init__(
@@ -444,6 +451,7 @@ class WorkflowSynthesizer:
         self.load_intent_clusters()
 
         self.generated_workflows = []
+        self.workflow_scores = []
 
     # ------------------------------------------------------------------
     def load_intent_clusters(self) -> None:
@@ -769,6 +777,8 @@ class WorkflowSynthesizer:
         problem: str | None = None,
         limit: int = 5,
         max_depth: int | None = None,
+        synergy_weight: float = 1.0,
+        intent_weight: float = 1.0,
     ) -> List[List[Dict[str, Any]]]:
         """Generate candidate workflows beginning at ``start_module``.
 
@@ -789,6 +799,11 @@ class WorkflowSynthesizer:
             currently generated.
         max_depth:
             Unused but kept for API compatibility.
+        synergy_weight:
+            Multiplier applied to synergy graph edge weights when scoring
+            workflows.
+        intent_weight:
+            Multiplier applied to intent match scores when scoring workflows.
         """
 
         if ModuleSignature is None or get_io_signature is None:
@@ -823,7 +838,50 @@ class WorkflowSynthesizer:
                 }
             )
 
-        self.generated_workflows = [workflow][:limit]
+        # Retain a simple chain following synergy edges from the start module
+        graph = getattr(self.module_synergy_grapher, "graph", None)
+        if graph is not None and workflow:
+            chained: List[Dict[str, Any]] = [workflow[0]]
+            for prev, step in zip(workflow, workflow[1:]):
+                if graph.has_edge(prev["module"], step["module"]):
+                    chained.append(step)
+                else:
+                    break
+            workflow = chained
+
+        # -------------------------------------------------------------- scoring
+        synergy_score = 0.0
+        graph = getattr(self.module_synergy_grapher, "graph", None)
+        modules_order = [step["module"] for step in workflow]
+        if graph is not None:
+            for a, b in zip(modules_order, modules_order[1:]):
+                if graph.has_edge(a, b):
+                    synergy_score += float(graph[a][b].get("weight", 0.0))
+                elif graph.has_edge(b, a):
+                    synergy_score += float(graph[b][a].get("weight", 0.0))
+
+        intent_score = 0.0
+        if problem and self.intent_clusterer is not None:
+            try:
+                matches = self.intent_clusterer.find_modules_related_to(problem, top_k=50)
+                score_map: Dict[str, float] = {}
+                for m in matches:
+                    path = getattr(m, "path", None) or getattr(m, "module", None)
+                    if path:
+                        mod = Path(str(path)).stem
+                        score_map[mod] = float(getattr(m, "score", 1.0))
+                for step in workflow:
+                    intent_score += score_map.get(step["module"], 0.0)
+            except Exception:  # pragma: no cover - best effort
+                pass
+
+        combined = synergy_weight * synergy_score + intent_weight * intent_score
+        normalised = combined / max(len(workflow), 1)
+
+        entries: List[Tuple[float, List[Dict[str, Any]]]] = [(normalised, workflow)]
+        entries.sort(key=lambda x: x[0], reverse=True)
+        self.workflow_scores = [score for score, _wf in entries][:limit]
+        self.generated_workflows = [wf for _score, wf in entries][:limit]
 
         out_dir = Path("sandbox_data/generated_workflows")
         out_dir.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""CLI for generating workflows using :class:`WorkflowSynthesizer`."""
+"""CLI for generating workflows using :class:`WorkflowSynthesizer`.
+
+Workflows are ranked by combining synergy graph and intent scores using
+configurable weights that are normalised by workflow length."""
 
 from __future__ import annotations
 
@@ -28,8 +31,14 @@ def run(args: argparse.Namespace) -> int:
         start_module=args.start,
         problem=args.problem,
         max_depth=args.max_depth,
+        synergy_weight=args.synergy_weight,
+        intent_weight=args.intent_weight,
     )
-    print(json.dumps(workflows, indent=2))
+    data = [
+        {"score": score, "steps": wf}
+        for wf, score in zip(workflows, getattr(synth, "workflow_scores", []))
+    ]
+    print(json.dumps(data, indent=2))
     if args.out:
         synth.save(args.out)
     return 0
@@ -39,7 +48,11 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
     """Create the argument parser for the workflow synthesiser CLI."""
 
     parser = parser or argparse.ArgumentParser(
-        description="Generate candidate workflows from a starting module",
+        description=(
+            "Generate candidate workflows from a starting module. Scores blend "
+            "synergy graph edge weights with intent matches and are normalised "
+            "by workflow length."
+        ),
     )
     parser.add_argument(
         "start",
@@ -58,6 +71,18 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
     parser.add_argument(
         "--out",
         help="File or directory to save generated workflows",
+    )
+    parser.add_argument(
+        "--synergy-weight",
+        type=float,
+        default=1.0,
+        help="Weight applied to synergy scores when ranking workflows",
+    )
+    parser.add_argument(
+        "--intent-weight",
+        type=float,
+        default=1.0,
+        help="Weight applied to intent scores when ranking workflows",
     )
     return parser
 
