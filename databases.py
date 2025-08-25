@@ -6,10 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
+from pathlib import Path
 import logging
 from typing import Literal
 
 from db_dedup import insert_if_unique, ensure_content_hash_column
+from db_write_queue import queue_insert
 
 from .env_config import DATABASE_URL
 from .scope_utils import build_scope_clause, apply_scope
@@ -52,11 +54,17 @@ class MenaceDB:
 
     engine: Engine
     meta: MetaData
+    queue_path: str | Path | None = None
+    use_queue: bool = False
 
-    def __init__(self, url: str | None = None) -> None:
+    def __init__(
+        self, url: str | None = None, queue_path: str | Path | None = None
+    ) -> None:
         url = url or DATABASE_URL
         self.engine = create_engine(url)
         self.meta = MetaData()
+        self.queue_path = queue_path
+        self.use_queue = bool(os.getenv("USE_DB_QUEUE")) or queue_path is not None
 
         self.models = Table(
             "models",
@@ -701,10 +709,13 @@ class MenaceDB:
             values,
             hash_fields,
             menace_id,
-            engine=self.engine,
+            engine=None if self.use_queue else self.engine,
             logger=logger,
+            queue_path=self.queue_path if self.use_queue else None,
         )
         if inserted is None:
+            if self.use_queue:
+                return 0
             raise RuntimeError("bot record not inserted")
         return int(inserted)
 
@@ -747,10 +758,13 @@ class MenaceDB:
             values,
             hash_fields,
             menace_id,
-            engine=self.engine,
+            engine=None if self.use_queue else self.engine,
             logger=logger,
+            queue_path=self.queue_path if self.use_queue else None,
         )
         if inserted is None:
+            if self.use_queue:
+                return 0
             raise RuntimeError("workflow record not inserted")
         return int(inserted)
 
@@ -786,10 +800,13 @@ class MenaceDB:
             values,
             hash_fields,
             menace_id,
-            engine=self.engine,
+            engine=None if self.use_queue else self.engine,
             logger=logger,
+            queue_path=self.queue_path if self.use_queue else None,
         )
         if inserted is None:
+            if self.use_queue:
+                return 0
             raise RuntimeError("enhancement record not inserted")
         return int(inserted)
 
@@ -821,14 +838,31 @@ class MenaceDB:
             values,
             hash_fields,
             menace_id,
-            engine=self.engine,
+            engine=None if self.use_queue else self.engine,
             logger=logger,
+            queue_path=self.queue_path if self.use_queue else None,
         )
         if inserted is None:
+            if self.use_queue:
+                return 0
             raise RuntimeError("error record not inserted")
         return int(inserted)
 
     def link_error_bot(self, error_id: int, bot_id: int) -> None:
+        if self.use_queue:
+            queue_insert(
+                self.error_bots.name,
+                {"error_id": error_id, "bot_id": bot_id},
+                ["error_id", "bot_id"],
+                self.queue_path,
+            )
+            queue_insert(
+                self.bot_errors.name,
+                {"bot_id": bot_id, "error_id": error_id},
+                ["bot_id", "error_id"],
+                self.queue_path,
+            )
+            return
         with self.engine.begin() as conn:
             conn.execute(
                 self.error_bots.insert().values(error_id=error_id, bot_id=bot_id)
@@ -838,6 +872,20 @@ class MenaceDB:
             )
 
     def link_error_model(self, error_id: int, model_id: int) -> None:
+        if self.use_queue:
+            queue_insert(
+                self.error_models.name,
+                {"error_id": error_id, "model_id": model_id},
+                ["error_id", "model_id"],
+                self.queue_path,
+            )
+            queue_insert(
+                self.model_errors.name,
+                {"model_id": model_id, "error_id": error_id},
+                ["model_id", "error_id"],
+                self.queue_path,
+            )
+            return
         with self.engine.begin() as conn:
             conn.execute(
                 self.error_models.insert().values(error_id=error_id, model_id=model_id)
@@ -847,6 +895,14 @@ class MenaceDB:
             )
 
     def link_error_code(self, error_id: int, code_id: int) -> None:
+        if self.use_queue:
+            queue_insert(
+                self.error_codes.name,
+                {"error_id": error_id, "code_id": code_id},
+                ["error_id", "code_id"],
+                self.queue_path,
+            )
+            return
         with self.engine.begin() as conn:
             conn.execute(
                 self.error_codes.insert().values(error_id=error_id, code_id=code_id)
@@ -873,17 +929,38 @@ class MenaceDB:
     ) -> int:
         """Insert a discrepancy and return its id."""
         menace_id = source_menace_id or os.getenv("MENACE_ID", "")
-        with self.engine.begin() as conn:
-            res = conn.execute(
-                self.discrepancies.insert().values(
-                    description=description,
-                    resolution_notes=notes,
-                    source_menace_id=menace_id,
-                )
+        values = {
+            "description": description,
+            "resolution_notes": notes,
+            "source_menace_id": menace_id,
+        }
+        if self.use_queue:
+            queue_insert(
+                self.discrepancies.name,
+                values,
+                ["description", "resolution_notes", "source_menace_id"],
+                self.queue_path,
             )
+            return 0
+        with self.engine.begin() as conn:
+            res = conn.execute(self.discrepancies.insert().values(**values))
             return int(res.inserted_primary_key[0])
 
     def link_discrepancy_model(self, disc_id: int, model_id: int) -> None:
+        if self.use_queue:
+            queue_insert(
+                self.discrepancy_models.name,
+                {"discrepancy_id": disc_id, "model_id": model_id},
+                ["discrepancy_id", "model_id"],
+                self.queue_path,
+            )
+            queue_insert(
+                self.model_discrepancies.name,
+                {"model_id": model_id, "discrepancy_id": disc_id},
+                ["model_id", "discrepancy_id"],
+                self.queue_path,
+            )
+            return
         with self.engine.begin() as conn:
             conn.execute(
                 self.discrepancy_models.insert().values(
@@ -897,6 +974,14 @@ class MenaceDB:
             )
 
     def link_discrepancy_bot(self, disc_id: int, bot_id: int) -> None:
+        if self.use_queue:
+            queue_insert(
+                self.discrepancy_bots.name,
+                {"discrepancy_id": disc_id, "bot_id": bot_id},
+                ["discrepancy_id", "bot_id"],
+                self.queue_path,
+            )
+            return
         with self.engine.begin() as conn:
             conn.execute(
                 self.discrepancy_bots.insert().values(
@@ -905,6 +990,14 @@ class MenaceDB:
             )
 
     def link_discrepancy_workflow(self, disc_id: int, workflow_id: int) -> None:
+        if self.use_queue:
+            queue_insert(
+                self.discrepancy_workflows.name,
+                {"discrepancy_id": disc_id, "workflow_id": workflow_id},
+                ["discrepancy_id", "workflow_id"],
+                self.queue_path,
+            )
+            return
         with self.engine.begin() as conn:
             conn.execute(
                 self.discrepancy_workflows.insert().values(
@@ -913,6 +1006,14 @@ class MenaceDB:
             )
 
     def link_discrepancy_enhancement(self, disc_id: int, enh_id: int) -> None:
+        if self.use_queue:
+            queue_insert(
+                self.discrepancy_enhancements.name,
+                {"discrepancy_id": disc_id, "enhancement_id": enh_id},
+                ["discrepancy_id", "enhancement_id"],
+                self.queue_path,
+            )
+            return
         with self.engine.begin() as conn:
             conn.execute(
                 self.discrepancy_enhancements.insert().values(
@@ -922,6 +1023,14 @@ class MenaceDB:
 
     def link_workflow_bot(self, workflow_id: int, bot_id: int) -> None:
         """Associate a bot with a workflow."""
+        if self.use_queue:
+            queue_insert(
+                self.workflow_bots.name,
+                {"workflow_id": workflow_id, "bot_id": bot_id},
+                ["workflow_id", "bot_id"],
+                self.queue_path,
+            )
+            return
         with self.engine.begin() as conn:
             conn.execute(
                 self.workflow_bots.insert().values(

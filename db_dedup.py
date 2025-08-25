@@ -11,6 +11,8 @@ row's ID is returned.
 from collections.abc import Iterable, Mapping
 import hashlib
 import json
+import os
+from pathlib import Path
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
@@ -96,6 +98,7 @@ def insert_if_unique(
     logger: Any,
     engine: "Engine | None" = None,
     conn: sqlite3.Connection | None = None,
+    queue_path: str | Path | None = None,
 ) -> Any | None:
     """Insert ``values`` into ``table`` if their hash is unique.
 
@@ -106,8 +109,19 @@ def insert_if_unique(
     returned.
 
     Supply ``engine`` with a SQLAlchemy :class:`~sqlalchemy.Table` for SQL
-    databases or ``conn`` with a table name for SQLite connections.
+    databases or ``conn`` with a table name for SQLite connections.  When
+    ``queue_path`` is provided or the ``USE_DB_QUEUE`` environment variable is
+    set, writes are queued via :func:`db_write_queue.queue_insert` instead of
+    executing immediately.
     """
+
+    use_queue = queue_path is not None or bool(os.getenv("USE_DB_QUEUE"))
+    if use_queue:
+        from db_write_queue import queue_insert  # avoid circular import
+
+        table_name = table.name if hasattr(table, "name") else str(table)
+        queue_insert(table_name, values, hash_fields, queue_path)
+        return None
 
     missing = [key for key in hash_fields if key not in values]
     if missing:
@@ -127,10 +141,11 @@ def insert_if_unique(
         with engine.begin() as eng_conn:
             if engine.dialect.name == "sqlite":
                 version = sqlite3.sqlite_version_info
+                pk_col = list(table.primary_key.columns)[0].name
                 if version >= (3, 35, 0):
                     sql = (
                         f"INSERT INTO {table.name} ({columns}) VALUES ({placeholders}) "
-                        "ON CONFLICT(content_hash) DO NOTHING RETURNING id"
+                        f"ON CONFLICT(content_hash) DO NOTHING RETURNING {pk_col}"
                     )
                     row = eng_conn.execute(text(sql), values).fetchone()
                     if row:
@@ -144,14 +159,13 @@ def insert_if_unique(
                         return result.lastrowid
 
                 logger.warning(
-                    "duplicate %s ignored for %s (menace_id=%s)",
-                    table.name.rstrip("s"),
+                    "Duplicate insert ignored for %s (menace_id=%s)",
                     table.name,
                     menace_id,
                 )
                 row = eng_conn.execute(
                     text(
-                        f"SELECT id FROM {table.name} WHERE content_hash=:hash"
+                        f"SELECT {pk_col} FROM {table.name} WHERE content_hash=:hash"
                     ),
                     {"hash": content_hash},
                 ).fetchone()
@@ -167,8 +181,7 @@ def insert_if_unique(
                 if row:
                     return row[0]
                 logger.warning(
-                    "duplicate %s ignored for %s (menace_id=%s)",
-                    table.name.rstrip("s"),
+                    "Duplicate insert ignored for %s (menace_id=%s)",
                     table.name,
                     menace_id,
                 )
@@ -202,7 +215,7 @@ def insert_if_unique(
                 return int(cur.lastrowid)
 
         logger.warning(
-            "duplicate %s ignored for %s (menace_id=%s)", table.rstrip("s"), table, menace_id
+            "Duplicate insert ignored for %s (menace_id=%s)", table, menace_id
         )
         cur = conn.execute(
             f"SELECT id FROM {table} WHERE content_hash=?",
