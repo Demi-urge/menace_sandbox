@@ -16,7 +16,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Set, Tuple
 
 try:  # Optional imports; fall back to stubs in tests
     from module_synergy_grapher import ModuleSynergyGrapher, get_synergy_cluster
@@ -75,14 +75,26 @@ def _parse_module_io(path: Path) -> ModuleIO:
             return node.id
         return None
 
-    # ---- top level function definitions
+    # ---- top level function definitions and globals
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
-            args = [a.arg for a in node.args.posonlyargs + node.args.args + node.args.kwonlyargs]
+            args: List[str] = []
+            annotations: Dict[str, str] = {}
+
+            def _handle_arg(a: ast.arg) -> None:
+                args.append(a.arg)
+                if getattr(a, "annotation", None) is not None:
+                    try:
+                        annotations[a.arg] = ast.unparse(a.annotation)
+                    except Exception:  # pragma: no cover - ast.unparse fallback
+                        pass
+
+            for a in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
+                _handle_arg(a)
             if node.args.vararg:
-                args.append(node.args.vararg.arg)
+                _handle_arg(node.args.vararg)
             if node.args.kwarg:
-                args.append(node.args.kwarg.arg)
+                _handle_arg(node.args.kwarg)
 
             returns = None
             if getattr(node, "returns", None) is not None:
@@ -91,8 +103,17 @@ def _parse_module_io(path: Path) -> ModuleIO:
                 except Exception:  # pragma: no cover - ast.unparse fallback
                     returns = None
 
-            module_io.functions[node.name] = {"args": args, "returns": returns}
+            module_io.functions[node.name] = {
+                "args": args,
+                "annotations": annotations,
+                "returns": returns,
+            }
             module_io.inputs.update(args)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                if isinstance(t, ast.Name):
+                    module_io.globals.add(t.id)
 
     class Visitor(ast.NodeVisitor):
         def visit_Global(self, node: ast.Global) -> None:  # noqa: D401
@@ -140,6 +161,12 @@ def _parse_module_io(path: Path) -> ModuleIO:
                     else:
                         module_io.files_read.add(filename)
 
+            elif isinstance(func, ast.Name) and func.id == "Path":
+                if node.args and isinstance(node.args[0], ast.Constant):
+                    val = node.args[0].value
+                    if isinstance(val, str):
+                        module_io.files_read.add(val)
+
             elif isinstance(func, ast.Attribute):
                 attr = func.attr
                 base = func.value
@@ -167,8 +194,37 @@ def _parse_module_io(path: Path) -> ModuleIO:
 
             self.generic_visit(node)
 
+        def visit_Constant(self, node: ast.Constant) -> None:  # noqa: D401
+            if isinstance(node.value, str):
+                val = node.value
+                if "/" in val or val.endswith(
+                    (".txt", ".json", ".csv", ".yaml", ".yml", ".ini", ".cfg", ".db", ".py")
+                ):
+                    module_io.files_read.add(val)
+
     Visitor().visit(tree)
     return module_io
+
+
+_ANALYZE_CACHE: Dict[str, Tuple[float, ModuleIO]] = {}
+
+
+def analyze_io(module_path: Path) -> ModuleIO:
+    """Return :class:`ModuleIO` information for ``module_path`` with caching."""
+
+    try:
+        mtime = module_path.stat().st_mtime
+    except OSError:
+        return ModuleIO()
+
+    key = str(module_path.resolve())
+    cached = _ANALYZE_CACHE.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    io = _parse_module_io(module_path)
+    _ANALYZE_CACHE[key] = (mtime, io)
+    return io
 
 
 class ModuleIOAnalyzer:
@@ -204,7 +260,7 @@ class ModuleIOAnalyzer:
         if cached and cached.get("hash") == digest:
             return {"inputs": cached.get("inputs", []), "outputs": cached.get("outputs", [])}
 
-        io = _parse_module_io(path)
+        io = analyze_io(path)
         record = {
             "hash": digest,
             "functions": io.functions,
@@ -230,7 +286,7 @@ def inspect_module(module_name: str) -> ModuleIO:
     """
 
     path = Path(module_name.replace(".", "/")).with_suffix(".py")
-    return _parse_module_io(path)
+    return analyze_io(path)
 
 
 @dataclass(init=False)
@@ -393,7 +449,10 @@ class WorkflowSynthesizer:
                 missing = len(ins - provided)
                 if (
                     overlap > best_overlap
-                    or (overlap == best_overlap and (best_missing is None or missing < best_missing))
+                    or (
+                        overlap == best_overlap
+                        and (best_missing is None or missing < best_missing)
+                    )
                 ):
                     best = mod
                     best_overlap = overlap
