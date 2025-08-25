@@ -163,6 +163,12 @@ def test_hash_fields_deterministic():
     assert hash_fields(data1, ["a", "b"]) == hash_fields(data2, ["a", "b"])
 
 
+def test_hash_fields_missing_key():
+    data = {"a": 1}
+    with pytest.raises(KeyError, match="Missing fields for hashing: b"):
+        hash_fields(data, ["a", "b"])
+
+
 def test_insert_if_unique_duplicate_returns_existing_id(tmp_path, caplog):
     path = tmp_path / "dedup.sqlite"
     router = db_router.init_db_router("test", str(path), str(path))
@@ -197,3 +203,23 @@ def test_insert_if_unique_duplicate_returns_existing_id(tmp_path, caplog):
     assert any(
         "Duplicate insert ignored for items" in r.message for r in caplog.records
     )
+
+
+def test_insert_if_unique_missing_field_sqlite(tmp_path):
+    path = tmp_path / "dedup.sqlite"
+    router = db_router.init_db_router("test", str(path), str(path))
+    conn = router.local_conn
+    conn.execute(
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, content_hash TEXT UNIQUE)"
+    )
+    logger = logging.getLogger(__name__)
+
+    with pytest.raises(KeyError, match="Missing fields for hashing: name"):
+        insert_if_unique(
+            "items",
+            {},
+            ["name"],
+            "m1",
+            conn=conn,
+            logger=logger,
+        )
