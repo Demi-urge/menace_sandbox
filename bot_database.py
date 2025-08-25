@@ -8,7 +8,7 @@ import dataclasses
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING, Literal
+from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING, Literal, Sequence
 from time import time
 
 from .auto_link import auto_link
@@ -62,9 +62,8 @@ _BOT_HASH_FIELDS = [
     "name",
     "type",
     "tasks",
-    "purpose",
-    "tags",
-    "toolchain",
+    "dependencies",
+    "resources",
 ]
 
 
@@ -399,6 +398,7 @@ class BotDB(EmbeddableDBMixin):
             "type": rec.type_,
             "tasks": _serialize_list(rec.tasks),
             "dependencies": _serialize_list(rec.dependencies),
+            "resources": _safe_json_dumps(rec.resources),
             "purpose": rec.purpose,
             "tags": _serialize_list(rec.tags),
             "toolchain": _serialize_list(rec.toolchain),

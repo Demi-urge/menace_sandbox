@@ -1,8 +1,7 @@
 import asyncio
+import logging
 
 import pytest
-
-pytest.importorskip("sqlalchemy")
 
 import menace.bot_creation_bot as bcb
 import menace.data_bot as db
@@ -11,7 +10,6 @@ import menace.bot_development_bot as bd
 import menace.bot_testing_bot as bt
 import menace.deployment_bot as dep
 import menace.error_bot as eb
-import sqlite3
 import menace.task_handoff_bot as thb
 import menace.research_aggregator_bot as rab
 import menace.chatgpt_enhancement_bot as ceb
@@ -19,6 +17,10 @@ import menace.database_manager as dm
 import menace.contrarian_db as cdb
 import menace.menace as mn
 import menace.trending_scraper as ts
+import menace.bot_database as bdb
+from menace.db_router import init_db_router
+
+pytest.importorskip("sqlalchemy")
 
 
 def _metrics(tmp_path):
@@ -72,19 +74,56 @@ def test_create_bots(tmp_path):
     planner = bp.BotPlanningBot()
     developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos")
     tester = bt.BotTestingBot()
-    deployer = dep.DeploymentBot(dep.DeploymentDB(tmp_path / "d.db"))
+    router = init_db_router("tcb", str(tmp_path / "l.db"), str(tmp_path / "s.db"))
+    bdb.router = router
+
+    class DummyClusterer:
+        pass
+
+    deployer = dep.DeploymentBot(
+        dep.DeploymentDB(tmp_path / "d.db"),
+        info_db=rab.InfoDB(tmp_path / "info.db"),
+        db_router=router,
+    )
     bot = bcb.BotCreationBot(
         metrics_db=metrics,
         planner=planner,
         developer=developer,
         tester=tester,
         deployer=deployer,
+        intent_clusterer=DummyClusterer(),
     )
     task = bp.PlanningTask(
         description="do", complexity=1, frequency=1, expected_time=0.1, actions=["run"]
     )
     ids = asyncio.run(bot.create_bots([task]))
     assert ids and deployer.db.get(ids[0])["status"] == "success"
+
+
+def test_duplicate_bot_insert(tmp_path, caplog, monkeypatch):
+    import menace.db_router as dbr
+
+    old = dbr.GLOBAL_ROUTER
+    init_db_router("dup", str(tmp_path / "l.db"), str(tmp_path / "s.db"))
+    bdb.router = dbr.GLOBAL_ROUTER
+    monkeypatch.setattr(bdb.BotDB, "_embed_record_on_write", lambda *a, **k: None)
+    dbh = bdb.BotDB()
+    rec1 = bdb.BotRecord(name="b1", dependencies=["d"], resources={"cpu": 1})
+    first = dbh.add_bot(rec1)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        rec2 = bdb.BotRecord(
+            name="b1",
+            dependencies=["d"],
+            resources={"cpu": 1},
+            tags=["x"],
+        )
+        second = dbh.add_bot(rec2)
+    assert first == second
+    assert dbh.conn.execute("SELECT COUNT(*) FROM bots").fetchone()[0] == 1
+    assert "already exists" in caplog.text.lower()
+    dbr.GLOBAL_ROUTER = old
+    bdb.router = old
 
 
 def test_trending_scraper_receives_energy(tmp_path):
@@ -203,7 +242,7 @@ def test_create_bots_records_workflows(tmp_path):
 
     recs = wf_db.fetch()
     assert recs and recs[0].status == "pending"
-    with sqlite3.connect(dm.DB_PATH) as conn:
+    with dm.get_connection(db_path=dm.DB_PATH) as conn:
         row = conn.execute(
             "SELECT workflow_id FROM models WHERE id=?", (model_id,)
         ).fetchone()
@@ -249,7 +288,7 @@ def test_code_db_updates_on_creation(tmp_path):
     asyncio.run(bot.create_bots([task], enhancements=[1]))
     bot_id = deployer.bot_db.fetch_all()[0]["id"]
     cids = code_db.codes_for_bot(bot_id)
-    with sqlite3.connect(code_db.path) as conn:
+    with code_db._connect() as conn:
         rows_enh = conn.execute(
             "SELECT enhancement_id FROM code_enhancements WHERE code_id=?",
             (cids[0],),
@@ -347,7 +386,13 @@ def test_higher_order_contrarian_timestamp(tmp_path):
     )
 
     tasks = [
-        bp.PlanningTask(description=f"t{i}", complexity=1, frequency=1, expected_time=0.1, actions=["run"])
+        bp.PlanningTask(
+            description=f"t{i}",
+            complexity=1,
+            frequency=1,
+            expected_time=0.1,
+            actions=["run"],
+        )
         for i in range(3)
     ]
     asyncio.run(bot.create_bots(tasks, workflows=[wid], contrarian_id=cid))
@@ -392,7 +437,13 @@ def test_higher_order_contrarian_new_links(tmp_path):
     )
 
     tasks = [
-        bp.PlanningTask(description=f"t{i}", complexity=1, frequency=1, expected_time=0.1, actions=["run"])
+        bp.PlanningTask(
+            description=f"t{i}",
+            complexity=1,
+            frequency=1,
+            expected_time=0.1,
+            actions=["run"],
+        )
         for i in range(3)
     ]
     asyncio.run(
