@@ -12,7 +12,12 @@ import argparse
 import json
 from pathlib import Path
 
-from workflow_synthesizer import WorkflowSynthesizer
+from workflow_synthesizer import (
+    WorkflowSynthesizer,
+    to_workflow_spec,
+    evaluate_workflow,
+    workflow_to_dict,
+)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -45,7 +50,7 @@ def run(args: argparse.Namespace) -> int:
         intent_weight=args.intent_weight,
     )
     data = [
-        {"score": score, "steps": wf}
+        {"score": score, "steps": workflow_to_dict(wf)["steps"]}
         for wf, score in zip(workflows, getattr(synth, "workflow_scores", []))
     ]
     print(json.dumps(data, indent=2))
@@ -58,6 +63,14 @@ def run(args: argparse.Namespace) -> int:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{safe}.workflow.json"
         synth.save(path)
+    if args.evaluate:
+        if not workflows:
+            print("no workflow generated")
+            return 1
+        spec = to_workflow_spec(workflows[0])
+        ok = evaluate_workflow(spec)
+        print("evaluation succeeded" if ok else "evaluation failed")
+        return 0 if ok else 1
     return 0
 
 
@@ -115,6 +128,11 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
         type=float,
         default=1.0,
         help="Weight applied to intent scores when ranking workflows",
+    )
+    parser.add_argument(
+        "--evaluate",
+        action="store_true",
+        help="Execute the generated workflow and report success",
     )
     return parser
 

@@ -1019,6 +1019,42 @@ def save_workflow(
     return _save_spec(spec, out)
 
 
+def evaluate_workflow(workflow: Dict[str, Any]) -> bool:
+    """Execute ``workflow`` using the sandbox runner.
+
+    Parameters
+    ----------
+    workflow:
+        Mapping describing a workflow in the format produced by
+        :func:`to_workflow_spec` with a top-level ``steps`` list.
+
+    Returns
+    -------
+    bool
+        ``True`` when the sandbox reports success, ``False`` otherwise.
+    """
+
+    import logging
+
+    try:  # pragma: no cover - sandbox_runner is optional in tests
+        from sandbox_runner import run_generated_workflow
+    except Exception as exc:  # pragma: no cover - provide clear error
+        raise RuntimeError(
+            "sandbox_runner.run_generated_workflow is unavailable"
+        ) from exc
+
+    logger = logging.getLogger(__name__)
+    try:
+        result = run_generated_workflow(workflow)
+    except Exception:
+        logger.exception("workflow evaluation failed")
+        return False
+
+    success = bool(result)
+    logger.info("workflow evaluation %s", "succeeded" if success else "failed")
+    return success
+
+
 def synthesise_workflow(**kwargs: Any) -> Dict[str, Any]:
     """Generate a workflow using :class:`WorkflowSynthesizer`.
 
@@ -1097,6 +1133,7 @@ __all__ = [
     "to_json",
     "to_yaml",
     "to_workflow_spec",
+    "evaluate_workflow",
     "save_workflow",
     "synthesise_workflow",
     "main",
