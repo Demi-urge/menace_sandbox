@@ -194,20 +194,20 @@ Tables are expected to expose `id`, a text field (`summary`, `message` or
 `details`), and the numeric fields `score`, `roi`, `confidence` and `ts`.
 
 ```python
-from codex_db_helpers import aggregate_training_samples
+from codex_db_helpers import aggregate_samples
 
-records = aggregate_training_samples(
-    enhancement_db,
-    summary_db,
-    sort_by="score",
-    limit=5,
+records = aggregate_samples(
+    sources=["enhancement", "workflow_summary"],
+    limit_per_source=5,
+    sort_by="outcome_score",
+    with_vectors=False,
 )
 
 prompt = "\n\n".join(r["summary"] for r in records)
 ```
 
 To support additional data types, implement a `fetch_*` helper returning the
-standard columns and register it with `aggregate_training_samples`. See
+standard columns and register it with `aggregate_samples`. See
 [docs/codex_db_helpers.md](docs/codex_db_helpers.md) for more details.
 
 ### ROI toolkit

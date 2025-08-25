@@ -61,7 +61,7 @@ except Exception:
         generate_patch = None  # type: ignore
 
 from governed_embeddings import governed_embed, get_embedder
-from .codex_db_helpers import aggregate_training_samples
+from .codex_db_helpers import aggregate_samples
 
 # Backwards compatibility with legacy imports
 ErrorType = ErrorCategory
@@ -617,34 +617,38 @@ class ErrorLogger:
         profile: dict[str, Any] | str,
         task_id: str | None = None,
         bot_id: str | None = None,
+        *,
+        sample_limit: int = 5,
+        sample_sort_by: str = "outcome_score",
+        with_vectors: bool = True,
     ) -> list[TelemetryEvent]:
-        """Derive and record fix suggestions for metric bottlenecks."""
+        """Derive and record fix suggestions for metric bottlenecks.
+
+        Training samples are pulled via :func:`codex_db_helpers.aggregate_samples`
+        to enrich Codex prompts.
+        """
 
         suggestions = propose_fix(metrics, profile)
         events: list[TelemetryEvent] = []
 
         # Gather training samples to enrich Codex prompts
         try:
-            samples = aggregate_training_samples(
-                enhancement_db=GLOBAL_ROUTER.get_connection("enhancements"),
-                summary_db=GLOBAL_ROUTER.get_connection("workflow_summaries"),
-                discrepancy_db=GLOBAL_ROUTER.get_connection("discrepancies"),
-                workflow_db=GLOBAL_ROUTER.get_connection("workflow_history"),
-                sort_by="score",
-                limit=5,
-                with_embeddings=True,
+            samples = aggregate_samples(
+                sources=[
+                    "enhancement",
+                    "workflow_summary",
+                    "discrepancy",
+                    "evolution",
+                ],
+                limit_per_source=sample_limit,
+                sort_by=sample_sort_by,
+                with_vectors=with_vectors,
+                scope="all",
             )
         except Exception:  # pragma: no cover - helper failures
             samples = []
 
-        context_lines: list[str] = []
-        for sample in samples:
-            for key in ("summary", "message", "details"):
-                val = sample.get(key)
-                if val:
-                    context_lines.append(str(val))
-                    break
-        prompt_context = "\n".join(context_lines)
+        prompt_context = "\n".join(s.text for s in samples if getattr(s, "text", ""))
 
         for module, hint in suggestions:
             payload = {

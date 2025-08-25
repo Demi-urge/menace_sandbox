@@ -36,6 +36,7 @@ from .models_repo import (
     ensure_models_repo,
 )
 from vector_service import ContextBuilder, FallbackResult, ErrorResult
+from codex_db_helpers import aggregate_samples
 
 if TYPE_CHECKING:  # pragma: no cover - heavy dependency
     from .watchdog import Watchdog
@@ -940,7 +941,13 @@ class BotDevelopmentBot:
             return ""
 
     def _build_prompt(
-        self, spec: BotSpec, *, builder: ContextBuilder | None = None
+        self,
+        spec: BotSpec,
+        *,
+        builder: ContextBuilder | None = None,
+        sample_limit: int = 5,
+        sample_sort_by: str = "outcome_score",
+        sample_with_vectors: bool = True,
     ) -> str:
         """Return the final prompt for the visual agent or Codex.
 
@@ -952,6 +959,13 @@ class BotDevelopmentBot:
             Optional :class:`ContextBuilder` used to enrich the prompt with
             historical context.  Falls back to ``self.context_builder`` when
             not provided.
+        sample_limit:
+            Maximum number of training samples fetched per source via
+            :func:`codex_db_helpers.aggregate_samples`.
+        sample_sort_by:
+            Field used when ranking training samples.
+        sample_with_vectors:
+            Whether to request embedding vectors for the training samples.
         """
         builder = builder or self.context_builder
         retrieval_context: str | Dict[str, Any] = ""
@@ -973,6 +987,24 @@ class BotDevelopmentBot:
         except Exception:
             predicted_tool = ""
             pred_conf = 0.0
+
+        # Gather historical samples to provide additional prompt context
+        try:
+            samples = aggregate_samples(
+                sources=[
+                    "enhancement",
+                    "workflow_summary",
+                    "discrepancy",
+                    "evolution",
+                ],
+                limit_per_source=sample_limit,
+                sort_by=sample_sort_by,
+                with_vectors=sample_with_vectors,
+                scope="all",
+            )
+        except Exception:
+            samples = []
+        sample_context = "\n".join(s.text for s in samples if getattr(s, "text", ""))
 
         problem_lines: list[str] = [
             f"# Bot specification: {spec.name}",
@@ -1050,6 +1082,8 @@ class BotDevelopmentBot:
             if not isinstance(retrieval_context, str):
                 retrieval_context = json.dumps(retrieval_context, indent=2)
             prompt += "\n\nContext:\n" + retrieval_context
+        if sample_context:
+            prompt += "\n\nTraining Samples:\n" + sample_context
 
         return prompt
 
@@ -1059,6 +1093,9 @@ class BotDevelopmentBot:
         *,
         model_id: int | None = None,
         context_builder: ContextBuilder | None = None,
+        sample_limit: int = 5,
+        sample_sort_by: str = "outcome_score",
+        sample_with_vectors: bool = True,
     ) -> Path:
         """Create code from a spec and save it to a repo.
 
@@ -1071,6 +1108,13 @@ class BotDevelopmentBot:
         context_builder:
             Optional :class:`ContextBuilder` overriding the instance level
             builder for this call.
+        sample_limit:
+            Maximum number of training samples fetched per source for prompt
+            generation.
+        sample_sort_by:
+            Field used when ranking training samples.
+        sample_with_vectors:
+            Whether to request embeddings for training samples.
         """
         # check for existing code templates first
         if self.db_steward:
@@ -1102,7 +1146,13 @@ class BotDevelopmentBot:
             )
             return file_path
 
-        prompt = self._build_prompt(spec, builder=context_builder)
+        prompt = self._build_prompt(
+            spec,
+            builder=context_builder,
+            sample_limit=sample_limit,
+            sample_sort_by=sample_sort_by,
+            sample_with_vectors=sample_with_vectors,
+        )
         built = self._visual_build(prompt, spec.name)
 
         if built:
