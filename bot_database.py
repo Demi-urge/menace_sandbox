@@ -57,7 +57,17 @@ def _safe_json_dumps(data: Any) -> str:
 logger = logging.getLogger(__name__)
 
 
-_BOT_HASH_FIELDS = ["name", "type", "tasks", "dependencies", "resources"]
+# Fields that uniquely identify a bot's core identity for deduplication
+_BOT_HASH_FIELDS = [
+    "name",
+    "type",
+    "tasks",
+    "dependencies",
+    "purpose",
+    "tags",
+    "toolchain",
+    "version",
+]
 
 
 @dataclass
@@ -172,8 +182,11 @@ class BotDB(EmbeddableDBMixin):
                 "ALTER TABLE bots ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
             )
         if "content_hash" not in cols:
+            # SQLite does not support adding a column with a UNIQUE constraint
+            # directly via ALTER TABLE, so we add the column first and create
+            # the uniqueness constraint via an explicit index below.
             self.conn.execute(
-                "ALTER TABLE bots ADD COLUMN content_hash TEXT UNIQUE"
+                "ALTER TABLE bots ADD COLUMN content_hash TEXT"
             )
         idxs = [r[1] for r in self.conn.execute("PRAGMA index_list('bots')").fetchall()]
         if "ix_bots_source_menace_id" in idxs:
@@ -387,18 +400,11 @@ class BotDB(EmbeddableDBMixin):
             "name": rec.name,
             "type": rec.type_,
             "tasks": _serialize_list(rec.tasks),
-            "parent_id": rec.parent_id,
             "dependencies": _serialize_list(rec.dependencies),
-            "resources": _safe_json_dumps(rec.resources),
-            "hierarchy_level": rec.hierarchy_level,
             "purpose": rec.purpose,
             "tags": _serialize_list(rec.tags),
             "toolchain": _serialize_list(rec.toolchain),
-            "creation_date": rec.creation_date,
-            "last_modification_date": rec.last_modification_date,
-            "status": rec.status,
             "version": rec.version,
-            "estimated_profit": rec.estimated_profit,
         }
         content_hash = hash_fields(values, _BOT_HASH_FIELDS)
         bot_id = insert_if_unique(
