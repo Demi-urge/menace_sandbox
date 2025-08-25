@@ -405,15 +405,17 @@ class BotDB(EmbeddableDBMixin):
             "name",
             "type",
             "tasks",
-            "dependencies",
             "purpose",
             "tags",
             "toolchain",
-            "version",
         ]
-        with self.router.get_connection("bots", "write") as conn:
-            rec.bid, inserted = insert_if_unique(
-                conn, "bots", values, hash_fields, menace_id
+        rec.bid, inserted = insert_if_unique(
+            self.conn, "bots", values, hash_fields, menace_id
+        )
+        self.conn.commit()
+        if not inserted:
+            logger.warning(
+                "bot '%s' already exists; using existing id %s", rec.name, rec.bid
             )
         if inserted:
             self._embed_record_on_write(rec.bid, rec)
