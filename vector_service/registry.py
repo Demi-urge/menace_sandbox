@@ -174,6 +174,13 @@ register_vectorizer(
     db_module="resources_bot",
     db_class="ROIHistoryDB",
 )
+register_vectorizer(
+    "intent",
+    "intent_vectorizer",
+    "IntentVectorizer",
+    db_module="intent_db",
+    db_class="IntentDB",
+)
 
 # Discover any additional vectorisers packaged under vector_service.*
 _discover_vectorizers()
