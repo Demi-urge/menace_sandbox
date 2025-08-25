@@ -1206,10 +1206,52 @@ class IntentClusterer:
             d_lbl, d_summ = derive_cluster_label(
                 [text], top_k=self.summary_top_k, method=self.summary_method
             )
-            if lbl is None:
+            changed = False
+            if d_lbl is not None and d_lbl != lbl:
                 lbl = d_lbl
-            if summ is None:
+                changed = True
+            if d_summ is not None and d_summ != summ:
                 summ = d_summ
+                changed = True
+            if changed:
+                entry = f"cluster:{int(cluster_id)}"
+                meta = {}
+                try:
+                    row = self.conn.execute(
+                        "SELECT metadata FROM intent_embeddings WHERE module_path = ?",
+                        (entry,),
+                    ).fetchone()
+                except Exception:
+                    row = None
+                if row:
+                    try:
+                        meta = json.loads(row[0] or "{}")
+                    except Exception:
+                        meta = {}
+                if lbl is not None:
+                    meta["label"] = lbl
+                if summ is not None:
+                    meta["summary"] = summ
+                try:
+                    self.conn.execute(
+                        "UPDATE intent_embeddings SET metadata = ? WHERE module_path = ?",
+                        (json.dumps(meta), entry),
+                    )
+                except Exception:
+                    pass
+                db_meta = getattr(self.db, "_metadata", None)
+                if isinstance(db_meta, dict):
+                    mem = db_meta.get(entry, {})
+                    if lbl is not None:
+                        mem["label"] = lbl
+                    if summ is not None:
+                        mem["summary"] = summ
+                    db_meta[entry] = mem
+                    try:
+                        self.db._rebuild_index()  # type: ignore[attr-defined]
+                        self.db.save_index()  # type: ignore[attr-defined]
+                    except Exception as exc:  # pragma: no cover - best effort
+                        logger.warning("failed to rebuild cluster index: %s", exc)
         return lbl or "", summ or ""
 
     # ------------------------------------------------------------------
