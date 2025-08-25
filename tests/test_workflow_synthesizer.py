@@ -1,11 +1,15 @@
 import json
+import os
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import networkx as nx
 import pytest
+from analysis.io_signature import ModuleSignature
 
 # Stub heavy optional dependencies before importing the module under test.
 sys.modules.setdefault("intent_clusterer", SimpleNamespace(IntentClusterer=None))
@@ -196,3 +200,121 @@ def test_synthesise_workflow_wrapper(tmp_path, monkeypatch):
     result = ws.synthesise_workflow(start="mod_a")
     assert "steps" in result
     assert result["steps"][0]["module"] == "mod_a"
+
+
+def test_expand_cluster_uses_both_sources(monkeypatch):
+    """Synergy grapher and intent clusterer are consulted."""
+
+    synergy = MagicMock()
+    synergy.get_synergy_cluster.return_value = ["mod_b"]
+    intent = MagicMock()
+    intent.find_modules_related_to.return_value = [
+        SimpleNamespace(path="mod_c.py")
+    ]
+
+    synth = ws.WorkflowSynthesizer(
+        module_synergy_grapher=synergy, intent_clusterer=intent
+    )
+    modules = synth.expand_cluster(start_module="mod_a", problem="x")
+
+    synergy.get_synergy_cluster.assert_called_once()
+    intent.find_modules_related_to.assert_called_once()
+    assert modules == {"mod_a", "mod_b", "mod_c"}
+
+
+def test_resolve_dependencies_missing_inputs():
+    """Missing producers raise a ``ValueError``."""
+
+    class DummyGrapher:
+        graph = None
+
+        def load(self, path):  # pragma: no cover - trivial
+            pass
+
+    synth = ws.WorkflowSynthesizer(module_synergy_grapher=DummyGrapher())
+
+    a = ModuleSignature(name="a")
+    a.files_written.add("data.txt")
+    a.functions = {"f": {"args": [], "annotations": {}, "returns": None}}
+
+    b = ModuleSignature(name="b")
+    b.files_read.add("data.txt")
+    b.functions = {"f": {"args": [], "annotations": {}, "returns": None}}
+
+    c = ModuleSignature(name="c")
+    c.files_read.add("missing.txt")
+    c.functions = {"f": {"args": [], "annotations": {}, "returns": None}}
+
+    with pytest.raises(ValueError) as exc:
+        synth.resolve_dependencies([a, b, c])
+    assert "Unresolved dependencies" in str(exc.value)
+    assert "c" in str(exc.value)
+
+
+def test_resolve_dependencies_cycle_detection():
+    """Dependency cycles are reported via ``ValueError``."""
+
+    class DummyGrapher:
+        graph = None
+
+        def load(self, path):  # pragma: no cover - trivial
+            pass
+
+    synth = ws.WorkflowSynthesizer(module_synergy_grapher=DummyGrapher())
+
+    a = ModuleSignature(name="a")
+    a.globals.add("a_out")
+    a.functions = {
+        "fa": {"args": ["b_out"], "annotations": {}, "returns": None}
+    }
+
+    b = ModuleSignature(name="b")
+    b.globals.add("b_out")
+    b.functions = {
+        "fb": {"args": ["a_out"], "annotations": {}, "returns": None}
+    }
+
+    with pytest.raises(ValueError) as exc:
+        synth.resolve_dependencies([a, b])
+    assert "Cyclic dependency detected" in str(exc.value)
+
+
+def test_cli_end_to_end(tmp_path):
+    """CLI produces a JSON workflow when executed."""
+
+    stub = tmp_path / "stubs"
+    stub.mkdir()
+    (stub / "module_synergy_grapher.py").write_text(
+        "class ModuleSynergyGrapher:\n"
+        "    def __init__(self):\n"
+        "        self.graph=None\n"
+        "    def load(self, path):\n"
+        "        pass\n"
+        "    def get_synergy_cluster(self, start_module, threshold=0.0):\n"
+        "        return []\n"
+        "\n"
+        "def get_synergy_cluster(start_module, path=None, threshold=0.0):\n"
+        "    return []\n"
+        "\n"
+        "def load_graph(path):\n"
+        "    return None\n"
+    )
+    (stub / "intent_clusterer.py").write_text(
+        "class IntentClusterer:\n"
+        "    def find_modules_related_to(self, problem, top_k=20):\n"
+        "        return []\n"
+    )
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join([str(stub), os.getcwd()])
+    result = subprocess.run(
+        [sys.executable, "workflow_synthesizer_cli.py", "simple_functions"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+    )
+
+    data = json.loads(result.stdout)
+    assert data
+    assert data[0]["steps"][0]["module"] == "simple_functions"
