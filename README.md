@@ -66,7 +66,19 @@
     ```
   - Shared tables include a `content_hash` column storing a SHA256 hash of JSON-encoded core fields.
     The `insert_if_unique` helper computes this hash and skips inserts when the value already exists,
-    preventing cross-instance duplicates.
+    preventing cross-instance duplicates. Existing databases will auto-add the column on startup,
+    or can be updated manually with:
+
+    ```sql
+    ALTER TABLE bots ADD COLUMN content_hash TEXT;
+    CREATE UNIQUE INDEX idx_bots_content_hash ON bots(content_hash);
+    ALTER TABLE workflows ADD COLUMN content_hash TEXT;
+    CREATE UNIQUE INDEX idx_workflows_content_hash ON workflows(content_hash);
+    ALTER TABLE enhancements ADD COLUMN content_hash TEXT;
+    CREATE UNIQUE INDEX idx_enhancements_content_hash ON enhancements(content_hash);
+    ALTER TABLE errors ADD COLUMN content_hash TEXT;
+    CREATE UNIQUE INDEX idx_errors_content_hash ON errors(content_hash);
+    ```
 - Change Data Capture events published to `UnifiedEventBus`
 - Vector embedding search via `EmbeddableDBMixin` for bots, workflows,
   errors, enhancements and research items. Each database stores its own

@@ -83,7 +83,9 @@ class MenaceDB:
             Column("discrepancy_links", Text),
             Column("status", String),
             Column("estimated_profit_per_bot", Float, default=0.0),
+            Column("content_hash", Text, unique=True),
         )
+        Index("idx_workflows_content_hash", self.workflows.c.content_hash, unique=True)
 
         self.model_workflows = Table(
             "model_workflows",
@@ -185,8 +187,10 @@ class MenaceDB:
                 nullable=False,
                 server_default="",
             ),
+            Column("content_hash", Text, unique=True),
         )
         Index("idx_bots_source_menace_id", self.bots.c.source_menace_id)
+        Index("idx_bots_content_hash", self.bots.c.content_hash, unique=True)
 
         self.bot_models = Table(
             "bot_models",
@@ -246,11 +250,13 @@ class MenaceDB:
             Column("timestamp", String),
             Column("triggered_by", String),
             Column("source_menace_id", Text, nullable=False),
+            Column("content_hash", Text, unique=True),
         )
         Index(
             "idx_enhancements_source_menace_id",
             self.enhancements.c.source_menace_id,
         )
+        Index("idx_enhancements_content_hash", self.enhancements.c.content_hash, unique=True)
 
         self.enhancement_models = Table(
             "enhancement_models",
@@ -366,8 +372,10 @@ class MenaceDB:
             Column("error_description", Text),
             Column("resolution_status", String),
             Column("source_menace_id", Text, nullable=False, server_default=""),
+            Column("content_hash", Text, unique=True),
         )
         Index("idx_errors_source_menace_id", self.errors.c.source_menace_id)
+        Index("idx_errors_content_hash", self.errors.c.content_hash, unique=True)
 
         self.error_bots = Table(
             "error_bots",
@@ -562,7 +570,24 @@ class MenaceDB:
             Column("checksum", String),
         )
 
+        for table in ("bots", "workflows", "enhancements", "errors"):
+            self._ensure_content_hash_column(table)
+
         self.meta.create_all(self.engine)
+
+    def _ensure_content_hash_column(self, table_name: str) -> None:
+        with self.engine.begin() as conn:
+            exists = conn.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,),
+            ).fetchone()
+            if not exists:
+                return
+            cols = conn.exec_driver_sql(f"PRAGMA table_info({table_name})").fetchall()
+            if "content_hash" not in [c[1] for c in cols]:
+                conn.exec_driver_sql(
+                    f"ALTER TABLE {table_name} ADD COLUMN content_hash TEXT"
+                )
 
     # ------------------------------------------------------------------
     # Query helpers
