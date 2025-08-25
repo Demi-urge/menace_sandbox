@@ -1,7 +1,6 @@
 import types
-import json
-import hashlib
 import menace.error_logger as elog
+from db_dedup import compute_content_hash
 
 class StubReplicator:
     instances = []
@@ -32,8 +31,8 @@ class StubReplicator:
         self.fail = False
         remaining = []
         for ev in self.queue:
-            payload = json.dumps(ev.dict(exclude={"checksum"}), sort_keys=True).encode("utf-8")
-            if not ev.checksum or hashlib.sha256(payload).hexdigest() != ev.checksum:
+            payload = ev.dict(exclude={"checksum"})
+            if not ev.checksum or compute_content_hash(payload) != ev.checksum:
                 continue
             if self.fail:
                 remaining.append(ev)
@@ -101,7 +100,7 @@ def test_event_checksum_and_validation(monkeypatch):
     inst = StubReplicator.instances[-1]
     ev = inst.events[0]
     data = ev.dict(exclude={"checksum"})
-    expected = hashlib.sha256(json.dumps(data, sort_keys=True).encode("utf-8")).hexdigest()
+    expected = compute_content_hash(data)
     assert ev.checksum == expected
 
     good = ev.copy()

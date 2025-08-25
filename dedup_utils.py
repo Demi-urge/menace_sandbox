@@ -3,24 +3,30 @@ from __future__ import annotations
 """Utilities for deduplicating SQLite inserts."""
 
 from collections.abc import Iterable, Mapping
-import hashlib
-import json
 import sqlite3
 from typing import Any
 
-__all__ = ["compute_content_hash", "insert_if_unique"]
+from db_dedup import compute_content_hash
+
+__all__ = ["hash_fields", "insert_if_unique"]
 
 
-def compute_content_hash(data: Mapping[str, Any]) -> str:
-    """Return a SHA256 hex digest for ``data``.
+def hash_fields(data: Mapping[str, Any], fields: Iterable[str]) -> str:
+    """Return a hash of selected ``fields`` from ``data``.
 
-    The mapping is JSON encoded with keys sorted to ensure stable hashes for
-    logically equivalent inputs.
+    Raises
+    ------
+    KeyError
+        If any of ``fields`` are missing from ``data``.
     """
 
-    return hashlib.sha256(
-        json.dumps(data, sort_keys=True).encode("utf-8")
-    ).hexdigest()
+    missing = [key for key in fields if key not in data]
+    if missing:
+        missing_list = ", ".join(sorted(missing))
+        raise KeyError(f"Missing fields for hashing: {missing_list}")
+
+    payload = {key: data[key] for key in fields}
+    return compute_content_hash(payload)
 
 
 def insert_if_unique(

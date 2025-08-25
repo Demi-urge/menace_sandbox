@@ -6,8 +6,8 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-import hashlib
-import json
+
+from db_dedup import compute_content_hash
 
 revision: str = "0010"
 down_revision: Union[str, Sequence[str], None] = "0009"
@@ -51,9 +51,7 @@ TABLES: dict[str, list[str]] = {
 
 def _compute_hash(row: dict[str, str], fields: list[str]) -> str:
     payload = {f: row.get(f) for f in fields}
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True).encode("utf-8")
-    ).hexdigest()
+    return compute_content_hash(payload)
 
 
 def upgrade() -> None:
