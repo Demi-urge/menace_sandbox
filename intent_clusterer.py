@@ -173,19 +173,54 @@ def extract_intent_text(path: Path) -> str:
     return "\n".join(docstrings + names + comments)
 
 
+def summarise_texts(texts: List[str]) -> str:
+    """Return a short summary for ``texts``.
+
+    A lightweight summarisation model is attempted first using
+    :mod:`transformers`.  If the dependency or model is unavailable the
+    function falls back to a simple ``sumy`` based summariser.  When neither
+    option is usable an empty string is returned.  The helper is factored out
+    so tests can easily monkeypatch it without requiring network access.
+    """
+
+    joined = "\n".join(texts)
+    try:  # pragma: no cover - optional dependency
+        from transformers import pipeline
+
+        summariser = pipeline("summarization", model="sshleifer/tiny-mbart")
+        out = summariser(joined, max_length=60, min_length=5, do_sample=False)
+        return (out[0]["summary_text"] or "").strip()
+    except Exception:
+        try:  # pragma: no cover - optional dependency
+            from sumy.parsers.plaintext import PlaintextParser
+            from sumy.nlp.tokenizers import Tokenizer
+            from sumy.summarizers.lex_rank import LexRankSummarizer
+
+            parser = PlaintextParser.from_string(joined, Tokenizer("english"))
+            summarizer = LexRankSummarizer()
+            sentences = summarizer(parser.document, sentences_count=1)
+            return str(sentences[0]) if sentences else ""
+        except Exception:
+            return ""
+
+
 def derive_cluster_label(texts: List[str], top_k: int = 3) -> tuple[str, str]:
     """Return a concise ``(label, summary)`` pair for ``texts``.
 
-    The helper still prefers a TF‑IDF based approach when ``scikit-learn`` is
-    available.  When the dependency is missing, instead of the previous
-    frequency fallback a lightweight LLM summariser is used.  The label is
-    composed of the first ``top_k`` words from the summary.  If the summariser
-    fails a final frequency based heuristic is used as a safety net.  The
-    summary may be an empty string when neither method succeeds.
+    A lightweight summariser is used to generate both a summary and label.
+    If the summariser is unavailable a TF‑IDF approach is attempted.  Only when
+    both strategies fail does the function fall back to a simple frequency
+    heuristic.
     """
 
     if not texts:
         return "", ""
+
+    summary = summarise_texts(texts)
+    if summary:
+        label = " ".join(summary.split()[:top_k])
+        return label, summary
+
     try:  # pragma: no cover - optional dependency
         from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
 
@@ -198,61 +233,38 @@ def derive_cluster_label(texts: List[str], top_k: int = 3) -> tuple[str, str]:
         summary = ""
         return label, summary
     except Exception:
-        summary = ""
-        try:  # pragma: no cover - optional external dependency
-            import openai  # type: ignore
+        pass
 
-            if getattr(openai, "api_key", None):
-                prompt = "Summarise the following texts in a short phrase:\n" + "\n".join(texts)
-                resp = openai.ChatCompletion.create(  # type: ignore[attr-defined]
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "Summarise the user content in a short concise phrase.",
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_tokens=32,
-                )
-                summary = resp["choices"][0]["message"]["content"].strip()
-        except Exception:
-            summary = ""
+    # Final safety net: frequency based heuristic
+    import re
+    from collections import Counter
 
-        if summary:
-            label = " ".join(summary.split()[:top_k])
-            return label, summary
-
-        # Final safety net: frequency based heuristic
-        import re
-        from collections import Counter
-
-        words = re.findall(r"[A-Za-z][A-Za-z0-9_]+", " ".join(texts).lower())
-        stop = {
-            "the",
-            "and",
-            "for",
-            "with",
-            "that",
-            "from",
-            "this",
-            "are",
-            "was",
-            "but",
-            "not",
-            "use",
-            "used",
-            "using",
-            "into",
-            "over",
-            "there",
-            "their",
-        }
-        words = [w for w in words if w not in stop]
-        if not words:
-            return "", ""
-        label = " ".join(w for w, _ in Counter(words).most_common(top_k))
-        return label, ""
+    words = re.findall(r"[A-Za-z][A-Za-z0-9_]+", " ".join(texts).lower())
+    stop = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "from",
+        "this",
+        "are",
+        "was",
+        "but",
+        "not",
+        "use",
+        "used",
+        "using",
+        "into",
+        "over",
+        "there",
+        "their",
+    }
+    words = [w for w in words if w not in stop]
+    if not words:
+        return "", ""
+    label = " ".join(w for w, _ in Counter(words).most_common(top_k))
+    return label, ""
 
 
 class ModuleVectorDB(EmbeddableDBMixin):

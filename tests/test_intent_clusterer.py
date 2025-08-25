@@ -54,6 +54,8 @@ def fake_embeddings(monkeypatch) -> None:
     # ``persist_embedding`` which would pollute the repository.  Replace it with
     # a no‑op to keep the workspace clean during tests.
     monkeypatch.setattr(ic, "persist_embedding", lambda *a, **k: None)
+    # Use a deterministic summariser to avoid network access
+    monkeypatch.setattr(ic, "summarise_texts", lambda texts: "auth helper summary")
 
 
 @pytest.fixture
@@ -107,6 +109,17 @@ def sample_repo(tmp_path: Path) -> Path:
         json.dumps({"auth": 1, "helper": 1, "payment": 2})
     )
     return tmp_path
+
+
+def test_derive_cluster_label_uses_summariser(monkeypatch):
+    """``derive_cluster_label`` should prefer the summariser when available."""
+
+    monkeypatch.setattr(
+        ic, "summarise_texts", lambda texts: "auth summary phrase"
+    )
+    label, summary = ic.derive_cluster_label(["auth stuff", "more auth"])
+    assert label == "auth summary phrase"
+    assert summary == "auth summary phrase"
 
 
 class DummyRetriever:
@@ -214,12 +227,12 @@ def test_cluster_lookup_uses_synergy_groups(
     assert cluster_items
     assert cluster_items[0].path.startswith("cluster:1")
     assert cluster_items[0].label and "auth" in cluster_items[0].label.lower()
-    assert cluster_items[0].summary is not None
+    assert cluster_items[0].summary == "auth helper summary"
     assert cluster_items[0].category == "authentication"
     # ``cluster_label`` should expose the persisted label and summary
     label, summary = clusterer.cluster_label(1)
-    assert label and "auth" in label.lower()
-    assert summary == "" or isinstance(summary, str)
+    assert label == "auth helper summary"
+    assert summary == "auth helper summary"
 
 
 def test_cluster_intents_adds_cluster_metadata(
