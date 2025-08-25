@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import networkx as nx
+import pytest
 
 # Stub heavy optional dependencies before importing the module under test.
 sys.modules.setdefault("intent_clusterer", SimpleNamespace(IntentClusterer=None))
@@ -13,7 +14,7 @@ sys.modules.setdefault(
     SimpleNamespace(ModuleSynergyGrapher=None, get_synergy_cluster=None),
 )
 
-import workflow_synthesizer as ws
+import workflow_synthesizer as ws  # noqa: E402
 
 
 def _write_modules(tmp_path: Path) -> None:
@@ -110,18 +111,26 @@ def test_generated_json_schema(tmp_path, monkeypatch):
     workflows = synth.generate_workflows(start_module="mod_a", problem="finalise")
     spec = ws.to_workflow_spec(workflows[0])
 
-    assert spec["workflow"] == ["mod_a", "mod_b", "mod_c"]
-    required = {
-        "workflow",
-        "action_chains",
-        "argument_strings",
-        "assigned_bots",
-        "enhancements",
-        "title",
-    }
-    assert required.issubset(spec)
+    assert [s["module"] for s in spec["steps"]] == ["mod_a", "mod_b", "mod_c"]
+    required_step_keys = {"module", "inputs", "outputs", "files", "globals"}
+    assert all(required_step_keys.issubset(s) for s in spec["steps"])
 
     spec_path = ws.save_workflow(workflows[0])
     saved = json.loads(spec_path.read_text())
-    assert saved["workflow"] == spec["workflow"]
+    assert saved == spec
 
+
+def test_dependency_resolution(tmp_path, monkeypatch):
+    """Modules are ordered by produced values and missing deps raise errors."""
+
+    _write_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    synth = ws.WorkflowSynthesizer()
+    modules = [ws.inspect_module(m) for m in ["mod_b", "mod_c", "mod_a"]]
+    steps = synth.resolve_dependencies(modules)
+    assert [s.module for s in steps] == ["mod_a", "mod_b", "mod_c"]
+
+    bad = [ws.inspect_module(m) for m in ["mod_a", "mod_d"]]
+    with pytest.raises(ValueError, match="mod_d"):
+        synth.resolve_dependencies(bad)

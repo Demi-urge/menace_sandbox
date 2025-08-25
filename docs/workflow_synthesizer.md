@@ -49,3 +49,22 @@ python workflow_synthesizer_cli.py --start module_a --out my.workflow.json
 The `generate_workflows` method returns multiple candidates and `save_workflow`
 can write a `.workflow.json` compatible with `WorkflowDB` for later reuse.
 
+## CLI options
+
+`workflow_synthesizer_cli.py` offers a small command line interface:
+
+* `--start` – starting module name or a free text problem description. If a
+  Python module with this name exists the synthesizer performs structural
+  expansion; otherwise it searches by intent.
+* `--out` – destination path for the generated workflow specification. The
+  tool interactively confirms each suggested step before writing the file.
+
+## Sandbox integration
+
+Generated specifications are ordinary `.workflow.json` files. They can be
+loaded into the sandbox's `WorkflowDB` or executed via existing workflow tools.
+By default the synthesizer reads the synergy graph from
+`sandbox_data/module_synergy_graph.json` and can optionally leverage an
+`IntentDB` when available, allowing new workflows to plug into the rest of the
+sandbox infrastructure without additional configuration.
+
