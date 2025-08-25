@@ -41,7 +41,7 @@ from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from vector_service import EmbeddableDBMixin
 from .scope_utils import build_scope_clause, Scope, apply_scope
-from db_dedup import insert_if_unique
+from db_dedup import compute_content_hash, insert_if_unique
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager
@@ -504,6 +504,8 @@ class ErrorDB(EmbeddableDBMixin):
             "ts": datetime.utcnow().isoformat(),
         }
         hash_fields = ["message", "type", "description", "resolution"]
+        hash_payload = {k: values[k] for k in hash_fields}
+        content_hash = compute_content_hash(hash_payload)
         with self.router.get_connection("errors", "write") as conn:
             err_id, inserted = insert_if_unique(
                 conn, "errors", values, hash_fields, menace_id
@@ -527,6 +529,11 @@ class ErrorDB(EmbeddableDBMixin):
                 },
             )
             self._publish("embedding:backfill", {"db": self.__class__.__name__})
+        else:
+            logger.warning(
+                "Duplicate error detected for content_hash=%s; embeddings/events skipped",
+                content_hash,
+            )
         return err_id
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
