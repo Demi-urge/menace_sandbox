@@ -10,6 +10,7 @@ when available with graceful fallbacks otherwise.
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List
@@ -121,5 +122,38 @@ class IntentClusterer:
         return results[:top_k]
 
 
-__all__ = ["IntentClusterer"]
+# ---------------------------------------------------------------------------
+def find_modules_related_to(query: str, top_k: int = 5) -> List[Dict[str, float]]:
+    """Return modules most relevant to ``query`` using a fresh clusterer.
+
+    This helper instantiates :class:`IntentClusterer` with default dependencies
+    and proxies the call to :meth:`IntentClusterer.find_modules_related_to` for
+    quick, interactive exploration.
+    """
+
+    clusterer = IntentClusterer()
+    return clusterer.find_modules_related_to(query, top_k=top_k)
+
+
+def _cli() -> int:
+    """Entry point for the ``python -m intent_clusterer`` command."""
+
+    parser = argparse.ArgumentParser(description="Search for related modules")
+    parser.add_argument("query", help="Natural language search query")
+    parser.add_argument("--top-k", type=int, default=5, dest="top_k")
+    args = parser.parse_args()
+
+    results = find_modules_related_to(args.query, top_k=args.top_k)
+    for res in results:
+        path = res.get("path")
+        score = res.get("score")
+        print(f"{score:.3f}\t{path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())
+
+
+__all__ = ["IntentClusterer", "find_modules_related_to"]
 
