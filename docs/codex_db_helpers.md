@@ -3,7 +3,7 @@
 The `codex_db_helpers` module collects training samples from Menace databases
 so they can be fed into language‑model prompts. It exposes fetch helpers for
 enhancements, workflow summaries, discrepancies and workflow history along with
-an `aggregate_training_samples` convenience wrapper.
+an `aggregate_samples` convenience wrapper.
 
 ## Parameters
 
@@ -23,14 +23,13 @@ The queried tables must expose `id`, a text field (`summary`, `message` or
 ## Example
 
 ```python
-from codex_db_helpers import aggregate_training_samples
+from codex_db_helpers import aggregate_samples
 
-records = aggregate_training_samples(
-    enh_db,
-    sum_db,
-    sort_by="score",
-    limit=5,
-    with_embeddings=False,
+records = aggregate_samples(
+    sources=["enhancement", "workflow_summary"],
+    limit_per_source=5,
+    sort_by="outcome_score",
+    with_vectors=False,
 )
 
 prompt = "Examples:\n" + "\n\n".join(
@@ -45,7 +44,7 @@ To add a new data source:
 1. Implement a `fetch_<name>` helper that selects `id`, the text column,
    `score`, `roi`, `confidence` and `ts` from the target table while forwarding
    the common parameters.
-2. Register the helper in `aggregate_training_samples` so its output participates
+2. Register the helper in `aggregate_samples` so its output participates
    in the combined ranking.
 
 This keeps the API consistent across data types and preserves scoping and
