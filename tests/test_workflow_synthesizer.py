@@ -31,9 +31,7 @@ class StubGrapher:
         self.graph = nx.DiGraph()
         self.graph.add_edge("mod_a", "mod_b", weight=2.0)
         self.graph.add_edge("mod_b", "mod_c", weight=1.0)
-
-    def get_synergy_cluster(self, start_module: str, threshold: float = 0.0):  # pragma: no cover - trivial
-        return ["mod_b"]
+        self.graph.add_edge("mod_c", "mod_d", weight=1.0)
 
 
 class StubIntent:
@@ -56,6 +54,28 @@ def test_expand_cluster_merges_sources(tmp_path, monkeypatch):
 
     modules = synth.expand_cluster(start_module="mod_a", problem="finalise")
     assert modules == {"mod_a", "mod_b", "mod_c"}
+
+
+def test_expand_cluster_bfs_multi_hop(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    grapher = StubGrapher()
+    synth = ws.WorkflowSynthesizer(module_synergy_grapher=grapher)
+
+    # default depth is 1 -> only direct neighbour
+    assert synth.expand_cluster(start_module="mod_a") == {"mod_a", "mod_b"}
+
+    # expanding to depth 2 pulls in mod_c
+    modules = synth.expand_cluster(start_module="mod_a", max_depth=2)
+    assert modules == {"mod_a", "mod_b", "mod_c"}
+
+    # depth 3 includes mod_d; threshold filters out weaker edges
+    modules = synth.expand_cluster(start_module="mod_a", max_depth=3)
+    assert modules == {"mod_a", "mod_b", "mod_c", "mod_d"}
+
+    modules = synth.expand_cluster(start_module="mod_a", max_depth=3, threshold=1.5)
+    assert modules == {"mod_a", "mod_b"}
 
 
 def test_resolve_dependencies_ordering_and_unresolved(tmp_path, monkeypatch):

@@ -21,6 +21,7 @@ import argparse
 import ast
 import json
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
@@ -33,11 +34,7 @@ except Exception:  # pragma: no cover - best effort fall back
     get_io_signature = None  # type: ignore[misc]
 
 try:  # Optional imports; fall back to stubs in tests
-    from module_synergy_grapher import (
-        ModuleSynergyGrapher,
-        get_synergy_cluster,
-        load_graph,
-    )
+    from module_synergy_grapher import ModuleSynergyGrapher, load_graph
 except Exception:  # pragma: no cover - graceful degradation
     ModuleSynergyGrapher = None  # type: ignore[misc]
     get_synergy_cluster = None  # type: ignore[misc]
@@ -399,35 +396,50 @@ class WorkflowSynthesizer:
         *,
         problem: str | None = None,
         threshold: float = 0.0,
+        max_depth: int = 1,
     ) -> Set[str]:
-        """Expand from ``start_module`` and/or ``problem`` to related modules."""
+        """Expand from ``start_module`` and/or ``problem`` to related modules.
+
+        Parameters
+        ----------
+        start_module:
+            Module name to expand from.  If ``None`` only intent based expansion
+            is performed.
+        problem:
+            Optional textual description used to search the intent database.
+        threshold:
+            Minimum edge weight when traversing the synergy graph.
+        max_depth:
+            Maximum graph depth to explore from ``start_module``.  ``1`` restricts
+            expansion to direct neighbours.
+        """
 
         modules: Set[str] = set()
 
         if start_module:
             modules.add(start_module)
             try:
-                if self.module_synergy_grapher is not None and hasattr(
-                    self.module_synergy_grapher, "get_synergy_cluster"
-                ):
-                    try:
-                        cluster = self.module_synergy_grapher.get_synergy_cluster(
-                            start_module, threshold=threshold
-                        )
-                    except TypeError:  # pragma: no cover - threshold unsupported
-                        cluster = self.module_synergy_grapher.get_synergy_cluster(
-                            start_module
-                        )
-                elif get_synergy_cluster is not None:
-                    cluster = get_synergy_cluster(
-                        start_module, path=self.synergy_graph_path, threshold=threshold
-                    )
+                graph = None
+                if self.module_synergy_grapher is not None:
+                    graph = getattr(self.module_synergy_grapher, "graph", None)
+                    if graph is None and hasattr(self.module_synergy_grapher, "load"):
+                        graph = self.module_synergy_grapher.load(self.synergy_graph_path)
                 elif load_graph is not None:
                     graph = load_graph(self.synergy_graph_path)
-                    cluster = list(graph.neighbors(start_module)) if start_module in graph else []
-                else:
-                    cluster = []
-                modules.update(cluster)
+                if graph is not None and start_module in graph:
+                    visited: Set[str] = {start_module}
+                    queue: deque[tuple[str, int]] = deque([(start_module, 0)])
+                    while queue:
+                        node, depth = queue.popleft()
+                        if depth >= max_depth:
+                            continue
+                        for neigh, data in graph[node].items():
+                            weight = float(data.get("weight", 0.0))
+                            if weight < threshold or neigh in visited:
+                                continue
+                            visited.add(neigh)
+                            modules.add(neigh)
+                            queue.append((neigh, depth + 1))
             except Exception:  # pragma: no cover - best effort
                 pass
 
