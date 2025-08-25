@@ -132,7 +132,8 @@ class WorkflowDB(EmbeddableDBMixin):
                 workflow_duration REAL,
                 performance_data TEXT,
                 estimated_profit_per_bot REAL,
-                timestamp TEXT
+                timestamp TEXT,
+                source_menace_id TEXT
             )
             """,
         )
@@ -141,6 +142,11 @@ class WorkflowDB(EmbeddableDBMixin):
             self.conn.execute("ALTER TABLE workflows ADD COLUMN action_chains TEXT")
         if "argument_strings" not in cols:
             self.conn.execute("ALTER TABLE workflows ADD COLUMN argument_strings TEXT")
+        if "source_menace_id" not in cols:
+            self.conn.execute(
+                "ALTER TABLE workflows ADD COLUMN "
+                "source_menace_id TEXT NOT NULL DEFAULT ''"
+            )
         if "content_hash" not in cols:
             # SQLite cannot add a column with a UNIQUE constraint via ALTER TABLE.
             # Add the column first and rely on the index below for uniqueness.
@@ -150,6 +156,10 @@ class WorkflowDB(EmbeddableDBMixin):
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS "
             "idx_workflows_content_hash ON workflows(content_hash)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS "
+            "idx_workflows_source_menace_id ON workflows(source_menace_id)"
         )
         self.conn.commit()
         EmbeddableDBMixin.__init__(
@@ -300,7 +310,9 @@ class WorkflowDB(EmbeddableDBMixin):
     # --------------------------------------------------------------
     # insert/fetch
     def add(self, wf: WorkflowRecord, source_menace_id: str = "") -> int | None:
+        menace_id = source_menace_id or self.router.menace_id
         values = {
+            "source_menace_id": menace_id,
             "workflow": ",".join(wf.workflow),
             "action_chains": ",".join(wf.action_chains),
             "argument_strings": ",".join(wf.argument_strings),
@@ -326,7 +338,7 @@ class WorkflowDB(EmbeddableDBMixin):
                 "workflows",
                 values,
                 _WORKFLOW_HASH_FIELDS,
-                source_menace_id,
+                menace_id,
                 logger,
             )
         if wf.wid is None:
