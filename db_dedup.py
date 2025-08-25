@@ -144,7 +144,8 @@ def insert_if_unique(
                         return result.lastrowid
 
                 logger.warning(
-                    "Duplicate insert ignored for %s (menace_id=%s)",
+                    "duplicate %s ignored for %s (menace_id=%s)",
+                    table.name.rstrip("s"),
                     table.name,
                     menace_id,
                 )
@@ -166,7 +167,8 @@ def insert_if_unique(
                 if row:
                     return row[0]
                 logger.warning(
-                    "Duplicate insert ignored for %s (menace_id=%s)",
+                    "duplicate %s ignored for %s (menace_id=%s)",
+                    table.name.rstrip("s"),
                     table.name,
                     menace_id,
                 )
@@ -200,7 +202,7 @@ def insert_if_unique(
                 return int(cur.lastrowid)
 
         logger.warning(
-            "Duplicate insert ignored for %s (menace_id=%s)", table, menace_id
+            "duplicate %s ignored for %s (menace_id=%s)", table.rstrip("s"), table, menace_id
         )
         cur = conn.execute(
             f"SELECT id FROM {table} WHERE content_hash=?",
