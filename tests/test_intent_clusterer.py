@@ -1,60 +1,51 @@
-import sys
+import pytest
 from pathlib import Path
 
-import pytest
-
-sys.modules['hdbscan'] = None
-
-import intent_clusterer as ic  # noqa: E402
-from vector_utils import cosine_similarity  # noqa: E402
+import embeddable_db_mixin as edm
+import intent_vectorizer as iv
+import intent_clusterer as ic
+import intent_db
+from db_router import init_db_router, LOCAL_TABLES
 
 
 @pytest.fixture(autouse=True)
-def fake_embed(monkeypatch):
-    def _fake(text: str) -> list[float]:
+def fake_embeddings(monkeypatch):
+    def _fake(text: str, model=None) -> list[float]:
         lower = text.lower()
-        return [float(lower.count("alpha")), float(lower.count("beta"))]
-
-    monkeypatch.setattr(ic, "governed_embed", _fake)
-
-
-class DummyRetriever:
-    def __init__(self):
-        self.items = []
-
-    def add_vector(self, vector, metadata):
-        self.items.append({"vector": vector, "metadata": metadata})
-
-    def search(self, vector, top_k=10):
-        scored = [
-            (item, cosine_similarity(vector, item["vector"]))
-            for item in self.items
+        return [
+            float(lower.count("auth")),
+            float(lower.count("help")),
+            float(lower.count("pay")),
         ]
-        scored.sort(key=lambda x: x[1], reverse=True)
-        results = []
-        for item, score in scored[:top_k]:
-            results.append(
-                {
-                    "metadata": item["metadata"],
-                    "vector": item["vector"],
-                    "path": item["metadata"]["path"],
-                    "score": score,
-                }
-            )
-        return results
 
-
-def _write(tmp: Path, rel: str, content: str) -> None:
-    p = tmp / rel
-    p.write_text(content)
+    monkeypatch.setattr(edm, "governed_embed", _fake)
+    monkeypatch.setattr(iv, "governed_embed", _fake)
 
 
 @pytest.fixture
-def repo_with_intents(tmp_path):
+def sample_repo(tmp_path: Path) -> Path:
     files = {
-        "alpha.py": '"""alpha module"""\nimport beta\n',
-        "beta.py": '"""beta module"""\nimport alpha\n',
-        "gamma.py": '"""gamma helper"""\n',
+        "auth.py": (
+            '"""Authentication module"""\n'
+            "# handles login\n\n"
+            "def login():\n"
+            '    """login user"""\n'
+            "    pass\n"
+        ),
+        "helper.py": (
+            '"""Authentication helper"""\n'
+            "# provides help\n\n"
+            "def assist():\n"
+            '    """assist auth"""\n'
+            "    pass\n"
+        ),
+        "payment.py": (
+            '"""Payment processor"""\n'
+            "# handles payments\n\n"
+            "def pay():\n"
+            '    """process pay"""\n'
+            "    pass\n"
+        ),
     }
     for name, content in files.items():
         (tmp_path / name).write_text(content)
@@ -62,78 +53,46 @@ def repo_with_intents(tmp_path):
 
 
 @pytest.fixture
-def indexed_clusterer(repo_with_intents):
-    retr = DummyRetriever()
-    clusterer = ic.IntentClusterer(retr)
-    clusterer.index_repository(repo_with_intents)
-    return clusterer, retr
+def indexed_clusterer(sample_repo: Path, tmp_path: Path):
+    LOCAL_TABLES.add("intent")
+    router = init_db_router(
+        "intent", str(tmp_path / "intent.db"), str(tmp_path / "intent.db")
+    )
+    db = intent_db.IntentDB(
+        path=tmp_path / "intent.db",
+        vector_index_path=tmp_path / "intent.index",
+        router=router,
+    )
+    class DummyRetriever:
+        def register_db(self, *args, **kwargs):
+            pass
+
+    clusterer = ic.IntentClusterer(intent_db=db, retriever=DummyRetriever())
+    clusterer.index_modules(sample_repo.glob("*.py"))
+    return clusterer, sample_repo
 
 
-def test_index_and_cluster(tmp_path):
-    _write(tmp_path, "a.py", '"""A"""\nimport b\n')
-    _write(tmp_path, "b.py", '"""B"""\nimport a\n')
-    _write(tmp_path, "c.py", '"""C"""\n')
-    retr = DummyRetriever()
-    clusterer = ic.IntentClusterer(retr)
-    clusterer.index_repository(tmp_path)
-    paths = {
-        item["metadata"]["path"]: item["metadata"].get("cluster_id")
-        for item in retr.items
-    }
-    assert paths["a.py"] == paths["b.py"]
-    assert "cluster_id" in retr.items[0]["metadata"]
+def test_intent_extraction(sample_repo: Path):
+    vectorizer = iv.IntentVectorizer()
+    text = vectorizer.bundle(sample_repo / "auth.py")
+    assert "Authentication module" in text
+    assert "handles login" in text
+    assert "login" in text
 
 
-def test_cluster_search(tmp_path):
-    _write(tmp_path, "a.py", '"""A doc"""\nimport b\n')
-    _write(tmp_path, "b.py", '"""B doc"""\nimport a\n')
-    retr = DummyRetriever()
-    clusterer = ic.IntentClusterer(retr)
-    clusterer.index_repository(tmp_path)
-    cid = clusterer.cluster_map["a"]
-    text, vec = clusterer.get_cluster_intents(cid)
-    assert "A doc" in text and "B doc" in text
-    res = clusterer.find_modules_related_to("cluster A", top_k=1)
-    assert res and res[0]["cluster_id"] == cid
+def test_clustering_output(indexed_clusterer):
+    clusterer, repo = indexed_clusterer
+    clusters = clusterer.cluster_intents(2)
+    auth_path = str(repo / "auth.py")
+    helper_path = str(repo / "helper.py")
+    payment_path = str(repo / "payment.py")
+    assert clusters[auth_path] == clusters[helper_path]
+    assert clusters[payment_path] != clusters[auth_path]
 
 
-def test_collect_intent_no_docstring(tmp_path):
-    path = tmp_path / "mod.py"
-    path.write_text("# comment about func\n\ndef fn():\n    pass\n")
-    clusterer = ic.IntentClusterer(DummyRetriever())
-    text, meta = clusterer._collect_intent(path)
-    assert meta["names"] == ["fn"]
-    assert "docstrings" not in meta
-    assert meta["comments"] == ["comment about func"]
-
-
-def test_collect_intent_only_comments_module(tmp_path):
-    path = tmp_path / "cmod.py"
-    path.write_text("# just a comment\n")
-    clusterer = ic.IntentClusterer(DummyRetriever())
-    text, meta = clusterer._collect_intent(path)
-    assert text == ""
-    assert meta["names"] == []
-
-
-def test_collect_intent_mixed_encoding(tmp_path):
-    path = tmp_path / "latin.py"
-    content = "# -*- coding: latin-1 -*-\n# espa\xf1ol\n\nclass X:\n    pass\n"
-    path.write_bytes(content.encode("latin-1"))
-    clusterer = ic.IntentClusterer(DummyRetriever())
-    text, meta = clusterer._collect_intent(path)
-    assert meta["names"] == ["X"]
-    assert "espa\xf1ol" in meta["comments"][0]
-
-
-def test_indexing_clusters_related_modules(indexed_clusterer):
-    clusterer, retr = indexed_clusterer
-    paths = {item["metadata"]["path"]: item["metadata"].get("cluster_id") for item in retr.items}
-    assert paths["alpha.py"] == paths["beta.py"]
-    assert paths["gamma.py"] != paths["alpha.py"]
-
-
-def test_query_returns_expected_module(indexed_clusterer):
-    clusterer, _retr = indexed_clusterer
-    res = clusterer.query("alpha module", threshold=0.1)
-    assert res and res[0].path == "alpha.py"
+def test_natural_language_query(indexed_clusterer):
+    clusterer, repo = indexed_clusterer
+    res = clusterer.find_modules_related_to("authentication help", top_k=1)
+    assert res and Path(res[0]["path"]).name == "helper.py"
+    res2 = clusterer.find_modules_related_to("process payment", top_k=1)
+    assert res2 and Path(res2[0]["path"]).name == "payment.py"
