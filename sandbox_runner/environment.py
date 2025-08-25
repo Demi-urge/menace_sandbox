@@ -176,7 +176,24 @@ _FAKER = Faker() if Faker is not None else None
 from .config import SANDBOX_REPO_URL, SANDBOX_REPO_PATH
 from .input_history_db import InputHistoryDB
 from collections import Counter
-from error_logger import ErrorLogger
+try:
+    from error_logger import ErrorLogger
+except Exception:  # pragma: no cover - optional during minimal imports
+    class ErrorLogger:  # type: ignore[misc]
+        """Fallback stub used when :mod:`error_logger` is unavailable."""
+
+        class _Classifier:
+            @staticmethod
+            def classify_details(_exc: object, _stack: object) -> tuple[str, str, str]:
+                return "", "", ""
+
+        classifier = _Classifier()
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def log(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - no-op
+            return None
 from knowledge_graph import KnowledgeGraph
 
 from db_router import GLOBAL_ROUTER, init_db_router

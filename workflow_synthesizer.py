@@ -241,3 +241,127 @@ class WorkflowSynthesizer:
                 pass
 
         return sorted(modules)[:limit]
+
+    # ------------------------------------------------------------------
+    def generate_workflows(
+        self,
+        start_module: str,
+        *,
+        problem: str | None = None,
+        limit: int = 5,
+    ) -> List[List[Dict[str, Any]]]:
+        """Generate candidate workflows beginning at ``start_module``.
+
+        The synthesizer builds a small dependency graph where edges connect
+        modules whose outputs feed the inputs of another module or when one
+        module writes a file another module reads.  The graph is seeded with
+        ``start_module`` and expanded using :meth:`synthesize` which blends
+        synergy relationships and intent matches.  A topological sort orders
+        the modules when the graph is acyclic; otherwise a best effort ranking
+        based on edge weights is used.  Simple paths starting from
+        ``start_module`` are converted into workflow candidates and scored by
+        combining edge weights with optional intent match scores.
+
+        Parameters
+        ----------
+        start_module:
+            Dotted name of the module that should start each workflow.
+        problem:
+            Optional textual description used for intent matching.  Only
+            available when ``intent_clusterer`` is provided.
+        limit:
+            Maximum number of workflows to return.
+        """
+
+        import networkx as nx
+
+        # gather candidate modules via synergy + intent expansion
+        modules = set(self.synthesize(start_module=start_module, problem=problem, limit=50))
+        modules.add(start_module)
+
+        # Inspect modules to gather IO information
+        info: Dict[str, ModuleIO] = {m: inspect_module(m) for m in modules}
+
+        # Build graph where outputs/files_written satisfy inputs/files_read
+        G = nx.DiGraph()
+        for m in modules:
+            G.add_node(m)
+        for a in modules:
+            for b in modules:
+                if a == b:
+                    continue
+                io_a, io_b = info[a], info[b]
+                if io_a.outputs & io_b.inputs or io_a.files_written & io_b.files_read:
+                    weight = 1.0
+                    if (
+                        self.module_synergy_grapher
+                        and getattr(self.module_synergy_grapher, "graph", None)
+                        and self.module_synergy_grapher.graph is not None
+                        and self.module_synergy_grapher.graph.has_edge(a, b)
+                    ):
+                        weight = float(
+                            self.module_synergy_grapher.graph[a][b].get("weight", 1.0)
+                        )
+                    G.add_edge(a, b, weight=weight)
+
+        # Determine node ordering
+        try:
+            order = list(nx.topological_sort(G))
+        except Exception:  # pragma: no cover - cycle detected
+            # Fallback heuristic: sort by total outgoing edge weight
+            order = sorted(
+                G.nodes,
+                key=lambda n: sum(G[n][m].get("weight", 1.0) for m in G.successors(n)),
+                reverse=True,
+            )
+
+        # Collect intent scores if problem provided
+        intent_scores: Dict[str, float] = {}
+        if problem and self.intent_clusterer is not None:
+            try:
+                matches = self.intent_clusterer.find_modules_related_to(problem, top_k=len(modules))
+                for m in matches:
+                    path = getattr(m, "path", None)
+                    score = getattr(m, "score", None) or getattr(m, "similarity", None)
+                    if path:
+                        intent_scores[Path(path).stem] = float(score or 0.0)
+            except Exception:  # pragma: no cover - best effort
+                pass
+
+        # Enumerate simple paths starting from start_module
+        paths: List[List[str]] = []
+        for target in order:
+            if target == start_module or not nx.has_path(G, start_module, target):
+                continue
+            for p in nx.all_simple_paths(G, start_module, target):
+                paths.append(p)
+        if not paths:
+            paths.append([start_module])
+
+        workflows: List[List[Dict[str, Any]]] = []
+        scores: List[float] = []
+        for p in paths:
+            wf: List[Dict[str, Any]] = []
+            synergy_score = 0.0
+            for i, mod in enumerate(p):
+                io = info[mod]
+                fn = next(iter(io.functions.keys()), None)
+                wf.append(
+                    {
+                        "module": mod,
+                        "function": fn,
+                        "inputs": sorted(io.inputs),
+                        "outputs": sorted(io.outputs),
+                    }
+                )
+                if i < len(p) - 1 and G.has_edge(mod, p[i + 1]):
+                    synergy_score += float(G[mod][p[i + 1]].get("weight", 1.0))
+
+            intent_score = sum(intent_scores.get(step["module"], 0.0) for step in wf)
+            scores.append(synergy_score + intent_score)
+            workflows.append(wf)
+
+        # Rank workflows by combined score
+        ranked = sorted(zip(workflows, scores), key=lambda x: x[1], reverse=True)
+        top = [wf for wf, _ in ranked[:limit]]
+        return top
