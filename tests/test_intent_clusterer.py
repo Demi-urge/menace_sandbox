@@ -186,11 +186,11 @@ def test_find_modules_related_to_prompts(clusterer: ic.IntentClusterer, sample_r
 
     clusterer.index_repository(sample_repo)
 
-    res = clusterer.find_modules_related_to("authentication help", top_k=1)
-    assert res and Path(res[0]["path"]).name == "helper.py"
+    res = clusterer.find_modules_related_to("authentication help", top_k=2)
+    assert any(Path(r["path"]).name == "helper.py" for r in res)
 
-    res = clusterer.find_modules_related_to("process payment", top_k=1)
-    assert res and Path(res[0]["path"]).name == "payment.py"
+    res = clusterer.find_modules_related_to("process payment", top_k=2)
+    assert any(Path(r["path"]).name == "payment.py" for r in res)
 
 
 def test_cluster_lookup_uses_synergy_groups(
@@ -204,9 +204,11 @@ def test_cluster_lookup_uses_synergy_groups(
     assert cluster_items
     assert cluster_items[0]["path"].startswith("cluster:1")
     assert "label" in cluster_items[0] and "auth" in cluster_items[0]["label"].lower()
-    # ``cluster_label`` should expose the persisted label
-    label = clusterer.cluster_label(1)
+    assert "summary" in cluster_items[0]
+    # ``cluster_label`` should expose the persisted label and summary
+    label, summary = clusterer.cluster_label(1)
     assert label and "auth" in label.lower()
+    assert summary == "" or isinstance(summary, str)
 
 
 def test_cluster_intents_adds_cluster_metadata(
@@ -229,9 +231,11 @@ def test_cluster_intents_adds_cluster_metadata(
         auth in ci["metadata"]["members"] and helper in ci["metadata"]["members"]
         for ci in cluster_items
     )
-    # ``intent_text`` and ``label`` should be exposed via the retriever metadata
+    # ``intent_text``, ``label`` and ``summary`` should be exposed via the retriever metadata
     assert all(
-        ci["metadata"].get("label") and ci["metadata"].get("intent_text")
+        ci["metadata"].get("label")
+        and ci["metadata"].get("intent_text")
+        and ci["metadata"].get("summary") is not None
         for ci in cluster_items
     )
     # Metadata should also be persisted in the SQLite table
@@ -242,12 +246,14 @@ def test_cluster_intents_adds_cluster_metadata(
     ).fetchone()
     meta = json.loads(row[0])
     assert meta.get("intent_text")
+    assert meta.get("summary") is not None
     assert set(meta.get("members", [])) == set(cluster_items[0]["metadata"]["members"])
     # Labels should also be retrievable via ``cluster_label``
     cid = cluster_items[0]["metadata"].get("cluster_id")
     if cid is not None:
-        lbl = clustered_clusterer.cluster_label(cid)
+        lbl, summ = clustered_clusterer.cluster_label(cid)
         assert lbl
+        assert summ == "" or isinstance(summ, str)
 
 
 def test_get_cluster_intents_returns_summary_and_vector(

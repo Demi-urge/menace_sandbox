@@ -129,17 +129,19 @@ def extract_intent_text(path: Path) -> str:
     return "\n".join(docstrings + names + comments)
 
 
-def derive_cluster_label(texts: List[str], top_k: int = 3) -> str:
-    """Return a concise label summarising ``texts``.
+def derive_cluster_label(texts: List[str], top_k: int = 3) -> tuple[str, str]:
+    """Return a concise ``(label, summary)`` pair for ``texts``.
 
-    The helper extracts the ``top_k`` keywords using a TF‑IDF weighting
-    scheme.  When ``scikit-learn`` is unavailable a simple frequency based
-    fallback is employed.  The resulting keywords are space separated to form
-    a short label representing the cluster's intent.
+    The helper still prefers a TF‑IDF based approach when ``scikit-learn`` is
+    available.  When the dependency is missing, instead of the previous
+    frequency fallback a lightweight LLM summariser is used.  The label is
+    composed of the first ``top_k`` words from the summary.  If the summariser
+    fails a final frequency based heuristic is used as a safety net.  The
+    summary may be an empty string when neither method succeeds.
     """
 
     if not texts:
-        return ""
+        return "", ""
     try:  # pragma: no cover - optional dependency
         from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
 
@@ -148,8 +150,36 @@ def derive_cluster_label(texts: List[str], top_k: int = 3) -> str:
         scores = matrix.sum(axis=0).A1
         terms = vec.get_feature_names_out()
         top = scores.argsort()[-top_k:][::-1]
-        return " ".join(terms[i] for i in top if scores[i] > 0)
+        label = " ".join(terms[i] for i in top if scores[i] > 0)
+        summary = ""
+        return label, summary
     except Exception:
+        summary = ""
+        try:  # pragma: no cover - optional external dependency
+            import openai  # type: ignore
+
+            if getattr(openai, "api_key", None):
+                prompt = "Summarise the following texts in a short phrase:\n" + "\n".join(texts)
+                resp = openai.ChatCompletion.create(  # type: ignore[attr-defined]
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "Summarise the user content in a short concise phrase.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=32,
+                )
+                summary = resp["choices"][0]["message"]["content"].strip()
+        except Exception:
+            summary = ""
+
+        if summary:
+            label = " ".join(summary.split()[:top_k])
+            return label, summary
+
+        # Final safety net: frequency based heuristic
         import re
         from collections import Counter
 
@@ -176,8 +206,9 @@ def derive_cluster_label(texts: List[str], top_k: int = 3) -> str:
         }
         words = [w for w in words if w not in stop]
         if not words:
-            return ""
-        return " ".join(w for w, _ in Counter(words).most_common(top_k))
+            return "", ""
+        label = " ".join(w for w, _ in Counter(words).most_common(top_k))
+        return label, ""
 
 
 class ModuleVectorDB(EmbeddableDBMixin):
@@ -380,7 +411,7 @@ class IntentClusterer:
                 except Exception as exc:
                     logger.warning("failed to extract intent text from %s: %s", m, exc)
                     continue
-            label = derive_cluster_label(texts)
+            label, summary = derive_cluster_label(texts)
             text = "\n".join(texts)
 
             meta = {
@@ -390,6 +421,7 @@ class IntentClusterer:
                 "cluster_ids": [int(gid)],
                 "path": entry,
                 "label": label,
+                "summary": summary,
                 "text": text,
                 "intent_text": text,
             }
@@ -424,6 +456,7 @@ class IntentClusterer:
                     "cluster_id": int(gid),
                     "cluster_ids": [int(gid)],
                     "label": label,
+                    "summary": summary,
                     "text": text,
                     "intent_text": text,
                 }
@@ -781,21 +814,52 @@ class IntentClusterer:
         return None
 
     # ------------------------------------------------------------------
-    def cluster_label(self, cluster_id: int) -> str:
-        """Return a human‑readable label for ``cluster_id``.
+    def _get_cluster_summary(self, cluster_id: int) -> str | None:
+        """Return persisted summary for ``cluster_id`` if available."""
 
-        Labels are stored in the cluster metadata when clusters are indexed.  If
-        a label was not persisted (for example when only the intent text is
-        available) the method derives one on the fly using
-        :func:`derive_cluster_label` and returns it.  The derived label is not
-        persisted but provides a best‑effort summary of the cluster's intent.
+        entry = f"cluster:{int(cluster_id)}"
+        meta = getattr(self.db, "_metadata", {}).get(entry)
+        if meta and meta.get("summary"):
+            return str(meta.get("summary"))
+        try:
+            row = self.conn.execute(
+                "SELECT metadata FROM intent_embeddings WHERE module_path = ?",
+                (entry,),
+            ).fetchone()
+        except Exception:
+            row = None
+        if row:
+            try:
+                data = json.loads(row[0] or "{}")
+                summ = data.get("summary")
+                if summ:
+                    return str(summ)
+            except Exception:
+                return None
+        return None
+
+    # ------------------------------------------------------------------
+    def cluster_label(self, cluster_id: int) -> tuple[str, str]:
+        """Return ``(label, summary)`` for ``cluster_id``.
+
+        Labels and summaries are stored in the cluster metadata when clusters
+        are indexed.  When either piece of information is missing, the method
+        derives both on the fly using :func:`derive_cluster_label` and returns
+        the result without persisting it.
         """
 
         lbl = self._get_cluster_label(cluster_id)
-        if lbl is not None:
-            return lbl
+        summ = self._get_cluster_summary(cluster_id)
+        if lbl is not None and summ is not None:
+            return lbl, summ
         text, _vec = self.get_cluster_intents(cluster_id)
-        return derive_cluster_label([text]) if text else ""
+        if text:
+            d_lbl, d_summ = derive_cluster_label([text])
+            if lbl is None:
+                lbl = d_lbl
+            if summ is None:
+                summ = d_summ
+        return lbl or "", summ or ""
 
     # ------------------------------------------------------------------
     def query(
@@ -808,7 +872,7 @@ class IntentClusterer:
     ) -> List[IntentMatch]:
         """Search retriever for modules relevant to ``text``."""
 
-        vec = governed_embed(text)
+        vec = self.db.encode_text(text)
         if not vec:
             return []
         norm = sqrt(sum(x * x for x in vec)) or 1.0
@@ -869,9 +933,9 @@ class IntentClusterer:
                             label = self._get_cluster_label(cluster_ids[0])
             if sim < threshold:
                 continue
-            if include_clusters and not cluster_ids and cids:
+            if not cluster_ids and cids:
                 cluster_ids = [int(c) for c in cids]
-                if cluster_ids and label is None:
+                if include_clusters and label is None and cluster_ids:
                     label = self._get_cluster_label(cluster_ids[0])
             results.append(
                 IntentMatch(path=path, similarity=sim, cluster_ids=cluster_ids, label=label)
@@ -911,6 +975,7 @@ class IntentClusterer:
                 if cluster_ids is None and cluster_id is not None:
                     cluster_ids = [cluster_id]
                 label = meta.get("label")
+                summary = meta.get("summary")
                 intent_text = meta.get("intent_text")
                 target_vec: Sequence[float] = item.get("vector", [])
                 tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
@@ -928,6 +993,8 @@ class IntentClusterer:
                         entry["cluster_id"] = int(cluster_id)
                     if label:
                         entry["label"] = str(label)
+                    if summary is not None:
+                        entry["summary"] = str(summary)
                     if intent_text:
                         entry["intent_text"] = str(intent_text)
                     results.append(entry)
@@ -966,6 +1033,7 @@ class IntentClusterer:
             if cluster_ids is None and cluster_id is not None:
                 cluster_ids = [cluster_id]
             label = meta.get("label")
+            summary = meta.get("summary")
             intent_text = meta.get("intent_text")
             origin = meta.get("kind") or meta.get("source_id") or path
             if path or members:
@@ -981,6 +1049,8 @@ class IntentClusterer:
                     entry["cluster_id"] = int(cluster_id)
                 if label:
                     entry["label"] = str(label)
+                if summary is not None:
+                    entry["summary"] = str(summary)
                 if intent_text:
                     entry["intent_text"] = str(intent_text)
                 results.append(entry)
