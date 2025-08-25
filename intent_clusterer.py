@@ -23,6 +23,7 @@ import json
 import pickle
 import os
 from datetime import datetime
+import asyncio
 
 from governed_embeddings import governed_embed
 from embeddable_db_mixin import EmbeddableDBMixin
@@ -1047,7 +1048,7 @@ class IntentClusterer:
         return lbl or "", summ or ""
 
     # ------------------------------------------------------------------
-    def query(
+    async def query_async(
         self,
         text: str,
         top_k: int = 5,
@@ -1055,15 +1056,15 @@ class IntentClusterer:
         threshold: float = 0.0,
         include_clusters: bool = True,
     ) -> List[IntentMatch]:
-        """Search retriever for modules relevant to ``text``."""
+        """Asynchronously search retriever for modules relevant to ``text``."""
 
-        vec = self.db.encode_text(text)
+        vec = await asyncio.to_thread(self.db.encode_text, text)
         if not vec:
             return []
         norm = sqrt(sum(x * x for x in vec)) or 1.0
         vec = [x / norm for x in vec]
         hits = (
-            self.retriever.search(vec, top_k=top_k)
+            await asyncio.to_thread(self.retriever.search, vec, top_k=top_k)
             if hasattr(self.retriever, "search")
             else []
         )
@@ -1090,9 +1091,13 @@ class IntentClusterer:
                 if cids:
                     cluster_ids = [int(c) for c in cids]
                 if label is None and cluster_ids:
-                    label = self._get_cluster_label(cluster_ids[0])
+                    label = await asyncio.to_thread(
+                        self._get_cluster_label, cluster_ids[0]
+                    )
                 if category is None and cluster_ids:
-                    category = self._get_cluster_category(cluster_ids[0])
+                    category = await asyncio.to_thread(
+                        self._get_cluster_category, cluster_ids[0]
+                    )
                 results.append(
                     IntentMatch(
                         path=None,
@@ -1107,7 +1112,9 @@ class IntentClusterer:
                 cluster_hits: List[tuple[int, float]] = []
                 best_sim = sim
                 for cid in cids:
-                    _text, cvec = self.get_cluster_intents(int(cid))
+                    _text, cvec = await asyncio.to_thread(
+                        self.get_cluster_intents, int(cid)
+                    )
                     if cvec:
                         cnorm = sqrt(sum(x * x for x in cvec)) or 1.0
                         cvec = [x / cnorm for x in cvec]
@@ -1122,16 +1129,24 @@ class IntentClusterer:
                     if include_clusters:
                         cluster_ids = [cid for cid, _ in cluster_hits]
                         if cluster_ids:
-                            label = self._get_cluster_label(cluster_ids[0])
-                            category = self._get_cluster_category(cluster_ids[0])
+                            label = await asyncio.to_thread(
+                                self._get_cluster_label, cluster_ids[0]
+                            )
+                            category = await asyncio.to_thread(
+                                self._get_cluster_category, cluster_ids[0]
+                            )
             if sim < threshold:
                 continue
             if include_clusters and not cluster_ids and cids:
                 cluster_ids = [int(c) for c in cids]
                 if label is None and cluster_ids:
-                    label = self._get_cluster_label(cluster_ids[0])
+                    label = await asyncio.to_thread(
+                        self._get_cluster_label, cluster_ids[0]
+                    )
                 if category is None and cluster_ids:
-                    category = self._get_cluster_category(cluster_ids[0])
+                    category = await asyncio.to_thread(
+                        self._get_cluster_category, cluster_ids[0]
+                    )
             elif not include_clusters and cids and len(cids) > 1:
                 cluster_ids = [int(c) for c in cids]
             results.append(
@@ -1144,6 +1159,25 @@ class IntentClusterer:
                 )
             )
         return results
+
+    def query(
+        self,
+        text: str,
+        top_k: int = 5,
+        *,
+        threshold: float = 0.0,
+        include_clusters: bool = True,
+    ) -> List[IntentMatch]:
+        """Synchronous wrapper for :meth:`query_async`."""
+
+        return asyncio.run(
+            self.query_async(
+                text,
+                top_k=top_k,
+                threshold=threshold,
+                include_clusters=include_clusters,
+            )
+        )
 
     # ------------------------------------------------------------------
     def _search_related(self, prompt: str, top_k: int = 5) -> List[IntentMatch]:
@@ -1267,27 +1301,39 @@ class IntentClusterer:
     def find_modules_related_to(
         self, prompt: str, top_k: int = 5, *, include_clusters: bool = False
     ) -> List[IntentMatch]:
-        """Return modules related to ``prompt``.
+        """Return modules related to ``prompt``."""
 
-        When ``include_clusters`` is ``True`` the result set may also contain
-        synergy cluster entries with ``origin`` set to ``"cluster"``.
-        Results are returned as :class:`IntentMatch` instances.
-        """
+        return asyncio.run(
+            self.find_modules_related_to_async(
+                prompt, top_k=top_k, include_clusters=include_clusters
+            )
+        )
 
-        results = self._search_related(prompt, top_k * 2)
+    async def find_modules_related_to_async(
+        self, prompt: str, top_k: int = 5, *, include_clusters: bool = False
+    ) -> List[IntentMatch]:
+        """Asynchronously return modules related to ``prompt``."""
+
+        results = await asyncio.to_thread(self._search_related, prompt, top_k * 2)
         if not include_clusters:
             results = [r for r in results if r.origin != "cluster"]
         return results[:top_k]
 
     # ------------------------------------------------------------------
     def find_clusters_related_to(self, prompt: str, top_k: int = 5) -> List[IntentMatch]:
-        """Return synergy clusters related to ``prompt``.
+        """Return synergy clusters related to ``prompt``."""
 
-        Results are returned as :class:`IntentMatch` instances.
-        """
+        return asyncio.run(self.find_clusters_related_to_async(prompt, top_k=top_k))
+
+    async def find_clusters_related_to_async(
+        self, prompt: str, top_k: int = 5
+    ) -> List[IntentMatch]:
+        """Asynchronously return synergy clusters related to ``prompt``."""
 
         results = [
-            r for r in self._search_related(prompt, top_k * 2) if r.origin == "cluster"
+            r
+            for r in await asyncio.to_thread(self._search_related, prompt, top_k * 2)
+            if r.origin == "cluster"
         ]
         return results[:top_k]
 
@@ -1297,8 +1343,20 @@ def find_modules_related_to(
 ) -> List[IntentMatch]:
     """Convenience wrapper to query a fresh clusterer instance."""
 
+    return asyncio.run(
+        find_modules_related_to_async(
+            query, top_k=top_k, include_clusters=include_clusters
+        )
+    )
+
+
+async def find_modules_related_to_async(
+    query: str, top_k: int = 5, *, include_clusters: bool = False
+) -> List[IntentMatch]:
+    """Asynchronously query a fresh clusterer instance."""
+
     clusterer = IntentClusterer()
-    return clusterer.find_modules_related_to(
+    return await clusterer.find_modules_related_to_async(
         query, top_k=top_k, include_clusters=include_clusters
     )
 
@@ -1306,8 +1364,14 @@ def find_modules_related_to(
 def find_clusters_related_to(query: str, top_k: int = 5) -> List[IntentMatch]:
     """Convenience wrapper returning synergy clusters for ``query``."""
 
+    return asyncio.run(find_clusters_related_to_async(query, top_k=top_k))
+
+
+async def find_clusters_related_to_async(query: str, top_k: int = 5) -> List[IntentMatch]:
+    """Asynchronously return synergy clusters for ``query``."""
+
     clusterer = IntentClusterer()
-    return clusterer.find_clusters_related_to(query, top_k=top_k)
+    return await clusterer.find_clusters_related_to_async(query, top_k=top_k)
 
 
 def _main(argv: Iterable[str] | None = None) -> int:
@@ -1330,7 +1394,9 @@ __all__ = [
     "IntentClusterer",
     "extract_intent_text",
     "find_modules_related_to",
+    "find_modules_related_to_async",
     "find_clusters_related_to",
+    "find_clusters_related_to_async",
 ]
 if __name__ == "__main__":  # pragma: no cover - manual invocation
     raise SystemExit(_main())
