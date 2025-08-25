@@ -1014,7 +1014,6 @@ class BotDevelopmentBot:
                     sort_by=sample_sort_by,
                     limit=sample_limit,
                     include_embeddings=sample_with_vectors,
-                    scope="all",
                 )
             except Exception:
                 samples = []

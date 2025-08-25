@@ -114,7 +114,6 @@ class EnhancementBot:
                     sort_by="confidence",
                     limit=3,
                     include_embeddings=False,
-                    scope="all",
                 )
             except Exception:  # pragma: no cover - helper failures
                 examples = []
