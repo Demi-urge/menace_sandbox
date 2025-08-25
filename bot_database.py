@@ -8,7 +8,7 @@ import dataclasses
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Sequence, TYPE_CHECKING, Literal
+from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING, Literal
 from time import time
 
 from .auto_link import auto_link
@@ -25,7 +25,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 from db_router import GLOBAL_ROUTER as router
 from .scope_utils import Scope, build_scope_clause, apply_scope
-from db_dedup import insert_if_unique
+from dedup_utils import insert_if_unique, hash_fields
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .deployment_bot import DeploymentDB
@@ -55,6 +55,9 @@ def _safe_json_dumps(data: Any) -> str:
 
 
 logger = logging.getLogger(__name__)
+
+
+_BOT_HASH_FIELDS = ["name", "type", "tasks", "dependencies", "resources"]
 
 
 @dataclass
@@ -401,55 +404,53 @@ class BotDB(EmbeddableDBMixin):
             "version": rec.version,
             "estimated_profit": rec.estimated_profit,
         }
-        hash_fields = [
-            "name",
-            "type",
-            "tasks",
-            "purpose",
-            "tags",
-            "toolchain",
-        ]
-        rec.bid, inserted = insert_if_unique(
-            self.conn, "bots", values, hash_fields, menace_id
+        content_hash = hash_fields(values, _BOT_HASH_FIELDS)
+        bot_id = insert_if_unique(
+            self.conn, "bots", values, _BOT_HASH_FIELDS, menace_id, logger
         )
         self.conn.commit()
-        if not inserted:
+        if bot_id is None:
+            row = self.conn.execute(
+                "SELECT id FROM bots WHERE content_hash=?", (content_hash,)
+            ).fetchone()
+            rec.bid = int(row[0]) if row else 0
             logger.warning(
                 "bot '%s' already exists; using existing id %s", rec.name, rec.bid
             )
-        if inserted:
-            self._embed_record_on_write(rec.bid, rec)
-            if self.menace_db:
-                try:
-                    self._insert_menace(
+            return rec.bid
+        rec.bid = bot_id
+        self._embed_record_on_write(rec.bid, rec)
+        if self.menace_db:
+            try:
+                self._insert_menace(
+                    rec,
+                    models or [],
+                    workflows or [],
+                    enhancements or [],
+                    source_menace_id=source_menace_id or self.router.menace_id,
+                )
+            except Exception as exc:
+                logger.exception("MenaceDB insert failed: %s", exc)
+                self.failed_menace.append(
+                    FailedMenace(
                         rec,
                         models or [],
                         workflows or [],
                         enhancements or [],
-                        source_menace_id=source_menace_id or self.router.menace_id,
+                        self.router.menace_id,
                     )
-                except Exception as exc:
-                    logger.exception("MenaceDB insert failed: %s", exc)
-                    self.failed_menace.append(
-                        FailedMenace(
-                            rec,
-                            models or [],
-                            workflows or [],
-                            enhancements or [],
-                            self.router.menace_id,
-                        )
-                    )
-            if self.event_bus:
-                payload = dataclasses.asdict(rec)
-                if not publish_with_retry(self.event_bus, "bot:new", payload):
-                    logger.exception("failed to publish bot:new event")
-                    self.failed_events.append(FailedEvent("bot:new", payload))
-                else:
-                    publish_with_retry(
-                        self.event_bus,
-                        "embedding:backfill",
-                        {"db": self.__class__.__name__},
-                    )
+                )
+        if self.event_bus:
+            payload = dataclasses.asdict(rec)
+            if not publish_with_retry(self.event_bus, "bot:new", payload):
+                logger.exception("failed to publish bot:new event")
+                self.failed_events.append(FailedEvent("bot:new", payload))
+            else:
+                publish_with_retry(
+                    self.event_bus,
+                    "embedding:backfill",
+                    {"db": self.__class__.__name__},
+                )
         return rec.bid
 
     def update_bot(
