@@ -28,13 +28,17 @@ clusterer.index_modules(module_paths)
 Retrieve modules or clusters that relate to a textual prompt:
 
 ```python
-matches = clusterer.find_modules_related_to("update configuration", top_k=5)
-for match in matches:
-    print(match["path"], match["score"])
+mods = clusterer.find_modules_related_to("update configuration", top_k=5)
+clusters = clusterer.find_clusters_related_to("update configuration", top_k=5)
+for match in mods:
+    print("module", match["path"], match["score"])
+for match in clusters:
+    print("cluster", match["path"], match.get("members"), match["score"])
 ```
 
-`find_modules_related_to` returns dictionaries describing the best matches.  For
-cluster information use `query`:
+Both functions return dictionaries describing the best matches.  For more
+detailed similarity information including related cluster identifiers use
+`query`:
 
 ```python
 matches = clusterer.query("update configuration")

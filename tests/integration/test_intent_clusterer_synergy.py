@@ -45,6 +45,6 @@ def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
     clusterer.index_modules([tmp_path / "a.py", tmp_path / "b.py"])
     db.index_synergy_cluster("a", 0.5)
 
-    res = clusterer.find_modules_related_to("alpha beta", top_k=1)
+    res = clusterer.find_clusters_related_to("alpha beta", top_k=1)
     assert res and res[0]["path"].startswith("cluster:a")
     assert res[0]["origin"] == "cluster"

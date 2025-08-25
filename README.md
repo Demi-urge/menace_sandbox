@@ -631,15 +631,17 @@ helper:
 python -m intent_clusterer "error handling"
 ```
 
-Or import the convenience function directly:
+Or import the convenience helpers directly:
 
 ```python
-from intent_clusterer import find_modules_related_to
+from intent_clusterer import find_modules_related_to, find_clusters_related_to
 find_modules_related_to("error handling")
+find_clusters_related_to("error handling")
 ```
 
-Results include a relevance ``score`` and an ``origin`` field indicating
-whether the match refers to an individual module or a synergy ``cluster``.
+``find_modules_related_to`` returns relevant module paths, while
+``find_clusters_related_to`` surfaces synergy clusters.  Entries include a
+relevance ``score`` and an ``origin`` field indicating the result type.
 
 ### Entropy delta detection
 
