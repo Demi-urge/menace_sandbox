@@ -106,7 +106,17 @@ class DummyRetriever:
         pass
 
     def add_vector(self, vector: Iterable[float], metadata: dict) -> None:
-        self.items.append({"vector": list(vector), "metadata": dict(metadata)})
+        item = {"vector": list(vector), "metadata": dict(metadata)}
+        path = item["metadata"].get("path")
+        if path:
+            for idx, existing in enumerate(self.items):
+                if existing["metadata"].get("path") == path:
+                    self.items[idx] = item
+                    break
+            else:
+                self.items.append(item)
+        else:
+            self.items.append(item)
 
     def search(self, vector: Iterable[float], top_k: int = 10) -> List[dict]:
         def score(item: dict) -> float:
@@ -166,4 +176,54 @@ def test_cluster_lookup_uses_synergy_groups(clusterer: ic.IntentClusterer, sampl
     assert res and res[0]["origin"] == "cluster"
     assert res[0]["path"].startswith("cluster:1")
     assert "label" in res[0] and "auth" in res[0]["label"].lower()
+
+
+def test_cluster_intents_adds_cluster_metadata(sample_repo: Path, tmp_path: Path) -> None:
+    db = ic.ModuleVectorDB(
+        index_path=tmp_path / "idx.ann", metadata_path=tmp_path / "idx.json"
+    )
+    clusterer = ic.IntentClusterer(db=db, retriever=DummyRetriever())
+    clusterer.index_modules(list(sample_repo.glob("*.py")))
+    clusterer.cluster_intents(2, threshold=0.0)
+    cluster_items = [
+        item for item in clusterer.retriever.items if item["metadata"].get("kind") == "cluster"
+    ]
+    assert cluster_items
+    auth = str(sample_repo / "auth.py")
+    helper = str(sample_repo / "helper.py")
+    assert any(
+        auth in ci["metadata"]["members"] and helper in ci["metadata"]["members"]
+        for ci in cluster_items
+    )
+    assert all("label" in ci["metadata"] for ci in cluster_items)
+
+
+def test_index_repository_updates_cluster_membership(
+    clusterer: ic.IntentClusterer, sample_repo: Path
+) -> None:
+    clusterer.index_repository(sample_repo)
+    retr = clusterer.retriever
+
+    def members(cid: int) -> List[str]:
+        path = f"cluster:{cid}"
+        for item in retr.items:
+            if item["metadata"].get("path") == path:
+                return list(item["metadata"].get("members", []))
+        return []
+
+    auth = str(sample_repo / "auth.py")
+    helper = str(sample_repo / "helper.py")
+    pay = str(sample_repo / "payment.py")
+    assert set(members(1)) == {auth, helper}
+    assert set(members(2)) == {pay}
+
+    mapping = json.loads(
+        (sample_repo / "sandbox_data" / "module_map.json").read_text()
+    )
+    mapping["helper"] = 2
+    (sample_repo / "sandbox_data" / "module_map.json").write_text(json.dumps(mapping))
+
+    clusterer.index_repository(sample_repo)
+    assert set(members(1)) == {auth}
+    assert set(members(2)) == {pay, helper}
 
