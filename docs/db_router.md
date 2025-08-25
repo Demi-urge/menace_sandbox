@@ -3,6 +3,9 @@
 The `DBRouter` routes SQLite queries to either a local database specific to a
 Menace instance or to a shared database used by all instances.
 
+Buffered writes destined for the shared database are described in
+[write_buffer.md](write_buffer.md).
+
 ## Instantiation
 
 Initialise a router via `init_db_router(menace_id)` or directly by creating a

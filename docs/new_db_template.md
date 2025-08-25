@@ -5,6 +5,9 @@ module. The generated module mixes in
 [`EmbeddableDBMixin`](../embeddable_db_mixin.py) and sets up a basic
 full-text-search schema derived from `sql_templates/create_fts.sql`.
 
+For buffered writes to shared tables and background queue processing, see
+[write_buffer.md](write_buffer.md).
+
 ```bash
 python menace_cli.py new-db sessions
 ```
