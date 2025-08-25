@@ -40,14 +40,15 @@ def test_process_queue_moves_errors(tmp_path, db):
     with queue_file.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(bad) + "\n")
 
-    sync_shared_db.process_queue_file(queue_file, conn=conn)
+    sync_shared_db.process_queue_file(queue_file, conn=conn, max_retries=1)
 
     assert _names(db_path) == ["ok"]
     assert queue_file.read_text() == ""
-    err = queue_dir / "foo_queue.error.jsonl"
-    assert err.exists()
-    rec = json.loads(err.read_text().strip())
-    assert rec["data"]["name"] == "bad"
+    failed = queue_dir / "foo_queue.failed.jsonl"
+    assert failed.exists()
+    rec = json.loads(failed.read_text().strip())
+    assert rec["record"]["data"]["name"] == "bad"
+    assert "error" in rec
 
 
 def test_malformed_lines_moved_to_error(tmp_path, db):
@@ -59,7 +60,7 @@ def test_malformed_lines_moved_to_error(tmp_path, db):
     with queue_file.open("a", encoding="utf-8") as fh:
         fh.write("not-json\n")
 
-    sync_shared_db.process_queue_file(queue_file, conn=conn)
+    sync_shared_db.process_queue_file(queue_file, conn=conn, max_retries=1)
 
     assert _names(db_path) == ["ok"]
     assert queue_file.read_text() == ""
@@ -75,7 +76,7 @@ def test_duplicate_hashes_committed_once(tmp_path, db):
     queue_insert("foo", {"name": "dup"}, ["name"], queue_dir)
     queue_file = queue_dir / "foo_queue.jsonl"
 
-    sync_shared_db.process_queue_file(queue_file, conn=conn)
+    sync_shared_db.process_queue_file(queue_file, conn=conn, max_retries=1)
 
     assert _names(db_path) == ["dup"]
     assert queue_file.read_text() == ""
