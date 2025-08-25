@@ -9,6 +9,9 @@ class DummyRetriever:
     def __init__(self):
         self.items = []
 
+    def register_db(self, *args, **kwargs):
+        pass
+
     def add_vector(self, vector, metadata):
         self.items.append({"vector": vector, "metadata": metadata})
 
@@ -78,3 +81,16 @@ def multi_cluster_clusterer(monkeypatch):
 def test_query_returns_multiple_cluster_ids(multi_cluster_clusterer):
     res = multi_cluster_clusterer.query("whatever", threshold=0.2)
     assert res and res[0].cluster_ids == [1, 2]
+
+
+def test_find_clusters_related_to_from_existing_store(monkeypatch, tmp_path):
+    retr = DummyRetriever()
+    clusterer = ic.IntentClusterer(retr)
+    member = tmp_path / "m.py"
+    member.write_text('"""cluster helper"""')
+    clusterer.vectors[str(member)] = [1.0, 0.0]
+    clusterer._index_clusters({"7": [str(member)]})
+    fresh = ic.IntentClusterer(retr)
+    monkeypatch.setattr(ic, "governed_embed", lambda text: [1.0, 0.0])
+    res = fresh.find_clusters_related_to("cluster helper", top_k=1)
+    assert res and res[0]["cluster_id"] == 7

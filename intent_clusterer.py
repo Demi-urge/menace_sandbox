@@ -260,6 +260,15 @@ class IntentClusterer:
             )()
         )
         self.db = db or intent_db or ModuleVectorDB()
+        if hasattr(self.retriever, "register_db"):
+            try:
+                self.retriever.register_db(
+                    "intent_cluster", self.db, ("path", "module_path")
+                )
+            except Exception:
+                logger.warning(
+                    "failed to register intent cluster DB with retriever", exc_info=True
+                )
         self.module_ids = {}
         self.vectors = {}
         self.clusters: Dict[str, List[int]] = {}
@@ -391,7 +400,7 @@ class IntentClusterer:
                 logger.exception("failed to persist cluster %s: %s", gid, exc)
             if hasattr(self.retriever, "add_vector"):
                 try:
-                    self.retriever.add_vector(mean, meta)
+                    self.retriever.add_vector(mean, metadata=meta)
                 except Exception as exc:
                     logger.warning("failed to add cluster %s to retriever: %s", gid, exc)
             try:
@@ -787,9 +796,9 @@ class IntentClusterer:
                             label = self._get_cluster_label(cluster_ids[0])
             if sim < threshold:
                 continue
-            if not cluster_ids and cids:
+            if include_clusters and not cluster_ids and cids:
                 cluster_ids = [int(c) for c in cids]
-                if include_clusters and cluster_ids and label is None:
+                if cluster_ids and label is None:
                     label = self._get_cluster_label(cluster_ids[0])
             results.append(
                 IntentMatch(path=path, similarity=sim, cluster_ids=cluster_ids, label=label)
