@@ -575,48 +575,18 @@ class IntentClusterer:
         except Exception as exc:
             logger.exception("failed to build synergy graph under %s: %s", root, exc)
 
-        # Fallback: group modules by shared imports or common name prefixes
-        modules = [p for p in root.glob("*.py") if p.is_file()]
-        import_map: Dict[str, set[str]] = {}
-        prefix_map: Dict[str, List[str]] = {}
-        for path in modules:
-            imports: set[str] = set()
-            try:
-                tree = ast.parse(path.read_text())
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Import):
-                        imports.update(alias.name.split(".")[0] for alias in node.names)
-                    elif isinstance(node, ast.ImportFrom):
-                        if node.module:
-                            imports.add(node.module.split(".")[0])
-            except Exception:
-                pass
-            import_map[str(path)] = imports
-            prefix = path.stem.split("_", 1)[0]
-            prefix_map.setdefault(prefix, []).append(str(path))
+        try:
+            from module_graph_analyzer import build_import_graph
+            import networkx as nx
 
-        gid = 0
-        used: set[str] = set()
-        for prefix, paths in prefix_map.items():
-            if len(paths) > 1:
-                groups[str(gid)] = list(paths)
-                used.update(paths)
-                gid += 1
-
-        remaining = [p for p in import_map if p not in used]
-        while remaining:
-            base = remaining.pop(0)
-            base_imports = import_map[base]
-            cluster = [base]
-            rest: List[str] = []
-            for other in remaining:
-                if import_map[other] & base_imports:
-                    cluster.append(other)
-                else:
-                    rest.append(other)
-            groups[str(gid)] = cluster
-            gid += 1
-            remaining = rest
+            graph = build_import_graph(root)
+            for idx, comp in enumerate(nx.connected_components(graph.to_undirected())):
+                groups[str(idx)] = [str(root / f"{m}.py") for m in comp]
+            return groups
+        except Exception as exc:
+            logger.warning(
+                "failed to build dependency graph under %s: %s", root, exc
+            )
         return groups
 
     # ------------------------------------------------------------------

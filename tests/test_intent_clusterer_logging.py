@@ -1,4 +1,5 @@
 import logging
+import sys
 from pathlib import Path
 
 import intent_clusterer as ic
@@ -18,6 +19,7 @@ def _make_clusterer(tmp_path: Path) -> ic.IntentClusterer:
 
 def test_load_synergy_groups_logs_failure(tmp_path, caplog, monkeypatch):
     monkeypatch.setattr(ic, "governed_embed", lambda text: [0.1, 0.2])
+    monkeypatch.setitem(sys.modules, "module_synergy_grapher", None)
     clusterer = _make_clusterer(tmp_path)
     map_file = tmp_path / "sandbox_data" / "module_map.json"
     map_file.parent.mkdir()
@@ -91,4 +93,3 @@ def test_index_modules_logs_retriever_failure(tmp_path, caplog, monkeypatch):
     caplog.set_level(logging.WARNING)
     clusterer.index_modules([module])
     assert "retriever boom" in caplog.text
-

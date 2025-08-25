@@ -16,21 +16,16 @@ def _make_clusterer(tmp_path: Path) -> ic.IntentClusterer:
     )
 
 
-def test_fallback_groups_by_prefix_and_import(tmp_path, monkeypatch):
+def test_fallback_groups_by_dependency_graph(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "module_synergy_grapher", None)
     clusterer = _make_clusterer(tmp_path)
-    a1 = tmp_path / "alpha_one.py"
-    a1.write_text("import os\n")
-    a2 = tmp_path / "alpha_two.py"
-    a2.write_text("import sys\n")
-    b1 = tmp_path / "mod_a.py"
-    b1.write_text("import json\n")
-    b2 = tmp_path / "mod_b.py"
-    b2.write_text("import json\n")
+    a = tmp_path / "a.py"
+    a.write_text("import b\n")
+    b = tmp_path / "b.py"
+    b.write_text("\n")
     solo = tmp_path / "solo.py"
-    solo.write_text("import pickle\n")
+    solo.write_text("\n")
     groups = clusterer._load_synergy_groups(tmp_path)
     gsets = [set(map(Path, members)) for members in groups.values()]
-    assert any(g == {a1, a2} for g in gsets)
-    assert any(g == {b1, b2} for g in gsets)
+    assert any(g == {a, b} for g in gsets)
     assert any(g == {solo} for g in gsets)
