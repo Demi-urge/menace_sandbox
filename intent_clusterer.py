@@ -18,11 +18,15 @@ from typing import Dict, Iterable, List, Any, Sequence
 import ast
 import io
 import tokenize
+import sqlite3
+import json
+import pickle
 
 from governed_embeddings import governed_embed
 from embeddable_db_mixin import EmbeddableDBMixin
 from math import sqrt
 from vector_utils import persist_embedding
+from db_router import init_db_router, LOCAL_TABLES
 
 try:  # pragma: no cover - optional dependency
     from sklearn.cluster import KMeans  # type: ignore
@@ -170,6 +174,8 @@ class IntentClusterer:
     vectors: Dict[str, List[float]]
     clusters: Dict[str, int]
     vector_service: Any | None
+    router: Any
+    conn: sqlite3.Connection
 
     def __init__(
         self,
@@ -178,6 +184,9 @@ class IntentClusterer:
         *,
         intent_db: ModuleVectorDB | None = None,
         vector_service: Any | None = None,
+        menace_id: str | None = None,
+        local_db_path: str | Path | None = None,
+        shared_db_path: str | Path | None = None,
     ) -> None:
         self.vector_service = vector_service
         self.retriever = (
@@ -197,7 +206,50 @@ class IntentClusterer:
         self.vectors = {}
         self.clusters = {}
         self.cluster_map = self.clusters  # backward compatibility alias
+
+        LOCAL_TABLES.add("intent_embeddings")
+        if retriever is not None and hasattr(retriever, "router"):
+            self.router = retriever.router
+        else:
+            try:  # pragma: no cover - best effort
+                from universal_retriever import router as _ur_router
+
+                self.router = _ur_router
+            except Exception:  # pragma: no cover - fallback
+                mid = menace_id or "intent"
+                local = str(local_db_path or f"./{mid}.db")
+                shared = str(shared_db_path or local)
+                self.router = init_db_router(mid, local, shared)
+        self.conn = self.router.get_connection("intent_embeddings")
+        self._ensure_table()
         self.__post_init__()
+
+    def _ensure_table(self) -> None:
+        """Create or migrate the ``intent_embeddings`` table."""
+        with self.conn:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS intent_embeddings (
+                    module_path TEXT PRIMARY KEY,
+                    vector BLOB,
+                    metadata JSON
+                )
+                """
+            )
+            cols = {
+                row[1]
+                for row in self.conn.execute(
+                    "PRAGMA table_info(intent_embeddings)"
+                ).fetchall()
+            }
+            if "vector" not in cols:
+                self.conn.execute(
+                    "ALTER TABLE intent_embeddings ADD COLUMN vector BLOB"
+                )
+            if "metadata" not in cols:
+                self.conn.execute(
+                    "ALTER TABLE intent_embeddings ADD COLUMN metadata JSON"
+                )
 
     def __post_init__(self) -> None:
         try:  # pragma: no cover - best effort registration
@@ -241,6 +293,51 @@ class IntentClusterer:
                         self.retriever.add_vector(vec, {"path": str(path)})
                     except Exception:
                         pass
+
+    # ------------------------------------------------------------------
+    def index_repository(self, repo_path: str | Path) -> None:
+        """Embed all modules in ``repo_path`` and store vectors in the table.
+
+        Only database entries for modules that are new or whose modification
+        time changed are updated.
+        """
+
+        root = Path(repo_path)
+        paths = list(root.rglob("*.py"))
+        if not paths:
+            return
+
+        self.index_modules(paths)
+
+        existing: Dict[str, Dict[str, Any]] = {}
+        try:
+            cur = self.conn.execute(
+                "SELECT module_path, metadata FROM intent_embeddings"
+            )
+            for mpath, meta_json in cur.fetchall():
+                try:
+                    existing[str(mpath)] = json.loads(meta_json or "{}")
+                except Exception:
+                    existing[str(mpath)] = {}
+        except Exception:
+            existing = {}
+
+        with self.conn:
+            for path in paths:
+                mpath = str(path)
+                mtime = path.stat().st_mtime
+                meta = existing.get(mpath, {})
+                if meta.get("mtime") == mtime:
+                    continue
+                vec = self.vectors.get(mpath)
+                if not vec:
+                    continue
+                blob = sqlite3.Binary(pickle.dumps(vec))
+                new_meta = {"mtime": mtime}
+                self.conn.execute(
+                    "REPLACE INTO intent_embeddings (module_path, vector, metadata) VALUES (?, ?, ?)",
+                    (mpath, blob, json.dumps(new_meta)),
+                )
 
     # ------------------------------------------------------------------
     def cluster_intents(self, n_clusters: int) -> Dict[str, int]:
