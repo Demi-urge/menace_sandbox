@@ -844,6 +844,53 @@ class IntentClusterer:
         if not paths:
             return
 
+        current = {str(p) for p in paths}
+        previous: set[str] = set()
+        try:
+            cur = self.conn.execute(
+                "SELECT module_path FROM intent_embeddings "
+                "WHERE module_path NOT LIKE 'cluster:%'"
+            )
+            previous = {str(row[0]) for row in cur.fetchall()}
+        except Exception:
+            previous = set()
+
+        missing = previous - current
+        if missing:
+            ids_to_remove: List[int] = []
+            with self.conn:
+                for mpath in missing:
+                    self.conn.execute(
+                        "DELETE FROM intent_embeddings WHERE module_path = ?",
+                        (mpath,),
+                    )
+                    rid = self.module_ids.pop(mpath, None)
+                    if rid is None:
+                        for k, v in list(getattr(self.db, "_paths", {}).items()):
+                            if v == mpath:
+                                rid = k
+                                break
+                    if rid is not None:
+                        ids_to_remove.append(int(rid))
+                    self.vectors.pop(mpath, None)
+                    self.clusters.pop(mpath, None)
+
+            if ids_to_remove:
+                for rid in ids_to_remove:
+                    rid_str = str(rid)
+                    getattr(self.db, "_texts", {}).pop(rid, None)
+                    getattr(self.db, "_paths", {}).pop(rid, None)
+                    getattr(self.db, "_metadata", {}).pop(rid_str, None)
+                    try:
+                        self.db._id_map.remove(rid_str)
+                    except ValueError:
+                        pass
+                try:
+                    self.db._rebuild_index()
+                    self.db.save_index()
+                except Exception:
+                    logger.exception("failed to rebuild intent vector index")
+
         self.update_modules(paths)
 
     # ------------------------------------------------------------------
