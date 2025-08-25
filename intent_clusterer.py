@@ -453,12 +453,54 @@ class IntentClusterer:
 
     # ------------------------------------------------------------------
     def get_cluster_intents(self, cluster_id: int) -> tuple[str, List[float]]:
-        """Return placeholder text and vector for ``cluster_id``.
+        """Return descriptive text and vector for ``cluster_id``.
 
-        This method is meant to be overridden or monkeypatched in tests.
+        The method looks up the aggregated intent vector for the cluster in the
+        ``intent_embeddings`` table.  The table stores vectors as pickled blobs
+        and keeps a JSON ``metadata`` column that lists the member modules of
+        the cluster.  Docstrings for these member modules are concatenated to
+        form a human‑readable description which is returned together with the
+        stored vector.  If the cluster cannot be found or deserialisation
+        fails, an empty text and vector are returned.
         """
 
-        return "", []
+        entry = f"cluster:{int(cluster_id)}"
+        try:
+            cur = self.conn.execute(
+                "SELECT vector, metadata FROM intent_embeddings WHERE module_path = ?",
+                (entry,),
+            )
+            row = cur.fetchone()
+        except Exception:
+            row = None
+        if not row:
+            return "", []
+
+        blob, meta_json = row
+        vector: List[float] = []
+        if blob:
+            try:
+                data = pickle.loads(blob)
+                vector = [float(x) for x in data]
+            except Exception:
+                vector = []
+
+        members: List[str] = []
+        try:
+            meta = json.loads(meta_json or "{}")
+            members = list(meta.get("members", [])) if meta else []
+        except Exception:
+            members = []
+
+        texts: List[str] = []
+        for m in members:
+            try:
+                txt = extract_intent_text(Path(m))
+                if txt:
+                    texts.append(txt)
+            except Exception:
+                continue
+        return "\n".join(texts), vector
 
     # ------------------------------------------------------------------
     def query(
