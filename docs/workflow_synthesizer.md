@@ -56,3 +56,10 @@ runner and evaluation workers will schedule, execute and score the workflow like
 any other entry. Results flow through `EvaluationHistoryDB` and surface on the
 standard dashboards without additional configuration.
 
+## Logging
+
+`WorkflowSynthesizer` emits warnings via the `workflow_synthesizer` logger when
+optional resources fail to load. Messages include the path that caused the
+failure and the underlying exception to aid troubleshooting. Configure the
+module logger to capture these diagnostics.
+
