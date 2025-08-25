@@ -295,11 +295,12 @@ class ErrorDB(EmbeddableDBMixin):
 
     def log_discrepancy(self, message: str, *, source_menace_id: str | None = None) -> None:
         menace_id = self._menace_id(source_menace_id)
-        self.conn.execute(
-            "INSERT INTO discrepancies(source_menace_id, message, ts) VALUES (?, ?, ?)",
-            (menace_id, message, datetime.utcnow().isoformat()),
-        )
-        self.conn.commit()
+        values = {
+            "source_menace_id": menace_id,
+            "message": message,
+            "ts": datetime.utcnow().isoformat(),
+        }
+        self.router.queue_write("discrepancies", values, ["source_menace_id", "message", "ts"])
         self._publish(
             "discrepancies:new", {"message": message, "source_menace_id": menace_id}
         )
@@ -446,34 +447,33 @@ class ErrorDB(EmbeddableDBMixin):
             "ts": datetime.utcnow().isoformat(),
         }
         hash_fields = sorted(["type", "description", "resolution"])
-        with self.router.get_connection("errors", "write") as conn:
-            err_id = insert_if_unique(
-                "errors",
-                values,
-                hash_fields,
-                menace_id,
-                conn=conn,
-                logger=logger,
-            )
-            conn.commit()
-        try:
-            self.add_embedding(
-                err_id, {"message": message}, kind="error", source_id=str(err_id)
-            )
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.exception("embedding hook failed for %s: %s", err_id, exc)
-        self._publish(
-            "errors:new",
-            {
-                "id": err_id,
-                "message": message,
-                "type": type_,
-                "description": description or message,
-                "resolution": resolution,
-                "source_menace_id": menace_id,
-            },
+        err_id = insert_if_unique(
+            "errors",
+            values,
+            hash_fields,
+            menace_id,
+            router=self.router,
+            logger=logger,
         )
-        self._publish("embedding:backfill", {"db": self.__class__.__name__})
+        if err_id is not None:
+            try:
+                self.add_embedding(
+                    err_id, {"message": message}, kind="error", source_id=str(err_id)
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.exception("embedding hook failed for %s: %s", err_id, exc)
+            self._publish(
+                "errors:new",
+                {
+                    "id": err_id,
+                    "message": message,
+                    "type": type_,
+                    "description": description or message,
+                    "resolution": resolution,
+                    "source_menace_id": menace_id,
+                },
+            )
+            self._publish("embedding:backfill", {"db": self.__class__.__name__})
         return err_id
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
