@@ -666,6 +666,146 @@ class MenaceDB:
                 .where(self.models.c.model_id == model_id)
                 .values(current_status=status)
             )
+    # ------------------------------------------------------------------
+    # Core record helpers
+    # ------------------------------------------------------------------
+
+    def add_bot(
+        self,
+        bot_name: str,
+        bot_type: str,
+        assigned_task: str,
+        *,
+        parent_bot_id: int | None = None,
+        dependencies: str = "[]",
+        resource_estimates: str = "{}",
+        creation_date: str | None = None,
+        last_modification_date: str | None = None,
+        status: str = "",
+        version: str = "",
+        estimated_profit: float = 0.0,
+        source_menace_id: str | None = None,
+    ) -> int:
+        """Insert a bot and return its id, deduplicating on key fields."""
+        menace_id = self._current_menace_id(source_menace_id)
+        values = {
+            "bot_name": bot_name,
+            "bot_type": bot_type,
+            "assigned_task": assigned_task,
+            "parent_bot_id": parent_bot_id,
+            "dependencies": dependencies,
+            "resource_estimates": resource_estimates,
+            "creation_date": creation_date,
+            "last_modification_date": last_modification_date,
+            "status": status,
+            "version": version,
+            "estimated_profit": estimated_profit,
+            "source_menace_id": menace_id,
+        }
+        values = {k: v for k, v in values.items() if v is not None}
+        hash_fields = [
+            "bot_name",
+            "bot_type",
+            "assigned_task",
+            "dependencies",
+            "resource_estimates",
+        ]
+        inserted = insert_if_unique(
+            self.bots,
+            values,
+            hash_fields,
+            menace_id,
+            engine=self.engine,
+            logger=logger,
+        )
+        if inserted is None:
+            raise RuntimeError("bot record not inserted")
+        return int(inserted)
+
+    def add_workflow(
+        self,
+        workflow_name: str,
+        task_tree: str,
+        dependencies: str,
+        resource_allocation_plan: str,
+        status: str,
+        *,
+        created_from: str = "",
+        enhancement_links: str = "",
+        discrepancy_links: str = "",
+        estimated_profit_per_bot: float = 0.0,
+        source_menace_id: str | None = None,
+    ) -> int:
+        """Insert a workflow and return its id, deduplicating on key fields."""
+        menace_id = self._current_menace_id(source_menace_id)
+        values = {
+            "workflow_name": workflow_name,
+            "task_tree": task_tree,
+            "dependencies": dependencies,
+            "resource_allocation_plan": resource_allocation_plan,
+            "created_from": created_from,
+            "enhancement_links": enhancement_links,
+            "discrepancy_links": discrepancy_links,
+            "status": status,
+            "estimated_profit_per_bot": estimated_profit_per_bot,
+        }
+        hash_fields = [
+            "workflow_name",
+            "task_tree",
+            "dependencies",
+            "resource_allocation_plan",
+            "status",
+        ]
+        inserted = insert_if_unique(
+            self.workflows,
+            values,
+            hash_fields,
+            menace_id,
+            engine=self.engine,
+            logger=logger,
+        )
+        if inserted is None:
+            raise RuntimeError("workflow record not inserted")
+        return int(inserted)
+
+    def add_enhancement(
+        self,
+        description_of_change: str,
+        reason_for_change: str,
+        performance_delta: float,
+        timestamp: str,
+        triggered_by: str,
+        *,
+        source_menace_id: str | None = None,
+    ) -> int:
+        """Insert an enhancement and return its id, deduplicating on key fields."""
+        menace_id = self._current_menace_id(source_menace_id)
+        values = {
+            "description_of_change": description_of_change,
+            "reason_for_change": reason_for_change,
+            "performance_delta": performance_delta,
+            "timestamp": timestamp,
+            "triggered_by": triggered_by,
+            "source_menace_id": menace_id,
+        }
+        hash_fields = [
+            "description_of_change",
+            "reason_for_change",
+            "performance_delta",
+            "timestamp",
+            "triggered_by",
+        ]
+        inserted = insert_if_unique(
+            self.enhancements,
+            values,
+            hash_fields,
+            menace_id,
+            engine=self.engine,
+            logger=logger,
+        )
+        if inserted is None:
+            raise RuntimeError("enhancement record not inserted")
+        return int(inserted)
 
     # ------------------------------------------------------------------
     # Error helpers
