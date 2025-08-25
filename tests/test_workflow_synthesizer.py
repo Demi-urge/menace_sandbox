@@ -117,8 +117,8 @@ def test_generate_workflows_persist_and_rank(tmp_path, monkeypatch):
 
     workflows = synth.generate_workflows(start_module="mod_a", problem="finalise", limit=2)
     assert len(workflows) == 2
-    assert [step.module for step in workflows[0]] == ["mod_a", "mod_b", "mod_c"]
-    assert [step.module for step in workflows[1]] == ["mod_a", "mod_b"]
+    assert [step.module for step in workflows[0]] == ["mod_a", "mod_b"]
+    assert [step.module for step in workflows[1]] == ["mod_a", "mod_c"]
 
     out_dir = Path("sandbox_data/generated_workflows")
     saved = sorted(out_dir.glob("*.workflow.json"))
@@ -159,3 +159,27 @@ def test_resolve_dependencies_cycles():
 
     with pytest.raises(ValueError, match="Cyclic dependency detected"):
         synth.resolve_dependencies([a, b])
+
+
+def test_generate_workflows_penalties_and_tiebreak(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    grapher = StubGrapher()
+    synth = ws.WorkflowSynthesizer(module_synergy_grapher=grapher)
+
+    workflows = synth.generate_workflows(
+        start_module="mod_a",
+        limit=5,
+        max_depth=3,
+        synergy_weight=0.0,
+        intent_weight=0.0,
+    )
+    flat = [[step.module for step in wf] for wf in workflows]
+
+    assert flat[0] == ["mod_a"]
+    assert flat[1] == ["mod_a", "mod_b"]
+    assert synth.workflow_scores[0] == synth.workflow_scores[1]
+
+    idx = flat.index(["mod_a", "mod_d"])
+    assert synth.workflow_scores[idx] < 0
