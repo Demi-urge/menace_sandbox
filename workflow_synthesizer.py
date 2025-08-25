@@ -21,6 +21,7 @@ import argparse
 import ast
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
@@ -52,6 +53,9 @@ try:  # Optional lightweight fallback
     from intent_db import IntentDB  # type: ignore
 except Exception:  # pragma: no cover - gracefully degrade
     IntentDB = None  # type: ignore[misc]
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -437,13 +441,22 @@ class WorkflowSynthesizer:
         if self.module_synergy_grapher is None and ModuleSynergyGrapher is not None:
             try:
                 self.module_synergy_grapher = ModuleSynergyGrapher()
-            except Exception:  # pragma: no cover - best effort
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.warning("Failed to initialise ModuleSynergyGrapher: %s", exc)
                 self.module_synergy_grapher = None
         if self.module_synergy_grapher is not None:
+            if not self.synergy_graph_path.exists():
+                logger.warning(
+                    "Synergy graph path %s does not exist", self.synergy_graph_path
+                )
             try:
                 self.module_synergy_grapher.load(self.synergy_graph_path)
-            except Exception:  # pragma: no cover - ignore load failures
-                pass
+            except Exception as exc:  # pragma: no cover - ignore load failures
+                logger.warning(
+                    "Failed to load synergy graph from %s: %s",
+                    self.synergy_graph_path,
+                    exc,
+                )
 
         self.intent_db_path = Path(intent_db_path) if intent_db_path else None
         self.intent_clusterer = intent_clusterer
@@ -466,12 +479,19 @@ class WorkflowSynthesizer:
                 else:
                     self.intent_clusterer = IntentClusterer()
                 return
-            except Exception:  # pragma: no cover - ignore init errors
+            except Exception as exc:  # pragma: no cover - ignore init errors
+                logger.warning(
+                    "Failed to initialise IntentClusterer with %s: %s",
+                    self.intent_db_path or "<default>",
+                    exc,
+                )
                 self.intent_clusterer = None
         if IntentDB is not None and self.intent_db is None:
             try:
-                self.intent_db = IntentDB(self.intent_db_path or Path("intent.db"))
-            except Exception:  # pragma: no cover - ignore
+                path = self.intent_db_path or Path("intent.db")
+                self.intent_db = IntentDB(path)
+            except Exception as exc:  # pragma: no cover - ignore
+                logger.warning("Failed to load IntentDB from %s: %s", path, exc)
                 self.intent_db = None
 
     # ------------------------------------------------------------------
