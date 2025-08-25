@@ -2,24 +2,30 @@ from __future__ import annotations
 
 """Thread-safe persistent queue for deferred database writes.
 
-Each queued entry is stored as a JSON object in a newline delimited file.  A
-separate file is maintained for each target table under a per-instance
-``queues`` directory (``sandbox_data/queues`` by default).  ``fcntl_compat``
-file locks ensure that writes are safe across threads and processes.
+The module provides two lightweight helpers for queuing writes destined for a
+shared database:
+
+* :func:`queue_insert` – legacy helper that writes to per-table queue files.
+* :func:`append_record` – new helper that appends records to per-menace queue
+  files.  These files may later be processed by a background worker.
+
+Queue files live under the directory specified by the ``DB_QUEUE_DIR"
+environment variable (``logs/queue`` by default).  ``fcntl_compat`` file locks
+are used to avoid interleaving writes from concurrent threads or processes.
 """
 
 from pathlib import Path
 import json
 import os
 from threading import Lock
-from typing import Iterable, Mapping, Any
+from typing import Iterable, Iterator, List, Mapping, Any
 
 from fcntl_compat import flock, LOCK_EX, LOCK_UN
 from db_dedup import compute_content_hash
 
-# Base directory for queue files.  Allow overriding via the SANDBOX_DATA_DIR
-# environment variable so multiple sandbox instances do not collide.
-DEFAULT_QUEUE_DIR = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "queues"
+# Base directory for queue files.  Allow overriding via the ``DB_QUEUE_DIR``
+# environment variable.  By default queue files are stored under ``logs/queue``.
+DEFAULT_QUEUE_DIR = Path(os.getenv("DB_QUEUE_DIR", "logs/queue"))
 
 # Global lock for in-process thread safety.  File locks handle cross-process
 # coordination.
@@ -44,6 +50,80 @@ def _write_record(path: Path, record: Mapping[str, Any]) -> None:
             flock(fh.fileno(), LOCK_UN)
 
 
+def append_record(
+    table: str,
+    payload: Mapping[str, Any],
+    menace_id: str,
+    queue_dir: Path | None = None,
+) -> None:
+    """Append ``payload`` for ``table`` to a menace-specific queue file.
+
+    Parameters
+    ----------
+    table:
+        Target table name for the write.
+    payload:
+        Mapping of column names to values.
+    menace_id:
+        Identifier of the menace instance producing the record.
+    queue_dir:
+        Optional base directory for queue files.  If omitted the directory is
+        derived from :data:`DEFAULT_QUEUE_DIR` which may be overridden via the
+        ``DB_QUEUE_DIR`` environment variable.
+    """
+
+    base = queue_dir if queue_dir is not None else DEFAULT_QUEUE_DIR
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / f"{menace_id}.jsonl"
+
+    record = {
+        "table": table,
+        "data": dict(payload),
+        "source_menace_id": menace_id,
+    }
+
+    _write_record(path, record)
+
+
+def iter_queue_files(queue_dir: Path | None = None) -> Iterator[Path]:
+    """Yield menace-specific queue files within ``queue_dir``."""
+
+    base = queue_dir if queue_dir is not None else DEFAULT_QUEUE_DIR
+    if not base.exists():
+        return
+    for path in sorted(base.glob("*.jsonl")):
+        # Skip legacy per-table queue files
+        if path.name.endswith("_queue.jsonl"):
+            continue
+        if path.is_file():
+            yield path
+
+
+def read_queue(path: Path) -> List[dict]:
+    """Return all records from ``path`` as a list of dictionaries."""
+
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8") as fh:
+        return [json.loads(line) for line in fh if line.strip()]
+
+
+def remove_processed_lines(path: Path, processed: int) -> None:
+    """Remove the first ``processed`` lines from ``path``."""
+
+    if processed <= 0 or not path.exists():
+        return
+
+    with _write_lock:
+        with path.open("r+", encoding="utf-8") as fh:
+            flock(fh.fileno(), LOCK_EX)
+            lines = fh.readlines()
+            fh.seek(0)
+            fh.writelines(lines[processed:])
+            fh.truncate()
+            flock(fh.fileno(), LOCK_UN)
+
+
 def queue_insert(
     table: str,
     values: Mapping[str, Any],
@@ -63,7 +143,7 @@ def queue_insert(
         for deduplication.
     queue_path:
         Optional directory where queue files are stored.  Defaults to
-        ``sandbox_data/queues``.
+        ``logs/queue`` as defined by :data:`DEFAULT_QUEUE_DIR`.
 
     Returns
     -------
