@@ -9,8 +9,18 @@ semantic intent matches provided by :class:`~intent_clusterer.IntentClusterer`.
 Workflows are scored by blending edge weights from the synergy graph with
 intent match scores.  The :meth:`WorkflowSynthesizer.generate_workflows`
 method exposes ``synergy_weight`` and ``intent_weight`` parameters to control
-this blend.  Scores are normalised by the number of steps so longer workflows
-are not automatically favoured.
+this blend.  Scores are normalised by path length and a diversity ratio based
+on the number of distinct modules.  Workflows accrue a penalty for unresolved
+or duplicated dependencies.  The resulting score is::
+
+    score = synergy_weight * (S / n * diversity)
+          + intent_weight * (I / n * diversity)
+          - penalty
+
+where ``S`` is the sum of synergy edge weights, ``I`` is the sum of intent
+match scores and ``penalty`` counts unresolved inputs and duplicate dependency
+uses.  This normalisation prevents long or repetitive workflows from
+dominating and penalises incomplete dependency chains.
 
 The synthesizer is intentionally small and focuses on expanding an initial set
 of modules either by following the synergy graph around a starting module or by
@@ -686,7 +696,6 @@ class WorkflowSynthesizer:
             return best
 
         deps: Dict[str, Set[str]] = {}
-        missing: Dict[str, Set[str]] = {}
         step_map: Dict[str, WorkflowStep] = {}
         for mod in signatures:
             name = mod.name
@@ -694,6 +703,7 @@ class WorkflowSynthesizer:
             for fn in mod.functions.values():
                 required.update(fn.get("args", []))
             dependencies: Set[str] = set()
+            unresolved: List[str] = []
             for item in required:
                 matched = False
                 producers = produced_by_name.get(item)
@@ -710,7 +720,7 @@ class WorkflowSynthesizer:
                             dependencies.add(producer)
                         matched = True
                 if not matched:
-                    missing.setdefault(name, set()).add(item)
+                    unresolved.append(item)
             deps[name] = dependencies
 
             outputs = (
@@ -722,13 +732,8 @@ class WorkflowSynthesizer:
                 module=name,
                 inputs=sorted(required),
                 outputs=sorted(outputs),
+                unresolved=sorted(unresolved),
             )
-
-        if missing:
-            problems = ", ".join(
-                f"{m}: {sorted(v)}" for m, v in sorted(missing.items())
-            )
-            raise ValueError(f"Unresolved dependencies: {problems}")
 
         from graphlib import CycleError, TopologicalSorter
 
@@ -792,9 +797,25 @@ class WorkflowSynthesizer:
                     elif graph.has_edge(b, a):
                         synergy_score += float(graph[b][a].get("weight", 0.0))
             intent_score = sum(score_map.get(m, 0.0) for m in order)
-            combined = synergy_weight * synergy_score + intent_weight * intent_score
-            normalised = combined / max(len(order), 1)
-            entries.append((normalised, workflow))
+
+            length = max(len(order), 1)
+            diversity = len(set(order)) / length
+            synergy_norm = (synergy_score / length) * diversity
+            intent_norm = (intent_score / length) * diversity
+
+            unresolved_penalty = sum(len(step.unresolved) for step in workflow)
+            dep_counts: Dict[str, int] = {}
+            for m in order:
+                for dep in deps[m]:
+                    dep_counts[dep] = dep_counts.get(dep, 0) + 1
+            duplicate_penalty = sum(v - 1 for v in dep_counts.values() if v > 1)
+
+            score = (
+                synergy_weight * synergy_norm
+                + intent_weight * intent_norm
+                - (unresolved_penalty + duplicate_penalty)
+            )
+            entries.append((score, workflow))
 
         entries.sort(key=lambda x: x[0], reverse=True)
         self.workflow_scores = [score for score, _wf in entries][:limit]
