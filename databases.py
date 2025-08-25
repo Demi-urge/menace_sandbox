@@ -703,13 +703,13 @@ class MenaceDB:
             "source_menace_id": menace_id,
         }
         values = {k: v for k, v in values.items() if v is not None}
-        hash_fields = [
+        hash_fields = sorted([
             "bot_name",
             "bot_type",
             "assigned_task",
             "dependencies",
             "resource_estimates",
-        ]
+        ])
         inserted = insert_if_unique(
             self.bots,
             values,
@@ -749,13 +749,13 @@ class MenaceDB:
             "status": status,
             "estimated_profit_per_bot": estimated_profit_per_bot,
         }
-        hash_fields = [
+        hash_fields = sorted([
             "workflow_name",
             "task_tree",
             "dependencies",
             "resource_allocation_plan",
             "status",
-        ]
+        ])
         inserted = insert_if_unique(
             self.workflows,
             values,
@@ -788,13 +788,13 @@ class MenaceDB:
             "triggered_by": triggered_by,
             "source_menace_id": menace_id,
         }
-        hash_fields = [
+        hash_fields = sorted([
             "description_of_change",
             "reason_for_change",
             "performance_delta",
             "timestamp",
             "triggered_by",
-        ]
+        ])
         inserted = insert_if_unique(
             self.enhancements,
             values,
@@ -829,7 +829,7 @@ class MenaceDB:
             "resolution_status": resolution,
             "source_menace_id": menace_id,
         }
-        hash_fields = ["error_type", "error_description", "resolution_status"]
+        hash_fields = sorted(["error_type", "error_description", "resolution_status"])
         inserted = insert_if_unique(
             self.errors,
             values,

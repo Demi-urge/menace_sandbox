@@ -20,6 +20,18 @@ def test_compute_content_hash_order_independent():
     assert compute_content_hash(data1) == compute_content_hash(data2)
 
 
+def test_compute_content_hash_list_order_independent():
+    data1 = {"a": [1, 2, 3]}
+    data2 = {"a": [3, 2, 1]}
+    assert compute_content_hash(data1) == compute_content_hash(data2)
+
+
+def test_compute_content_hash_nested_list_order_independent():
+    data1 = {"a": [{"x": 1}, {"x": 2}]}
+    data2 = {"a": [{"x": 2}, {"x": 1}]}
+    assert compute_content_hash(data1) == compute_content_hash(data2)
+
+
 def test_insert_if_unique_duplicate_returns_existing_id(caplog):
     engine = create_engine("sqlite:///:memory:")
     meta = MetaData()

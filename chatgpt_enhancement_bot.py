@@ -51,13 +51,13 @@ DEFAULT_FETCH_LIMIT = int(os.environ.get("ENHANCEMENT_FETCH_LIMIT", "50"))
 DEFAULT_PROPOSE_RATIO = float(os.environ.get("PROPOSE_SUMMARY_RATIO", "0.3"))
 
 # Fields used to compute the deduplication content hash for enhancements
-_ENHANCEMENT_HASH_FIELDS = [
+_ENHANCEMENT_HASH_FIELDS = sorted([
     "idea",
     "rationale",
     "before_code",
     "after_code",
     "description",
-]
+])
 
 
 @dataclass

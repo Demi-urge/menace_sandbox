@@ -58,22 +58,23 @@ logger = logging.getLogger(__name__)
 
 
 # Fields that uniquely identify a bot's core identity for deduplication
-_BOT_HASH_FIELDS = [
+
+_BOT_HASH_FIELDS = sorted([
     "name",
     "type",
     "tasks",
     "dependencies",
     "resources",
-]
+])
 
 # Columns in the Menace ``bots`` table used to compute the deduplication hash
-_MENACE_BOT_HASH_FIELDS = [
+_MENACE_BOT_HASH_FIELDS = sorted([
     "bot_name",
     "bot_type",
     "assigned_task",
     "dependencies",
     "resource_estimates",
-]
+])
 
 
 @dataclass

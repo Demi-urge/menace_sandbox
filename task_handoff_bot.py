@@ -80,12 +80,12 @@ class WorkflowRecord:
 
 
 # Columns that contribute to the deduplication hash.
-_WORKFLOW_HASH_FIELDS = [
+_WORKFLOW_HASH_FIELDS = sorted([
     "workflow",
     "action_chains",
     "argument_strings",
     "description",
-]
+])
 
 
 class WorkflowDB(EmbeddableDBMixin):
