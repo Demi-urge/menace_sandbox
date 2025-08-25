@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
+import logging
 from typing import Literal
+
+from db_dedup import insert_if_unique, compute_content_hash
 
 from .env_config import DATABASE_URL
 from .scope_utils import build_scope_clause, apply_scope
@@ -39,6 +42,8 @@ except Exception:  # pragma: no cover - optional dependency
         create_engine,
     ) = (None,) * 11  # type: ignore
 from sqlalchemy.engine import Engine
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -677,26 +682,38 @@ class MenaceDB:
     ) -> int:
         """Insert a new error and return its id."""
         menace_id = self._current_menace_id(source_menace_id)
+        values = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "error_type": type_,
+            "error_description": description,
+            "resolution_status": resolution,
+            "source_menace_id": menace_id,
+        }
+        hash_fields = ["error_type", "error_description", "resolution_status"]
+        inserted = insert_if_unique(
+            self.errors,
+            values,
+            hash_fields,
+            menace_id,
+            engine=self.engine,
+            logger=logger,
+        )
+        if inserted is not None:
+            return int(inserted)
+
+        payload = {key: values[key] for key in hash_fields}
+        content_hash = compute_content_hash(payload)
         with self.engine.begin() as conn:
             clause, params = build_scope_clause("errors", scope, menace_id)
             query = apply_scope(
-                "SELECT error_id FROM errors WHERE error_description = ?",
+                "SELECT error_id FROM errors WHERE content_hash = ?",
                 clause,
             )
-            params.append(description)
+            params.append(content_hash)
             row = conn.exec_driver_sql(query, params).fetchone()
             if row:
                 return int(row[0])
-            res = conn.execute(
-                self.errors.insert().values(
-                    timestamp=datetime.utcnow().isoformat(),
-                    error_type=type_,
-                    error_description=description,
-                    resolution_status=resolution,
-                    source_menace_id=menace_id,
-                )
-            )
-            return int(res.inserted_primary_key[0])
+        raise RuntimeError("error record not found after duplicate detection")
 
     def link_error_bot(self, error_id: int, bot_id: int) -> None:
         with self.engine.begin() as conn:
