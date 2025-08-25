@@ -616,7 +616,8 @@ class WorkflowSynthesizer:
         limit:
             Maximum number of workflows to return.
         max_depth:
-            Unused but kept for API compatibility.
+            Maximum graph depth to explore from ``start_module``.  ``1``
+            restricts exploration to direct neighbours.
         synergy_weight:
             Multiplier applied to synergy graph edge weights when scoring
             workflows.
@@ -627,7 +628,10 @@ class WorkflowSynthesizer:
         if ModuleSignature is None or get_io_signature is None:
             raise ValueError("Structural analysis helpers are unavailable")
 
-        modules = self.expand_cluster(start_module=start_module, problem=problem)
+        depth = max_depth if max_depth is not None else 1
+        modules = self.expand_cluster(
+            start_module=start_module, problem=problem, max_depth=depth
+        )
         modules.add(start_module)
 
         analyzer = ModuleIOAnalyzer()
@@ -753,6 +757,9 @@ class WorkflowSynthesizer:
                 continue
             seen.add(key)
             orders.append(order.copy())
+
+            if max_depth is not None and len(order) - 1 >= max_depth:
+                continue
 
             available = [m for m in remaining if deps[m].issubset(order)]
             for mod in sorted(available):

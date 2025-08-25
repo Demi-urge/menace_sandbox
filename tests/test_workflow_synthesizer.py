@@ -130,6 +130,22 @@ def test_generate_workflows_persist_and_rank(tmp_path, monkeypatch):
     assert synth.workflow_scores == sorted(synth.workflow_scores, reverse=True)
 
 
+def test_generate_workflows_max_depth(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    grapher = StubGrapher()
+    synth = ws.WorkflowSynthesizer(module_synergy_grapher=grapher)
+
+    workflows = synth.generate_workflows(start_module="mod_a", limit=5, max_depth=1)
+    flat = [[step.module for step in wf] for wf in workflows]
+    assert all("mod_c" not in order for order in flat)
+
+    workflows = synth.generate_workflows(start_module="mod_a", limit=5, max_depth=2)
+    flat = [[step.module for step in wf] for wf in workflows]
+    assert any(order == ["mod_a", "mod_b", "mod_c"] for order in flat)
+
+
 def test_resolve_dependencies_cycles():
     synth = ws.WorkflowSynthesizer()
 
