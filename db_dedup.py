@@ -16,6 +16,8 @@ from pathlib import Path
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
+from db_router import SHARED_TABLES, DBRouter
+
 try:  # pragma: no cover - optional dependency
     from sqlalchemy.exc import IntegrityError as SAIntegrityError
 except Exception:  # pragma: no cover - optional dependency
@@ -99,6 +101,7 @@ def insert_if_unique(
     engine: "Engine | None" = None,
     conn: sqlite3.Connection | None = None,
     queue_path: str | Path | None = None,
+    router: DBRouter | None = None,
 ) -> Any | None:
     """Insert ``values`` into ``table`` if their hash is unique.
 
@@ -115,11 +118,16 @@ def insert_if_unique(
     executing immediately.
     """
 
+    table_name = table.name if hasattr(table, "name") else str(table)
+
+    if router is not None and table_name in SHARED_TABLES:
+        router.queue_write(table_name, values, hash_fields)
+        return None
+
     use_queue = queue_path is not None or bool(os.getenv("USE_DB_QUEUE"))
     if use_queue:
         from db_write_queue import queue_insert  # avoid circular import
 
-        table_name = table.name if hasattr(table, "name") else str(table)
         queue_insert(table_name, values, hash_fields, queue_path)
         return None
 

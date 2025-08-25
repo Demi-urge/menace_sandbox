@@ -16,7 +16,7 @@ import threading
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Set
+from typing import Set, Iterable, Mapping, Any
 
 __all__ = [
     "DBRouter",
@@ -406,6 +406,11 @@ class DBRouter:
 
             conn: sqlite3.Connection
             if table_name in SHARED_TABLES:
+                if operation == "write":
+                    logger.warning(
+                        "direct write to shared table '%s'; use queue_write instead",
+                        table_name,
+                    )
                 if _log_format == "kv":
                     msg = " ".join(f"{k}={v}" for k, v in entry.items())
                 else:
@@ -422,6 +427,32 @@ class DBRouter:
             _record_audit(entry)
 
             return conn
+
+    # ------------------------------------------------------------------
+    def queue_write(
+        self,
+        table_name: str,
+        values: Mapping[str, Any],
+        hash_fields: Iterable[str],
+    ) -> None:
+        """Queue a write to a shared table.
+
+        Parameters
+        ----------
+        table_name:
+            Target table name. Must be one of :data:`SHARED_TABLES`.
+        values:
+            Mapping of column names to values for the row.
+        hash_fields:
+            Iterable of field names used to compute a deduplication hash.
+        """
+
+        if table_name not in SHARED_TABLES:
+            raise ValueError("queue_write is only supported for shared tables")
+
+        from db_write_buffer import buffer_shared_insert
+
+        buffer_shared_insert(table_name, values, hash_fields)
 
     # ------------------------------------------------------------------
     def close(self) -> None:
