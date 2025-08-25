@@ -48,11 +48,12 @@ def fake_embeddings(monkeypatch) -> None:
 
 @pytest.fixture
 def sample_repo(tmp_path: Path) -> Path:
-    """Create a temporary repository with three modules.
+    """Create a temporary repository with several modules.
 
     Two modules relate to authentication while ``payment.py`` handles payments.
-    A ``module_map.json`` file places ``auth.py`` and ``helper.py`` into the
-    same synthetic synergy cluster so the cluster search API can be exercised.
+    ``authpay.py`` mixes both intents.  A ``module_map.json`` file places
+    ``auth.py`` and ``helper.py`` into the same synthetic synergy cluster so the
+    cluster search API can be exercised.
     """
 
     files = {
@@ -68,6 +69,13 @@ def sample_repo(tmp_path: Path) -> Path:
             "# provides help\n\n"
             "def assist():\n"
             '    """assist auth"""\n'
+            "    pass\n"
+        ),
+        "authpay.py": (
+            '"""Authentication and payment handler"""\n'
+            "# handles auth and pay\n\n"
+            "def authpay():\n"
+            '    """auth pay"""\n'
             "    pass\n"
         ),
         "payment.py": (
@@ -155,7 +163,9 @@ def clustered_clusterer(sample_repo: Path, tmp_path: Path) -> ic.IntentClusterer
     return clusterer
 
 
-def test_index_repository_stores_embeddings(clusterer: ic.IntentClusterer, sample_repo: Path) -> None:
+def test_index_repository_stores_embeddings(
+    clusterer: ic.IntentClusterer, sample_repo: Path
+) -> None:
     """Ensure ``index_repository`` writes vectors for each module."""
 
     clusterer.index_repository(sample_repo)
@@ -183,14 +193,17 @@ def test_find_modules_related_to_prompts(clusterer: ic.IntentClusterer, sample_r
     assert res and Path(res[0]["path"]).name == "payment.py"
 
 
-def test_cluster_lookup_uses_synergy_groups(clusterer: ic.IntentClusterer, sample_repo: Path) -> None:
+def test_cluster_lookup_uses_synergy_groups(
+    clusterer: ic.IntentClusterer, sample_repo: Path
+) -> None:
     """Synthetic synergy groups should be searchable as clusters."""
 
     clusterer.index_repository(sample_repo)
-    res = clusterer.find_clusters_related_to("auth help", top_k=1)
-    assert res and res[0]["origin"] == "cluster"
-    assert res[0]["path"].startswith("cluster:1")
-    assert "label" in res[0] and "auth" in res[0]["label"].lower()
+    res = clusterer.find_clusters_related_to("auth help", top_k=5)
+    cluster_items = [r for r in res if r.get("origin") == "cluster"]
+    assert cluster_items
+    assert cluster_items[0]["path"].startswith("cluster:1")
+    assert "label" in cluster_items[0] and "auth" in cluster_items[0]["label"].lower()
 
 
 def test_cluster_intents_adds_cluster_metadata(
@@ -262,6 +275,26 @@ def test_query_and_find_helpers_respect_thresholds(
     assert clusters and clusters[0]["origin"] == "cluster"
 
 
+def test_mixed_intent_module_gets_multiple_cluster_ids(
+    sample_repo: Path, tmp_path: Path
+) -> None:
+    """Modules covering several intents should surface all cluster IDs."""
+
+    db = ic.ModuleVectorDB(
+        index_path=tmp_path / "mix.ann", metadata_path=tmp_path / "mix.json"
+    )
+    clusterer = ic.IntentClusterer(db=db, retriever=DummyRetriever())
+    clusterer.index_modules(list(sample_repo.glob("*.py")))
+    clusterer.cluster_intents(2, threshold=0.0)
+
+    mixed_path = str(sample_repo / "authpay.py")
+    assert len(clusterer.clusters[mixed_path]) > 1
+
+    res = clusterer.query("auth pay", top_k=5, include_clusters=False)
+    match = next(m for m in res if m.path and Path(m.path).name == "authpay.py")
+    assert len(match.cluster_ids) > 1
+
+
 def test_index_repository_updates_cluster_membership(
     clusterer: ic.IntentClusterer, sample_repo: Path
 ) -> None:
@@ -290,4 +323,3 @@ def test_index_repository_updates_cluster_membership(
     clusterer.index_repository(sample_repo)
     assert set(members(1)) == {auth}
     assert set(members(2)) == {pay, helper}
-

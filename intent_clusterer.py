@@ -787,9 +787,9 @@ class IntentClusterer:
                             label = self._get_cluster_label(cluster_ids[0])
             if sim < threshold:
                 continue
-            if include_clusters and not cluster_ids and cids:
+            if not cluster_ids and cids:
                 cluster_ids = [int(c) for c in cids]
-                if cluster_ids and label is None:
+                if include_clusters and cluster_ids and label is None:
                     label = self._get_cluster_label(cluster_ids[0])
             results.append(
                 IntentMatch(path=path, similarity=sim, cluster_ids=cluster_ids, label=label)
