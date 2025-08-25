@@ -133,14 +133,9 @@ class WorkflowDB(EmbeddableDBMixin):
         if "argument_strings" not in cols:
             self.conn.execute("ALTER TABLE workflows ADD COLUMN argument_strings TEXT")
         if "content_hash" not in cols:
-            try:
-                self.conn.execute(
-                    "ALTER TABLE workflows ADD COLUMN content_hash TEXT UNIQUE"
-                )
-            except sqlite3.OperationalError:
-                self.conn.execute(
-                    "ALTER TABLE workflows ADD COLUMN content_hash TEXT"
-                )
+            self.conn.execute(
+                "ALTER TABLE workflows ADD COLUMN content_hash TEXT UNIQUE"
+            )
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS "
             "idx_workflows_content_hash ON workflows(content_hash)"

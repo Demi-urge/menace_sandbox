@@ -172,14 +172,9 @@ class BotDB(EmbeddableDBMixin):
                 "ALTER TABLE bots ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
             )
         if "content_hash" not in cols:
-            try:
-                self.conn.execute(
-                    "ALTER TABLE bots ADD COLUMN content_hash TEXT UNIQUE"
-                )
-            except sqlite3.OperationalError:
-                self.conn.execute(
-                    "ALTER TABLE bots ADD COLUMN content_hash TEXT"
-                )
+            self.conn.execute(
+                "ALTER TABLE bots ADD COLUMN content_hash TEXT UNIQUE"
+            )
         idxs = [r[1] for r in self.conn.execute("PRAGMA index_list('bots')").fetchall()]
         if "ix_bots_source_menace_id" in idxs:
             self.conn.execute("DROP INDEX IF EXISTS ix_bots_source_menace_id")
@@ -189,6 +184,7 @@ class BotDB(EmbeddableDBMixin):
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_bots_content_hash ON bots(content_hash)"
         )
+        self.conn.commit()
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS bot_model(bot_id INTEGER, model_id INTEGER)"
         )
