@@ -340,9 +340,9 @@ class IntentClusterer:
         shared_db_path: str | Path | None = None,
     ) -> None:
         self.vector_service = vector_service
-        self.retriever = (
-            retriever
-            or type(
+        self.retriever = retriever
+        if self.retriever is None and self.vector_service is None:
+            self.retriever = type(
                 "DummyRetriever",
                 (),
                 {
@@ -351,9 +351,8 @@ class IntentClusterer:
                     "add_vector": lambda *a, **k: None,
                 },
             )()
-        )
         self.db = db or intent_db or ModuleVectorDB()
-        if hasattr(self.retriever, "register_db"):
+        if self.retriever is not None and hasattr(self.retriever, "register_db"):
             try:
                 self.retriever.register_db(
                     "intent_cluster", self.db, ("path", "module_path")
@@ -537,11 +536,20 @@ class IntentClusterer:
                     )
             except Exception as exc:
                 logger.exception("failed to persist cluster %s: %s", gid, exc)
-            if hasattr(self.retriever, "add_vector"):
+            if self.retriever is not None and hasattr(self.retriever, "add_vector"):
                 try:
                     self.retriever.add_vector(mean, metadata=meta)
                 except Exception as exc:
                     logger.warning("failed to add cluster %s to retriever: %s", gid, exc)
+            if self.vector_service is not None and hasattr(
+                self.vector_service, "add_vector"
+            ):
+                try:
+                    self.vector_service.add_vector(mean, meta)
+                except Exception as exc:
+                    logger.warning(
+                        "failed to add cluster %s to vector service: %s", gid, exc
+                    )
             try:
                 rid = entry
                 if rid not in self.db._metadata:  # type: ignore[attr-defined]
@@ -655,11 +663,20 @@ class IntentClusterer:
                 except TypeError:  # pragma: no cover - backwards compatibility
                     persist_embedding("intent", str(path), vec)
                 # Persist in retriever for cross-module search when available
-                if hasattr(self.retriever, "add_vector"):
+                if self.retriever is not None and hasattr(self.retriever, "add_vector"):
                     try:
                         self.retriever.add_vector(vec, {"path": str(path)})
                     except Exception as exc:
                         logger.warning("failed to add %s to retriever: %s", path, exc)
+                if self.vector_service is not None and hasattr(
+                    self.vector_service, "add_vector"
+                ):
+                    try:
+                        self.vector_service.add_vector(vec, {"path": str(path)})
+                    except Exception as exc:
+                        logger.warning(
+                            "failed to add %s to vector service: %s", path, exc
+                        )
 
     # ------------------------------------------------------------------
     def update_modules(self, paths: Iterable[Path]) -> None:
@@ -1194,11 +1211,56 @@ class IntentClusterer:
             return []
 
         # Prefer retriever-based search when available
-        if hasattr(self.retriever, "search"):
+        if self.retriever is not None and hasattr(self.retriever, "search"):
             norm = sqrt(sum(x * x for x in vec)) or 1.0
             qvec = [x / norm for x in vec]
             try:
                 hits = self.retriever.search(qvec, top_k=top_k) or []
+            except Exception:
+                hits = []
+            results: List[IntentMatch] = []
+            for item in hits:
+                meta = item.get("metadata", {})
+                path = meta.get("path")
+                members = meta.get("members")
+                origin = meta.get("kind") or meta.get("source_id") or path
+                cluster_ids = meta.get("cluster_ids")
+                cluster_id = meta.get("cluster_id")
+                if cluster_ids is None and cluster_id is not None:
+                    cluster_ids = [cluster_id]
+                label = meta.get("label")
+                summary = meta.get("summary")
+                intent_text = meta.get("intent_text")
+                category = meta.get("category")
+                if category is None and cluster_ids:
+                    category = self._get_cluster_category(cluster_ids[0])
+                if category is None:
+                    category = _categorise(label, summary)
+                target_vec: Sequence[float] = item.get("vector", [])
+                tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
+                target_vec = [x / tnorm for x in target_vec]
+                score = sum(a * b for a, b in zip(qvec, target_vec))
+                if path or members:
+                    results.append(
+                        IntentMatch(
+                            path=path,
+                            similarity=score,
+                            cluster_ids=[int(c) for c in cluster_ids] if cluster_ids else [],
+                            label=str(label) if label else None,
+                            origin=str(origin) if origin else None,
+                            members=list(members) if members else None,
+                            summary=str(summary) if summary is not None else None,
+                            category=str(category) if category else None,
+                            intent_text=str(intent_text) if intent_text else None,
+                        )
+                    )
+            if results:
+                return results[:top_k]
+        elif self.vector_service is not None and hasattr(self.vector_service, "search"):
+            norm = sqrt(sum(x * x for x in vec)) or 1.0
+            qvec = [x / norm for x in vec]
+            try:
+                hits = self.vector_service.search(qvec, top_k=top_k) or []
             except Exception:
                 hits = []
             results: List[IntentMatch] = []
