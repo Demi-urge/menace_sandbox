@@ -20,10 +20,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
 try:  # Optional imports; fall back to stubs in tests
-    from module_synergy_grapher import ModuleSynergyGrapher, get_synergy_cluster
+    from module_synergy_grapher import (
+        ModuleSynergyGrapher,
+        get_synergy_cluster,
+        load_graph,
+    )
 except Exception:  # pragma: no cover - graceful degradation
     ModuleSynergyGrapher = None  # type: ignore[misc]
     get_synergy_cluster = None  # type: ignore[misc]
+    load_graph = None  # type: ignore[misc]
 
 try:  # Optional dependency
     from intent_clusterer import IntentClusterer
@@ -343,27 +348,32 @@ class WorkflowSynthesizer:
                 pass
 
         self.intent_db_path = Path(intent_db_path) if intent_db_path else None
-
-        # Intent search machinery. Prefer provided clusterer, otherwise attempt
-        # to instantiate IntentClusterer or fall back to IntentDB.
         self.intent_clusterer = intent_clusterer
         self.intent_db = None
-        if self.intent_clusterer is None:
-            if IntentClusterer is not None:
-                try:
-                    if self.intent_db_path is not None:
-                        self.intent_clusterer = IntentClusterer(self.intent_db_path)
-                    else:
-                        self.intent_clusterer = IntentClusterer()
-                except Exception:  # pragma: no cover - ignore init errors
-                    self.intent_clusterer = None
-            if self.intent_clusterer is None and IntentDB is not None:
-                try:
-                    self.intent_db = IntentDB(self.intent_db_path or Path("intent.db"))
-                except Exception:  # pragma: no cover - ignore
-                    self.intent_db = None
+        self.load_intent_clusters()
 
         self.generated_workflows = []
+
+    # ------------------------------------------------------------------
+    def load_intent_clusters(self) -> None:
+        """Load intent search helpers if available."""
+
+        if self.intent_clusterer is not None or self.intent_db is not None:
+            return
+        if IntentClusterer is not None:
+            try:
+                if self.intent_db_path is not None:
+                    self.intent_clusterer = IntentClusterer(self.intent_db_path)
+                else:
+                    self.intent_clusterer = IntentClusterer()
+                return
+            except Exception:  # pragma: no cover - ignore init errors
+                self.intent_clusterer = None
+        if IntentDB is not None and self.intent_db is None:
+            try:
+                self.intent_db = IntentDB(self.intent_db_path or Path("intent.db"))
+            except Exception:  # pragma: no cover - ignore
+                self.intent_db = None
 
     # ------------------------------------------------------------------
     def resolve_dependencies(self, modules: List[ModuleIO]) -> List[WorkflowStep]:
@@ -462,29 +472,76 @@ class WorkflowSynthesizer:
         return steps
 
     # ------------------------------------------------------------------
-    def expand_cluster(self, start_module: str, threshold: float = 0.0) -> Set[str]:
-        """Return modules synergistic with ``start_module``."""
+    def expand_cluster(
+        self,
+        start_module: str | None = None,
+        *,
+        problem: str | None = None,
+        threshold: float = 0.0,
+    ) -> Set[str]:
+        """Expand from ``start_module`` and/or ``problem`` to related modules."""
 
-        modules: Set[str] = {start_module}
-        try:
-            if self.module_synergy_grapher is not None and hasattr(
-                self.module_synergy_grapher, "get_synergy_cluster"
-            ):
-                try:
-                    cluster = self.module_synergy_grapher.get_synergy_cluster(
-                        start_module, threshold=threshold
+        modules: Set[str] = set()
+
+        if start_module:
+            modules.add(start_module)
+            try:
+                if self.module_synergy_grapher is not None and hasattr(
+                    self.module_synergy_grapher, "get_synergy_cluster"
+                ):
+                    try:
+                        cluster = self.module_synergy_grapher.get_synergy_cluster(
+                            start_module, threshold=threshold
+                        )
+                    except TypeError:  # pragma: no cover - threshold unsupported
+                        cluster = self.module_synergy_grapher.get_synergy_cluster(
+                            start_module
+                        )
+                elif get_synergy_cluster is not None:
+                    cluster = get_synergy_cluster(
+                        start_module, path=self.synergy_graph_path, threshold=threshold
                     )
-                except TypeError:  # pragma: no cover - threshold unsupported
-                    cluster = self.module_synergy_grapher.get_synergy_cluster(start_module)
-            elif get_synergy_cluster is not None:
-                cluster = get_synergy_cluster(
-                    start_module, path=self.synergy_graph_path, threshold=threshold
-                )
-            else:
-                cluster = [start_module]
-            modules.update(cluster)
-        except Exception:  # pragma: no cover - best effort
-            pass
+                elif load_graph is not None:
+                    graph = load_graph(self.synergy_graph_path)
+                    cluster = list(graph.neighbors(start_module)) if start_module in graph else []
+                else:
+                    cluster = []
+                modules.update(cluster)
+            except Exception:  # pragma: no cover - best effort
+                pass
+
+        if problem:
+            if self.intent_clusterer is None and self.intent_db is None:
+                self.load_intent_clusters()
+            if self.intent_clusterer is not None:
+                try:
+                    matches = self.intent_clusterer.find_modules_related_to(
+                        problem, top_k=20
+                    )
+                    for m in matches:
+                        path = getattr(m, "path", None) or getattr(m, "module", None)
+                        if path:
+                            p = Path(str(path))
+                            modules.add(p.stem)
+                except Exception:  # pragma: no cover - best effort
+                    pass
+            elif self.intent_db is not None:
+                try:
+                    vec = self.intent_db.encode_text(problem)  # type: ignore[attr-defined]
+                    results = self.intent_db.search_by_vector(vec, top_k=20)
+                    for rid, _dist in results:
+                        path = rid
+                        if isinstance(rid, int):
+                            row = self.intent_db.conn.execute(
+                                "SELECT path FROM intent_modules WHERE id=?",
+                                (rid,),
+                            ).fetchone()
+                            path = row["path"] if row else None
+                        if path:
+                            modules.add(Path(str(path)).stem)
+                except Exception:  # pragma: no cover - best effort
+                    pass
+
         return modules
 
     # ------------------------------------------------------------------
@@ -506,24 +563,9 @@ class WorkflowSynthesizer:
         ``start_module``.
         """
 
-        modules: Set[str] = set()
-
-        # ----- expand via synergy graph
-        if start_module:
-            modules.update(self.expand_cluster(start_module, threshold=threshold))
-
-        # ----- expand via intent search
-        if problem and self.intent_clusterer is not None:
-            try:
-                matches = self.intent_clusterer.find_modules_related_to(
-                    problem, top_k=limit
-                )
-                for match in matches:
-                    path = getattr(match, "path", None)
-                    if path:
-                        modules.add(Path(path).stem)
-            except Exception:  # pragma: no cover - ignore search failures
-                pass
+        modules: Set[str] = self.expand_cluster(
+            start_module=start_module, problem=problem, threshold=threshold
+        )
 
         if start_module:
             modules.add(start_module)
@@ -610,13 +652,14 @@ class WorkflowSynthesizer:
         *,
         problem: str | None = None,
         limit: int = 5,
+        max_depth: int | None = None,
     ) -> List[List[Dict[str, Any]]]:
         """Generate candidate workflows beginning at ``start_module``.
 
         The synthesizer builds a small dependency graph where edges connect
         modules whose outputs feed the inputs of another module or when one
         module writes a file another module reads.  The graph is seeded with
-        ``start_module`` and expanded using :meth:`synthesize` which blends
+        ``start_module`` and expanded using :meth:`expand_cluster` which blends
         synergy relationships and intent matches.  A topological sort orders
         the modules when the graph is acyclic; otherwise a best effort ranking
         based on edge weights is used.  Simple paths starting from
@@ -632,15 +675,14 @@ class WorkflowSynthesizer:
             available when ``intent_clusterer`` is provided.
         limit:
             Maximum number of workflows to return.
+        max_depth:
+            Optional maximum path length when exploring module connections.
         """
 
         import networkx as nx
 
         # gather candidate modules via synergy + intent expansion
-        steps = self._synthesize_greedy(
-            start_module=start_module, problem=problem, limit=50
-        )
-        modules = {s["module"] for s in steps}
+        modules = self.expand_cluster(start_module=start_module, problem=problem)
         modules.add(start_module)
 
         # Inspect modules to gather IO information
@@ -697,7 +739,7 @@ class WorkflowSynthesizer:
         for target in order:
             if target == start_module or not nx.has_path(G, start_module, target):
                 continue
-            for p in nx.all_simple_paths(G, start_module, target):
+            for p in nx.all_simple_paths(G, start_module, target, cutoff=max_depth):
                 paths.append(p)
         if not paths:
             paths.append([start_module])
