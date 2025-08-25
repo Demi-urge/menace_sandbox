@@ -1,70 +1,54 @@
 # Workflow Synthesizer
 
-`WorkflowSynthesizer` expands a seed module by blending structural signals from
-`ModuleSynergyGrapher` with semantic intent search. It inspects module inputs
-and outputs to resolve dependency order and emits small workflow candidates.
+## Purpose
 
-## Design
+`WorkflowSynthesizer` proposes small, ordered workflows by blending structural
+signals from `ModuleSynergyGrapher` with optional intent search. The tool
+inspects each candidate module's inputs and outputs, arranges them so
+dependencies are satisfied and emits a list of steps that can be executed or
+further refined.
 
-The synthesizer queries `ModuleSynergyGrapher` for related modules and scores
-them against a text description. Candidates are explored breadth‑first and
-pruned by synergy weight and semantic similarity. Internal state tracks which
-modules have been selected and the values each step provides.
+## CLI usage
 
-## I/O analysis
-
-Each candidate module is introspected to determine its expected inputs and the
-values it returns. Function signatures supply argument names while docstring or
-return annotations describe outputs. The synthesizer aggregates this metadata so
-later steps can consume values produced earlier in the workflow.
-
-## Dependency resolution
-
-When assembling a workflow the synthesizer orders modules so that every required
-input is satisfied by a previous output. Any unresolved parameters are surfaced
-in the step description for manual filling or further synthesis. This ensures
-generated workflows can be executed or converted into specifications without
-missing dependencies.
-
-## Examples
-
-### Programmatic usage
-
-```python
-from workflow_synthesizer import WorkflowSynthesizer
-
-synth = WorkflowSynthesizer()
-steps = synth.synthesize(start_module="module_a", problem="summarise data")
-for step in steps:
-    print(step["module"], step["args"], "->", step["provides"])
-```
-
-### Saving and CLI
+The standalone helper `workflow_synthesizer_cli.py` exposes a minimal command
+line interface:
 
 ```bash
-# Generate candidate workflows and interactively save a spec
 python workflow_synthesizer_cli.py --start module_a --out my.workflow.json
+python workflow_synthesizer_cli.py --start "summarise data" --out summary.workflow.json
 ```
 
-The `generate_workflows` method returns multiple candidates and `save_workflow`
-can write a `.workflow.json` compatible with `WorkflowDB` for later reuse.
+* `--start` – starting module name. When the module does not exist the value is
+  treated as a free‑text problem description used for intent matching.
+* `--problem` – additional description to bias intent search.
+* `--max-depth` – limit traversal depth when exploring connected modules.
+* `--out` – file or directory where generated workflows are written.
 
-## CLI options
+The command prints the candidate workflows to stdout and, when `--out` is
+supplied, persists them to disk.
 
-`workflow_synthesizer_cli.py` offers a small command line interface:
+## Output format
 
-* `--start` – starting module name or a free text problem description. If a
-  Python module with this name exists the synthesizer performs structural
-  expansion; otherwise it searches by intent.
-* `--out` – destination path for the generated workflow specification. The
-  tool interactively confirms each suggested step before writing the file.
+Saved workflows always end with `.workflow.json` and contain an ordered list of
+steps:
 
-## Sandbox integration
+```json
+{
+  "steps": [
+    {"module": "module_a", "inputs": [], "outputs": ["result"]},
+    {"module": "module_b", "inputs": ["result"], "outputs": []}
+  ]
+}
+```
 
-Generated specifications are ordinary `.workflow.json` files. They can be
-loaded into the sandbox's `WorkflowDB` or executed via existing workflow tools.
-By default the synthesizer reads the synergy graph from
-`sandbox_data/module_synergy_graph.json` and can optionally leverage an
-`IntentDB` when available, allowing new workflows to plug into the rest of the
-sandbox infrastructure without additional configuration.
+The structure mirrors the format produced by `workflow_spec.to_spec`, allowing
+conversion to YAML or insertion into `WorkflowDB`.
+
+## Sandbox evaluation pipeline integration
+
+Generated `.workflow.json` files plug directly into the sandbox evaluation
+pipeline. Register the file with `task_handoff_bot.WorkflowDB` and the sandbox
+runner and evaluation workers will schedule, execute and score the workflow like
+any other entry. Results flow through `EvaluationHistoryDB` and surface on the
+standard dashboards without additional configuration.
 
