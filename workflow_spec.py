@@ -1,29 +1,26 @@
 from __future__ import annotations
 
-"""Helpers for creating and persisting workflow specifications.
+"""Utilities for serialising lightweight workflow specifications.
 
-This module exposes two small helpers:
+The helpers in this module are intentionally small.  They convert a sequence of
+``WorkflowStep`` objects – simple containers describing a module and its IO –
+into a mapping that can readily be dumped to JSON or YAML and persisted on
+disk.
 
 ``to_spec``
-    Convert a list of step dictionaries into the lightweight schema used by
-    :class:`task_handoff_bot.WorkflowDB`.  Only a subset of keys is required;
-    missing fields fall back to sensible defaults so the resulting mapping can
-    be serialised to ``.workflow.json`` files.
+    Transform a list of steps into ``{"steps": [...]}`` where each step
+    contains ``module``, ``inputs``, ``outputs``, ``files`` and ``globals``
+    fields.
 
-``save``
-    Persist a workflow specification as ``<name>.workflow.json`` inside a
-    configurable output directory and register it in ``WorkflowDB``.  If PyYAML
-    is available a companion ``.workflow.yaml`` file is also written.
+``save_spec``
+    Write such a specification to ``<name>.workflow.json`` or
+    ``<name>.workflow.yaml`` inside a ``workflows`` directory.
 """
 
-from dataclasses import fields
-import importlib.util
+from dataclasses import asdict, is_dataclass
 import json
-import os
-import re
-import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 try:  # Optional dependency for YAML output
     import yaml  # type: ignore
@@ -31,156 +28,91 @@ except Exception:  # pragma: no cover - YAML support is optional
     yaml = None  # type: ignore
 
 
-def _load_thb() -> tuple[Any, Any]:
-    """Return ``WorkflowDB`` and ``WorkflowRecord`` classes."""
+def _to_list(value: Iterable[Any] | None) -> list[str]:
+    """Normalise ``value`` to a list of strings."""
 
-    try:
-        from .task_handoff_bot import WorkflowDB, WorkflowRecord  # type: ignore
-        return WorkflowDB, WorkflowRecord
-    except Exception:
-        try:  # pragma: no cover - package style import failed
-            import task_handoff_bot as thb  # type: ignore
-            return thb.WorkflowDB, thb.WorkflowRecord
-        except Exception:  # pragma: no cover - fallback to manual loading
-            path = Path(__file__).with_name("task_handoff_bot.py")
-            spec = importlib.util.spec_from_file_location(
-                "menace.task_handoff_bot", path, submodule_search_locations=[str(path.parent)]
-            )
-            module = importlib.util.module_from_spec(spec)
-            assert spec and spec.loader
-            sys.modules.setdefault("menace.task_handoff_bot", module)
-            spec.loader.exec_module(module)  # type: ignore[attr-defined]
-            return module.WorkflowDB, module.WorkflowRecord
-
-# ---------------------------------------------------------------------------
-# Configuration
-_OUTPUT_DIR = Path(os.environ.get("WORKFLOW_OUTPUT_DIR", "workflows"))
-
-# ---------------------------------------------------------------------------
-
-def _as_list(value: Any) -> list[str]:
-    """Helper converting ``value`` to a list of strings."""
-
-    if value is None:
+    if not value:
         return []
     if isinstance(value, (list, tuple, set)):
         return [str(v) for v in value]
     return [str(value)]
 
 
-def to_spec(workflow: list[dict]) -> dict:
-    """Return a workflow specification mapping for ``WorkflowDB``.
+def to_spec(steps: list[Any]) -> dict:
+    """Return a JSON/YAML‑serialisable specification.
 
     Parameters
     ----------
-    workflow:
-        Sequence of step dictionaries.  Common keys include ``name``, ``bot``
-        and ``args`` but any additional fields are ignored.
-
-    Returns
-    -------
-    dict
-        Mapping following the :class:`WorkflowRecord` schema.
+    steps:
+        Sequence of :class:`WorkflowStep` instances or ``dict``\ s describing
+        workflow steps.  Each step is expected to expose the attributes
+        ``module``, ``inputs`` and ``outputs``.  Optional ``files`` or
+        ``files_read``/``files_written`` and ``globals`` attributes are also
+        honoured.
     """
 
-    names: list[str] = []
-    chains: list[str] = []
-    args: list[str] = []
-    bots: list[str] = []
-    enhancements: list[str] = []
+    spec_steps = []
 
-    for step in workflow:
-        if step.get("name"):
-            names.append(str(step["name"]))
-        if step.get("action_chain") or step.get("chain") or step.get("actions"):
-            chains.append(str(step.get("action_chain") or step.get("chain") or step.get("actions")))
-        if step.get("argument_string") or step.get("arguments") or step.get("args"):
-            val = step.get("argument_string") or step.get("arguments") or step.get("args")
-            if isinstance(val, (list, tuple)):
-                args.append(", ".join(map(str, val)))
-            else:
-                args.append(str(val))
-        if step.get("assigned_bot") or step.get("bot"):
-            bots.append(str(step.get("assigned_bot") or step.get("bot")))
-        if step.get("enhancements") or step.get("enhancement"):
-            enhancements.extend(_as_list(step.get("enhancements") or step.get("enhancement")))
+    for step in steps:
+        if is_dataclass(step):
+            data = asdict(step)
+        elif isinstance(step, dict):
+            data = dict(step)
+        else:  # pragma: no cover - best effort for simple objects
+            data = step.__dict__
 
-    title = names[0] if names else ""
-    spec = {
-        "workflow": names,
-        "action_chains": chains,
-        "argument_strings": args,
-        "assigned_bots": bots,
-        "enhancements": enhancements,
-        "title": title,
-        "description": "",
-        "task_sequence": names[:],
-        "tags": [],
-        "category": "",
-        "type": "",
-        "status": "pending",
-        "rejection_reason": "",
-        "workflow_duration": 0.0,
-        "performance_data": "",
-        "estimated_profit_per_bot": 0.0,
-    }
-    return spec
+        files = _to_list(data.get("files"))
+        if not files:
+            files = _to_list(data.get("files_read")) + _to_list(data.get("files_written"))
+
+        spec_steps.append(
+            {
+                "module": str(data.get("module") or data.get("name", "")),
+                "inputs": sorted(_to_list(data.get("inputs"))),
+                "outputs": sorted(_to_list(data.get("outputs"))),
+                "files": sorted(files),
+                "globals": sorted(_to_list(data.get("globals"))),
+            }
+        )
+
+    return {"steps": spec_steps}
 
 
-def _record_from_spec(spec: dict) -> WorkflowRecord:
-    """Create :class:`WorkflowRecord` from ``spec`` ignoring unknown keys."""
+def save_spec(spec: dict, path: Path) -> Path:
+    """Persist ``spec`` to ``path`` within a ``workflows`` directory.
 
-    _, WorkflowRecord = _load_thb()
-    valid = {f.name for f in fields(WorkflowRecord)}
-    data = {k: v for k, v in spec.items() if k in valid}
-    if "type" in spec and "type_" not in data:
-        data["type_"] = spec["type"]
-    return WorkflowRecord(**data)
-
-
-def save(workflow: dict, path: Path | None = None) -> Path:
-    """Persist ``workflow`` and register it with :class:`WorkflowDB`.
-
-    The resulting JSON file is named ``<name>.workflow.json`` where ``name`` is
-    taken from the ``title`` or ``name`` field.  Files are stored inside the
-    directory specified by the ``WORKFLOW_OUTPUT_DIR`` environment variable
-    unless ``path`` overrides the location.
+    The extension of ``path`` determines the output format: ``.workflow.json``
+    results in JSON while ``.workflow.yaml``/``.workflow.yml`` produces YAML.
+    Regardless of the provided location the file is written beneath a
+    ``workflows`` folder, which is created if necessary.
     """
 
-    # Determine output directory
-    if path and path.suffix:
-        out_dir = path.parent
-    elif path:
-        out_dir = path
+    path = Path(path)
+    parent = path.parent
+    if parent.name != "workflows":
+        parent = parent / "workflows"
+    parent.mkdir(parents=True, exist_ok=True)
+
+    name = path.name
+    if name.endswith(".workflow.json"):
+        out_path = parent / name
+        with out_path.open("w", encoding="utf-8") as fh:
+            json.dump(spec, fh, indent=2, sort_keys=True)
+    elif name.endswith(('.workflow.yaml', '.workflow.yml')):
+        if yaml is None:  # pragma: no cover - YAML optional
+            raise RuntimeError("PyYAML is required for YAML output")
+        out_path = parent / name
+        with out_path.open("w", encoding="utf-8") as fh:
+            yaml.safe_dump(spec, fh, sort_keys=False)  # type: ignore[arg-type]
     else:
-        out_dir = _OUTPUT_DIR
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+        raise ValueError("path must end with .workflow.json or .workflow.yaml")
 
-    name = workflow.get("name") or workflow.get("title")
-    if not name:
-        names = workflow.get("workflow") or []
-        name = names[0] if names else "workflow"
-    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", str(name))
-    json_path = out_dir / f"{safe_name}.workflow.json"
-
-    with json_path.open("w", encoding="utf-8") as fh:
-        json.dump(workflow, fh, indent=2, sort_keys=True)
-
-    if yaml is not None:
-        yaml_path = out_dir / f"{safe_name}.workflow.yaml"
-        with yaml_path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(workflow, fh, sort_keys=False)  # type: ignore[arg-type]
-
-    # Register in WorkflowDB
-    try:
-        WorkflowDB, _WR = _load_thb()
-        db = WorkflowDB(out_dir / "workflows.db")
-        db.add(_record_from_spec(workflow))
-    except Exception:  # pragma: no cover - best effort
-        pass
-
-    return json_path
+    return out_path
 
 
-__all__ = ["to_spec", "save"]
+# Backwards compatibility -------------------------------------------------
+# Some modules still import ``save``; keep it as an alias.
+save = save_spec
+
+__all__ = ["to_spec", "save_spec", "save"]
+

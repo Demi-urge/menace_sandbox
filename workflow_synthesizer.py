@@ -771,28 +771,39 @@ class WorkflowSynthesizer:
 
 # ---------------------------------------------------------------------------
 def to_workflow_spec(workflow: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Return a workflow specification mapping for ``WorkflowDB``.
+    """Return a lightweight workflow specification.
 
-    This is a thin wrapper around :func:`workflow_spec.to_spec` that accepts the
-    workflow format produced by :class:`WorkflowSynthesizer` where each step is
-    represented by a ``module`` key.
+    The synthesizer internally represents workflows as a sequence of
+    dictionaries containing at least the ``module`` name and optional ``inputs``
+    and ``outputs``.  This helper adapts that structure to the format produced
+    by :func:`workflow_spec.to_spec`.
     """
 
     from workflow_spec import to_spec as _to_spec
 
-    steps = [{"name": step.get("name") or step.get("module", "")}
-             for step in workflow]
+    steps = [
+        {
+            "module": step.get("module", ""),
+            "inputs": step.get("inputs", []),
+            "outputs": step.get("outputs", []),
+            "files": step.get("files", [])
+            or step.get("files_read", [])
+            + step.get("files_written", []),
+            "globals": step.get("globals", []),
+        }
+        for step in workflow
+    ]
     return _to_spec(steps)
 
 
 def save_workflow(workflow: List[Dict[str, Any]], path: Path | str | None = None) -> Path:
-    """Persist ``workflow`` as ``.workflow.json`` for ``WorkflowDB`` utilities."""
+    """Persist ``workflow`` using :func:`workflow_spec.save_spec`."""
 
-    from workflow_spec import save as _save
+    from workflow_spec import save_spec as _save_spec
 
     spec = to_workflow_spec(workflow)
-    out = Path(path) if path is not None else Path("sandbox_data/generated_workflows")
-    return _save(spec, out)
+    out = Path(path) if path is not None else Path("workflow.workflow.json")
+    return _save_spec(spec, out)
 
 
 __all__ = [
