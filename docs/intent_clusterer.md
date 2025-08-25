@@ -53,13 +53,13 @@ Retrieve modules or clusters that relate to a textual prompt:
 mods = clusterer.find_modules_related_to("update configuration", top_k=5)
 clusters = clusterer.find_clusters_related_to("update configuration", top_k=5)
 for match in mods:
-    print("module", match["path"], match["score"])
+    print("module", match.path, match.similarity)
 for match in clusters:
-    print("cluster", match["path"], match.get("members"), match["score"])
+    print("cluster", match.path, match.members, match.similarity)
 ```
 
-Both functions return dictionaries describing the best matches.  For more
-detailed similarity information including related cluster identifiers use
+Both functions return :class:`IntentMatch` objects describing the best matches.
+For more detailed similarity information including related cluster identifiers use
 `query`:
 
 ```python
@@ -88,6 +88,6 @@ label, summary = clusterer.cluster_label(1)
 print(label, summary)  # -> "auth help", "Authentication helper module" (for example)
 ```
 
-Labels and summaries are also returned in the metadata of `find_clusters_related_to`
-and `query` results, enabling quick inspection of the cluster's theme without
-loading the full intent text.
+Labels and summaries are also returned in the fields of ``IntentMatch`` objects
+from ``find_clusters_related_to`` and ``query`` results, enabling quick
+inspection of the cluster's theme without loading the full intent text.

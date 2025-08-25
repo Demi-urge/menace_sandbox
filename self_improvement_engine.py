@@ -3690,20 +3690,10 @@ class SelfImprovementEngine:
             for rel in list(expanded):
                 try:
                     matches = self.intent_clusterer.find_modules_related_to(rel)
-                    paths = [
-                        m.get("path")
-                        for m in matches
-                        if isinstance(m, dict) and m.get("path")
-                    ]
-                    clusters = [
-                        m.get("cluster_id")
-                        for m in matches
-                        if isinstance(m, dict) and m.get("cluster_id") is not None
-                    ]
+                    paths = [m.path for m in matches if m.path]
+                    clusters = [cid for m in matches for cid in m.cluster_ids]
                     if paths:
-                        self.logger.info(
-                            "intent matches for %s: %s", rel, paths
-                        )
+                        self.logger.info("intent matches for %s: %s", rel, paths)
                     if clusters:
                         self.logger.info(
                             "intent clusters for %s: %s", rel, clusters

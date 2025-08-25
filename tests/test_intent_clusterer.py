@@ -187,10 +187,10 @@ def test_find_modules_related_to_prompts(clusterer: ic.IntentClusterer, sample_r
     clusterer.index_repository(sample_repo)
 
     res = clusterer.find_modules_related_to("authentication help", top_k=2)
-    assert any(Path(r["path"]).name == "helper.py" for r in res)
+    assert any(Path(r.path).name == "helper.py" for r in res if r.path)
 
     res = clusterer.find_modules_related_to("process payment", top_k=2)
-    assert any(Path(r["path"]).name == "payment.py" for r in res)
+    assert any(Path(r.path).name == "payment.py" for r in res if r.path)
 
 
 def test_cluster_lookup_uses_synergy_groups(
@@ -200,11 +200,11 @@ def test_cluster_lookup_uses_synergy_groups(
 
     clusterer.index_repository(sample_repo)
     res = clusterer.find_clusters_related_to("auth help", top_k=5)
-    cluster_items = [r for r in res if r.get("origin") == "cluster"]
+    cluster_items = res
     assert cluster_items
-    assert cluster_items[0]["path"].startswith("cluster:1")
-    assert "label" in cluster_items[0] and "auth" in cluster_items[0]["label"].lower()
-    assert "summary" in cluster_items[0]
+    assert cluster_items[0].path.startswith("cluster:1")
+    assert cluster_items[0].label and "auth" in cluster_items[0].label.lower()
+    assert cluster_items[0].summary is not None
     # ``cluster_label`` should expose the persisted label and summary
     label, summary = clusterer.cluster_label(1)
     assert label and "auth" in label.lower()
@@ -280,13 +280,13 @@ def test_query_and_find_helpers_respect_thresholds(
     mods = clustered_clusterer.find_modules_related_to(
         "authentication help", top_k=5, include_clusters=True
     )
-    mod_entry = next(m for m in mods if m.get("path"))
-    assert mod_entry.get("cluster_ids")
-    cluster_entry = next(m for m in mods if m.get("origin") == "cluster")
-    assert cluster_entry.get("cluster_ids")
+    mod_entry = next(m for m in mods if m.path)
+    assert mod_entry.cluster_ids
+    cluster_entry = next(m for m in mods if m.origin == "cluster")
+    assert cluster_entry.cluster_ids
 
     clusters = clustered_clusterer.find_clusters_related_to("authentication help", top_k=5)
-    assert clusters and clusters[0]["origin"] == "cluster"
+    assert clusters and clusters[0].origin == "cluster"
 
 
 def test_mixed_intent_module_gets_multiple_cluster_ids(

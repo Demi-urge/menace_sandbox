@@ -72,16 +72,8 @@ class WorkflowEvolutionBot:
             if self.intent_clusterer:
                 try:
                     matches = self.intent_clusterer.find_modules_related_to(seq)
-                    paths = [
-                        m.get("path")
-                        for m in matches
-                        if isinstance(m, dict) and m.get("path")
-                    ]
-                    clusters = [
-                        m.get("cluster_id")
-                        for m in matches
-                        if isinstance(m, dict) and m.get("cluster_id") is not None
-                    ]
+                    paths = [m.path for m in matches if m.path]
+                    clusters = [cid for m in matches for cid in m.cluster_ids]
                     if paths:
                         logger.info("intent matches for %s: %s", seq, paths)
                     if clusters:

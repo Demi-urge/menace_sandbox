@@ -53,13 +53,13 @@ def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
     clusterer.index_repository(tmp_path)
 
     res = clusterer.find_clusters_related_to("alpha beta", top_k=5)
-    assert res and res[0]["origin"] == "cluster"
+    assert res and res[0].origin == "cluster"
     members = {str(tmp_path / "a.py"), str(tmp_path / "b.py")}
-    assert set(res[0]["members"]) == members
-    assert res[0]["intent_text"]
+    assert set(res[0].members or []) == members
+    assert res[0].intent_text
     row = clusterer.conn.execute(
         "SELECT metadata FROM intent_embeddings WHERE module_path = ?",
-        (res[0]["path"],),
+        (res[0].path,),
     ).fetchone()
     meta = json.loads(row[0])
     assert meta.get("intent_text")

@@ -640,8 +640,9 @@ find_clusters_related_to("error handling")
 ```
 
 ``find_modules_related_to`` returns relevant module paths, while
-``find_clusters_related_to`` surfaces synergy clusters.  Entries include a
-relevance ``score`` and an ``origin`` field indicating the result type.
+``find_clusters_related_to`` surfaces synergy clusters.  Each result is an
+``IntentMatch`` carrying a similarity ``score`` and an ``origin`` attribute
+indicating the result type.
 
 The underlying ``IntentClusterer`` is available at the package root for custom
 workflows:
