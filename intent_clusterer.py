@@ -22,6 +22,7 @@ import tokenize
 from governed_embeddings import governed_embed
 from embeddable_db_mixin import EmbeddableDBMixin
 from math import sqrt
+from vector_utils import persist_embedding
 
 try:  # pragma: no cover - optional dependency
     from sklearn.cluster import KMeans  # type: ignore
@@ -224,6 +225,16 @@ class IntentClusterer:
             if vec:
                 self.module_ids[str(path)] = rid
                 self.vectors[str(path)] = vec
+                try:
+                    persist_embedding(
+                        "intent",
+                        str(path),
+                        vec,
+                        origin_db="intent",
+                        metadata={"type": "intent", "module": str(path)},
+                    )
+                except TypeError:  # pragma: no cover - backwards compatibility
+                    persist_embedding("intent", str(path), vec)
                 # Persist in retriever for cross-module search when available
                 if hasattr(self.retriever, "add_vector"):
                     try:
