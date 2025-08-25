@@ -204,6 +204,9 @@ def test_cluster_lookup_uses_synergy_groups(
     assert cluster_items
     assert cluster_items[0]["path"].startswith("cluster:1")
     assert "label" in cluster_items[0] and "auth" in cluster_items[0]["label"].lower()
+    # ``cluster_label`` should expose the persisted label
+    label = clusterer.cluster_label(1)
+    assert label and "auth" in label.lower()
 
 
 def test_cluster_intents_adds_cluster_metadata(
@@ -240,6 +243,11 @@ def test_cluster_intents_adds_cluster_metadata(
     meta = json.loads(row[0])
     assert meta.get("intent_text")
     assert set(meta.get("members", [])) == set(cluster_items[0]["metadata"]["members"])
+    # Labels should also be retrievable via ``cluster_label``
+    cid = cluster_items[0]["metadata"].get("cluster_id")
+    if cid is not None:
+        lbl = clustered_clusterer.cluster_label(cid)
+        assert lbl
 
 
 def test_get_cluster_intents_returns_summary_and_vector(
