@@ -42,7 +42,7 @@ from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from vector_service import EmbeddableDBMixin
 from .scope_utils import build_scope_clause, Scope, apply_scope
-from db_dedup import insert_if_unique
+from db_dedup import insert_if_unique, ensure_content_hash_column
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager
@@ -135,7 +135,7 @@ class ErrorDB(EmbeddableDBMixin):
                 cause TEXT,
                 frequency INTEGER,
                 source_menace_id TEXT NOT NULL DEFAULT '',
-                content_hash TEXT NOT NULL UNIQUE
+                content_hash TEXT NOT NULL
             )
             """
         )
@@ -150,13 +150,7 @@ class ErrorDB(EmbeddableDBMixin):
             self.conn.execute(
                 "ALTER TABLE errors ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
             )
-        if "content_hash" not in cols:
-            self.conn.execute(
-                "ALTER TABLE errors ADD COLUMN content_hash TEXT NOT NULL"
-            )
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_errors_content_hash ON errors(content_hash)"
-        )
+        ensure_content_hash_column("errors", conn=self.conn)
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_errors_source_menace_id ON errors(source_menace_id)"
         )
@@ -210,73 +204,18 @@ class ErrorDB(EmbeddableDBMixin):
         if "module_counts" not in cols:
             self.conn.execute("ALTER TABLE telemetry ADD COLUMN module_counts TEXT")
         if "category" not in cols:
-            self.conn.execute("ALTER TABLE telemetry ADD COLUMN category TEXT")
+            self.conn.execute("ALTER TABLE errors ADD COLUMN category TEXT")
         if "cause" not in cols:
-            self.conn.execute("ALTER TABLE telemetry ADD COLUMN cause TEXT")
+            self.conn.execute("ALTER TABLE errors ADD COLUMN cause TEXT")
         if "frequency" not in cols:
-            self.conn.execute("ALTER TABLE telemetry ADD COLUMN frequency INTEGER")
+            self.conn.execute("ALTER TABLE errors ADD COLUMN frequency INTEGER")
         if "source_menace_id" not in cols:
             self.conn.execute(
-                "ALTER TABLE telemetry ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
+                "ALTER TABLE errors ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
             )
+        ensure_content_hash_column("errors", conn=self.conn)
         self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_telemetry_source_menace_id ON telemetry(source_menace_id)"
-        )
-        if "fix_suggestions" not in cols:
-            self.conn.execute("ALTER TABLE telemetry ADD COLUMN fix_suggestions TEXT")
-        if "bottlenecks" not in cols:
-            self.conn.execute("ALTER TABLE telemetry ADD COLUMN bottlenecks TEXT")
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS error_stats(
-                category TEXT,
-                module TEXT,
-                count INTEGER,
-                PRIMARY KEY (category, module)
-            )
-            """
-        )
-        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(error_stats)").fetchall()]
-        if "category" not in cols and "error_type" in cols:
-            self.conn.execute(
-                "ALTER TABLE error_stats RENAME COLUMN error_type TO category"
-            )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS error_clusters(
-                error_type TEXT PRIMARY KEY,
-                cluster_id INTEGER
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS safe_mode(
-                module TEXT PRIMARY KEY,
-                active INTEGER
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS test_results(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                passed INTEGER,
-                failed INTEGER,
-                ts TEXT
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS preemptive_patches(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                module TEXT,
-                risk_score REAL,
-                patch_id INTEGER,
-                ts TEXT
-            )
-            """
+            "CREATE INDEX IF NOT EXISTS idx_errors_source_menace_id ON errors(source_menace_id)"
         )
         self.conn.commit()
         # ``vector_backend`` is accepted for backwards compatibility but only
