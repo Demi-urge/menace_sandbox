@@ -3,8 +3,19 @@ import menace.bot_database as bdb
 from menace.db_router import init_db_router
 
 
+def _reset_router(old):
+    import menace.db_router as dbr
+
+    dbr.GLOBAL_ROUTER = old
+    bdb.router = old
+
+
 def test_add_bot_duplicate(tmp_path, caplog, monkeypatch):
-    init_db_router("botdup", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
+    import menace.db_router as dbr
+
+    old = dbr.GLOBAL_ROUTER
+    router = init_db_router("botdup", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
+    bdb.router = router
     monkeypatch.setattr(bdb.BotDB, "_embed_record_on_write", lambda *a, **k: None)
     db = bdb.BotDB()
 
@@ -28,3 +39,4 @@ def test_add_bot_duplicate(tmp_path, caplog, monkeypatch):
     assert captured["id"] is None
     assert "duplicate" in caplog.text.lower()
     assert db.conn.execute("SELECT COUNT(*) FROM bots").fetchone()[0] == 1
+    _reset_router(old)
