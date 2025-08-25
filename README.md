@@ -1791,13 +1791,15 @@ Use `workflow_synthesizer_cli.py` to explore and save workflows from the
 command line:
 
 ```bash
-python workflow_synthesizer_cli.py --start module_a --out my.workflow.json
-python workflow_synthesizer_cli.py --start "summarise data" --out summary.workflow.json
+python workflow_synthesizer_cli.py --start module_a --save
+python workflow_synthesizer_cli.py --start "summarise data" --save summary
+python workflow_synthesizer_cli.py --list
 ```
 
-The first example seeds the synthesizer from an existing module. The second
-accepts a free-text problem description. In both cases an interactive prompt
-allows editing before the workflow specification is written to the chosen file.
+The first example seeds the synthesizer from an existing module and stores the
+result under `sandbox_data/generated_workflows/module_a.workflow.json`. The
+second accepts a free-text problem description and saves the spec using the
+provided name. The `--list` flag prints previously saved workflow files.
 
 Candidates can be exported to `.workflow.json` for registration with
 `WorkflowDB`. The JSON contains a `steps` list describing each module's inputs
