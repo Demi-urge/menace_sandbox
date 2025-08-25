@@ -10,4 +10,10 @@ __path__.append(os.path.dirname(os.path.dirname(__file__)))
 # Default flag used by modules expecting it
 RAISE_ERRORS = False
 
-__all__ = ["RAISE_ERRORS"]
+# Expose MenaceDB for tests and compatibility
+try:  # pragma: no cover - optional dependency
+    from .databases import MenaceDB  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    MenaceDB = None  # type: ignore
+
+__all__ = ["RAISE_ERRORS", "MenaceDB"]
