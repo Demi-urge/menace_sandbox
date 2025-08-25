@@ -2,6 +2,7 @@ import intent_clusterer as ic
 import json
 import pickle
 import sqlite3
+import pytest
 
 
 class DummyRetriever:
@@ -62,3 +63,18 @@ def test_query_without_cluster_ids(monkeypatch):
     monkeypatch.setattr(ic, "governed_embed", lambda text: [1.0, 0.0])
     res = clusterer.query("foo", include_clusters=False)
     assert res and res[0].cluster_ids == []
+
+
+@pytest.fixture
+def multi_cluster_clusterer(monkeypatch):
+    retr = DummyRetriever()
+    clusterer = ic.IntentClusterer(retr)
+    clusterer.cluster_map["a"] = [1, 2]
+    retr.add_vector([1.0, 0.0], {"path": "a.py", "cluster_ids": [1, 2]})
+    monkeypatch.setattr(ic, "governed_embed", lambda text: [1.0, 0.0])
+    return clusterer
+
+
+def test_query_returns_multiple_cluster_ids(multi_cluster_clusterer):
+    res = multi_cluster_clusterer.query("whatever", threshold=0.2)
+    assert res and res[0].cluster_ids == [1, 2]

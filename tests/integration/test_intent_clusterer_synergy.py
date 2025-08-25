@@ -1,6 +1,8 @@
 import pytest
 from pathlib import Path
 
+import json
+
 import embeddable_db_mixin as edm
 import intent_db
 import intent_clusterer as ic
@@ -21,13 +23,9 @@ def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
     (tmp_path / "a.py").write_text('"""alpha"""')
     (tmp_path / "b.py").write_text('"""beta"""')
 
-    class DummyGrapher:
-        root = tmp_path
-
-        def get_synergy_cluster(self, module_name: str, threshold: float):
-            return {"a", "b"}
-
-    monkeypatch.setattr(intent_db, "ModuleSynergyGrapher", lambda: DummyGrapher())
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (data_dir / "module_map.json").write_text(json.dumps({"a": 1, "b": 1}))
 
     LOCAL_TABLES.add("intent")
     router = init_db_router("intent", str(tmp_path / "intent.db"), str(tmp_path / "intent.db"))
@@ -38,13 +36,30 @@ def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
     )
 
     class DummyRetriever:
+        def __init__(self):
+            self.items = []
+
         def register_db(self, *args, **kwargs):
             pass
 
-    clusterer = ic.IntentClusterer(intent_db=db, retriever=DummyRetriever())
-    clusterer.index_modules([tmp_path / "a.py", tmp_path / "b.py"])
-    db.index_synergy_cluster("a", 0.5)
+        def add_vector(self, vector, metadata):
+            self.items.append({"vector": list(vector), "metadata": dict(metadata)})
 
-    res = clusterer.find_clusters_related_to("alpha beta", top_k=1)
-    assert res and res[0]["path"].startswith("cluster:a")
-    assert res[0]["origin"] == "cluster"
+        def search(self, vector, top_k=10):
+            return self.items
+
+    clusterer = ic.IntentClusterer(intent_db=db, retriever=DummyRetriever())
+    clusterer.index_repository(tmp_path)
+
+    res = clusterer.find_clusters_related_to("alpha beta", top_k=5)
+    assert res and res[0]["origin"] == "cluster"
+    members = {str(tmp_path / "a.py"), str(tmp_path / "b.py")}
+    assert set(res[0]["members"]) == members
+    assert res[0]["intent_text"]
+    row = clusterer.conn.execute(
+        "SELECT metadata FROM intent_embeddings WHERE module_path = ?",
+        (res[0]["path"],),
+    ).fetchone()
+    meta = json.loads(row[0])
+    assert meta.get("intent_text")
+    assert set(meta.get("members", [])) == members
