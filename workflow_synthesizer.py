@@ -267,8 +267,9 @@ class WorkflowSynthesizer:
         list[WorkflowStep]
             Ordered steps where all required inputs for a step are produced by
             earlier steps.  If a dependency cycle is detected a ``ValueError``
-            is raised.  Missing producers for required inputs are also reported
-            via ``ValueError``.
+            is raised.  Missing producers for required inputs are accumulated
+            per module and reported via the ``unresolved`` attribute of the
+            returned :class:`WorkflowStep` objects.
         """
 
         from graphlib import CycleError, TopologicalSorter
@@ -299,30 +300,35 @@ class WorkflowSynthesizer:
                 best = sorted(candidates)[0]
             return best
 
-        # Map produced values/files/globals -> modules
-        produced_by_name: Dict[str, Set[str]] = {}
+        # Map produced values by category -> modules
+        produced_globals: Dict[str, Set[str]] = {}
+        produced_files: Dict[str, Set[str]] = {}
         produced_by_type: Dict[str, Set[str]] = {}
+        func_args: Dict[str, Set[str]] = {}
         for mod in modules:
             name = mod.name or getattr(mod, "module", "")
             if not name:
                 raise ValueError("ModuleSignature missing name attribute")
 
-            outputs = (
-                set(mod.files_written)
-                | set(mod.globals)
-                | set(getattr(mod, "outputs", []))
-            )
-            for out in outputs:
-                produced_by_name.setdefault(out, set()).add(name)
-
+            args: Set[str] = set()
             for fn in mod.functions.values():
+                args.update(fn.get("args", []))
                 ret = fn.get("returns")
                 if ret:
                     produced_by_type.setdefault(ret, set()).add(name)
+            func_args[name] = args
+
+            globals_out = set(mod.globals) | set(getattr(mod, "outputs", []))
+            globals_out -= args
+            for g in globals_out:
+                produced_globals.setdefault(g, set()).add(name)
+
+            for f in mod.files_written:
+                produced_files.setdefault(f, set()).add(name)
 
         # Build dependency mapping for topological sort
         deps: Dict[str, Set[str]] = {}
-        missing: Dict[str, Set[str]] = {}
+        unresolved: Dict[str, Set[str]] = {}
         annotations_cache: Dict[str, Dict[str, str]] = {
             mod.name: {
                 k: v
@@ -334,14 +340,18 @@ class WorkflowSynthesizer:
 
         for mod in modules:
             name = mod.name
-            required: Set[str] = set(mod.files_read) | set(mod.globals)
+            required_args: Set[str] = set()
             for fn in mod.functions.values():
-                required.update(fn.get("args", []))
+                required_args.update(fn.get("args", []))
+            required_files: Set[str] = set(mod.files_read)
+            required_globals: Set[str] = set(mod.globals)
+
             dependencies: Set[str] = set()
 
-            for item in required:
+            # function args
+            for item in required_args:
                 matched = False
-                producers = produced_by_name.get(item)
+                producers = produced_globals.get(item)
                 if producers:
                     producer = _select_best(name, producers)
                     if producer != name:
@@ -355,13 +365,29 @@ class WorkflowSynthesizer:
                             dependencies.add(producer)
                         matched = True
                 if not matched:
-                    missing.setdefault(name, set()).add(item)
+                    unresolved.setdefault(name, set()).add(item)
+
+            # file dependencies
+            for item in required_files:
+                producers = produced_files.get(item)
+                if producers:
+                    producer = _select_best(name, producers)
+                    if producer != name:
+                        dependencies.add(producer)
+                else:
+                    unresolved.setdefault(name, set()).add(item)
+
+            # globals
+            for item in required_globals:
+                producers = produced_globals.get(item)
+                if producers:
+                    producer = _select_best(name, producers)
+                    if producer != name:
+                        dependencies.add(producer)
+                else:
+                    unresolved.setdefault(name, set()).add(item)
 
             deps[name] = dependencies
-
-        if missing:
-            problems = ", ".join(f"{m}: {sorted(v)}" for m, v in sorted(missing.items()))
-            raise ValueError(f"Unresolved dependencies: {problems}")
 
         sorter = TopologicalSorter(deps)
         try:
@@ -375,15 +401,15 @@ class WorkflowSynthesizer:
             inputs: Set[str] = set(mod.files_read) | set(mod.globals)
             for fn in mod.functions.values():
                 inputs.update(fn.get("args", []))
-            outputs = (
-                set(mod.files_written)
-                | set(mod.globals)
-                | set(getattr(mod, "outputs", []))
-            )
+            outputs = set(mod.files_written)
+            globals_out = set(mod.globals) | set(getattr(mod, "outputs", []))
+            globals_out -= func_args.get(name, set())
+            outputs |= globals_out
             step = WorkflowStep(
                 module=name,
                 inputs=sorted(inputs),
                 outputs=sorted(outputs),
+                unresolved=sorted(unresolved.get(name, set())),
             )
             steps.append(step)
 
