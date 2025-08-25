@@ -17,6 +17,7 @@ def _fake(text: str, model=None) -> list[float]:
 @pytest.fixture(autouse=True)
 def patch_embed(monkeypatch):
     monkeypatch.setattr(edm, "governed_embed", _fake)
+    monkeypatch.setattr(ic, "governed_embed", _fake)
 
 
 def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
@@ -63,3 +64,48 @@ def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
     meta = json.loads(row[0])
     assert meta.get("intent_text")
     assert set(meta.get("members", [])) == members
+
+
+def test_query_falls_back_to_cluster_vectors(tmp_path: Path):
+    (tmp_path / "a.py").write_text('"""alpha"""')
+    (tmp_path / "b.py").write_text('"""beta"""')
+
+    LOCAL_TABLES.add("intent")
+    router = init_db_router("intent", str(tmp_path / "intent.db"), str(tmp_path / "intent.db"))
+    db = intent_db.IntentDB(
+        path=tmp_path / "intent.db",
+        vector_index_path=tmp_path / "intent.index",
+        router=router,
+    )
+
+    class DummyRetriever:
+        def __init__(self):
+            self.items = []
+
+        def register_db(self, *args, **kwargs):
+            pass
+
+        def add_vector(self, vector, metadata):
+            if metadata.get("kind") == "cluster":
+                return
+            path = metadata.get("path")
+            for item in self.items:
+                if item["metadata"].get("path") == path:
+                    item["metadata"].update(metadata)
+                    item["vector"] = list(vector)
+                    return
+            self.items.append({"vector": list(vector), "metadata": dict(metadata)})
+
+        def search(self, vector, top_k=10):
+            return self.items[:1]
+
+    clusterer = ic.IntentClusterer(intent_db=db, retriever=DummyRetriever())
+    clusterer.index_modules([tmp_path / "a.py", tmp_path / "b.py"])
+    clusterer.cluster_intents(1)
+
+    matches = clusterer.query("beta", threshold=0.6)
+    assert matches and matches[0].path is None
+    assert matches[0].cluster_ids == [0]
+    text, vec = clusterer.get_cluster_intents(0)
+    assert "alpha" in text and "beta" in text
+    assert vec == [0.5, 0.5]

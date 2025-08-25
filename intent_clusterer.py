@@ -417,6 +417,21 @@ class IntentClusterer:
                 logger.warning(
                     "failed to update vector DB for cluster %s: %s", gid, exc
                 )
+            try:
+                persist_embedding(
+                    "intent",
+                    entry,
+                    mean,
+                    origin_db="intent",
+                    metadata={
+                        "type": "cluster",
+                        "cluster_id": int(gid),
+                        "members": sorted(members),
+                        "intent_text": text,
+                    },
+                )
+            except TypeError:  # pragma: no cover - backwards compatibility
+                persist_embedding("intent", entry, mean)
 
         try:
             self.db._rebuild_index()  # type: ignore[attr-defined]
@@ -598,11 +613,12 @@ class IntentClusterer:
 
     # ------------------------------------------------------------------
     def get_cluster_intents(self, cluster_id: int) -> tuple[str, List[float]]:
-        """Return concatenated intent text and vector for ``cluster_id``.
+        """Return stored intent text and vector for ``cluster_id``.
 
-        All member module texts are gathered and concatenated into a single
-        string which is then embedded via :func:`governed_embed` to produce the
-        cluster vector.  Results are cached to avoid repeated embedding work.
+        Persisted cluster metadata is loaded from the ``intent_embeddings``
+        table or the vector DB.  When no stored vector is found the method falls
+        back to aggregating member module texts and embedding them.  Results are
+        cached to avoid repeated work.
         """
 
         cid = int(cluster_id)
@@ -611,46 +627,65 @@ class IntentClusterer:
             return cached
 
         entry = f"cluster:{cid}"
+        text = ""
+        vector: List[float] = []
         meta: Dict[str, Any] = {}
 
-        # Try to load persisted cluster metadata to obtain members or text
         try:
             row = self.conn.execute(
-                "SELECT metadata FROM intent_embeddings WHERE module_path = ?",
+                "SELECT vector, metadata FROM intent_embeddings WHERE module_path = ?",
                 (entry,),
             ).fetchone()
-            if row and row[0]:
-                meta = json.loads(row[0] or "{}")
         except Exception:
-            meta = {}
+            row = None
+        if row:
+            vec_blob, meta_json = row
+            if vec_blob:
+                try:
+                    vector = [float(x) for x in pickle.loads(vec_blob)]
+                except Exception:
+                    vector = []
+            if meta_json:
+                try:
+                    meta = json.loads(meta_json or "{}")
+                    text = str(meta.get("intent_text") or meta.get("text") or "")
+                except Exception:
+                    meta = {}
+
         if not meta:
             meta = getattr(self.db, "_metadata", {}).get(entry, {})
+            if meta and not text:
+                text = str(meta.get("intent_text") or meta.get("text") or "")
+            if meta and not vector:
+                vec = meta.get("vector")
+                if vec:
+                    vector = [float(x) for x in vec]
 
-        text = str(meta.get("intent_text") or meta.get("text") or "")
-        if not text:
-            members = meta.get("members") or [
-                path
-                for path, cids in self.clusters.items()
-                if cid in (cids if isinstance(cids, list) else [cids])
-            ]
-            texts: List[str] = []
-            for path in members:
-                rid = self.module_ids.get(path)
-                mod_meta = {}
-                if rid is not None:
-                    mod_meta = getattr(self.db, "_metadata", {}).get(str(rid), {})
-                mod_text = mod_meta.get("text") if mod_meta else None
-                if not mod_text:
-                    try:
-                        mod_text = extract_intent_text(Path(path))
-                    except Exception:
-                        mod_text = None
-                if mod_text:
-                    texts.append(mod_text)
-            text = "\n".join(texts)
+        if not vector:
+            if not text:
+                members = meta.get("members") or [
+                    path
+                    for path, cids in self.clusters.items()
+                    if cid in (cids if isinstance(cids, list) else [cids])
+                ]
+                texts: List[str] = []
+                for path in members:
+                    rid = self.module_ids.get(path)
+                    mod_meta = {}
+                    if rid is not None:
+                        mod_meta = getattr(self.db, "_metadata", {}).get(str(rid), {})
+                    mod_text = mod_meta.get("text") if mod_meta else None
+                    if not mod_text:
+                        try:
+                            mod_text = extract_intent_text(Path(path))
+                        except Exception:
+                            mod_text = None
+                    if mod_text:
+                        texts.append(mod_text)
+                text = "\n".join(texts)
+            vec = governed_embed(text) if text else []
+            vector = [float(x) for x in vec] if vec else []
 
-        vec = governed_embed(text) if text else []
-        vector = [float(x) for x in vec] if vec else []
         result = (text, vector)
         self._cluster_cache[cid] = result
         return result
