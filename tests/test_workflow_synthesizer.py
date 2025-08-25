@@ -77,7 +77,7 @@ def test_cluster_expansion_and_io_matching(tmp_path, monkeypatch):
     steps = result["steps"]
 
     assert [s["module"] for s in steps] == ["mod_a", "mod_b", "mod_c", "mod_d"]
-    assert steps[-1]["args"] == ["missing"]
+    assert steps[-1]["inputs"] == ["missing"]
     assert grapher.loaded == tmp_path / "graph.json"
 
 
@@ -118,6 +118,21 @@ def test_generated_json_schema(tmp_path, monkeypatch):
     spec_path = ws.save_workflow(workflows[0])
     saved = json.loads(spec_path.read_text())
     assert saved == spec
+
+    generated = list(Path("sandbox_data/generated_workflows").glob("*.workflow.json"))
+    assert generated
+    saved_spec = json.loads(generated[0].read_text())
+    assert "steps" in saved_spec
+
+
+def test_to_json_yaml_helpers():
+    workflow = [{"module": "m", "inputs": ["x"], "outputs": ["y"]}]
+    data = json.loads(ws.to_json(workflow))
+    assert data == {"steps": workflow}
+
+    yaml = pytest.importorskip("yaml")
+    again = yaml.safe_load(ws.to_yaml(workflow))
+    assert again == data
 
 
 def test_dependency_resolution(tmp_path, monkeypatch):

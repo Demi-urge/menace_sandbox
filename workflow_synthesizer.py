@@ -623,7 +623,7 @@ class WorkflowSynthesizer:
             if overrides and mod in overrides:
                 unresolved = [i for i in unresolved if i not in overrides[mod]]
             workflow.append(
-                {"module": mod, "args": unresolved, "provides": sorted(outputs)}
+                {"module": mod, "inputs": unresolved, "outputs": sorted(outputs)}
             )
             provided.update(outputs)
 
@@ -810,13 +810,21 @@ class WorkflowSynthesizer:
         ranked = sorted(zip(workflows, scores), key=lambda x: x[1], reverse=True)
         top = [wf for wf, _ in ranked[:limit]]
         self.generated_workflows = top
+
+        # Persist each candidate workflow for inspection
+        out_dir = Path("sandbox_data/generated_workflows")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for idx, wf in enumerate(top):
+            name = wf[0]["module"].replace(".", "_") if wf else f"workflow_{idx}"
+            path = out_dir / f"{name}_{idx}.workflow.json"
+            path.write_text(to_json(wf), encoding="utf-8")
+
         return top
 
     # ------------------------------------------------------------------
     def to_dict(self) -> Dict[str, Any]:
         """Return a JSON‑serialisable representation of generated workflows."""
-
-        return {"workflows": self.generated_workflows}
+        return {"workflows": [workflow_to_dict(wf) for wf in self.generated_workflows]}
 
     # ------------------------------------------------------------------
     def save(self, path: Path | str | None = None) -> Path:
@@ -858,6 +866,39 @@ class WorkflowSynthesizer:
             pass
 
         return json_path
+
+
+# ---------------------------------------------------------------------------
+def workflow_to_dict(workflow: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return ``workflow`` in the simplified serialisable format."""
+
+    return {
+        "steps": [
+            {
+                "module": step.get("module", ""),
+                "inputs": step.get("inputs") or step.get("args", []),
+                "outputs": step.get("outputs") or step.get("provides", []),
+            }
+            for step in workflow
+        ]
+    }
+
+
+def to_json(workflow: List[Dict[str, Any]]) -> str:
+    """Serialize ``workflow`` to a JSON string."""
+
+    return json.dumps(workflow_to_dict(workflow), indent=2)
+
+
+def to_yaml(workflow: List[Dict[str, Any]]) -> str:
+    """Serialize ``workflow`` to a YAML string."""
+
+    try:  # pragma: no cover - YAML optional
+        import yaml  # type: ignore
+
+        return yaml.safe_dump(workflow_to_dict(workflow), sort_keys=False)  # type: ignore[arg-type]
+    except Exception:
+        return to_json(workflow)
 
 
 # ---------------------------------------------------------------------------
@@ -949,6 +990,8 @@ __all__ = [
     "ModuleIOAnalyzer",
     "WorkflowSynthesizer",
     "inspect_module",
+    "to_json",
+    "to_yaml",
     "to_workflow_spec",
     "save_workflow",
     "main",
