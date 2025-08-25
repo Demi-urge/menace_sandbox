@@ -61,7 +61,6 @@ except Exception:
         generate_patch = None  # type: ignore
 
 from governed_embeddings import governed_embed, get_embedder
-from .codex_db_helpers import aggregate_samples
 
 # Backwards compatibility with legacy imports
 ErrorType = ErrorCategory
@@ -624,31 +623,48 @@ class ErrorLogger:
     ) -> list[TelemetryEvent]:
         """Derive and record fix suggestions for metric bottlenecks.
 
-        Training samples are pulled via :func:`codex_db_helpers.aggregate_samples`
+        Training examples are pulled via :func:`codex_db_helpers.aggregate_examples`
+        and discrepancy samples via :func:`codex_db_helpers.fetch_discrepancies`
         to enrich Codex prompts.
         """
 
         suggestions = propose_fix(metrics, profile)
         events: list[TelemetryEvent] = []
 
-        # Gather training samples to enrich Codex prompts
-        try:
-            samples = aggregate_samples(
-                sources=[
-                    "enhancement",
-                    "workflow_summary",
-                    "discrepancy",
-                    "evolution",
-                ],
-                limit_per_source=sample_limit,
-                sort_by=sample_sort_by,
-                with_vectors=with_vectors,
-                scope="all",
-            )
+        try:  # pragma: no cover - helper failures
+            from . import codex_db_helpers as cdh
         except Exception:  # pragma: no cover - helper failures
-            samples = []
+            cdh = None
+
+        samples = []
+        discrepancies = []
+        if cdh is not None:
+            try:
+                samples = cdh.aggregate_examples(
+                    order_by=sample_sort_by,
+                    limit=sample_limit,
+                    include_embeddings=with_vectors,
+                    sources=[
+                        "enhancements",
+                        "workflow_summaries",
+                        "discrepancies",
+                        "workflow_history",
+                    ],
+                )
+            except Exception:  # pragma: no cover - helper failures
+                samples = []
+            try:
+                discrepancies = cdh.fetch_discrepancies(
+                    order_by="confidence",
+                    limit=sample_limit,
+                )
+            except Exception:  # pragma: no cover - helper failures
+                discrepancies = []
 
         prompt_context = "\n".join(s.text for s in samples if getattr(s, "text", ""))
+        discrepancy_context = "\n".join(
+            d.text for d in discrepancies if getattr(d, "text", "")
+        )
 
         for module, hint in suggestions:
             payload = {
@@ -724,7 +740,9 @@ class ErrorLogger:
             else:
                 prompt = f"Fix bottleneck in {module or 'unknown module'}: {hint}"
                 if prompt_context:
-                    prompt += "\n\nTraining samples:\n" + prompt_context
+                    prompt += "\n\n### Training Examples\n" + prompt_context
+                if discrepancy_context:
+                    prompt += "\n\n### Discrepancy Examples\n" + discrepancy_context
                 self.logger.info("Codex prompt: %s", prompt)
 
             events.append(event)

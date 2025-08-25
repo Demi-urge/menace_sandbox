@@ -6,11 +6,10 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable
 
 import ast
 from difflib import SequenceMatcher
-import libcst as cst
 
 from .code_database import CodeDB
 from .chatgpt_enhancement_bot import (
@@ -102,9 +101,24 @@ class EnhancementBot:
         if not api_key:
             return ""
         openai.api_key = api_key
+
+        try:
+            from . import codex_db_helpers as cdh
+            examples = cdh.aggregate_examples(
+                order_by="confidence",
+                limit=3,
+            )
+        except Exception:  # pragma: no cover - helper failures
+            examples = []
+        example_context = "\n".join(
+            e.text for e in examples if getattr(e, "text", "")
+        )
+
         prompt = (
             "Summarize the code change.\nBefore:\n" + before + "\nAfter:\n" + after
         )
+        if example_context:
+            prompt += "\n\n### Training Examples\n" + example_context
         messages = [{"role": "user", "content": prompt}]
         if hint:
             messages = inject_prefix(
