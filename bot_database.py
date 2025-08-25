@@ -26,6 +26,7 @@ except Exception:  # pragma: no cover - optional dependency
 from db_router import GLOBAL_ROUTER as router
 from .scope_utils import Scope, build_scope_clause, apply_scope
 from dedup_utils import insert_if_unique, hash_fields
+from db_dedup import insert_if_unique as insert_if_unique_menace
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .deployment_bot import DeploymentDB
@@ -64,6 +65,15 @@ _BOT_HASH_FIELDS = [
     "tasks",
     "dependencies",
     "resources",
+]
+
+# Columns in the Menace ``bots`` table used to compute the deduplication hash
+_MENACE_BOT_HASH_FIELDS = [
+    "bot_name",
+    "bot_type",
+    "assigned_task",
+    "dependencies",
+    "resource_estimates",
 ]
 
 
@@ -618,30 +628,42 @@ class BotDB(EmbeddableDBMixin):
         mdb = self.menace_db
         bot_id = rec.bid
         menace_id = source_menace_id or self.router.menace_id
+        values = {
+            "bot_id": bot_id,
+            "bot_name": rec.name,
+            "bot_type": rec.type_,
+            "assigned_task": _serialize_list(rec.tasks),
+            "parent_bot_id": int(rec.parent_id) if str(rec.parent_id).isdigit() else None,
+            "dependencies": _serialize_list(rec.dependencies),
+            "resource_estimates": _safe_json_dumps(rec.resources),
+            "creation_date": rec.creation_date,
+            "last_modification_date": rec.last_modification_date,
+            "status": rec.status,
+            "version": rec.version,
+            "estimated_profit": rec.estimated_profit,
+            "source_menace_id": menace_id,
+        }
+        inserted_id = insert_if_unique_menace(
+            mdb.bots,
+            values,
+            _MENACE_BOT_HASH_FIELDS,
+            menace_id,
+            engine=mdb.engine,
+            logger=logger,
+        )
+        if inserted_id is None:
+            warnings.warn("menace bot already exists; skipping relationship inserts")
+            return
+
         with mdb.engine.begin() as conn:
-            conn.execute(
-                mdb.bots.insert().values(
-                    bot_id=bot_id,
-                    bot_name=rec.name,
-                    bot_type=rec.type_,
-                    assigned_task=_serialize_list(rec.tasks),
-                    parent_bot_id=int(rec.parent_id) if str(rec.parent_id).isdigit() else None,
-                    dependencies=_serialize_list(rec.dependencies),
-                    resource_estimates=_safe_json_dumps(rec.resources),
-                    creation_date=rec.creation_date,
-                    last_modification_date=rec.last_modification_date,
-                    status=rec.status,
-                    version=rec.version,
-                    estimated_profit=rec.estimated_profit,
-                    source_menace_id=menace_id,
-                )
-            )
             for mid in models:
                 row = conn.execute(
                     mdb.models.select().where(mdb.models.c.model_id == mid)
                 ).fetchone()
                 if row:
-                    conn.execute(mdb.bot_models.insert().values(bot_id=bot_id, model_id=mid))
+                    conn.execute(
+                        mdb.bot_models.insert().values(bot_id=bot_id, model_id=mid)
+                    )
                 else:
                     warnings.warn(f"invalid model_id {mid}")
             for wid in workflows:
@@ -649,17 +671,23 @@ class BotDB(EmbeddableDBMixin):
                     mdb.workflows.select().where(mdb.workflows.c.workflow_id == wid)
                 ).fetchone()
                 if row:
-                    conn.execute(mdb.bot_workflows.insert().values(bot_id=bot_id, workflow_id=wid))
+                    conn.execute(
+                        mdb.bot_workflows.insert().values(bot_id=bot_id, workflow_id=wid)
+                    )
                 else:
                     warnings.warn(f"invalid workflow_id {wid}")
             for enh in enhancements:
                 row = conn.execute(
-                    mdb.enhancements.select().where(mdb.enhancements.c.enhancement_id == enh)
+                    mdb.enhancements.select().where(
+                        mdb.enhancements.c.enhancement_id == enh
+                    )
                 ).fetchone()
                 if row:
                     conn.execute(
                         mdb.bot_enhancements.insert().values(
-                            source_menace_id=menace_id, bot_id=bot_id, enhancement_id=enh
+                            source_menace_id=menace_id,
+                            bot_id=bot_id,
+                            enhancement_id=enh,
                         )
                     )
                 else:
