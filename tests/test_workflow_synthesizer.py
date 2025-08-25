@@ -34,6 +34,22 @@ def _write_modules(tmp_path: Path) -> None:
     )
 
 
+def _write_io_module(tmp_path: Path) -> None:
+    """Create a module exercising IO and globals for analysis tests."""
+
+    (tmp_path / "mod_io.py").write_text(
+        "CONFIG = 'config.json'\n"
+        "GLOBAL_VAR = 0\n\n"
+        "def worker(arg1: str) -> str:\n"
+        "    global GLOBAL_VAR\n"
+        "    data = open('input.txt').read()\n"
+        "    GLOBAL_VAR = arg1\n"
+        "    with open('output.txt', 'w') as fh:\n"
+        "        fh.write(data)\n"
+        "    return data\n"
+    )
+
+
 class FakeGrapher:
     """Minimal synergy grapher used to control expansion."""
 
@@ -79,6 +95,19 @@ def test_cluster_expansion_and_io_matching(tmp_path, monkeypatch):
     assert [s["module"] for s in steps] == ["mod_a", "mod_b", "mod_c", "mod_d"]
     assert steps[-1]["inputs"] == ["missing"]
     assert grapher.loaded == tmp_path / "graph.json"
+
+
+def test_module_io_extraction(tmp_path, monkeypatch):
+    _write_io_module(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    info = ws.inspect_module("mod_io")
+    worker = info.functions["worker"]
+    assert worker["args"] == ["arg1"]
+    assert worker["returns"] == "str"
+    assert info.globals >= {"CONFIG", "GLOBAL_VAR"}
+    assert "input.txt" in info.files_read
+    assert "output.txt" in info.files_written
 
 
 def test_generated_json_schema(tmp_path, monkeypatch):
