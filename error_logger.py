@@ -42,6 +42,11 @@ try:
 except ImportError:  # pragma: no cover - package fallback
     from error_ontology import ErrorCategory, classify_exception  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from . import codex_db_helpers as cdh
+except Exception:  # pragma: no cover - optional dependency
+    cdh = None  # type: ignore
+
 try:
     from .knowledge_graph import KnowledgeGraph
 except ImportError:  # pragma: no cover - package fallback
@@ -618,12 +623,12 @@ class ErrorLogger:
         bot_id: str | None = None,
         *,
         sample_limit: int = 5,
-        sample_sort_by: str = "outcome_score",
+        sample_sort_by: str = "confidence",
         with_vectors: bool = True,
     ) -> list[TelemetryEvent]:
         """Derive and record fix suggestions for metric bottlenecks.
 
-        Training examples are pulled via :func:`codex_db_helpers.aggregate_examples`
+        Training examples are pulled via :func:`codex_db_helpers.aggregate_samples`
         and discrepancy samples via :func:`codex_db_helpers.fetch_discrepancies`
         to enrich Codex prompts.
         """
@@ -631,39 +636,33 @@ class ErrorLogger:
         suggestions = propose_fix(metrics, profile)
         events: list[TelemetryEvent] = []
 
-        try:  # pragma: no cover - helper failures
-            from . import codex_db_helpers as cdh
-        except Exception:  # pragma: no cover - helper failures
-            cdh = None
-
         samples = []
         discrepancies = []
         if cdh is not None:
             try:
-                samples = cdh.aggregate_examples(
-                    order_by=sample_sort_by,
+                samples = cdh.aggregate_samples(
+                    sort_by=sample_sort_by,
                     limit=sample_limit,
                     include_embeddings=with_vectors,
-                    sources=[
-                        "enhancements",
-                        "workflow_summaries",
-                        "discrepancies",
-                        "workflow_history",
-                    ],
+                    scope="all",
                 )
             except Exception:  # pragma: no cover - helper failures
                 samples = []
             try:
                 discrepancies = cdh.fetch_discrepancies(
-                    order_by="confidence",
+                    sort_by="confidence",
                     limit=sample_limit,
+                    include_embeddings=False,
+                    scope="all",
                 )
             except Exception:  # pragma: no cover - helper failures
                 discrepancies = []
 
-        prompt_context = "\n".join(s.text for s in samples if getattr(s, "text", ""))
+        prompt_context = "\n".join(
+            s.content for s in samples if getattr(s, "content", "")
+        )
         discrepancy_context = "\n".join(
-            d.text for d in discrepancies if getattr(d, "text", "")
+            d.content for d in discrepancies if getattr(d, "content", "")
         )
 
         for module, hint in suggestions:
