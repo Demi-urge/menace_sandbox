@@ -4,9 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, Iterable, List
+import logging
 
 from .neuroplasticity import PathwayDB
 from . import mutation_logger as MutationLogger
+try:  # pragma: no cover - allow flat imports
+    from .intent_clusterer import IntentClusterer
+    from .universal_retriever import UniversalRetriever
+except Exception:  # pragma: no cover - fallback for flat layout
+    from intent_clusterer import IntentClusterer  # type: ignore
+    from universal_retriever import UniversalRetriever  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -18,8 +27,13 @@ class WorkflowSuggestion:
 class WorkflowEvolutionBot:
     """Suggest workflow improvements from PathwayDB statistics."""
 
-    def __init__(self, pathway_db: PathwayDB | None = None) -> None:
+    def __init__(
+        self,
+        pathway_db: PathwayDB | None = None,
+        intent_clusterer: IntentClusterer | None = None,
+    ) -> None:
         self.db = pathway_db or PathwayDB()
+        self.intent_clusterer = intent_clusterer or IntentClusterer(UniversalRetriever())
         # Track mutation events for rearranged sequences so benchmarking
         # results can be fed back once available.
         self._rearranged_events: Dict[str, int] = {}
@@ -55,6 +69,25 @@ class WorkflowEvolutionBot:
         for suggestion in self.analyse(limit):
             parts = suggestion.sequence.split("-")
             seq = "-".join(reversed(parts))
+            if self.intent_clusterer:
+                try:
+                    matches = self.intent_clusterer.find_modules_related_to(seq)
+                    paths = [
+                        m.get("path")
+                        for m in matches
+                        if isinstance(m, dict) and m.get("path")
+                    ]
+                    clusters = [
+                        m.get("cluster_id")
+                        for m in matches
+                        if isinstance(m, dict) and m.get("cluster_id") is not None
+                    ]
+                    if paths:
+                        logger.info("intent matches for %s: %s", seq, paths)
+                    if clusters:
+                        logger.info("intent clusters for %s: %s", seq, clusters)
+                except Exception as exc:
+                    logger.error("intent cluster search failed: %s", exc)
             yield seq
             event_id = MutationLogger.log_mutation(
                 change=seq,
