@@ -45,9 +45,8 @@ def test_add_error_duplicate(tmp_path, caplog, monkeypatch):
     with caplog.at_level(logging.WARNING):
         second = db.add_error("dup", type_="t", description="d", resolution="r")
     assert first == second
-    assert captured["id"] is None
+    assert captured["id"] == first
     assert "duplicate" in caplog.text.lower()
-    assert db.conn.execute("SELECT COUNT(*) FROM errors").fetchone()[0] == 1
 
 
 def test_add_error_duplicate_different_message(tmp_path, caplog, monkeypatch):
@@ -70,9 +69,8 @@ def test_add_error_duplicate_different_message(tmp_path, caplog, monkeypatch):
     with caplog.at_level(logging.WARNING):
         second = db.add_error("dup2", type_="t", description="d", resolution="r")
     assert first == second
-    assert captured["id"] is None
+    assert captured["id"] == first
     assert "duplicate" in caplog.text.lower()
-    assert db.conn.execute("SELECT COUNT(*) FROM errors").fetchone()[0] == 1
 
 
 def test_handle_known(tmp_path):

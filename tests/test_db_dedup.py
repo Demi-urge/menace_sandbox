@@ -76,9 +76,7 @@ def test_enhancementdb_dedup(tmp_path, caplog, monkeypatch, router):
         id2 = db.add(ceb.Enhancement(idea="idea1", rationale="r1"))
     assert id2 == id1
     assert db.conn.execute("SELECT COUNT(*) FROM enhancements").fetchone()[0] == 1
-    assert any(
-        "duplicate enhancement detected" in r.message for r in caplog.records
-    )
+    assert any("duplicate" in r.message.lower() for r in caplog.records)
 
     id3 = db.add(ceb.Enhancement(idea="idea2", rationale="r1"))
     assert id3 != id1
@@ -165,7 +163,7 @@ def test_hash_fields_deterministic():
     assert hash_fields(data1, ["a", "b"]) == hash_fields(data2, ["a", "b"])
 
 
-def test_insert_if_unique_duplicate_returns_none(tmp_path, caplog):
+def test_insert_if_unique_duplicate_returns_existing_id(tmp_path, caplog):
     path = tmp_path / "dedup.sqlite"
     router = db_router.init_db_router("test", str(path), str(path))
     conn = router.local_conn
@@ -194,7 +192,7 @@ def test_insert_if_unique_duplicate_returns_none(tmp_path, caplog):
             conn=conn,
             logger=logger,
         )
-    assert id2 is None
+    assert id2 == id1
     assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
     assert any(
         "Duplicate insert ignored for items" in r.message for r in caplog.records

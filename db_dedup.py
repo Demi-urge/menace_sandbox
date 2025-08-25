@@ -62,7 +62,8 @@ def insert_if_unique(
     ``hash_fields`` specifies which keys from ``values`` are hashed using
     :func:`compute_content_hash` to detect duplicates.  The resulting
     ``content_hash`` is added to the values prior to insertion.  If the hash
-    already exists the insert is skipped and ``None`` is returned.
+    already exists the insert is skipped and the existing row's ID is
+    returned.
 
     Supply ``engine`` with a SQLAlchemy :class:`~sqlalchemy.Table` for SQL
     databases or ``conn`` with a table name for SQLite connections.
@@ -85,7 +86,13 @@ def insert_if_unique(
             logger.warning(
                 "Duplicate insert ignored for %s (menace_id=%s)", table.name, menace_id
             )
-            return None
+            from sqlalchemy import select  # type: ignore
+
+            with engine.begin() as eng_conn:
+                row = eng_conn.execute(
+                    select(table.c.id).where(table.c.content_hash == content_hash)
+                ).fetchone()
+            return row[0] if row else None
 
     if conn is not None:
         columns = ", ".join(values.keys())
@@ -100,6 +107,11 @@ def insert_if_unique(
             logger.warning(
                 "Duplicate insert ignored for %s (menace_id=%s)", table, menace_id
             )
-            return None
+            cur = conn.execute(
+                f"SELECT id FROM {table} WHERE content_hash=?",
+                (content_hash,),
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row else None
 
     raise TypeError("Either 'engine' or 'conn' must be provided")

@@ -42,7 +42,7 @@ from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from vector_service import EmbeddableDBMixin
 from .scope_utils import build_scope_clause, Scope, apply_scope
-from db_dedup import insert_if_unique, hash_fields as _hash_fields
+from db_dedup import insert_if_unique
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager
@@ -507,7 +507,6 @@ class ErrorDB(EmbeddableDBMixin):
             "ts": datetime.utcnow().isoformat(),
         }
         hash_fields = ["type", "description", "resolution"]
-        content_hash = _hash_fields(values, hash_fields)
         with self.router.get_connection("errors", "write") as conn:
             err_id = insert_if_unique(
                 "errors",
@@ -518,16 +517,6 @@ class ErrorDB(EmbeddableDBMixin):
                 logger=logger,
             )
             conn.commit()
-        if err_id is None:
-            row = self.conn.execute(
-                "SELECT id FROM errors WHERE content_hash=?", (content_hash,)
-            ).fetchone()
-            err_id = int(row[0]) if row else 0
-            logger.warning(
-                "Duplicate error detected for content_hash=%s; embeddings/events skipped",
-                content_hash,
-            )
-            return err_id
         try:
             self.add_embedding(
                 err_id, {"message": message}, kind="error", source_id=str(err_id)

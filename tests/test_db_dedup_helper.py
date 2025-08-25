@@ -19,7 +19,7 @@ def test_compute_content_hash_order_independent():
     assert compute_content_hash(data1) == compute_content_hash(data2)
 
 
-def test_insert_if_unique_duplicate_returns_none(caplog):
+def test_insert_if_unique_duplicate_returns_existing_id(caplog):
     engine = create_engine("sqlite:///:memory:")
     meta = MetaData()
     tbl = Table(
@@ -52,7 +52,7 @@ def test_insert_if_unique_duplicate_returns_none(caplog):
             engine=engine,
             logger=logger,
         )
-    assert id2 is None
+    assert id2 == id1
     with engine.begin() as conn:
         count = conn.execute(sa.select(sa.func.count()).select_from(tbl)).scalar()
     assert count == 1
