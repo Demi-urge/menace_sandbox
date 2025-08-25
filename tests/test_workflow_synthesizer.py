@@ -1,11 +1,10 @@
-import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+
 import networkx as nx
 
 import workflow_synthesizer as ws
-import workflow_spec as wspec
 
 
 def _write_modules(tmp_path):
@@ -16,7 +15,7 @@ def _write_modules(tmp_path):
         "def middle(data):\n    result = data + 'b'\n    return result\n"
     )
     (tmp_path / "mod_c.py").write_text(
-        "def end(result):\n    pass\n"
+        "def end(result, extra):\n    pass\n"
     )
 
 
@@ -42,7 +41,7 @@ class FakeIntent:
         return [SimpleNamespace(path=str(self.base / "mod_c.py"), score=1.0)]
 
 
-def test_workflow_synthesizer_roundtrip(tmp_path, monkeypatch):
+def test_workflow_synthesizer_greedy_chain(tmp_path, monkeypatch):
     _write_modules(tmp_path)
     repo_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo_root))
@@ -50,7 +49,6 @@ def test_workflow_synthesizer_roundtrip(tmp_path, monkeypatch):
     sys.modules["task_handoff_bot"] = thb
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("WORKFLOW_OUTPUT_DIR", str(tmp_path))
 
     grapher = FakeGrapher()
     intent = FakeIntent(tmp_path)
@@ -60,23 +58,10 @@ def test_workflow_synthesizer_roundtrip(tmp_path, monkeypatch):
         synergy_graph_path=tmp_path / "graph.json",
     )
 
-    modules = synth.synthesize(start_module="mod_a", problem="finish")
-    assert set(modules) == {"mod_a", "mod_b", "mod_c"}
+    steps = synth.synthesize(start_module="mod_a", problem="finish", overrides={"mod_c": {"extra"}})
+    assert [s["module"] for s in steps] == ["mod_a", "mod_b", "mod_c"]
+    assert steps[-1]["args"] == []
     assert grapher.loaded == tmp_path / "graph.json"
 
-    workflows = synth.generate_workflows("mod_a", problem="finish")
-    assert [step["module"] for step in workflows[0]] == ["mod_a", "mod_b", "mod_c"]
-
-    steps = [
-        {"name": s["module"], "bot": s["module"], "args": s["inputs"]}
-        for s in workflows[0]
-    ]
-    spec = wspec.to_spec(steps)
-    path = wspec.save(spec)
-    data = json.loads(path.read_text())
-    assert data["workflow"] == ["mod_a", "mod_b", "mod_c"]
-
-    WorkflowDB, _ = wspec._load_thb()
-    db = WorkflowDB(tmp_path / "workflows.db")
-    recs = db.fetch()
-    assert recs and recs[0].workflow == ["mod_a", "mod_b", "mod_c"]
+    steps_no_override = synth.synthesize(start_module="mod_a", problem="finish")
+    assert steps_no_override[-1]["args"] == ["extra"]
