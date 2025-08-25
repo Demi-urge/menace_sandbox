@@ -204,14 +204,9 @@ class EnhancementDB(EmbeddableDBMixin):
                         )
                     )
                 if "content_hash" not in cols:
-                    try:
-                        conn.execute(
-                            "ALTER TABLE enhancements ADD COLUMN content_hash TEXT UNIQUE"
-                        )
-                    except sqlite3.OperationalError:
-                        conn.execute(
-                            "ALTER TABLE enhancements ADD COLUMN content_hash TEXT"
-                        )
+                    conn.execute(
+                        "ALTER TABLE enhancements ADD COLUMN content_hash TEXT UNIQUE"
+                    )
                 idxs = [
                     r[1]
                     for r in conn.execute(
@@ -235,6 +230,7 @@ class EnhancementDB(EmbeddableDBMixin):
                         "idx_enhancements_content_hash ON enhancements(content_hash)"
                     )
                 )
+                conn.commit()
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS enhancement_models (

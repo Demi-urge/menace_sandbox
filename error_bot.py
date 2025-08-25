@@ -152,20 +152,16 @@ class ErrorDB(EmbeddableDBMixin):
                 "ALTER TABLE errors ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
             )
         if "content_hash" not in cols:
-            try:
-                self.conn.execute(
-                    "ALTER TABLE errors ADD COLUMN content_hash TEXT UNIQUE"
-                )
-            except sqlite3.OperationalError:
-                self.conn.execute(
-                    "ALTER TABLE errors ADD COLUMN content_hash TEXT"
-                )
+            self.conn.execute(
+                "ALTER TABLE errors ADD COLUMN content_hash TEXT UNIQUE"
+            )
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_errors_content_hash ON errors(content_hash)"
         )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_errors_source_menace_id ON errors(source_menace_id)"
         )
+        self.conn.commit()
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS error_model(error_id INTEGER, model_id INTEGER)"
         )
