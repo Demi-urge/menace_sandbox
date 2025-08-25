@@ -42,17 +42,28 @@ def _load_table(engine: Engine, name: str, cache: Dict[str, Table]) -> Table:
     return cache[name]
 
 
-def process_queue_file(path: Path, *, engine: Engine) -> None:
-    """Process queued operations from *path*.
+MAX_RETRIES = 3
 
-    Lines that fail to process are written back to the file for retry.
+
+def _log(event: str, **data: Any) -> None:
+    """Emit a structured JSON log entry."""
+
+    logger.info("%s", json.dumps({"event": event, **data}))
+
+
+def process_queue_file(path: Path, *, engine: Engine) -> None:
+    """Process queued operations from *path* with temporary file safety.
+
+    Lines that fail to process are written back for retry.  Records exceeding
+    ``MAX_RETRIES`` are moved to a ``.failed`` file for manual inspection.
     """
+
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    failed_path = path.with_suffix(".failed.jsonl")
     keep: list[str] = []
-    with path.open("r+", encoding="utf-8") as fh:
+    with path.open("r", encoding="utf-8") as fh:
         flock(fh.fileno(), LOCK_EX)
         lines = fh.readlines()
-        fh.seek(0)
-        fh.truncate(0)
         for line in lines:
             line = line.rstrip("\n")
             if not line:
@@ -66,7 +77,7 @@ def process_queue_file(path: Path, *, engine: Engine) -> None:
 
             if record.get("op") != "insert":
                 logger.warning("Unsupported operation %s", record.get("op"))
-                keep.append(line)
+                keep.append(json.dumps(record, sort_keys=True))
                 continue
 
             table = record.get("table")
@@ -76,14 +87,40 @@ def process_queue_file(path: Path, *, engine: Engine) -> None:
 
             try:
                 tbl = _load_table(engine, table, process_queue_file._tbl_cache)
-                insert_if_unique(tbl, data, hash_fields, menace_id, logger=logger, engine=engine)
-            except Exception:
-                logger.exception("Failed to insert queued record into %s", table)
-                keep.append(line)
+                insert_if_unique(
+                    tbl, data, hash_fields, menace_id, logger=logger, engine=engine
+                )
+                _log("commit", table=table, content_hash=record.get("content_hash"))
+            except Exception as exc:
+                fail_count = int(record.get("fail_count", 0)) + 1
+                record["fail_count"] = fail_count
+                if fail_count >= MAX_RETRIES:
+                    with failed_path.open("a", encoding="utf-8") as fail_fh:
+                        fail_fh.write(json.dumps(record, sort_keys=True))
+                        fail_fh.write("\n")
+                    _log(
+                        "rollback",
+                        table=table,
+                        content_hash=record.get("content_hash"),
+                        error=str(exc),
+                        action="moved_to_failed",
+                        fail_count=fail_count,
+                    )
+                else:
+                    keep.append(json.dumps(record, sort_keys=True))
+                    _log(
+                        "rollback",
+                        table=table,
+                        content_hash=record.get("content_hash"),
+                        error=str(exc),
+                        fail_count=fail_count,
+                    )
 
-        for line in keep:
-            fh.write(line)
-            fh.write("\n")
+        with temp_path.open("w", encoding="utf-8") as tmp_fh:
+            for line in keep:
+                tmp_fh.write(line)
+                tmp_fh.write("\n")
+        os.replace(temp_path, path)
         flock(fh.fileno(), LOCK_UN)
 
 
