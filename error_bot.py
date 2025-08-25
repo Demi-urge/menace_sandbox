@@ -31,6 +31,8 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
+_ERROR_HASH_FIELDS = ["type", "description", "resolution"]
+
 from .data_bot import MetricsDB, DataBot
 from .error_forecaster import ErrorForecaster
 from .error_logger import TelemetryEvent, ErrorLogger
@@ -41,7 +43,7 @@ from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from vector_service import EmbeddableDBMixin
 from .scope_utils import build_scope_clause, Scope, apply_scope
-from db_dedup import compute_content_hash, insert_if_unique
+from dedup_utils import insert_if_unique, hash_fields as _hash_fields
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager
@@ -125,7 +127,7 @@ class ErrorDB(EmbeddableDBMixin):
             """
             CREATE TABLE IF NOT EXISTS errors(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message TEXT UNIQUE,
+                message TEXT,
                 type TEXT,
                 description TEXT,
                 resolution TEXT,
@@ -133,7 +135,8 @@ class ErrorDB(EmbeddableDBMixin):
                 category TEXT,
                 cause TEXT,
                 frequency INTEGER,
-                source_menace_id TEXT NOT NULL DEFAULT ''
+                source_menace_id TEXT NOT NULL DEFAULT '',
+                content_hash TEXT UNIQUE
             )
             """
         )
@@ -503,37 +506,40 @@ class ErrorDB(EmbeddableDBMixin):
             "resolution": resolution,
             "ts": datetime.utcnow().isoformat(),
         }
-        hash_fields = ["message", "type", "description", "resolution"]
-        hash_payload = {k: values[k] for k in hash_fields}
-        content_hash = compute_content_hash(hash_payload)
+        content_hash = _hash_fields(values, _ERROR_HASH_FIELDS)
         with self.router.get_connection("errors", "write") as conn:
-            err_id, inserted = insert_if_unique(
-                conn, "errors", values, hash_fields, menace_id
+            err_id = insert_if_unique(
+                conn, "errors", values, _ERROR_HASH_FIELDS, menace_id, logger
             )
-        if inserted:
-            try:
-                self.add_embedding(
-                    err_id, {"message": message}, kind="error", source_id=str(err_id)
-                )
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.exception("embedding hook failed for %s: %s", err_id, exc)
-            self._publish(
-                "errors:new",
-                {
-                    "id": err_id,
-                    "message": message,
-                    "type": type_,
-                    "description": description or message,
-                    "resolution": resolution,
-                    "source_menace_id": menace_id,
-                },
-            )
-            self._publish("embedding:backfill", {"db": self.__class__.__name__})
-        else:
+            conn.commit()
+        if err_id is None:
+            row = self.conn.execute(
+                "SELECT id FROM errors WHERE content_hash=?", (content_hash,)
+            ).fetchone()
+            err_id = int(row[0]) if row else 0
             logger.warning(
                 "Duplicate error detected for content_hash=%s; embeddings/events skipped",
                 content_hash,
             )
+            return err_id
+        try:
+            self.add_embedding(
+                err_id, {"message": message}, kind="error", source_id=str(err_id)
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("embedding hook failed for %s: %s", err_id, exc)
+        self._publish(
+            "errors:new",
+            {
+                "id": err_id,
+                "message": message,
+                "type": type_,
+                "description": description or message,
+                "resolution": resolution,
+                "source_menace_id": menace_id,
+            },
+        )
+        self._publish("embedding:backfill", {"db": self.__class__.__name__})
         return err_id
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:

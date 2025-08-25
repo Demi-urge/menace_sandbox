@@ -42,7 +42,6 @@ TABLES: dict[str, list[str]] = {
         "description",
     ],
     "errors": [
-        "message",
         "type",
         "description",
         "resolution",
@@ -71,6 +70,9 @@ def upgrade() -> None:
         idx_name = f"idx_{table}_content_hash"
         if idx_name not in idxs:
             op.create_index(idx_name, table, ["content_hash"], unique=True)
+        if table == "errors":
+            with op.batch_alter_table("errors", recreate="always") as batch:
+                batch.alter_column("message", existing_type=sa.Text(), nullable=True, unique=False)
         pk_cols = inspector.get_pk_constraint(table)["constrained_columns"]
         if not pk_cols:
             continue
@@ -107,6 +109,9 @@ def downgrade() -> None:
         idxs = {i["name"] for i in inspector.get_indexes(table)}
         if idx_name in idxs:
             op.drop_index(idx_name, table_name=table)
+        if table == "errors":
+            with op.batch_alter_table("errors", recreate="always") as batch:
+                batch.alter_column("message", existing_type=sa.Text(), nullable=True, unique=True)
         cols = {c["name"] for c in inspector.get_columns(table)}
         if "content_hash" in cols:
             op.drop_column(table, "content_hash")
