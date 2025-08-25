@@ -294,7 +294,7 @@ class WorkflowDB(EmbeddableDBMixin):
     # --------------------------------------------------------------
     # insert/fetch
     def add(self, wf: WorkflowRecord, source_menace_id: str = "") -> int:
-        values = {
+        core_fields = {
             "workflow": ",".join(wf.workflow),
             "action_chains": ",".join(wf.action_chains),
             "argument_strings": ",".join(wf.argument_strings),
@@ -302,6 +302,9 @@ class WorkflowDB(EmbeddableDBMixin):
             "enhancements": ",".join(wf.enhancements),
             "title": wf.title,
             "description": wf.description,
+        }
+        values = {
+            **core_fields,
             "task_sequence": ",".join(wf.task_sequence),
             "tags": ",".join(wf.tags),
             "category": wf.category,
@@ -313,14 +316,7 @@ class WorkflowDB(EmbeddableDBMixin):
             "estimated_profit_per_bot": wf.estimated_profit_per_bot,
             "timestamp": wf.timestamp,
         }
-        hash_fields = [
-            "workflow",
-            "action_chains",
-            "argument_strings",
-            "title",
-            "description",
-            "task_sequence",
-        ]
+        hash_fields = list(core_fields.keys())
         with self.router.get_connection("workflows", "write") as conn:
             wf.wid, inserted = insert_if_unique(
                 conn, "workflows", values, hash_fields, source_menace_id
