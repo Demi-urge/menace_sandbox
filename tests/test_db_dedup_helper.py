@@ -40,7 +40,7 @@ def test_insert_if_unique_duplicate_returns_existing_id(caplog):
         meta,
         Column("id", Integer, primary_key=True),
         Column("name", Text),
-        Column("content_hash", Text, unique=True),
+        Column("content_hash", Text, unique=True, nullable=False),
     )
     meta.create_all(engine)
     logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def test_insert_if_unique_missing_field_sqlalchemy():
         meta,
         Column("id", Integer, primary_key=True),
         Column("name", Text),
-        Column("content_hash", Text, unique=True),
+        Column("content_hash", Text, unique=True, nullable=False),
     )
     meta.create_all(engine)
     logger = logging.getLogger(__name__)

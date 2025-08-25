@@ -133,7 +133,8 @@ class WorkflowDB(EmbeddableDBMixin):
                 performance_data TEXT,
                 estimated_profit_per_bot REAL,
                 timestamp TEXT,
-                source_menace_id TEXT
+                source_menace_id TEXT,
+                content_hash TEXT NOT NULL UNIQUE
             )
             """,
         )
@@ -151,7 +152,7 @@ class WorkflowDB(EmbeddableDBMixin):
             # SQLite cannot add a column with a UNIQUE constraint via ALTER TABLE.
             # Add the column first and rely on the index below for uniqueness.
             self.conn.execute(
-                "ALTER TABLE workflows ADD COLUMN content_hash TEXT"
+                "ALTER TABLE workflows ADD COLUMN content_hash TEXT NOT NULL"
             )
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS "

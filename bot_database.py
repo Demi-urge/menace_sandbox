@@ -167,7 +167,8 @@ class BotDB(EmbeddableDBMixin):
                 status TEXT,
                 version TEXT,
                 estimated_profit REAL,
-                source_menace_id TEXT NOT NULL
+                source_menace_id TEXT NOT NULL,
+                content_hash TEXT NOT NULL UNIQUE
             )
             """
         )
@@ -193,7 +194,7 @@ class BotDB(EmbeddableDBMixin):
             # directly via ALTER TABLE, so we add the column first and create
             # the uniqueness constraint via an explicit index below.
             self.conn.execute(
-                "ALTER TABLE bots ADD COLUMN content_hash TEXT"
+                "ALTER TABLE bots ADD COLUMN content_hash TEXT NOT NULL"
             )
         idxs = [r[1] for r in self.conn.execute("PRAGMA index_list('bots')").fetchall()]
         if "ix_bots_source_menace_id" in idxs:

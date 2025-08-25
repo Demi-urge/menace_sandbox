@@ -135,7 +135,7 @@ class ErrorDB(EmbeddableDBMixin):
                 cause TEXT,
                 frequency INTEGER,
                 source_menace_id TEXT NOT NULL DEFAULT '',
-                content_hash TEXT UNIQUE
+                content_hash TEXT NOT NULL UNIQUE
             )
             """
         )
@@ -152,7 +152,7 @@ class ErrorDB(EmbeddableDBMixin):
             )
         if "content_hash" not in cols:
             self.conn.execute(
-                "ALTER TABLE errors ADD COLUMN content_hash TEXT UNIQUE"
+                "ALTER TABLE errors ADD COLUMN content_hash TEXT NOT NULL"
             )
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_errors_content_hash ON errors(content_hash)"

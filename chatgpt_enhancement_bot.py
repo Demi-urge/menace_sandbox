@@ -174,7 +174,8 @@ class EnhancementDB(EmbeddableDBMixin):
                         category TEXT,
                         associated_bots TEXT,
                         triggered_by TEXT,
-                        source_menace_id TEXT NOT NULL
+                        source_menace_id TEXT NOT NULL,
+                        content_hash TEXT NOT NULL UNIQUE
                     )
                     """
                 )
@@ -208,7 +209,7 @@ class EnhancementDB(EmbeddableDBMixin):
                     # ALTER TABLE, so add the column and create a unique index
                     # separately below.
                     conn.execute(
-                        "ALTER TABLE enhancements ADD COLUMN content_hash TEXT"
+                        "ALTER TABLE enhancements ADD COLUMN content_hash TEXT NOT NULL"
                     )
                 idxs = [
                     r[1]
