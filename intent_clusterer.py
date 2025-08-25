@@ -725,6 +725,23 @@ class IntentClusterer:
         return None
 
     # ------------------------------------------------------------------
+    def cluster_label(self, cluster_id: int) -> str:
+        """Return a human‑readable label for ``cluster_id``.
+
+        Labels are stored in the cluster metadata when clusters are indexed.  If
+        a label was not persisted (for example when only the intent text is
+        available) the method derives one on the fly using
+        :func:`derive_cluster_label` and returns it.  The derived label is not
+        persisted but provides a best‑effort summary of the cluster's intent.
+        """
+
+        lbl = self._get_cluster_label(cluster_id)
+        if lbl is not None:
+            return lbl
+        text, _vec = self.get_cluster_intents(cluster_id)
+        return derive_cluster_label([text]) if text else ""
+
+    # ------------------------------------------------------------------
     def query(
         self,
         text: str,

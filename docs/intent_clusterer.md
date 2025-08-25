@@ -71,3 +71,21 @@ for m in matches:
 `query` yields `IntentMatch` objects with module paths, similarity scores,
 any related cluster identifiers and, for cluster entries, a concise
 ``label`` describing the cluster intent.
+
+## Cluster labels
+
+When synergy groups or `cluster_intents` are processed, the clusterer
+aggregates the intent text of all member modules and extracts the most
+informative keywords using a TF‑IDF weighting scheme.  These keywords are
+joined into a short label summarising the cluster's purpose.  Labels are
+persisted alongside other cluster metadata and exposed via the
+`cluster_label` helper:
+
+```python
+clusterer.index_repository(Path("/path/to/repo"))
+print(clusterer.cluster_label(1))  # -> "auth help" (for example)
+```
+
+Labels are also returned in the metadata of `find_clusters_related_to` and
+`query` results, enabling quick inspection of the cluster's theme without
+loading the full intent text.
