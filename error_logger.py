@@ -61,6 +61,7 @@ except Exception:
         generate_patch = None  # type: ignore
 
 from governed_embeddings import governed_embed, get_embedder
+from .codex_db_helpers import aggregate_training_samples
 
 # Backwards compatibility with legacy imports
 ErrorType = ErrorCategory
@@ -621,6 +622,30 @@ class ErrorLogger:
 
         suggestions = propose_fix(metrics, profile)
         events: list[TelemetryEvent] = []
+
+        # Gather training samples to enrich Codex prompts
+        try:
+            samples = aggregate_training_samples(
+                enhancement_db=GLOBAL_ROUTER.get_connection("enhancements"),
+                summary_db=GLOBAL_ROUTER.get_connection("workflow_summaries"),
+                discrepancy_db=GLOBAL_ROUTER.get_connection("discrepancies"),
+                workflow_db=GLOBAL_ROUTER.get_connection("workflow_history"),
+                sort_by="score",
+                limit=5,
+                with_embeddings=True,
+            )
+        except Exception:  # pragma: no cover - helper failures
+            samples = []
+
+        context_lines: list[str] = []
+        for sample in samples:
+            for key in ("summary", "message", "details"):
+                val = sample.get(key)
+                if val:
+                    context_lines.append(str(val))
+                    break
+        prompt_context = "\n".join(context_lines)
+
         for module, hint in suggestions:
             payload = {
                 "task_id": task_id,
@@ -694,6 +719,8 @@ class ErrorLogger:
                     )
             else:
                 prompt = f"Fix bottleneck in {module or 'unknown module'}: {hint}"
+                if prompt_context:
+                    prompt += "\n\nTraining samples:\n" + prompt_context
                 self.logger.info("Codex prompt: %s", prompt)
 
             events.append(event)
