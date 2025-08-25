@@ -48,7 +48,8 @@ def main() -> None:
         else:
             modules = [start]
     else:
-        modules = synth.synthesize(start_module=None, problem=start)
+        result = synth.synthesize(start)
+        modules = [step.get("module", "") for step in result.get("steps", [])]
 
     if not modules:
         print("No modules found")

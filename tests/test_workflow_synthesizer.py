@@ -72,7 +72,8 @@ def test_cluster_expansion_and_io_matching(tmp_path, monkeypatch):
         synergy_graph_path=tmp_path / "graph.json",
     )
 
-    steps = synth.synthesize(start_module="mod_a", problem="finalise")
+    result = synth.synthesize({"module": "mod_a", "problem": "finalise"})
+    steps = result["steps"]
 
     assert [s["module"] for s in steps] == ["mod_a", "mod_b", "mod_c", "mod_d"]
     assert steps[-1]["args"] == ["missing"]
