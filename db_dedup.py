@@ -29,15 +29,38 @@ if TYPE_CHECKING:  # pragma: no cover - type checking only
 __all__ = ["compute_content_hash", "hash_fields", "insert_if_unique"]
 
 
+def _sort_nested(value: Any) -> Any:
+    """Recursively sort lists and tuples within ``value``.
+
+    Dictionaries are left as-is since ``json.dumps`` with ``sort_keys=True``
+    will handle key ordering. Lists and tuples are normalised by sorting their
+    elements after recursively applying this function. Elements are sorted using
+    their JSON representation to provide a deterministic order even for nested
+    structures.
+    """
+
+    if isinstance(value, Mapping):
+        return {k: _sort_nested(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return sorted(
+            (_sort_nested(v) for v in value),
+            key=lambda x: json.dumps(x, sort_keys=True),
+        )
+    return value
+
+
 def compute_content_hash(data: Mapping[str, Any]) -> str:
     """Return a SHA256 hex digest for ``data``.
 
     The mapping is JSON encoded with keys sorted to ensure stable hashes for
-    logically equivalent inputs.
+    logically equivalent inputs. Lists and tuples contained within the mapping
+    are sorted recursively prior to encoding so that their ordering does not
+    affect the resulting hash.
     """
 
+    normalized = _sort_nested(data)
     return hashlib.sha256(
-        json.dumps(data, sort_keys=True).encode("utf-8")
+        json.dumps(normalized, sort_keys=True).encode("utf-8")
     ).hexdigest()
 
 

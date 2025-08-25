@@ -506,7 +506,7 @@ class ErrorDB(EmbeddableDBMixin):
             "resolution": resolution,
             "ts": datetime.utcnow().isoformat(),
         }
-        hash_fields = ["type", "description", "resolution"]
+        hash_fields = sorted(["type", "description", "resolution"])
         with self.router.get_connection("errors", "write") as conn:
             err_id = insert_if_unique(
                 "errors",
