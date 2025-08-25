@@ -14,7 +14,7 @@ import os
 from threading import Lock
 from typing import Mapping, Iterable, Any
 
-from fcntl_compat import flock, LOCK_EX, LOCK_UN
+from fcntl import flock, LOCK_EX, LOCK_UN
 
 # Default directory where queue files are stored.  Callers may override via the
 # ``MENACE_QUEUE_DIR`` environment variable.
@@ -61,13 +61,12 @@ def append_to_queue(
     base.mkdir(parents=True, exist_ok=True)
     file_path = base / f"{table_name}_queue.jsonl"
 
-    data = json.dumps(payload, ensure_ascii=False)
+    record = json.dumps(payload, ensure_ascii=False) + "\n"
 
     with _write_lock:
         with file_path.open("a", encoding="utf-8") as fh:
             flock(fh.fileno(), LOCK_EX)
-            fh.write(data)
-            fh.write("\n")
+            fh.write(record)
             flock(fh.fileno(), LOCK_UN)
 
 
