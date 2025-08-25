@@ -272,7 +272,7 @@ class IntentClusterer:
             meta = {
                 "members": sorted(members),
                 "kind": "cluster",
-                "cluster_id": int(gid),
+                "cluster_ids": [int(gid)],
                 "path": entry,
             }
             try:
@@ -303,6 +303,7 @@ class IntentClusterer:
                     "redacted": True,
                     "members": sorted(members),
                     "path": entry,
+                    "cluster_ids": [int(gid)],
                 }
                 self.db._rebuild_index()  # type: ignore[attr-defined]
                 self.db.save_index()  # type: ignore[attr-defined]
@@ -430,25 +431,53 @@ class IntentClusterer:
             self._index_clusters(groups)
 
     # ------------------------------------------------------------------
-    def cluster_intents(self, n_clusters: int) -> Dict[str, int]:
-        """Group indexed modules into ``n_clusters`` clusters."""
+    def cluster_intents(
+        self, n_clusters: int, *, threshold: float = 0.8
+    ) -> Dict[str, List[int]]:
+        """Group indexed modules into ``n_clusters`` clusters.
+
+        Unlike the previous hard assignment approach, modules may now belong to
+        multiple clusters.  Similarity between a module vector and each cluster
+        centroid is computed and all clusters whose cosine similarity exceeds
+        ``threshold`` are associated with the module.  At least one cluster is
+        always assigned (the closest centroid).
+        """
 
         if not self.vectors:
             return {}
         vectors = list(self.vectors.values())
         km = KMeans(n_clusters=n_clusters)
         km.fit(vectors)
-        labels = km.predict(vectors) if hasattr(km, "predict") else km.labels_
-        self.clusters = {p: int(l) for p, l in zip(self.vectors.keys(), labels)}
-        # Update retriever metadata with assigned cluster identifiers
-        if hasattr(self.retriever, "add_vector"):
-            for path, cid in self.clusters.items():
-                vec = self.vectors.get(path)
-                if vec:
-                    try:
-                        self.retriever.add_vector(vec, {"path": path, "cluster_id": int(cid)})
-                    except Exception:
-                        continue
+        centers = [list(c) for c in getattr(km, "cluster_centers_", [])]
+        # Pre-normalise centroids for cosine similarity computation
+        norm_centers = []
+        for c in centers:
+            cnorm = sqrt(sum(x * x for x in c)) or 1.0
+            norm_centers.append([x / cnorm for x in c])
+
+        self.clusters = {}
+        for path, vec in self.vectors.items():
+            vnorm = sqrt(sum(x * x for x in vec)) or 1.0
+            nvec = [x / vnorm for x in vec]
+            sims: List[int] = []
+            scores: List[float] = []
+            for idx, center in enumerate(norm_centers):
+                score = sum(a * b for a, b in zip(nvec, center))
+                if score >= threshold:
+                    sims.append(idx)
+                scores.append(score)
+            if not sims and scores:
+                # Always associate with the closest cluster
+                sims = [int(max(range(len(scores)), key=lambda i: scores[i]))]
+            self.clusters[path] = [int(cid) for cid in sims]
+            # Update retriever metadata with the assigned cluster identifiers
+            if hasattr(self.retriever, "add_vector"):
+                try:
+                    self.retriever.add_vector(
+                        vec, {"path": path, "cluster_ids": self.clusters[path]}
+                    )
+                except Exception:
+                    continue
         return dict(self.clusters)
 
     # ------------------------------------------------------------------
@@ -518,7 +547,11 @@ class IntentClusterer:
             return []
         norm = sqrt(sum(x * x for x in vec)) or 1.0
         vec = [x / norm for x in vec]
-        hits = self.retriever.search(vec, top_k=top_k) if hasattr(self.retriever, "search") else []
+        hits = (
+            self.retriever.search(vec, top_k=top_k)
+            if hasattr(self.retriever, "search")
+            else []
+        )
         results: List[IntentMatch] = []
         for item in hits:
             meta = item.get("metadata", {})
@@ -527,27 +560,44 @@ class IntentClusterer:
             target_vec = [x / tnorm for x in target_vec]
             sim = sum(a * b for a, b in zip(vec, target_vec))
             path = meta.get("path")
-            cid = meta.get("cluster_id")
             kind = meta.get("kind")
+            cids = meta.get("cluster_ids")
+            if cids is None:
+                cid = meta.get("cluster_id")
+                if cid is not None:
+                    cids = [cid]
             cluster_ids: List[int] = []
             if kind == "cluster":
                 if not include_clusters or sim < threshold:
                     continue
-                if cid is not None:
-                    cluster_ids = [int(cid)]
-                results.append(IntentMatch(path=None, similarity=sim, cluster_ids=cluster_ids))
+                if cids:
+                    cluster_ids = [int(c) for c in cids]
+                results.append(
+                    IntentMatch(path=None, similarity=sim, cluster_ids=cluster_ids)
+                )
                 continue
-            if sim < threshold and cid is not None:
-                _text, cvec = self.get_cluster_intents(int(cid))
-                if cvec:
-                    cnorm = sqrt(sum(x * x for x in cvec)) or 1.0
-                    cvec = [x / cnorm for x in cvec]
-                    sim = sum(a * b for a, b in zip(vec, cvec))
+            if sim < threshold and cids:
+                cluster_hits: List[tuple[int, float]] = []
+                best_sim = sim
+                for cid in cids:
+                    _text, cvec = self.get_cluster_intents(int(cid))
+                    if cvec:
+                        cnorm = sqrt(sum(x * x for x in cvec)) or 1.0
+                        cvec = [x / cnorm for x in cvec]
+                        c_sim = sum(a * b for a, b in zip(vec, cvec))
+                        if c_sim >= threshold:
+                            cluster_hits.append((int(cid), c_sim))
+                            if c_sim > best_sim:
+                                best_sim = c_sim
+                if cluster_hits:
+                    sim = best_sim
                     path = None
+                    if include_clusters:
+                        cluster_ids = [cid for cid, _ in cluster_hits]
             if sim < threshold:
                 continue
-            if include_clusters and cid is not None:
-                cluster_ids = [int(cid)]
+            if include_clusters and not cluster_ids and cids:
+                cluster_ids = [int(c) for c in cids]
             results.append(IntentMatch(path=path, similarity=sim, cluster_ids=cluster_ids))
         return results
 
@@ -579,6 +629,7 @@ class IntentClusterer:
                 path = meta.get("path")
                 members = meta.get("members")
                 origin = meta.get("kind") or meta.get("source_id") or path
+                cluster_ids = meta.get("cluster_ids")
                 target_vec: Sequence[float] = item.get("vector", [])
                 tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
                 target_vec = [x / tnorm for x in target_vec]
@@ -589,6 +640,8 @@ class IntentClusterer:
                         entry["path"] = path
                     if members:
                         entry["members"] = list(members)
+                    if cluster_ids:
+                        entry["cluster_ids"] = [int(c) for c in cluster_ids]
                     results.append(entry)
             if results:
                 return results[:top_k]
@@ -620,6 +673,7 @@ class IntentClusterer:
             if not path:
                 path = meta.get("path")
             members = meta.get("members")
+            cluster_ids = meta.get("cluster_ids")
             origin = meta.get("kind") or meta.get("source_id") or path
             if path or members:
                 score = 1.0 / (1.0 + float(dist))
@@ -628,6 +682,8 @@ class IntentClusterer:
                     entry["path"] = path
                 if members:
                     entry["members"] = list(members)
+                if cluster_ids:
+                    entry["cluster_ids"] = [int(c) for c in cluster_ids]
                 results.append(entry)
         return results[:top_k]
 

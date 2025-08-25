@@ -3,10 +3,12 @@
 `IntentClusterer` builds a lightweight semantic index of Python modules by
 collecting docstrings, comments and symbol names.  Embeddings are stored via a
 `UniversalRetriever`-compatible backend so other components can discover modules
-related to a natural language goal.  The clusterer underpins several parts of
-the sandbox self‑improvement loop, including the `self_improvement_engine` and
-`workflow_evolution_bot`.  The class can be imported either directly or via the
-package root:
+related to a natural language goal.  Modules are assigned to intent clusters
+using a soft‑clustering strategy so they may belong to multiple clusters when
+similarity to several centroids exceeds a configurable threshold.  The
+clusterer underpins several parts of the sandbox self‑improvement loop,
+including the `self_improvement_engine` and `workflow_evolution_bot`.  The class
+can be imported either directly or via the package root:
 
 ```python
 from menace import IntentClusterer
