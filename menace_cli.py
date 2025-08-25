@@ -37,6 +37,7 @@ from patch_provenance import (
 )
 from cache_utils import get_cached_chain, set_cached_chain, _get_cache
 from cache_utils import clear_cache, show_cache, cache_stats
+from workflow_synthesizer_cli import run as handle_workflow
 
 
 def _normalise_hits(hits, origin=None):
@@ -344,6 +345,20 @@ def main(argv: list[str] | None = None) -> int:
         "--create-migration", action="store_true", help="Create alembic migration"
     )
     p_newvec.set_defaults(func=handle_new_vector)
+
+    p_workflow = sub.add_parser(
+        "workflow", help="Generate workflows using WorkflowSynthesizer"
+    )
+    p_workflow.add_argument("start", help="Starting module name")
+    p_workflow.add_argument("--problem", help="Optional problem statement")
+    p_workflow.add_argument(
+        "--max-depth", type=int, dest="max_depth", help="Maximum traversal depth"
+    )
+    p_workflow.add_argument(
+        "--out", help="File or directory to save generated workflows"
+    )
+    p_workflow.set_defaults(func=handle_workflow)
+
     # allow plugins to register additional subcommands
     load_plugins(sub)
 
