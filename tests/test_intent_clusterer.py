@@ -99,3 +99,42 @@ def test_natural_language_query(indexed_clusterer):
     res2 = clusterer.find_modules_related_to("process payment", top_k=1)
     assert res2 and Path(res2[0]["path"]).name == "payment.py"
     assert res2[0]["origin"] == "module"
+
+
+def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
+    (tmp_path / "a.py").write_text('"""alpha"""')
+    (tmp_path / "b.py").write_text('"""beta"""')
+
+    def _fake(text: str, model=None) -> list[float]:
+        lower = text.lower()
+        return [float(lower.count("alpha")), float(lower.count("beta"))]
+
+    monkeypatch.setattr(edm, "governed_embed", _fake)
+
+    class DummyGrapher:
+        root = tmp_path
+
+        def get_synergy_cluster(self, module_name: str, threshold: float):
+            return {"a", "b"}
+
+    monkeypatch.setattr(intent_db, "ModuleSynergyGrapher", lambda: DummyGrapher())
+
+    LOCAL_TABLES.add("intent")
+    router = init_db_router("intent", str(tmp_path / "intent.db"), str(tmp_path / "intent.db"))
+    db = intent_db.IntentDB(
+        path=tmp_path / "intent.db",
+        vector_index_path=tmp_path / "intent.index",
+        router=router,
+    )
+
+    class DummyRetriever:
+        def register_db(self, *args, **kwargs):
+            pass
+
+    clusterer = ic.IntentClusterer(intent_db=db, retriever=DummyRetriever())
+    clusterer.index_modules([tmp_path / "a.py", tmp_path / "b.py"])
+    db.index_synergy_cluster("a", 0.5)
+
+    res = clusterer.find_modules_related_to("alpha beta", top_k=1)
+    assert res and res[0]["path"].startswith("cluster:a")
+    assert res[0]["origin"] == "cluster"
