@@ -90,8 +90,21 @@ def test_resolve_dependencies_ordering_and_unresolved(tmp_path, monkeypatch):
     assert sorted(order[1:]) == ["mod_b", "mod_c"]
 
     bad = [ws.inspect_module(m) for m in ["mod_a", "mod_d"]]
-    with pytest.raises(ValueError, match="mod_d"):
-        synth.resolve_dependencies(bad)
+    steps = synth.resolve_dependencies(bad)
+    unresolved = {s.module: s.unresolved for s in steps}
+    assert unresolved["mod_d"] == ["missing"]
+
+
+def test_resolve_dependencies_types_and_files(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    synth = ws.WorkflowSynthesizer()
+    mods = [ws.inspect_module(m) for m in ["mod_f", "mod_h", "mod_e", "mod_g"]]
+    steps = synth.resolve_dependencies(mods)
+    order = [s.module for s in steps]
+    assert order.index("mod_e") < order.index("mod_f")
+    assert order.index("mod_g") < order.index("mod_h")
 
 
 def test_generate_workflows_persist_and_rank(tmp_path, monkeypatch):
