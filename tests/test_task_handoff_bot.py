@@ -109,6 +109,7 @@ def test_workflowdb_duplicate(tmp_path, caplog, monkeypatch):
     caplog.clear()
     with caplog.at_level(logging.WARNING):
         second = db.add(thb.WorkflowRecord(workflow=["a"], title="T", description="d"))
-    assert first == second == captured["id"]
+    assert first == second
+    assert captured["id"] is None
     assert "duplicate" in caplog.text.lower()
     assert db.conn.execute("SELECT COUNT(*) FROM workflows").fetchone()[0] == 1
