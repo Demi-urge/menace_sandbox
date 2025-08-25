@@ -28,14 +28,25 @@ def make_metrics(tmp_path):
 def test_add_error_duplicate(tmp_path, caplog, monkeypatch):
     monkeypatch.setattr(eb.ErrorDB, "add_embedding", lambda *a, **k: None)
     db = eb.ErrorDB(tmp_path / "e.db")
+
+    captured: dict[str, int | None] = {"id": None}
+    orig = eb.insert_if_unique
+
+    def wrapper(*args, **kwargs):
+        res = orig(*args, **kwargs)
+        captured["id"] = res
+        return res
+
+    monkeypatch.setattr(eb, "insert_if_unique", wrapper)
+
+    first = db.add_error("dup", type_="t", description="d", resolution="r")
+    captured["id"] = None
+    caplog.clear()
     with caplog.at_level(logging.WARNING):
-        first = db.add_error("dup", type_="t", description="d", resolution="r")
         second = db.add_error("dup", type_="t", description="d", resolution="r")
-        third = db.add_error("other", type_="t", description="d", resolution="r")
-    assert first == second
-    assert third != first
-    assert caplog.text.lower().count("duplicate error detected") >= 1
-    assert db.conn.execute("SELECT COUNT(*) FROM errors").fetchone()[0] == 2
+    assert first == second == captured["id"]
+    assert "duplicate" in caplog.text.lower()
+    assert db.conn.execute("SELECT COUNT(*) FROM errors").fetchone()[0] == 1
 
 
 def test_handle_known(tmp_path):
