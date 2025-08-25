@@ -62,7 +62,7 @@ def fetch_enhancements(
     sort_by: str = "timestamp",
     limit: int = 100,
     include_embeddings: bool = False,
-    scope: str | Scope = Scope.ALL,
+    scope: Scope = Scope.ALL,
 ) -> List[TrainingSample]:
     """Return enhancement summaries from :class:`EnhancementDB`.
 
@@ -71,15 +71,11 @@ def fetch_enhancements(
         limit: Maximum number of rows to return.
         include_embeddings: When ``True``, attach vector embeddings where
             available.
-        scope: Menace scope for the query. Accepts :class:`Scope` values or
-            ``"local"``, ``"global"`` or ``"all"``. Defaults to
-            :attr:`Scope.ALL`.
+        scope: Menace scope for the query. Defaults to :attr:`Scope.ALL`.
     """
 
     db = EnhancementDB()
     menace_id = getattr(getattr(db, "router", None), "menace_id", "")
-    if isinstance(scope, str):
-        scope = Scope(scope)
     clause, params = build_scope_clause("enhancements", scope, menace_id)
     columns = {
         "confidence": "confidence",
@@ -122,7 +118,7 @@ def fetch_summaries(
     sort_by: str = "timestamp",
     limit: int = 100,
     include_embeddings: bool = False,
-    scope: str | Scope = Scope.ALL,
+    scope: Scope = Scope.ALL,
 ) -> List[TrainingSample]:
     """Return workflow summaries from :class:`WorkflowSummaryDB`.
 
@@ -131,15 +127,11 @@ def fetch_summaries(
         limit: Maximum number of rows to return.
         include_embeddings: When ``True``, attach vector embeddings where
             available.
-        scope: Menace scope for the query. Accepts :class:`Scope` values or
-            ``"local"``, ``"global"`` or ``"all"``. Defaults to
-            :attr:`Scope.ALL`.
+        scope: Menace scope for the query. Defaults to :attr:`Scope.ALL`.
     """
 
     db = WorkflowSummaryDB()
     menace_id = getattr(getattr(db, "router", None), "menace_id", "")
-    if isinstance(scope, str):
-        scope = Scope(scope)
     clause, params = build_scope_clause("workflow_summaries", scope, menace_id)
     order_col = _resolve_order(sort_by, {"timestamp": "timestamp"}, "workflow_id")
     sql = "SELECT workflow_id, summary, timestamp FROM workflow_summaries"
@@ -173,7 +165,7 @@ def fetch_discrepancies(
     sort_by: str = "timestamp",
     limit: int = 100,
     include_embeddings: bool = False,
-    scope: str | Scope = Scope.ALL,
+    scope: Scope = Scope.ALL,
 ) -> List[TrainingSample]:
     """Return discrepancy messages from :class:`DiscrepancyDB`.
 
@@ -182,15 +174,11 @@ def fetch_discrepancies(
         limit: Maximum number of rows to return.
         include_embeddings: When ``True``, attach vector embeddings where
             available.
-        scope: Menace scope for the query. Accepts :class:`Scope` values or
-            ``"local"``, ``"global"`` or ``"all"``. Defaults to
-            :attr:`Scope.ALL`.
+        scope: Menace scope for the query. Defaults to :attr:`Scope.ALL`.
     """
 
     db = DiscrepancyDB()
     menace_id = getattr(getattr(db, "router", None), "menace_id", "")
-    if isinstance(scope, str):
-        scope = Scope(scope)
     clause, params = build_scope_clause("discrepancies", scope, menace_id)
     columns = {
         "confidence": "confidence",
@@ -233,7 +221,7 @@ def fetch_workflows(
     sort_by: str = "timestamp",
     limit: int = 100,
     include_embeddings: bool = False,
-    scope: str | Scope = Scope.ALL,
+    scope: Scope = Scope.ALL,
 ) -> List[TrainingSample]:
     """Return stored workflows from :class:`task_handoff_bot.WorkflowDB`.
 
@@ -242,15 +230,11 @@ def fetch_workflows(
         limit: Maximum number of rows to return.
         include_embeddings: When ``True``, attach vector embeddings where
             available.
-        scope: Menace scope for the query. Accepts :class:`Scope` values or
-            ``"local"``, ``"global"`` or ``"all"``. Defaults to
-            :attr:`Scope.ALL`.
+        scope: Menace scope for the query. Defaults to :attr:`Scope.ALL`.
     """
 
     db = TaskWorkflowDB()
     menace_id = getattr(getattr(db, "router", None), "menace_id", "")
-    if isinstance(scope, str):
-        scope = Scope(scope)
     clause, params = build_scope_clause("workflows", scope, menace_id)
     columns = {"timestamp": "timestamp"}
     order_col = _resolve_order(sort_by, columns, "id")
@@ -284,7 +268,7 @@ def aggregate_samples(
     sort_by: str = "timestamp",
     limit: int = 100,
     include_embeddings: bool = False,
-    scope: str | Scope = Scope.ALL,
+    scope: Scope = Scope.ALL,
 ) -> List[TrainingSample]:
     """Return combined samples from all data sources.
 
@@ -293,13 +277,10 @@ def aggregate_samples(
         limit: Maximum number of rows to return.
         include_embeddings: When ``True``, attach vector embeddings where
             available.
-        scope: Menace scope forwarded to each fetcher. Accepts :class:`Scope`
-            values or ``"local"``, ``"global"`` or ``"all"``. Defaults to
+        scope: Menace scope forwarded to each fetcher. Defaults to
             :attr:`Scope.ALL`.
     """
 
-    if isinstance(scope, str):
-        scope = Scope(scope)
     fetchers = [
         ("fetch_enhancements", fetch_enhancements),
         ("fetch_summaries", fetch_summaries),

@@ -190,13 +190,14 @@ Each helper supports:
 - `sort_by` – one of `"confidence"`, `"outcome_score"` or `"timestamp"`.
 - `limit` – maximum number of records to return.
 - `include_embeddings` – attach vector embeddings when available.
+- `scope` – restrict to `Scope.LOCAL`, `Scope.GLOBAL` or `Scope.ALL` (default).
 
 All queries run fleetwide by applying `Scope.ALL` via `build_scope_clause`.
 
 ```python
-from codex_db_helpers import aggregate_samples
+from codex_db_helpers import aggregate_samples, Scope
 
-samples = aggregate_samples(sort_by="timestamp", limit=20)
+samples = aggregate_samples(sort_by="timestamp", limit=20, scope=Scope.ALL)
 prompt = "\n\n".join(s.content for s in samples)
 ```
 

@@ -34,6 +34,10 @@ class Scope(str, Enum):
 
 def build_scope_clause(table, scope, menace_id):
     assert isinstance(scope, Scope)
+    if scope is Scope.LOCAL:
+        return "source_menace_id=?", [menace_id]
+    if scope is Scope.GLOBAL:
+        return "source_menace_id IS NULL", []
     return "", []
 
 
@@ -157,15 +161,19 @@ def _setup_wf_db(tmp_path, monkeypatch, rows):
 
 def test_fetch_enhancements(monkeypatch, tmp_path):
     rows = [
-        (1, "a", 0.2, 0.5, "2023-01-01", "A"),
-        (2, "b", 0.8, 0.3, "2023-01-02", "B"),
+        (1, "a", 0.2, 0.5, "2023-01-01", "m0"),
+        (2, "b", 0.8, 0.3, "2023-01-02", "x"),
     ]
     _setup_enh_db(tmp_path, monkeypatch, rows)
-
     all_rows = helpers.fetch_enhancements(
-        sort_by="timestamp", limit=10, scope="local"
+        sort_by="timestamp", limit=10, scope=helpers.Scope.ALL
     )
     assert [s.content for s in all_rows] == ["b", "a"]
+
+    local_only = helpers.fetch_enhancements(
+        sort_by="timestamp", limit=10, scope=helpers.Scope.LOCAL
+    )
+    assert [s.content for s in local_only] == ["a"]
 
     top = helpers.fetch_enhancements(
         sort_by="confidence", limit=1, scope=helpers.Scope.ALL
@@ -173,42 +181,44 @@ def test_fetch_enhancements(monkeypatch, tmp_path):
     assert top[0].confidence == 0.8
 
     emb = helpers.fetch_enhancements(
-        include_embeddings=True, limit=1, scope="local"
+        include_embeddings=True, limit=1, scope=helpers.Scope.LOCAL
     )
     assert emb[0].embedding and len(emb[0].embedding) > 0
 
 
 def test_fetch_summaries(monkeypatch, tmp_path):
     rows = [
-        (1, "s1", "2023-01-01", "A"),
-        (2, "s2", "2023-01-02", "B"),
+        (1, "s1", "2023-01-01", "m1"),
+        (2, "s2", "2023-01-02", "x"),
     ]
     _setup_ws_db(tmp_path, monkeypatch, rows)
-
     all_rows = helpers.fetch_summaries(limit=10, scope=helpers.Scope.ALL)
     assert [s.content for s in all_rows] == ["s2", "s1"]
 
-    limited = helpers.fetch_summaries(limit=1, scope="local")
-    assert limited[0].content == "s2"
-    assert limited[0].timestamp == "2023-01-02"
+    local = helpers.fetch_summaries(limit=10, scope=helpers.Scope.LOCAL)
+    assert [s.content for s in local] == ["s1"]
 
     emb = helpers.fetch_summaries(
-        include_embeddings=True, limit=1, scope=helpers.Scope.ALL
+        include_embeddings=True, limit=1, scope=helpers.Scope.LOCAL
     )
     assert emb[0].embedding and len(emb[0].embedding) > 0
 
 
 def test_fetch_discrepancies(monkeypatch, tmp_path):
     rows = [
-        (1, "d1", "{}", 0.1, 0.9, "2023-01-01", "A"),
-        (2, "d2", "{}", 0.9, 0.1, "2023-01-02", "B"),
+        (1, "d1", "{}", 0.1, 0.9, "2023-01-01", "m2"),
+        (2, "d2", "{}", 0.9, 0.1, "2023-01-02", "x"),
     ]
     _setup_disc_db(tmp_path, monkeypatch, rows)
-
     all_rows = helpers.fetch_discrepancies(
-        sort_by="timestamp", limit=10, scope="local"
+        sort_by="timestamp", limit=10, scope=helpers.Scope.ALL
     )
     assert [s.content for s in all_rows] == ["d2", "d1"]
+
+    local = helpers.fetch_discrepancies(
+        sort_by="timestamp", limit=10, scope=helpers.Scope.LOCAL
+    )
+    assert [s.content for s in local] == ["d1"]
 
     top = helpers.fetch_discrepancies(
         sort_by="outcome_score", limit=1, scope=helpers.Scope.ALL
@@ -216,44 +226,76 @@ def test_fetch_discrepancies(monkeypatch, tmp_path):
     assert top[0].outcome_score == 0.9
 
     emb = helpers.fetch_discrepancies(
-        include_embeddings=True, limit=1, scope="local"
+        include_embeddings=True, limit=1, scope=helpers.Scope.LOCAL
     )
     assert emb[0].embedding and len(emb[0].embedding) > 0
 
 
 def test_fetch_workflows(monkeypatch, tmp_path):
     rows = [
-        (1, "w1", "2023-01-01", "A"),
-        (2, "w2", "2023-01-02", "B"),
+        (1, "w1", "2023-01-01", "m3"),
+        (2, "w2", "2023-01-02", "x"),
     ]
     _setup_wf_db(tmp_path, monkeypatch, rows)
-
     all_rows = helpers.fetch_workflows(
         sort_by="timestamp", limit=10, scope=helpers.Scope.ALL
     )
     assert [s.content for s in all_rows] == ["w2", "w1"]
 
+    local = helpers.fetch_workflows(
+        sort_by="timestamp", limit=10, scope=helpers.Scope.LOCAL
+    )
+    assert [s.content for s in local] == ["w1"]
+
     fallback = helpers.fetch_workflows(
-        sort_by="outcome_score", limit=2, scope="local"
+        sort_by="outcome_score", limit=2, scope=helpers.Scope.ALL
     )
     assert [s.content for s in fallback] == ["w2", "w1"]
 
     emb = helpers.fetch_workflows(
-        include_embeddings=True, limit=1, scope=helpers.Scope.ALL
+        include_embeddings=True, limit=1, scope=helpers.Scope.LOCAL
     )
     assert emb[0].embedding and len(emb[0].embedding) > 0
 
 
 def test_aggregate_samples(monkeypatch, tmp_path):
-    _setup_enh_db(tmp_path, monkeypatch, [(1, "a", 0.2, 0.5, "2023-01-02", "A")])
-    _setup_ws_db(tmp_path, monkeypatch, [(1, "s1", "2023-01-01", "A")])
-    _setup_disc_db(tmp_path, monkeypatch, [(1, "d1", "{}", 0.1, 0.9, "2023-01-03", "A")])
-    _setup_wf_db(tmp_path, monkeypatch, [(1, "w1", "2023-01-01", "A")])
+    _setup_enh_db(
+        tmp_path,
+        monkeypatch,
+        [
+            (1, "a", 0.2, 0.5, "2023-01-02", "m0"),
+            (2, "ax", 0.3, 0.7, "2023-01-05", "x"),
+        ],
+    )
+    _setup_ws_db(
+        tmp_path,
+        monkeypatch,
+        [
+            (1, "s1", "2023-01-01", "m1"),
+            (2, "sX", "2023-01-06", "x"),
+        ],
+    )
+    _setup_disc_db(
+        tmp_path,
+        monkeypatch,
+        [
+            (1, "d1", "{}", 0.1, 0.9, "2023-01-03", "m2"),
+            (2, "dX", "{}", 0.2, 0.8, "2023-01-07", "x"),
+        ],
+    )
+    _setup_wf_db(
+        tmp_path,
+        monkeypatch,
+        [
+            (1, "w1", "2023-01-04", "m3"),
+            (2, "wX", "2023-01-08", "x"),
+        ],
+    )
 
     results = helpers.aggregate_samples(
-        sort_by="timestamp", limit=3, scope="local"
+        sort_by="timestamp", limit=10, scope=helpers.Scope.LOCAL
     )
-    assert [s.content for s in results] == ["d1", "a", "s1"]
+    assert [s.content for s in results] == ["w1", "d1", "a", "s1"]
 
 
 def test_bot_development_bot_uses_codex_samples(monkeypatch, tmp_path):
@@ -320,7 +362,7 @@ def test_aggregate_samples_warns_when_fetcher_fails(monkeypatch, caplog):
     monkeypatch.setattr(helpers, "fetch_workflows", ok_fetcher)
 
     caplog.set_level("WARNING", logger=helpers.__name__)
-    results = helpers.aggregate_samples(limit=5, scope="local")
+    results = helpers.aggregate_samples(limit=5, scope=helpers.Scope.LOCAL)
 
     assert len(results) == 3
     assert "fetch_summaries" in caplog.text

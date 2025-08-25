@@ -26,14 +26,14 @@ All helpers share the following keyword arguments:
 - `limit` – maximum number of rows to return (defaults to `100`).
 - `include_embeddings` – attach vector embeddings via `db.vector(id)` when
   available.
-- `scope` – menace query scope. Accepts `Scope` values or the strings
-  `"local"`, `"global"` or `"all"` (default).
+- `scope` – menace query scope. One of `Scope.LOCAL`, `Scope.GLOBAL` or
+  `Scope.ALL` (default).
 
 ## Scope
 
 Queries default to `Scope.ALL` via `build_scope_clause`, so records from every
 Menace instance participate in fleetwide Codex training. Passing
-`scope="local"` or `scope=Scope.GLOBAL` restricts the results to a single
+`scope=Scope.LOCAL` or `scope=Scope.GLOBAL` restricts the results to a single
 instance or global templates.
 
 ## Example
