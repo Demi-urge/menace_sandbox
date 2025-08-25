@@ -40,6 +40,7 @@ def test_query_falls_back_to_clusters(monkeypatch, tmp_path):
         "kind": "cluster",
         "cluster_ids": [5],
         "path": "cluster:5",
+        "text": "cluster helper",
     }
     clusterer.conn.execute(
         "REPLACE INTO intent_embeddings (module_path, vector, metadata) VALUES (?, ?, ?)",
