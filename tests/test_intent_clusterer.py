@@ -285,6 +285,64 @@ def test_cluster_lookup_uses_synergy_groups(
     assert summary == "auth helper summary"
 
 
+def test_cluster_label_updates_persisted_metadata(
+    clustered_clusterer: ic.IntentClusterer, monkeypatch
+) -> None:
+    """``cluster_label`` should persist derived labels and summaries."""
+
+    clusterer = clustered_clusterer
+    entry = "cluster:1"
+    # start with outdated metadata: label only
+    meta = {"label": "old", "intent_text": "auth helper"}
+    row = clusterer.conn.execute(
+        "SELECT vector FROM intent_embeddings WHERE module_path = ?",
+        (entry,),
+    ).fetchone()
+    vec = row[0] if row else None
+    clusterer.conn.execute(
+        "REPLACE INTO intent_embeddings (module_path, vector, metadata) VALUES (?, ?, ?)",
+        (entry, vec, json.dumps(meta)),
+    )
+    clusterer.conn.commit()
+    clusterer.db._metadata[entry] = dict(meta)  # type: ignore[attr-defined]
+    clusterer._cluster_cache.pop(1, None)
+    assert clusterer._get_cluster_summary(1) is None
+    t, _ = clusterer.get_cluster_intents(1)
+    assert t
+    clusterer._cluster_cache.pop(1, None)
+
+    monkeypatch.setattr(
+        ic,
+        "derive_cluster_label",
+        lambda *a, **k: ("new label", "new summary"),
+    )
+    rebuild_called = {"r": 0, "s": 0}
+    monkeypatch.setattr(
+        clusterer.db,
+        "_rebuild_index",
+        lambda: rebuild_called.__setitem__("r", rebuild_called["r"] + 1),
+    )
+    monkeypatch.setattr(
+        clusterer.db,
+        "save_index",
+        lambda: rebuild_called.__setitem__("s", rebuild_called["s"] + 1),
+    )
+
+    label, summary = clusterer.cluster_label(1)
+    assert label == "new label"
+    assert summary == "new summary"
+    row = clusterer.conn.execute(
+        "SELECT metadata FROM intent_embeddings WHERE module_path = ?",
+        (entry,),
+    ).fetchone()
+    data = json.loads(row[0])
+    assert data.get("label") == "new label"
+    assert data.get("summary") == "new summary"
+    assert clusterer.db._metadata[entry]["label"] == "new label"  # type: ignore[attr-defined]
+    assert clusterer.db._metadata[entry]["summary"] == "new summary"  # type: ignore[attr-defined]
+    assert rebuild_called["r"] == 1 and rebuild_called["s"] == 1
+
+
 def test_cluster_intents_adds_cluster_metadata(
     clustered_clusterer: ic.IntentClusterer, sample_repo: Path
 ) -> None:
