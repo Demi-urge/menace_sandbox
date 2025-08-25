@@ -512,8 +512,9 @@ class IntentClusterer:
         """Group indexed modules into ``n_clusters`` clusters.
 
         Unlike the previous hard assignment approach, modules may now belong to
-        multiple clusters.  Similarity between a module vector and each cluster
-        centroid is computed and all clusters whose cosine similarity exceeds
+        multiple clusters.  For each module we compute the Euclidean distance to
+        every cluster centroid and convert it to a similarity score using the
+        ``1 / (1 + distance)`` transform.  All clusters whose similarity exceeds
         ``threshold`` are associated with the module.  At least one cluster is
         always assigned (the closest centroid).
         """
@@ -524,20 +525,14 @@ class IntentClusterer:
         km = KMeans(n_clusters=n_clusters)
         km.fit(vectors)
         centers = [list(c) for c in getattr(km, "cluster_centers_", [])]
-        # Pre-normalise centroids for cosine similarity computation
-        norm_centers = []
-        for c in centers:
-            cnorm = sqrt(sum(x * x for x in c)) or 1.0
-            norm_centers.append([x / cnorm for x in c])
 
         self.clusters = {}
         for path, vec in self.vectors.items():
-            vnorm = sqrt(sum(x * x for x in vec)) or 1.0
-            nvec = [x / vnorm for x in vec]
             sims: List[int] = []
             scores: List[float] = []
-            for idx, center in enumerate(norm_centers):
-                score = sum(a * b for a, b in zip(nvec, center))
+            for idx, center in enumerate(centers):
+                dist = sqrt(sum((a - b) * (a - b) for a, b in zip(vec, center)))
+                score = 1.0 / (1.0 + dist)
                 if score >= threshold:
                     sims.append(idx)
                 scores.append(score)
@@ -725,6 +720,10 @@ class IntentClusterer:
                 members = meta.get("members")
                 origin = meta.get("kind") or meta.get("source_id") or path
                 cluster_ids = meta.get("cluster_ids")
+                if cluster_ids is None:
+                    cid = meta.get("cluster_id")
+                    if cid is not None:
+                        cluster_ids = [cid]
                 label = meta.get("label")
                 target_vec: Sequence[float] = item.get("vector", [])
                 tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
@@ -772,6 +771,10 @@ class IntentClusterer:
                 path = meta.get("path")
             members = meta.get("members")
             cluster_ids = meta.get("cluster_ids")
+            if cluster_ids is None:
+                cid = meta.get("cluster_id")
+                if cid is not None:
+                    cluster_ids = [cid]
             label = meta.get("label")
             origin = meta.get("kind") or meta.get("source_id") or path
             if path or members:
