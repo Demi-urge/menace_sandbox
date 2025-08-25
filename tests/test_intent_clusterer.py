@@ -25,6 +25,7 @@ import intent_clusterer as ic  # noqa: E402
 import intent_db  # noqa: E402
 import intent_vectorizer as iv  # noqa: E402
 import json  # noqa: E402
+import pickle  # noqa: E402
 import pytest  # noqa: E402
 from db_router import LOCAL_TABLES, init_db_router  # noqa: E402
 
@@ -352,6 +353,53 @@ def test_index_repository_updates_cluster_membership(
     clusterer.index_repository(sample_repo)
     assert set(members(1)) == {auth}
     assert set(members(2)) == {pay, helper}
+
+
+def _fetch_entry(clusterer: ic.IntentClusterer, path: Path) -> tuple[list, dict]:
+    row = clusterer.conn.execute(
+        "SELECT vector, metadata FROM intent_embeddings WHERE module_path = ?",
+        (str(path),),
+    ).fetchone()
+    vec = pickle.loads(row[0]) if row and row[0] else []
+    meta = json.loads(row[1]) if row and row[1] else {}
+    return vec, meta
+
+
+def test_incremental_update_and_prune(
+    clusterer: ic.IntentClusterer, sample_repo: Path
+) -> None:
+    clusterer.index_repository(sample_repo)
+
+    auth_path = sample_repo / "auth.py"
+    helper_path = sample_repo / "helper.py"
+    pay_path = sample_repo / "payment.py"
+
+    auth_vec1, auth_meta1 = _fetch_entry(clusterer, auth_path)
+    helper_vec1, helper_meta1 = _fetch_entry(clusterer, helper_path)
+
+    helper_path.write_text(
+        helper_path.read_text().replace("helper", "helper pay")
+    )
+    pay_path.unlink()
+
+    clusterer.index_repository(sample_repo)
+
+    auth_vec2, auth_meta2 = _fetch_entry(clusterer, auth_path)
+    helper_vec2, helper_meta2 = _fetch_entry(clusterer, helper_path)
+
+    assert auth_meta2["mtime"] == auth_meta1["mtime"]
+    assert auth_vec2 == auth_vec1
+    assert helper_meta2["mtime"] != helper_meta1["mtime"]
+    assert helper_vec2 != helper_vec1
+
+    rows = clusterer.conn.execute(
+        "SELECT module_path FROM intent_embeddings"
+    ).fetchall()
+    paths = {row[0] for row in rows}
+    assert str(pay_path) not in paths
+
+    retr_paths = {item["metadata"].get("path") for item in clusterer.retriever.items}
+    assert "cluster:2" not in retr_paths
 
 
 def test_index_modules_records_vectors(

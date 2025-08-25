@@ -21,6 +21,7 @@ import tokenize
 import sqlite3
 import json
 import pickle
+import os
 from datetime import datetime
 
 from governed_embeddings import governed_embed
@@ -605,54 +606,103 @@ class IntentClusterer:
                         logger.warning("failed to add %s to retriever: %s", path, exc)
 
     # ------------------------------------------------------------------
-    def index_repository(self, repo_path: str | Path) -> None:
-        """Embed all modules in ``repo_path`` and store vectors in the table.
+    def update_modules(self, paths: Iterable[Path]) -> None:
+        """Incrementally index ``paths`` updating only changed modules."""
 
-        Only database entries for modules that are new or whose modification
-        time changed are updated.
-        """
+        paths = [Path(p) for p in paths]
+        if not paths:
+            return
+
+        wanted = {str(p) for p in paths}
+
+        existing: Dict[str, Dict[str, Any]] = {}
+        try:
+            cur = self.conn.execute(
+                "SELECT module_path, vector, metadata FROM intent_embeddings "
+                "WHERE module_path NOT LIKE 'cluster:%'"
+            )
+            for mpath, blob, meta_json in cur.fetchall():
+                mpath = str(mpath)
+                meta = json.loads(meta_json or "{}") if meta_json else {}
+                existing[mpath] = meta
+                if blob and mpath not in self.vectors:
+                    try:
+                        vec = [float(x) for x in pickle.loads(blob)]
+                    except Exception:
+                        vec = []
+                    if vec:
+                        self.vectors[mpath] = vec
+        except Exception:
+            existing = {}
+
+        stale = set(existing) - wanted
+        if stale:
+            with self.conn:
+                for mpath in stale:
+                    self.conn.execute(
+                        "DELETE FROM intent_embeddings WHERE module_path = ?",
+                        (mpath,),
+                    )
+                    self.module_ids.pop(mpath, None)
+                    self.vectors.pop(mpath, None)
+                    self.clusters.pop(mpath, None)
+
+        changed: List[Path] = []
+        for path in paths:
+            mpath = str(path)
+            mtime = path.stat().st_mtime
+            meta = existing.get(mpath, {})
+            if meta.get("mtime") != mtime or mpath not in self.vectors:
+                changed.append(path)
+
+        if changed:
+            self.index_modules(changed)
+            with self.conn:
+                for path in changed:
+                    mpath = str(path)
+                    vec = self.vectors.get(mpath)
+                    if not vec:
+                        continue
+                    blob = sqlite3.Binary(pickle.dumps(vec))
+                    meta = {"mtime": path.stat().st_mtime}
+                    self.conn.execute(
+                        "REPLACE INTO intent_embeddings (module_path, vector, metadata) "
+                        "VALUES (?, ?, ?)",
+                        (mpath, blob, json.dumps(meta)),
+                    )
+
+        root = Path(os.path.commonpath([str(p.parent) for p in paths]))
+        groups = self._load_synergy_groups(root)
+        if groups:
+            filtered: Dict[str, List[str]] = {}
+            for gid, members in groups.items():
+                valid = [m for m in members if m in wanted]
+                if valid:
+                    filtered[gid] = valid
+            if filtered:
+                self._index_clusters(filtered)
+                try:
+                    valid = {f"cluster:{gid}" for gid in filtered}
+                    if hasattr(self.retriever, "items"):
+                        self.retriever.items = [
+                            it
+                            for it in getattr(self.retriever, "items", [])
+                            if not str(it.get("metadata", {}).get("path", "")).startswith("cluster:")
+                            or it.get("metadata", {}).get("path") in valid
+                        ]
+                except Exception:
+                    pass
+
+    # ------------------------------------------------------------------
+    def index_repository(self, repo_path: str | Path) -> None:
+        """Embed modules under ``repo_path`` using incremental updates."""
 
         root = Path(repo_path)
         paths = list(root.rglob("*.py"))
         if not paths:
             return
 
-        self.index_modules(paths)
-
-        existing: Dict[str, Dict[str, Any]] = {}
-        try:
-            cur = self.conn.execute(
-                "SELECT module_path, metadata FROM intent_embeddings"
-            )
-            for mpath, meta_json in cur.fetchall():
-                try:
-                    existing[str(mpath)] = json.loads(meta_json or "{}")
-                except Exception:
-                    existing[str(mpath)] = {}
-        except Exception:
-            existing = {}
-
-        with self.conn:
-            for path in paths:
-                mpath = str(path)
-                mtime = path.stat().st_mtime
-                meta = existing.get(mpath, {})
-                if meta.get("mtime") == mtime:
-                    continue
-                vec = self.vectors.get(mpath)
-                if not vec:
-                    continue
-                blob = sqlite3.Binary(pickle.dumps(vec))
-                new_meta = {"mtime": mtime}
-                self.conn.execute(
-                    "REPLACE INTO intent_embeddings (module_path, vector, metadata) "
-                    "VALUES (?, ?, ?)",
-                    (mpath, blob, json.dumps(new_meta)),
-                )
-
-        groups = self._load_synergy_groups(root)
-        if groups:
-            self._index_clusters(groups)
+        self.update_modules(paths)
 
     # ------------------------------------------------------------------
     def _optimal_cluster_count(self, vectors: List[List[float]]) -> int:
