@@ -67,7 +67,7 @@ def upgrade() -> None:
         if "content_hash" not in cols:
             op.add_column(
                 table,
-                sa.Column("content_hash", sa.Text(), nullable=True),
+                sa.Column("content_hash", sa.Text(), nullable=True, unique=True),
             )
         idxs = {i["name"] for i in inspector.get_indexes(table)}
         idx_name = f"idx_{table}_content_hash"

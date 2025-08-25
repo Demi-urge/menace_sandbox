@@ -65,7 +65,7 @@ def upgrade() -> None:
             continue
         cols = {c["name"] for c in inspector.get_columns(table)}
         if "content_hash" not in cols:
-            op.add_column(table, sa.Column("content_hash", sa.Text(), nullable=True))
+            op.add_column(table, sa.Column("content_hash", sa.Text(), nullable=True, unique=True))
         idxs = {i["name"] for i in inspector.get_indexes(table)}
         idx_name = f"idx_{table}_content_hash"
         if idx_name not in idxs:
@@ -115,4 +115,3 @@ def downgrade() -> None:
         cols = {c["name"] for c in inspector.get_columns(table)}
         if "content_hash" in cols:
             op.drop_column(table, "content_hash")
-
