@@ -32,9 +32,10 @@ def test_add_error_duplicate(tmp_path, caplog, monkeypatch):
         first = db.add_error("dup", type_="t", description="d", resolution="r")
         second = db.add_error("dup", type_="t", description="d", resolution="r")
         third = db.add_error("other", type_="t", description="d", resolution="r")
-    assert first == second == third
-    assert caplog.text.lower().count("duplicate error") >= 2
-    assert db.conn.execute("SELECT COUNT(*) FROM errors").fetchone()[0] == 1
+    assert first == second
+    assert third != first
+    assert caplog.text.lower().count("duplicate error detected") >= 1
+    assert db.conn.execute("SELECT COUNT(*) FROM errors").fetchone()[0] == 2
 
 
 def test_handle_known(tmp_path):

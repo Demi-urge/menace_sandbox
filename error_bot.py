@@ -491,7 +491,12 @@ class ErrorDB(EmbeddableDBMixin):
         source_menace_id: str | None = None,
         scope: Literal["local", "global", "all"] = "local",
     ) -> int:
-        """Insert a new error if not already present and return its id."""
+        """Insert a new error if not already present and return its id.
+
+        Deduplicates based on the hash of ``message``, ``type``, ``description`` and
+        ``resolution``. When a duplicate is detected, a warning is emitted and
+        embedding/event hooks are skipped.
+        """
         menace_id = self._menace_id(source_menace_id)
         values = {
             "source_menace_id": menace_id,
