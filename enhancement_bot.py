@@ -20,6 +20,11 @@ from .chatgpt_enhancement_bot import (
 from .micro_models.diff_summarizer import summarize_diff
 from .micro_models.prefix_injector import inject_prefix
 
+try:  # pragma: no cover - optional dependency
+    from . import codex_db_helpers as cdh
+except Exception:  # pragma: no cover - optional dependency
+    cdh = None  # type: ignore
+
 
 @dataclass
 class RefactorProposal:
@@ -102,16 +107,19 @@ class EnhancementBot:
             return ""
         openai.api_key = api_key
 
-        try:
-            from . import codex_db_helpers as cdh
-            examples = cdh.aggregate_examples(
-                order_by="confidence",
-                limit=3,
-            )
-        except Exception:  # pragma: no cover - helper failures
-            examples = []
+        examples = []
+        if cdh is not None:
+            try:
+                examples = cdh.aggregate_samples(
+                    sort_by="confidence",
+                    limit=3,
+                    include_embeddings=False,
+                    scope="all",
+                )
+            except Exception:  # pragma: no cover - helper failures
+                examples = []
         example_context = "\n".join(
-            e.text for e in examples if getattr(e, "text", "")
+            e.content for e in examples if getattr(e, "content", "")
         )
 
         prompt = (

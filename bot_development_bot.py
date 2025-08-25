@@ -35,6 +35,11 @@ from .models_repo import (
 )
 from vector_service import ContextBuilder, FallbackResult, ErrorResult
 
+try:  # pragma: no cover - optional dependency
+    from . import codex_db_helpers as cdh
+except Exception:  # pragma: no cover - optional dependency
+    cdh = None  # type: ignore
+
 if TYPE_CHECKING:  # pragma: no cover - heavy dependency
     from .watchdog import Watchdog
 
@@ -959,7 +964,7 @@ class BotDevelopmentBot:
         *,
         builder: ContextBuilder | None = None,
         sample_limit: int = 5,
-        sample_sort_by: str = "outcome_score",
+        sample_sort_by: str = "confidence",
         sample_with_vectors: bool = True,
     ) -> str:
         """Return the final prompt for the visual agent or Codex.
@@ -974,7 +979,7 @@ class BotDevelopmentBot:
             not provided.
         sample_limit:
             Maximum number of training examples fetched via
-            :func:`codex_db_helpers.aggregate_examples`.
+            :func:`codex_db_helpers.aggregate_samples`.
         sample_sort_by:
             Field used when ranking training examples.
         sample_with_vectors:
@@ -1002,22 +1007,20 @@ class BotDevelopmentBot:
             pred_conf = 0.0
 
         # Gather historical examples to provide additional prompt context
-        try:
-            from . import codex_db_helpers as cdh
-            samples = cdh.aggregate_examples(
-                order_by=sample_sort_by,
-                limit=sample_limit,
-                include_embeddings=sample_with_vectors,
-                sources=[
-                    "enhancements",
-                    "workflow_summaries",
-                    "discrepancies",
-                    "workflow_history",
-                ],
-            )
-        except Exception:
-            samples = []
-        sample_context = "\n".join(s.text for s in samples if getattr(s, "text", ""))
+        samples = []
+        if cdh is not None:
+            try:
+                samples = cdh.aggregate_samples(
+                    sort_by=sample_sort_by,
+                    limit=sample_limit,
+                    include_embeddings=sample_with_vectors,
+                    scope="all",
+                )
+            except Exception:
+                samples = []
+        sample_context = "\n".join(
+            s.content for s in samples if getattr(s, "content", "")
+        )
 
         problem_lines: list[str] = [
             f"# Bot specification: {spec.name}",
