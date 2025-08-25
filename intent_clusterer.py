@@ -164,6 +164,7 @@ class IntentClusterer:
     module_ids: Dict[str, int]
     vectors: Dict[str, List[float]]
     clusters: Dict[str, int]
+    vector_service: Any | None
 
     def __init__(
         self,
@@ -171,7 +172,9 @@ class IntentClusterer:
         db: ModuleVectorDB | None = None,
         *,
         intent_db: ModuleVectorDB | None = None,
+        vector_service: Any | None = None,
     ) -> None:
+        self.vector_service = vector_service
         self.retriever = (
             retriever
             or type(
@@ -217,6 +220,12 @@ class IntentClusterer:
             if vec:
                 self.module_ids[str(path)] = rid
                 self.vectors[str(path)] = vec
+                # Persist in retriever for cross-module search when available
+                if hasattr(self.retriever, "add_vector"):
+                    try:
+                        self.retriever.add_vector(vec, {"path": str(path)})
+                    except Exception:
+                        pass
 
     # ------------------------------------------------------------------
     def cluster_intents(self, n_clusters: int) -> Dict[str, int]:
@@ -229,6 +238,15 @@ class IntentClusterer:
         km.fit(vectors)
         labels = km.predict(vectors) if hasattr(km, "predict") else km.labels_
         self.clusters = {p: int(l) for p, l in zip(self.vectors.keys(), labels)}
+        # Update retriever metadata with assigned cluster identifiers
+        if hasattr(self.retriever, "add_vector"):
+            for path, cid in self.clusters.items():
+                vec = self.vectors.get(path)
+                if vec:
+                    try:
+                        self.retriever.add_vector(vec, {"path": path, "cluster_id": int(cid)})
+                    except Exception:
+                        continue
         return dict(self.clusters)
 
     # ------------------------------------------------------------------
@@ -283,12 +301,45 @@ class IntentClusterer:
 
     # ------------------------------------------------------------------
     def find_modules_related_to(self, prompt: str, top_k: int = 5) -> List[Dict[str, float]]:
-        """Return modules most semantically similar to ``prompt``."""
+        """Return modules most semantically similar to ``prompt``.
+
+        The query text is embedded and searched using the configured
+        :class:`~universal_retriever.UniversalRetriever` instance.  If the
+        retriever is unavailable, the method falls back to the underlying
+        vector database.
+        """
 
         vec = self.db.encode_text(prompt)
         if not vec:
             return []
-        hits = self.db.search_by_vector(vec, top_k)
+
+        # Prefer retriever-based search when available
+        if hasattr(self.retriever, "search"):
+            norm = sqrt(sum(x * x for x in vec)) or 1.0
+            qvec = [x / norm for x in vec]
+            try:
+                hits = self.retriever.search(qvec, top_k=top_k) or []
+            except Exception:
+                hits = []
+            results: List[Dict[str, float]] = []
+            for item in hits:
+                meta = item.get("metadata", {})
+                path = meta.get("path")
+                target_vec: Sequence[float] = item.get("vector", [])
+                tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
+                target_vec = [x / tnorm for x in target_vec]
+                score = sum(a * b for a, b in zip(qvec, target_vec))
+                if path:
+                    results.append({"path": path, "score": score})
+            if results:
+                return results[:top_k]
+
+        # Fallback: direct search on the vector database
+        hits = []
+        try:
+            hits = self.db.search_by_vector(vec, top_k)
+        except Exception:
+            return []
         results: List[Dict[str, float]] = []
         for rid, dist in hits:
             path: str | None = None
