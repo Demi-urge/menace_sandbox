@@ -1782,6 +1782,14 @@ The `ModuleSynergyGrapher` constructor accepts the same via its `config`
 parameter or a raw `coefficients` mapping.  `make synergy-graph` can be used in
 automation to refresh the graph.
 
+## Workflow Synthesizer
+
+Combines structural relationships from `ModuleSynergyGrapher` with semantic
+intent search to propose small, ordered module workflows.  Candidates can be
+exported to `.workflow.json` for registration with `WorkflowDB`.  See
+[docs/workflow_synthesizer.md](docs/workflow_synthesizer.md) for usage
+examples.
+
 ## Vector Analytics
 
 `vector_metrics_analytics` surfaces stored vector metrics for quick
