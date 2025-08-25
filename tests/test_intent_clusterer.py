@@ -63,6 +63,7 @@ def indexed_clusterer(sample_repo: Path, tmp_path: Path):
         vector_index_path=tmp_path / "intent.index",
         router=router,
     )
+
     class DummyRetriever:
         def register_db(self, *args, **kwargs):
             pass
@@ -94,5 +95,7 @@ def test_natural_language_query(indexed_clusterer):
     clusterer, repo = indexed_clusterer
     res = clusterer.find_modules_related_to("authentication help", top_k=1)
     assert res and Path(res[0]["path"]).name == "helper.py"
+    assert res[0]["origin"] == "module"
     res2 = clusterer.find_modules_related_to("process payment", top_k=1)
     assert res2 and Path(res2[0]["path"]).name == "payment.py"
+    assert res2[0]["origin"] == "module"
