@@ -79,6 +79,15 @@ class WorkflowRecord:
     wid: int = 0
 
 
+# Columns that contribute to the deduplication hash.
+_WORKFLOW_HASH_FIELDS = [
+    "workflow",
+    "action_chains",
+    "argument_strings",
+    "description",
+]
+
+
 class WorkflowDB(EmbeddableDBMixin):
     """SQLite storage for generated workflows with vector search."""
 
@@ -291,7 +300,7 @@ class WorkflowDB(EmbeddableDBMixin):
     # --------------------------------------------------------------
     # insert/fetch
     def add(self, wf: WorkflowRecord, source_menace_id: str = "") -> int | None:
-        core_fields = {
+        values = {
             "workflow": ",".join(wf.workflow),
             "action_chains": ",".join(wf.action_chains),
             "argument_strings": ",".join(wf.argument_strings),
@@ -299,9 +308,6 @@ class WorkflowDB(EmbeddableDBMixin):
             "enhancements": ",".join(wf.enhancements),
             "title": wf.title,
             "description": wf.description,
-        }
-        values = {
-            **core_fields,
             "task_sequence": ",".join(wf.task_sequence),
             "tags": ",".join(wf.tags),
             "category": wf.category,
@@ -313,14 +319,13 @@ class WorkflowDB(EmbeddableDBMixin):
             "estimated_profit_per_bot": wf.estimated_profit_per_bot,
             "timestamp": wf.timestamp,
         }
-        hash_keys = list(core_fields.keys())
-        content_hash = _hash_fields(core_fields, hash_keys)
+        content_hash = _hash_fields(values, _WORKFLOW_HASH_FIELDS)
         with self.router.get_connection("workflows", "write") as conn:
             wf.wid = insert_if_unique(
                 conn,
                 "workflows",
                 values,
-                hash_keys,
+                _WORKFLOW_HASH_FIELDS,
                 source_menace_id,
                 logger,
             )

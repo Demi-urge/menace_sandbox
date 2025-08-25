@@ -6432,7 +6432,11 @@ def generate_workflows_for_modules(
         dotted = Path(name).with_suffix("").as_posix().replace("/", ".")
         try:
             rec = WorkflowRecord(workflow=[dotted], title=dotted)
-            ids.append(wf_db.add(rec))
+            wid = wf_db.add(rec)
+            if wid is not None:
+                ids.append(wid)
+            else:
+                logger.warning("duplicate workflow ignored for %s", dotted)
         except Exception:
             logger.exception("failed to store workflow for %s", dotted)
     return ids

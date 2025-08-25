@@ -274,6 +274,9 @@ class BotCreationBot(AdminBotBase):
                 status="pending",
             )
             wid = wf_db.add(rec)
+            if wid is None:
+                self.logger.warning("duplicate workflow ignored for %s", chunk)
+                continue
             ids.append(wid)
             if self.safety_monitor:
                 try:
