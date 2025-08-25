@@ -1,3 +1,5 @@
+import logging
+
 import menace.chatgpt_enhancement_bot as ceb  # noqa: E402
 
 
@@ -41,7 +43,7 @@ def test_add_and_link(tmp_path):
     assert db.workflows_for(cross_id, scope="global") == [6]
 
 
-def test_duplicate_insert(tmp_path):
+def test_duplicate_insert(tmp_path, caplog):
     db = ceb.EnhancementDB(tmp_path / "e.db")
     # prevent vector backend interactions
     db.add_embedding = lambda *a, **k: None
@@ -54,10 +56,12 @@ def test_duplicate_insert(tmp_path):
         description="desc",
     )
 
-    first = db.add(enh)
-    second = db.add(enh)
+    with caplog.at_level(logging.WARNING):
+        first = db.add(enh)
+        second = db.add(enh)
 
     assert first == second
     with db._connect() as conn:
         count = conn.execute("SELECT COUNT(*) FROM enhancements").fetchone()[0]
     assert count == 1
+    assert any("duplicate enhancement" in r.message for r in caplog.records)
