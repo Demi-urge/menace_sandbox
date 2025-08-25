@@ -41,7 +41,18 @@ def compute_content_hash(data: Mapping[str, Any]) -> str:
 
 
 def hash_fields(data: Mapping[str, Any], fields: Iterable[str]) -> str:
-    """JSON-encode selected ``fields`` from ``data`` and return a hash."""
+    """JSON-encode selected ``fields`` from ``data`` and return a hash.
+
+    Raises
+    ------
+    KeyError
+        If any of ``fields`` are missing from ``data``.
+    """
+
+    missing = [key for key in fields if key not in data]
+    if missing:
+        missing_list = ", ".join(sorted(missing))
+        raise KeyError(f"Missing fields for hashing: {missing_list}")
 
     payload = {key: data[key] for key in fields}
     return compute_content_hash(payload)
@@ -68,6 +79,11 @@ def insert_if_unique(
     Supply ``engine`` with a SQLAlchemy :class:`~sqlalchemy.Table` for SQL
     databases or ``conn`` with a table name for SQLite connections.
     """
+
+    missing = [key for key in hash_fields if key not in values]
+    if missing:
+        missing_list = ", ".join(sorted(missing))
+        raise KeyError(f"Missing fields for hashing: {missing_list}")
 
     payload = {key: values[key] for key in hash_fields}
     content_hash = compute_content_hash(payload)
