@@ -20,7 +20,7 @@ LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.d
 SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
-from menace.plugins import load_plugins
+from menace.plugins import load_plugins  # noqa: E402
 
 
 def _run(cmd: list[str]) -> int:
@@ -28,16 +28,16 @@ def _run(cmd: list[str]) -> int:
     return subprocess.call(cmd)
 
 
-from code_database import PatchHistoryDB
-from patch_provenance import (
+from code_database import PatchHistoryDB  # noqa: E402
+from patch_provenance import (  # noqa: E402
     PatchLogger,
     build_chain,
     search_patches_by_vector,
     search_patches_by_license,
 )
-from cache_utils import get_cached_chain, set_cached_chain, _get_cache
-from cache_utils import clear_cache, show_cache, cache_stats
-from workflow_synthesizer_cli import run as handle_workflow
+from cache_utils import get_cached_chain, set_cached_chain, _get_cache  # noqa: E402
+from cache_utils import clear_cache, show_cache, cache_stats  # noqa: E402
+from workflow_synthesizer_cli import run as handle_workflow  # noqa: E402
 
 
 def _normalise_hits(hits, origin=None):
@@ -193,13 +193,19 @@ def handle_retrieve(args: argparse.Namespace) -> int:
             )
             score_values = [f"{r['score']:.4f}" for r in results]
             score_w = max([len(headers[2])] + [len(s) for s in score_values])
-            header_line = f"{headers[0]:<{origin_w}}  {headers[1]:<{record_w}}  {headers[2]:>{score_w}}  {headers[3]}"
+            header_line = (
+                f"{headers[0]:<{origin_w}}  {headers[1]:<{record_w}}  "
+                f"{headers[2]:>{score_w}}  {headers[3]}"
+            )
             print(header_line)
             for r in results:
                 snippet = str(r["snippet"]).replace("\n", " ")
                 if len(snippet) > 80:
                     snippet = snippet[:77] + "..."
-                line = f"{r['origin_db']:<{origin_w}}  {str(r['record_id']):<{record_w}}  {r['score']:{score_w}.4f}  {snippet}"
+                line = (
+                    f"{r['origin_db']:<{origin_w}}  {str(r['record_id']):<{record_w}}  "
+                    f"{r['score']:{score_w}.4f}  {snippet}"
+                )
                 print(line)
     return 0
 
@@ -353,6 +359,13 @@ def main(argv: list[str] | None = None) -> int:
     p_workflow.add_argument("--problem", help="Optional problem statement")
     p_workflow.add_argument(
         "--max-depth", type=int, dest="max_depth", help="Maximum traversal depth"
+    )
+    p_workflow.add_argument(
+        "--limit",
+        type=int,
+        dest="limit",
+        help="Maximum workflows to generate",
+        default=5,
     )
     p_workflow.add_argument(
         "--out", help="File or directory to save generated workflows"

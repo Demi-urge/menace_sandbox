@@ -23,13 +23,15 @@ python workflow_synthesizer_cli.py --list
   treated as a free‑text problem description used for intent matching.
 * `--problem` – additional description to bias intent search.
 * `--max-depth` – limit traversal depth when exploring connected modules.
+* `--limit` – maximum number of candidate workflows to generate.
 * `--save` – write the workflow to
   `sandbox_data/generated_workflows/<name>.workflow.json` where `<name>`
   defaults to the start argument.
 * `--list` – print the names of previously saved workflows and exit.
 
-The command prints candidate workflows to stdout. When `--save` or `--out` is
-supplied, the specification is persisted to disk.
+The command prints numbered candidate workflows with their scores. When
+`--save`, `--out` or `--evaluate` is supplied you are prompted to choose a
+workflow to persist or execute.
 
 ## Output format
 

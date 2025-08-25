@@ -9,7 +9,6 @@ via the ``--list`` flag."""
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 from workflow_synthesizer import (
@@ -17,6 +16,7 @@ from workflow_synthesizer import (
     to_workflow_spec,
     evaluate_workflow,
     workflow_to_dict,
+    save_workflow,
 )
 
 
@@ -45,29 +45,49 @@ def run(args: argparse.Namespace) -> int:
     workflows = synth.generate_workflows(
         start_module=args.start,
         problem=args.problem,
+        limit=getattr(args, "limit", 5),
         max_depth=args.max_depth,
-        synergy_weight=args.synergy_weight,
-        intent_weight=args.intent_weight,
+        synergy_weight=getattr(args, "synergy_weight", 1.0),
+        intent_weight=getattr(args, "intent_weight", 1.0),
     )
-    data = [
-        {"score": score, "steps": workflow_to_dict(wf)["steps"]}
-        for wf, score in zip(workflows, getattr(synth, "workflow_scores", []))
-    ]
-    print(json.dumps(data, indent=2))
+    scores = getattr(synth, "workflow_scores", [])
+    for idx, (wf, score) in enumerate(zip(workflows, scores), start=1):
+        modules = " -> ".join(step["module"] for step in workflow_to_dict(wf)["steps"])
+        print(f"{idx}. {score:.4f} {modules}")
+
+    selected = 0
+    if len(workflows) > 1 and (
+        getattr(args, "out", None) or args.save is not None or getattr(args, "evaluate", False)
+    ):
+        while True:
+            choice = input(f"Select workflow [1-{len(workflows)}] (default 1): ").strip()
+            if not choice:
+                break
+            if choice.isdigit() and 1 <= int(choice) <= len(workflows):
+                selected = int(choice) - 1
+                break
+            print("invalid selection")
+
+    if (
+        getattr(args, "out", None)
+        or args.save is not None
+        or getattr(args, "evaluate", False)
+    ) and not workflows:
+        print("no workflow generated")
+        return 1
+
+    chosen = workflows[selected] if workflows else []
     if args.out:
-        synth.save(args.out)
+        save_workflow(chosen, args.out)
     elif args.save is not None:
         name = args.save or args.start
         safe = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in name)
         directory = Path("sandbox_data/generated_workflows")
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{safe}.workflow.json"
-        synth.save(path)
-    if args.evaluate:
-        if not workflows:
-            print("no workflow generated")
-            return 1
-        spec = to_workflow_spec(workflows[0])
+        save_workflow(chosen, path)
+    if getattr(args, "evaluate", False):
+        spec = to_workflow_spec(chosen)
         ok = evaluate_workflow(spec)
         print("evaluation succeeded" if ok else "evaluation failed")
         return 0 if ok else 1
@@ -98,6 +118,12 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
         type=int,
         dest="max_depth",
         help="Maximum traversal depth when exploring module connections",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Maximum number of workflows to generate",
     )
     parser.add_argument(
         "--out",
@@ -149,4 +175,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - script entry point
     raise SystemExit(main())
-
