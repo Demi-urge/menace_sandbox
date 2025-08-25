@@ -608,3 +608,107 @@ def test_fresh_instance_queries_clusters(sample_repo: Path, tmp_path: Path) -> N
     fresh = ic.IntentClusterer(intent_db=db, retriever=retr)
     res = fresh.find_clusters_related_to("auth help", top_k=5)
     assert res and res[0].path.startswith("cluster:1")
+
+
+def test_extract_intent_text_parses_docstrings_and_comments(tmp_path: Path) -> None:
+    """Ensure ``extract_intent_text`` collects docs, names and comments."""
+
+    module = tmp_path / "sample.py"
+    module.write_text(
+        '"""Top level doc"""\n'
+        "# pre foo\n\n"
+        "def foo():\n"
+        '    """Foo docs"""\n'
+        "    pass\n\n"
+        "# pre bar class\n"
+        "class Bar:\n"
+        '    """Bar docs"""\n'
+        "    pass\n"
+    )
+
+    text = ic.extract_intent_text(module)
+    assert "Top level doc" in text
+    assert "Foo docs" in text
+    assert "Bar docs" in text
+    assert "foo" in text
+    assert "Bar" in text
+    assert "pre foo" in text
+    assert "pre bar class" in text
+
+
+def test_index_modules_and_repository_populate_ids_vectors_db(
+    clusterer: ic.IntentClusterer, sample_repo: Path
+) -> None:
+    """``index_modules`` and ``index_repository`` should populate mappings."""
+
+    paths = list(sample_repo.glob("*.py"))
+    expected = {str(p) for p in paths}
+
+    # ``index_modules`` populates in-memory maps
+    clusterer.index_modules(paths)
+    assert expected <= set(clusterer.module_ids)
+    assert expected <= set(clusterer.vectors)
+
+    # database table not yet populated
+    count = clusterer.conn.execute(
+        "SELECT COUNT(*) FROM intent_embeddings"
+    ).fetchone()[0]
+    assert count == 0
+
+    # ``index_repository`` performs incremental update and stores rows
+    clusterer.index_repository(sample_repo)
+    rows = {
+        row[0]
+        for row in clusterer.conn.execute(
+            "SELECT module_path FROM intent_embeddings "
+            "WHERE module_path NOT LIKE 'cluster:%'"
+        ).fetchall()
+    }
+    assert rows == expected
+
+
+def test_index_clusters_creates_metadata_and_embeddings(
+    clusterer: ic.IntentClusterer, sample_repo: Path
+) -> None:
+    """``_index_clusters`` should aggregate vectors and persist metadata."""
+
+    paths = list(sample_repo.glob("*.py"))
+    clusterer.index_modules(paths)
+
+    members = [str(sample_repo / "auth.py"), str(sample_repo / "helper.py")]
+    clusterer._index_clusters({"1": members})
+
+    row = clusterer.conn.execute(
+        "SELECT vector, metadata FROM intent_embeddings WHERE module_path = ?",
+        ("cluster:1",),
+    ).fetchone()
+    assert row is not None
+    vec = list(pickle.loads(row[0]))
+    assert vec == pytest.approx([1.5, 0.0, 1.0])
+    meta = json.loads(row[1])
+    assert meta["members"] == sorted(members)
+    assert meta["cluster_id"] == 1
+    assert meta["label"] == "auth helper summary"
+    assert any(
+        item["metadata"].get("path") == "cluster:1" for item in clusterer.retriever.items
+    )
+
+
+def test_search_helpers_return_expected_matches(
+    clusterer: ic.IntentClusterer, sample_repo: Path
+) -> None:
+    """Search helpers should surface relevant modules and clusters."""
+
+    clusterer.index_repository(sample_repo)
+
+    query = "auth help help help help"
+    results = clusterer._search_related(query, top_k=5)
+    assert results and results[0].path.endswith("helper.py")
+    assert any(r.origin == "cluster" for r in results)
+
+    mods = clusterer.find_modules_related_to(query, top_k=2)
+    assert mods and mods[0].path.endswith("helper.py")
+    assert all(m.origin != "cluster" for m in mods)
+
+    clusters = clusterer.find_clusters_related_to("auth help", top_k=2)
+    assert clusters and clusters[0].cluster_ids == [1]
