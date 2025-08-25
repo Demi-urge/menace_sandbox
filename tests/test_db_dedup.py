@@ -1,9 +1,11 @@
 import importlib
 import logging
+import sqlite3
 
 import pytest
 
 import db_router
+from dedup_utils import hash_fields, insert_if_unique
 
 
 @pytest.fixture
@@ -149,9 +151,33 @@ def test_workflowdb_dedup(tmp_path, caplog, monkeypatch, router):
         thb.WorkflowRecord(
             workflow=["a"],
             title="t2",
-            description="d1",
+            description="d2",
             task_sequence=["a"],
         )
     )
     assert id3 != id1
     assert db.conn.execute("SELECT COUNT(*) FROM workflows").fetchone()[0] == 2
+
+
+def test_hash_fields_deterministic():
+    data1 = {"a": 1, "b": 2}
+    data2 = {"b": 2, "a": 1}
+    assert hash_fields(data1, ["a", "b"]) == hash_fields(data2, ["a", "b"])
+
+
+def test_insert_if_unique_duplicate_returns_none(caplog):
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, content_hash TEXT UNIQUE)"
+    )
+    logger = logging.getLogger(__name__)
+
+    id1 = insert_if_unique(conn, "items", {"name": "alpha"}, ["name"], "m1", logger)
+    assert id1 == 1
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        id2 = insert_if_unique(conn, "items", {"name": "alpha"}, ["name"], "m1", logger)
+    assert id2 is None
+    assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
+    assert any("Duplicate insert ignored for items" in r.message for r in caplog.records)
