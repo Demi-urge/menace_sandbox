@@ -1,11 +1,10 @@
 import importlib
 import logging
-import sqlite3
 
 import pytest
 
 import db_router
-from dedup_utils import hash_fields, insert_if_unique
+from db_dedup import hash_fields, insert_if_unique
 
 
 @pytest.fixture
@@ -62,7 +61,8 @@ def test_enhancementdb_dedup(tmp_path, caplog, monkeypatch, router):
     except Exception:
         pass
     db.conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_enhancements_content_hash ON enhancements(content_hash)"
+        "CREATE UNIQUE INDEX IF NOT EXISTS "
+        "idx_enhancements_content_hash ON enhancements(content_hash)"
     )
     db.conn.commit()
 
@@ -165,19 +165,37 @@ def test_hash_fields_deterministic():
     assert hash_fields(data1, ["a", "b"]) == hash_fields(data2, ["a", "b"])
 
 
-def test_insert_if_unique_duplicate_returns_none(caplog):
-    conn = sqlite3.connect(":memory:")
+def test_insert_if_unique_duplicate_returns_none(tmp_path, caplog):
+    path = tmp_path / "dedup.sqlite"
+    router = db_router.init_db_router("test", str(path), str(path))
+    conn = router.local_conn
     conn.execute(
         "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, content_hash TEXT UNIQUE)"
     )
     logger = logging.getLogger(__name__)
 
-    id1 = insert_if_unique(conn, "items", {"name": "alpha"}, ["name"], "m1", logger)
+    id1 = insert_if_unique(
+        "items",
+        {"name": "alpha"},
+        ["name"],
+        "m1",
+        conn=conn,
+        logger=logger,
+    )
     assert id1 == 1
 
     caplog.clear()
     with caplog.at_level(logging.WARNING):
-        id2 = insert_if_unique(conn, "items", {"name": "alpha"}, ["name"], "m1", logger)
+        id2 = insert_if_unique(
+            "items",
+            {"name": "alpha"},
+            ["name"],
+            "m1",
+            conn=conn,
+            logger=logger,
+        )
     assert id2 is None
     assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
-    assert any("Duplicate insert ignored for items" in r.message for r in caplog.records)
+    assert any(
+        "Duplicate insert ignored for items" in r.message for r in caplog.records
+    )
