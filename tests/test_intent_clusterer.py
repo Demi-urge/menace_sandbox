@@ -11,13 +11,22 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, List
 
-import embeddable_db_mixin as edm
-import intent_clusterer as ic
-import intent_db
-import intent_vectorizer as iv
-import json
-import pytest
-from db_router import LOCAL_TABLES, init_db_router
+import sys
+import types
+
+# Provide a minimal stub for ``sentence_transformers`` to avoid importing heavy
+# dependencies such as ``torch`` during test collection.
+st_stub = types.ModuleType("sentence_transformers")
+st_stub.SentenceTransformer = None
+sys.modules.setdefault("sentence_transformers", st_stub)
+
+import embeddable_db_mixin as edm  # noqa: E402
+import intent_clusterer as ic  # noqa: E402
+import intent_db  # noqa: E402
+import intent_vectorizer as iv  # noqa: E402
+import json  # noqa: E402
+import pytest  # noqa: E402
+from db_router import LOCAL_TABLES, init_db_router  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -337,3 +346,70 @@ def test_index_repository_updates_cluster_membership(
     clusterer.index_repository(sample_repo)
     assert set(members(1)) == {auth}
     assert set(members(2)) == {pay, helper}
+
+
+def test_index_modules_records_vectors(
+    clusterer: ic.IntentClusterer, sample_repo: Path
+) -> None:
+    """``index_modules`` should store vectors and register paths."""
+
+    paths = list(sample_repo.glob("*.py"))
+    clusterer.index_modules(paths)
+
+    for path in paths:
+        spath = str(path)
+        assert spath in clusterer.module_ids
+        assert spath in clusterer.vectors
+
+    stored = {item["metadata"].get("path") for item in clusterer.retriever.items}
+    assert {str(p) for p in paths} <= stored
+
+
+def test_cluster_intents_dynamic_count(
+    clusterer: ic.IntentClusterer, sample_repo: Path, monkeypatch
+) -> None:
+    """When ``n_clusters`` is ``None`` the optimal count is used."""
+
+    clusterer.index_modules(list(sample_repo.glob("*.py")))
+
+    called: dict[str, bool] = {}
+
+    def _fake_optimal(self, vectors: List[List[float]]) -> int:
+        called["yes"] = True
+        return 2
+
+    monkeypatch.setattr(ic.IntentClusterer, "_optimal_cluster_count", _fake_optimal)
+
+    clusters = clusterer.cluster_intents(n_clusters=None, threshold=0.0)
+    assert called.get("yes") is True
+    unique = {cid for ids in clusters.values() for cid in ids}
+    assert len(unique) == 2
+
+
+def test_search_related_returns_modules_and_clusters(
+    clusterer: ic.IntentClusterer, sample_repo: Path
+) -> None:
+    """``_search_related`` should surface both module and cluster entries."""
+
+    clusterer.index_modules(list(sample_repo.glob("*.py")))
+    clusterer.cluster_intents(2, threshold=0.0)
+    results = clusterer._search_related("authentication help", top_k=5)
+
+    assert any(Path(r.path).name == "auth.py" for r in results if r.path)
+    assert any(r.origin == "cluster" for r in results)
+
+
+def test_find_modules_related_to_filters_clusters(
+    clusterer: ic.IntentClusterer, sample_repo: Path
+) -> None:
+    """``find_modules_related_to`` should optionally include clusters."""
+
+    clusterer.index_repository(sample_repo)
+
+    mods_only = clusterer.find_modules_related_to("authentication help", top_k=5)
+    assert all(r.origin != "cluster" for r in mods_only)
+
+    with_clusters = clusterer.find_modules_related_to(
+        "authentication help", top_k=5, include_clusters=True
+    )
+    assert any(r.origin == "cluster" for r in with_clusters)
