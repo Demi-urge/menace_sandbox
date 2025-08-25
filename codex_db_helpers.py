@@ -1,11 +1,10 @@
 """Helpers for extracting training samples from Menace databases.
 
 This module exposes lightweight wrappers around several SQLite databases so
-training data can be gathered in a consistent format.  Each helper queries all
-Menace instances by applying :func:`scope_utils.build_scope_clause` with
-``Scope.ALL`` and returns a list of :class:`TrainingSample` objects.  Optional
-embeddings are attached when the underlying database provides a ``vector``
-method.
+training data can be gathered in a consistent format.  Each helper accepts a
+``scope`` parameter controlling which Menace instances participate in the
+query, defaulting to :class:`~scope_utils.Scope.ALL`.  Optional embeddings are
+attached when the underlying database provides a ``vector`` method.
 
 Available fetchers:
 
@@ -63,12 +62,25 @@ def fetch_enhancements(
     sort_by: str = "timestamp",
     limit: int = 100,
     include_embeddings: bool = False,
+    scope: str | Scope = Scope.ALL,
 ) -> List[TrainingSample]:
-    """Return enhancement summaries from :class:`EnhancementDB`."""
+    """Return enhancement summaries from :class:`EnhancementDB`.
+
+    Args:
+        sort_by: Column used for ordering the results.
+        limit: Maximum number of rows to return.
+        include_embeddings: When ``True``, attach vector embeddings where
+            available.
+        scope: Menace scope for the query. Accepts :class:`Scope` values or
+            ``"local"``, ``"global"`` or ``"all"``. Defaults to
+            :attr:`Scope.ALL`.
+    """
 
     db = EnhancementDB()
     menace_id = getattr(getattr(db, "router", None), "menace_id", "")
-    clause, params = build_scope_clause("enhancements", Scope.ALL, menace_id)
+    if isinstance(scope, str):
+        scope = Scope(scope)
+    clause, params = build_scope_clause("enhancements", scope, menace_id)
     columns = {
         "confidence": "confidence",
         "outcome_score": "outcome_score",
@@ -110,12 +122,25 @@ def fetch_summaries(
     sort_by: str = "timestamp",
     limit: int = 100,
     include_embeddings: bool = False,
+    scope: str | Scope = Scope.ALL,
 ) -> List[TrainingSample]:
-    """Return workflow summaries from :class:`WorkflowSummaryDB`."""
+    """Return workflow summaries from :class:`WorkflowSummaryDB`.
+
+    Args:
+        sort_by: Column used for ordering the results.
+        limit: Maximum number of rows to return.
+        include_embeddings: When ``True``, attach vector embeddings where
+            available.
+        scope: Menace scope for the query. Accepts :class:`Scope` values or
+            ``"local"``, ``"global"`` or ``"all"``. Defaults to
+            :attr:`Scope.ALL`.
+    """
 
     db = WorkflowSummaryDB()
     menace_id = getattr(getattr(db, "router", None), "menace_id", "")
-    clause, params = build_scope_clause("workflow_summaries", Scope.ALL, menace_id)
+    if isinstance(scope, str):
+        scope = Scope(scope)
+    clause, params = build_scope_clause("workflow_summaries", scope, menace_id)
     order_col = _resolve_order(sort_by, {"timestamp": "timestamp"}, "workflow_id")
     sql = "SELECT workflow_id, summary, timestamp FROM workflow_summaries"
     if clause:
@@ -148,12 +173,25 @@ def fetch_discrepancies(
     sort_by: str = "timestamp",
     limit: int = 100,
     include_embeddings: bool = False,
+    scope: str | Scope = Scope.ALL,
 ) -> List[TrainingSample]:
-    """Return discrepancy messages from :class:`DiscrepancyDB`."""
+    """Return discrepancy messages from :class:`DiscrepancyDB`.
+
+    Args:
+        sort_by: Column used for ordering the results.
+        limit: Maximum number of rows to return.
+        include_embeddings: When ``True``, attach vector embeddings where
+            available.
+        scope: Menace scope for the query. Accepts :class:`Scope` values or
+            ``"local"``, ``"global"`` or ``"all"``. Defaults to
+            :attr:`Scope.ALL`.
+    """
 
     db = DiscrepancyDB()
     menace_id = getattr(getattr(db, "router", None), "menace_id", "")
-    clause, params = build_scope_clause("discrepancies", Scope.ALL, menace_id)
+    if isinstance(scope, str):
+        scope = Scope(scope)
+    clause, params = build_scope_clause("discrepancies", scope, menace_id)
     columns = {
         "confidence": "confidence",
         "outcome_score": "outcome_score",
@@ -195,12 +233,25 @@ def fetch_workflows(
     sort_by: str = "timestamp",
     limit: int = 100,
     include_embeddings: bool = False,
+    scope: str | Scope = Scope.ALL,
 ) -> List[TrainingSample]:
-    """Return stored workflows from :class:`task_handoff_bot.WorkflowDB`."""
+    """Return stored workflows from :class:`task_handoff_bot.WorkflowDB`.
+
+    Args:
+        sort_by: Column used for ordering the results.
+        limit: Maximum number of rows to return.
+        include_embeddings: When ``True``, attach vector embeddings where
+            available.
+        scope: Menace scope for the query. Accepts :class:`Scope` values or
+            ``"local"``, ``"global"`` or ``"all"``. Defaults to
+            :attr:`Scope.ALL`.
+    """
 
     db = TaskWorkflowDB()
     menace_id = getattr(getattr(db, "router", None), "menace_id", "")
-    clause, params = build_scope_clause("workflows", Scope.ALL, menace_id)
+    if isinstance(scope, str):
+        scope = Scope(scope)
+    clause, params = build_scope_clause("workflows", scope, menace_id)
     columns = {"timestamp": "timestamp"}
     order_col = _resolve_order(sort_by, columns, "id")
     sql = "SELECT id, workflow, timestamp FROM workflows"
@@ -233,9 +284,22 @@ def aggregate_samples(
     sort_by: str = "timestamp",
     limit: int = 100,
     include_embeddings: bool = False,
+    scope: str | Scope = Scope.ALL,
 ) -> List[TrainingSample]:
-    """Return combined samples from all data sources."""
+    """Return combined samples from all data sources.
 
+    Args:
+        sort_by: Column used for ordering the combined results.
+        limit: Maximum number of rows to return.
+        include_embeddings: When ``True``, attach vector embeddings where
+            available.
+        scope: Menace scope forwarded to each fetcher. Accepts :class:`Scope`
+            values or ``"local"``, ``"global"`` or ``"all"``. Defaults to
+            :attr:`Scope.ALL`.
+    """
+
+    if isinstance(scope, str):
+        scope = Scope(scope)
     fetchers = [
         ("fetch_enhancements", fetch_enhancements),
         ("fetch_summaries", fetch_summaries),
@@ -246,7 +310,12 @@ def aggregate_samples(
     for name, fetch in fetchers:
         try:
             samples.extend(
-                fetch(sort_by=sort_by, limit=limit, include_embeddings=include_embeddings)
+                fetch(
+                    sort_by=sort_by,
+                    limit=limit,
+                    include_embeddings=include_embeddings,
+                    scope=scope,
+                )
             )
         except Exception as exc:  # pragma: no cover - best effort
             logger.warning("%s failed: %s", name, exc)
