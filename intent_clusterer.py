@@ -51,16 +51,78 @@ except Exception:  # pragma: no cover - graceful fallback
 
 logger = get_logger(__name__)
 
-CANONICAL_CATEGORIES: List[str] = [
-    "scraping",
-    "cleaning",
-    "formatting",
-    "automation",
-    "decision-making",
-    "authentication",
-    "payment",
-]
-_CATEGORY_VECTORS: Dict[str, List[float]] = {}
+
+def _load_canonical_categories() -> List[str]:
+    """Return category names from environment or configuration."""
+
+    default = [
+        "scraping",
+        "cleaning",
+        "formatting",
+        "automation",
+        "decision-making",
+        "authentication",
+        "payment",
+    ]
+
+    file_path = os.getenv("INTENT_CATEGORIES_FILE")
+    if file_path:
+        try:
+            data = json.loads(Path(file_path).read_text())
+            if isinstance(data, list) and all(isinstance(x, str) for x in data):
+                return data
+        except Exception:
+            pass
+
+    env = os.getenv("INTENT_CATEGORIES")
+    if env:
+        try:
+            if env.strip().startswith("["):
+                data = json.loads(env)
+            else:
+                data = [c.strip() for c in env.split(",") if c.strip()]
+            if isinstance(data, list) and all(isinstance(x, str) for x in data):
+                return data
+        except Exception:
+            pass
+
+    return default
+
+
+CANONICAL_CATEGORIES: List[str] = _load_canonical_categories()
+
+_CATEGORY_EMBED_PATH = Path(
+    os.getenv("INTENT_CATEGORY_EMBEDDINGS", "category_embeddings.json")
+)
+
+
+def _load_category_vectors() -> Dict[str, List[float]]:
+    """Load persisted category embeddings if available."""
+
+    try:
+        data = json.loads(_CATEGORY_EMBED_PATH.read_text())
+        if isinstance(data, dict):
+            return {
+                str(k): [float(x) for x in v]
+                for k, v in data.items()
+                if isinstance(v, list)
+            }
+    except Exception:
+        pass
+    return {}
+
+
+_CATEGORY_VECTORS: Dict[str, List[float]] = _load_category_vectors()
+
+
+def _persist_category_vectors() -> None:
+    """Persist category embeddings to disk."""
+
+    try:
+        _CATEGORY_EMBED_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _CATEGORY_EMBED_PATH.write_text(json.dumps(_CATEGORY_VECTORS))
+    except OSError:
+        pass
 
 
 def _categorise(label: str | None, summary: str | None) -> str | None:
@@ -80,6 +142,7 @@ def _categorise(label: str | None, summary: str | None) -> str | None:
         if not cvec:
             cvec = governed_embed(cat)
             _CATEGORY_VECTORS[cat] = list(cvec) if cvec else []
+            _persist_category_vectors()
         if not cvec:
             continue
         cnorm = sqrt(sum(x * x for x in cvec)) or 1.0
@@ -466,7 +529,9 @@ class IntentClusterer:
         self._cluster_cache = {}
 
         LOCAL_TABLES.add("intent_embeddings")
-        if retriever is not None and hasattr(retriever, "router"):
+        if hasattr(self.db, "router"):
+            self.router = self.db.router
+        elif retriever is not None and hasattr(retriever, "router"):
             self.router = retriever.router
         else:
             try:  # pragma: no cover - best effort
@@ -803,14 +868,10 @@ class IntentClusterer:
                 continue
             if hasattr(self.db, "add_module"):
                 rid = self.db.add_module(str(path), text)
-            else:  # fall back to IntentDB style API
+                vec = self.db.get_vector(rid) or []
+            else:  # fall back to IntentDB style API without persisting
                 rid = self.db.add(str(path))
-                try:
-                    self.db.add_embedding(rid, {"path": str(path), "text": text}, "module")
-                except Exception as exc:
-                    logger.warning("failed to add embedding for %s: %s", path, exc)
-                    continue
-            vec = self.db.get_vector(rid) or []
+                vec = self.db.vector({"path": str(path), "text": text})
             if vec:
                 self.module_ids[str(path)] = rid
                 self.vectors[str(path)] = vec
@@ -1763,11 +1824,15 @@ def find_modules_related_to(
     query: str, top_k: int = 5, *, include_clusters: bool = False
 ) -> List[IntentMatch]:
     """Convenience wrapper to query a fresh clusterer instance."""
-
-    return asyncio.run(
-        find_modules_related_to_async(
-            query, top_k=top_k, include_clusters=include_clusters
+    clusterer = IntentClusterer()
+    if hasattr(clusterer, "find_modules_related_to_async"):
+        return asyncio.run(
+            clusterer.find_modules_related_to_async(
+                query, top_k=top_k, include_clusters=include_clusters
+            )
         )
+    return clusterer.find_modules_related_to(
+        query, top_k=top_k, include_clusters=include_clusters
     )
 
 
@@ -1775,24 +1840,32 @@ async def find_modules_related_to_async(
     query: str, top_k: int = 5, *, include_clusters: bool = False
 ) -> List[IntentMatch]:
     """Asynchronously query a fresh clusterer instance."""
-
     clusterer = IntentClusterer()
-    return await clusterer.find_modules_related_to_async(
+    if hasattr(clusterer, "find_modules_related_to_async"):
+        return await clusterer.find_modules_related_to_async(
+            query, top_k=top_k, include_clusters=include_clusters
+        )
+    return clusterer.find_modules_related_to(
         query, top_k=top_k, include_clusters=include_clusters
     )
 
 
 def find_clusters_related_to(query: str, top_k: int = 5) -> List[IntentMatch]:
     """Convenience wrapper returning synergy clusters for ``query``."""
-
-    return asyncio.run(find_clusters_related_to_async(query, top_k=top_k))
+    clusterer = IntentClusterer()
+    if hasattr(clusterer, "find_clusters_related_to_async"):
+        return asyncio.run(
+            clusterer.find_clusters_related_to_async(query, top_k=top_k)
+        )
+    return clusterer.find_clusters_related_to(query, top_k=top_k)
 
 
 async def find_clusters_related_to_async(query: str, top_k: int = 5) -> List[IntentMatch]:
     """Asynchronously return synergy clusters for ``query``."""
-
     clusterer = IntentClusterer()
-    return await clusterer.find_clusters_related_to_async(query, top_k=top_k)
+    if hasattr(clusterer, "find_clusters_related_to_async"):
+        return await clusterer.find_clusters_related_to_async(query, top_k=top_k)
+    return clusterer.find_clusters_related_to(query, top_k=top_k)
 
 
 def _main(argv: Iterable[str] | None = None) -> int:
