@@ -93,4 +93,4 @@ def test_find_clusters_related_to_from_existing_store(monkeypatch, tmp_path):
     fresh = ic.IntentClusterer(retr)
     monkeypatch.setattr(ic, "governed_embed", lambda text: [1.0, 0.0])
     res = fresh.find_clusters_related_to("cluster helper", top_k=1)
-    assert res and res[0]["cluster_id"] == 7
+    assert res and res[0].cluster_ids == [7]

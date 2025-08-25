@@ -50,6 +50,10 @@ class IntentMatch:
     similarity: float
     cluster_ids: List[int]
     label: str | None = None
+    origin: str | None = None
+    members: List[str] | None = None
+    summary: str | None = None
+    intent_text: str | None = None
 
 
 def extract_intent_text(path: Path) -> str:
@@ -933,18 +937,20 @@ class IntentClusterer:
                             label = self._get_cluster_label(cluster_ids[0])
             if sim < threshold:
                 continue
-            if not cluster_ids and cids:
+            if include_clusters and not cluster_ids and cids:
                 cluster_ids = [int(c) for c in cids]
-                if include_clusters and label is None and cluster_ids:
+                if label is None and cluster_ids:
                     label = self._get_cluster_label(cluster_ids[0])
+            elif not include_clusters and cids and len(cids) > 1:
+                cluster_ids = [int(c) for c in cids]
             results.append(
                 IntentMatch(path=path, similarity=sim, cluster_ids=cluster_ids, label=label)
             )
         return results
 
     # ------------------------------------------------------------------
-    def _search_related(self, prompt: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Return raw intent matches for ``prompt``.
+    def _search_related(self, prompt: str, top_k: int = 5) -> List[IntentMatch]:
+        """Return intent matches for ``prompt``.
 
         Each result contains a similarity ``score`` and an ``origin`` field
         describing whether the entry refers to a ``module`` or a synergy
@@ -964,7 +970,7 @@ class IntentClusterer:
                 hits = self.retriever.search(qvec, top_k=top_k) or []
             except Exception:
                 hits = []
-            results: List[Dict[str, Any]] = []
+            results: List[IntentMatch] = []
             for item in hits:
                 meta = item.get("metadata", {})
                 path = meta.get("path")
@@ -982,22 +988,18 @@ class IntentClusterer:
                 target_vec = [x / tnorm for x in target_vec]
                 score = sum(a * b for a, b in zip(qvec, target_vec))
                 if path or members:
-                    entry: Dict[str, Any] = {"score": score, "origin": origin}
-                    if path:
-                        entry["path"] = path
-                    if members:
-                        entry["members"] = list(members)
-                    if cluster_ids:
-                        entry["cluster_ids"] = [int(c) for c in cluster_ids]
-                    if cluster_id is not None:
-                        entry["cluster_id"] = int(cluster_id)
-                    if label:
-                        entry["label"] = str(label)
-                    if summary is not None:
-                        entry["summary"] = str(summary)
-                    if intent_text:
-                        entry["intent_text"] = str(intent_text)
-                    results.append(entry)
+                    results.append(
+                        IntentMatch(
+                            path=path,
+                            similarity=score,
+                            cluster_ids=[int(c) for c in cluster_ids] if cluster_ids else [],
+                            label=str(label) if label else None,
+                            origin=str(origin) if origin else None,
+                            members=list(members) if members else None,
+                            summary=str(summary) if summary is not None else None,
+                            intent_text=str(intent_text) if intent_text else None,
+                        )
+                    )
             if results:
                 return results[:top_k]
 
@@ -1007,7 +1009,7 @@ class IntentClusterer:
             hits = self.db.search_by_vector(vec, top_k)
         except Exception:
             return []
-        results: List[Dict[str, Any]] = []
+        results: List[IntentMatch] = []
         for rid, dist in hits:
             path: str | None = None
             if hasattr(self.db, "get_path"):
@@ -1038,52 +1040,52 @@ class IntentClusterer:
             origin = meta.get("kind") or meta.get("source_id") or path
             if path or members:
                 score = 1.0 / (1.0 + float(dist))
-                entry: Dict[str, Any] = {"score": score, "origin": origin}
-                if path:
-                    entry["path"] = path
-                if members:
-                    entry["members"] = list(members)
-                if cluster_ids:
-                    entry["cluster_ids"] = [int(c) for c in cluster_ids]
-                if cluster_id is not None:
-                    entry["cluster_id"] = int(cluster_id)
-                if label:
-                    entry["label"] = str(label)
-                if summary is not None:
-                    entry["summary"] = str(summary)
-                if intent_text:
-                    entry["intent_text"] = str(intent_text)
-                results.append(entry)
+                results.append(
+                    IntentMatch(
+                        path=path,
+                        similarity=score,
+                        cluster_ids=[int(c) for c in cluster_ids] if cluster_ids else [],
+                        label=str(label) if label else None,
+                        origin=str(origin) if origin else None,
+                        members=list(members) if members else None,
+                        summary=str(summary) if summary is not None else None,
+                        intent_text=str(intent_text) if intent_text else None,
+                    )
+                )
         return results[:top_k]
 
     # ------------------------------------------------------------------
     def find_modules_related_to(
         self, prompt: str, top_k: int = 5, *, include_clusters: bool = False
-    ) -> List[Dict[str, Any]]:
+    ) -> List[IntentMatch]:
         """Return modules related to ``prompt``.
 
         When ``include_clusters`` is ``True`` the result set may also contain
         synergy cluster entries with ``origin`` set to ``"cluster"``.
+        Results are returned as :class:`IntentMatch` instances.
         """
 
         results = self._search_related(prompt, top_k * 2)
         if not include_clusters:
-            results = [r for r in results if r.get("origin") != "cluster"]
+            results = [r for r in results if r.origin != "cluster"]
         return results[:top_k]
 
     # ------------------------------------------------------------------
-    def find_clusters_related_to(self, prompt: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Return synergy clusters related to ``prompt``."""
+    def find_clusters_related_to(self, prompt: str, top_k: int = 5) -> List[IntentMatch]:
+        """Return synergy clusters related to ``prompt``.
+
+        Results are returned as :class:`IntentMatch` instances.
+        """
 
         results = [
-            r for r in self._search_related(prompt, top_k * 2) if r.get("origin") == "cluster"
+            r for r in self._search_related(prompt, top_k * 2) if r.origin == "cluster"
         ]
         return results[:top_k]
 
 
 def find_modules_related_to(
     query: str, top_k: int = 5, *, include_clusters: bool = False
-) -> List[Dict[str, Any]]:
+) -> List[IntentMatch]:
     """Convenience wrapper to query a fresh clusterer instance."""
 
     clusterer = IntentClusterer()
@@ -1092,7 +1094,7 @@ def find_modules_related_to(
     )
 
 
-def find_clusters_related_to(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+def find_clusters_related_to(query: str, top_k: int = 5) -> List[IntentMatch]:
     """Convenience wrapper returning synergy clusters for ``query``."""
 
     clusterer = IntentClusterer()
