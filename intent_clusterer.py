@@ -325,7 +325,6 @@ class IntentClusterer:
                     agg[i] += float(val)
             mean = [v / len(vectors) for v in agg]
             entry = f"cluster:{gid}"
-
             texts: List[str] = []
             for m in members:
                 try:
@@ -336,6 +335,7 @@ class IntentClusterer:
                     logger.warning("failed to extract intent text from %s: %s", m, exc)
                     continue
             label = derive_cluster_label(texts)
+            text = "\n".join(texts)
 
             meta = {
                 "members": sorted(members),
@@ -343,6 +343,7 @@ class IntentClusterer:
                 "cluster_ids": [int(gid)],
                 "path": entry,
                 "label": label,
+                "text": text,
             }
             try:
                 blob = sqlite3.Binary(pickle.dumps(mean))
@@ -374,6 +375,7 @@ class IntentClusterer:
                     "path": entry,
                     "cluster_ids": [int(gid)],
                     "label": label,
+                    "text": text,
                 }
                 self.db._rebuild_index()  # type: ignore[attr-defined]
                 self.db.save_index()  # type: ignore[attr-defined]
@@ -555,18 +557,21 @@ class IntentClusterer:
 
     # ------------------------------------------------------------------
     def get_cluster_intents(self, cluster_id: int) -> tuple[str, List[float]]:
-        """Return descriptive text and vector for ``cluster_id``.
+        """Return aggregated intent text and vector for ``cluster_id``.
 
-        The method looks up the aggregated intent vector for the cluster in the
-        ``intent_embeddings`` table.  The table stores vectors as pickled blobs
-        and keeps a JSON ``metadata`` column that lists the member modules of
-        the cluster.  Docstrings for these member modules are concatenated to
-        form a human‑readable description which is returned together with the
-        stored vector.  If the cluster cannot be found or deserialisation
-        fails, an empty text and vector are returned.
+        The cluster information is stored either in the ``intent_embeddings``
+        table or within the in-memory :class:`ModuleVectorDB` metadata.  Both
+        sources keep the averaged vector under ``vector`` and the concatenated
+        intent text under ``text``.  This method retrieves the stored data and
+        falls back to reconstructing the text from member modules if necessary.
         """
 
         entry = f"cluster:{int(cluster_id)}"
+        vector: List[float] = []
+        text: str = ""
+
+        # Primary lookup: SQLite table
+        row = None
         try:
             cur = self.conn.execute(
                 "SELECT vector, metadata FROM intent_embeddings WHERE module_path = ?",
@@ -575,34 +580,51 @@ class IntentClusterer:
             row = cur.fetchone()
         except Exception:
             row = None
-        if not row:
-            return "", []
-
-        blob, meta_json = row
-        vector: List[float] = []
-        if blob:
+        if row:
+            blob, meta_json = row
+            if blob:
+                try:
+                    data = pickle.loads(blob)
+                    vector = [float(x) for x in data]
+                except Exception:
+                    vector = []
             try:
-                data = pickle.loads(blob)
-                vector = [float(x) for x in data]
+                meta = json.loads(meta_json or "{}")
             except Exception:
-                vector = []
+                meta = {}
+            text = str(meta.get("text", ""))
+            if not text and meta.get("members"):
+                texts: List[str] = []
+                for m in meta.get("members", []):
+                    try:
+                        txt = extract_intent_text(Path(m))
+                        if txt:
+                            texts.append(txt)
+                    except Exception:
+                        continue
+                text = "\n".join(texts)
+            if not vector:
+                vec_meta = meta.get("vector")
+                if isinstance(vec_meta, list):
+                    vector = [float(x) for x in vec_meta]
+        else:
+            # Fallback: in-memory metadata of the vector DB
+            meta = getattr(self.db, "_metadata", {}).get(entry, {})
+            if meta:
+                vector = [float(x) for x in meta.get("vector", [])]
+                text = str(meta.get("text", ""))
+                if not text and meta.get("members"):
+                    texts = []
+                    for m in meta.get("members", []):
+                        try:
+                            txt = extract_intent_text(Path(m))
+                            if txt:
+                                texts.append(txt)
+                        except Exception:
+                            continue
+                    text = "\n".join(texts)
 
-        members: List[str] = []
-        try:
-            meta = json.loads(meta_json or "{}")
-            members = list(meta.get("members", [])) if meta else []
-        except Exception:
-            members = []
-
-        texts: List[str] = []
-        for m in members:
-            try:
-                txt = extract_intent_text(Path(m))
-                if txt:
-                    texts.append(txt)
-            except Exception:
-                continue
-        return "\n".join(texts), vector
+        return text, vector
 
     # ------------------------------------------------------------------
     def query(
