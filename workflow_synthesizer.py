@@ -19,6 +19,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
+# lightweight structural analysis helpers
+try:  # Optional import; makes the synthesizer work in minimal environments
+    from analysis import ModuleSignature
+except Exception:  # pragma: no cover - best effort fall back
+    ModuleSignature = None  # type: ignore[misc]
+
 try:  # Optional imports; fall back to stubs in tests
     from module_synergy_grapher import (
         ModuleSynergyGrapher,
@@ -376,13 +382,13 @@ class WorkflowSynthesizer:
                 self.intent_db = None
 
     # ------------------------------------------------------------------
-    def resolve_dependencies(self, modules: List[ModuleIO]) -> List[WorkflowStep]:
+    def resolve_dependencies(self, modules: List["ModuleSignature"]) -> List[WorkflowStep]:
         """Order ``modules`` based on their data dependencies.
 
         Parameters
         ----------
         modules:
-            Sequence of :class:`ModuleIO` objects.  Each must provide a
+            Sequence of :class:`ModuleSignature` objects. Each must provide a
             ``name`` identifying the module it represents.
 
         Returns
@@ -399,15 +405,38 @@ class WorkflowSynthesizer:
         if not modules:
             return []
 
+        if ModuleSignature is None:
+            raise ValueError("ModuleSignature support is unavailable")
+
+        # Helper to select the best producer for a given consumer based on
+        # synergy weights.  Falls back to a deterministic alphabetical choice.
+        def _select_best(consumer: str, candidates: Set[str]) -> str:
+            best = None
+            best_weight = float("-inf")
+            graph = getattr(self.module_synergy_grapher, "graph", None)
+            for cand in candidates:
+                weight = 0.0
+                if graph is not None:
+                    if graph.has_edge(cand, consumer):
+                        weight = float(graph[cand][consumer].get("weight", 0.0))
+                    elif graph.has_edge(consumer, cand):
+                        weight = float(graph[consumer][cand].get("weight", 0.0))
+                if best is None or weight > best_weight:
+                    best = cand
+                    best_weight = weight
+            if best is None:
+                best = sorted(candidates)[0]
+            return best
+
         # Map produced values/files/globals -> modules
         produced_by_name: Dict[str, Set[str]] = {}
         produced_by_type: Dict[str, Set[str]] = {}
         for mod in modules:
             name = mod.name or getattr(mod, "module", "")
             if not name:
-                raise ValueError("ModuleIO missing name attribute")
+                raise ValueError("ModuleSignature missing name attribute")
 
-            outputs = set(mod.outputs) | set(mod.files_written) | set(mod.globals)
+            outputs = set(mod.files_written) | set(mod.globals)
             for out in outputs:
                 produced_by_name.setdefault(out, set()).add(name)
 
@@ -430,19 +459,25 @@ class WorkflowSynthesizer:
 
         for mod in modules:
             name = mod.name
-            required = set(mod.inputs) | set(mod.files_read) | set(mod.globals)
+            required: Set[str] = set(mod.files_read) | set(mod.globals)
+            for fn in mod.functions.values():
+                required.update(fn.get("args", []))
             dependencies: Set[str] = set()
 
             for item in required:
                 matched = False
                 producers = produced_by_name.get(item)
                 if producers:
-                    dependencies.update(p for p in producers if p != name)
+                    producer = _select_best(name, producers)
+                    if producer != name:
+                        dependencies.add(producer)
                     matched = True
                 else:
                     ann = annotations_cache[name].get(item)
                     if ann and ann in produced_by_type:
-                        dependencies.update(p for p in produced_by_type[ann] if p != name)
+                        producer = _select_best(name, produced_by_type[ann])
+                        if producer != name:
+                            dependencies.add(producer)
                         matched = True
                 if not matched:
                     missing.setdefault(name, set()).add(item)
@@ -462,10 +497,14 @@ class WorkflowSynthesizer:
         steps: List[WorkflowStep] = []
         for name in order:
             mod = next(m for m in modules if m.name == name)
+            inputs: Set[str] = set(mod.files_read) | set(mod.globals)
+            for fn in mod.functions.values():
+                inputs.update(fn.get("args", []))
+            outputs = set(mod.files_written) | set(mod.globals)
             step = WorkflowStep(
                 module=name,
-                inputs=sorted(mod.inputs),
-                outputs=sorted(mod.outputs),
+                inputs=sorted(inputs),
+                outputs=sorted(outputs),
             )
             steps.append(step)
 
