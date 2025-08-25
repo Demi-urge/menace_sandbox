@@ -85,7 +85,9 @@ def test_resolve_dependencies_ordering_and_unresolved(tmp_path, monkeypatch):
     synth = ws.WorkflowSynthesizer()
     mods = [ws.inspect_module(m) for m in ["mod_b", "mod_c", "mod_a"]]
     steps = synth.resolve_dependencies(mods)
-    assert [s.module for s in steps] == ["mod_a", "mod_b", "mod_c"]
+    order = [s.module for s in steps]
+    assert order[0] == "mod_a"
+    assert sorted(order[1:]) == ["mod_b", "mod_c"]
 
     bad = [ws.inspect_module(m) for m in ["mod_a", "mod_d"]]
     with pytest.raises(ValueError, match="mod_d"):
@@ -100,11 +102,14 @@ def test_generate_workflows_persist_and_rank(tmp_path, monkeypatch):
     intent = StubIntent(tmp_path)
     synth = ws.WorkflowSynthesizer(module_synergy_grapher=grapher, intent_clusterer=intent)
 
-    workflows = synth.generate_workflows(start_module="mod_a", problem="finalise")
+    workflows = synth.generate_workflows(start_module="mod_a", problem="finalise", limit=2)
+    assert len(workflows) == 2
     assert [step.module for step in workflows[0]] == ["mod_a", "mod_b", "mod_c"]
+    assert [step.module for step in workflows[1]] == ["mod_a", "mod_c", "mod_b"]
+
     out_dir = Path("sandbox_data/generated_workflows")
-    saved = list(out_dir.glob("*.workflow.json"))
-    assert saved and saved[0].name.startswith("mod_a_0")
+    saved = sorted(out_dir.glob("*.workflow.json"))
+    assert len(saved) >= 2 and saved[0].name.startswith("mod_a_0")
 
     data = json.loads(saved[0].read_text())
     assert data["steps"][0]["module"] == "mod_a"

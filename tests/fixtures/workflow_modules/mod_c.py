@@ -1,2 +1,2 @@
-def final(result):
+def final(data):
     pass
