@@ -40,3 +40,15 @@ def test_add_bot_duplicate(tmp_path, caplog, monkeypatch):
     assert "duplicate" in caplog.text.lower()
     assert db.conn.execute("SELECT COUNT(*) FROM bots").fetchone()[0] == 1
     _reset_router(old)
+
+
+def test_botdb_content_hash_unique_index(tmp_path):
+    import menace.db_router as dbr
+
+    old = dbr.GLOBAL_ROUTER
+    router = init_db_router("botidx", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
+    bdb.router = router
+    db = bdb.BotDB()
+    indexes = {row[1]: row[2] for row in db.conn.execute("PRAGMA index_list('bots')").fetchall()}
+    assert indexes.get("idx_bots_content_hash") == 1
+    _reset_router(old)

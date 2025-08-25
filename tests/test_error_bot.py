@@ -49,6 +49,15 @@ def test_add_error_duplicate(tmp_path, caplog, monkeypatch):
     assert "duplicate" in caplog.text.lower()
 
 
+def test_error_content_hash_unique_index(tmp_path, monkeypatch):
+    monkeypatch.setattr(eb.ErrorDB, "add_embedding", lambda *a, **k: None)
+    old = eb.GLOBAL_ROUTER
+    db = eb.ErrorDB(tmp_path / "e.db")
+    indexes = {row[1]: row[2] for row in db.conn.execute("PRAGMA index_list('errors')").fetchall()}
+    assert indexes.get("idx_errors_content_hash") == 1
+    eb.GLOBAL_ROUTER = old
+
+
 def test_add_error_duplicate_different_message(tmp_path, caplog, monkeypatch):
     monkeypatch.setattr(eb.ErrorDB, "add_embedding", lambda *a, **k: None)
     db = eb.ErrorDB(tmp_path / "e.db")
