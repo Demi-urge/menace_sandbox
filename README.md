@@ -1787,10 +1787,26 @@ automation to refresh the graph.
 ## Workflow Synthesizer
 
 Combines structural relationships from `ModuleSynergyGrapher` with semantic
-intent search to propose small, ordered module workflows.  Candidates can be
-exported to `.workflow.json` for registration with `WorkflowDB`.  See
-[docs/workflow_synthesizer.md](docs/workflow_synthesizer.md) for usage
-examples.
+intent search to propose small, ordered module workflows. It inspects module
+inputs and outputs to resolve dependency order and emits candidate steps.
+
+### CLI usage
+
+Use `workflow_synthesizer_cli.py` to explore and save workflows from the
+command line:
+
+```bash
+python workflow_synthesizer_cli.py --start module_a --out my.workflow.json
+python workflow_synthesizer_cli.py --start "summarise data" --out summary.workflow.json
+```
+
+The first example seeds the synthesizer from an existing module. The second
+accepts a free-text problem description. In both cases an interactive prompt
+allows editing before the workflow specification is written to the chosen file.
+
+Candidates can be exported to `.workflow.json` for registration with
+`WorkflowDB`. See [docs/workflow_synthesizer.md](docs/workflow_synthesizer.md)
+for design notes and more examples.
 
 ## Vector Analytics
 

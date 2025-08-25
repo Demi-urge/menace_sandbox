@@ -1,10 +1,34 @@
 # Workflow Synthesizer
 
 `WorkflowSynthesizer` expands a seed module by blending structural signals from
-`ModuleSynergyGrapher` with semantic intent search.  It inspects module inputs
+`ModuleSynergyGrapher` with semantic intent search. It inspects module inputs
 and outputs to resolve dependency order and emits small workflow candidates.
 
-## Quick start
+## Design
+
+The synthesizer queries `ModuleSynergyGrapher` for related modules and scores
+them against a text description. Candidates are explored breadth‑first and
+pruned by synergy weight and semantic similarity. Internal state tracks which
+modules have been selected and the values each step provides.
+
+## I/O analysis
+
+Each candidate module is introspected to determine its expected inputs and the
+values it returns. Function signatures supply argument names while docstring or
+return annotations describe outputs. The synthesizer aggregates this metadata so
+later steps can consume values produced earlier in the workflow.
+
+## Dependency resolution
+
+When assembling a workflow the synthesizer orders modules so that every required
+input is satisfied by a previous output. Any unresolved parameters are surfaced
+in the step description for manual filling or further synthesis. This ensures
+generated workflows can be executed or converted into specifications without
+missing dependencies.
+
+## Examples
+
+### Programmatic usage
 
 ```python
 from workflow_synthesizer import WorkflowSynthesizer
@@ -15,20 +39,13 @@ for step in steps:
     print(step["module"], step["args"], "->", step["provides"])
 ```
 
-The :meth:`WorkflowSynthesizer.synthesize` method returns a structured list of
-steps where each entry describes the module name, unresolved arguments and the
-values it provides.  These steps can be transformed into a workflow
-specification or executed directly.
+### Saving and CLI
 
-Once a set of candidate workflows has been produced via
-``generate_workflows`` the synthesizer can serialise them for later reuse:
-
-```python
-workflows = synth.generate_workflows(start_module="module_a")
-data = synth.to_dict()          # JSON serialisable mapping
-path = synth.save()             # writes JSON/YAML to sandbox_data/generated_workflows
-
-# create a .workflow.json file compatible with WorkflowDB
-from workflow_synthesizer import save_workflow
-save_workflow(workflows[0])
+```bash
+# Generate candidate workflows and interactively save a spec
+python workflow_synthesizer_cli.py --start module_a --out my.workflow.json
 ```
+
+The `generate_workflows` method returns multiple candidates and `save_workflow`
+can write a `.workflow.json` compatible with `WorkflowDB` for later reuse.
+
