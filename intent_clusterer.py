@@ -300,7 +300,7 @@ class IntentClusterer:
         return results
 
     # ------------------------------------------------------------------
-    def find_modules_related_to(self, prompt: str, top_k: int = 5) -> List[Dict[str, float]]:
+    def find_modules_related_to(self, prompt: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """Return modules most semantically similar to ``prompt``.
 
         The query text is embedded and searched using the configured
@@ -321,16 +321,20 @@ class IntentClusterer:
                 hits = self.retriever.search(qvec, top_k=top_k) or []
             except Exception:
                 hits = []
-            results: List[Dict[str, float]] = []
+            results: List[Dict[str, Any]] = []
             for item in hits:
                 meta = item.get("metadata", {})
                 path = meta.get("path")
+                members = meta.get("members")
                 target_vec: Sequence[float] = item.get("vector", [])
                 tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
                 target_vec = [x / tnorm for x in target_vec]
                 score = sum(a * b for a, b in zip(qvec, target_vec))
                 if path:
-                    results.append({"path": path, "score": score})
+                    entry: Dict[str, Any] = {"path": path, "score": score}
+                    if members:
+                        entry["members"] = list(members)
+                    results.append(entry)
             if results:
                 return results[:top_k]
 
@@ -340,9 +344,10 @@ class IntentClusterer:
             hits = self.db.search_by_vector(vec, top_k)
         except Exception:
             return []
-        results: List[Dict[str, float]] = []
+        results: List[Dict[str, Any]] = []
         for rid, dist in hits:
             path: str | None = None
+            members = None
             if hasattr(self.db, "get_path"):
                 path = self.db.get_path(int(rid))
             elif hasattr(self.db, "conn"):
@@ -354,13 +359,18 @@ class IntentClusterer:
                         path = str(row["path"])
                 except Exception:
                     path = None
+            meta = getattr(self.db, "_metadata", {}).get(str(rid), {})
+            members = meta.get("members")
             if path:
                 score = 1.0 / (1.0 + float(dist))
-                results.append({"path": path, "score": score})
+                entry: Dict[str, Any] = {"path": path, "score": score}
+                if members:
+                    entry["members"] = list(members)
+                results.append(entry)
         return results[:top_k]
 
 
-def find_modules_related_to(query: str, top_k: int = 5) -> List[Dict[str, float]]:
+def find_modules_related_to(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """Convenience wrapper to query a fresh clusterer instance."""
 
     clusterer = IntentClusterer()
