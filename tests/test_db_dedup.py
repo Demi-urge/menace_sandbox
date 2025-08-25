@@ -2,6 +2,9 @@ import importlib
 import logging
 
 import pytest
+import sqlalchemy as sa
+
+import db_dedup
 import db_router
 
 
@@ -10,6 +13,49 @@ def router(tmp_path):
     """Initialize a fresh DBRouter pointing at temporary files."""
     path = tmp_path / "db.sqlite"
     return db_router.init_db_router("test", str(path), str(path))
+
+
+def test_insert_if_unique_sa(tmp_path, caplog):
+    """Verify SQLAlchemy-based duplicate insertion prevention."""
+
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'dedup.db'}")
+    meta = sa.MetaData()
+    tbl = sa.Table(
+        "items",
+        meta,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("name", sa.Text),
+        sa.Column("content_hash", sa.String, unique=True),
+    )
+    meta.create_all(engine)
+
+    values = {"name": "alpha"}
+    logger = logging.getLogger(__name__)
+    with caplog.at_level(logging.WARNING):
+        pk1 = db_dedup.insert_if_unique(
+            tbl,
+            values,
+            ["name"],
+            "m1",
+            engine=engine,
+            logger=logger,
+        )
+        assert pk1 == 1
+        pk2 = db_dedup.insert_if_unique(
+            tbl,
+            values,
+            ["name"],
+            "m1",
+            engine=engine,
+            logger=logger,
+        )
+        assert pk2 is None
+    assert "Duplicate insert ignored for items" in caplog.text
+
+    with engine.connect() as conn:
+        count = conn.execute(sa.select(sa.func.count()).select_from(tbl)).scalar_one()
+        assert count == 1
+
 
 def test_botdb_dedup(tmp_path, caplog, monkeypatch):
     path = tmp_path / "db.sqlite"
@@ -34,7 +80,6 @@ def test_botdb_dedup(tmp_path, caplog, monkeypatch):
 
     db.add_bot(bdb.BotRecord(name="beta", purpose="p"))
     assert db.conn.execute("SELECT COUNT(*) FROM bots").fetchone()[0] == 2
-
 
 
 def test_enhancementdb_dedup(tmp_path, caplog, monkeypatch, router):

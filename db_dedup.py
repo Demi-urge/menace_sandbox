@@ -1,97 +1,96 @@
 from __future__ import annotations
 
+"""Database deduplication helpers.
+
+This module provides a small utility for inserting rows only if their
+content is unique.  Uniqueness is determined by hashing selected fields
+using JSON encoding with sorted keys.  The resulting SHA256 hash is stored
+in a ``content_hash`` column which should be declared as ``UNIQUE`` in the
+target table.
+"""
+
 import hashlib
 import json
-import logging
-import sqlite3
 from collections.abc import Iterable, Mapping
-from typing import Any, Tuple
+from typing import Any
+
+from sqlalchemy import Table
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 __all__ = ["compute_content_hash", "insert_if_unique"]
 
 
-def compute_content_hash(data: Mapping[str, Any]) -> str:
-    """Return a SHA256 hash of ``data`` encoded as sorted JSON.
+def compute_content_hash(values: Mapping[str, Any], fields: Iterable[str]) -> str:
+    """Return SHA256 hex digest of ``fields`` from ``values``.
 
     Parameters
     ----------
-    data:
-        Mapping of field names to values that should be hashed.
-
-    Returns
-    -------
-    str
-        Hex digest of the SHA256 hash of the JSON representation of ``data``.
+    values:
+        Mapping containing the data to hash.
+    fields:
+        Iterable of keys from ``values`` whose values should be included in the
+        hash calculation.
     """
 
+    payload = {key: values[key] for key in fields}
     return hashlib.sha256(
-        json.dumps(data, sort_keys=True).encode("utf-8")
+        json.dumps(payload, sort_keys=True).encode("utf-8")
     ).hexdigest()
 
 
 def insert_if_unique(
-    conn: sqlite3.Connection,
-    table: str,
+    table: Table,
     values: Mapping[str, Any],
     hash_fields: Iterable[str],
     menace_id: str,
-) -> Tuple[int, bool]:
-    """Insert ``values`` into ``table`` if the content is unique.
+    *,
+    engine: Engine,
+    logger: Any,
+) -> Any | None:
+    """Insert ``values`` into ``table`` if the hashed content is unique.
 
-    The hash of ``hash_fields`` is computed using :func:`compute_content_hash` and
-    stored in the ``content_hash`` column.  If an existing row with the same
-    ``content_hash`` is found, the insert is skipped and the existing row's ``id``
-    is returned.
+    The hash of ``hash_fields`` is computed using :func:`compute_content_hash`
+    and stored in the ``content_hash`` column before attempting the insert.
 
     Parameters
     ----------
-    conn:
-        SQLite connection used to execute the insert.
     table:
-        Table name to insert into.
+        SQLAlchemy ``Table`` object representing the target table.
     values:
-        Mapping of column names to values.  ``content_hash`` is added to this
-        mapping before the insert.
+        Mapping of column names to values. ``content_hash`` is added to a copy
+        of this mapping prior to insertion.
     hash_fields:
-        Iterable of keys from ``values`` whose contents should be hashed to
-        detect duplicates.
+        Iterable of keys from ``values`` to include in the hash calculation.
     menace_id:
-        Identifier of the menace instance performing the insert.  Used for log
-        messages.
+        Identifier of the menace instance performing the insert, included in
+        log messages.
+    engine:
+        SQLAlchemy ``Engine`` used to execute the insert.
+    logger:
+        Logger used for warning messages when duplicates are detected.
 
     Returns
     -------
-    tuple[int, bool]
-        A pair of ``(row_id, inserted)`` where ``row_id`` is the primary key of
-        the existing or newly inserted row and ``inserted`` is ``True`` if a new
-        row was created.
+    Any | None
+        Primary key of the inserted row, or ``None`` if a duplicate was
+        detected.
     """
 
-    hash_payload = {k: values[k] for k in hash_fields}
-    content_hash = compute_content_hash(hash_payload)
-    values_with_hash = dict(values)
-    values_with_hash["content_hash"] = content_hash
-
-    columns = ", ".join(values_with_hash.keys())
-    placeholders = ", ".join("?" for _ in values_with_hash)
+    values_copy = dict(values)
+    values_copy["content_hash"] = compute_content_hash(values_copy, hash_fields)
 
     try:
-        cur = conn.execute(
-            f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
-            tuple(values_with_hash.values()),
+        with engine.begin() as conn:
+            result = conn.execute(table.insert().values(**values_copy))
+            return result.inserted_primary_key[0]
+    except IntegrityError as exc:
+        # Only treat the error as a duplicate if the unique ``content_hash``
+        # constraint triggered it. Otherwise re-raise for visibility.
+        msg = str(getattr(exc, "orig", exc))
+        if "content_hash" not in msg:
+            raise
+        logger.warning(
+            "Duplicate insert ignored for %s (menace_id=%s)", table.name, menace_id
         )
-        return int(cur.lastrowid), True
-    except sqlite3.IntegrityError as exc:
-        if "UNIQUE" in str(exc).upper():
-            logging.warning(
-                "Duplicate insert ignored for %s (menace_id=%s)", table, menace_id
-            )
-            cur = conn.execute(
-                f"SELECT id FROM {table} WHERE content_hash=?",
-                (content_hash,),
-            )
-            row = cur.fetchone()
-            if row is None:
-                raise
-            return int(row[0]), False
-        raise
+        return None
