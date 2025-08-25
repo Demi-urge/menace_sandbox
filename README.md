@@ -50,9 +50,9 @@
     from workflow_summary_db import WorkflowSummaryDB
 
     db = WorkflowSummaryDB()
-    db.get_summary(1, scope="local")   # current menace only
-    db.get_summary(1, scope="global")  # other menace instances
-    db.get_summary(1, scope="all")     # all records
+    db.get_summary(1, scope="local")   # -> WorkflowSummary for current menace
+    db.get_summary(1, scope="global")  # -> records from other menace instances
+    db.get_summary(1, scope="all")     # -> records from all menaces
     ```
     Scoping can also be applied manually when building SQL queries:
 

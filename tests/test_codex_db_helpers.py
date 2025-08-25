@@ -70,11 +70,13 @@ def _setup_ws_db(tmp_path, monkeypatch, rows):
     conn = sqlite3.connect(tmp_path / "ws.db")
     conn.row_factory = sqlite3.Row
     conn.execute(
-        "CREATE TABLE workflow_summaries("  # workflow_id, summary
-        "workflow_id INTEGER PRIMARY KEY, summary TEXT, source_menace_id TEXT)"
+        "CREATE TABLE workflow_summaries("  # workflow_id, summary, timestamp
+        "workflow_id INTEGER PRIMARY KEY, summary TEXT, timestamp TEXT, "
+        "source_menace_id TEXT)"
     )
     conn.executemany(
-        "INSERT INTO workflow_summaries(workflow_id, summary, source_menace_id) VALUES (?,?,?)",
+        "INSERT INTO workflow_summaries(workflow_id, summary, timestamp, source_menace_id)"
+        " VALUES (?,?,?,?)",
         rows,
     )
     conn.commit()
@@ -160,8 +162,8 @@ def test_fetch_enhancements(monkeypatch, tmp_path):
 
 def test_fetch_summaries(monkeypatch, tmp_path):
     rows = [
-        (1, "s1", "A"),
-        (2, "s2", "B"),
+        (1, "s1", "2023-01-01", "A"),
+        (2, "s2", "2023-01-02", "B"),
     ]
     _setup_ws_db(tmp_path, monkeypatch, rows)
 
@@ -170,6 +172,7 @@ def test_fetch_summaries(monkeypatch, tmp_path):
 
     limited = helpers.fetch_summaries(limit=1)
     assert limited[0].content == "s2"
+    assert limited[0].timestamp == "2023-01-02"
 
     emb = helpers.fetch_summaries(include_embeddings=True, limit=1)
     assert emb[0].embedding and len(emb[0].embedding) > 0
@@ -211,9 +214,9 @@ def test_fetch_workflows(monkeypatch, tmp_path):
 
 def test_aggregate_samples(monkeypatch, tmp_path):
     _setup_enh_db(tmp_path, monkeypatch, [(1, "a", 0.2, 0.5, "2023-01-02", "A")])
-    _setup_ws_db(tmp_path, monkeypatch, [(1, "s1", "A")])
+    _setup_ws_db(tmp_path, monkeypatch, [(1, "s1", "2023-01-01", "A")])
     _setup_disc_db(tmp_path, monkeypatch, [(1, "d1", "{}", 0.1, 0.9, "2023-01-03", "A")])
     _setup_wf_db(tmp_path, monkeypatch, [(1, "w1", "2023-01-01", "A")])
 
     results = helpers.aggregate_samples(sort_by="timestamp", limit=3)
-    assert [s.content for s in results] == ["d1", "a", "w1"]
+    assert [s.content for s in results] == ["d1", "a", "s1"]

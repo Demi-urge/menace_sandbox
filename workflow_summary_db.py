@@ -24,6 +24,7 @@ The ``scope`` parameter replaces the deprecated ``include_cross_instance`` and
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import sqlite3
 from typing import Literal
 
@@ -45,6 +46,7 @@ class WorkflowSummary:
     workflow_id: int
     summary: str
     source_menace_id: str = ""
+    timestamp: str | None = None
 
 
 class WorkflowSummaryDB:
@@ -59,14 +61,28 @@ class WorkflowSummaryDB:
             CREATE TABLE IF NOT EXISTS workflow_summaries(
                 workflow_id INTEGER PRIMARY KEY,
                 summary TEXT,
+                timestamp TEXT,
                 source_menace_id TEXT NOT NULL
             )
             """,
         )
+        # Lightweight migration: add timestamp column if missing
+        cur = self.conn.execute("PRAGMA table_info(workflow_summaries)")
+        columns = [row[1] for row in cur.fetchall()]
+        if "timestamp" not in columns:
+            self.conn.execute(
+                "ALTER TABLE workflow_summaries ADD COLUMN timestamp TEXT"
+            )
         self.conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_workflow_summaries_source_menace_id
                 ON workflow_summaries(source_menace_id)
+            """,
+        )
+        self.conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_workflow_summaries_timestamp
+                ON workflow_summaries(timestamp)
             """,
         )
         self.conn.commit()
@@ -87,13 +103,18 @@ class WorkflowSummaryDB:
 
         menace_id = self._current_menace_id(source_menace_id)
         conn = self.router.get_connection("workflow_summaries")
+        ts = datetime.now(timezone.utc).isoformat()
         conn.execute(
             """
-            INSERT INTO workflow_summaries(source_menace_id, workflow_id, summary)
-            VALUES(?,?,?)
-            ON CONFLICT(workflow_id) DO UPDATE SET summary=excluded.summary
+            INSERT INTO workflow_summaries(
+                source_menace_id, workflow_id, summary, timestamp
+            )
+            VALUES(?,?,?,?)
+            ON CONFLICT(workflow_id) DO UPDATE SET
+                summary=excluded.summary,
+                timestamp=excluded.timestamp
             """,
-            (menace_id, workflow_id, summary),
+            (menace_id, workflow_id, summary, ts),
         )
         conn.commit()
 
@@ -103,7 +124,7 @@ class WorkflowSummaryDB:
         workflow_id: int,
         *,
         scope: Literal["local", "global", "all"] = "local",
-    ) -> str | None:
+    ) -> WorkflowSummary | None:
         """Return the summary for ``workflow_id`` filtered by ``scope``."""
 
         menace_id = self._current_menace_id()
@@ -112,13 +133,14 @@ class WorkflowSummaryDB:
         )
         conn = self.router.get_connection("workflow_summaries")
         query = apply_scope(
-            "SELECT summary FROM workflow_summaries WHERE workflow_id=?",
+            "SELECT workflow_id, summary, source_menace_id, timestamp"
+            " FROM workflow_summaries WHERE workflow_id=?",
             clause,
         )
         params = [workflow_id] + params
         cur = conn.execute(query, params)
         row = cur.fetchone()
-        return row["summary"] if row else None
+        return WorkflowSummary(**dict(row)) if row else None
 
     # ------------------------------------------------------------------
     def all_summaries(
@@ -132,7 +154,8 @@ class WorkflowSummaryDB:
         )
         conn = self.router.get_connection("workflow_summaries")
         query = apply_scope(
-            "SELECT workflow_id, summary, source_menace_id FROM workflow_summaries",
+            "SELECT workflow_id, summary, source_menace_id, timestamp"
+            " FROM workflow_summaries",
             clause,
         )
         cur = conn.execute(query, params)

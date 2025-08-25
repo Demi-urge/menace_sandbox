@@ -112,8 +112,8 @@ def fetch_summaries(
     db = WorkflowSummaryDB()
     menace_id = getattr(getattr(db, "router", None), "menace_id", "")
     clause, params = build_scope_clause("workflow_summaries", Scope.ALL, menace_id)
-    order_col = _resolve_order(sort_by, {}, "workflow_id")
-    sql = "SELECT workflow_id, summary FROM workflow_summaries"
+    order_col = _resolve_order(sort_by, {"timestamp": "timestamp"}, "workflow_id")
+    sql = "SELECT workflow_id, summary, timestamp FROM workflow_summaries"
     if clause:
         sql += f" WHERE {clause}"
     sql += f" ORDER BY {order_col} DESC LIMIT ?"
@@ -132,7 +132,7 @@ def fetch_summaries(
             TrainingSample(
                 source="workflow_summary",
                 content=row["summary"],
-                timestamp=None,
+                timestamp=row["timestamp"],
                 embedding=embedding,
             )
         )
