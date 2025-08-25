@@ -372,6 +372,7 @@ class IntentClusterer:
             meta = {
                 "members": sorted(members),
                 "kind": "cluster",
+                "cluster_id": int(gid),
                 "cluster_ids": [int(gid)],
                 "path": entry,
                 "label": label,
@@ -406,6 +407,7 @@ class IntentClusterer:
                     "redacted": True,
                     "members": sorted(members),
                     "path": entry,
+                    "cluster_id": int(gid),
                     "cluster_ids": [int(gid)],
                     "label": label,
                     "text": text,
@@ -788,11 +790,11 @@ class IntentClusterer:
                 members = meta.get("members")
                 origin = meta.get("kind") or meta.get("source_id") or path
                 cluster_ids = meta.get("cluster_ids")
-                if cluster_ids is None:
-                    cid = meta.get("cluster_id")
-                    if cid is not None:
-                        cluster_ids = [cid]
+                cluster_id = meta.get("cluster_id")
+                if cluster_ids is None and cluster_id is not None:
+                    cluster_ids = [cluster_id]
                 label = meta.get("label")
+                intent_text = meta.get("intent_text")
                 target_vec: Sequence[float] = item.get("vector", [])
                 tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
                 target_vec = [x / tnorm for x in target_vec]
@@ -805,8 +807,12 @@ class IntentClusterer:
                         entry["members"] = list(members)
                     if cluster_ids:
                         entry["cluster_ids"] = [int(c) for c in cluster_ids]
+                    if cluster_id is not None:
+                        entry["cluster_id"] = int(cluster_id)
                     if label:
                         entry["label"] = str(label)
+                    if intent_text:
+                        entry["intent_text"] = str(intent_text)
                     results.append(entry)
             if results:
                 return results[:top_k]
@@ -839,11 +845,11 @@ class IntentClusterer:
                 path = meta.get("path")
             members = meta.get("members")
             cluster_ids = meta.get("cluster_ids")
-            if cluster_ids is None:
-                cid = meta.get("cluster_id")
-                if cid is not None:
-                    cluster_ids = [cid]
+            cluster_id = meta.get("cluster_id")
+            if cluster_ids is None and cluster_id is not None:
+                cluster_ids = [cluster_id]
             label = meta.get("label")
+            intent_text = meta.get("intent_text")
             origin = meta.get("kind") or meta.get("source_id") or path
             if path or members:
                 score = 1.0 / (1.0 + float(dist))
@@ -854,8 +860,12 @@ class IntentClusterer:
                     entry["members"] = list(members)
                 if cluster_ids:
                     entry["cluster_ids"] = [int(c) for c in cluster_ids]
+                if cluster_id is not None:
+                    entry["cluster_id"] = int(cluster_id)
                 if label:
                     entry["label"] = str(label)
+                if intent_text:
+                    entry["intent_text"] = str(intent_text)
                 results.append(entry)
         return results[:top_k]
 
