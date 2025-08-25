@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from math import log, sqrt
@@ -287,6 +286,10 @@ def fork_model_from_candidate(
         performance_data=base.performance_data,
     )
     forked_workflow_id = wf_db.add(cloned)
+    if forked_workflow_id is None:
+        logger.warning(
+            "duplicate workflow ignored for %s", candidate.product_name
+        )
 
     model_uuid = generate_uuid()
     with get_connection(models_db) as conn:
