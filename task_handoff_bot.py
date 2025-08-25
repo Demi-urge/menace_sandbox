@@ -313,15 +313,8 @@ class WorkflowDB(EmbeddableDBMixin):
             "estimated_profit_per_bot": wf.estimated_profit_per_bot,
             "timestamp": wf.timestamp,
         }
-        hash_keys = [
-            "workflow",
-            "action_chains",
-            "argument_strings",
-            "title",
-            "description",
-            "task_sequence",
-        ]
-        content_hash = _hash_fields(values, hash_keys)
+        hash_keys = list(core_fields.keys())
+        content_hash = _hash_fields(core_fields, hash_keys)
         with self.router.get_connection("workflows", "write") as conn:
             wf.wid = insert_if_unique(
                 conn,
