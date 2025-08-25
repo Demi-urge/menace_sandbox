@@ -158,16 +158,22 @@ def fetch_discrepancy_samples(
 
     db = DiscrepancyDB()
     key = sort_by.lower()
+    cols = {r[1] for r in db.conn.execute("PRAGMA table_info(discrepancies)")}
+    has_cols = "confidence" in cols and "outcome_score" in cols
     if key in {"ts", "timestamp"}:
         order_expr = "ts"
     elif key == "outcome_score":
-        order_expr = "json_extract(metadata,'$.outcome_score')"
+        order_expr = "outcome_score" if has_cols else "json_extract(metadata,'$.outcome_score')"
     elif key == "confidence":
-        order_expr = "json_extract(metadata,'$.confidence')"
+        order_expr = "confidence" if has_cols else "json_extract(metadata,'$.confidence')"
     else:  # pragma: no cover - defensive
         raise ValueError(f"unsupported sort field: {sort_by}")
 
-    base = "SELECT id, message, metadata, ts FROM discrepancies"
+    base = (
+        "SELECT id, message, metadata, ts"
+        + (", confidence, outcome_score" if has_cols else "")
+        + " FROM discrepancies"
+    )
     sql, params = apply_scope_to_query(base, scope=Scope.ALL, menace_id="")
     sql += f" ORDER BY {order_expr} DESC LIMIT ?"
     params.append(limit)
@@ -181,7 +187,18 @@ def fetch_discrepancy_samples(
                 meta = json.loads(row["metadata"])
             except json.JSONDecodeError:
                 meta = {"raw": row["metadata"]}
-        score = meta.get("outcome_score") or meta.get("confidence")
+        if has_cols:
+            if row["confidence"] is not None:
+                meta.setdefault("confidence", row["confidence"])
+            if row["outcome_score"] is not None:
+                meta.setdefault("outcome_score", row["outcome_score"])
+            score = (
+                row["outcome_score"]
+                if row["outcome_score"] is not None
+                else row["confidence"]
+            )
+        else:
+            score = meta.get("outcome_score") or meta.get("confidence")
         vector = db.vector(row["id"]) if with_vectors and hasattr(db, "vector") else None
         samples.append(
             TrainingSample(
