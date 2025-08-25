@@ -1,5 +1,3 @@
-import pytest
-
 import menace.chatgpt_enhancement_bot as ceb  # noqa: E402
 
 
@@ -41,3 +39,25 @@ def test_add_and_link(tmp_path):
     assert db.bots_for(cross_id, scope="global") == [5]
     assert db.workflows_for(cross_id, scope="local") == []
     assert db.workflows_for(cross_id, scope="global") == [6]
+
+
+def test_duplicate_insert(tmp_path):
+    db = ceb.EnhancementDB(tmp_path / "e.db")
+    # prevent vector backend interactions
+    db.add_embedding = lambda *a, **k: None
+
+    enh = ceb.Enhancement(
+        idea="same",
+        rationale="why",
+        before_code="a",
+        after_code="b",
+        description="desc",
+    )
+
+    first = db.add(enh)
+    second = db.add(enh)
+
+    assert first == second
+    with db._connect() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM enhancements").fetchone()[0]
+    assert count == 1
