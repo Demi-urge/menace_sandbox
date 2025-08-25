@@ -24,6 +24,7 @@ import pickle
 import os
 from datetime import datetime
 import asyncio
+import threading
 
 from governed_embeddings import governed_embed
 from embeddable_db_mixin import EmbeddableDBMixin
@@ -41,6 +42,11 @@ try:  # pragma: no cover - optional dependency
     from sklearn.metrics import silhouette_score  # type: ignore
 except Exception:  # pragma: no cover - fallback when sklearn is absent
     silhouette_score = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    from watchfiles import watch
+except Exception:  # pragma: no cover - graceful fallback
+    watch = None
 
 
 logger = get_logger(__name__)
@@ -195,7 +201,9 @@ def summarise_texts(texts: List[str], method: str = "tfidf", top_k: int = 5) -> 
         tokens = re.findall(r"[A-Za-z][A-Za-z0-9_]*", text.lower())
         phrases = list(tokens)
         for n in (2, 3):
-            phrases.extend(" ".join(tokens[i : i + n]) for i in range(len(tokens) - n + 1))
+            phrases.extend(
+                " ".join(tokens[i:i + n]) for i in range(len(tokens) - n + 1)
+            )
         return phrases
 
     docs = [_phrases(t) for t in texts if t]
@@ -587,7 +595,7 @@ class IntentClusterer:
                 )
             try:
                 persist_embedding(
-                    "intent", 
+                    "intent",
                     entry,
                     mean,
                     origin_db="intent",
@@ -652,7 +660,10 @@ class IntentClusterer:
             for mpath, blob, meta_json in cur.fetchall():
                 mpath = str(mpath)
                 p = Path(mpath)
-                if not (mpath.startswith("cluster:") or (p.exists() and p.resolve().is_relative_to(db_dir))):
+                if not (
+                    mpath.startswith("cluster:")
+                    or (p.exists() and p.resolve().is_relative_to(db_dir))
+                ):
                     continue
                 if blob and mpath not in self.vectors:
                     try:
@@ -672,7 +683,6 @@ class IntentClusterer:
         except Exception as exc:  # pragma: no cover - best effort
             logger.warning("failed to load stored intent embeddings: %s", exc)
 
-    
         try:
             for rid, meta in getattr(self.db, "_metadata", {}).items():
                 path = meta.get("source_id") or meta.get("path")
@@ -821,19 +831,21 @@ class IntentClusterer:
                 valid = [m for m in members if m in wanted]
                 if valid:
                     filtered[gid] = valid
-            if filtered:
-                self._index_clusters(filtered)
-                try:
-                    valid = {f"cluster:{gid}" for gid in filtered}
-                    if hasattr(self.retriever, "items"):
-                        self.retriever.items = [
-                            it
-                            for it in getattr(self.retriever, "items", [])
-                            if not str(it.get("metadata", {}).get("path", "")).startswith("cluster:")
-                            or it.get("metadata", {}).get("path") in valid
-                        ]
-                except Exception:
-                    pass
+                if filtered:
+                    self._index_clusters(filtered)
+                    try:
+                        valid = {f"cluster:{gid}" for gid in filtered}
+                        if hasattr(self.retriever, "items"):
+                            self.retriever.items = [
+                                it
+                                for it in getattr(self.retriever, "items", [])
+                                if not str(
+                                    it.get("metadata", {}).get("path", "")
+                                ).startswith("cluster:")
+                                or it.get("metadata", {}).get("path") in valid
+                            ]
+                    except Exception:
+                        pass
 
     # ------------------------------------------------------------------
     def index_repository(self, repo_path: str | Path) -> None:
@@ -892,6 +904,60 @@ class IntentClusterer:
                     logger.exception("failed to rebuild intent vector index")
 
         self.update_modules(paths)
+
+    # ------------------------------------------------------------------
+    def watch_repository(self, repo_path: str | Path):
+        """Watch ``repo_path`` for Python file changes and keep the index fresh.
+
+        This spawns a background thread that monitors ``.py`` files under
+        ``repo_path`` using :mod:`watchfiles`.  Whenever a file is created,
+        modified or removed the repository is re-indexed and synergy clusters
+        are rebuilt via :meth:`_index_clusters`.
+
+        The function returns a ``stop`` callable that terminates the watcher
+        thread when invoked.  Example:
+
+        .. code-block:: python
+
+            clusterer = IntentClusterer()
+            stop = clusterer.watch_repository(Path('.'))
+            # ... perform work ...
+            stop()
+
+        Exceptions raised during indexing are caught and logged so the watcher
+        can continue running without crashing the host process.
+        """
+
+        if watch is None:
+            raise RuntimeError("watchfiles is required for watch_repository")
+
+        repo_path = Path(repo_path)
+        stop_event = threading.Event()
+
+        def _run() -> None:
+            for changes in watch(repo_path, stop_event=stop_event):
+                relevant = [p for _evt, p in changes if p.endswith('.py')]
+                if not relevant:
+                    continue
+                try:
+                    self.index_repository(repo_path)
+                    try:
+                        groups = self._load_synergy_groups(repo_path)
+                        if groups:
+                            self._index_clusters(groups)
+                    except Exception:
+                        logger.exception("failed to rebuild clusters for %s", repo_path)
+                except Exception:
+                    logger.exception("error updating repository %s", repo_path)
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        def stop() -> None:
+            stop_event.set()
+            thread.join()
+
+        return stop
 
     # ------------------------------------------------------------------
     def _optimal_cluster_count(self, vectors: List[List[float]]) -> int:
@@ -1009,7 +1075,8 @@ class IntentClusterer:
                 meta["cluster_ids"] = [int(cid) for cid in self.clusters[path]]
                 with self.conn:
                     self.conn.execute(
-                        "REPLACE INTO intent_embeddings (module_path, vector, metadata) VALUES (?, ?, ?)",
+                        "REPLACE INTO intent_embeddings (module_path, vector, metadata) "
+                        "VALUES (?, ?, ?)",
                         (path, blob, json.dumps(meta)),
                     )
             except Exception as exc:
