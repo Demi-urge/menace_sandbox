@@ -19,7 +19,6 @@ searching for modules related to a textual problem description.
 
 import argparse
 import ast
-import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -59,20 +58,6 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ModuleIO:
-    """Basic structural information about a Python module."""
-
-    name: str = ""
-    functions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    inputs: Set[str] = field(default_factory=set)
-    outputs: Set[str] = field(default_factory=set)
-    globals: Set[str] = field(default_factory=set)
-    files_read: Set[str] = field(default_factory=set)
-    files_written: Set[str] = field(default_factory=set)
-    env_vars: Set[str] = field(default_factory=set)
-
-
-@dataclass
 class WorkflowStep:
     """Lightweight representation of an ordered workflow step."""
 
@@ -80,268 +65,6 @@ class WorkflowStep:
     inputs: List[str] = field(default_factory=list)
     outputs: List[str] = field(default_factory=list)
     unresolved: List[str] = field(default_factory=list)
-
-
-def _parse_module_io(path: Path) -> ModuleIO:
-    """Parse ``path`` and extract high level IO information."""
-
-    module_io = ModuleIO(name=path.stem)
-
-    try:
-        source = path.read_text(encoding="utf-8")
-    except OSError:
-        return module_io
-
-    tree = ast.parse(source, filename=str(path))
-
-    def _extract_path(node: ast.AST) -> str | None:
-        """Best effort extraction of a file path from ``node``.
-
-        The helper recognises ``Path('foo')`` calls, ``os.path.join`` and
-        f-strings composed solely of resolvable parts.  The returned value is
-        a string if the path could be statically determined otherwise ``None``.
-        """
-
-        if isinstance(node, ast.Call):
-            func = node.func
-            # Path("foo") / Path(os.path.join(...))
-            if isinstance(func, ast.Name) and func.id == "Path":
-                if node.args:
-                    val = _extract_path(node.args[0])
-                    if isinstance(val, str):
-                        return val
-            # os.path.join("a", "b")
-            elif (
-                isinstance(func, ast.Attribute)
-                and func.attr == "join"
-                and isinstance(func.value, ast.Attribute)
-                and func.value.attr == "path"
-                and isinstance(func.value.value, ast.Name)
-                and func.value.value.id == "os"
-            ):
-                parts: List[str] = []
-                for arg in node.args:
-                    part = _extract_path(arg)
-                    if part is None:
-                        break
-                    parts.append(part)
-                if len(parts) == len(node.args):
-                    return "/".join(parts)
-            # os.environ.get("VAR") - environment variable names
-            elif (
-                isinstance(func, ast.Attribute)
-                and func.attr == "get"
-                and isinstance(func.value, ast.Attribute)
-                and func.value.attr == "environ"
-                and isinstance(func.value.value, ast.Name)
-                and func.value.value.id == "os"
-            ):
-                if node.args:
-                    arg = node.args[0]
-                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                        module_io.env_vars.add(arg.value)
-        if isinstance(node, ast.JoinedStr):
-            parts: List[str] = []
-            for value in node.values:
-                if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                    parts.append(value.value)
-                elif isinstance(value, ast.Str):  # pragma: no cover - Py<3.8
-                    parts.append(value.s)
-                elif isinstance(value, ast.FormattedValue):
-                    inner = _extract_path(value.value)
-                    if inner is None:
-                        return None
-                    parts.append(inner)
-                else:
-                    return None
-            return "".join(parts)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            return node.value
-        if isinstance(node, ast.Name):
-            return node.id
-        return None
-
-    # ---- top level function definitions and globals
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef):
-            args: List[str] = []
-            annotations: Dict[str, str] = {}
-
-            def _handle_arg(a: ast.arg) -> None:
-                args.append(a.arg)
-                if getattr(a, "annotation", None) is not None:
-                    try:
-                        annotations[a.arg] = ast.unparse(a.annotation)
-                    except Exception:  # pragma: no cover - ast.unparse fallback
-                        pass
-
-            for a in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
-                _handle_arg(a)
-            if node.args.vararg:
-                _handle_arg(node.args.vararg)
-            if node.args.kwarg:
-                _handle_arg(node.args.kwarg)
-
-            returns = None
-            if getattr(node, "returns", None) is not None:
-                try:
-                    returns = ast.unparse(node.returns)
-                except Exception:  # pragma: no cover - ast.unparse fallback
-                    returns = None
-
-            module_io.functions[node.name] = {
-                "args": args,
-                "annotations": annotations,
-                "returns": returns,
-            }
-            module_io.inputs.update(args)
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for t in targets:
-                if isinstance(t, ast.Name):
-                    module_io.globals.add(t.id)
-
-    class Visitor(ast.NodeVisitor):
-        def visit_Global(self, node: ast.Global) -> None:  # noqa: D401
-            module_io.globals.update(node.names)
-
-        def visit_Return(self, node: ast.Return) -> None:  # noqa: D401
-            targets: list[str] = []
-            val = node.value
-            if isinstance(val, ast.Name):
-                targets.append(val.id)
-            elif isinstance(val, ast.Tuple):
-                for elt in val.elts:
-                    if isinstance(elt, ast.Name):
-                        targets.append(elt.id)
-            module_io.outputs.update(targets)
-            self.generic_visit(node)
-
-        def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
-            func = node.func
-            if (
-                isinstance(func, ast.Attribute)
-                and func.attr == "get"
-                and isinstance(func.value, ast.Attribute)
-                and func.value.attr == "environ"
-                and isinstance(func.value.value, ast.Name)
-                and func.value.value.id == "os"
-            ):
-                if node.args and isinstance(node.args[0], ast.Constant):
-                    val = node.args[0].value
-                    if isinstance(val, str):
-                        module_io.env_vars.add(val)
-            if isinstance(func, ast.Name) and func.id == "open":
-                filename = None
-                if node.args:
-                    arg = node.args[0]
-                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                        filename = arg.value
-                    elif isinstance(arg, ast.Name):
-                        filename = arg.id
-                    else:
-                        filename = _extract_path(arg)
-
-                mode = None
-                if len(node.args) > 1:
-                    m = node.args[1]
-                    if isinstance(m, ast.Constant) and isinstance(m.value, str):
-                        mode = m.value
-                for kw in node.keywords:
-                    if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
-                        val = kw.value.value
-                        if isinstance(val, str):
-                            mode = val
-
-                if filename:
-                    if mode and any(c in mode for c in "wa+"):
-                        module_io.files_written.add(filename)
-                    else:
-                        module_io.files_read.add(filename)
-
-            elif isinstance(func, ast.Name) and func.id == "Path":
-                if node.args and isinstance(node.args[0], ast.Constant):
-                    val = node.args[0].value
-                    if isinstance(val, str):
-                        module_io.files_read.add(val)
-
-            elif isinstance(func, ast.Attribute):
-                attr = func.attr
-                base = func.value
-                filename = _extract_path(base)
-                if filename:
-                    if attr in {"read_text", "read_bytes"}:
-                        module_io.files_read.add(filename)
-                    elif attr in {"write_text", "write_bytes"}:
-                        module_io.files_written.add(filename)
-                    elif attr == "open":
-                        mode = None
-                        if node.args:
-                            arg = node.args[0]
-                            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                                mode = arg.value
-                        for kw in node.keywords:
-                            if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
-                                val = kw.value.value
-                                if isinstance(val, str):
-                                    mode = val
-                        if mode and any(c in mode for c in "wa+"):
-                            module_io.files_written.add(filename)
-                        else:
-                            module_io.files_read.add(filename)
-
-            self.generic_visit(node)
-
-        def visit_Subscript(self, node: ast.Subscript) -> None:  # noqa: D401
-            value = node.value
-            if (
-                isinstance(value, ast.Attribute)
-                and value.attr == "environ"
-                and isinstance(value.value, ast.Name)
-                and value.value.id == "os"
-            ):
-                key_node = node.slice
-                key = None
-                if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
-                    key = key_node.value
-                elif isinstance(key_node, ast.Index) and isinstance(key_node.value, ast.Constant):
-                    if isinstance(key_node.value.value, str):
-                        key = key_node.value.value
-                if key:
-                    module_io.env_vars.add(key)
-            self.generic_visit(node)
-
-        def visit_Constant(self, node: ast.Constant) -> None:  # noqa: D401
-            if isinstance(node.value, str):
-                val = node.value
-                if "/" in val or val.endswith(
-                    (".txt", ".json", ".csv", ".yaml", ".yml", ".ini", ".cfg", ".db", ".py")
-                ):
-                    module_io.files_read.add(val)
-
-    Visitor().visit(tree)
-    return module_io
-
-
-_ANALYZE_CACHE: Dict[str, Tuple[float, ModuleIO]] = {}
-
-
-def analyze_io(module_path: Path) -> ModuleIO:
-    """Return :class:`ModuleIO` information for ``module_path`` with caching."""
-
-    try:
-        mtime = module_path.stat().st_mtime
-    except OSError:
-        return ModuleIO()
-
-    key = str(module_path.resolve())
-    cached = _ANALYZE_CACHE.get(key)
-    if cached and cached[0] == mtime:
-        return cached[1]
-
-    io = _parse_module_io(module_path)
-    _ANALYZE_CACHE[key] = (mtime, io)
-    return io
 
 
 class ModuleIOAnalyzer:
@@ -357,54 +80,92 @@ class ModuleIOAnalyzer:
             self._cache = {}
 
     # ------------------------------------------------------------------
-    def analyze(self, module_path: str | Path) -> Dict[str, List[str]]:
-        """Return cached IO information for ``module_path``.
+    def analyze(self, module_path: str | Path) -> "ModuleSignature":
+        """Return cached :class:`ModuleSignature` for ``module_path``."""
 
-        The analysis inspects functions, globals, and basic file operations to
-        produce high level input and output signatures.  Results are cached on
-        disk so subsequent calls avoid re-parsing unchanged modules.
-        """
+        if ModuleSignature is None or get_io_signature is None:
+            raise ValueError("Structural analysis helpers are unavailable")
 
         path = Path(module_path)
         try:
-            data = path.read_bytes()
+            mtime = path.stat().st_mtime
         except OSError:
-            return {"inputs": [], "outputs": []}
+            return ModuleSignature(name=path.stem)
 
-        digest = hashlib.sha256(data).hexdigest()
         key = str(path)
         cached = self._cache.get(key)
-        if cached and cached.get("hash") == digest:
-            return {"inputs": cached.get("inputs", []), "outputs": cached.get("outputs", [])}
+        if cached and cached.get("mtime") == mtime:
+            data = cached.get("signature", {})
+            sig = ModuleSignature(
+                name=data.get("name", path.stem),
+                functions=data.get("functions", {}),
+                classes=data.get("classes", {}),
+                globals=set(data.get("globals", [])),
+                files_read=set(data.get("files_read", [])),
+                files_written=set(data.get("files_written", [])),
+            )
+            sig.inputs = data.get("inputs", [])
+            sig.outputs = data.get("outputs", [])
+            return sig
 
-        io = analyze_io(path)
+        sig = get_io_signature(path)
+
+        all_args: Set[str] = set()
+        for fn in sig.functions.values():
+            all_args.update(fn.get("args", []))
+        module_globals = set(sig.globals) - all_args
+        sig.globals = module_globals
+
+        inputs: Set[str] = set(sig.files_read) | all_args | module_globals
+
+        return_names: Set[str] = set()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Return):
+                    val = node.value
+                    if isinstance(val, ast.Name):
+                        return_names.add(val.id)
+                    elif isinstance(val, ast.Tuple):
+                        for elt in val.elts:
+                            if isinstance(elt, ast.Name):
+                                return_names.add(elt.id)
+        except Exception:  # pragma: no cover - best effort
+            pass
+
+        outputs: Set[str] = set(sig.files_written) | module_globals | return_names
+        sig.inputs = sorted(inputs)
+        sig.outputs = sorted(outputs)
+
         record = {
-            "hash": digest,
-            "functions": io.functions,
-            "inputs": sorted(io.inputs | io.files_read | io.globals | io.env_vars),
-            "outputs": sorted(io.outputs | io.files_written | io.globals),
-            "globals": sorted(io.globals),
-            "files_read": sorted(io.files_read),
-            "files_written": sorted(io.files_written),
-            "env_vars": sorted(io.env_vars),
+            "mtime": mtime,
+            "signature": {
+                "name": sig.name,
+                "functions": sig.functions,
+                "classes": sig.classes,
+                "globals": sorted(module_globals),
+                "files_read": sorted(sig.files_read),
+                "files_written": sorted(sig.files_written),
+                "inputs": sig.inputs,
+                "outputs": sig.outputs,
+            },
         }
         self._cache[key] = record
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.cache_path.write_text(json.dumps(self._cache, indent=2), encoding="utf-8")
-        return {"inputs": record["inputs"], "outputs": record["outputs"]}
+        return sig
 
 
-def inspect_module(module_name: str) -> ModuleIO:
-    """Return :class:`ModuleIO` information for ``module_name``.
-
-    Parameters
-    ----------
-    module_name:
-        Dotted module name relative to the repository root.
-    """
+def inspect_module(module_name: str) -> "ModuleSignature":
+    """Return :class:`ModuleSignature` information for ``module_name``."""
 
     path = Path(module_name.replace(".", "/")).with_suffix(".py")
-    return analyze_io(path)
+    if ModuleSignature is None or get_io_signature is None:
+        return ModuleSignature(name=path.stem)
+    analyzer = ModuleIOAnalyzer()
+    sig = analyzer.analyze(path)
+    sig.name = path.stem
+    return sig
 
 
 @dataclass(init=False)
@@ -717,8 +478,8 @@ class WorkflowSynthesizer:
 
         Modules are gathered using synergy graph expansion and optional intent
         search. They are then ordered using :meth:`resolve_dependencies` which
-        analyses each module via :func:`analysis.get_io_signature`. ``overrides``
-        allows callers to mark specific arguments as satisfied externally.
+        analyses each module via :class:`ModuleIOAnalyzer`. ``overrides`` allows
+        callers to mark specific arguments as satisfied externally.
         ``threshold`` controls the minimum synergy weight when expanding the
         cluster around ``start_module``.
         """
@@ -733,10 +494,11 @@ class WorkflowSynthesizer:
         if start_module:
             modules.add(start_module)
 
+        analyzer = ModuleIOAnalyzer()
         signatures: List[ModuleSignature] = []
         for mod in sorted(modules):
             path = Path(mod.replace(".", "/")).with_suffix(".py")
-            sig = get_io_signature(path)
+            sig = analyzer.analyze(path)
             sig.name = mod
             if overrides and mod in overrides:
                 for fn in sig.functions.values():
@@ -832,10 +594,11 @@ class WorkflowSynthesizer:
         modules = self.expand_cluster(start_module=start_module, problem=problem)
         modules.add(start_module)
 
+        analyzer = ModuleIOAnalyzer()
         signatures: List[ModuleSignature] = []
         for mod in sorted(modules):
             path = Path(mod.replace(".", "/")).with_suffix(".py")
-            sig = get_io_signature(path)
+            sig = analyzer.analyze(path)
             sig.name = mod
             signatures.append(sig)
 
@@ -1145,7 +908,7 @@ def main(argv: List[str] | None = None) -> None:
 
 
 __all__ = [
-    "ModuleIO",
+    "ModuleSignature",
     "WorkflowStep",
     "ModuleIOAnalyzer",
     "WorkflowSynthesizer",
