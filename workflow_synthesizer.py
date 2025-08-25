@@ -436,7 +436,11 @@ class WorkflowSynthesizer:
             if not name:
                 raise ValueError("ModuleSignature missing name attribute")
 
-            outputs = set(mod.files_written) | set(mod.globals)
+            outputs = (
+                set(mod.files_written)
+                | set(mod.globals)
+                | set(getattr(mod, "outputs", []))
+            )
             for out in outputs:
                 produced_by_name.setdefault(out, set()).add(name)
 
@@ -500,7 +504,11 @@ class WorkflowSynthesizer:
             inputs: Set[str] = set(mod.files_read) | set(mod.globals)
             for fn in mod.functions.values():
                 inputs.update(fn.get("args", []))
-            outputs = set(mod.files_written) | set(mod.globals)
+            outputs = (
+                set(mod.files_written)
+                | set(mod.globals)
+                | set(getattr(mod, "outputs", []))
+            )
             step = WorkflowStep(
                 module=name,
                 inputs=sorted(inputs),
@@ -938,6 +946,29 @@ def save_workflow(workflow: List[Dict[str, Any]], path: Path | str | None = None
     return _save_spec(spec, out)
 
 
+def synthesise_workflow(**kwargs: Any) -> Dict[str, Any]:
+    """Generate a workflow using :class:`WorkflowSynthesizer`.
+
+    Remote function signature:
+    ``synthesise_workflow(start: str | dict[str, Any], threshold: float = 0.0) -> dict``
+
+    Parameters
+    ----------
+    **kwargs:
+        Forwarded to :meth:`WorkflowSynthesizer.synthesize`. Common keys are
+        ``start`` or ``start_module`` describing the module or problem to
+        expand and an optional ``threshold`` controlling synergy expansion.
+
+    Returns
+    -------
+    dict[str, Any]
+        Workflow description containing a ``steps`` list.
+    """
+
+    synthesizer = WorkflowSynthesizer()
+    return synthesizer.synthesize(**kwargs)
+
+
 def main(argv: List[str] | None = None) -> None:
     """Command line interface for :mod:`workflow_synthesizer`.
 
@@ -994,6 +1025,7 @@ __all__ = [
     "to_yaml",
     "to_workflow_spec",
     "save_workflow",
+    "synthesise_workflow",
     "main",
 ]
 

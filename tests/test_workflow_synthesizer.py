@@ -149,3 +149,14 @@ def test_dependency_resolution(tmp_path, monkeypatch):
     bad = [ws.inspect_module(m) for m in ["mod_a", "mod_d"]]
     with pytest.raises(ValueError, match="mod_d"):
         synth.resolve_dependencies(bad)
+
+
+def test_synthesise_workflow_wrapper(tmp_path, monkeypatch):
+    """Public wrapper exposes synthesizer functionality."""
+
+    _write_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = ws.synthesise_workflow(start="mod_a")
+    assert "steps" in result
+    assert result["steps"][0]["module"] == "mod_a"
