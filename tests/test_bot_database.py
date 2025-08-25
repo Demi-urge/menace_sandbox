@@ -36,7 +36,7 @@ def test_add_bot_duplicate(tmp_path, caplog, monkeypatch):
     with caplog.at_level(logging.WARNING):
         second = db.add_bot(bdb.BotRecord(name="b1"))
     assert first == second
-    assert captured["id"] is None
+    assert captured["id"] == first
     assert "duplicate" in caplog.text.lower()
     assert db.conn.execute("SELECT COUNT(*) FROM bots").fetchone()[0] == 1
     _reset_router(old)

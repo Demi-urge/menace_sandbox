@@ -15,7 +15,7 @@ from .unified_event_bus import UnifiedEventBus
 from .workflow_graph import WorkflowGraph
 from vector_service import EmbeddableDBMixin
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
-from db_dedup import insert_if_unique, hash_fields as _hash_fields
+from db_dedup import insert_if_unique
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -331,7 +331,6 @@ class WorkflowDB(EmbeddableDBMixin):
             "estimated_profit_per_bot": wf.estimated_profit_per_bot,
             "timestamp": wf.timestamp,
         }
-        content_hash = _hash_fields(values, _WORKFLOW_HASH_FIELDS)
         with self.router.get_connection("workflows", "write") as conn:
             wf.wid = insert_if_unique(
                 "workflows",
@@ -341,17 +340,6 @@ class WorkflowDB(EmbeddableDBMixin):
                 conn=conn,
                 logger=logger,
             )
-        if wf.wid is None:
-            row = self.conn.execute(
-                "SELECT id FROM workflows WHERE content_hash=?",
-                (content_hash,),
-            ).fetchone()
-            if row:
-                wf.wid = int(row[0])
-            logger.warning(
-                "duplicate workflow detected; skipping embedding and events",
-            )
-            return wf.wid
 
         try:
             self.add_embedding(wf.wid, wf, "workflow", source_id=str(wf.wid))

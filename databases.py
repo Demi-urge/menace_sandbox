@@ -9,7 +9,7 @@ import os
 import logging
 from typing import Literal
 
-from db_dedup import insert_if_unique, compute_content_hash
+from db_dedup import insert_if_unique
 
 from .env_config import DATABASE_URL
 from .scope_utils import build_scope_clause, apply_scope
@@ -698,22 +698,9 @@ class MenaceDB:
             engine=self.engine,
             logger=logger,
         )
-        if inserted is not None:
-            return int(inserted)
-
-        payload = {key: values[key] for key in hash_fields}
-        content_hash = compute_content_hash(payload)
-        with self.engine.begin() as conn:
-            clause, params = build_scope_clause("errors", scope, menace_id)
-            query = apply_scope(
-                "SELECT error_id FROM errors WHERE content_hash = ?",
-                clause,
-            )
-            params.append(content_hash)
-            row = conn.exec_driver_sql(query, params).fetchone()
-            if row:
-                return int(row[0])
-        raise RuntimeError("error record not found after duplicate detection")
+        if inserted is None:
+            raise RuntimeError("error record not inserted")
+        return int(inserted)
 
     def link_error_bot(self, error_id: int, bot_id: int) -> None:
         with self.engine.begin() as conn:

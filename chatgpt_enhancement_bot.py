@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable, List, Optional, Iterator, Sequence, Literal
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-from db_dedup import insert_if_unique, hash_fields
+from db_dedup import insert_if_unique
 from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
@@ -323,9 +323,6 @@ class EnhancementDB(EmbeddableDBMixin):
             "associated_bots": assoc,
             "triggered_by": enh.triggered_by,
         }
-        # pre-compute content hash for duplicate lookups
-        content_hash = hash_fields(values, _ENHANCEMENT_HASH_FIELDS)
-
         with self._connect() as conn:
             enh_id = insert_if_unique(
                 "enhancements",
@@ -335,16 +332,6 @@ class EnhancementDB(EmbeddableDBMixin):
                 conn=conn,
                 logger=logger,
             )
-        if enh_id is None:
-            logger.warning(
-                "duplicate enhancement detected; skipping embedding and event generation"
-            )
-            with self._connect() as conn:
-                row = conn.execute(
-                    "SELECT id FROM enhancements WHERE content_hash=?",
-                    (content_hash,),
-                ).fetchone()
-            return int(row[0]) if row else -1
         # generate vector embedding for the newly inserted record
         try:
             self.add_embedding(enh_id, enh, "enhancement", source_id=str(enh_id))
