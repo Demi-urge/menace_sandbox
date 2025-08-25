@@ -5,6 +5,9 @@ so they can be fed into language‑model prompts. It exposes fetch helpers for
 enhancements, workflow summaries, discrepancies and workflow history along with
 an `aggregate_samples` convenience wrapper.
 
+For a higher level overview of available sources and sample prompts see
+[codex_training_data.md](codex_training_data.md).
+
 ## Parameters
 
 All helpers share the following keyword arguments:
