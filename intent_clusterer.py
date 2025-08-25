@@ -44,6 +44,7 @@ class IntentMatch:
     path: str | None
     similarity: float
     cluster_ids: List[int]
+    label: str | None = None
 
 
 def extract_intent_text(path: Path) -> str:
@@ -622,6 +623,31 @@ class IntentClusterer:
         return text, vector
 
     # ------------------------------------------------------------------
+    def _get_cluster_label(self, cluster_id: int) -> str | None:
+        """Return persisted label for ``cluster_id`` if available."""
+
+        entry = f"cluster:{int(cluster_id)}"
+        meta = getattr(self.db, "_metadata", {}).get(entry)
+        if meta and meta.get("label"):
+            return str(meta.get("label"))
+        try:
+            row = self.conn.execute(
+                "SELECT metadata FROM intent_embeddings WHERE module_path = ?",
+                (entry,),
+            ).fetchone()
+        except Exception:
+            row = None
+        if row:
+            try:
+                data = json.loads(row[0] or "{}")
+                lbl = data.get("label")
+                if lbl:
+                    return str(lbl)
+            except Exception:
+                return None
+        return None
+
+    # ------------------------------------------------------------------
     def query(
         self,
         text: str,
@@ -645,6 +671,7 @@ class IntentClusterer:
         results: List[IntentMatch] = []
         for item in hits:
             meta = item.get("metadata", {})
+            label = meta.get("label")
             target_vec: Sequence[float] = item.get("vector", [])
             tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
             target_vec = [x / tnorm for x in target_vec]
@@ -662,8 +689,12 @@ class IntentClusterer:
                     continue
                 if cids:
                     cluster_ids = [int(c) for c in cids]
+                if label is None and cluster_ids:
+                    label = self._get_cluster_label(cluster_ids[0])
                 results.append(
-                    IntentMatch(path=None, similarity=sim, cluster_ids=cluster_ids)
+                    IntentMatch(
+                        path=None, similarity=sim, cluster_ids=cluster_ids, label=label
+                    )
                 )
                 continue
             if sim < threshold and cids:
@@ -684,11 +715,17 @@ class IntentClusterer:
                     path = None
                     if include_clusters:
                         cluster_ids = [cid for cid, _ in cluster_hits]
+                        if cluster_ids:
+                            label = self._get_cluster_label(cluster_ids[0])
             if sim < threshold:
                 continue
             if include_clusters and not cluster_ids and cids:
                 cluster_ids = [int(c) for c in cids]
-            results.append(IntentMatch(path=path, similarity=sim, cluster_ids=cluster_ids))
+                if cluster_ids and label is None:
+                    label = self._get_cluster_label(cluster_ids[0])
+            results.append(
+                IntentMatch(path=path, similarity=sim, cluster_ids=cluster_ids, label=label)
+            )
         return results
 
     # ------------------------------------------------------------------
