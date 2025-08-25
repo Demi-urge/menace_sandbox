@@ -140,6 +140,21 @@ def clusterer(sample_repo: Path, tmp_path: Path) -> ic.IntentClusterer:
     return ic.IntentClusterer(intent_db=db, retriever=DummyRetriever())
 
 
+@pytest.fixture
+def clustered_clusterer(sample_repo: Path, tmp_path: Path) -> ic.IntentClusterer:
+    """Clustered ``IntentClusterer`` with modules in multiple clusters."""
+
+    db = ic.ModuleVectorDB(
+        index_path=tmp_path / "idx.ann", metadata_path=tmp_path / "idx.json"
+    )
+    clusterer = ic.IntentClusterer(db=db, retriever=DummyRetriever())
+    # ``index_modules`` avoids loading synergy groups so KMeans clustering is used
+    clusterer.index_modules(list(sample_repo.glob("*.py")))
+    # ``threshold=0`` ensures each module belongs to all clusters
+    clusterer.cluster_intents(2, threshold=0.0)
+    return clusterer
+
+
 def test_index_repository_stores_embeddings(clusterer: ic.IntentClusterer, sample_repo: Path) -> None:
     """Ensure ``index_repository`` writes vectors for each module."""
 
@@ -178,15 +193,18 @@ def test_cluster_lookup_uses_synergy_groups(clusterer: ic.IntentClusterer, sampl
     assert "label" in res[0] and "auth" in res[0]["label"].lower()
 
 
-def test_cluster_intents_adds_cluster_metadata(sample_repo: Path, tmp_path: Path) -> None:
-    db = ic.ModuleVectorDB(
-        index_path=tmp_path / "idx.ann", metadata_path=tmp_path / "idx.json"
-    )
-    clusterer = ic.IntentClusterer(db=db, retriever=DummyRetriever())
-    clusterer.index_modules(list(sample_repo.glob("*.py")))
-    clusterer.cluster_intents(2, threshold=0.0)
+def test_cluster_intents_adds_cluster_metadata(
+    clustered_clusterer: ic.IntentClusterer, sample_repo: Path
+) -> None:
+    """Clustering should persist rich metadata for each cluster."""
+
+    # At least one module should belong to more than one cluster
+    assert any(len(cids) > 1 for cids in clustered_clusterer.clusters.values())
+
     cluster_items = [
-        item for item in clusterer.retriever.items if item["metadata"].get("kind") == "cluster"
+        item
+        for item in clustered_clusterer.retriever.items
+        if item["metadata"].get("kind") == "cluster"
     ]
     assert cluster_items
     auth = str(sample_repo / "auth.py")
@@ -195,7 +213,53 @@ def test_cluster_intents_adds_cluster_metadata(sample_repo: Path, tmp_path: Path
         auth in ci["metadata"]["members"] and helper in ci["metadata"]["members"]
         for ci in cluster_items
     )
-    assert all("label" in ci["metadata"] for ci in cluster_items)
+    # ``intent_text`` and ``label`` should be exposed via the retriever metadata
+    assert all(
+        ci["metadata"].get("label") and ci["metadata"].get("intent_text")
+        for ci in cluster_items
+    )
+    # Metadata should also be persisted in the SQLite table
+    entry = cluster_items[0]["metadata"]["path"]
+    row = clustered_clusterer.conn.execute(
+        "SELECT metadata FROM intent_embeddings WHERE module_path = ?",
+        (entry,),
+    ).fetchone()
+    meta = json.loads(row[0])
+    assert meta.get("intent_text")
+    assert set(meta.get("members", [])) == set(cluster_items[0]["metadata"]["members"])
+
+
+def test_get_cluster_intents_returns_summary_and_vector(
+    clustered_clusterer: ic.IntentClusterer,
+) -> None:
+    """``get_cluster_intents`` should yield non-empty text and vectors."""
+
+    cid = clustered_clusterer.clusters[next(iter(clustered_clusterer.clusters))][0]
+    text, vec = clustered_clusterer.get_cluster_intents(cid)
+    assert text and vec
+
+
+def test_query_and_find_helpers_respect_thresholds(
+    clustered_clusterer: ic.IntentClusterer,
+) -> None:
+    """Query and helper functions should honour thresholds and surface clusters."""
+
+    res = clustered_clusterer.query("authentication help", threshold=0.1)
+    assert res and res[0].path and res[0].cluster_ids
+
+    # High threshold filters out even perfect matches
+    assert clustered_clusterer.query("authentication help", threshold=0.99) == []
+
+    mods = clustered_clusterer.find_modules_related_to(
+        "authentication help", top_k=5, include_clusters=True
+    )
+    mod_entry = next(m for m in mods if m.get("path"))
+    assert mod_entry.get("cluster_ids")
+    cluster_entry = next(m for m in mods if m.get("origin") == "cluster")
+    assert cluster_entry.get("cluster_ids")
+
+    clusters = clustered_clusterer.find_clusters_related_to("authentication help", top_k=5)
+    assert clusters and clusters[0]["origin"] == "cluster"
 
 
 def test_index_repository_updates_cluster_membership(
