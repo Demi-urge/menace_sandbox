@@ -29,6 +29,11 @@ try:  # Optional dependency
 except Exception:  # pragma: no cover - graceful degradation
     IntentClusterer = None  # type: ignore[misc]
 
+try:  # Optional lightweight fallback
+    from intent_db import IntentDB  # type: ignore
+except Exception:  # pragma: no cover - gracefully degrade
+    IntentDB = None  # type: ignore[misc]
+
 
 @dataclass
 class ModuleIO:
@@ -228,32 +233,98 @@ def inspect_module(module_name: str) -> ModuleIO:
     return _parse_module_io(path)
 
 
-@dataclass
+@dataclass(init=False)
 class WorkflowSynthesizer:
-    """Suggest modules for building a workflow.
+    """Suggest modules for building a workflow."""
 
-    Parameters
-    ----------
-    module_synergy_grapher:
-        Helper used to expand modules via structural relationships.
-    intent_clusterer:
-        Component used to search modules based on natural language problems.
-    synergy_graph_path:
-        Location of the persisted synergy graph JSON file.
-    intent_db_path:
-        Optional location of the intent vector database.  The synthesizer does
-        not interact with the database directly but exposes this path so that
-        callers can initialise :class:`IntentClusterer` with it if desired.
-    """
-
-    module_synergy_grapher: ModuleSynergyGrapher | None = None
-    intent_clusterer: IntentClusterer | None = None
-    synergy_graph_path: Path = Path("sandbox_data/module_synergy_graph.json")
-    intent_db_path: Path | None = None
-    generated_workflows: List[List[Dict[str, Any]]] = field(default_factory=list)
+    module_synergy_grapher: ModuleSynergyGrapher | None
+    intent_clusterer: IntentClusterer | None
+    intent_db: "IntentDB" | None
+    synergy_graph_path: Path
+    intent_db_path: Path | None
+    generated_workflows: List[List[Dict[str, Any]]]
 
     # ------------------------------------------------------------------
-    def synthesize(
+    def __init__(
+        self,
+        module_synergy_grapher: ModuleSynergyGrapher | None = None,
+        *,
+        synergy_graph_path: str | Path | None = None,
+        intent_clusterer: IntentClusterer | None = None,
+        intent_db_path: str | Path | None = None,
+    ) -> None:
+        """Initialise the synthesizer and load optional resources."""
+
+        self.synergy_graph_path = (
+            Path(synergy_graph_path)
+            if synergy_graph_path is not None
+            else Path("sandbox_data/module_synergy_graph.json")
+        )
+
+        # Load synergy graph if available
+        self.module_synergy_grapher = module_synergy_grapher
+        if self.module_synergy_grapher is None and ModuleSynergyGrapher is not None:
+            try:
+                self.module_synergy_grapher = ModuleSynergyGrapher()
+            except Exception:  # pragma: no cover - best effort
+                self.module_synergy_grapher = None
+        if self.module_synergy_grapher is not None:
+            try:
+                self.module_synergy_grapher.load(self.synergy_graph_path)
+            except Exception:  # pragma: no cover - ignore load failures
+                pass
+
+        self.intent_db_path = Path(intent_db_path) if intent_db_path else None
+
+        # Intent search machinery. Prefer provided clusterer, otherwise attempt
+        # to instantiate IntentClusterer or fall back to IntentDB.
+        self.intent_clusterer = intent_clusterer
+        self.intent_db = None
+        if self.intent_clusterer is None:
+            if IntentClusterer is not None:
+                try:
+                    if self.intent_db_path is not None:
+                        self.intent_clusterer = IntentClusterer(self.intent_db_path)
+                    else:
+                        self.intent_clusterer = IntentClusterer()
+                except Exception:  # pragma: no cover - ignore init errors
+                    self.intent_clusterer = None
+            if self.intent_clusterer is None and IntentDB is not None:
+                try:
+                    self.intent_db = IntentDB(self.intent_db_path or Path("intent.db"))
+                except Exception:  # pragma: no cover - ignore
+                    self.intent_db = None
+
+        self.generated_workflows = []
+
+    # ------------------------------------------------------------------
+    def expand_cluster(self, start_module: str, threshold: float = 0.0) -> Set[str]:
+        """Return modules synergistic with ``start_module``."""
+
+        modules: Set[str] = {start_module}
+        try:
+            if self.module_synergy_grapher is not None and hasattr(
+                self.module_synergy_grapher, "get_synergy_cluster"
+            ):
+                try:
+                    cluster = self.module_synergy_grapher.get_synergy_cluster(
+                        start_module, threshold=threshold
+                    )
+                except TypeError:  # pragma: no cover - threshold unsupported
+                    cluster = self.module_synergy_grapher.get_synergy_cluster(start_module)
+            elif get_synergy_cluster is not None:
+                cluster = get_synergy_cluster(
+                    start_module, path=self.synergy_graph_path, threshold=threshold
+                )
+            else:
+                cluster = [start_module]
+            modules.update(cluster)
+        except Exception:  # pragma: no cover - best effort
+            pass
+        return modules
+
+    # ------------------------------------------------------------------
+    def _synthesize_greedy(
         self,
         start_module: str | None = None,
         problem: str | None = None,
@@ -263,31 +334,16 @@ class WorkflowSynthesizer:
         """Return a greedy chain of modules.
 
         Modules are gathered using synergy graph expansion and optional intent
-        search.  They are then ordered greedily by matching outputs of previous
-        modules to inputs of subsequent modules.  When no direct match exists the
-        module with the smallest number of unresolved inputs is chosen as a
-        fallback.  ``overrides`` allows callers to mark specific arguments as
-        satisfied externally.
+        search. They are then ordered greedily by matching outputs of previous
+        modules to inputs of subsequent modules. ``overrides`` allows callers to
+        mark specific arguments as satisfied externally.
         """
 
         modules: Set[str] = set()
 
         # ----- expand via synergy graph
         if start_module:
-            try:
-                if self.module_synergy_grapher is not None:
-                    if hasattr(self.module_synergy_grapher, "load"):
-                        # Ensure the grapher has the latest graph loaded
-                        self.module_synergy_grapher.load(self.synergy_graph_path)
-                    cluster = self.module_synergy_grapher.get_synergy_cluster(start_module)
-                elif get_synergy_cluster is not None:
-                    # Fall back to module level helper which loads the graph on demand
-                    cluster = get_synergy_cluster(start_module, path=self.synergy_graph_path)
-                else:
-                    cluster = {start_module}
-                modules.update(cluster)
-            except Exception:  # pragma: no cover - best effort
-                modules.add(start_module)
+            modules.update(self.expand_cluster(start_module))
 
         # ----- expand via intent search
         if problem and self.intent_clusterer is not None:
@@ -351,6 +407,27 @@ class WorkflowSynthesizer:
         return workflow
 
     # ------------------------------------------------------------------
+    def synthesize(self, start: str | Dict[str, Any]) -> Dict[str, Any]:
+        """Expand ``start`` into a workflow description.
+
+        ``start`` may be a module name or free text problem description. A
+        mapping may also be supplied with ``module`` and ``problem`` keys.
+        """
+
+        if isinstance(start, dict):
+            start_module = start.get("module") or start.get("start")
+            problem = start.get("problem")
+        else:
+            module_path = Path(start.replace(".", "/")).with_suffix(".py")
+            if module_path.exists():
+                start_module, problem = start, None
+            else:
+                start_module, problem = None, start
+
+        steps = self._synthesize_greedy(start_module=start_module, problem=problem)
+        return {"steps": steps}
+
+    # ------------------------------------------------------------------
     def generate_workflows(
         self,
         start_module: str,
@@ -384,7 +461,9 @@ class WorkflowSynthesizer:
         import networkx as nx
 
         # gather candidate modules via synergy + intent expansion
-        steps = self.synthesize(start_module=start_module, problem=problem, limit=50)
+        steps = self._synthesize_greedy(
+            start_module=start_module, problem=problem, limit=50
+        )
         modules = {s["module"] for s in steps}
         modules.add(start_module)
 

@@ -13,6 +13,7 @@ from .roi_calculator import ROICalculator
 from .truth_adapter import TruthAdapter
 from .foresight_tracker import ForesightTracker
 from .upgrade_forecaster import UpgradeForecaster
+from .workflow_synthesizer import WorkflowSynthesizer
 try:  # pragma: no cover - optional heavy dependency
     from .intent_clusterer import IntentClusterer
 except Exception:  # pragma: no cover - gracefully degrade
@@ -109,6 +110,8 @@ __all__ = [
     "foresight_tracker",
     "UpgradeForecaster",
     "upgrade_forecaster",
+    "WorkflowSynthesizer",
+    "workflow_synthesizer",
     "IntentClusterer",
     "intent_clusterer",
     "newsreader_bot",
