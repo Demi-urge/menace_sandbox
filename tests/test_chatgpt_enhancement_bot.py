@@ -57,3 +57,16 @@ def test_enhancementdb_duplicate(tmp_path, caplog, monkeypatch):
     with db._connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM enhancements").fetchone()[0] == 1
     assert "duplicate" in caplog.text.lower()
+
+
+def test_enhancementdb_content_hash_unique_index(tmp_path):
+    old = ceb.GLOBAL_ROUTER
+    router = ceb.init_db_router("enhidx", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
+    db = ceb.EnhancementDB(tmp_path / "enh.db", router=router)
+    with db._connect() as conn:
+        indexes = {
+            row[1]: row[2]
+            for row in conn.execute("PRAGMA index_list('enhancements')").fetchall()
+        }
+    assert indexes.get("idx_enhancements_content_hash") == 1
+    ceb.GLOBAL_ROUTER = old

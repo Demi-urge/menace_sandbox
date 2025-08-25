@@ -113,3 +113,16 @@ def test_workflowdb_duplicate(tmp_path, caplog, monkeypatch):
     assert captured["id"] == first
     assert "duplicate" in caplog.text.lower()
     assert db.conn.execute("SELECT COUNT(*) FROM workflows").fetchone()[0] == 1
+
+
+def test_workflowdb_content_hash_unique_index(tmp_path, monkeypatch):
+    old = thb.GLOBAL_ROUTER
+    router = thb.init_db_router("wfidx", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
+    monkeypatch.setattr(thb.WorkflowDB, "add_embedding", lambda *a, **k: None)
+    db = thb.WorkflowDB(tmp_path / "wf.db", router=router)
+    indexes = {
+        row[1]: row[2]
+        for row in db.conn.execute("PRAGMA index_list('workflows')").fetchall()
+    }
+    assert indexes.get("idx_workflows_content_hash") == 1
+    thb.GLOBAL_ROUTER = old
