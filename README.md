@@ -208,7 +208,9 @@ prompt = "\n\n".join(r["summary"] for r in records)
 
 To support additional data types, implement a `fetch_*` helper returning the
 standard columns and register it with `aggregate_samples`. See
-[docs/codex_db_helpers.md](docs/codex_db_helpers.md) for more details.
+[docs/codex_db_helpers.md](docs/codex_db_helpers.md) for more details and
+[docs/codex_training_data.md](docs/codex_training_data.md) for a tour of the
+available sources and prompt-building examples.
 
 ### ROI toolkit
 
