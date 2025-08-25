@@ -1,6 +1,12 @@
 from pathlib import Path
 
 import pytest
+import sys
+import types
+
+st_stub = types.ModuleType("sentence_transformers")
+st_stub.SentenceTransformer = None
+sys.modules.setdefault("sentence_transformers", st_stub)
 
 import intent_clusterer as ic
 
@@ -9,7 +15,9 @@ import intent_clusterer as ic
 def mock_summariser(monkeypatch):
     """Replace the heavy summariser with a deterministic stub."""
 
-    monkeypatch.setattr(ic, "summarise_texts", lambda texts: "cluster helper summary")
+    monkeypatch.setattr(
+        ic, "summarise_texts", lambda texts, **_: "cluster helper summary"
+    )
 
 
 class DummyRetriever:

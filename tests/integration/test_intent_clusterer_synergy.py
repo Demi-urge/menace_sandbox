@@ -2,6 +2,12 @@ import pytest
 from pathlib import Path
 
 import json
+import sys
+import types
+
+st_stub = types.ModuleType("sentence_transformers")
+st_stub.SentenceTransformer = None
+sys.modules.setdefault("sentence_transformers", st_stub)
 
 import embeddable_db_mixin as edm
 import intent_db
@@ -18,7 +24,9 @@ def _fake(text: str, model=None) -> list[float]:
 def patch_embed(monkeypatch):
     monkeypatch.setattr(edm, "governed_embed", _fake)
     monkeypatch.setattr(ic, "governed_embed", _fake)
-    monkeypatch.setattr(ic, "summarise_texts", lambda texts: "alpha beta summary")
+    monkeypatch.setattr(
+        ic, "summarise_texts", lambda texts, **_: "alpha beta summary"
+    )
 
 
 def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):

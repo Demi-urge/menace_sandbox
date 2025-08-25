@@ -174,67 +174,70 @@ def extract_intent_text(path: Path) -> str:
     return "\n".join(docstrings + names + comments)
 
 
-def summarise_texts(texts: List[str]) -> str:
+def summarise_texts(texts: List[str], method: str = "tfidf", top_k: int = 5) -> str:
     """Return a short summary for ``texts``.
 
-    A lightweight summarisation model is attempted first using
-    :mod:`transformers`.  If the dependency or model is unavailable the
-    function falls back to a simple ``sumy`` based summariser.  When neither
-    option is usable an empty string is returned.  The helper is factored out
-    so tests can easily monkeypatch it without requiring network access.
+    The helper relies solely on local processing and avoids heavyweight models
+    or network calls.  Noun phrases (approximated via n‑grams) are scored using
+    a tiny TF‑IDF scheme.  ``method`` can be set to ``"freq"`` to use raw
+    frequency counts instead.  The ``top_k`` highest scoring phrases are
+    returned, joined by spaces.
     """
 
-    joined = "\n".join(texts)
-    try:  # pragma: no cover - optional dependency
-        from transformers import pipeline
+    import math
+    import re
+    from collections import Counter
 
-        summariser = pipeline("summarization", model="sshleifer/tiny-mbart")
-        out = summariser(joined, max_length=60, min_length=5, do_sample=False)
-        return (out[0]["summary_text"] or "").strip()
-    except Exception:
-        try:  # pragma: no cover - optional dependency
-            from sumy.parsers.plaintext import PlaintextParser
-            from sumy.nlp.tokenizers import Tokenizer
-            from sumy.summarizers.lex_rank import LexRankSummarizer
+    if not texts:
+        return ""
 
-            parser = PlaintextParser.from_string(joined, Tokenizer("english"))
-            summarizer = LexRankSummarizer()
-            sentences = summarizer(parser.document, sentences_count=1)
-            return str(sentences[0]) if sentences else ""
-        except Exception:
-            return ""
+    def _phrases(text: str) -> List[str]:
+        tokens = re.findall(r"[A-Za-z][A-Za-z0-9_]*", text.lower())
+        phrases = list(tokens)
+        for n in (2, 3):
+            phrases.extend(" ".join(tokens[i : i + n]) for i in range(len(tokens) - n + 1))
+        return phrases
+
+    docs = [_phrases(t) for t in texts if t]
+    if not docs:
+        return ""
+
+    scores: Counter[str]
+    if method == "tfidf":
+        df = Counter()
+        for doc in docs:
+            df.update(set(doc))
+        scores = Counter()
+        N = len(docs)
+        for doc in docs:
+            tf = Counter(doc)
+            for term, freq in tf.items():
+                idf = math.log((1 + N) / (1 + df[term])) + 1.0
+                scores[term] += freq * idf
+    else:  # ``freq`` or any unknown method
+        scores = Counter(p for doc in docs for p in doc)
+
+    ranked = sorted(scores.items(), key=lambda x: (x[1], len(x[0].split())), reverse=True)
+    terms = [term for term, _ in ranked[:top_k]]
+    return " ".join(terms)
 
 
-def derive_cluster_label(texts: List[str], top_k: int = 3) -> tuple[str, str]:
+def derive_cluster_label(
+    texts: List[str], top_k: int = 3, method: str = "tfidf"
+) -> tuple[str, str]:
     """Return a concise ``(label, summary)`` pair for ``texts``.
 
-    A lightweight summariser is used to generate both a summary and label.
-    If the summariser is unavailable a TF‑IDF approach is attempted.  Only when
-    both strategies fail does the function fall back to a simple frequency
-    heuristic.
+    ``summarise_texts`` provides both the label and summary.  When no summary
+    can be produced a final frequency based heuristic is used which guarantees
+    deterministic output without external dependencies.
     """
 
     if not texts:
         return "", ""
 
-    summary = summarise_texts(texts)
+    summary = summarise_texts(texts, method=method, top_k=top_k)
     if summary:
-        label = " ".join(summary.split()[:top_k])
-        return label, summary
-
-    try:  # pragma: no cover - optional dependency
-        from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
-
-        vec = TfidfVectorizer(stop_words="english")
-        matrix = vec.fit_transform(texts)
-        scores = matrix.sum(axis=0).A1
-        terms = vec.get_feature_names_out()
-        top = scores.argsort()[-top_k:][::-1]
-        label = " ".join(terms[i] for i in top if scores[i] > 0)
-        summary = ""
-        return label, summary
-    except Exception:
-        pass
+        return summary, summary
 
     # Final safety net: frequency based heuristic
     import re
@@ -265,7 +268,7 @@ def derive_cluster_label(texts: List[str], top_k: int = 3) -> tuple[str, str]:
     if not words:
         return "", ""
     label = " ".join(w for w, _ in Counter(words).most_common(top_k))
-    return label, ""
+    return label, label
 
 
 class ModuleVectorDB(EmbeddableDBMixin):
@@ -338,9 +341,13 @@ class IntentClusterer:
         menace_id: str | None = None,
         local_db_path: str | Path | None = None,
         shared_db_path: str | Path | None = None,
+        summary_method: str = "tfidf",
+        summary_top_k: int = 3,
     ) -> None:
         self.vector_service = vector_service
         self.retriever = retriever
+        self.summary_method = summary_method
+        self.summary_top_k = summary_top_k
         if self.retriever is None and self.vector_service is None:
             self.retriever = type(
                 "DummyRetriever",
@@ -510,7 +517,9 @@ class IntentClusterer:
                 except Exception as exc:
                     logger.warning("failed to extract intent text from %s: %s", m, exc)
                     continue
-            label, summary = derive_cluster_label(texts)
+            label, summary = derive_cluster_label(
+                texts, top_k=self.summary_top_k, method=self.summary_method
+            )
             text = "\n".join(texts)
             category = _categorise(label, summary)
 
@@ -1057,7 +1066,9 @@ class IntentClusterer:
             return lbl, summ
         text, _vec = self.get_cluster_intents(cluster_id)
         if text:
-            d_lbl, d_summ = derive_cluster_label([text])
+            d_lbl, d_summ = derive_cluster_label(
+                [text], top_k=self.summary_top_k, method=self.summary_method
+            )
             if lbl is None:
                 lbl = d_lbl
             if summ is None:
@@ -1089,6 +1100,7 @@ class IntentClusterer:
         for item in hits:
             meta = item.get("metadata", {})
             label = meta.get("label")
+            summary = meta.get("summary")
             category = meta.get("category")
             target_vec: Sequence[float] = item.get("vector", [])
             tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
@@ -1107,14 +1119,19 @@ class IntentClusterer:
                     continue
                 if cids:
                     cluster_ids = [int(c) for c in cids]
-                if label is None and cluster_ids:
-                    label = await asyncio.to_thread(
-                        self._get_cluster_label, cluster_ids[0]
-                    )
-                if category is None and cluster_ids:
-                    category = await asyncio.to_thread(
-                        self._get_cluster_category, cluster_ids[0]
-                    )
+                if cluster_ids:
+                    if label is None:
+                        label = await asyncio.to_thread(
+                            self._get_cluster_label, cluster_ids[0]
+                        )
+                    if summary is None:
+                        summary = await asyncio.to_thread(
+                            self._get_cluster_summary, cluster_ids[0]
+                        )
+                    if category is None:
+                        category = await asyncio.to_thread(
+                            self._get_cluster_category, cluster_ids[0]
+                        )
                 results.append(
                     IntentMatch(
                         path=None,
@@ -1122,6 +1139,7 @@ class IntentClusterer:
                         cluster_ids=cluster_ids,
                         label=label,
                         category=category,
+                        summary=summary,
                     )
                 )
                 continue
@@ -1146,24 +1164,35 @@ class IntentClusterer:
                     if include_clusters:
                         cluster_ids = [cid for cid, _ in cluster_hits]
                         if cluster_ids:
-                            label = await asyncio.to_thread(
-                                self._get_cluster_label, cluster_ids[0]
-                            )
-                            category = await asyncio.to_thread(
-                                self._get_cluster_category, cluster_ids[0]
-                            )
+                            if label is None:
+                                label = await asyncio.to_thread(
+                                    self._get_cluster_label, cluster_ids[0]
+                                )
+                            if summary is None:
+                                summary = await asyncio.to_thread(
+                                    self._get_cluster_summary, cluster_ids[0]
+                                )
+                            if category is None:
+                                category = await asyncio.to_thread(
+                                    self._get_cluster_category, cluster_ids[0]
+                                )
             if sim < threshold:
                 continue
             if include_clusters and not cluster_ids and cids:
                 cluster_ids = [int(c) for c in cids]
-                if label is None and cluster_ids:
-                    label = await asyncio.to_thread(
-                        self._get_cluster_label, cluster_ids[0]
-                    )
-                if category is None and cluster_ids:
-                    category = await asyncio.to_thread(
-                        self._get_cluster_category, cluster_ids[0]
-                    )
+                if cluster_ids:
+                    if label is None:
+                        label = await asyncio.to_thread(
+                            self._get_cluster_label, cluster_ids[0]
+                        )
+                    if summary is None:
+                        summary = await asyncio.to_thread(
+                            self._get_cluster_summary, cluster_ids[0]
+                        )
+                    if category is None:
+                        category = await asyncio.to_thread(
+                            self._get_cluster_category, cluster_ids[0]
+                        )
             elif not include_clusters and cids and len(cids) > 1:
                 cluster_ids = [int(c) for c in cids]
             results.append(
@@ -1173,6 +1202,7 @@ class IntentClusterer:
                     cluster_ids=cluster_ids,
                     label=label,
                     category=category,
+                    summary=summary,
                 )
             )
         return results

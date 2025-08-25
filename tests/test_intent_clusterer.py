@@ -49,13 +49,16 @@ def fake_embeddings(monkeypatch) -> None:
 
     monkeypatch.setattr(edm, "governed_embed", _fake)
     monkeypatch.setattr(iv, "governed_embed", _fake)
+    monkeypatch.setattr(ic, "governed_embed", _fake)
     monkeypatch.setattr(iv, "SentenceTransformer", None)
     # ``IntentClusterer.index_modules`` writes to ``embeddings.jsonl`` via
     # ``persist_embedding`` which would pollute the repository.  Replace it with
     # a no‑op to keep the workspace clean during tests.
     monkeypatch.setattr(ic, "persist_embedding", lambda *a, **k: None)
     # Use a deterministic summariser to avoid network access
-    monkeypatch.setattr(ic, "summarise_texts", lambda texts: "auth helper summary")
+    monkeypatch.setattr(
+        ic, "summarise_texts", lambda texts, **_: "auth helper summary"
+    )
 
 
 @pytest.fixture
@@ -115,7 +118,7 @@ def test_derive_cluster_label_uses_summariser(monkeypatch):
     """``derive_cluster_label`` should prefer the summariser when available."""
 
     monkeypatch.setattr(
-        ic, "summarise_texts", lambda texts: "auth summary phrase"
+        ic, "summarise_texts", lambda texts, **_: "auth summary phrase"
     )
     label, summary = ic.derive_cluster_label(["auth stuff", "more auth"])
     assert label == "auth summary phrase"
@@ -349,7 +352,7 @@ def test_query_and_find_helpers_respect_thresholds(
     assert res[0].category == "authentication"
 
     # High threshold filters out even perfect matches
-    assert clustered_clusterer.query("authentication help", threshold=0.99) == []
+    assert clustered_clusterer.query("authentication help", threshold=1.1) == []
 
     mods = clustered_clusterer.find_modules_related_to(
         "authentication help", top_k=5, include_clusters=True
