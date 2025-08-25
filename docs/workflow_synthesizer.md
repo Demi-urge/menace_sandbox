@@ -14,18 +14,22 @@ The standalone helper `workflow_synthesizer_cli.py` exposes a minimal command
 line interface:
 
 ```bash
-python workflow_synthesizer_cli.py --start module_a --out my.workflow.json
-python workflow_synthesizer_cli.py --start "summarise data" --out summary.workflow.json
+python workflow_synthesizer_cli.py --start module_a --save
+python workflow_synthesizer_cli.py --start "summarise data" --save summary
+python workflow_synthesizer_cli.py --list
 ```
 
 * `--start` – starting module name. When the module does not exist the value is
   treated as a free‑text problem description used for intent matching.
 * `--problem` – additional description to bias intent search.
 * `--max-depth` – limit traversal depth when exploring connected modules.
-* `--out` – file or directory where generated workflows are written.
+* `--save` – write the workflow to
+  `sandbox_data/generated_workflows/<name>.workflow.json` where `<name>`
+  defaults to the start argument.
+* `--list` – print the names of previously saved workflows and exit.
 
-The command prints the candidate workflows to stdout and, when `--out` is
-supplied, persists them to disk.
+The command prints candidate workflows to stdout. When `--save` or `--out` is
+supplied, the specification is persisted to disk.
 
 ## Output format
 

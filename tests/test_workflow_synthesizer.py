@@ -318,3 +318,53 @@ def test_cli_end_to_end(tmp_path):
     data = json.loads(result.stdout)
     assert data
     assert data[0]["steps"][0]["module"] == "simple_functions"
+
+
+def test_cli_save_and_list(tmp_path):
+    """`--save` writes workflow files and `--list` reports them."""
+
+    stub = tmp_path / "stubs"
+    stub.mkdir()
+    (stub / "module_synergy_grapher.py").write_text(
+        "class ModuleSynergyGrapher:\n"
+        "    def __init__(self):\n"
+        "        self.graph=None\n"
+        "    def load(self, path):\n"
+        "        pass\n"
+        "    def get_synergy_cluster(self, start_module, threshold=0.0):\n"
+        "        return []\n"
+        "\n"
+        "def get_synergy_cluster(start_module, path=None, threshold=0.0):\n"
+        "    return []\n"
+        "\n"
+        "def load_graph(path):\n"
+        "    return None\n"
+    )
+    (stub / "intent_clusterer.py").write_text(
+        "class IntentClusterer:\n"
+        "    def find_modules_related_to(self, problem, top_k=20):\n"
+        "        return []\n"
+    )
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join([str(stub), os.getcwd()])
+    cli = Path(__file__).resolve().parent.parent / "workflow_synthesizer_cli.py"
+
+    subprocess.run(
+        [sys.executable, str(cli), "simple_functions", "--save"],
+        check=True,
+        env=env,
+        cwd=tmp_path,
+    )
+    saved = tmp_path / "sandbox_data" / "generated_workflows" / "simple_functions.workflow.json"
+    assert saved.is_file()
+
+    result = subprocess.run(
+        [sys.executable, str(cli), "--list"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+        cwd=tmp_path,
+    )
+    assert "simple_functions.workflow.json" in result.stdout

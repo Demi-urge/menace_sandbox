@@ -2,18 +2,21 @@
 """CLI for generating workflows using :class:`WorkflowSynthesizer`.
 
 Workflows are ranked by combining synergy graph and intent scores using
-configurable weights that are normalised by workflow length."""
+configurable weights that are normalised by workflow length. Generated
+specifications can be written to the local sandbox and existing ones listed
+via the ``--list`` flag."""
 
 from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from workflow_synthesizer import WorkflowSynthesizer
 
 
 def run(args: argparse.Namespace) -> int:
-    """Handle command line arguments to synthesise workflows.
+    """Handle command line arguments to synthesise or list workflows.
 
     Parameters
     ----------
@@ -25,6 +28,13 @@ def run(args: argparse.Namespace) -> int:
     int
         Process exit code, ``0`` for success.
     """
+
+    if getattr(args, "list", False):
+        directory = Path("sandbox_data/generated_workflows")
+        if directory.exists():
+            for path in sorted(directory.glob("*.workflow.json")):
+                print(path.name)
+        return 0
 
     synth = WorkflowSynthesizer()
     workflows = synth.generate_workflows(
@@ -41,6 +51,13 @@ def run(args: argparse.Namespace) -> int:
     print(json.dumps(data, indent=2))
     if args.out:
         synth.save(args.out)
+    elif args.save is not None:
+        name = args.save or args.start
+        safe = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in name)
+        directory = Path("sandbox_data/generated_workflows")
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{safe}.workflow.json"
+        synth.save(path)
     return 0
 
 
@@ -56,6 +73,7 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
     )
     parser.add_argument(
         "start",
+        nargs="?",
         help="Starting module name",
     )
     parser.add_argument(
@@ -71,6 +89,20 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
     parser.add_argument(
         "--out",
         help="File or directory to save generated workflows",
+    )
+    parser.add_argument(
+        "--save",
+        nargs="?",
+        const="",
+        help=(
+            "Save workflow to sandbox_data/generated_workflows/<name>.workflow.json "
+            "(default name derived from start)."
+        ),
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List saved workflow specifications and exit",
     )
     parser.add_argument(
         "--synergy-weight",
@@ -92,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not args.list and args.start is None:
+        parser.error("start is required unless --list is specified")
     return run(args)
 
 
