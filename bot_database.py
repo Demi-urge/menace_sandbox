@@ -25,8 +25,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 from db_router import GLOBAL_ROUTER as router
 from .scope_utils import Scope, build_scope_clause, apply_scope
-from dedup_utils import insert_if_unique, hash_fields
-from db_dedup import insert_if_unique as insert_if_unique_menace
+from db_dedup import insert_if_unique, hash_fields
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .deployment_bot import DeploymentDB
@@ -416,7 +415,12 @@ class BotDB(EmbeddableDBMixin):
         }
         content_hash = hash_fields(values, _BOT_HASH_FIELDS)
         bot_id = insert_if_unique(
-            self.conn, "bots", values, _BOT_HASH_FIELDS, menace_id, logger
+            "bots",
+            values,
+            _BOT_HASH_FIELDS,
+            menace_id,
+            conn=self.conn,
+            logger=logger,
         )
         self.conn.commit()
         if bot_id is None:
@@ -643,7 +647,7 @@ class BotDB(EmbeddableDBMixin):
             "estimated_profit": rec.estimated_profit,
             "source_menace_id": menace_id,
         }
-        inserted_id = insert_if_unique_menace(
+        inserted_id = insert_if_unique(
             mdb.bots,
             values,
             _MENACE_BOT_HASH_FIELDS,

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable, List, Optional, Iterator, Sequence, Literal
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-from dedup_utils import insert_if_unique, hash_fields
+from db_dedup import insert_if_unique, hash_fields
 from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
@@ -328,12 +328,12 @@ class EnhancementDB(EmbeddableDBMixin):
 
         with self._connect() as conn:
             enh_id = insert_if_unique(
-                conn,
                 "enhancements",
                 values,
                 _ENHANCEMENT_HASH_FIELDS,
                 menace_id,
-                logger,
+                conn=conn,
+                logger=logger,
             )
         if enh_id is None:
             logger.warning(

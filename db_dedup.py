@@ -10,12 +10,13 @@ detected via a ``UNIQUE`` constraint the insert is skipped.
 from collections.abc import Iterable, Mapping
 import hashlib
 import json
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 try:  # pragma: no cover - optional dependency
-    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.exc import IntegrityError as SAIntegrityError
 except Exception:  # pragma: no cover - optional dependency
-    class IntegrityError(Exception):
+    class SAIntegrityError(Exception):
         """Fallback when SQLAlchemy isn't installed."""
 
         pass
@@ -24,7 +25,7 @@ if TYPE_CHECKING:  # pragma: no cover - type checking only
     from sqlalchemy import Table
     from sqlalchemy.engine import Engine
 
-__all__ = ["compute_content_hash", "insert_if_unique"]
+__all__ = ["compute_content_hash", "hash_fields", "insert_if_unique"]
 
 
 def compute_content_hash(data: Mapping[str, Any]) -> str:
@@ -39,14 +40,22 @@ def compute_content_hash(data: Mapping[str, Any]) -> str:
     ).hexdigest()
 
 
+def hash_fields(data: Mapping[str, Any], fields: Iterable[str]) -> str:
+    """JSON-encode selected ``fields`` from ``data`` and return a hash."""
+
+    payload = {key: data[key] for key in fields}
+    return compute_content_hash(payload)
+
+
 def insert_if_unique(
-    table: Table,
+    table: "Table | str",
     values: Mapping[str, Any],
     hash_fields: Iterable[str],
     menace_id: str,
     *,
-    engine: Engine,
     logger: Any,
+    engine: "Engine | None" = None,
+    conn: sqlite3.Connection | None = None,
 ) -> Any | None:
     """Insert ``values`` into ``table`` if their hash is unique.
 
@@ -54,25 +63,43 @@ def insert_if_unique(
     :func:`compute_content_hash` to detect duplicates.  The resulting
     ``content_hash`` is added to the values prior to insertion.  If the hash
     already exists the insert is skipped and ``None`` is returned.
-    """
 
-    import sqlalchemy as sa  # Imported lazily to avoid mandatory dependency
+    Supply ``engine`` with a SQLAlchemy :class:`~sqlalchemy.Table` for SQL
+    databases or ``conn`` with a table name for SQLite connections.
+    """
 
     payload = {key: values[key] for key in hash_fields}
     content_hash = compute_content_hash(payload)
     values = dict(values)
     values["content_hash"] = content_hash
 
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(table.insert().values(**values))
-        return result.inserted_primary_key[0]
-    except IntegrityError as exc:
-        # Only treat as a duplicate if the ``content_hash`` constraint failed.
-        msg = str(getattr(exc, "orig", exc))
-        if "content_hash" not in msg:
-            raise
-        logger.warning(
-            "Duplicate insert ignored for %s (menace_id=%s)", table.name, menace_id
-        )
-        return None
+    if engine is not None:
+        try:
+            with engine.begin() as eng_conn:
+                result = eng_conn.execute(table.insert().values(**values))  # type: ignore[arg-type]
+            return result.inserted_primary_key[0]
+        except SAIntegrityError as exc:
+            msg = str(getattr(exc, "orig", exc))
+            if "content_hash" not in msg:
+                raise
+            logger.warning(
+                "Duplicate insert ignored for %s (menace_id=%s)", table.name, menace_id
+            )
+            return None
+
+    if conn is not None:
+        columns = ", ".join(values.keys())
+        placeholders = ", ".join("?" for _ in values)
+        try:
+            cur = conn.execute(
+                f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
+                tuple(values.values()),
+            )
+            return int(cur.lastrowid)
+        except sqlite3.IntegrityError:
+            logger.warning(
+                "Duplicate insert ignored for %s (menace_id=%s)", table, menace_id
+            )
+            return None
+
+    raise TypeError("Either 'engine' or 'conn' must be provided")

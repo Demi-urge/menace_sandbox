@@ -42,7 +42,7 @@ from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from vector_service import EmbeddableDBMixin
 from .scope_utils import build_scope_clause, Scope, apply_scope
-from dedup_utils import insert_if_unique, hash_fields as _hash_fields
+from db_dedup import insert_if_unique, hash_fields as _hash_fields
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager
@@ -510,7 +510,12 @@ class ErrorDB(EmbeddableDBMixin):
         content_hash = _hash_fields(values, hash_fields)
         with self.router.get_connection("errors", "write") as conn:
             err_id = insert_if_unique(
-                conn, "errors", values, hash_fields, menace_id, logger
+                "errors",
+                values,
+                hash_fields,
+                menace_id,
+                conn=conn,
+                logger=logger,
             )
             conn.commit()
         if err_id is None:
