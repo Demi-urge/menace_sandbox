@@ -165,4 +165,5 @@ def test_cluster_lookup_uses_synergy_groups(clusterer: ic.IntentClusterer, sampl
     res = clusterer.find_clusters_related_to("auth help", top_k=1)
     assert res and res[0]["origin"] == "cluster"
     assert res[0]["path"].startswith("cluster:1")
+    assert "label" in res[0] and "auth" in res[0]["label"].lower()
 
