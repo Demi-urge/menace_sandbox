@@ -53,7 +53,7 @@ DEFAULT_PROPOSE_RATIO = float(os.environ.get("PROPOSE_SUMMARY_RATIO", "0.3"))
 # Fields used to compute the deduplication content hash for enhancements
 _ENHANCEMENT_HASH_FIELDS = [
     "idea",
-    "summary",
+    "rationale",
     "before_code",
     "after_code",
     "description",
