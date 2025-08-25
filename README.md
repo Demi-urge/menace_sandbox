@@ -73,6 +73,8 @@
   embedding fields and can use either a FAISS or Annoy backend for
   similarity queries. See [docs/embedding_system.md](docs/embedding_system.md)
   for configuration details and backfilling instructions.
+- Lightweight intent clustering for modules with semantic query support
+  ([docs/intent_clusterer.md](docs/intent_clusterer.md))
 - `EmbeddingBackfill` and `EmbeddingScheduler` now handle `bots`, `workflows`,
   `enhancements` and `errors` tables directly.  Operators can schedule
   periodic backfills by setting `EMBEDDING_SCHEDULER_SOURCES` to a comma
