@@ -1,3 +1,4 @@
+import json
 import pytest
 from pathlib import Path
 
@@ -138,3 +139,42 @@ def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
     res = clusterer.find_clusters_related_to("alpha beta", top_k=1)
     assert res and res[0]["path"].startswith("cluster:a")
     assert res[0]["origin"] == "cluster"
+
+
+def test_module_map_cluster_embeddings(tmp_path: Path, monkeypatch):
+    def _fake(text: str, model=None) -> list[float]:
+        lower = text.lower()
+        return [float(lower.count("alpha")), float(lower.count("beta"))]
+
+    monkeypatch.setattr(edm, "governed_embed", _fake)
+
+    (tmp_path / "a.py").write_text('"""alpha"""')
+    (tmp_path / "b.py").write_text('"""beta"""')
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (data_dir / "module_map.json").write_text(json.dumps({"a": 1, "b": 1}))
+
+    LOCAL_TABLES.add("intent")
+    router = init_db_router("intent", str(tmp_path / "intent.db"), str(tmp_path / "intent.db"))
+    db = intent_db.IntentDB(
+        path=tmp_path / "intent.db",
+        vector_index_path=tmp_path / "intent.index",
+        router=router,
+    )
+
+    class DummyRetriever:
+        def register_db(self, *args, **kwargs):
+            pass
+
+    clusterer = ic.IntentClusterer(intent_db=db, retriever=DummyRetriever())
+    clusterer.index_repository(tmp_path)
+
+    res = clusterer.find_clusters_related_to("alpha beta", top_k=1)
+    assert res and res[0]["origin"] == "cluster"
+    assert res[0]["path"].startswith("cluster:1")
+
+    res2 = clusterer.find_modules_related_to(
+        "alpha beta", top_k=3, include_clusters=True
+    )
+    origins = {r["origin"] for r in res2}
+    assert "module" in origins and "cluster" in origins
