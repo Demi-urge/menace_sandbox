@@ -35,6 +35,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback used in tests
     from knowledge_graph import _SimpleKMeans as KMeans  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from sklearn.metrics import silhouette_score  # type: ignore
+except Exception:  # pragma: no cover - fallback when sklearn is absent
+    silhouette_score = None  # type: ignore
+
 
 logger = get_logger(__name__)
 
@@ -570,10 +575,59 @@ class IntentClusterer:
             self._index_clusters(groups)
 
     # ------------------------------------------------------------------
+    def _optimal_cluster_count(self, vectors: List[List[float]]) -> int:
+        """Estimate an appropriate number of clusters for ``vectors``."""
+
+        max_k = min(10, len(vectors))
+        if max_k <= 1:
+            return 1
+
+        if silhouette_score:  # pragma: no cover - optional dependency
+            best_k = 2
+            best_score = -1.0
+            for k in range(2, max_k + 1):
+                km = KMeans(n_clusters=k)
+                km.fit(vectors)
+                labels = getattr(km, "labels_", km.predict(vectors))
+                try:
+                    score = float(silhouette_score(vectors, labels))
+                except Exception:
+                    score = -1.0
+                if score > best_score:
+                    best_score = score
+                    best_k = k
+            return best_k
+
+        def _sse(k: int) -> float:
+            km = KMeans(n_clusters=k)
+            km.fit(vectors)
+            centers = getattr(km, "cluster_centers_", getattr(km, "centers", []))
+            labels = getattr(km, "labels_", km.predict(vectors))
+            sse = 0.0
+            for vec, idx in zip(vectors, labels):
+                center = centers[idx]
+                sse += sum((a - b) ** 2 for a, b in zip(vec, center))
+            return sse
+
+        prev = _sse(1)
+        best_k = 1
+        for k in range(2, max_k + 1):
+            curr = _sse(k)
+            improvement = (prev - curr) / prev if prev else 0.0
+            if improvement < 0.1:
+                break
+            best_k = k
+            prev = curr
+        return max(best_k, 1)
+
+    # ------------------------------------------------------------------
     def cluster_intents(
-        self, n_clusters: int, *, threshold: float = 0.8
+        self, n_clusters: int | None = None, *, threshold: float = 0.8
     ) -> Dict[str, List[int]]:
-        """Group indexed modules into ``n_clusters`` clusters.
+        """Group indexed modules into clusters.
+
+        When ``n_clusters`` is ``None`` a best effort is made to determine an
+        optimal cluster count using silhouette or elbow analysis.
 
         Unlike the previous hard assignment approach, modules may now belong to
         multiple clusters.  For each module we compute the Euclidean distance to
@@ -586,6 +640,8 @@ class IntentClusterer:
         if not self.vectors:
             return {}
         vectors = list(self.vectors.values())
+        if n_clusters is None:
+            n_clusters = self._optimal_cluster_count(vectors)
         km = KMeans(n_clusters=n_clusters)
         km.fit(vectors)
         centers = [list(c) for c in getattr(km, "cluster_centers_", [])]
