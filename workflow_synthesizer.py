@@ -21,9 +21,10 @@ from typing import Any, Dict, List, Set, Tuple
 
 # lightweight structural analysis helpers
 try:  # Optional import; makes the synthesizer work in minimal environments
-    from analysis import ModuleSignature
+    from analysis import ModuleSignature, get_io_signature
 except Exception:  # pragma: no cover - best effort fall back
     ModuleSignature = None  # type: ignore[misc]
+    get_io_signature = None  # type: ignore[misc]
 
 try:  # Optional imports; fall back to stubs in tests
     from module_synergy_grapher import (
@@ -600,15 +601,18 @@ class WorkflowSynthesizer:
         overrides: Dict[str, Set[str]] | None = None,
         threshold: float = 0.0,
     ) -> List[Dict[str, Any]]:
-        """Return a greedy chain of modules.
+        """Return an ordered chain of modules based on dependency resolution.
 
         Modules are gathered using synergy graph expansion and optional intent
-        search. They are then ordered greedily by matching outputs of previous
-        modules to inputs of subsequent modules. ``overrides`` allows callers to
-        mark specific arguments as satisfied externally. ``threshold`` controls
-        the minimum synergy weight when expanding the cluster around
-        ``start_module``.
+        search. They are then ordered using :meth:`resolve_dependencies` which
+        analyses each module via :func:`analysis.get_io_signature`. ``overrides``
+        allows callers to mark specific arguments as satisfied externally.
+        ``threshold`` controls the minimum synergy weight when expanding the
+        cluster around ``start_module``.
         """
+
+        if ModuleSignature is None or get_io_signature is None:
+            raise ValueError("Structural analysis helpers are unavailable")
 
         modules: Set[str] = self.expand_cluster(
             start_module=start_module, problem=problem, threshold=threshold
@@ -617,51 +621,30 @@ class WorkflowSynthesizer:
         if start_module:
             modules.add(start_module)
 
-        # Greedily order modules based on IO overlap
-        analyzer = ModuleIOAnalyzer()
-        remaining = [m for m in sorted(modules) if m != start_module]
-        provided: Set[str] = set()
-        workflow: List[Dict[str, Any]] = []
-
-        def _append(mod: str) -> None:
-            io = analyzer.analyze(Path(mod.replace(".", "/")).with_suffix(".py"))
-            inputs = set(io.get("inputs", []))
-            outputs = set(io.get("outputs", []))
-            unresolved = [i for i in inputs if i not in provided]
+        signatures: List[ModuleSignature] = []
+        for mod in sorted(modules):
+            path = Path(mod.replace(".", "/")).with_suffix(".py")
+            sig = get_io_signature(path)
+            sig.name = mod
             if overrides and mod in overrides:
-                unresolved = [i for i in unresolved if i not in overrides[mod]]
+                for fn in sig.functions.values():
+                    fn["args"] = [a for a in fn.get("args", []) if a not in overrides[mod]]
+            signatures.append(sig)
+
+        try:
+            steps = self.resolve_dependencies(signatures)
+        except ValueError as exc:  # pragma: no cover - surface errors
+            raise ValueError(f"Dependency resolution failed: {exc}") from exc
+
+        workflow: List[Dict[str, Any]] = []
+        for step in steps[:limit]:
             workflow.append(
-                {"module": mod, "inputs": unresolved, "outputs": sorted(outputs)}
+                {
+                    "module": step.module,
+                    "inputs": step.inputs,
+                    "outputs": step.outputs,
+                }
             )
-            provided.update(outputs)
-
-        if start_module:
-            _append(start_module)
-
-        while remaining and len(workflow) < limit:
-            best = None
-            best_overlap = -1
-            best_missing = None
-            for mod in remaining:
-                io = analyzer.analyze(Path(mod.replace(".", "/")).with_suffix(".py"))
-                ins = set(io.get("inputs", []))
-                overlap = len(ins & provided)
-                missing = len(ins - provided)
-                if (
-                    overlap > best_overlap
-                    or (
-                        overlap == best_overlap
-                        and (best_missing is None or missing < best_missing)
-                    )
-                ):
-                    best = mod
-                    best_overlap = overlap
-                    best_missing = missing
-
-            if best is None:
-                break
-            _append(best)
-            remaining.remove(best)
 
         return workflow
 
@@ -686,10 +669,12 @@ class WorkflowSynthesizer:
                 start_module, problem = start, None
             else:
                 start_module, problem = None, start
-
-        steps = self._synthesize_greedy(
-            start_module=start_module, problem=problem, threshold=threshold
-        )
+        try:
+            steps = self._synthesize_greedy(
+                start_module=start_module, problem=problem, threshold=threshold
+            )
+        except ValueError as exc:  # pragma: no cover - propagate helpful errors
+            raise ValueError(f"Failed to synthesise workflow: {exc}") from exc
         return {"steps": steps}
 
     # ------------------------------------------------------------------
@@ -703,15 +688,10 @@ class WorkflowSynthesizer:
     ) -> List[List[Dict[str, Any]]]:
         """Generate candidate workflows beginning at ``start_module``.
 
-        The synthesizer builds a small dependency graph where edges connect
-        modules whose outputs feed the inputs of another module or when one
-        module writes a file another module reads.  The graph is seeded with
-        ``start_module`` and expanded using :meth:`expand_cluster` which blends
-        synergy relationships and intent matches.  A topological sort orders
-        the modules when the graph is acyclic; otherwise a best effort ranking
-        based on edge weights is used.  Simple paths starting from
-        ``start_module`` are converted into workflow candidates and scored by
-        combining edge weights with optional intent match scores.
+        The returned workflows are ordered using the same dependency resolution
+        logic as :meth:`synthesize`.  Currently a single workflow is produced
+        representing a best effort ordering of modules related to
+        ``start_module`` and ``problem``.
 
         Parameters
         ----------
@@ -721,113 +701,54 @@ class WorkflowSynthesizer:
             Optional textual description used for intent matching.  Only
             available when ``intent_clusterer`` is provided.
         limit:
-            Maximum number of workflows to return.
+            Maximum number of workflows to return. Only the top workflow is
+            currently generated.
         max_depth:
-            Optional maximum path length when exploring module connections.
+            Unused but kept for API compatibility.
         """
 
-        import networkx as nx
+        if ModuleSignature is None or get_io_signature is None:
+            raise ValueError("Structural analysis helpers are unavailable")
 
-        # gather candidate modules via synergy + intent expansion
         modules = self.expand_cluster(start_module=start_module, problem=problem)
         modules.add(start_module)
 
-        # Inspect modules to gather IO information
-        info: Dict[str, ModuleIO] = {m: inspect_module(m) for m in modules}
+        signatures: List[ModuleSignature] = []
+        for mod in sorted(modules):
+            path = Path(mod.replace(".", "/")).with_suffix(".py")
+            sig = get_io_signature(path)
+            sig.name = mod
+            signatures.append(sig)
 
-        # Build graph where outputs/files_written satisfy inputs/files_read
-        G = nx.DiGraph()
-        for m in modules:
-            G.add_node(m)
-        for a in modules:
-            for b in modules:
-                if a == b:
-                    continue
-                io_a, io_b = info[a], info[b]
-                if io_a.outputs & io_b.inputs or io_a.files_written & io_b.files_read:
-                    weight = 1.0
-                    if (
-                        self.module_synergy_grapher
-                        and getattr(self.module_synergy_grapher, "graph", None)
-                        and self.module_synergy_grapher.graph is not None
-                        and self.module_synergy_grapher.graph.has_edge(a, b)
-                    ):
-                        weight = float(
-                            self.module_synergy_grapher.graph[a][b].get("weight", 1.0)
-                        )
-                    G.add_edge(a, b, weight=weight)
-
-        # Determine node ordering
         try:
-            order = list(nx.topological_sort(G))
-        except Exception:  # pragma: no cover - cycle detected
-            # Fallback heuristic: sort by total outgoing edge weight
-            order = sorted(
-                G.nodes,
-                key=lambda n: sum(G[n][m].get("weight", 1.0) for m in G.successors(n)),
-                reverse=True,
+            ordered = self.resolve_dependencies(signatures)
+        except ValueError as exc:  # pragma: no cover - surface errors
+            raise ValueError(f"Failed to resolve dependencies: {exc}") from exc
+
+        sig_map = {s.name: s for s in signatures}
+        workflow: List[Dict[str, Any]] = []
+        for step in ordered:
+            sig = sig_map[step.module]
+            fn = next(iter(sig.functions.keys()), None)
+            workflow.append(
+                {
+                    "module": step.module,
+                    "function": fn,
+                    "inputs": step.inputs,
+                    "outputs": step.outputs,
+                }
             )
 
-        # Collect intent scores if problem provided
-        intent_scores: Dict[str, float] = {}
-        if problem and self.intent_clusterer is not None:
-            try:
-                matches = self.intent_clusterer.find_modules_related_to(problem, top_k=len(modules))
-                for m in matches:
-                    path = getattr(m, "path", None)
-                    score = getattr(m, "score", None) or getattr(m, "similarity", None)
-                    if path:
-                        intent_scores[Path(path).stem] = float(score or 0.0)
-            except Exception:  # pragma: no cover - best effort
-                pass
+        self.generated_workflows = [workflow][:limit]
 
-        # Enumerate simple paths starting from start_module
-        paths: List[List[str]] = []
-        for target in order:
-            if target == start_module or not nx.has_path(G, start_module, target):
-                continue
-            for p in nx.all_simple_paths(G, start_module, target, cutoff=max_depth):
-                paths.append(p)
-        if not paths:
-            paths.append([start_module])
-
-        workflows: List[List[Dict[str, Any]]] = []
-        scores: List[float] = []
-        for p in paths:
-            wf: List[Dict[str, Any]] = []
-            synergy_score = 0.0
-            for i, mod in enumerate(p):
-                io = info[mod]
-                fn = next(iter(io.functions.keys()), None)
-                wf.append(
-                    {
-                        "module": mod,
-                        "function": fn,
-                        "inputs": sorted(io.inputs),
-                        "outputs": sorted(io.outputs),
-                    }
-                )
-                if i < len(p) - 1 and G.has_edge(mod, p[i + 1]):
-                    synergy_score += float(G[mod][p[i + 1]].get("weight", 1.0))
-
-            intent_score = sum(intent_scores.get(step["module"], 0.0) for step in wf)
-            scores.append(synergy_score + intent_score)
-            workflows.append(wf)
-
-        # Rank workflows by combined score
-        ranked = sorted(zip(workflows, scores), key=lambda x: x[1], reverse=True)
-        top = [wf for wf, _ in ranked[:limit]]
-        self.generated_workflows = top
-
-        # Persist each candidate workflow for inspection
         out_dir = Path("sandbox_data/generated_workflows")
         out_dir.mkdir(parents=True, exist_ok=True)
-        for idx, wf in enumerate(top):
+        for idx, wf in enumerate(self.generated_workflows):
             name = wf[0]["module"].replace(".", "_") if wf else f"workflow_{idx}"
             path = out_dir / f"{name}_{idx}.workflow.json"
             path.write_text(to_json(wf), encoding="utf-8")
 
-        return top
+        return self.generated_workflows
 
     # ------------------------------------------------------------------
     def to_dict(self) -> Dict[str, Any]:
