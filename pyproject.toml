@@ -78,7 +78,7 @@ adaptive-roi = "adaptive_roi_cli:main"
 backfill-embeddings = "scripts.backfill_embeddings:cli"
 retrieval-ranker = "retrieval_ranker:main"
 knowledge-cli = "knowledge_cli:main"
-workflow-synthesizer = "tools.workflow_synthesizer_cli:main"
+workflow-synth = "workflow_synthesizer:main"
 
 [project.entry-points."menace.plugins"]
 sample = "menace.plugins.sample:register"

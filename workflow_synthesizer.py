@@ -11,6 +11,7 @@ of modules either by following the synergy graph around a starting module or by
 searching for modules related to a textual problem description.
 """
 
+import argparse
 import ast
 import hashlib
 import json
@@ -493,20 +494,23 @@ class WorkflowSynthesizer:
         problem: str | None = None,
         limit: int = 10,
         overrides: Dict[str, Set[str]] | None = None,
+        threshold: float = 0.0,
     ) -> List[Dict[str, Any]]:
         """Return a greedy chain of modules.
 
         Modules are gathered using synergy graph expansion and optional intent
         search. They are then ordered greedily by matching outputs of previous
         modules to inputs of subsequent modules. ``overrides`` allows callers to
-        mark specific arguments as satisfied externally.
+        mark specific arguments as satisfied externally. ``threshold`` controls
+        the minimum synergy weight when expanding the cluster around
+        ``start_module``.
         """
 
         modules: Set[str] = set()
 
         # ----- expand via synergy graph
         if start_module:
-            modules.update(self.expand_cluster(start_module))
+            modules.update(self.expand_cluster(start_module, threshold=threshold))
 
         # ----- expand via intent search
         if problem and self.intent_clusterer is not None:
@@ -573,11 +577,15 @@ class WorkflowSynthesizer:
         return workflow
 
     # ------------------------------------------------------------------
-    def synthesize(self, start: str | Dict[str, Any]) -> Dict[str, Any]:
+    def synthesize(
+        self, start: str | Dict[str, Any], *, threshold: float = 0.0
+    ) -> Dict[str, Any]:
         """Expand ``start`` into a workflow description.
 
         ``start`` may be a module name or free text problem description. A
-        mapping may also be supplied with ``module`` and ``problem`` keys.
+        mapping may also be supplied with ``module`` and ``problem`` keys. The
+        optional ``threshold`` argument is forwarded to
+        :meth:`expand_cluster`.
         """
 
         if isinstance(start, dict):
@@ -590,7 +598,9 @@ class WorkflowSynthesizer:
             else:
                 start_module, problem = None, start
 
-        steps = self._synthesize_greedy(start_module=start_module, problem=problem)
+        steps = self._synthesize_greedy(
+            start_module=start_module, problem=problem, threshold=threshold
+        )
         return {"steps": steps}
 
     # ------------------------------------------------------------------
@@ -806,6 +816,52 @@ def save_workflow(workflow: List[Dict[str, Any]], path: Path | str | None = None
     return _save_spec(spec, out)
 
 
+def main(argv: List[str] | None = None) -> None:
+    """Command line interface for :mod:`workflow_synthesizer`.
+
+    When invoked with the ``synthesize`` command a single workflow is
+    generated from the provided starting module or problem statement. Running
+    the script without arguments starts an interactive loop prompting for a
+    starting module or problem description.
+    """
+
+    parser = argparse.ArgumentParser(description="Workflow synthesizer CLI")
+    sub = parser.add_subparsers(dest="command")
+
+    synth_parser = sub.add_parser(
+        "synthesize", help="Expand a starting module or problem into a workflow"
+    )
+    synth_parser.add_argument(
+        "start",
+        nargs="?",
+        help="Starting module name or free text problem description",
+    )
+    synth_parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.0,
+        help="Synergy threshold used when expanding the starting module",
+    )
+
+    args = parser.parse_args(argv)
+    synthesizer = WorkflowSynthesizer()
+
+    if args.command == "synthesize":
+        start = args.start or input("Enter starting module or problem: ").strip()
+        result = synthesizer.synthesize(start, threshold=args.threshold)
+        print(json.dumps(result, indent=2))
+    else:
+        while True:
+            try:
+                start = input("Start module or problem (blank to exit): ").strip()
+            except EOFError:
+                break
+            if not start:
+                break
+            result = synthesizer.synthesize(start)
+            print(json.dumps(result, indent=2))
+
+
 __all__ = [
     "ModuleIO",
     "WorkflowStep",
@@ -814,4 +870,9 @@ __all__ = [
     "inspect_module",
     "to_workflow_spec",
     "save_workflow",
+    "main",
 ]
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    main()
