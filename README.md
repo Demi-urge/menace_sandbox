@@ -183,8 +183,9 @@
 ### Codex database helpers
 
 The `codex_db_helpers` module gathers training samples from Menace's
-enhancement, workflow summary, discrepancy and workflow databases. Each helper
-supports:
+enhancement, workflow summary, discrepancy and workflow databases. It powers
+fleetwide Codex training by aggregating examples from all Menace instances.
+Each helper supports:
 
 - `sort_by` – one of `"confidence"`, `"outcome_score"` or `"timestamp"`.
 - `limit` – maximum number of records to return.
