@@ -129,26 +129,62 @@ class IntentDB(EmbeddableDBMixin):
 
     # ------------------------------------------------------------------
     def index_synergy_cluster(self, module_name: str, threshold: float) -> int | None:
+        """Index an aggregated embedding for the synergy cluster around ``module_name``.
+
+        Each member module of the cluster is embedded individually and the
+        resulting vectors are averaged to form the cluster representation.
+        The combined vector is stored in the same index as regular modules so
+        retrieval can surface cluster level results alongside individual files.
+        """
+
         grapher = ModuleSynergyGrapher()
         cluster = grapher.get_synergy_cluster(module_name, threshold)
         if not cluster:
             return None
+
         root = grapher.root or Path.cwd()
-        texts: List[str] = []
+        vectors: List[List[float]] = []
+        members: List[str] = []
         for mod in cluster:
             path = root / f"{mod}.py"
             try:
                 text = self._vectorizer.bundle(path)
             except Exception:
                 text = ""
-            if text:
-                texts.append(text)
-        if not texts:
+            if not text:
+                continue
+            vec = self.encode_text(text)
+            if vec:
+                vectors.append(vec)
+                members.append(str(path))
+        if not vectors:
             return None
-        combined = "\n".join(texts)
+
+        dim = len(vectors[0])
+        agg = [0.0] * dim
+        for vec in vectors:
+            if len(vec) != dim:
+                continue
+            for i, val in enumerate(vec):
+                agg[i] += float(val)
+        avg_vec = [v / len(vectors) for v in agg]
+
         key = f"cluster:{module_name}"
         rec_id = self.add(key)
-        self.add_embedding(rec_id, {"path": key, "text": combined}, "cluster")
+        rid = str(rec_id)
+        if rid not in self._metadata:
+            self._id_map.append(rid)
+        self._metadata[rid] = {
+            "vector": list(avg_vec),
+            "created_at": datetime.utcnow().isoformat(),
+            "embedding_version": self.embedding_version,
+            "kind": "cluster",
+            "source_id": "",
+            "redacted": True,
+            "members": sorted(members),
+        }
+        self._rebuild_index()
+        self.save_index()
         return rec_id
 
 
