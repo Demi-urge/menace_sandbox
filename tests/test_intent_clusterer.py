@@ -157,6 +157,31 @@ class DummyRetriever:
         return sorted(self.items, key=score, reverse=True)[:top_k]
 
 
+class DummyVectorService:
+    """Minimal stand-in for the vector service layer.
+
+    The service records any vectors passed to :meth:`add_vector` and performs a
+    simple dot-product search.  A ``search_called`` flag allows tests to verify
+    that queries are delegated to this service.
+    """
+
+    def __init__(self) -> None:
+        self.items: List[dict] = []
+        self.search_called = False
+
+    def add_vector(self, vector: Iterable[float], metadata: dict) -> None:
+        self.items.append({"vector": list(vector), "metadata": dict(metadata)})
+
+    def search(self, vector: Iterable[float], top_k: int = 10) -> List[dict]:
+        self.search_called = True
+
+        def score(item: dict) -> float:
+            vec = item["vector"]
+            return sum(a * b for a, b in zip(vector, vec))
+
+        return sorted(self.items, key=score, reverse=True)[:top_k]
+
+
 @pytest.fixture
 def clusterer(sample_repo: Path, tmp_path: Path) -> ic.IntentClusterer:
     """Return a fresh ``IntentClusterer`` instance for each test."""
@@ -214,6 +239,28 @@ def test_find_modules_related_to_prompts(clusterer: ic.IntentClusterer, sample_r
 
     res = clusterer.find_modules_related_to("process payment", top_k=2)
     assert any(Path(r.path).name == "payment.py" for r in res if r.path)
+
+
+def test_vector_service_storage_and_query(sample_repo: Path, tmp_path: Path) -> None:
+    """Vectors should be stored in and retrieved via ``vector_service``."""
+
+    LOCAL_TABLES.add("intent")
+    router = init_db_router("intent", str(tmp_path / "vs.db"), str(tmp_path / "vs.db"))
+    db = intent_db.IntentDB(
+        path=tmp_path / "vs.db",
+        vector_index_path=tmp_path / "vs.index",
+        router=router,
+    )
+    vs = DummyVectorService()
+    clusterer = ic.IntentClusterer(intent_db=db, vector_service=vs)
+
+    clusterer.index_repository(sample_repo)
+    # ``add_vector`` should have been called for each module (and clusters)
+    assert vs.items
+
+    res = clusterer.find_modules_related_to("auth help", top_k=2)
+    assert vs.search_called
+    assert any(Path(r.path).name == "helper.py" for r in res if r.path)
 
 
 def test_cluster_lookup_uses_synergy_groups(
