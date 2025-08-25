@@ -13,6 +13,10 @@ from .roi_calculator import ROICalculator
 from .truth_adapter import TruthAdapter
 from .foresight_tracker import ForesightTracker
 from .upgrade_forecaster import UpgradeForecaster
+try:  # pragma: no cover - optional heavy dependency
+    from .intent_clusterer import IntentClusterer
+except Exception:  # pragma: no cover - gracefully degrade
+    IntentClusterer = None  # type: ignore[misc]
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -105,6 +109,8 @@ __all__ = [
     "foresight_tracker",
     "UpgradeForecaster",
     "upgrade_forecaster",
+    "IntentClusterer",
+    "intent_clusterer",
     "newsreader_bot",
     "preliminary_research_bot",
     "passive_discovery_bot",
