@@ -250,6 +250,7 @@ class WorkflowSynthesizer:
     intent_clusterer: IntentClusterer | None = None
     synergy_graph_path: Path = Path("sandbox_data/module_synergy_graph.json")
     intent_db_path: Path | None = None
+    generated_workflows: List[List[Dict[str, Any]]] = field(default_factory=list)
 
     # ------------------------------------------------------------------
     def synthesize(
@@ -472,4 +473,87 @@ class WorkflowSynthesizer:
         # Rank workflows by combined score
         ranked = sorted(zip(workflows, scores), key=lambda x: x[1], reverse=True)
         top = [wf for wf, _ in ranked[:limit]]
+        self.generated_workflows = top
         return top
+
+    # ------------------------------------------------------------------
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a JSON‑serialisable representation of generated workflows."""
+
+        return {"workflows": self.generated_workflows}
+
+    # ------------------------------------------------------------------
+    def save(self, path: Path | str | None = None) -> Path:
+        """Persist generated workflows to ``path`` as JSON and YAML.
+
+        Parameters
+        ----------
+        path:
+            Optional file or directory.  When omitted or when a directory is
+            supplied, ``sandbox_data/generated_workflows`` is used and the file
+            is named ``workflows.json``.
+
+        Returns
+        -------
+        Path
+            Location of the written JSON file.
+        """
+
+        data = self.to_dict()
+        base = Path(path) if path is not None else Path("sandbox_data/generated_workflows")
+        if base.suffix:
+            out_dir = base.parent
+            stem = base.stem
+        else:
+            out_dir = base
+            stem = "workflows"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        json_path = out_dir / f"{stem}.json"
+        json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+        try:  # pragma: no cover - YAML optional
+            import yaml  # type: ignore
+
+            yaml_path = out_dir / f"{stem}.yaml"
+            with yaml_path.open("w", encoding="utf-8") as fh:
+                yaml.safe_dump(data, fh, sort_keys=False)  # type: ignore[arg-type]
+        except Exception:
+            pass
+
+        return json_path
+
+
+# ---------------------------------------------------------------------------
+def to_workflow_spec(workflow: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return a workflow specification mapping for ``WorkflowDB``.
+
+    This is a thin wrapper around :func:`workflow_spec.to_spec` that accepts the
+    workflow format produced by :class:`WorkflowSynthesizer` where each step is
+    represented by a ``module`` key.
+    """
+
+    from workflow_spec import to_spec as _to_spec
+
+    steps = [{"name": step.get("name") or step.get("module", "")}
+             for step in workflow]
+    return _to_spec(steps)
+
+
+def save_workflow(workflow: List[Dict[str, Any]], path: Path | str | None = None) -> Path:
+    """Persist ``workflow`` as ``.workflow.json`` for ``WorkflowDB`` utilities."""
+
+    from workflow_spec import save as _save
+
+    spec = to_workflow_spec(workflow)
+    out = Path(path) if path is not None else Path("sandbox_data/generated_workflows")
+    return _save(spec, out)
+
+
+__all__ = [
+    "ModuleIOAnalyzer",
+    "WorkflowSynthesizer",
+    "inspect_module",
+    "to_workflow_spec",
+    "save_workflow",
+]
