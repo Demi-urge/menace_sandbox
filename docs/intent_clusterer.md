@@ -45,6 +45,26 @@ clusterer = IntentClusterer()
 clusterer.index_repository(Path("/path/to/repo"))
 ```
 
+## Watching a repository
+
+Keep an index up to date by watching a repository for changes.  The watcher
+returns a callable that should be invoked to stop monitoring.
+
+```python
+from pathlib import Path
+from menace import IntentClusterer
+
+clusterer = IntentClusterer()
+stop = clusterer.watch_repository(Path("/path/to/repo"))
+# ... perform work ...
+stop()
+```
+
+`watch_repository` relies on the lightweight `watchfiles` package.  It watches
+for creation, modification and deletion of `.py` files, re-indexes the
+repository and rebuilds clusters on each change.  Errors are logged and do not
+crash the watcher thread.
+
 ## Retrieving intent results
 
 Retrieve modules or clusters that relate to a textual prompt:
