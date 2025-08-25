@@ -530,3 +530,23 @@ def test_find_modules_related_to_filters_clusters(
         "authentication help", top_k=5, include_clusters=True
     )
     assert any(r.origin == "cluster" for r in with_clusters)
+
+
+def test_fresh_instance_queries_clusters(sample_repo: Path, tmp_path: Path) -> None:
+    """A new ``IntentClusterer`` should use stored cluster mappings."""
+
+    LOCAL_TABLES.add("intent")
+    router = init_db_router("intent", str(tmp_path / "fresh.db"), str(tmp_path / "fresh.db"))
+    db = intent_db.IntentDB(
+        path=tmp_path / "fresh.db",
+        vector_index_path=tmp_path / "fresh.index",
+        router=router,
+    )
+    retr = DummyRetriever()
+    clusterer = ic.IntentClusterer(intent_db=db, retriever=retr)
+    clusterer.index_repository(sample_repo)
+    clusterer.cluster_intents(2, threshold=0.0)
+
+    fresh = ic.IntentClusterer(intent_db=db, retriever=retr)
+    res = fresh.find_clusters_related_to("auth help", top_k=5)
+    assert res and res[0].path.startswith("cluster:1")
