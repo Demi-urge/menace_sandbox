@@ -39,6 +39,7 @@ except Exception:  # pragma: no cover - gracefully degrade
 class ModuleIO:
     """Basic structural information about a Python module."""
 
+    name: str = ""
     functions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     inputs: Set[str] = field(default_factory=set)
     outputs: Set[str] = field(default_factory=set)
@@ -47,10 +48,20 @@ class ModuleIO:
     files_written: Set[str] = field(default_factory=set)
 
 
+@dataclass
+class WorkflowStep:
+    """Lightweight representation of an ordered workflow step."""
+
+    module: str
+    inputs: List[str] = field(default_factory=list)
+    outputs: List[str] = field(default_factory=list)
+    unresolved: List[str] = field(default_factory=list)
+
+
 def _parse_module_io(path: Path) -> ModuleIO:
     """Parse ``path`` and extract high level IO information."""
 
-    module_io = ModuleIO()
+    module_io = ModuleIO(name=path.stem)
 
     try:
         source = path.read_text(encoding="utf-8")
@@ -352,6 +363,102 @@ class WorkflowSynthesizer:
                     self.intent_db = None
 
         self.generated_workflows = []
+
+    # ------------------------------------------------------------------
+    def resolve_dependencies(self, modules: List[ModuleIO]) -> List[WorkflowStep]:
+        """Order ``modules`` based on their data dependencies.
+
+        Parameters
+        ----------
+        modules:
+            Sequence of :class:`ModuleIO` objects.  Each must provide a
+            ``name`` identifying the module it represents.
+
+        Returns
+        -------
+        list[WorkflowStep]
+            Ordered steps where all required inputs for a step are produced by
+            earlier steps.  If a dependency cycle is detected a ``ValueError``
+            is raised.  Missing producers for required inputs are also reported
+            via ``ValueError``.
+        """
+
+        from graphlib import CycleError, TopologicalSorter
+
+        if not modules:
+            return []
+
+        # Map produced values/files/globals -> modules
+        produced_by_name: Dict[str, Set[str]] = {}
+        produced_by_type: Dict[str, Set[str]] = {}
+        for mod in modules:
+            name = mod.name or getattr(mod, "module", "")
+            if not name:
+                raise ValueError("ModuleIO missing name attribute")
+
+            outputs = set(mod.outputs) | set(mod.files_written) | set(mod.globals)
+            for out in outputs:
+                produced_by_name.setdefault(out, set()).add(name)
+
+            for fn in mod.functions.values():
+                ret = fn.get("returns")
+                if ret:
+                    produced_by_type.setdefault(ret, set()).add(name)
+
+        # Build dependency mapping for topological sort
+        deps: Dict[str, Set[str]] = {}
+        missing: Dict[str, Set[str]] = {}
+        annotations_cache: Dict[str, Dict[str, str]] = {
+            mod.name: {
+                k: v
+                for fn in mod.functions.values()
+                for k, v in fn.get("annotations", {}).items()
+            }
+            for mod in modules
+        }
+
+        for mod in modules:
+            name = mod.name
+            required = set(mod.inputs) | set(mod.files_read) | set(mod.globals)
+            dependencies: Set[str] = set()
+
+            for item in required:
+                matched = False
+                producers = produced_by_name.get(item)
+                if producers:
+                    dependencies.update(p for p in producers if p != name)
+                    matched = True
+                else:
+                    ann = annotations_cache[name].get(item)
+                    if ann and ann in produced_by_type:
+                        dependencies.update(p for p in produced_by_type[ann] if p != name)
+                        matched = True
+                if not matched:
+                    missing.setdefault(name, set()).add(item)
+
+            deps[name] = dependencies
+
+        if missing:
+            problems = ", ".join(f"{m}: {sorted(v)}" for m, v in sorted(missing.items()))
+            raise ValueError(f"Unresolved dependencies: {problems}")
+
+        sorter = TopologicalSorter(deps)
+        try:
+            order = list(sorter.static_order())
+        except CycleError as exc:  # pragma: no cover - cycle detection
+            raise ValueError(f"Cyclic dependency detected: {exc.args}") from exc
+
+        steps: List[WorkflowStep] = []
+        for name in order:
+            mod = next(m for m in modules if m.name == name)
+            step = WorkflowStep(
+                module=name,
+                inputs=sorted(mod.inputs),
+                outputs=sorted(mod.outputs),
+            )
+            steps.append(step)
+
+        return steps
 
     # ------------------------------------------------------------------
     def expand_cluster(self, start_module: str, threshold: float = 0.0) -> Set[str]:
@@ -689,6 +796,8 @@ def save_workflow(workflow: List[Dict[str, Any]], path: Path | str | None = None
 
 
 __all__ = [
+    "ModuleIO",
+    "WorkflowStep",
     "ModuleIOAnalyzer",
     "WorkflowSynthesizer",
     "inspect_module",
