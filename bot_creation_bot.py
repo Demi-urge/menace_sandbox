@@ -35,7 +35,7 @@ from .admin_bot_base import AdminBotBase
 from datetime import datetime
 from .database_manager import DB_PATH, update_model
 from vector_service.cognition_layer import CognitionLayer
-from roi_tracker import ROITracker
+from .roi_tracker import ROITracker
 try:  # pragma: no cover - allow flat imports
     from .intent_clusterer import IntentClusterer
     from .universal_retriever import UniversalRetriever

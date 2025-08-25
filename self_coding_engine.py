@@ -69,7 +69,7 @@ except Exception:  # pragma: no cover - defensive fallback
 
         pass
 
-from roi_tracker import ROITracker
+from .roi_tracker import ROITracker
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
