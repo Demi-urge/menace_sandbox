@@ -21,6 +21,7 @@ import tokenize
 import sqlite3
 import json
 import pickle
+from datetime import datetime
 
 from governed_embeddings import governed_embed
 from embeddable_db_mixin import EmbeddableDBMixin
@@ -224,6 +225,90 @@ class IntentClusterer:
         self._ensure_table()
         self.__post_init__()
 
+    # ------------------------------------------------------------------
+    def _load_synergy_groups(self, root: Path) -> Dict[str, List[str]]:
+        """Return mapping of ``group_id`` to module paths under ``root``."""
+
+        groups: Dict[str, List[str]] = {}
+        map_file = root / "sandbox_data" / "module_map.json"
+        if map_file.exists():
+            try:
+                mapping = json.loads(map_file.read_text())
+                for mod, gid in mapping.items():
+                    path = root / f"{mod}.py"
+                    groups.setdefault(str(gid), []).append(str(path))
+                return groups
+            except Exception:
+                pass
+        try:  # pragma: no cover - optional dependency
+            from module_synergy_grapher import ModuleSynergyGrapher
+            import networkx as nx
+
+            grapher = ModuleSynergyGrapher(root=root)
+            graph = grapher.load()
+            for idx, comp in enumerate(nx.connected_components(graph.to_undirected())):
+                groups[str(idx)] = [str(root / f"{m}.py") for m in comp]
+        except Exception:
+            return {}
+        return groups
+
+    # ------------------------------------------------------------------
+    def _index_clusters(self, groups: Dict[str, List[str]]) -> None:
+        """Aggregate embeddings for ``groups`` and persist as cluster entries."""
+
+        for gid, members in groups.items():
+            vectors = [self.vectors.get(m) for m in members if self.vectors.get(m)]
+            if not vectors:
+                continue
+            dim = len(vectors[0])
+            agg = [0.0] * dim
+            for vec in vectors:
+                if len(vec) != dim:
+                    continue
+                for i, val in enumerate(vec):
+                    agg[i] += float(val)
+            mean = [v / len(vectors) for v in agg]
+            entry = f"cluster:{gid}"
+            meta = {
+                "members": sorted(members),
+                "kind": "cluster",
+                "cluster_id": int(gid),
+                "path": entry,
+            }
+            try:
+                blob = sqlite3.Binary(pickle.dumps(mean))
+                with self.conn:
+                    self.conn.execute(
+                        "REPLACE INTO intent_embeddings (module_path, vector, metadata) "
+                        "VALUES (?, ?, ?)",
+                        (entry, blob, json.dumps(meta)),
+                    )
+            except Exception:
+                pass
+            if hasattr(self.retriever, "add_vector"):
+                try:
+                    self.retriever.add_vector(mean, {"path": entry, **meta})
+                except Exception:
+                    pass
+            try:
+                rid = entry
+                if rid not in self.db._metadata:  # type: ignore[attr-defined]
+                    self.db._id_map.append(rid)  # type: ignore[attr-defined]
+                self.db._metadata[rid] = {  # type: ignore[attr-defined]
+                    "vector": list(mean),
+                    "created_at": datetime.utcnow().isoformat(),
+                    "embedding_version": getattr(self.db, "embedding_version", 1),
+                    "kind": "cluster",
+                    "source_id": rid,
+                    "redacted": True,
+                    "members": sorted(members),
+                    "path": entry,
+                }
+                self.db._rebuild_index()  # type: ignore[attr-defined]
+                self.db.save_index()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
     def _ensure_table(self) -> None:
         """Create or migrate the ``intent_embeddings`` table."""
         with self.conn:
@@ -340,6 +425,10 @@ class IntentClusterer:
                     (mpath, blob, json.dumps(new_meta)),
                 )
 
+        groups = self._load_synergy_groups(root)
+        if groups:
+            self._index_clusters(groups)
+
     # ------------------------------------------------------------------
     def cluster_intents(self, n_clusters: int) -> Dict[str, int]:
         """Group indexed modules into ``n_clusters`` clusters."""
@@ -397,7 +486,15 @@ class IntentClusterer:
             sim = sum(a * b for a, b in zip(vec, target_vec))
             path = meta.get("path")
             cid = meta.get("cluster_id")
+            kind = meta.get("kind")
             cluster_ids: List[int] = []
+            if kind == "cluster":
+                if not include_clusters or sim < threshold:
+                    continue
+                if cid is not None:
+                    cluster_ids = [int(cid)]
+                results.append(IntentMatch(path=None, similarity=sim, cluster_ids=cluster_ids))
+                continue
             if sim < threshold and cid is not None:
                 _text, cvec = self.get_cluster_intents(int(cid))
                 if cvec:
@@ -464,7 +561,10 @@ class IntentClusterer:
         for rid, dist in hits:
             path: str | None = None
             if hasattr(self.db, "get_path"):
-                path = self.db.get_path(int(rid))
+                try:
+                    path = self.db.get_path(int(rid))
+                except Exception:
+                    path = None
             elif hasattr(self.db, "conn"):
                 try:
                     row = self.db.conn.execute(
@@ -475,6 +575,8 @@ class IntentClusterer:
                 except Exception:
                     path = None
             meta = getattr(self.db, "_metadata", {}).get(str(rid), {})
+            if not path:
+                path = meta.get("path")
             members = meta.get("members")
             origin = meta.get("kind") or meta.get("source_id") or path
             if path or members:
@@ -488,12 +590,18 @@ class IntentClusterer:
         return results[:top_k]
 
     # ------------------------------------------------------------------
-    def find_modules_related_to(self, prompt: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Return modules most semantically similar to ``prompt``."""
+    def find_modules_related_to(
+        self, prompt: str, top_k: int = 5, *, include_clusters: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Return modules related to ``prompt``.
 
-        results = [
-            r for r in self._search_related(prompt, top_k * 2) if r.get("origin") != "cluster"
-        ]
+        When ``include_clusters`` is ``True`` the result set may also contain
+        synergy cluster entries with ``origin`` set to ``"cluster"``.
+        """
+
+        results = self._search_related(prompt, top_k * 2)
+        if not include_clusters:
+            results = [r for r in results if r.get("origin") != "cluster"]
         return results[:top_k]
 
     # ------------------------------------------------------------------
@@ -506,11 +614,15 @@ class IntentClusterer:
         return results[:top_k]
 
 
-def find_modules_related_to(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+def find_modules_related_to(
+    query: str, top_k: int = 5, *, include_clusters: bool = False
+) -> List[Dict[str, Any]]:
     """Convenience wrapper to query a fresh clusterer instance."""
 
     clusterer = IntentClusterer()
-    return clusterer.find_modules_related_to(query, top_k=top_k)
+    return clusterer.find_modules_related_to(
+        query, top_k=top_k, include_clusters=include_clusters
+    )
 
 
 def find_clusters_related_to(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
