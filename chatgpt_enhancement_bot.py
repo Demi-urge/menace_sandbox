@@ -68,6 +68,8 @@ class Enhancement:
     rationale: str
     summary: str = ""
     score: float = 0.0
+    confidence: float = 0.0
+    outcome_score: float = 0.0
     context: str = ""
     before_code: str = ""
     after_code: str = ""
@@ -116,7 +118,7 @@ class EnhancementDB(EmbeddableDBMixin):
     ) -> None:
         self.path = Path(path) if path else DB_PATH
         self.override_manager = override_manager
-        self.router = router or GLOBAL_ROUTER
+        self.router = router or (GLOBAL_ROUTER if path is None else None)
         if self.router is None:
             self.router = init_db_router("enh", str(self.path), str(self.path))
         self.conn = self.router.get_connection("enhancements")
@@ -160,6 +162,8 @@ class EnhancementDB(EmbeddableDBMixin):
                         rationale TEXT,
                         summary TEXT,
                         score REAL,
+                        confidence REAL DEFAULT 0,
+                        outcome_score REAL DEFAULT 0,
                         timestamp TEXT,
                         context TEXT,
                         before_code TEXT,
@@ -175,7 +179,7 @@ class EnhancementDB(EmbeddableDBMixin):
                         associated_bots TEXT,
                         triggered_by TEXT,
                         source_menace_id TEXT NOT NULL,
-                        content_hash TEXT NOT NULL UNIQUE
+                        content_hash TEXT UNIQUE
                     )
                     """
                 )
@@ -197,6 +201,14 @@ class EnhancementDB(EmbeddableDBMixin):
                     conn.execute(
                         "ALTER TABLE enhancements ADD COLUMN triggered_by TEXT"
                     )
+                if "confidence" not in cols:
+                    conn.execute(
+                        "ALTER TABLE enhancements ADD COLUMN confidence REAL DEFAULT 0"
+                    )
+                if "outcome_score" not in cols:
+                    conn.execute(
+                        "ALTER TABLE enhancements ADD COLUMN outcome_score REAL DEFAULT 0"
+                    )
                 if "source_menace_id" not in cols:
                     conn.execute(
                         (
@@ -209,8 +221,17 @@ class EnhancementDB(EmbeddableDBMixin):
                     # ALTER TABLE, so add the column and create a unique index
                     # separately below.
                     conn.execute(
-                        "ALTER TABLE enhancements ADD COLUMN content_hash TEXT NOT NULL"
+                        "ALTER TABLE enhancements ADD COLUMN content_hash TEXT"
                     )
+                try:
+                    conn.execute(
+                        "UPDATE enhancements SET confidence=0 WHERE confidence IS NULL"
+                    )
+                    conn.execute(
+                        "UPDATE enhancements SET outcome_score=0 WHERE outcome_score IS NULL"
+                    )
+                except sqlite3.Error:
+                    pass
                 idxs = [
                     r[1]
                     for r in conn.execute(
@@ -226,6 +247,17 @@ class EnhancementDB(EmbeddableDBMixin):
                         (
                             "CREATE INDEX idx_enhancements_source_menace_id "
                             "ON enhancements(source_menace_id)"
+                        )
+                    )
+                if "idx_enhancements_confidence" not in idxs:
+                    conn.execute(
+                        "CREATE INDEX idx_enhancements_confidence ON enhancements(confidence)"
+                    )
+                if "idx_enhancements_outcome_score" not in idxs:
+                    conn.execute(
+                        (
+                            "CREATE INDEX idx_enhancements_outcome_score "
+                            "ON enhancements(outcome_score)"
                         )
                     )
                 conn.execute(
@@ -309,6 +341,8 @@ class EnhancementDB(EmbeddableDBMixin):
             "rationale": enh.rationale,
             "summary": enh.summary,
             "score": enh.score,
+            "confidence": enh.confidence,
+            "outcome_score": enh.outcome_score,
             "timestamp": enh.timestamp,
             "context": enh.context,
             "before_code": enh.before_code,
@@ -358,7 +392,7 @@ class EnhancementDB(EmbeddableDBMixin):
                 conn.execute(
                     """
                     UPDATE enhancements SET
-                        idea=?, rationale=?, summary=?, score=?, timestamp=?, context=?,
+                        idea=?, rationale=?, summary=?, score=?, confidence=?, outcome_score=?, timestamp=?, context=?,
                         before_code=?, after_code=?, title=?, description=?, tags=?,
                         type=?, assigned_bots=?,
                         rejection_reason=?, cost_estimate=?, category=?,
@@ -370,6 +404,8 @@ class EnhancementDB(EmbeddableDBMixin):
                         enh.rationale,
                         enh.summary,
                         enh.score,
+                        enh.confidence,
+                        enh.outcome_score,
                         enh.timestamp,
                         enh.context,
                         enh.before_code,
@@ -603,6 +639,7 @@ class EnhancementDB(EmbeddableDBMixin):
         self,
         limit: int = DEFAULT_FETCH_LIMIT,
         *,
+        order_by: Literal["id", "confidence", "outcome_score"] = "id",
         source_menace_id: str | None = None,
         scope: Literal["local", "global", "all"] = "local",
     ) -> List[Enhancement]:
@@ -616,7 +653,12 @@ class EnhancementDB(EmbeddableDBMixin):
                 query = "SELECT * FROM enhancements"
                 if clause:
                     query += f" WHERE {clause}"
-                query += " ORDER BY id DESC LIMIT ?"
+                order_col = {
+                    "id": "id",
+                    "confidence": "confidence",
+                    "outcome_score": "outcome_score",
+                }.get(order_by, "id")
+                query += f" ORDER BY {order_col} DESC LIMIT ?"
                 params.append(limit)
                 rows = conn.execute(query, params).fetchall()
             results: List[Enhancement] = []
@@ -637,6 +679,8 @@ class EnhancementDB(EmbeddableDBMixin):
                         rationale=row["rationale"],
                         summary=row["summary"],
                         score=row["score"],
+                        confidence=row["confidence"] or 0.0,
+                        outcome_score=row["outcome_score"] or 0.0,
                         timestamp=row["timestamp"],
                         context=row["context"],
                         before_code=row["before_code"] or "",
@@ -775,6 +819,8 @@ class EnhancementDB(EmbeddableDBMixin):
                     rationale=row["rationale"],
                     summary=row["summary"],
                     score=row["score"],
+                    confidence=row["confidence"] or 0.0,
+                    outcome_score=row["outcome_score"] or 0.0,
                     timestamp=row["timestamp"],
                     context=row["context"],
                     before_code=row["before_code"] or "",
