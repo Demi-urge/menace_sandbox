@@ -17,9 +17,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Set
 
 try:  # Optional imports; fall back to stubs in tests
-    from module_synergy_grapher import ModuleSynergyGrapher
+    from module_synergy_grapher import ModuleSynergyGrapher, get_synergy_cluster
 except Exception:  # pragma: no cover - graceful degradation
     ModuleSynergyGrapher = None  # type: ignore[misc]
+    get_synergy_cluster = None  # type: ignore[misc]
 
 try:  # Optional dependency
     from intent_clusterer import IntentClusterer
@@ -217,12 +218,18 @@ class WorkflowSynthesizer:
         modules: Set[str] = set()
 
         # ----- expand via synergy graph
-        if start_module and self.module_synergy_grapher is not None:
+        if start_module:
             try:
-                if hasattr(self.module_synergy_grapher, "load"):
-                    # Ensure the grapher has the latest graph loaded
-                    self.module_synergy_grapher.load(self.synergy_graph_path)
-                cluster = self.module_synergy_grapher.get_synergy_cluster(start_module)
+                if self.module_synergy_grapher is not None:
+                    if hasattr(self.module_synergy_grapher, "load"):
+                        # Ensure the grapher has the latest graph loaded
+                        self.module_synergy_grapher.load(self.synergy_graph_path)
+                    cluster = self.module_synergy_grapher.get_synergy_cluster(start_module)
+                elif get_synergy_cluster is not None:
+                    # Fall back to module level helper which loads the graph on demand
+                    cluster = get_synergy_cluster(start_module, path=self.synergy_graph_path)
+                else:
+                    cluster = {start_module}
                 modules.update(cluster)
             except Exception:  # pragma: no cover - best effort
                 modules.add(start_module)
