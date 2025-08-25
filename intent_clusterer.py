@@ -233,6 +233,7 @@ class IntentClusterer:
     vector_service: Any | None
     router: Any
     conn: sqlite3.Connection
+    _cluster_cache: Dict[int, tuple[str, List[float]]]
 
     def __init__(
         self,
@@ -263,6 +264,7 @@ class IntentClusterer:
         self.vectors = {}
         self.clusters = {}
         self.cluster_map = self.clusters  # backward compatibility alias
+        self._cluster_cache = {}
 
         LOCAL_TABLES.add("intent_embeddings")
         if retriever is not None and hasattr(retriever, "router"):
@@ -339,6 +341,10 @@ class IntentClusterer:
                 logger.warning("failed to remove stale cluster %s: %s", rid, exc)
 
         for gid, members in groups.items():
+            try:
+                self._cluster_cache.pop(int(gid), None)
+            except Exception:
+                pass
             vectors = [self.vectors.get(m) for m in members if self.vectors.get(m)]
             if not vectors:
                 continue
@@ -370,6 +376,7 @@ class IntentClusterer:
                 "path": entry,
                 "label": label,
                 "text": text,
+                "intent_text": text,
             }
             try:
                 blob = sqlite3.Binary(pickle.dumps(mean))
@@ -402,6 +409,7 @@ class IntentClusterer:
                     "cluster_ids": [int(gid)],
                     "label": label,
                     "text": text,
+                    "intent_text": text,
                 }
             except Exception as exc:
                 logger.warning(
@@ -588,74 +596,62 @@ class IntentClusterer:
 
     # ------------------------------------------------------------------
     def get_cluster_intents(self, cluster_id: int) -> tuple[str, List[float]]:
-        """Return aggregated intent text and vector for ``cluster_id``.
+        """Return concatenated intent text and vector for ``cluster_id``.
 
-        The cluster information is stored either in the ``intent_embeddings``
-        table or within the in-memory :class:`ModuleVectorDB` metadata.  Both
-        sources keep the averaged vector under ``vector`` and the concatenated
-        intent text under ``text``.  This method retrieves the stored data and
-        falls back to reconstructing the text from member modules if necessary.
+        All member module texts are gathered and concatenated into a single
+        string which is then embedded via :func:`governed_embed` to produce the
+        cluster vector.  Results are cached to avoid repeated embedding work.
         """
 
-        entry = f"cluster:{int(cluster_id)}"
-        vector: List[float] = []
-        text: str = ""
+        cid = int(cluster_id)
+        cached = self._cluster_cache.get(cid)
+        if cached:
+            return cached
 
-        # Primary lookup: SQLite table
-        row = None
+        entry = f"cluster:{cid}"
+        meta: Dict[str, Any] = {}
+
+        # Try to load persisted cluster metadata to obtain members or text
         try:
-            cur = self.conn.execute(
-                "SELECT vector, metadata FROM intent_embeddings WHERE module_path = ?",
+            row = self.conn.execute(
+                "SELECT metadata FROM intent_embeddings WHERE module_path = ?",
                 (entry,),
-            )
-            row = cur.fetchone()
+            ).fetchone()
+            if row and row[0]:
+                meta = json.loads(row[0] or "{}")
         except Exception:
-            row = None
-        if row:
-            blob, meta_json = row
-            if blob:
-                try:
-                    data = pickle.loads(blob)
-                    vector = [float(x) for x in data]
-                except Exception:
-                    vector = []
-            try:
-                meta = json.loads(meta_json or "{}")
-            except Exception:
-                meta = {}
-            text = str(meta.get("text", ""))
-            if not text and meta.get("members"):
-                texts: List[str] = []
-                for m in meta.get("members", []):
-                    try:
-                        txt = extract_intent_text(Path(m))
-                        if txt:
-                            texts.append(txt)
-                    except Exception:
-                        continue
-                text = "\n".join(texts)
-            if not vector:
-                vec_meta = meta.get("vector")
-                if isinstance(vec_meta, list):
-                    vector = [float(x) for x in vec_meta]
-        else:
-            # Fallback: in-memory metadata of the vector DB
+            meta = {}
+        if not meta:
             meta = getattr(self.db, "_metadata", {}).get(entry, {})
-            if meta:
-                vector = [float(x) for x in meta.get("vector", [])]
-                text = str(meta.get("text", ""))
-                if not text and meta.get("members"):
-                    texts = []
-                    for m in meta.get("members", []):
-                        try:
-                            txt = extract_intent_text(Path(m))
-                            if txt:
-                                texts.append(txt)
-                        except Exception:
-                            continue
-                    text = "\n".join(texts)
 
-        return text, vector
+        text = str(meta.get("intent_text") or meta.get("text") or "")
+        if not text:
+            members = meta.get("members") or [
+                path
+                for path, cids in self.clusters.items()
+                if cid in (cids if isinstance(cids, list) else [cids])
+            ]
+            texts: List[str] = []
+            for path in members:
+                rid = self.module_ids.get(path)
+                mod_meta = {}
+                if rid is not None:
+                    mod_meta = getattr(self.db, "_metadata", {}).get(str(rid), {})
+                mod_text = mod_meta.get("text") if mod_meta else None
+                if not mod_text:
+                    try:
+                        mod_text = extract_intent_text(Path(path))
+                    except Exception:
+                        mod_text = None
+                if mod_text:
+                    texts.append(mod_text)
+            text = "\n".join(texts)
+
+        vec = governed_embed(text) if text else []
+        vector = [float(x) for x in vec] if vec else []
+        result = (text, vector)
+        self._cluster_cache[cid] = result
+        return result
 
     # ------------------------------------------------------------------
     def _get_cluster_label(self, cluster_id: int) -> str | None:
