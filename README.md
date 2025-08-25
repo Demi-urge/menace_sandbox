@@ -180,6 +180,36 @@
    run. See [docs/deployment_governance.md](docs/deployment_governance.md) for
    rule syntax, configuration paths and example policy/scorecard templates.
 
+### Codex database helpers
+
+The `codex_db_helpers` module pulls training samples from multiple Menace
+databases. Each fetch helper accepts:
+
+- `scope` – record visibility (`"local"`, `"global"` or `"all"`, default).
+- `sort_by` – order column (`"score"`, `"roi"`, `"confidence"` or `"ts"`).
+- `limit` – maximum number of records to return.
+- `with_embeddings` – attach vector embeddings when available.
+
+Tables are expected to expose `id`, a text field (`summary`, `message` or
+`details`), and the numeric fields `score`, `roi`, `confidence` and `ts`.
+
+```python
+from codex_db_helpers import aggregate_training_samples
+
+records = aggregate_training_samples(
+    enhancement_db,
+    summary_db,
+    sort_by="score",
+    limit=5,
+)
+
+prompt = "\n\n".join(r["summary"] for r in records)
+```
+
+To support additional data types, implement a `fetch_*` helper returning the
+standard columns and register it with `aggregate_training_samples`. See
+[docs/codex_db_helpers.md](docs/codex_db_helpers.md) for more details.
+
 ### ROI toolkit
 
 ROI evaluation combines `ROICalculator`, `ROITracker` and the RAROI formula to
