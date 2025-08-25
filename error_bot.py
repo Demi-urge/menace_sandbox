@@ -31,7 +31,6 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
-_ERROR_HASH_FIELDS = ["type", "description", "resolution"]
 
 from .data_bot import MetricsDB, DataBot
 from .error_forecaster import ErrorForecaster
@@ -502,10 +501,11 @@ class ErrorDB(EmbeddableDBMixin):
             "resolution": resolution,
             "ts": datetime.utcnow().isoformat(),
         }
-        content_hash = _hash_fields(values, _ERROR_HASH_FIELDS)
+        hash_fields = ["message", "type", "description", "resolution"]
+        content_hash = _hash_fields(values, hash_fields)
         with self.router.get_connection("errors", "write") as conn:
             err_id = insert_if_unique(
-                conn, "errors", values, _ERROR_HASH_FIELDS, menace_id, logger
+                conn, "errors", values, hash_fields, menace_id, logger
             )
             conn.commit()
         if err_id is None:
