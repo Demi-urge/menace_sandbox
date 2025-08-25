@@ -5,6 +5,13 @@ import sqlite3
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def mock_summariser(monkeypatch):
+    """Replace the heavy summariser with a deterministic stub."""
+
+    monkeypatch.setattr(ic, "summarise_texts", lambda texts: "cluster helper summary")
+
+
 class DummyRetriever:
     def __init__(self):
         self.items = []

@@ -18,6 +18,7 @@ def _fake(text: str, model=None) -> list[float]:
 def patch_embed(monkeypatch):
     monkeypatch.setattr(edm, "governed_embed", _fake)
     monkeypatch.setattr(ic, "governed_embed", _fake)
+    monkeypatch.setattr(ic, "summarise_texts", lambda texts: "alpha beta summary")
 
 
 def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
