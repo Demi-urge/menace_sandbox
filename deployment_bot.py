@@ -396,6 +396,9 @@ class DeploymentBot:
                     task_sequence=chunk,
                 )
                 wid = self.workflow_db.add(rec)
+                if wid is None:
+                    self.logger.warning("duplicate workflow ignored for %s", key)
+                    continue
                 existing[key] = wid
             ids.append(wid)
 

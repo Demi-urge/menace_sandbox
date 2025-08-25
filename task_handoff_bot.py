@@ -15,7 +15,7 @@ from .unified_event_bus import UnifiedEventBus
 from .workflow_graph import WorkflowGraph
 from vector_service import EmbeddableDBMixin
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
-from db_dedup import insert_if_unique
+from dedup_utils import insert_if_unique, hash_fields as _hash_fields
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -293,7 +293,7 @@ class WorkflowDB(EmbeddableDBMixin):
 
     # --------------------------------------------------------------
     # insert/fetch
-    def add(self, wf: WorkflowRecord, source_menace_id: str = "") -> int:
+    def add(self, wf: WorkflowRecord, source_menace_id: str = "") -> int | None:
         core_fields = {
             "workflow": ",".join(wf.workflow),
             "action_chains": ",".join(wf.action_chains),
@@ -316,12 +316,24 @@ class WorkflowDB(EmbeddableDBMixin):
             "estimated_profit_per_bot": wf.estimated_profit_per_bot,
             "timestamp": wf.timestamp,
         }
-        hash_fields = list(core_fields.keys())
+        hash_keys = ["workflow", "action_chains", "argument_strings", "description"]
         with self.router.get_connection("workflows", "write") as conn:
-            wf.wid, inserted = insert_if_unique(
-                conn, "workflows", values, hash_fields, source_menace_id
+            wf.wid = insert_if_unique(
+                conn,
+                "workflows",
+                values,
+                hash_keys,
+                source_menace_id,
+                logger,
             )
-        if not inserted:
+        if wf.wid is None:
+            content_hash = _hash_fields(values, hash_keys)
+            row = self.conn.execute(
+                "SELECT id FROM workflows WHERE content_hash=?",
+                (content_hash,),
+            ).fetchone()
+            if row:
+                wf.wid = int(row[0])
             logger.warning(
                 "duplicate workflow detected; skipping embedding generation",
             )
@@ -593,7 +605,9 @@ class TaskHandoffBot:
                 task_sequence=chunk,
                 enhancements=list(enhancements or []),
             )
-            ids.append(self.workflow_db.add(rec))
+            wid = self.workflow_db.add(rec)
+            if wid is not None:
+                ids.append(wid)
         return ids
 
     # --------------------------------------------------------------
