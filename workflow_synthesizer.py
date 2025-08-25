@@ -576,10 +576,9 @@ class WorkflowSynthesizer:
     ) -> List[List[WorkflowStep]]:
         """Generate candidate workflows beginning at ``start_module``.
 
-        The returned workflows are ordered using the same dependency resolution
-        logic as :meth:`synthesize`.  Currently a single workflow is produced
-        representing a best effort ordering of modules related to
-        ``start_module`` and ``problem``.
+        Candidate workflows are constructed by exploring different
+        permutations of modules that satisfy dependency constraints.  Each
+        candidate is scored and the best ``limit`` workflows are returned.
 
         Parameters
         ----------
@@ -589,8 +588,7 @@ class WorkflowSynthesizer:
             Optional textual description used for intent matching.  Only
             available when ``intent_clusterer`` is provided.
         limit:
-            Maximum number of workflows to return. Only the top workflow is
-            currently generated.
+            Maximum number of workflows to return.
         max_depth:
             Unused but kept for API compatibility.
         synergy_weight:
@@ -614,52 +612,149 @@ class WorkflowSynthesizer:
             sig.name = mod
             signatures.append(sig)
 
-        try:
-            workflow = self.resolve_dependencies(signatures)
-        except ValueError as exc:  # pragma: no cover - surface errors
-            raise ValueError(f"Failed to resolve dependencies: {exc}") from exc
+        # Build dependency mapping for permutations
+        produced_by_name: Dict[str, Set[str]] = {}
+        produced_by_type: Dict[str, Set[str]] = {}
+        for mod in signatures:
+            outputs = (
+                set(mod.files_written)
+                | set(mod.globals)
+                | set(getattr(mod, "outputs", []))
+            )
+            for out in outputs:
+                produced_by_name.setdefault(out, set()).add(mod.name)
+            for fn in mod.functions.values():
+                ret = fn.get("returns")
+                if ret:
+                    produced_by_type.setdefault(ret, set()).add(mod.name)
 
-        # Retain a simple chain following synergy edges from the start module
-        graph = getattr(self.module_synergy_grapher, "graph", None)
-        if graph is not None and workflow:
-            chained: List[WorkflowStep] = [workflow[0]]
-            for prev, step in zip(workflow, workflow[1:]):
-                if graph.has_edge(prev.module, step.module):
-                    chained.append(step)
+        annotations_cache: Dict[str, Dict[str, str]] = {
+            mod.name: {
+                k: v
+                for fn in mod.functions.values()
+                for k, v in fn.get("annotations", {}).items()
+            }
+            for mod in signatures
+        }
+
+        def _select_best(consumer: str, candidates: Set[str]) -> str:
+            best = None
+            best_weight = float("-inf")
+            graph = getattr(self.module_synergy_grapher, "graph", None)
+            for cand in candidates:
+                weight = 0.0
+                if graph is not None:
+                    if graph.has_edge(cand, consumer):
+                        weight = float(graph[cand][consumer].get("weight", 0.0))
+                    elif graph.has_edge(consumer, cand):
+                        weight = float(graph[consumer][cand].get("weight", 0.0))
+                if best is None or weight > best_weight:
+                    best = cand
+                    best_weight = weight
+            if best is None:
+                best = sorted(candidates)[0]
+            return best
+
+        deps: Dict[str, Set[str]] = {}
+        missing: Dict[str, Set[str]] = {}
+        step_map: Dict[str, WorkflowStep] = {}
+        for mod in signatures:
+            name = mod.name
+            required: Set[str] = set(mod.files_read) | set(mod.globals)
+            for fn in mod.functions.values():
+                required.update(fn.get("args", []))
+            dependencies: Set[str] = set()
+            for item in required:
+                matched = False
+                producers = produced_by_name.get(item)
+                if producers:
+                    producer = _select_best(name, producers)
+                    if producer != name:
+                        dependencies.add(producer)
+                    matched = True
                 else:
-                    break
-            workflow = chained
+                    ann = annotations_cache[name].get(item)
+                    if ann and ann in produced_by_type:
+                        producer = _select_best(name, produced_by_type[ann])
+                        if producer != name:
+                            dependencies.add(producer)
+                        matched = True
+                if not matched:
+                    missing.setdefault(name, set()).add(item)
+            deps[name] = dependencies
 
-        # -------------------------------------------------------------- scoring
-        synergy_score = 0.0
+            outputs = (
+                set(mod.files_written)
+                | set(mod.globals)
+                | set(getattr(mod, "outputs", []))
+            )
+            step_map[name] = WorkflowStep(
+                module=name,
+                inputs=sorted(required),
+                outputs=sorted(outputs),
+            )
+
+        if missing:
+            problems = ", ".join(
+                f"{m}: {sorted(v)}" for m, v in sorted(missing.items())
+            )
+            raise ValueError(f"Unresolved dependencies: {problems}")
+
+        from graphlib import CycleError, TopologicalSorter
+
+        try:  # Validate acyclic dependencies
+            TopologicalSorter(deps).static_order()
+        except CycleError as exc:  # pragma: no cover - cycle detection
+            raise ValueError(f"Cyclic dependency detected: {exc.args}") from exc
+
+        orders: List[List[str]] = []
+
+        def _dfs(order: List[str], remaining: Set[str]) -> None:
+            if not remaining:
+                orders.append(order.copy())
+                return
+            available = [m for m in remaining if deps[m].issubset(order)]
+            for mod in sorted(available):
+                order.append(mod)
+                remaining.remove(mod)
+                _dfs(order, remaining)
+                remaining.add(mod)
+                order.pop()
+
+        if start_module not in step_map:
+            raise ValueError(f"Start module {start_module!r} not found")
+
+        _dfs([start_module], set(step_map) - {start_module})
+
         graph = getattr(self.module_synergy_grapher, "graph", None)
-        modules_order = [step.module for step in workflow]
-        if graph is not None:
-            for a, b in zip(modules_order, modules_order[1:]):
-                if graph.has_edge(a, b):
-                    synergy_score += float(graph[a][b].get("weight", 0.0))
-                elif graph.has_edge(b, a):
-                    synergy_score += float(graph[b][a].get("weight", 0.0))
 
-        intent_score = 0.0
+        score_map: Dict[str, float] = {}
         if problem and self.intent_clusterer is not None:
             try:
                 matches = self.intent_clusterer.find_modules_related_to(problem, top_k=50)
-                score_map: Dict[str, float] = {}
                 for m in matches:
                     path = getattr(m, "path", None) or getattr(m, "module", None)
                     if path:
                         mod = Path(str(path)).stem
                         score_map[mod] = float(getattr(m, "score", 1.0))
-                for step in workflow:
-                    intent_score += score_map.get(step.module, 0.0)
             except Exception:  # pragma: no cover - best effort
                 pass
 
-        combined = synergy_weight * synergy_score + intent_weight * intent_score
-        normalised = combined / max(len(workflow), 1)
+        entries: List[Tuple[float, List[WorkflowStep]]] = []
+        for order in orders:
+            workflow = [step_map[m] for m in order]
+            synergy_score = 0.0
+            if graph is not None:
+                for a, b in zip(order, order[1:]):
+                    if graph.has_edge(a, b):
+                        synergy_score += float(graph[a][b].get("weight", 0.0))
+                    elif graph.has_edge(b, a):
+                        synergy_score += float(graph[b][a].get("weight", 0.0))
+            intent_score = sum(score_map.get(m, 0.0) for m in order)
+            combined = synergy_weight * synergy_score + intent_weight * intent_score
+            normalised = combined / max(len(order), 1)
+            entries.append((normalised, workflow))
 
-        entries: List[Tuple[float, List[WorkflowStep]]] = [(normalised, workflow)]
         entries.sort(key=lambda x: x[0], reverse=True)
         self.workflow_scores = [score for score, _wf in entries][:limit]
         self.generated_workflows = [wf for _score, wf in entries][:limit]
