@@ -65,8 +65,8 @@
     # params == ["alpha"]
     ```
   - Shared tables include a `content_hash` column storing a SHA256 hash of JSON-encoded core fields.
-    The `insert_if_unique` helper computes this hash and skips inserts when the value already exists,
-    preventing cross-instance duplicates. Existing databases will auto-add the column on startup,
+    A new `insert_if_unique` utility computes this hash and skips inserts when the value already exists,
+    suppressing cross-instance duplicates. Existing databases will auto-add the column on startup,
     or can be updated manually with:
 
     ```sql
