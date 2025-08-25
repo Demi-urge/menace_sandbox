@@ -63,11 +63,11 @@ from dataclasses import dataclass
 import json
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
-from chatgpt_enhancement_bot import EnhancementDB
-from workflow_summary_db import WorkflowSummaryDB
-from discrepancy_db import DiscrepancyDB
-from evolution_history_db import EvolutionHistoryDB
-from scope_utils import Scope, build_scope_clause
+from .chatgpt_enhancement_bot import EnhancementDB
+from .workflow_summary_db import WorkflowSummaryDB
+from .discrepancy_db import DiscrepancyDB
+from .evolution_history_db import EvolutionHistoryDB
+from .scope_utils import Scope, build_scope_clause
 
 
 @dataclass
@@ -328,4 +328,3 @@ __all__ = [
     "fetch_workflow_history",
     "aggregate_examples",
 ]
-
