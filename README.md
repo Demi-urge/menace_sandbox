@@ -643,6 +643,20 @@ find_clusters_related_to("error handling")
 ``find_clusters_related_to`` surfaces synergy clusters.  Entries include a
 relevance ``score`` and an ``origin`` field indicating the result type.
 
+The underlying ``IntentClusterer`` is available at the package root for custom
+workflows:
+
+```python
+from pathlib import Path
+from menace import IntentClusterer
+
+clusterer = IntentClusterer()
+clusterer.index_repository(Path("."))
+```
+
+See [docs/intent_clusterer.md](docs/intent_clusterer.md) for additional usage
+notes.
+
 ### Entropy delta detection
 
 The sandbox monitors the ROI gain relative to entropy changes for each module.

@@ -5,7 +5,12 @@ collecting docstrings, comments and symbol names.  Embeddings are stored via a
 `UniversalRetriever`-compatible backend so other components can discover modules
 related to a natural language goal.  The clusterer underpins several parts of
 the sandbox self‑improvement loop, including the `self_improvement_engine` and
-`workflow_evolution_bot`.
+`workflow_evolution_bot`.  The class can be imported either directly or via the
+package root:
+
+```python
+from menace import IntentClusterer
+```
 
 ## Indexing modules
 
@@ -21,6 +26,21 @@ module_paths = [
     Path("bot_creation_bot.py"),
 ]
 clusterer.index_modules(module_paths)
+```
+
+## Indexing a repository
+
+To embed an entire repository and persist the vectors, call
+``index_repository`` with the repository root.  Synergy clusters derived from
+``sandbox_data/module_map.json`` (or ``ModuleSynergyGrapher`` when available)
+are embedded automatically and can be queried alongside individual modules.
+
+```python
+from pathlib import Path
+from menace import IntentClusterer
+
+clusterer = IntentClusterer()
+clusterer.index_repository(Path("/path/to/repo"))
 ```
 
 ## Retrieving intent results
