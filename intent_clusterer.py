@@ -53,8 +53,8 @@ class IntentClusterer:
         """Parse and embed Python modules listed in ``paths``.
 
         Each module is processed with :class:`IntentVectorizer` to extract
-        high level intent text.  The text is then embedded and persisted using
-        :meth:`SharedVectorService.vectorise_and_store` with ``kind="intent"``.
+        high level intent text.  The text is then embedded and persisted in
+        :class:`IntentDB` so that similarity searches can be performed later.
         A mapping of module path to the resulting vector identifier is stored
         in :attr:`module_ids` while the in-memory vector is cached for future
         clustering.
@@ -71,13 +71,8 @@ class IntentClusterer:
             # Record in the database to obtain a stable identifier
             module_id = self.intent_db.add(str(path))
 
-            vec = self.vector_service.vectorise_and_store(
-                "intent",
-                str(module_id),
-                {"path": str(path), "text": text},
-                origin_db="intent",
-                metadata={"path": str(path)},
-            )
+            self.intent_db.add_embedding(module_id, {"path": str(path)}, "module")
+            vec = self.intent_db.get_vector(module_id) or []
             self._vectors[str(path)] = vec
             self.module_ids[str(path)] = module_id
 
@@ -104,38 +99,25 @@ class IntentClusterer:
     ) -> List[Dict[str, float]]:
         """Return modules most relevant to ``prompt``.
 
-        The ``prompt`` is embedded using :class:`SharedVectorService` and the
-        resulting vector is queried against :class:`IntentDB` via the injected
-        :class:`UniversalRetriever`.  A list of dictionaries containing the
-        module path and similarity score is returned, ordered from most to
+        The ``prompt`` is embedded using :class:`IntentDB`'s encoding model and
+        the resulting vector is queried directly against the stored embeddings.
+        A list of dictionaries containing the module path (or synergy cluster
+        identifier) and similarity score is returned, ordered from most to
         least similar.
         """
 
-        vec = self.vector_service.vectorise("text", {"text": prompt})
+        vec = self.intent_db.encode_text(prompt)
         if not vec:
             return []
-
-        try:
-            res, *_ = self.retriever.retrieve(vec, top_k=top_k, db_names=["intent"])
-            hits = list(res)
-        except Exception:  # pragma: no cover - compatibility fallback
-            try:
-                search = getattr(self.retriever, "search")
-                hits = list(search(vec, top_k=top_k))
-            except Exception:
-                return []
-
+        hits = self.intent_db.search_by_vector(vec, top_k)
         results: List[Dict[str, float]] = []
-        for hit in hits:
-            meta = getattr(hit, "metadata", hit)
-            if isinstance(meta, dict):
-                path = meta.get("path") or meta.get("record_id") or meta.get("id")
-                score = meta.get("score") or getattr(hit, "score", 0.0)
-            else:
-                path = getattr(meta, "path", None)
-                score = getattr(meta, "score", 0.0)
-            if path is not None:
-                results.append({"path": str(path), "score": float(score)})
+        for rid, dist in hits:
+            row = self.intent_db.conn.execute(
+                "SELECT path FROM intent_modules WHERE id=?", (rid,)
+            ).fetchone()
+            if row:
+                score = 1.0 / (1.0 + float(dist))
+                results.append({"path": str(row["path"]), "score": score})
         return results[:top_k]
 
 

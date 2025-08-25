@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple
 import sqlite3
 
+from module_synergy_grapher import ModuleSynergyGrapher
 from vector_service import EmbeddableDBMixin
 try:  # pragma: no cover - import available when running inside package
     from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
@@ -111,19 +112,44 @@ class IntentDB(EmbeddableDBMixin):
     # ------------------------------------------------------------------
     def vector(self, rec: Any) -> List[float]:
         path = None
+        text = None
         if isinstance(rec, dict):
             path = rec.get("path")
+            text = rec.get("text")
         elif isinstance(rec, (str, Path)):
             path = str(rec)
         elif isinstance(rec, int):
             row = self.conn.execute("SELECT path FROM intent_modules WHERE id=?", (rec,)).fetchone()
             path = row["path"] if row else None
-        if not path:
-            return []
-        text = self._bundle(path)
+        if text is None and path:
+            text = self._bundle(path)
         if not text:
             return []
         return self.encode_text(text)
+
+    # ------------------------------------------------------------------
+    def index_synergy_cluster(self, module_name: str, threshold: float) -> int | None:
+        grapher = ModuleSynergyGrapher()
+        cluster = grapher.get_synergy_cluster(module_name, threshold)
+        if not cluster:
+            return None
+        root = grapher.root or Path.cwd()
+        texts: List[str] = []
+        for mod in cluster:
+            path = root / f"{mod}.py"
+            try:
+                text = self._vectorizer.bundle(path)
+            except Exception:
+                text = ""
+            if text:
+                texts.append(text)
+        if not texts:
+            return None
+        combined = "\n".join(texts)
+        key = f"cluster:{module_name}"
+        rec_id = self.add(key)
+        self.add_embedding(rec_id, {"path": key, "text": combined}, "cluster")
+        return rec_id
 
 
 __all__ = ["IntentRecord", "IntentDB"]
