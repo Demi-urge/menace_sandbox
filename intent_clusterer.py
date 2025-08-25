@@ -335,7 +335,8 @@ class IntentClusterer:
                 blob = sqlite3.Binary(pickle.dumps(vec))
                 new_meta = {"mtime": mtime}
                 self.conn.execute(
-                    "REPLACE INTO intent_embeddings (module_path, vector, metadata) VALUES (?, ?, ?)",
+                    "REPLACE INTO intent_embeddings (module_path, vector, metadata) "
+                    "VALUES (?, ?, ?)",
                     (mpath, blob, json.dumps(new_meta)),
                 )
 
@@ -412,13 +413,13 @@ class IntentClusterer:
         return results
 
     # ------------------------------------------------------------------
-    def find_modules_related_to(self, prompt: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Return modules most semantically similar to ``prompt``.
+    def _search_related(self, prompt: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """Return raw intent matches for ``prompt``.
 
-        The query text is embedded and searched using the configured
-        :class:`~universal_retriever.UniversalRetriever` instance.  If the
-        retriever is unavailable, the method falls back to the underlying
-        vector database.
+        Each result contains a similarity ``score`` and an ``origin`` field
+        describing whether the entry refers to a ``module`` or a synergy
+        ``cluster``.  When a retriever is unavailable the method falls back to
+        the local vector index.
         """
 
         vec = self.db.encode_text(prompt)
@@ -444,13 +445,11 @@ class IntentClusterer:
                 target_vec = [x / tnorm for x in target_vec]
                 score = sum(a * b for a, b in zip(qvec, target_vec))
                 if path or members:
-                    entry: Dict[str, Any] = {"score": score}
+                    entry: Dict[str, Any] = {"score": score, "origin": origin}
                     if path:
                         entry["path"] = path
                     if members:
                         entry["members"] = list(members)
-                    if origin:
-                        entry["origin"] = origin
                     results.append(entry)
             if results:
                 return results[:top_k]
@@ -464,7 +463,6 @@ class IntentClusterer:
         results: List[Dict[str, Any]] = []
         for rid, dist in hits:
             path: str | None = None
-            members = None
             if hasattr(self.db, "get_path"):
                 path = self.db.get_path(int(rid))
             elif hasattr(self.db, "conn"):
@@ -481,14 +479,30 @@ class IntentClusterer:
             origin = meta.get("kind") or meta.get("source_id") or path
             if path or members:
                 score = 1.0 / (1.0 + float(dist))
-                entry: Dict[str, Any] = {"score": score}
+                entry: Dict[str, Any] = {"score": score, "origin": origin}
                 if path:
                     entry["path"] = path
                 if members:
                     entry["members"] = list(members)
-                if origin:
-                    entry["origin"] = origin
                 results.append(entry)
+        return results[:top_k]
+
+    # ------------------------------------------------------------------
+    def find_modules_related_to(self, prompt: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """Return modules most semantically similar to ``prompt``."""
+
+        results = [
+            r for r in self._search_related(prompt, top_k * 2) if r.get("origin") != "cluster"
+        ]
+        return results[:top_k]
+
+    # ------------------------------------------------------------------
+    def find_clusters_related_to(self, prompt: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """Return synergy clusters related to ``prompt``."""
+
+        results = [
+            r for r in self._search_related(prompt, top_k * 2) if r.get("origin") == "cluster"
+        ]
         return results[:top_k]
 
 
@@ -497,6 +511,13 @@ def find_modules_related_to(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
 
     clusterer = IntentClusterer()
     return clusterer.find_modules_related_to(query, top_k=top_k)
+
+
+def find_clusters_related_to(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    """Convenience wrapper returning synergy clusters for ``query``."""
+
+    clusterer = IntentClusterer()
+    return clusterer.find_clusters_related_to(query, top_k=top_k)
 
 
 def _main(argv: Iterable[str] | None = None) -> int:
@@ -515,6 +536,11 @@ def _main(argv: Iterable[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["IntentClusterer", "extract_intent_text", "find_modules_related_to"]
+__all__ = [
+    "IntentClusterer",
+    "extract_intent_text",
+    "find_modules_related_to",
+    "find_clusters_related_to",
+]
 if __name__ == "__main__":  # pragma: no cover - manual invocation
     raise SystemExit(_main())
