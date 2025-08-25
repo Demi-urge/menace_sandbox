@@ -133,8 +133,10 @@ class WorkflowDB(EmbeddableDBMixin):
         if "argument_strings" not in cols:
             self.conn.execute("ALTER TABLE workflows ADD COLUMN argument_strings TEXT")
         if "content_hash" not in cols:
+            # SQLite cannot add a column with a UNIQUE constraint via ALTER TABLE.
+            # Add the column first and rely on the index below for uniqueness.
             self.conn.execute(
-                "ALTER TABLE workflows ADD COLUMN content_hash TEXT UNIQUE"
+                "ALTER TABLE workflows ADD COLUMN content_hash TEXT"
             )
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS "
@@ -311,7 +313,15 @@ class WorkflowDB(EmbeddableDBMixin):
             "estimated_profit_per_bot": wf.estimated_profit_per_bot,
             "timestamp": wf.timestamp,
         }
-        hash_keys = ["workflow", "action_chains", "argument_strings", "description"]
+        hash_keys = [
+            "workflow",
+            "action_chains",
+            "argument_strings",
+            "title",
+            "description",
+            "task_sequence",
+        ]
+        content_hash = _hash_fields(values, hash_keys)
         with self.router.get_connection("workflows", "write") as conn:
             wf.wid = insert_if_unique(
                 conn,
@@ -322,7 +332,6 @@ class WorkflowDB(EmbeddableDBMixin):
                 logger,
             )
         if wf.wid is None:
-            content_hash = _hash_fields(values, hash_keys)
             row = self.conn.execute(
                 "SELECT id FROM workflows WHERE content_hash=?",
                 (content_hash,),
@@ -330,7 +339,7 @@ class WorkflowDB(EmbeddableDBMixin):
             if row:
                 wf.wid = int(row[0])
             logger.warning(
-                "duplicate workflow detected; skipping embedding generation",
+                "duplicate workflow detected; skipping embedding and events",
             )
             return wf.wid
 
