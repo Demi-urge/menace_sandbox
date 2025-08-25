@@ -105,8 +105,9 @@ def insert_if_unique(
             from sqlalchemy import select  # type: ignore
 
             with engine.begin() as eng_conn:
+                pk_col = list(table.primary_key.columns)[0]
                 row = eng_conn.execute(
-                    select(table.c.id).where(table.c.content_hash == content_hash)
+                    select(pk_col).where(table.c.content_hash == content_hash)
                 ).fetchone()
             return row[0] if row else None
 
