@@ -389,6 +389,7 @@ class IntentClusterer:
                 self.router = init_db_router(mid, local, shared)
         self.conn = self.router.get_connection("intent_embeddings")
         self._ensure_table()
+        self._load_existing_mappings()
         self.__post_init__()
 
     # ------------------------------------------------------------------
@@ -633,6 +634,65 @@ class IntentClusterer:
                 self.conn.execute(
                     "ALTER TABLE intent_embeddings ADD COLUMN metadata JSON"
                 )
+
+    def _load_existing_mappings(self) -> None:
+        """Load persisted vectors and cluster mappings from storage."""
+
+        try:
+            db_dir = Path(
+                self.conn.execute("PRAGMA database_list").fetchone()[2]
+            ).resolve().parent
+        except Exception:
+            db_dir = Path.cwd()
+
+        try:
+            cur = self.conn.execute(
+                "SELECT module_path, vector, metadata FROM intent_embeddings"
+            )
+            for mpath, blob, meta_json in cur.fetchall():
+                mpath = str(mpath)
+                p = Path(mpath)
+                if not (mpath.startswith("cluster:") or (p.exists() and p.resolve().is_relative_to(db_dir))):
+                    continue
+                if blob and mpath not in self.vectors:
+                    try:
+                        vec = [float(x) for x in pickle.loads(blob)]
+                    except Exception:
+                        vec = []
+                    if vec:
+                        self.vectors[mpath] = vec
+                try:
+                    meta = json.loads(meta_json or "{}") if meta_json else {}
+                except Exception:
+                    meta = {}
+                if not mpath.startswith("cluster:"):
+                    cids = meta.get("cluster_ids")
+                    if cids:
+                        self.clusters[mpath] = [int(c) for c in cids]
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("failed to load stored intent embeddings: %s", exc)
+
+    
+        try:
+            for rid, meta in getattr(self.db, "_metadata", {}).items():
+                path = meta.get("source_id") or meta.get("path")
+                if not path:
+                    continue
+                p = Path(path)
+                if not (p.exists() and p.resolve().is_relative_to(db_dir)):
+                    continue
+                try:
+                    self.module_ids[path] = int(rid)
+                except Exception:
+                    continue
+                vec = meta.get("vector")
+                if vec and path not in self.vectors:
+                    self.vectors[path] = [float(x) for x in vec]
+                cids = meta.get("cluster_ids")
+                if cids and path not in self.clusters:
+                    self.clusters[path] = [int(c) for c in cids]
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("failed to load module metadata: %s", exc)
 
     def __post_init__(self) -> None:
         try:  # pragma: no cover - best effort registration
@@ -885,6 +945,36 @@ class IntentClusterer:
                     )
                 except Exception:
                     continue
+            # Persist cluster identifiers for each module
+            try:
+                row = self.conn.execute(
+                    "SELECT vector, metadata FROM intent_embeddings WHERE module_path = ?",
+                    (path,),
+                ).fetchone()
+                if row:
+                    blob, meta_json = row
+                    meta = json.loads(meta_json or "{}") if meta_json else {}
+                else:
+                    blob = sqlite3.Binary(pickle.dumps(vec))
+                    meta = {}
+                if not blob:
+                    blob = sqlite3.Binary(pickle.dumps(vec))
+                meta["cluster_ids"] = [int(cid) for cid in self.clusters[path]]
+                with self.conn:
+                    self.conn.execute(
+                        "REPLACE INTO intent_embeddings (module_path, vector, metadata) VALUES (?, ?, ?)",
+                        (path, blob, json.dumps(meta)),
+                    )
+            except Exception as exc:
+                logger.warning("failed to persist cluster ids for %s: %s", path, exc)
+            rid = self.module_ids.get(path)
+            if rid is not None:
+                try:
+                    meta = self.db._metadata.get(str(rid), {})
+                    meta["cluster_ids"] = [int(cid) for cid in self.clusters[path]]
+                    self.db._metadata[str(rid)] = meta
+                except Exception:
+                    pass
         self._index_clusters({k: v for k, v in cluster_members.items() if v})
         return dict(self.clusters)
 
