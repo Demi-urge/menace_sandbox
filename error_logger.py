@@ -644,6 +644,7 @@ class ErrorLogger:
                     sort_by=sample_sort_by,
                     limit=sample_limit,
                     include_embeddings=with_vectors,
+                    scope=Scope.ALL,
                 )
             except Exception:  # pragma: no cover - helper failures
                 samples = []
@@ -652,6 +653,7 @@ class ErrorLogger:
                     sort_by="confidence",
                     limit=sample_limit,
                     include_embeddings=False,
+                    scope=Scope.ALL,
                 )
             except Exception:  # pragma: no cover - helper failures
                 discrepancies = []

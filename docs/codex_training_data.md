@@ -18,8 +18,8 @@ All helpers accept:
 - `sort_by` – `"confidence"`, `"outcome_score"` or `"timestamp"` determine ordering.
 - `limit` – number of rows to fetch per source.
 - `include_embeddings` – when `True`, attach embedding vectors via the respective database's `vector(id)` API.
-- `scope` – restrict records to a menace instance. Accepts `Scope` values or
-  `"local"`, `"global"` or `"all"` (default).
+- `scope` – restrict records to a menace instance. One of `Scope.LOCAL`,
+  `Scope.GLOBAL` or `Scope.ALL` (default).
 
 ## Example
 
