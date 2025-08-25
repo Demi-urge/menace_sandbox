@@ -50,6 +50,31 @@ def test_add_error_duplicate(tmp_path, caplog, monkeypatch):
     assert db.conn.execute("SELECT COUNT(*) FROM errors").fetchone()[0] == 1
 
 
+def test_add_error_duplicate_different_message(tmp_path, caplog, monkeypatch):
+    monkeypatch.setattr(eb.ErrorDB, "add_embedding", lambda *a, **k: None)
+    db = eb.ErrorDB(tmp_path / "e.db")
+
+    captured: dict[str, int | None] = {"id": None}
+    orig = eb.insert_if_unique
+
+    def wrapper(*args, **kwargs):
+        res = orig(*args, **kwargs)
+        captured["id"] = res
+        return res
+
+    monkeypatch.setattr(eb, "insert_if_unique", wrapper)
+
+    first = db.add_error("dup1", type_="t", description="d", resolution="r")
+    captured["id"] = None
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        second = db.add_error("dup2", type_="t", description="d", resolution="r")
+    assert first == second
+    assert captured["id"] is None
+    assert "duplicate" in caplog.text.lower()
+    assert db.conn.execute("SELECT COUNT(*) FROM errors").fetchone()[0] == 1
+
+
 def test_handle_known(tmp_path):
     e = eb.ErrorDB(tmp_path / "e.db")
     e.add_known("err", "fix")

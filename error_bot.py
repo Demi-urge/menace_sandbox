@@ -493,7 +493,7 @@ class ErrorDB(EmbeddableDBMixin):
     ) -> int:
         """Insert a new error if not already present and return its id.
 
-        Deduplicates based on the hash of ``message``, ``type``, ``description`` and
+        Deduplicates based on the hash of ``type``, ``description`` and
         ``resolution``. When a duplicate is detected, a warning is emitted and
         embedding/event hooks are skipped.
         """
@@ -506,7 +506,7 @@ class ErrorDB(EmbeddableDBMixin):
             "resolution": resolution,
             "ts": datetime.utcnow().isoformat(),
         }
-        hash_fields = ["message", "type", "description", "resolution"]
+        hash_fields = ["type", "description", "resolution"]
         content_hash = _hash_fields(values, hash_fields)
         with self.router.get_connection("errors", "write") as conn:
             err_id = insert_if_unique(
