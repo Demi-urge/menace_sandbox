@@ -612,6 +612,20 @@ python -m menace.self_improvement_engine synergy-dashboard --wsgi flask
 
 Replace `flask` with `gunicorn` or `uvicorn` to use a different server.
 
+To explore the existing module index interactively, use the intent clusterer
+helper:
+
+```bash
+python -m intent_clusterer "error handling"
+```
+
+Or import the convenience function directly:
+
+```python
+from intent_clusterer import find_modules_related_to
+find_modules_related_to("error handling")
+```
+
 ### Entropy delta detection
 
 The sandbox monitors the ROI gain relative to entropy changes for each module.
