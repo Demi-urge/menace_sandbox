@@ -186,8 +186,8 @@ def summarise_texts(texts: List[str], method: str = "tfidf", top_k: int = 5) -> 
     The helper relies solely on local processing and avoids heavyweight models
     or network calls.  Noun phrases (approximated via n‑grams) are scored using
     a tiny TF‑IDF scheme.  ``method`` can be set to ``"freq"`` to use raw
-    frequency counts instead.  The ``top_k`` highest scoring phrases are
-    returned, joined by spaces.
+    frequency counts or ``"rake"`` to apply a lightweight RAKE keyword extractor.
+    The ``top_k`` highest scoring phrases are returned, joined by spaces.
     """
 
     import math
@@ -197,33 +197,107 @@ def summarise_texts(texts: List[str], method: str = "tfidf", top_k: int = 5) -> 
     if not texts:
         return ""
 
-    def _phrases(text: str) -> List[str]:
-        tokens = re.findall(r"[A-Za-z][A-Za-z0-9_]*", text.lower())
-        phrases = list(tokens)
-        for n in (2, 3):
-            phrases.extend(
-                " ".join(tokens[i:i + n]) for i in range(len(tokens) - n + 1)
-            )
-        return phrases
-
-    docs = [_phrases(t) for t in texts if t]
-    if not docs:
-        return ""
-
     scores: Counter[str]
-    if method == "tfidf":
-        df = Counter()
-        for doc in docs:
-            df.update(set(doc))
-        scores = Counter()
-        N = len(docs)
-        for doc in docs:
-            tf = Counter(doc)
-            for term, freq in tf.items():
-                idf = math.log((1 + N) / (1 + df[term])) + 1.0
-                scores[term] += freq * idf
-    else:  # ``freq`` or any unknown method
-        scores = Counter(p for doc in docs for p in doc)
+    if method == "rake":
+        try:
+            stop = {
+                "the",
+                "and",
+                "for",
+                "with",
+                "that",
+                "from",
+                "this",
+                "are",
+                "was",
+                "but",
+                "not",
+                "use",
+                "used",
+                "using",
+                "into",
+                "over",
+                "there",
+                "their",
+                "to",
+                "of",
+                "in",
+                "on",
+                "a",
+                "an",
+                "as",
+                "is",
+                "it",
+                "be",
+                "at",
+                "by",
+                "or",
+                "if",
+                "then",
+                "else",
+                "than",
+                "so",
+                "such",
+                "via",
+            }
+            text = ". ".join(t for t in texts if t).lower()
+            sentences = re.split(r"[.!?,;:\n]", text)
+            phrases: List[List[str]] = []
+            for sentence in sentences:
+                words = re.findall(r"[a-z][a-z0-9_]*", sentence)
+                phrase: List[str] = []
+                for word in words:
+                    if word in stop:
+                        if phrase:
+                            phrases.append(phrase)
+                            phrase = []
+                    else:
+                        phrase.append(word)
+                if phrase:
+                    phrases.append(phrase)
+            if not phrases:
+                return ""
+            freq = Counter()
+            degree = Counter()
+            for phrase in phrases:
+                deg = len(phrase)
+                for word in phrase:
+                    freq[word] += 1
+                    degree[word] += deg
+            word_score = {w: degree[w] / freq[w] for w in freq}
+            scores = Counter()
+            for phrase in phrases:
+                phrase_str = " ".join(phrase)
+                scores[phrase_str] += sum(word_score[w] for w in phrase)
+        except Exception:
+            return ""
+    else:
+        def _phrases(text: str) -> List[str]:
+            tokens = re.findall(r"[A-Za-z][A-Za-z0-9_]*", text.lower())
+            phrases = list(tokens)
+            for n in (2, 3):
+                phrases.extend(
+                    " ".join(tokens[i:i + n]) for i in range(len(tokens) - n + 1)
+                )
+            return phrases
+
+        docs = [_phrases(t) for t in texts if t]
+        if not docs:
+            return ""
+
+        if method == "tfidf":
+            df = Counter()
+            for doc in docs:
+                df.update(set(doc))
+            scores = Counter()
+            N = len(docs)
+            for doc in docs:
+                tf = Counter(doc)
+                for term, freq in tf.items():
+                    idf = math.log((1 + N) / (1 + df[term])) + 1.0
+                    scores[term] += freq * idf
+        else:  # ``freq`` or any unknown method
+            scores = Counter(p for doc in docs for p in doc)
 
     ranked = sorted(scores.items(), key=lambda x: (x[1], len(x[0].split())), reverse=True)
     terms = [term for term, _ in ranked[:top_k]]
@@ -231,7 +305,7 @@ def summarise_texts(texts: List[str], method: str = "tfidf", top_k: int = 5) -> 
 
 
 def derive_cluster_label(
-    texts: List[str], top_k: int = 3, method: str = "tfidf"
+    texts: List[str], top_k: int = 3, method: str = "rake"
 ) -> tuple[str, str]:
     """Return a concise ``(label, summary)`` pair for ``texts``.
 
@@ -243,7 +317,16 @@ def derive_cluster_label(
     if not texts:
         return "", ""
 
-    summary = summarise_texts(texts, method=method, top_k=top_k)
+    summary = ""
+    try:
+        summary = summarise_texts(texts, method=method, top_k=top_k)
+    except Exception:
+        summary = ""
+    if not summary and method != "tfidf":
+        try:
+            summary = summarise_texts(texts, method="tfidf", top_k=top_k)
+        except Exception:
+            summary = ""
     if summary:
         return summary, summary
 
@@ -349,7 +432,7 @@ class IntentClusterer:
         menace_id: str | None = None,
         local_db_path: str | Path | None = None,
         shared_db_path: str | Path | None = None,
-        summary_method: str = "tfidf",
+        summary_method: str = "rake",
         summary_top_k: int = 3,
     ) -> None:
         self.vector_service = vector_service
