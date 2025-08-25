@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Callable, Any, Iterable, Optional, Iterator
+from typing import List, Dict, Callable, Any, Iterable, Optional, Iterator, Literal
 import logging
 
 import sqlite3
@@ -16,6 +16,7 @@ from .workflow_graph import WorkflowGraph
 from vector_service import EmbeddableDBMixin
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from db_dedup import insert_if_unique, ensure_content_hash_column
+from scope_utils import Scope, build_scope_clause
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -397,6 +398,59 @@ class WorkflowDB(EmbeddableDBMixin):
         results: List[WorkflowRecord] = []
         for row in rows:
             results.append(self._row_to_record(row))
+        return results
+
+    def fetch_workflows(
+        self,
+        *,
+        scope: Literal["local", "global", "all"] = "local",
+        sort_by: Literal["confidence", "outcome_score", "timestamp"] = "timestamp",
+        limit: int = 100,
+        include_embeddings: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Return stored workflows filtered by menace scope and ordered.
+
+        Parameters mirror those used by other fetch helpers. ``scope`` controls
+        which menace IDs to include via :func:`build_scope_clause`. ``sort_by``
+        selects the column used for ordering with the following mappings:
+
+        - ``"confidence"``    -> ``estimated_profit_per_bot``
+        - ``"outcome_score"`` -> ``workflow_duration``
+        - ``"timestamp"``     -> ``timestamp``
+
+        When ``include_embeddings`` is true, each record includes an ``embedding``
+        field containing the vector representation produced by :meth:`vector`.
+        ``confidence`` and ``outcome_score`` are populated from existing
+        columns as described above.
+        """
+
+        menace_id = getattr(self.router, "menace_id", "")
+        clause, params = build_scope_clause("workflows", Scope(scope), menace_id)
+        order_map = {
+            "confidence": "estimated_profit_per_bot",
+            "outcome_score": "workflow_duration",
+            "timestamp": "timestamp",
+        }
+        order_col = order_map.get(sort_by, "timestamp")
+        sql = "SELECT * FROM workflows"
+        if clause:
+            sql += f" WHERE {clause}"
+        sql += f" ORDER BY {order_col} DESC LIMIT ?"
+        params.append(limit)
+
+        rows = self.conn.execute(sql, params).fetchall()
+        results: List[Dict[str, Any]] = []
+        for row in rows:
+            rec = self._row_to_record(row)
+            data = asdict(rec)
+            data["confidence"] = row["estimated_profit_per_bot"]
+            data["outcome_score"] = row["workflow_duration"]
+            if include_embeddings:
+                try:
+                    data["embedding"] = self.vector(rec)
+                except Exception:  # pragma: no cover - best effort
+                    data["embedding"] = None
+            results.append(data)
         return results
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
