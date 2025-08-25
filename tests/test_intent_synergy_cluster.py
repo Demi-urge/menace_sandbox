@@ -1,10 +1,8 @@
 import embeddable_db_mixin as edm
 import intent_db
-import intent_clusterer as ic
 from intent_db import IntentDB
 from intent_clusterer import IntentClusterer
 from db_router import init_db_router, LOCAL_TABLES
-from pathlib import Path
 import pytest
 
 
@@ -52,3 +50,4 @@ def test_synergy_cluster_index_and_search(tmp_path, monkeypatch):
 
     res = clusterer.find_modules_related_to("alpha beta", top_k=1)
     assert res and res[0]["path"].startswith("cluster:a")
+    assert res[0]["origin"] == "cluster"

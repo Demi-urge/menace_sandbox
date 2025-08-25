@@ -638,6 +638,9 @@ from intent_clusterer import find_modules_related_to
 find_modules_related_to("error handling")
 ```
 
+Results include a relevance ``score`` and an ``origin`` field indicating
+whether the match refers to an individual module or a synergy ``cluster``.
+
 ### Entropy delta detection
 
 The sandbox monitors the ROI gain relative to entropy changes for each module.

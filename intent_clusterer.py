@@ -12,7 +12,7 @@ provides a simple semantic search helper.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Any, Sequence
 import ast
@@ -20,7 +20,6 @@ import io
 import tokenize
 
 from governed_embeddings import governed_embed
-from universal_retriever import UniversalRetriever
 from embeddable_db_mixin import EmbeddableDBMixin
 from math import sqrt
 
@@ -117,7 +116,12 @@ def extract_intent_text(path: Path) -> str:
 class ModuleVectorDB(EmbeddableDBMixin):
     """Minimal vector DB for module intent embeddings."""
 
-    def __init__(self, *, index_path: str | Path = "intent_vectors.ann", metadata_path: str | Path = "intent_vectors.json") -> None:
+    def __init__(
+        self,
+        *,
+        index_path: str | Path = "intent_vectors.ann",
+        metadata_path: str | Path = "intent_vectors.json",
+    ) -> None:
         super().__init__(index_path=index_path, metadata_path=metadata_path)
         self._texts: Dict[int, str] = {}
         self._paths: Dict[int, str] = {}
@@ -326,14 +330,19 @@ class IntentClusterer:
                 meta = item.get("metadata", {})
                 path = meta.get("path")
                 members = meta.get("members")
+                origin = meta.get("kind") or meta.get("source_id") or path
                 target_vec: Sequence[float] = item.get("vector", [])
                 tnorm = sqrt(sum(x * x for x in target_vec)) or 1.0
                 target_vec = [x / tnorm for x in target_vec]
                 score = sum(a * b for a, b in zip(qvec, target_vec))
-                if path:
-                    entry: Dict[str, Any] = {"path": path, "score": score}
+                if path or members:
+                    entry: Dict[str, Any] = {"score": score}
+                    if path:
+                        entry["path"] = path
                     if members:
                         entry["members"] = list(members)
+                    if origin:
+                        entry["origin"] = origin
                     results.append(entry)
             if results:
                 return results[:top_k]
@@ -361,11 +370,16 @@ class IntentClusterer:
                     path = None
             meta = getattr(self.db, "_metadata", {}).get(str(rid), {})
             members = meta.get("members")
-            if path:
+            origin = meta.get("kind") or meta.get("source_id") or path
+            if path or members:
                 score = 1.0 / (1.0 + float(dist))
-                entry: Dict[str, Any] = {"path": path, "score": score}
+                entry: Dict[str, Any] = {"score": score}
+                if path:
+                    entry["path"] = path
                 if members:
                     entry["members"] = list(members)
+                if origin:
+                    entry["origin"] = origin
                 results.append(entry)
         return results[:top_k]
 
@@ -377,5 +391,22 @@ def find_modules_related_to(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     return clusterer.find_modules_related_to(query, top_k=top_k)
 
 
-__all__ = ["IntentClusterer", "extract_intent_text", "find_modules_related_to"]
+def _main(argv: Iterable[str] | None = None) -> int:
+    """Minimal CLI for semantic module search."""
 
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("query", help="Search query")
+    parser.add_argument("--top-k", type=int, default=5, dest="top_k")
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    results = find_modules_related_to(args.query, top_k=args.top_k)
+    print(json.dumps(results, indent=2))
+    return 0
+
+
+__all__ = ["IntentClusterer", "extract_intent_text", "find_modules_related_to"]
+if __name__ == "__main__":  # pragma: no cover - manual invocation
+    raise SystemExit(_main())

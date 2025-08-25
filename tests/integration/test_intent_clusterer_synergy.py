@@ -47,3 +47,4 @@ def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
 
     res = clusterer.find_modules_related_to("alpha beta", top_k=1)
     assert res and res[0]["path"].startswith("cluster:a")
+    assert res[0]["origin"] == "cluster"
