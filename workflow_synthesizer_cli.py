@@ -46,7 +46,7 @@ def run(args: argparse.Namespace) -> int:
         start_module=args.start,
         problem=args.problem,
         limit=getattr(args, "limit", 5),
-        max_depth=args.max_depth,
+        max_depth=getattr(args, "max_depth", None),
         synergy_weight=getattr(args, "synergy_weight", 1.0),
         intent_weight=getattr(args, "intent_weight", 1.0),
     )
@@ -117,6 +117,7 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
         "--max-depth",
         type=int,
         dest="max_depth",
+        default=None,
         help="Maximum traversal depth when exploring module connections",
     )
     parser.add_argument(
