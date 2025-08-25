@@ -10,7 +10,7 @@ def test_insert_if_unique_concurrent(tmp_path):
     path = tmp_path / "dedup.sqlite"
     base_conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
     base_conn.execute(
-        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, content_hash TEXT UNIQUE)"
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, content_hash TEXT UNIQUE NOT NULL)"
     )
     base_conn.close()
 

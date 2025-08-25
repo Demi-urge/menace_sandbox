@@ -88,7 +88,7 @@ class MenaceDB:
             Column("discrepancy_links", Text),
             Column("status", String),
             Column("estimated_profit_per_bot", Float, default=0.0),
-            Column("content_hash", Text, unique=True),
+            Column("content_hash", Text, unique=True, nullable=False),
         )
         Index("idx_workflows_content_hash", self.workflows.c.content_hash, unique=True)
 
@@ -192,7 +192,7 @@ class MenaceDB:
                 nullable=False,
                 server_default="",
             ),
-            Column("content_hash", Text, unique=True),
+            Column("content_hash", Text, unique=True, nullable=False),
         )
         Index("idx_bots_source_menace_id", self.bots.c.source_menace_id)
         Index("idx_bots_content_hash", self.bots.c.content_hash, unique=True)
@@ -255,7 +255,7 @@ class MenaceDB:
             Column("timestamp", String),
             Column("triggered_by", String),
             Column("source_menace_id", Text, nullable=False),
-            Column("content_hash", Text, unique=True),
+            Column("content_hash", Text, unique=True, nullable=False),
         )
         Index(
             "idx_enhancements_source_menace_id",
@@ -377,7 +377,7 @@ class MenaceDB:
             Column("error_description", Text),
             Column("resolution_status", String),
             Column("source_menace_id", Text, nullable=False, server_default=""),
-            Column("content_hash", Text, unique=True),
+            Column("content_hash", Text, unique=True, nullable=False),
         )
         Index("idx_errors_source_menace_id", self.errors.c.source_menace_id)
         Index("idx_errors_content_hash", self.errors.c.content_hash, unique=True)
@@ -591,7 +591,7 @@ class MenaceDB:
             cols = conn.exec_driver_sql(f"PRAGMA table_info({table_name})").fetchall()
             if "content_hash" not in [c[1] for c in cols]:
                 conn.exec_driver_sql(
-                    f"ALTER TABLE {table_name} ADD COLUMN content_hash TEXT"
+                    f"ALTER TABLE {table_name} ADD COLUMN content_hash TEXT NOT NULL"
                 )
 
     # ------------------------------------------------------------------

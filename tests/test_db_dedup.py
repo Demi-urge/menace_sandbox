@@ -57,7 +57,9 @@ def test_enhancementdb_dedup(tmp_path, caplog, monkeypatch, router):
     # ``content_hash`` column may not be added on older SQLite versions; ensure
     # it exists so deduplication can be tested reliably.
     try:
-        db.conn.execute("ALTER TABLE enhancements ADD COLUMN content_hash TEXT")
+        db.conn.execute(
+            "ALTER TABLE enhancements ADD COLUMN content_hash TEXT NOT NULL"
+        )
     except Exception:
         pass
     db.conn.execute(
@@ -174,7 +176,7 @@ def test_insert_if_unique_duplicate_returns_existing_id(tmp_path, caplog):
     router = db_router.init_db_router("test", str(path), str(path))
     conn = router.local_conn
     conn.execute(
-        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, content_hash TEXT UNIQUE)"
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, content_hash TEXT UNIQUE NOT NULL)"
     )
     logger = logging.getLogger(__name__)
 
@@ -210,7 +212,7 @@ def test_insert_if_unique_missing_field_sqlite(tmp_path):
     router = db_router.init_db_router("test", str(path), str(path))
     conn = router.local_conn
     conn.execute(
-        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, content_hash TEXT UNIQUE)"
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, content_hash TEXT UNIQUE NOT NULL)"
     )
     logger = logging.getLogger(__name__)
 
