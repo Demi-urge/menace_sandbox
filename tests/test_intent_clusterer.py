@@ -11,7 +11,11 @@ from vector_utils import cosine_similarity  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def fake_embed(monkeypatch):
-    monkeypatch.setattr(ic, "governed_embed", lambda text: [float(len(text))])
+    def _fake(text: str) -> list[float]:
+        lower = text.lower()
+        return [float(lower.count("alpha")), float(lower.count("beta"))]
+
+    monkeypatch.setattr(ic, "governed_embed", _fake)
 
 
 class DummyRetriever:
@@ -23,16 +27,46 @@ class DummyRetriever:
 
     def search(self, vector, top_k=10):
         scored = [
-            (item["metadata"], cosine_similarity(vector, item["vector"]))
+            (item, cosine_similarity(vector, item["vector"]))
             for item in self.items
         ]
         scored.sort(key=lambda x: x[1], reverse=True)
-        return [dict(path=m["path"], score=s) for m, s in scored[:top_k]]
+        results = []
+        for item, score in scored[:top_k]:
+            results.append(
+                {
+                    "metadata": item["metadata"],
+                    "vector": item["vector"],
+                    "path": item["metadata"]["path"],
+                    "score": score,
+                }
+            )
+        return results
 
 
 def _write(tmp: Path, rel: str, content: str) -> None:
     p = tmp / rel
     p.write_text(content)
+
+
+@pytest.fixture
+def repo_with_intents(tmp_path):
+    files = {
+        "alpha.py": '"""alpha module"""\nimport beta\n',
+        "beta.py": '"""beta module"""\nimport alpha\n',
+        "gamma.py": '"""gamma helper"""\n',
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content)
+    return tmp_path
+
+
+@pytest.fixture
+def indexed_clusterer(repo_with_intents):
+    retr = DummyRetriever()
+    clusterer = ic.IntentClusterer(retr)
+    clusterer.index_repository(repo_with_intents)
+    return clusterer, retr
 
 
 def test_index_and_cluster(tmp_path):
@@ -90,3 +124,16 @@ def test_collect_intent_mixed_encoding(tmp_path):
     text, meta = clusterer._collect_intent(path)
     assert meta["names"] == ["X"]
     assert "espa\xf1ol" in meta["comments"][0]
+
+
+def test_indexing_clusters_related_modules(indexed_clusterer):
+    clusterer, retr = indexed_clusterer
+    paths = {item["metadata"]["path"]: item["metadata"].get("cluster_id") for item in retr.items}
+    assert paths["alpha.py"] == paths["beta.py"]
+    assert paths["gamma.py"] != paths["alpha.py"]
+
+
+def test_query_returns_expected_module(indexed_clusterer):
+    clusterer, _retr = indexed_clusterer
+    res = clusterer.query("alpha module", threshold=0.1)
+    assert res and res[0].path == "alpha.py"
