@@ -28,11 +28,15 @@ from embeddable_db_mixin import EmbeddableDBMixin
 from math import sqrt
 from vector_utils import persist_embedding
 from db_router import init_db_router, LOCAL_TABLES
+from logging_utils import get_logger
 
 try:  # pragma: no cover - optional dependency
     from sklearn.cluster import KMeans  # type: ignore
 except Exception:  # pragma: no cover - fallback used in tests
     from knowledge_graph import _SimpleKMeans as KMeans  # type: ignore
+
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -289,8 +293,8 @@ class IntentClusterer:
                     path = root / f"{mod}.py"
                     groups.setdefault(str(gid), []).append(str(path))
                 return groups
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("failed to read module map from %s: %s", map_file, exc)
         try:  # pragma: no cover - optional dependency
             from module_synergy_grapher import ModuleSynergyGrapher
             import networkx as nx
@@ -299,7 +303,8 @@ class IntentClusterer:
             graph = grapher.load()
             for idx, comp in enumerate(nx.connected_components(graph.to_undirected())):
                 groups[str(idx)] = [str(root / f"{m}.py") for m in comp]
-        except Exception:
+        except Exception as exc:
+            logger.exception("failed to build synergy graph under %s: %s", root, exc)
             return {}
         return groups
 
@@ -327,7 +332,8 @@ class IntentClusterer:
                     txt = extract_intent_text(Path(m))
                     if txt:
                         texts.append(txt)
-                except Exception:
+                except Exception as exc:
+                    logger.warning("failed to extract intent text from %s: %s", m, exc)
                     continue
             label = derive_cluster_label(texts)
 
@@ -346,13 +352,13 @@ class IntentClusterer:
                         "VALUES (?, ?, ?)",
                         (entry, blob, json.dumps(meta)),
                     )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("failed to persist cluster %s: %s", gid, exc)
             if hasattr(self.retriever, "add_vector"):
                 try:
                     self.retriever.add_vector(mean, {"path": entry, **meta})
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("failed to add cluster %s to retriever: %s", gid, exc)
             try:
                 rid = entry
                 if rid not in self.db._metadata:  # type: ignore[attr-defined]
@@ -371,8 +377,10 @@ class IntentClusterer:
                 }
                 self.db._rebuild_index()  # type: ignore[attr-defined]
                 self.db.save_index()  # type: ignore[attr-defined]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "failed to update vector DB for cluster %s: %s", gid, exc
+                )
 
     def _ensure_table(self) -> None:
         """Create or migrate the ``intent_embeddings`` table."""
@@ -404,8 +412,8 @@ class IntentClusterer:
     def __post_init__(self) -> None:
         try:  # pragma: no cover - best effort registration
             self.retriever.register_db("intent", self.db, ("path",))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("failed to register intent DB with retriever: %s", exc)
 
     # ------------------------------------------------------------------
     def index_modules(self, paths: Iterable[Path]) -> None:
@@ -421,7 +429,8 @@ class IntentClusterer:
                 rid = self.db.add(str(path))
                 try:
                     self.db.add_embedding(rid, {"path": str(path), "text": text}, "module")
-                except Exception:
+                except Exception as exc:
+                    logger.warning("failed to add embedding for %s: %s", path, exc)
                     continue
             vec = self.db.get_vector(rid) or []
             if vec:
@@ -441,8 +450,8 @@ class IntentClusterer:
                 if hasattr(self.retriever, "add_vector"):
                     try:
                         self.retriever.add_vector(vec, {"path": str(path)})
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("failed to add %s to retriever: %s", path, exc)
 
     # ------------------------------------------------------------------
     def index_repository(self, repo_path: str | Path) -> None:
