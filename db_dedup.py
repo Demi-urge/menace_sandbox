@@ -26,7 +26,12 @@ if TYPE_CHECKING:  # pragma: no cover - type checking only
     from sqlalchemy import Table
     from sqlalchemy.engine import Engine
 
-__all__ = ["compute_content_hash", "hash_fields", "insert_if_unique"]
+__all__ = [
+    "compute_content_hash",
+    "hash_fields",
+    "insert_if_unique",
+    "ensure_content_hash_column",
+]
 
 
 def _sort_nested(value: Any) -> Any:
@@ -203,5 +208,60 @@ def insert_if_unique(
         )
         row = cur.fetchone()
         return int(row[0]) if row else None
+
+    raise TypeError("Either 'engine' or 'conn' must be provided")
+
+
+def ensure_content_hash_column(
+    table: str,
+    *,
+    engine: "Engine | None" = None,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Ensure ``table`` has a ``content_hash`` column and unique index.
+
+    The helper works with either a SQLAlchemy ``engine`` or a raw SQLite
+    ``conn``.  If the table does not exist the function is a no-op.  When the
+    column is added a unique index named ``idx_<table>_content_hash`` is also
+    created to enforce uniqueness consistently across the code base.
+    """
+
+    if engine is not None:
+        with engine.begin() as eng_conn:
+            exists = eng_conn.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            ).fetchone()
+            if not exists:
+                return
+            cols = eng_conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+            if "content_hash" not in [c[1] for c in cols]:
+                eng_conn.exec_driver_sql(
+                    f"ALTER TABLE {table} ADD COLUMN content_hash TEXT NOT NULL"
+                )
+            eng_conn.exec_driver_sql(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_content_hash"
+                f" ON {table}(content_hash)"
+            )
+        return
+
+    if conn is not None:
+        exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()
+        if not exists:
+            return
+        cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        if "content_hash" not in [c[1] for c in cols]:
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN content_hash TEXT NOT NULL"
+            )
+        conn.execute(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_content_hash"
+            f" ON {table}(content_hash)"
+        )
+        conn.commit()
+        return
 
     raise TypeError("Either 'engine' or 'conn' must be provided")

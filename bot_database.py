@@ -25,7 +25,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 from db_router import GLOBAL_ROUTER as router
 from .scope_utils import Scope, build_scope_clause, apply_scope
-from db_dedup import insert_if_unique
+from db_dedup import insert_if_unique, ensure_content_hash_column
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .deployment_bot import DeploymentDB
@@ -168,7 +168,7 @@ class BotDB(EmbeddableDBMixin):
                 version TEXT,
                 estimated_profit REAL,
                 source_menace_id TEXT NOT NULL,
-                content_hash TEXT NOT NULL UNIQUE
+                content_hash TEXT NOT NULL
             )
             """
         )
@@ -187,23 +187,14 @@ class BotDB(EmbeddableDBMixin):
             self.conn.execute("ALTER TABLE bots ADD COLUMN estimated_profit REAL")
         if "source_menace_id" not in cols:
             self.conn.execute(
-                "ALTER TABLE bots ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''"
+                "ALTER TABLE bots ADD COLUMN source_menace_id TEXT NOT NULL DEFAULT ''",
             )
-        if "content_hash" not in cols:
-            # SQLite does not support adding a column with a UNIQUE constraint
-            # directly via ALTER TABLE, so we add the column first and create
-            # the uniqueness constraint via an explicit index below.
-            self.conn.execute(
-                "ALTER TABLE bots ADD COLUMN content_hash TEXT NOT NULL"
-            )
+        ensure_content_hash_column("bots", conn=self.conn)
         idxs = [r[1] for r in self.conn.execute("PRAGMA index_list('bots')").fetchall()]
         if "ix_bots_source_menace_id" in idxs:
             self.conn.execute("DROP INDEX IF EXISTS ix_bots_source_menace_id")
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_bots_source_menace_id ON bots(source_menace_id)"
-        )
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_bots_content_hash ON bots(content_hash)"
         )
         self.conn.commit()
         self.conn.execute(

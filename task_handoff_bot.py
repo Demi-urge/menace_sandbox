@@ -15,7 +15,7 @@ from .unified_event_bus import UnifiedEventBus
 from .workflow_graph import WorkflowGraph
 from vector_service import EmbeddableDBMixin
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
-from db_dedup import insert_if_unique
+from db_dedup import insert_if_unique, ensure_content_hash_column
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -134,7 +134,7 @@ class WorkflowDB(EmbeddableDBMixin):
                 estimated_profit_per_bot REAL,
                 timestamp TEXT,
                 source_menace_id TEXT,
-                content_hash TEXT NOT NULL UNIQUE
+                content_hash TEXT NOT NULL
             )
             """,
         )
@@ -148,16 +148,7 @@ class WorkflowDB(EmbeddableDBMixin):
                 "ALTER TABLE workflows ADD COLUMN "
                 "source_menace_id TEXT NOT NULL DEFAULT ''"
             )
-        if "content_hash" not in cols:
-            # SQLite cannot add a column with a UNIQUE constraint via ALTER TABLE.
-            # Add the column first and rely on the index below for uniqueness.
-            self.conn.execute(
-                "ALTER TABLE workflows ADD COLUMN content_hash TEXT NOT NULL"
-            )
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS "
-            "idx_workflows_content_hash ON workflows(content_hash)"
-        )
+        ensure_content_hash_column("workflows", conn=self.conn)
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS "
             "idx_workflows_source_menace_id ON workflows(source_menace_id)"

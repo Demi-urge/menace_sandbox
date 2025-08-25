@@ -9,7 +9,7 @@ import os
 import logging
 from typing import Literal
 
-from db_dedup import insert_if_unique
+from db_dedup import insert_if_unique, ensure_content_hash_column
 
 from .env_config import DATABASE_URL
 from .scope_utils import build_scope_clause, apply_scope
@@ -576,23 +576,9 @@ class MenaceDB:
         )
 
         for table in ("bots", "workflows", "enhancements", "errors"):
-            self._ensure_content_hash_column(table)
+            ensure_content_hash_column(table, engine=self.engine)
 
         self.meta.create_all(self.engine)
-
-    def _ensure_content_hash_column(self, table_name: str) -> None:
-        with self.engine.begin() as conn:
-            exists = conn.exec_driver_sql(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                (table_name,),
-            ).fetchone()
-            if not exists:
-                return
-            cols = conn.exec_driver_sql(f"PRAGMA table_info({table_name})").fetchall()
-            if "content_hash" not in [c[1] for c in cols]:
-                conn.exec_driver_sql(
-                    f"ALTER TABLE {table_name} ADD COLUMN content_hash TEXT NOT NULL"
-                )
 
     # ------------------------------------------------------------------
     # Query helpers
