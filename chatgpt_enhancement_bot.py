@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable, List, Optional, Iterator, Sequence, Literal
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-from db_dedup import insert_if_unique, compute_content_hash
+from dedup_utils import insert_if_unique, hash_fields
 from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
@@ -49,6 +49,15 @@ FEASIBLE_WORD_LIMIT = int(os.environ.get("MAX_RATIONALE_WORDS", "50"))
 DEFAULT_NUM_IDEAS = int(os.environ.get("DEFAULT_ENHANCEMENT_COUNT", "3"))
 DEFAULT_FETCH_LIMIT = int(os.environ.get("ENHANCEMENT_FETCH_LIMIT", "50"))
 DEFAULT_PROPOSE_RATIO = float(os.environ.get("PROPOSE_SUMMARY_RATIO", "0.3"))
+
+# Fields used to compute the deduplication content hash for enhancements
+_ENHANCEMENT_HASH_FIELDS = [
+    "idea",
+    "rationale",
+    "before_code",
+    "after_code",
+    "description",
+]
 
 
 @dataclass
@@ -315,35 +324,28 @@ class EnhancementDB(EmbeddableDBMixin):
             "associated_bots": assoc,
             "triggered_by": enh.triggered_by,
         }
-        # compute a hash of core fields for deduplication
-        hash_payload = {
-            "idea": enh.idea,
-            "summary": enh.summary,
-            "before_code": enh.before_code,
-            "after_code": enh.after_code,
-            "description": enh.description,
-        }
-        values["content_hash"] = compute_content_hash(hash_payload)
+        # pre-compute content hash for duplicate lookups
+        content_hash = hash_fields(values, _ENHANCEMENT_HASH_FIELDS)
 
         with self._connect() as conn:
-            enh_id, inserted = insert_if_unique(
+            enh_id = insert_if_unique(
                 conn,
                 "enhancements",
                 values,
-                [
-                    "idea",
-                    "summary",
-                    "before_code",
-                    "after_code",
-                    "description",
-                ],
+                _ENHANCEMENT_HASH_FIELDS,
                 self.router.menace_id if self.router else "",
+                logger,
             )
-        if not inserted:
+        if enh_id is None:
             logger.warning(
                 "duplicate enhancement detected; skipping embedding and event generation"
             )
-            return -1
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT id FROM enhancements WHERE content_hash=?",
+                    (content_hash,),
+                ).fetchone()
+            return int(row[0]) if row else -1
         # generate vector embedding for the newly inserted record
         try:
             self.add_embedding(enh_id, enh, "enhancement", source_id=str(enh_id))
