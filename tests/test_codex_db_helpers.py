@@ -261,12 +261,11 @@ def test_bot_development_bot_uses_codex_samples(monkeypatch, tmp_path):
         helpers.TrainingSample(source="workflow", content="ex2"),
     ]
 
-    def fake_aggregate_samples(*, sort_by, limit, include_embeddings, scope):
+    def fake_aggregate_samples(*, sort_by, limit, include_embeddings):
         calls.update(
             sort_by=sort_by,
             limit=limit,
             include_embeddings=include_embeddings,
-            scope=scope,
         )
         return samples
 
@@ -287,4 +286,3 @@ def test_bot_development_bot_uses_codex_samples(monkeypatch, tmp_path):
     assert calls["limit"] == 2
     assert calls["sort_by"] == "confidence"
     assert calls["include_embeddings"] is True
-    assert calls["scope"] == "all"
