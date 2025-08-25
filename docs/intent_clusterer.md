@@ -68,5 +68,6 @@ for m in matches:
     print(m.path, m.cluster_ids, m.similarity)
 ```
 
-`query` yields `IntentMatch` objects with module paths, similarity scores and
-any related cluster identifiers.
+`query` yields `IntentMatch` objects with module paths, similarity scores,
+any related cluster identifiers and, for cluster entries, a concise
+``label`` describing the cluster intent.
