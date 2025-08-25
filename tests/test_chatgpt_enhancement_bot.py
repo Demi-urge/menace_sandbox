@@ -52,7 +52,8 @@ def test_enhancementdb_duplicate(tmp_path, caplog, monkeypatch):
     caplog.clear()
     with caplog.at_level(logging.WARNING):
         second = db.add(ceb.Enhancement(idea="i", rationale="r"))
-    assert first == second == captured["id"]
+    assert first == second
+    assert captured["id"] is None
     with db._connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM enhancements").fetchone()[0] == 1
     assert "duplicate" in caplog.text.lower()

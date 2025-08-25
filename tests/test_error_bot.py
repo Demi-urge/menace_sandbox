@@ -44,7 +44,8 @@ def test_add_error_duplicate(tmp_path, caplog, monkeypatch):
     caplog.clear()
     with caplog.at_level(logging.WARNING):
         second = db.add_error("dup", type_="t", description="d", resolution="r")
-    assert first == second == captured["id"]
+    assert first == second
+    assert captured["id"] is None
     assert "duplicate" in caplog.text.lower()
     assert db.conn.execute("SELECT COUNT(*) FROM errors").fetchone()[0] == 1
 
