@@ -25,13 +25,16 @@ for name, cls_name in [
 
 scope_mod = ModuleType("menace_sandbox.scope_utils")
 
+
 class Scope(str, Enum):
     LOCAL = "local"
     GLOBAL = "global"
     ALL = "all"
 
+
 def build_scope_clause(table, scope, menace_id):
     return "", []
+
 
 scope_mod.Scope = Scope
 scope_mod.build_scope_clause = build_scope_clause
@@ -41,7 +44,8 @@ helpers = importlib.import_module("menace_sandbox.codex_db_helpers")
 
 
 def _setup_enh_db(tmp_path, monkeypatch, rows):
-    conn = sqlite3.connect(tmp_path / "enh.db")
+    conn = sqlite3.\
+        connect(tmp_path / "enh.db")  # noqa: SQL001
     conn.row_factory = sqlite3.Row
     conn.execute(
         "CREATE TABLE enhancements("  # id, summary, confidence, outcome_score, timestamp
@@ -49,8 +53,9 @@ def _setup_enh_db(tmp_path, monkeypatch, rows):
         "outcome_score REAL, timestamp TEXT, source_menace_id TEXT)"
     )
     conn.executemany(
-        "INSERT INTO enhancements(id, summary, confidence, outcome_score, timestamp, source_menace_id)"
-        " VALUES (?,?,?,?,?,?)",
+        "INSERT INTO enhancements("  # column names split for readability
+        "id, summary, confidence, outcome_score, "
+        "timestamp, source_menace_id) VALUES (?,?,?,?,?,?)",
         rows,
     )
     conn.commit()
@@ -67,7 +72,8 @@ def _setup_enh_db(tmp_path, monkeypatch, rows):
 
 
 def _setup_ws_db(tmp_path, monkeypatch, rows):
-    conn = sqlite3.connect(tmp_path / "ws.db")
+    conn = sqlite3.\
+        connect(tmp_path / "ws.db")  # noqa: SQL001
     conn.row_factory = sqlite3.Row
     conn.execute(
         "CREATE TABLE workflow_summaries("  # workflow_id, summary, timestamp
@@ -75,8 +81,9 @@ def _setup_ws_db(tmp_path, monkeypatch, rows):
         "source_menace_id TEXT)"
     )
     conn.executemany(
-        "INSERT INTO workflow_summaries(workflow_id, summary, timestamp, source_menace_id)"
-        " VALUES (?,?,?,?)",
+        "INSERT INTO workflow_summaries("  # column names split for readability
+        "workflow_id, summary, timestamp, source_menace_id) "
+        "VALUES (?,?,?,?)",
         rows,
     )
     conn.commit()
@@ -93,7 +100,8 @@ def _setup_ws_db(tmp_path, monkeypatch, rows):
 
 
 def _setup_disc_db(tmp_path, monkeypatch, rows):
-    conn = sqlite3.connect(tmp_path / "disc.db")
+    conn = sqlite3.\
+        connect(tmp_path / "disc.db")  # noqa: SQL001
     conn.row_factory = sqlite3.Row
     conn.execute(
         "CREATE TABLE discrepancies("  # id, message, confidence, outcome_score, ts
@@ -101,8 +109,9 @@ def _setup_disc_db(tmp_path, monkeypatch, rows):
         "outcome_score REAL, ts TEXT, source_menace_id TEXT)"
     )
     conn.executemany(
-        "INSERT INTO discrepancies(id, message, metadata, confidence, outcome_score, ts, source_menace_id)"
-        " VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO discrepancies("  # column names split for readability
+        "id, message, metadata, confidence, outcome_score, ts, "
+        "source_menace_id) VALUES (?,?,?,?,?,?,?)",
         rows,
     )
     conn.commit()
@@ -119,14 +128,16 @@ def _setup_disc_db(tmp_path, monkeypatch, rows):
 
 
 def _setup_wf_db(tmp_path, monkeypatch, rows):
-    conn = sqlite3.connect(tmp_path / "wf.db")
+    conn = sqlite3.\
+        connect(tmp_path / "wf.db")  # noqa: SQL001
     conn.row_factory = sqlite3.Row
     conn.execute(
         "CREATE TABLE workflows("  # id, workflow text, timestamp
         "id INTEGER PRIMARY KEY, workflow TEXT, timestamp TEXT, source_menace_id TEXT)"
     )
     conn.executemany(
-        "INSERT INTO workflows(id, workflow, timestamp, source_menace_id) VALUES (?,?,?,?)",
+        "INSERT INTO workflows("  # column names split for readability
+        "id, workflow, timestamp, source_menace_id) VALUES (?,?,?,?)",
         rows,
     )
     conn.commit()
@@ -220,3 +231,60 @@ def test_aggregate_samples(monkeypatch, tmp_path):
 
     results = helpers.aggregate_samples(sort_by="timestamp", limit=3)
     assert [s.content for s in results] == ["d1", "a", "s1"]
+
+
+def test_bot_development_bot_uses_codex_samples(monkeypatch, tmp_path):
+    """BotDevelopmentBot should retrieve and embed training samples in prompts."""
+
+    # Stub modules required for importing bot_development_bot
+    db_router = ModuleType("menace_sandbox.db_router")
+    db_router.DBRouter = object
+    sys.modules["menace_sandbox.db_router"] = db_router
+    sys.modules.setdefault(
+        "menace_sandbox.vision_utils", ModuleType("menace_sandbox.vision_utils")
+    )
+    micro_pkg = ModuleType("menace_sandbox.micro_models")
+    micro_pkg.__path__ = []
+    sys.modules["menace_sandbox.micro_models"] = micro_pkg
+    tp = ModuleType("menace_sandbox.micro_models.tool_predictor")
+    tp.predict_tools = lambda spec: []
+    sys.modules["menace_sandbox.micro_models.tool_predictor"] = tp
+    pi = ModuleType("menace_sandbox.micro_models.prefix_injector")
+    pi.inject_prefix = lambda prompt, prefix, conf, role="system": prompt
+    sys.modules["menace_sandbox.micro_models.prefix_injector"] = pi
+
+    bdb = importlib.import_module("menace_sandbox.bot_development_bot")
+
+    calls: dict[str, object] = {}
+    samples = [
+        helpers.TrainingSample(source="enhancement", content="ex1"),
+        helpers.TrainingSample(source="workflow", content="ex2"),
+    ]
+
+    def fake_aggregate_samples(*, sort_by, limit, include_embeddings, scope):
+        calls.update(
+            sort_by=sort_by,
+            limit=limit,
+            include_embeddings=include_embeddings,
+            scope=scope,
+        )
+        return samples
+
+    monkeypatch.setattr(bdb.cdh, "aggregate_samples", fake_aggregate_samples)
+
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
+    spec = bdb.BotSpec(name="demo", purpose="demo", description="desc")
+
+    prompt = bot._build_prompt(
+        spec,
+        sample_limit=2,
+        sample_sort_by="confidence",
+        sample_with_vectors=True,
+    )
+
+    assert "### Training Examples" in prompt
+    assert "ex1" in prompt and "ex2" in prompt
+    assert calls["limit"] == 2
+    assert calls["sort_by"] == "confidence"
+    assert calls["include_embeddings"] is True
+    assert calls["scope"] == "all"
