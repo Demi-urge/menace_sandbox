@@ -38,15 +38,17 @@ def _write_io_module(tmp_path: Path) -> None:
     """Create a module exercising IO and globals for analysis tests."""
 
     (tmp_path / "mod_io.py").write_text(
+        "import os\nfrom pathlib import Path\n"
         "CONFIG = 'config.json'\n"
         "GLOBAL_VAR = 0\n\n"
         "def worker(arg1: str) -> str:\n"
         "    global GLOBAL_VAR\n"
-        "    data = open('input.txt').read()\n"
+        "    data = open(os.path.join('data', 'input.txt')).read()\n"
         "    GLOBAL_VAR = arg1\n"
-        "    with open('output.txt', 'w') as fh:\n"
+        "    with Path(f\"out_{'file'}.txt\").open('w') as fh:\n"
         "        fh.write(data)\n"
-        "    return data\n"
+        "    token = os.environ['TOKEN']\n"
+        "    return token\n"
     )
 
 
@@ -106,8 +108,13 @@ def test_module_io_extraction(tmp_path, monkeypatch):
     assert worker["args"] == ["arg1"]
     assert worker["returns"] == "str"
     assert info.globals >= {"CONFIG", "GLOBAL_VAR"}
-    assert "input.txt" in info.files_read
-    assert "output.txt" in info.files_written
+    assert "data/input.txt" in info.files_read
+    assert "out_file.txt" in info.files_written
+    assert "TOKEN" in info.env_vars
+
+    analyzer = ws.ModuleIOAnalyzer(cache_path=tmp_path / "cache.json")
+    analyzed = analyzer.analyze("mod_io.py")
+    assert "TOKEN" in analyzed["inputs"]
 
 
 def test_generated_json_schema(tmp_path, monkeypatch):

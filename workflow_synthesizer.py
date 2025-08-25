@@ -59,6 +59,7 @@ class ModuleIO:
     globals: Set[str] = field(default_factory=set)
     files_read: Set[str] = field(default_factory=set)
     files_written: Set[str] = field(default_factory=set)
+    env_vars: Set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -84,15 +85,66 @@ def _parse_module_io(path: Path) -> ModuleIO:
     tree = ast.parse(source, filename=str(path))
 
     def _extract_path(node: ast.AST) -> str | None:
-        """Return a string path from ``Path('foo')`` like nodes."""
+        """Best effort extraction of a file path from ``node``.
+
+        The helper recognises ``Path('foo')`` calls, ``os.path.join`` and
+        f-strings composed solely of resolvable parts.  The returned value is
+        a string if the path could be statically determined otherwise ``None``.
+        """
 
         if isinstance(node, ast.Call):
             func = node.func
+            # Path("foo") / Path(os.path.join(...))
             if isinstance(func, ast.Name) and func.id == "Path":
-                if node.args and isinstance(node.args[0], ast.Constant):
-                    val = node.args[0].value
+                if node.args:
+                    val = _extract_path(node.args[0])
                     if isinstance(val, str):
                         return val
+            # os.path.join("a", "b")
+            elif (
+                isinstance(func, ast.Attribute)
+                and func.attr == "join"
+                and isinstance(func.value, ast.Attribute)
+                and func.value.attr == "path"
+                and isinstance(func.value.value, ast.Name)
+                and func.value.value.id == "os"
+            ):
+                parts: List[str] = []
+                for arg in node.args:
+                    part = _extract_path(arg)
+                    if part is None:
+                        break
+                    parts.append(part)
+                if len(parts) == len(node.args):
+                    return "/".join(parts)
+            # os.environ.get("VAR") - environment variable names
+            elif (
+                isinstance(func, ast.Attribute)
+                and func.attr == "get"
+                and isinstance(func.value, ast.Attribute)
+                and func.value.attr == "environ"
+                and isinstance(func.value.value, ast.Name)
+                and func.value.value.id == "os"
+            ):
+                if node.args:
+                    arg = node.args[0]
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        module_io.env_vars.add(arg.value)
+        if isinstance(node, ast.JoinedStr):
+            parts: List[str] = []
+            for value in node.values:
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    parts.append(value.value)
+                elif isinstance(value, ast.Str):  # pragma: no cover - Py<3.8
+                    parts.append(value.s)
+                elif isinstance(value, ast.FormattedValue):
+                    inner = _extract_path(value.value)
+                    if inner is None:
+                        return None
+                    parts.append(inner)
+                else:
+                    return None
+            return "".join(parts)
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return node.value
         if isinstance(node, ast.Name):
@@ -157,6 +209,18 @@ def _parse_module_io(path: Path) -> ModuleIO:
 
         def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
             func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "get"
+                and isinstance(func.value, ast.Attribute)
+                and func.value.attr == "environ"
+                and isinstance(func.value.value, ast.Name)
+                and func.value.value.id == "os"
+            ):
+                if node.args and isinstance(node.args[0], ast.Constant):
+                    val = node.args[0].value
+                    if isinstance(val, str):
+                        module_io.env_vars.add(val)
             if isinstance(func, ast.Name) and func.id == "open":
                 filename = None
                 if node.args:
@@ -216,6 +280,25 @@ def _parse_module_io(path: Path) -> ModuleIO:
                         else:
                             module_io.files_read.add(filename)
 
+            self.generic_visit(node)
+
+        def visit_Subscript(self, node: ast.Subscript) -> None:  # noqa: D401
+            value = node.value
+            if (
+                isinstance(value, ast.Attribute)
+                and value.attr == "environ"
+                and isinstance(value.value, ast.Name)
+                and value.value.id == "os"
+            ):
+                key_node = node.slice
+                key = None
+                if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
+                    key = key_node.value
+                elif isinstance(key_node, ast.Index) and isinstance(key_node.value, ast.Constant):
+                    if isinstance(key_node.value.value, str):
+                        key = key_node.value.value
+                if key:
+                    module_io.env_vars.add(key)
             self.generic_visit(node)
 
         def visit_Constant(self, node: ast.Constant) -> None:  # noqa: D401
@@ -288,11 +371,12 @@ class ModuleIOAnalyzer:
         record = {
             "hash": digest,
             "functions": io.functions,
-            "inputs": sorted(io.inputs | io.files_read | io.globals),
+            "inputs": sorted(io.inputs | io.files_read | io.globals | io.env_vars),
             "outputs": sorted(io.outputs | io.files_written | io.globals),
             "globals": sorted(io.globals),
             "files_read": sorted(io.files_read),
             "files_written": sorted(io.files_written),
+            "env_vars": sorted(io.env_vars),
         }
         self._cache[key] = record
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
