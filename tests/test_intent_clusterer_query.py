@@ -33,29 +33,39 @@ def test_query_falls_back_to_clusters(monkeypatch, tmp_path):
     retr = DummyRetriever()
     clusterer = ic.IntentClusterer(retr)
     clusterer.cluster_map["a"] = [5]
-    retr.add_vector([0.0, 1.0], {"path": "a.py", "cluster_ids": [5]})
-    monkeypatch.setattr(ic, "governed_embed", lambda text: [1.0, 0.0])
+    retr.add_vector([0.0, 1.0, 0.0], {"path": "a.py", "cluster_ids": [5]})
+    monkeypatch.setattr(
+        ic,
+        "governed_embed",
+        lambda text: [
+            float("auth" in text.lower()),
+            float("pay" in text.lower()),
+            float("help" in text.lower()),
+        ],
+    )
     # Persist a cluster record with a matching vector so fallback can occur
     member = tmp_path / "b.py"
     member.write_text('"""cluster helper"""')
-    blob = sqlite3.Binary(pickle.dumps([1.0, 0.0]))
+    blob = sqlite3.Binary(pickle.dumps([1.0, 0.0, 0.0]))
     meta = {
         "members": [str(member)],
         "kind": "cluster",
         "cluster_ids": [5],
         "path": "cluster:5",
         "text": "cluster helper",
+        "label": "auth helper",
+        "summary": "",
     }
     clusterer.conn.execute(
         "REPLACE INTO intent_embeddings (module_path, vector, metadata) VALUES (?, ?, ?)",
         ("cluster:5", blob, json.dumps(meta)),
     )
     clusterer.conn.commit()
-    res = clusterer.query("whatever", threshold=0.9)
-    assert res and res[0].path is None and res[0].cluster_ids == [5]
+    res = clusterer.query("auth", threshold=0.9)
+    assert res and res[0].path is None and res[0].cluster_ids == [5] and res[0].category in ic.CANONICAL_CATEGORIES
     text, vec = clusterer.get_cluster_intents(5)
     assert "cluster helper" in text
-    assert vec == [1.0, 0.0]
+    assert vec == [1.0, 0.0, 0.0]
 
 
 def test_query_without_cluster_ids(monkeypatch):
@@ -88,9 +98,17 @@ def test_find_clusters_related_to_from_existing_store(monkeypatch, tmp_path):
     clusterer = ic.IntentClusterer(retr)
     member = tmp_path / "m.py"
     member.write_text('"""cluster helper"""')
-    clusterer.vectors[str(member)] = [1.0, 0.0]
+    monkeypatch.setattr(
+        ic,
+        "governed_embed",
+        lambda text: [
+            float("auth" in text.lower()),
+            float("pay" in text.lower()),
+            float("help" in text.lower()),
+        ],
+    )
+    clusterer.vectors[str(member)] = [1.0, 0.0, 0.0]
     clusterer._index_clusters({"7": [str(member)]})
     fresh = ic.IntentClusterer(retr)
-    monkeypatch.setattr(ic, "governed_embed", lambda text: [1.0, 0.0])
     res = fresh.find_clusters_related_to("cluster helper", top_k=1)
-    assert res and res[0].cluster_ids == [7]
+    assert res and res[0].cluster_ids == [7] and res[0].category in ic.CANONICAL_CATEGORIES
