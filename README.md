@@ -180,6 +180,27 @@
    run. See [docs/deployment_governance.md](docs/deployment_governance.md) for
    rule syntax, configuration paths and example policy/scorecard templates.
 
+### SQLite Write Buffer
+
+SQLite's coarse file locking can stall concurrent writers. When `USE_DB_QUEUE`
+is set, calls to `insert_if_unique` are queued as JSONL records under
+`SANDBOX_DATA_DIR/queues`. Each entry stores the source `MENACE_ID` and a
+content hash for deduplication.
+
+A background daemon flushes the queue into the shared database:
+
+```bash
+python sync_shared_db.py --db-url sqlite:///menace.db --queue-dir sandbox_data/queues
+```
+
+Successful rows are committed and removed, retries happen up to three times and
+then move to `<table>_queue.failed.jsonl`. Override the queue directory with
+`SANDBOX_DATA_DIR` when running multiple instances.
+
+For PostgreSQL or other backends that handle concurrent writes, disable the
+buffer by unsetting `USE_DB_QUEUE` (or passing `queue_path=None`) so inserts go
+directly to the database and the daemon is unnecessary.
+
 ### Codex database helpers
 
 The `codex_db_helpers` module gathers training samples from Menace's
