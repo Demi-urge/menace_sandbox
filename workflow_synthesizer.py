@@ -12,6 +12,8 @@ searching for modules related to a textual problem description.
 """
 
 import ast
+import hashlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Set
@@ -162,6 +164,55 @@ def _parse_module_io(path: Path) -> ModuleIO:
 
     Visitor().visit(tree)
     return module_io
+
+
+class ModuleIOAnalyzer:
+    """Analyze modules to determine their IO signatures with caching."""
+
+    def __init__(self, cache_path: Path = Path("sandbox_data/io_signatures.json")) -> None:
+        self.cache_path = cache_path
+        try:
+            self._cache: Dict[str, Dict[str, Any]] = json.loads(
+                cache_path.read_text(encoding="utf-8")
+            )
+        except Exception:  # pragma: no cover - empty or corrupt cache
+            self._cache = {}
+
+    # ------------------------------------------------------------------
+    def analyze(self, module_path: str | Path) -> Dict[str, List[str]]:
+        """Return cached IO information for ``module_path``.
+
+        The analysis inspects functions, globals, and basic file operations to
+        produce high level input and output signatures.  Results are cached on
+        disk so subsequent calls avoid re-parsing unchanged modules.
+        """
+
+        path = Path(module_path)
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return {"inputs": [], "outputs": []}
+
+        digest = hashlib.sha256(data).hexdigest()
+        key = str(path)
+        cached = self._cache.get(key)
+        if cached and cached.get("hash") == digest:
+            return {"inputs": cached.get("inputs", []), "outputs": cached.get("outputs", [])}
+
+        io = _parse_module_io(path)
+        record = {
+            "hash": digest,
+            "functions": io.functions,
+            "inputs": sorted(io.inputs | io.files_read | io.globals),
+            "outputs": sorted(io.outputs | io.files_written | io.globals),
+            "globals": sorted(io.globals),
+            "files_read": sorted(io.files_read),
+            "files_written": sorted(io.files_written),
+        }
+        self._cache[key] = record
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self.cache_path.write_text(json.dumps(self._cache, indent=2), encoding="utf-8")
+        return {"inputs": record["inputs"], "outputs": record["outputs"]}
 
 
 def inspect_module(module_name: str) -> ModuleIO:
