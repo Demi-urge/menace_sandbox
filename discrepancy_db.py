@@ -57,7 +57,9 @@ class DiscrepancyDB(EmbeddableDBMixin):
                 message TEXT,
                 metadata TEXT,
                 ts TEXT,
-                source_menace_id TEXT NOT NULL
+                source_menace_id TEXT NOT NULL,
+                confidence REAL,
+                outcome_score REAL
             )
             """
         )
@@ -69,9 +71,34 @@ class DiscrepancyDB(EmbeddableDBMixin):
             self.conn.execute(
                 "UPDATE discrepancies SET source_menace_id='' WHERE source_menace_id IS NULL"
             )
+        if "confidence" not in cols:
+            self.conn.execute(
+                "ALTER TABLE discrepancies ADD COLUMN confidence REAL"
+            )
+        if "outcome_score" not in cols:
+            self.conn.execute(
+                "ALTER TABLE discrepancies ADD COLUMN outcome_score REAL"
+            )
+        # migrate existing JSON data into the new columns
+        self.conn.execute(
+            "UPDATE discrepancies SET confidence=json_extract(metadata,'$.confidence') "
+            "WHERE confidence IS NULL"
+        )
+        self.conn.execute(
+            "UPDATE discrepancies SET outcome_score=json_extract(metadata,'$.outcome_score') "
+            "WHERE outcome_score IS NULL"
+        )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_discrepancies_source_menace_id "
             "ON discrepancies(source_menace_id)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_discrepancies_confidence "
+            "ON discrepancies(confidence)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_discrepancies_outcome_score "
+            "ON discrepancies(outcome_score)"
         )
         self.conn.commit()
         index_path = (
@@ -181,9 +208,20 @@ class DiscrepancyDB(EmbeddableDBMixin):
 
     def add(self, rec: DiscrepancyRecord, *, source_menace_id: str | None = None) -> int:
         menace_id = self._current_menace_id(source_menace_id)
+        confidence = rec.metadata.get("confidence")
+        outcome = rec.metadata.get("outcome_score")
         cur = self.conn.execute(
-            "INSERT INTO discrepancies(source_menace_id, message, metadata, ts) VALUES (?,?,?,?)",
-            (menace_id, rec.message, json.dumps(rec.metadata), rec.ts),
+            "INSERT INTO discrepancies("
+            "source_menace_id, message, metadata, ts, confidence, outcome_score)"
+            " VALUES (?,?,?,?,?,?)",
+            (
+                menace_id,
+                rec.message,
+                json.dumps(rec.metadata),
+                rec.ts,
+                confidence,
+                outcome,
+            ),
         )
         self.conn.commit()
         rec.id = int(cur.lastrowid)
@@ -235,11 +273,18 @@ class DiscrepancyDB(EmbeddableDBMixin):
         if metadata is not None:
             existing.metadata = metadata
         menace_id = self._current_menace_id(source_menace_id)
-        query = "UPDATE discrepancies SET message=?, metadata=?, ts=?"
+        query = (
+            "UPDATE discrepancies SET message=?, metadata=?, ts=?, "
+            "confidence=?, outcome_score=?"
+        )
+        confidence = existing.metadata.get("confidence")
+        outcome = existing.metadata.get("outcome_score")
         params: list[Any] = [
             existing.message,
             json.dumps(existing.metadata),
             existing.ts,
+            confidence,
+            outcome,
         ]
         clause, scope_params = build_scope_clause("discrepancies", scope, menace_id)
         params.extend(scope_params)
