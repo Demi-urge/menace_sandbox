@@ -1799,8 +1799,12 @@ accepts a free-text problem description. In both cases an interactive prompt
 allows editing before the workflow specification is written to the chosen file.
 
 Candidates can be exported to `.workflow.json` for registration with
-`WorkflowDB`. See [docs/workflow_synthesizer.md](docs/workflow_synthesizer.md)
-for design notes and more examples.
+`WorkflowDB`. The JSON contains a `steps` list describing each module's inputs
+and outputs, making it consumable by the sandbox evaluation pipeline. Once
+stored in `WorkflowDB`, evaluation services and workers can execute and score
+the workflow alongside existing ones. See
+[docs/workflow_synthesizer.md](docs/workflow_synthesizer.md) for design notes
+and more examples.
 
 ## Vector Analytics
 
