@@ -92,11 +92,23 @@ def test_store_plan(tmp_path):
 def test_workflowdb_duplicate(tmp_path, caplog, monkeypatch):
     router = thb.init_db_router("wfdup", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
     monkeypatch.setattr(thb.WorkflowDB, "add_embedding", lambda *a, **k: None)
+    captured: dict[str, int | None] = {"id": None}
+    orig = thb.insert_if_unique
+
+    def wrapper(*args, **kwargs):
+        res = orig(*args, **kwargs)
+        captured["id"] = res
+        return res
+
+    monkeypatch.setattr(thb, "insert_if_unique", wrapper)
+
     db = thb.WorkflowDB(tmp_path / "wf.db", router=router)
     wf = thb.WorkflowRecord(workflow=["a"], title="T", description="d")
+    first = db.add(wf)
+    captured["id"] = None
+    caplog.clear()
     with caplog.at_level(logging.WARNING):
-        first = db.add(wf)
         second = db.add(thb.WorkflowRecord(workflow=["a"], title="T", description="d"))
-    assert first == second
-    assert "duplicate workflow" in caplog.text.lower()
+    assert first == second == captured["id"]
+    assert "duplicate" in caplog.text.lower()
     assert db.conn.execute("SELECT COUNT(*) FROM workflows").fetchone()[0] == 1
