@@ -54,6 +54,7 @@ DEFAULT_PROPOSE_RATIO = float(os.environ.get("PROPOSE_SUMMARY_RATIO", "0.3"))
 _ENHANCEMENT_HASH_FIELDS = [
     "idea",
     "rationale",
+    "summary",
     "before_code",
     "after_code",
     "description",
@@ -329,7 +330,7 @@ class EnhancementDB(EmbeddableDBMixin):
                 "enhancements",
                 values,
                 _ENHANCEMENT_HASH_FIELDS,
-                self.router.menace_id if self.router else "",
+                menace_id,
                 logger,
             )
         if enh_id is None:
