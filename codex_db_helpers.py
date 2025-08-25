@@ -22,6 +22,7 @@ alias.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Iterable, List, Optional
 
 from .chatgpt_enhancement_bot import EnhancementDB
@@ -29,6 +30,9 @@ from .workflow_summary_db import WorkflowSummaryDB
 from .discrepancy_db import DiscrepancyDB
 from .task_handoff_bot import WorkflowDB as TaskWorkflowDB
 from .scope_utils import Scope, build_scope_clause
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -233,18 +237,19 @@ def aggregate_samples(
     """Return combined samples from all data sources."""
 
     fetchers = [
-        fetch_enhancements,
-        fetch_summaries,
-        fetch_discrepancies,
-        fetch_workflows,
+        ("fetch_enhancements", fetch_enhancements),
+        ("fetch_summaries", fetch_summaries),
+        ("fetch_discrepancies", fetch_discrepancies),
+        ("fetch_workflows", fetch_workflows),
     ]
     samples: List[TrainingSample] = []
-    for fetch in fetchers:
+    for name, fetch in fetchers:
         try:
             samples.extend(
                 fetch(sort_by=sort_by, limit=limit, include_embeddings=include_embeddings)
             )
-        except Exception:  # pragma: no cover - best effort
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("%s failed: %s", name, exc)
             continue
 
     key_map = {

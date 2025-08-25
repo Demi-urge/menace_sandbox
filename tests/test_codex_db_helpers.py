@@ -280,3 +280,22 @@ def test_bot_development_bot_uses_codex_samples(monkeypatch, tmp_path):
     assert "### Training Examples" in prompt
     assert "ex1" in prompt and "ex2" in prompt
     assert calls["args"] == ("confidence", 2, True)
+
+
+def test_aggregate_samples_warns_when_fetcher_fails(monkeypatch, caplog):
+    def ok_fetcher(*, sort_by, limit, include_embeddings):
+        return [helpers.TrainingSample(source="x", content="ok", timestamp="t")]
+
+    def bad_fetcher(*, sort_by, limit, include_embeddings):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(helpers, "fetch_enhancements", ok_fetcher)
+    monkeypatch.setattr(helpers, "fetch_summaries", bad_fetcher)
+    monkeypatch.setattr(helpers, "fetch_discrepancies", ok_fetcher)
+    monkeypatch.setattr(helpers, "fetch_workflows", ok_fetcher)
+
+    caplog.set_level("WARNING", logger=helpers.__name__)
+    results = helpers.aggregate_samples(limit=5)
+
+    assert len(results) == 3
+    assert "fetch_summaries" in caplog.text
