@@ -8,17 +8,40 @@ import importlib.util
 import logging
 import os
 import sys
+from typing import TYPE_CHECKING
 
 from .roi_calculator import ROICalculator
 from .truth_adapter import TruthAdapter
 from .foresight_tracker import ForesightTracker
 from .upgrade_forecaster import UpgradeForecaster
 from .workflow_synthesizer import WorkflowSynthesizer
-CompositeWorkflowScorer = None  # type: ignore
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from .composite_workflow_scorer import CompositeWorkflowScorer
 try:  # pragma: no cover - optional heavy dependency
     from .intent_clusterer import IntentClusterer
 except Exception:  # pragma: no cover - gracefully degrade
     IntentClusterer = None  # type: ignore[misc]
+
+
+def __getattr__(name: str) -> object:
+    """Lazily import optional heavy modules on first access.
+
+    This keeps initial import costs low while still exposing the class via
+    ``menace_sandbox.CompositeWorkflowScorer``.  If the import fails the
+    attribute resolves to ``None`` instead of raising ``ImportError``.
+    """
+
+    if name == "CompositeWorkflowScorer":  # pragma: no cover - dynamic import
+        try:
+            from .composite_workflow_scorer import (
+                CompositeWorkflowScorer as _CompositeWorkflowScorer,
+            )
+        except Exception:  # pragma: no cover - gracefully degrade
+            globals()[name] = None
+            return None
+        globals()[name] = _CompositeWorkflowScorer
+        return _CompositeWorkflowScorer
+    raise AttributeError(name)
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
