@@ -27,15 +27,15 @@ from menace_sandbox.roi_results_db import ROIResultsDB
 
 def test_compute_metric_helpers():
     roi_hist = [1.0, 2.0, 3.0]
-    module_hist = {"a": [0.5, 1.0], "b": [0.5, 1.0]}
-    assert compute_workflow_synergy(roi_hist, module_hist, window=3) == pytest.approx(0.5)
+    module_hist = {"a": [0.5, 1.0, 1.5], "b": [0.5, 1.0, 1.5]}
+    assert compute_workflow_synergy(roi_hist, module_hist, window=3) == pytest.approx(1.0)
 
     tracker = types.SimpleNamespace(timings={"a": 2.0, "b": 1.0})
-    assert compute_bottleneck_index(tracker) == pytest.approx(2.0 / 3.0)
+    assert compute_bottleneck_index(tracker) == pytest.approx(1.0 / 6.0)
 
     history = [1.0, 2.0, 4.0]
     expected_patch = compute_patchability(history, window=3)
-    assert expected_patch == pytest.approx(0.6674916480965474)
+    assert expected_patch == pytest.approx(1.2026755886059102)
 
 
 def test_composite_scorer_end_to_end(tmp_path, monkeypatch):
@@ -70,16 +70,16 @@ def test_composite_scorer_end_to_end(tmp_path, monkeypatch):
 
     modules = {"mod_a": lambda: True, "mod_b": lambda: True}
 
-    counter = iter([0, 1, 2, 3, 4, 5])
+    counter = iter([0, 1, 3, 4, 5, 6])
     monkeypatch.setattr(time, "perf_counter", lambda: next(counter))
 
     run_id = "run1"
     rid, metrics = scorer.score_workflow("wf1", modules, run_id=run_id)
     assert rid == run_id
 
-    assert metrics["roi_gain"] == pytest.approx(4.0)
-    assert metrics["workflow_synergy_score"] == pytest.approx(0.4)
-    assert metrics["bottleneck_index"] == pytest.approx(0.5)
+    assert metrics["roi_gain"] == pytest.approx(3.5)
+    assert metrics["workflow_synergy_score"] == pytest.approx(0.0)
+    assert metrics["bottleneck_index"] == pytest.approx(1.0 / 6.0)
     expected_patch = compute_patchability(tracker.roi_history, scorer.history_window)
     assert metrics["patchability_score"] == pytest.approx(expected_patch)
 
@@ -87,10 +87,10 @@ def test_composite_scorer_end_to_end(tmp_path, monkeypatch):
     assert len(results) == 1
     row = results[0]
     assert row.workflow_id == "wf1" and row.run_id == run_id
-    assert row.module_deltas["mod_a"]["roi_delta"] == pytest.approx(2.0)
+    assert row.module_deltas["mod_a"]["roi_delta"] == pytest.approx(1.5)
     assert row.module_deltas["mod_b"]["roi_delta"] == pytest.approx(2.0)
 
     attrib = results_db.fetch_module_attribution()
-    assert attrib["mod_a"]["roi_delta"] == pytest.approx(2.0)
-    assert attrib["mod_a"]["bottleneck"] == pytest.approx(0.5)
-    assert scorer.module_attribution["mod_b"]["bottleneck_contribution"] == pytest.approx(0.5)
+    assert attrib["mod_a"]["roi_delta"] == pytest.approx(1.5)
+    assert attrib["mod_a"]["bottleneck"] == pytest.approx(2.0 / 3.0)
+    assert scorer.module_attribution["mod_b"]["bottleneck_contribution"] == pytest.approx(1.0 / 3.0)
