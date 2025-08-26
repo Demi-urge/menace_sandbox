@@ -1,13 +1,20 @@
-"""Simple CLI/dashboard for ROI and retrieval metrics."""
+"""Simple CLI/dashboard for workflow-level ROI results.
+
+This version pulls data from ``roi_results.db`` and can visualise multiple
+metrics over time for one or more workflows.  Results can be filtered by
+``workflow_id`` and timestamp range.
+"""
 
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-from typing import List, Tuple, Dict
+from datetime import datetime
+from typing import Dict, List, Sequence
 
-from vector_metrics_db import VectorMetricsDB
-from roi_tracker import ROITracker
+try:
+    from ..roi_results_db import ROIResultsDB
+except ImportError:  # pragma: no cover - allow running as script
+    from roi_results_db import ROIResultsDB
 
 try:  # optional dependency for plotting
     import matplotlib.pyplot as plt  # pragma: no cover - plotting only
@@ -16,64 +23,76 @@ except Exception:  # pragma: no cover - matplotlib may be missing
 
 
 # ---------------------------------------------------------------------------
-def _patch_outcomes(db: VectorMetricsDB, limit: int = 10) -> List[Tuple[str, float]]:
-    """Return top ``limit`` patches by cumulative ROI contribution."""
+def _fetch_results(
+    db: ROIResultsDB,
+    workflows: Sequence[str] | None,
+    start: str | None,
+    end: str | None,
+) -> List[Dict[str, object]]:
+    """Return ROI result rows honouring the provided filters."""
 
-    cur = db.conn.execute(
-        """
-        SELECT patch_id, COALESCE(SUM(contribution),0) AS roi
-          FROM vector_metrics
-         WHERE event_type='retrieval' AND patch_id != ''
-      GROUP BY patch_id
-      ORDER BY roi DESC
-         LIMIT ?
-        """,
-        (limit,),
+    query = (
+        "SELECT workflow_id, timestamp, roi_gain, success_rate, "
+        "workflow_synergy_score, bottleneck_index, patchability_score "
+        "FROM workflow_results"
     )
-    return [(str(patch), float(roi)) for patch, roi in cur.fetchall()]
+    clauses: List[str] = []
+    params: List[object] = []
+
+    if workflows:
+        placeholders = ",".join(["?"] * len(workflows))
+        clauses.append(f"workflow_id IN ({placeholders})")
+        params.extend(workflows)
+    if start:
+        clauses.append("timestamp >= ?")
+        params.append(start)
+    if end:
+        clauses.append("timestamp <= ?")
+        params.append(end)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY timestamp"
+
+    cur = db.conn.execute(query, params)
+    cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
 # ---------------------------------------------------------------------------
-def _plot(
-    roi_history: List[float],
-    db_metrics: List[Dict[str, float]],
-    patch_metrics: List[Tuple[str, float]],
-    *,
-    output: str | None = None,
-) -> None:
-    """Render plots for ROI trend, retrieval success and patch outcomes."""
+def _plot(records: List[Dict[str, object]], *, output: str | None = None) -> None:
+    """Render metric trends for the provided records."""
 
     if plt is None:  # pragma: no cover - plotting optional
         print("matplotlib not available; skipping visualisation")
         return
 
-    fig, axes = plt.subplots(3, 1, figsize=(10, 12))
+    if not records:
+        print("No data matching filters")
+        return
 
-    if roi_history:
-        axes[0].plot(range(len(roi_history)), roi_history, marker="o")
-        axes[0].set_title("ROI Delta Trend")
-        axes[0].set_xlabel("Iteration")
-        axes[0].set_ylabel("ROI Δ")
+    metrics = [
+        "roi_gain",
+        "success_rate",
+        "workflow_synergy_score",
+        "bottleneck_index",
+        "patchability_score",
+    ]
+    workflows = sorted({str(r["workflow_id"]) for r in records})
+    fig, axes = plt.subplots(len(metrics), 1, figsize=(10, 3 * len(metrics)))
+    if len(metrics) == 1:
+        axes = [axes]
 
-    if db_metrics:
-        names = [m["origin_db"] for m in db_metrics]
-        win_rates = [m.get("win_rate", 0.0) for m in db_metrics]
-        regret_rates = [m.get("regret_rate", 0.0) for m in db_metrics]
-        x = range(len(names))
-        axes[1].bar([i - 0.2 for i in x], win_rates, width=0.4, label="Win rate")
-        axes[1].bar([i + 0.2 for i in x], regret_rates, width=0.4, label="Regret rate")
-        axes[1].set_title("Retrieval Success by Database")
-        axes[1].set_xticks(list(x))
-        axes[1].set_xticklabels(names, rotation=45, ha="right")
-        axes[1].legend()
-
-    if patch_metrics:
-        patches = [p for p, _ in patch_metrics]
-        roi_vals = [r for _, r in patch_metrics]
-        axes[2].bar(patches, roi_vals)
-        axes[2].set_title("Patch ROI Contribution")
-        axes[2].set_xticklabels(patches, rotation=45, ha="right")
-        axes[2].set_ylabel("ROI")
+    for ax, metric in zip(axes, metrics):
+        for wf in workflows:
+            wf_records = [r for r in records if r["workflow_id"] == wf]
+            times = [datetime.fromisoformat(str(r["timestamp"])) for r in wf_records]
+            values = [float(r[metric]) for r in wf_records]
+            ax.plot(times, values, marker="o", label=wf)
+        ax.set_title(metric.replace("_", " ").title())
+        ax.set_xlabel("Timestamp")
+        ax.set_ylabel(metric)
+        if len(workflows) > 1:
+            ax.legend()
 
     fig.tight_layout()
     if output:
@@ -87,46 +106,21 @@ def main(argv: List[str] | None = None) -> None:
     """Entry point for the ROI dashboard CLI."""
 
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--roi-db", default="roi_results.db", help="Path to ROI results DB")
     parser.add_argument(
-        "--vector-db",
-        default="vector_metrics.db",
-        help="Path to vector metrics SQLite DB",
+        "--workflow-id",
+        action="append",
+        dest="workflows",
+        help="Workflow ID to filter (can be repeated)",
     )
-    parser.add_argument(
-        "--roi-history",
-        default="sandbox_data/roi_history.json",
-        help="Path to ROI history JSON or SQLite file",
-    )
-    parser.add_argument(
-        "--plateau-window",
-        type=int,
-        default=5,
-        help="Iterations considered when checking for plateau",
-    )
-    parser.add_argument(
-        "--output",
-        help="Optional path to save the generated plot instead of displaying",
-    )
+    parser.add_argument("--start", help="Start timestamp (inclusive)")
+    parser.add_argument("--end", help="End timestamp (inclusive)")
+    parser.add_argument("--output", help="Optional path to save the plot instead of displaying")
     args = parser.parse_args(argv)
 
-    vec_db = VectorMetricsDB(Path(args.vector_db))
-    tracker = ROITracker()
-    tracker.load_history(str(args.roi_history))
-
-    # Aggregate per-database metrics and ROI deltas.
-    tracker.ingest_vector_metrics_db(vec_db)
-    db_metrics = tracker.db_roi_report()
-    patches = _patch_outcomes(vec_db)
-
-    # Plateau detection.
-    threshold = tracker.diminishing()
-    recent = tracker.roi_history[-args.plateau_window :]
-    if recent and all(abs(x) <= threshold for x in recent):
-        print(
-            f"Warning: ROI improvement plateau detected (|Δ| <= {threshold:.4f} for last {len(recent)} iterations)",
-        )
-
-    _plot(tracker.roi_history, db_metrics, patches, output=args.output)
+    db = ROIResultsDB(args.roi_db)
+    records = _fetch_results(db, args.workflows, args.start, args.end)
+    _plot(records, output=args.output)
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
