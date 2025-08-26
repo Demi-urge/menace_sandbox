@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Prevent direct sqlite3.connect usage outside db_router.py."""
+"""Prevent direct ``sqlite3.connect`` usage outside approved modules.
+
+The allow list is shared with ``tests/test_db_router_enforcement.py`` via
+``tests/approved_sqlite3_usage.txt`` so CI and pre-commit use the same source
+of truth.
+"""
 from __future__ import annotations
 
 import sys
@@ -11,18 +16,23 @@ PATTERN = "sqlite3.connect("
 # directory. Paths in ``ALLOWLIST`` are defined relative to this directory.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Files below are permitted to call sqlite3.connect directly. Any additional
-# exceptions must be documented in ``docs/db_router.md`` and added here with
-# explicit approval.
-ALLOWLIST = {
-    REPO_ROOT / "db_router.py",
-    REPO_ROOT / "scripts/check_sqlite_connections.py",
-    REPO_ROOT / "scripts/new_db.py",
-    REPO_ROOT / "scripts/new_db_template.py",
-    REPO_ROOT / "scripts/scaffold_db.py",
-    REPO_ROOT / "scripts/new_vector_module.py",
-    REPO_ROOT / "sync_shared_db.py",
-}
+ALLOW_FILE = REPO_ROOT / "tests" / "approved_sqlite3_usage.txt"
+
+
+def _load_allowlist() -> set[Path]:
+    try:
+        text = ALLOW_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    items: set[Path] = set()
+    for line in text.splitlines():
+        entry = line.strip()
+        if entry and not entry.startswith("#"):
+            items.add((REPO_ROOT / entry).resolve())
+    return items
+
+
+ALLOWLIST = _load_allowlist()
 
 
 def main() -> int:

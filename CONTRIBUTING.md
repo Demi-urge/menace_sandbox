@@ -5,7 +5,9 @@
 Use `DBRouter` for all database access. Direct calls to `sqlite3.connect` are not
 permitted outside approved scaffolding scripts
 (`scripts/new_db.py`, `scripts/new_db_template.py`, `scripts/scaffold_db.py`, and
-`scripts/new_vector_module.py`).
+`scripts/new_vector_module.py`).  In the rare case a raw connection is required,
+include explicit audit logging and add the module to
+`tests/approved_sqlite3_usage.txt` with a justification.
 
 To avoid accidental direct connections, CI runs
 `tests/test_db_router_enforcement.py` and a pre-commit hook which executes
