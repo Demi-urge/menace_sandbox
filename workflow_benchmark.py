@@ -2,9 +2,10 @@ from __future__ import annotations
 
 """Utilities for benchmarking workflows and logging the results."""
 
-from typing import Callable
+from typing import Callable, Mapping
 from time import perf_counter, sleep
 import logging
+import os
 
 try:
     import numpy as np  # type: ignore
@@ -23,6 +24,8 @@ except Exception:  # pragma: no cover - optional dependency
 
 from .data_bot import MetricsDB
 from .neuroplasticity import PathwayDB, PathwayRecord, Outcome
+from .roi_tracker import ROITracker
+from .roi_scorer import CompositeWorkflowScorer
 
 
 def benchmark_workflow(
@@ -192,11 +195,6 @@ def benchmark_workflow(
     return success
 
 
-import os
-from typing import Mapping
-from .roi_tracker import ROITracker
-
-
 def benchmark_registered_workflows(
     workflows: Mapping[str, Callable[[], bool]],
     env_presets: list[Mapping[str, object]] | None,
@@ -206,18 +204,15 @@ def benchmark_registered_workflows(
 ) -> None:
     """Benchmark *workflows* under each environment preset.
 
-    The metrics for every run are logged via ``MetricsDB`` and recorded in
-    ``tracker`` using :meth:`ROITracker.update`.
+    The metrics for every run are logged via ``MetricsDB`` and scored using
+    :class:`CompositeWorkflowScorer` which records ROI deltas in ``tracker``.
     """
 
     presets = env_presets or [{}]
-    baseline: dict[str, list[tuple]] = {
-        n: metrics_db.fetch_eval(n) for n in workflows
-    }
-    stop_all = False
+    baseline: dict[str, list[tuple]] = {n: metrics_db.fetch_eval(n) for n in workflows}
+    scorer = CompositeWorkflowScorer(metrics_db, pathway_db, tracker=tracker)
     for preset in presets:
         for name, func in workflows.items():
-            prev_rows = metrics_db.fetch_eval(name)
 
             def _run() -> bool:
                 env_backup = os.environ.copy()
@@ -228,50 +223,13 @@ def benchmark_registered_workflows(
                     os.environ.clear()
                     os.environ.update(env_backup)
 
-            benchmark_workflow(_run, metrics_db, pathway_db, name=name)
-            new_rows = metrics_db.fetch_eval(name)[len(prev_rows) :]
-            metrics: dict[str, float] = {}
-            success = 0.0
-            prev_success_vals = [float(v) for _, m, v, _ in prev_rows if m == "success"]
-            prev_success = prev_success_vals[-1] if prev_success_vals else 0.0
-            prev_lat_vals = [float(v) for _, m, v, _ in prev_rows if m == "latency_median"]
-            prev_lat = prev_lat_vals[-1] if prev_lat_vals else 0.0
-            for _, metric, value, _ in new_rows:
-                try:
-                    val = float(value)
-                except Exception:
-                    val = 0.0
-                metrics[metric] = val
-                if metric == "success":
-                    success = val
-
-            _, _, stop, _ = tracker.update(prev_success, success, modules=[name], metrics=metrics)
-            # early stop when improvement is negligible or success rate stagnates
-            if abs(success - prev_success) <= tracker.diminishing() and abs(metrics.get("latency_median", metrics.get("latency", 0.0)) - prev_lat) <= tracker.diminishing():
-                stop = True
-            if len(prev_success_vals) >= 2 and len([v for _, m, v, _ in new_rows if m == "success"]) >= 2:
-                try:
-                    from scipy import stats
-
-                    old = prev_success_vals[-2:]
-                    new = [float(v) for _, m, v, _ in new_rows if m == "success"]
-                    _, p_succ = stats.ttest_ind(old, new, equal_var=False)
-                except Exception:
-                    p_succ = 1.0
-                if p_succ > 0.5 and abs(success - prev_success) <= tracker.diminishing():
-                    stop = True
-            if stop:
-                stop_all = True
-                break
-
-        if stop_all:
-            break
+            scorer.score(name, _run)
 
     # statistical significance tests for key metrics
     for name in workflows:
         prev_rows = baseline.get(name, [])
         all_rows = metrics_db.fetch_eval(name)
-        new_rows = all_rows[len(prev_rows) :]
+        new_rows = all_rows[len(prev_rows):]
 
         def _metric_values(rows: list[tuple], metric: str) -> list[float]:
             return [float(v) for _, m, v, _ in rows if m == metric]
