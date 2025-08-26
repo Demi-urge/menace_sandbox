@@ -1274,6 +1274,41 @@ class DataBot:
             except Exception:
                 logger.exception("failed to log patch_reverted")
 
+    def log_workflow_evolution(
+        self,
+        workflow_id: int,
+        variant: str,
+        baseline_roi: float,
+        variant_roi: float,
+        *,
+        mutation_id: int | None = None,
+    ) -> int | None:
+        """Record workflow variant evaluation details."""
+
+        if not self.evolution_db:
+            return None
+        roi_delta = variant_roi - baseline_roi
+        try:
+            event_id = self.evolution_db.log_workflow_evolution(
+                workflow_id=workflow_id,
+                variant=variant,
+                baseline_roi=baseline_roi,
+                variant_roi=variant_roi,
+                roi_delta=roi_delta,
+                mutation_id=mutation_id,
+            )
+        except Exception:
+            logger.exception("failed to log workflow evolution")
+            return None
+        cycle = f"workflow:{workflow_id}:{variant}"
+        try:
+            self.db.log_eval(cycle, "baseline_roi", float(baseline_roi))
+            self.db.log_eval(cycle, "variant_roi", float(variant_roi))
+            self.db.log_eval(cycle, "roi_delta", float(roi_delta))
+        except Exception:
+            logger.exception("failed to log workflow evolution metrics")
+        return event_id
+
     def roi(self, bot: str) -> float:
         """Return ROI for a bot via the capital manager if available."""
         if not self.capital_bot:

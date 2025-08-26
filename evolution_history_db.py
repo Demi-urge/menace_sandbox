@@ -34,6 +34,19 @@ class EvolutionEvent:
     actual_class: str = ""
 
 
+@dataclass
+class WorkflowEvolutionRecord:
+    """Audit entry for a workflow variant evaluation."""
+
+    workflow_id: int
+    variant: str
+    baseline_roi: float
+    variant_roi: float
+    roi_delta: float
+    mutation_id: int | None = None
+    ts: str = datetime.utcnow().isoformat()
+
+
 class EvolutionHistoryDB:
     """SQLite-backed store for evolution history."""
 
@@ -117,6 +130,25 @@ class EvolutionHistoryDB:
             self.conn.execute(
                 "ALTER TABLE evolution_history ADD COLUMN actual_class TEXT"
             )
+
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_evolution(
+                workflow_id INTEGER,
+                variant TEXT,
+                baseline_roi REAL,
+                variant_roi REAL,
+                roi_delta REAL,
+                mutation_id INTEGER,
+                ts TEXT
+            )
+            """
+        )
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(workflow_evolution)").fetchall()]
+        if "mutation_id" not in cols:
+            self.conn.execute("ALTER TABLE workflow_evolution ADD COLUMN mutation_id INTEGER")
+        if "ts" not in cols:
+            self.conn.execute("ALTER TABLE workflow_evolution ADD COLUMN ts TEXT")
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS "
             "idx_evolution_history_source_menace_id ON evolution_history("
@@ -154,6 +186,34 @@ class EvolutionHistoryDB:
                 event.parent_event_id,
                 event.predicted_class,
                 event.actual_class,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    # ------------------------------------------------------------------
+    def log_workflow_evolution(
+        self,
+        *,
+        workflow_id: int,
+        variant: str,
+        baseline_roi: float,
+        variant_roi: float,
+        roi_delta: float,
+        mutation_id: int | None = None,
+    ) -> int:
+        """Persist details of a workflow variant evaluation."""
+
+        cur = self.conn.execute(
+            "INSERT INTO workflow_evolution(workflow_id, variant, baseline_roi, variant_roi, roi_delta, mutation_id, ts) VALUES(?,?,?,?,?,?,?)",
+            (
+                int(workflow_id),
+                variant,
+                float(baseline_roi),
+                float(variant_roi),
+                float(roi_delta),
+                mutation_id,
+                datetime.utcnow().isoformat(),
             ),
         )
         self.conn.commit()
@@ -520,4 +580,8 @@ class EvolutionHistoryDB:
         return {"avg_roi_delta": avg_roi_delta, "avg_efficiency": avg_eff}
 
 
-__all__ = ["EvolutionEvent", "EvolutionHistoryDB"]
+__all__ = [
+    "EvolutionEvent",
+    "EvolutionHistoryDB",
+    "WorkflowEvolutionRecord",
+]

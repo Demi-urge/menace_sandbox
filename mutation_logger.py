@@ -9,7 +9,10 @@ from typing import Optional, Dict, Generator
 
 from .retry_utils import publish_with_retry
 
-from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
+from .evolution_history_db import (
+    EvolutionEvent,
+    EvolutionHistoryDB,
+)
 
 try:  # optional dependency
     from .unified_event_bus import UnifiedEventBus  # type: ignore
@@ -85,6 +88,39 @@ def log_mutation(
 
         Thread(target=_publish, daemon=True).start()
     return event_id
+
+
+def log_workflow_evolution(
+    workflow_id: int,
+    variant: str,
+    baseline_roi: float,
+    variant_roi: float,
+    *,
+    mutation_id: int | None = None,
+) -> int:
+    """Record evaluation of a workflow variant and return the mutation id."""
+
+    roi_delta = variant_roi - baseline_roi
+    if mutation_id is None:
+        mutation_id = log_mutation(
+            change=variant,
+            reason="variant",
+            trigger="workflow_evolution",
+            performance=roi_delta,
+            workflow_id=workflow_id,
+            before_metric=baseline_roi,
+            after_metric=variant_roi,
+        )
+    with _lock:
+        _history_db.log_workflow_evolution(
+            workflow_id=workflow_id,
+            variant=variant,
+            baseline_roi=baseline_roi,
+            variant_roi=variant_roi,
+            roi_delta=roi_delta,
+            mutation_id=mutation_id,
+        )
+    return mutation_id
 
 
 def record_mutation_outcome(
@@ -173,4 +209,5 @@ __all__ = [
     "build_lineage",
     "set_event_bus",
     "log_context",
+    "log_workflow_evolution",
 ]
