@@ -45,11 +45,15 @@ print(result.success_rate, result.roi_gain)
   bottleneck_index = max(runtime_m) / sum(runtime_m for m in modules)
   ```
 
-- **Patchability** – derivative of the ROI trend over recent runs adjusted by historical volatility:
+- **Patchability** – derivative of the ROI trend over recent runs normalised by
+  recent volatility and scaled by the patch success rate:
 
   ```
-  patchability_score = slope(recent_roi_history) / (1 + std(all_roi_history))
+  patchability_score = slope(recent_roi_history) / std(recent_roi_history) * patch_success_rate
   ```
+
+The metric helper functions above reside in `workflow_scorer_core` and are
+re-exported by this module for convenience.
 
 ## Database schema
 
@@ -65,7 +69,7 @@ print(result.success_rate, result.roi_gain)
 | `roi_gain` | REAL | sum of `roi_history` deltas |
 | `workflow_synergy_score` | REAL | summed module ROI gains divided by combined gain |
 | `bottleneck_index` | REAL | max module runtime divided by total runtime |
-| `patchability_score` | REAL | ROI slope adjusted by volatility |
+| `patchability_score` | REAL | ROI slope normalised by volatility and scaled by patch success rate |
 | `module_deltas` | TEXT | JSON mapping `module -> {success_rate, roi_delta}` |
 
 ## CLI example
