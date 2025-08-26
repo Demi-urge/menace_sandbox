@@ -5,27 +5,17 @@ from __future__ import annotations
 from typing import Callable, Optional
 import importlib
 import logging
-import os
 
 from .composite_workflow_scorer import CompositeWorkflowScorer
 from .workflow_evolution_bot import WorkflowEvolutionBot
 from .roi_results_db import ROIResultsDB
+from .roi_tracker import ROITracker
+from .workflow_stability_db import WorkflowStabilityDB
 from . import mutation_logger as MutationLogger
 
-try:  # pragma: no cover - settings optional
-    from .sandbox_settings import SandboxSettings
-
-    ROI_EMA_ALPHA = SandboxSettings().roi_ema_alpha
-except Exception:  # pragma: no cover - fallback when settings missing
-    ROI_EMA_ALPHA = 0.1
-
-GATING_THRESHOLD = float(os.getenv("ROI_GATING_THRESHOLD", "0.0"))
-GATING_CONSECUTIVE = int(os.getenv("ROI_GATING_CONSECUTIVE", "3"))
-
-_roi_delta_ema: dict[str, float] = {}
-_gating_counts: dict[str, int] = {}
-
 logger = logging.getLogger(__name__)
+
+STABLE_WORKFLOWS = WorkflowStabilityDB()
 
 
 def _build_callable(sequence: str) -> Callable[[], bool]:
@@ -64,19 +54,9 @@ def _build_callable(sequence: str) -> Callable[[], bool]:
     return _workflow
 
 
-def _update_ema(workflow_id: str, delta: float) -> None:
-    prev = _roi_delta_ema.get(workflow_id, 0.0)
-    ema = (1 - ROI_EMA_ALPHA) * prev + ROI_EMA_ALPHA * delta
-    _roi_delta_ema[workflow_id] = ema
-    if ema < GATING_THRESHOLD:
-        _gating_counts[workflow_id] = _gating_counts.get(workflow_id, 0) + 1
-    else:
-        _gating_counts[workflow_id] = 0
-
-
 def is_stable(workflow_id: int | str) -> bool:
-    """Return True when *workflow_id* is gated as stable."""
-    return _gating_counts.get(str(workflow_id), 0) >= GATING_CONSECUTIVE
+    """Return ``True`` when *workflow_id* is marked stable."""
+    return STABLE_WORKFLOWS.is_stable(str(workflow_id))
 
 
 def evolve(
@@ -109,17 +89,25 @@ def evolve(
     """
 
     wf_id_str = str(workflow_id)
-    if is_stable(wf_id_str):
-        logger.info("workflow %s gated by ROI EMA", wf_id_str)
-        return workflow_callable
-
     results_db = ROIResultsDB()
+    tracker = ROITracker()
 
     # Baseline evaluation
-    baseline_scorer = CompositeWorkflowScorer(results_db=results_db)
-    baseline_result = baseline_scorer.run(workflow_callable, wf_id_str, run_id="baseline")
+    baseline_scorer = CompositeWorkflowScorer(
+        results_db=results_db, tracker=tracker
+    )
+    baseline_result = baseline_scorer.run(
+        workflow_callable, wf_id_str, run_id="baseline"
+    )
     baseline_roi = baseline_result.roi_gain
     baseline_synergy = getattr(baseline_result, "workflow_synergy_score", 0.0)
+
+    # Skip variant generation when workflow marked stable and ROI unchanged
+    if STABLE_WORKFLOWS.is_stable(wf_id_str, baseline_roi, tracker.diminishing()):
+        logger.info("workflow %s marked stable", wf_id_str)
+        _, raroi, _ = tracker.calculate_raroi(baseline_roi)
+        tracker.score_workflow(wf_id_str, raroi)
+        return workflow_callable
 
     bot = WorkflowEvolutionBot()
 
@@ -131,10 +119,9 @@ def evolve(
         variant_callable = _build_callable(seq)
         run_id = f"variant-{hash(seq) & 0xffffffff:x}"
 
-        scorer = CompositeWorkflowScorer(results_db=results_db)
+        scorer = CompositeWorkflowScorer(results_db=results_db, tracker=tracker)
         variant_result = scorer.run(variant_callable, wf_id_str, run_id=run_id)
         roi_delta = variant_result.roi_gain - baseline_roi
-        variant_synergy = getattr(variant_result, "workflow_synergy_score", 0.0)
 
         # Persist ROI delta with variant identifier
         results_db.log_module_delta(
@@ -175,9 +162,26 @@ def evolve(
             best_variant_seq = seq
 
     delta = best_roi - baseline_roi
-    _update_ema(wf_id_str, delta)
+
+    # Record final RAROI for history
+    _, final_raroi, _ = tracker.calculate_raroi(best_roi)
+    tracker.score_workflow(wf_id_str, final_raroi)
+
+    if delta <= tracker.diminishing():
+        STABLE_WORKFLOWS.mark_stable(wf_id_str, baseline_roi)
+        MutationLogger.log_mutation(
+            change="stable",
+            reason="stable",
+            trigger="workflow_evolution_manager",
+            performance=0.0,
+            workflow_id=int(workflow_id),
+            before_metric=baseline_roi,
+            after_metric=baseline_roi,
+        )
+        return workflow_callable
 
     if best_variant_seq is not None and best_roi > baseline_roi:
+        STABLE_WORKFLOWS.clear(wf_id_str)
         MutationLogger.log_mutation(
             change=best_variant_seq,
             reason="promoted",
@@ -189,15 +193,6 @@ def evolve(
         )
         return best_callable
 
-    MutationLogger.log_mutation(
-        change="stable",
-        reason="stable",
-        trigger="workflow_evolution_manager",
-        performance=0.0,
-        workflow_id=int(workflow_id),
-        before_metric=baseline_roi,
-        after_metric=baseline_roi,
-    )
     return workflow_callable
 
 
