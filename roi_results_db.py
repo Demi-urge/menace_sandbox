@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import sqlite3
 
@@ -140,5 +140,43 @@ class ROIResultsDB:
         den = sum((i - mean_x) ** 2 for i in range(n))
         return num / den if den else 0.0
 
+    def module_impact_report(self, workflow_id: str, run_id: str) -> Dict[str, Dict[str, float]]:
+        """Return modules grouped by improvement sign for ``run_id``."""
 
-__all__ = ["ROIResult", "ROIResultsDB"]
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT module, roi_gain FROM roi_results WHERE workflow_id=? AND run_id=? AND module IS NOT NULL",
+            (workflow_id, run_id),
+        )
+        current = {str(m): float(g) for m, g in cur.fetchall()}
+        improved: Dict[str, float] = {}
+        regressed: Dict[str, float] = {}
+        for mod in current:
+            history = self.fetch_runs(workflow_id, mod)
+            cumulative = 0.0
+            prev_total = 0.0
+            cur_total = 0.0
+            for rec in history:
+                cumulative += rec.roi_gain
+                if rec.run_id == run_id:
+                    cur_total = cumulative
+                    break
+                prev_total = cumulative
+            delta = cur_total - prev_total
+            if delta >= 0:
+                improved[mod] = delta
+            else:
+                regressed[mod] = delta
+        return {"improved": improved, "regressed": regressed}
+
+
+def module_impact_report(
+    workflow_id: str, run_id: str, db_path: str | Path = "roi_results.db"
+) -> Dict[str, Dict[str, float]]:
+    """Convenience wrapper returning module impact report from ``db_path``."""
+
+    db = ROIResultsDB(db_path)
+    return db.module_impact_report(workflow_id, run_id)
+
+
+__all__ = ["ROIResult", "ROIResultsDB", "module_impact_report"]

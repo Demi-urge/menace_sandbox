@@ -283,6 +283,10 @@ class CompositeWorkflowScorer(ROIScorer):
         start_counts = {
             m: len(d) for m, d in self.tracker.module_deltas.items()
         }
+        baseline_rois: Dict[str, float] = {}
+        for mod in modules:
+            runs = self.results_db.fetch_runs(workflow_id, mod)
+            baseline_rois[mod] = runs[-1].roi_gain if runs else 0.0
         try:
             prev_rows = self.metrics_db.fetch_eval(workflow_id)
         except sqlite3.ProgrammingError:
@@ -350,6 +354,34 @@ class CompositeWorkflowScorer(ROIScorer):
         metrics["workflow_synergy_score"] = workflow_synergy_score
         metrics["bottleneck_index"] = bottleneck_index
         metrics["patchability_score"] = patchability_score
+
+        # Update tracker with overall workflow ROI
+        self.tracker.update(
+            roi_before,
+            roi_after,
+            metrics=calc_metrics,
+            profile_type=self.profile_type,
+        )
+
+        # Compute per-module ROI and update tracker
+        for mod in modules:
+            runtime_mod = timings.get(mod, 0.0)
+            success_rate_mod = 0.0 if failures.get(mod, 0.0) else 1.0
+            mod_metrics = {
+                "reliability": 1.0 if success_rate_mod else 0.0,
+                "efficiency": 1.0 / runtime_mod if runtime_mod > 0 else 0.0,
+            }
+            roi_mod_after, _, _ = self.calculator.calculate(
+                mod_metrics, self.profile_type
+            )
+            roi_mod_before = baseline_rois.get(mod, 0.0)
+            self.tracker.update(
+                roi_mod_before,
+                roi_mod_after,
+                modules=[mod],
+                metrics=mod_metrics,
+                profile_type=self.profile_type,
+            )
 
         run_id = self._persist(
             workflow_id,
