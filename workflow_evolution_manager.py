@@ -114,6 +114,7 @@ def evolve(
     best_callable = workflow_callable
     best_roi = baseline_roi
     best_variant_seq: Optional[str] = None
+    best_variant_result: Optional[object] = None
 
     for seq in bot.generate_variants(limit=variants, workflow_id=int(workflow_id)):
         variant_callable = _build_callable(seq)
@@ -160,6 +161,7 @@ def evolve(
             best_roi = variant_result.roi_gain
             best_callable = variant_callable
             best_variant_seq = seq
+            best_variant_result = variant_result
 
     delta = best_roi - baseline_roi
 
@@ -169,6 +171,7 @@ def evolve(
 
     if delta <= tracker.diminishing():
         STABLE_WORKFLOWS.mark_stable(wf_id_str, baseline_roi)
+        logger.info("workflow %s stable (delta=%.4f)", wf_id_str, delta)
         MutationLogger.log_mutation(
             change="stable",
             reason="stable",
@@ -182,7 +185,7 @@ def evolve(
 
     if best_variant_seq is not None and best_roi > baseline_roi:
         STABLE_WORKFLOWS.clear(wf_id_str)
-        MutationLogger.log_mutation(
+        event_id = MutationLogger.log_mutation(
             change=best_variant_seq,
             reason="promoted",
             trigger="workflow_evolution_manager",
@@ -191,6 +194,30 @@ def evolve(
             before_metric=baseline_roi,
             after_metric=best_roi,
         )
+        log_evo = getattr(MutationLogger, "log_workflow_evolution", None)
+        if callable(log_evo):
+            try:
+                log_evo(
+                    workflow_id=int(workflow_id),
+                    variant=best_variant_seq,
+                    baseline_roi=baseline_roi,
+                    variant_roi=best_roi,
+                    baseline_synergy=baseline_synergy,
+                    variant_synergy=getattr(
+                        best_variant_result, "workflow_synergy_score", 0.0
+                    ),
+                    mutation_id=event_id,
+                )
+            except Exception:
+                logger.exception("record promotion failed")
+        try:
+            from .workflow_benchmark import benchmark_workflow
+            from .data_bot import MetricsDB
+            from .neuroplasticity import PathwayDB
+
+            benchmark_workflow(best_callable, MetricsDB(), PathwayDB(), name=wf_id_str)
+        except Exception:
+            logger.exception("benchmark promoted workflow failed")
         return best_callable
 
     return workflow_callable
