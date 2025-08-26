@@ -1,4 +1,4 @@
-# SQLite Write Buffer
+# SQLite Write Queue
 
 For queue layout, environment variables and recovery procedures see
 [shared_db_queue.md](shared_db_queue.md).
@@ -19,12 +19,12 @@ configured queue directory. Every line is a JSON object containing:
 - `hash_fields` or `content_hash` – fields used to deduplicate queued rows
 
 ## How `sync_shared_db.py` processes queues
-`sync_shared_db.py` scans the queue directory for pending files and attempts to
-insert each record into the shared database. Successful inserts, or rows that
-already exist, are removed from the queue. Malformed entries are moved to
-`<table>_queue.error.jsonl` while failures are appended to
-`<table>_queue.failed.jsonl` with error details. The script may run once or loop
-continuously based on its polling interval.
+`sync_shared_db.py` scans the queue directory for pending files produced by
+`db_write_queue.queue_insert` and attempts to insert each record into the shared
+database. Successful inserts, or rows that already exist, are removed from the
+queue. Malformed entries are moved to `<table>_queue.error.jsonl` while failures
+are appended to `<table>_queue.failed.jsonl` with error details. The script may
+run once or loop continuously based on its polling interval.
 
 ## Configuration variables
 - `MENACE_QUEUE_DIR` – base directory for queue files. Defaults to `./queue` but

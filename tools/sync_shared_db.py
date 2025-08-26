@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Synchronise queued writes with the shared database.
 
-This utility scans ``*_queue.jsonl`` files produced by :mod:`db_write_buffer`.
+This utility scans ``*_queue.jsonl`` files produced by :mod:`db_write_queue`.
 Each line represents a record destined for a table in the shared database.
 Processed lines are removed from the queue file.  Failed lines remain and are
 logged for later inspection.

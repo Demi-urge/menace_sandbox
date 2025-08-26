@@ -6,7 +6,7 @@ module. The generated module mixes in
 full-text-search schema derived from `sql_templates/create_fts.sql`.
 
 For buffered writes to shared tables and background queue processing, see
-[write_buffer.md](write_buffer.md).
+[write_queue.md](write_queue.md).
 
 ```bash
 python menace_cli.py new-db sessions
