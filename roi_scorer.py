@@ -17,6 +17,7 @@ from .roi_tracker import ROITracker
 from .roi_calculator import ROICalculator
 from .data_bot import MetricsDB
 from .neuroplasticity import PathwayDB
+from .roi_results_db import ROIResult, ROIResultsDB
 try:  # ensure telemetry backend uses same router
     from . import telemetry_backend as tb
 except Exception:  # pragma: no cover - optional
@@ -274,11 +275,13 @@ class CompositeWorkflowScorer(ROIScorer):
         self,
         metrics_db: MetricsDB,
         pathway_db: PathwayDB,
+        results_db: ROIResultsDB | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.metrics_db = metrics_db
         self.pathway_db = pathway_db
+        self.results_db = results_db or ROIResultsDB(self.db_path, router=self._db)
         self._module_offsets: Dict[str, int] = {
             m: len(d) for m, d in self.tracker.module_deltas.items()
         }
@@ -384,6 +387,34 @@ class CompositeWorkflowScorer(ROIScorer):
                 (workflow_id, run_id, mod, runtime_mod, delta),
             )
         self.conn.commit()
+        # Record aggregate workflow result
+        self.results_db.add(
+            ROIResult(
+                workflow_id=workflow_id,
+                run_id=run_id,
+                module=None,
+                runtime=runtime,
+                success_rate=1.0 if success else 0.0,
+                roi_gain=roi_gain,
+                workflow_synergy_score=workflow_synergy,
+                bottleneck_index=bottleneck_index,
+                patchability_score=patchability,
+            )
+        )
+        # Record per-module results
+        for mod in set(mod_deltas) | set(timings):
+            runtime_mod, failures = timings.get(mod, (0.0, 0.0))
+            success_rate_mod = 0.0 if failures else 1.0
+            self.results_db.add(
+                ROIResult(
+                    workflow_id=workflow_id,
+                    run_id=run_id,
+                    module=mod,
+                    runtime=runtime_mod,
+                    success_rate=success_rate_mod,
+                    roi_gain=mod_deltas.get(mod, 0.0),
+                )
+            )
         for key, value in metrics.items():
             self.tracker.metrics_history.setdefault(key, []).append(value)
         result = {

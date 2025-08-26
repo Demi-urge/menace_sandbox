@@ -96,3 +96,15 @@ def test_composite_workflow_scorer_records_metrics(tmp_path):
     assert mod_data["slow"][1] > mod_data["fast"][1]
     assert scorer.module_deltas()["fast"] == pytest.approx(1.0)
     assert scorer.module_deltas()["slow"] == pytest.approx(2.0)
+
+    # roi_results table should contain one aggregate row plus per-module rows
+    cur = scorer.results_db.conn.cursor()
+    cur.execute(
+        "SELECT module, roi_gain FROM roi_results WHERE workflow_id=? AND run_id=?",
+        (workflow_id, run_id),
+    )
+    rows = cur.fetchall()
+    mod_map = {mod: gain for mod, gain in rows}
+    assert mod_map[None] == pytest.approx(result["roi_gain"])
+    assert mod_map["fast"] == pytest.approx(1.0)
+    assert mod_map["slow"] == pytest.approx(2.0)
