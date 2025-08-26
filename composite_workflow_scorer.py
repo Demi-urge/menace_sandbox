@@ -140,6 +140,7 @@ class CompositeWorkflowScorer(ROIScorer):
         self._module_roi_history: Dict[str, deque[float]] = defaultdict(
             lambda: deque(maxlen=self.history_window)
         )
+        self.module_attribution: Dict[str, Dict[str, float]] = {}
 
     # ------------------------------------------------------------------
     def run(
@@ -163,15 +164,27 @@ class CompositeWorkflowScorer(ROIScorer):
 
         per_module: Dict[str, Dict[str, float]] = {}
         timings = getattr(self.tracker, "timings", {})
+        total_runtime = sum(float(t) for t in timings.values())
         for mod, deltas in self.tracker.module_deltas.items():
             start_idx = self._module_start.get(mod, 0)
             roi_delta = sum(float(x) for x in deltas[start_idx:])
+            runtime = float(timings.get(mod, 0.0))
+            bottleneck = runtime / total_runtime if total_runtime > 0 else 0.0
             per_module[mod] = {
-                "runtime": float(timings.get(mod, 0.0)),
+                "runtime": runtime,
                 "roi_delta": roi_delta,
                 "success_rate": 1.0 if self._module_successes.get(mod) else 0.0,
+                "bottleneck_contribution": bottleneck,
             }
             self._module_roi_history[mod].append(roi_delta)
+            self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
+        self.module_attribution = {
+            mod: {
+                "roi_delta": data["roi_delta"],
+                "bottleneck_contribution": data["bottleneck_contribution"],
+            }
+            for mod, data in per_module.items()
+        }
 
         workflow_synergy_score = compute_workflow_synergy(
             self.tracker.roi_history, self._module_roi_history, self.history_window
@@ -288,11 +301,28 @@ class CompositeWorkflowScorer(ROIScorer):
         roi_gain = sum(float(r) for r in getattr(tracker, "roi_history", []))
 
         per_module_metrics: Dict[str, Dict[str, float]] = {}
+        timings = getattr(tracker, "timings", {})
+        total_runtime = sum(float(t) for t in timings.values())
         for mod, counts in per_module_counts.items():
             roi_delta = sum(float(x) for x in tracker.module_deltas.get(mod, []))
             sr = counts["success"] / counts["total"] if counts["total"] else 0.0
-            per_module_metrics[mod] = {"success_rate": sr, "roi_delta": roi_delta}
+            runtime = float(timings.get(mod, 0.0))
+            bottleneck = runtime / total_runtime if total_runtime > 0 else 0.0
+            per_module_metrics[mod] = {
+                "success_rate": sr,
+                "roi_delta": roi_delta,
+                "runtime": runtime,
+                "bottleneck_contribution": bottleneck,
+            }
             self._module_roi_history[mod].append(roi_delta)
+            self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
+        self.module_attribution = {
+            mod: {
+                "roi_delta": data["roi_delta"],
+                "bottleneck_contribution": data["bottleneck_contribution"],
+            }
+            for mod, data in per_module_metrics.items()
+        }
 
         workflow_synergy_score = compute_workflow_synergy(
             getattr(tracker, "roi_history", []), self._module_roi_history, self.history_window

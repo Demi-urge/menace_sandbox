@@ -121,3 +121,10 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
     assert report["improved"]["mod_a"] == pytest.approx(1.0)
     assert report["regressed"]["mod_c"] == pytest.approx(-0.5)
 
+    # Module attribution records were stored and exposed
+    attrib = scorer.results_db.fetch_module_attribution()
+    total = 0.1 + 0.2 + 0.3
+    assert attrib["mod_a"]["roi_delta"] == pytest.approx(1.0)
+    assert attrib["mod_a"]["bottleneck"] == pytest.approx(0.1 / total)
+    assert scorer.module_attribution["mod_c"]["bottleneck_contribution"] == pytest.approx(0.3 / total)
+

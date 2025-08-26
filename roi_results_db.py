@@ -76,6 +76,16 @@ class ROIResultsDB:
                 ON workflow_results(workflow_id, run_id)
             """,
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS module_attribution(
+                module TEXT PRIMARY KEY,
+                roi_delta REAL,
+                bottleneck REAL,
+                runs INTEGER
+            )
+            """,
+        )
         # migrate legacy ``roi_results`` table if present
         cur.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='roi_results'"
@@ -139,6 +149,35 @@ class ROIResultsDB:
         )
         self.conn.commit()
         return int(cur.lastrowid or 0)
+
+    # ------------------------------------------------------------------
+    def log_module_attribution(self, module: str, roi_delta: float, bottleneck: float) -> None:
+        """Update per-module attribution stats."""
+
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO module_attribution(module, roi_delta, bottleneck, runs)
+            VALUES(?,?,?,1)
+            ON CONFLICT(module) DO UPDATE SET
+                roi_delta=roi_delta + excluded.roi_delta,
+                bottleneck=bottleneck + excluded.bottleneck,
+                runs=runs + 1
+            """,
+            (module, roi_delta, bottleneck),
+        )
+        self.conn.commit()
+
+    def fetch_module_attribution(self) -> Dict[str, Dict[str, float]]:
+        """Return cumulative per-module attribution metrics."""
+
+        cur = self.conn.cursor()
+        cur.execute("SELECT module, roi_delta, bottleneck, runs FROM module_attribution")
+        rows = cur.fetchall()
+        return {
+            str(m): {"roi_delta": float(r), "bottleneck": float(b), "runs": int(n)}
+            for m, r, b, n in rows
+        }
 
     # backward compatibility -------------------------------------------------
     def add_result(self, **kwargs: Any) -> int:  # pragma: no cover - legacy alias
