@@ -617,6 +617,7 @@ class WorkflowSynthesizer:
         problem: str | None = None,
         threshold: float = 0.0,
         max_depth: int | None = None,
+        intent_limit: int = 20,
     ) -> Set[str]:
         """Expand from ``start_module`` and/or ``problem`` to related modules.
 
@@ -633,6 +634,11 @@ class WorkflowSynthesizer:
             Maximum graph depth to explore from ``start_module``.  ``None``
             explores the entire reachable graph. ``1`` restricts expansion to
             direct neighbours.
+        intent_limit:
+            Maximum number of intent matches to consider for ``problem`` based
+            expansion.  Controls the breadth of intent search; higher values may
+            introduce less relevant modules while lower values focus on the most
+            confident matches.
         """
 
         modules: Set[str] = set()
@@ -648,19 +654,33 @@ class WorkflowSynthesizer:
                 elif load_graph is not None:
                     graph = load_graph(self.synergy_graph_path)
                 if graph is not None and start_module in graph:
+                    import heapq
+
                     visited: Set[str] = {start_module}
-                    queue: deque[tuple[str, int]] = deque([(start_module, 0)])
-                    while queue:
-                        node, depth = queue.popleft()
+                    # priority queue ordered by negative weight so that the
+                    # highest weight edges are expanded first
+                    heap: list[tuple[float, int, str]] = []
+                    for neigh, data in graph[start_module].items():
+                        weight = float(data.get("weight", 0.0))
+                        if weight < threshold:
+                            continue
+                        heapq.heappush(heap, (-weight, 1, neigh))
+
+                    while heap:
+                        neg_weight, depth, node = heapq.heappop(heap)
+                        if node in visited:
+                            continue
+                        if max_depth is not None and depth > max_depth:
+                            continue
+                        visited.add(node)
+                        modules.add(node)
                         if max_depth is not None and depth >= max_depth:
                             continue
                         for neigh, data in graph[node].items():
                             weight = float(data.get("weight", 0.0))
                             if weight < threshold or neigh in visited:
                                 continue
-                            visited.add(neigh)
-                            modules.add(neigh)
-                            queue.append((neigh, depth + 1))
+                            heapq.heappush(heap, (-weight, depth + 1, neigh))
             except (FileNotFoundError, RuntimeError) as exc:  # pragma: no cover
                 logger.warning(
                     "Synergy graph expansion failed",
@@ -677,7 +697,7 @@ class WorkflowSynthesizer:
             if self.intent_clusterer is not None:
                 try:
                     matches = self.intent_clusterer.find_modules_related_to(
-                        problem, top_k=20
+                        problem, top_k=intent_limit
                     )
                     for m in matches:
                         path = getattr(m, "path", None) or getattr(m, "module", None)
@@ -696,7 +716,7 @@ class WorkflowSynthesizer:
             elif self.intent_db is not None:
                 try:
                     vec = self.intent_db.encode_text(problem)  # type: ignore[attr-defined]
-                    results = self.intent_db.search_by_vector(vec, top_k=20)
+                    results = self.intent_db.search_by_vector(vec, top_k=intent_limit)
                     for rid, _dist in results:
                         path = rid
                         if isinstance(rid, int):
