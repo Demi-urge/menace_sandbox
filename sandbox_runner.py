@@ -141,7 +141,7 @@ except Exception:  # pragma: no cover - fallback for test stubs
 from menace.audit_trail import AuditTrail
 from menace.error_bot import ErrorBot, ErrorDB
 from menace.data_bot import MetricsDB, DataBot
-from menace.roi_scorer import CompositeWorkflowScorer
+from menace.composite_workflow_scorer import CompositeWorkflowScorer
 from menace.neuroplasticity import PathwayDB
 from sandbox_runner.metrics_plugins import (
     discover_metrics_plugins,
