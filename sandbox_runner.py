@@ -141,6 +141,8 @@ except Exception:  # pragma: no cover - fallback for test stubs
 from menace.audit_trail import AuditTrail
 from menace.error_bot import ErrorBot, ErrorDB
 from menace.data_bot import MetricsDB, DataBot
+from menace.roi_scorer import CompositeWorkflowScorer
+from menace.neuroplasticity import PathwayDB
 from sandbox_runner.metrics_plugins import (
     discover_metrics_plugins,
     load_metrics_plugins,
@@ -647,6 +649,7 @@ class SandboxContext:
     engine: Any
     dd_bot: DiscrepancyDetectionBot
     data_bot: DataBot
+    pathway_db: PathwayDB
     telem_db: ErrorDB
     plugins: list
     extra_metrics: Dict[str, float]
@@ -763,6 +766,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     meta_log.module_index = module_index
     meta_log.metrics_db = relevancy_db
     metrics_db = MetricsDB(data_dir / "metrics.db")
+    pathway_db = PathwayDB(data_dir / "pathways.db")
     data_bot = DataBot(metrics_db)
     dd_bot = DiscrepancyDetectionBot()
     module_counts: Dict[str, int] = {}
@@ -1156,6 +1160,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         engine=engine,
         dd_bot=dd_bot,
         data_bot=data_bot,
+        pathway_db=pathway_db,
         telem_db=telem_db,
         plugins=plugins,
         extra_metrics=extra_metrics,
@@ -1249,62 +1254,71 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
         tracker: "ROITracker",
         scenario: str | None = None,
     ) -> None:
-        try:
-            _sandbox_cycle_runner(ctx, section, snippet, tracker, scenario)
-        except Exception as exc:
-            err_logger.log(exc, section, "sandbox_runner")
-            raise
-        finally:
-            forecaster = getattr(ctx.sandbox, "error_forecaster", None)
-            qfix = getattr(ctx.sandbox, "quick_fix_engine", None)
-            if forecaster:
-                try:
-                    forecaster.train()
-                    bots: list[str] = []
+        workflow_id = section or "workflow"
+
+        def _run() -> bool:
+            try:
+                _sandbox_cycle_runner(ctx, section, snippet, tracker, scenario)
+                return True
+            except Exception as exc:
+                err_logger.log(exc, section, "sandbox_runner")
+                return False
+            finally:
+                forecaster = getattr(ctx.sandbox, "error_forecaster", None)
+                qfix = getattr(ctx.sandbox, "quick_fix_engine", None)
+                if forecaster:
                     try:
-                        df = forecaster.metrics_db.fetch(None)
-                        if hasattr(df, "empty"):
-                            if not getattr(df, "empty", True):
-                                bots = list(dict.fromkeys(df["bot"].tolist()))
-                        elif isinstance(df, list):
-                            bots = list(
-                                dict.fromkeys(r.get("bot") for r in df if r.get("bot"))
-                            )
-                    except Exception:
-                        bots = []
-                    for b in bots:
+                        forecaster.train()
+                        bots: list[str] = []
                         try:
-                            probs = forecaster.predict_error_prob(b, steps=1)
-                        except Exception:
-                            continue
-                        if probs and probs[0] > 0.8:
-                            modules: list[str] = []
-                            if getattr(ctx.sandbox, "graph", None):
-                                try:
-                                    chain_nodes = forecaster.predict_failure_chain(
-                                        b, ctx.sandbox.graph, steps=3
-                                    )
-                                    modules = [
-                                        n.split(":", 1)[1]
-                                        for n in chain_nodes
-                                        if n.startswith("module:")
-                                    ]
-                                except Exception:
-                                    modules = []
-                            if modules:
-                                logger.info(
-                                    "predicted high risk",
-                                    extra=log_record(bot=b, modules=modules),
+                            df = forecaster.metrics_db.fetch(None)
+                            if hasattr(df, "empty"):
+                                if not getattr(df, "empty", True):
+                                    bots = list(dict.fromkeys(df["bot"].tolist()))
+                            elif isinstance(df, list):
+                                bots = list(
+                                    dict.fromkeys(r.get("bot") for r in df if r.get("bot"))
                                 )
-                            if qfix:
-                                try:
-                                    qfix.run(b)
-                                except Exception:
-                                    logger.exception(
-                                        "quick fix engine failed for %s", b
+                        except Exception:
+                            bots = []
+                        for b in bots:
+                            try:
+                                probs = forecaster.predict_error_prob(b, steps=1)
+                            except Exception:
+                                continue
+                            if probs and probs[0] > 0.8:
+                                modules: list[str] = []
+                                if getattr(ctx.sandbox, "graph", None):
+                                    try:
+                                        chain_nodes = forecaster.predict_failure_chain(
+                                            b, ctx.sandbox.graph, steps=3
+                                        )
+                                        modules = [
+                                            n.split(":", 1)[1]
+                                            for n in chain_nodes
+                                            if n.startswith("module:")
+                                        ]
+                                    except Exception:
+                                        modules = []
+                                if modules:
+                                    logger.info(
+                                        "predicted high risk",
+                                        extra=log_record(bot=b, modules=modules),
                                     )
-                except Exception:
-                    logger.exception("error forecasting failed")
+                                if qfix:
+                                    try:
+                                        qfix.run(b)
+                                    except Exception:
+                                        logger.exception(
+                                            "quick fix engine failed for %s", b
+                                        )
+                    except Exception:
+                        logger.exception("error forecasting failed")
+
+        scorer = CompositeWorkflowScorer(
+            ctx.data_bot.db, ctx.pathway_db, tracker=tracker
+        )
+        scorer.score_workflow(workflow_id, {workflow_id: _run})
 
     switched = False
     section_results: dict[str, dict[str, list]] = {}

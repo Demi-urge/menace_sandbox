@@ -49,6 +49,10 @@ from .metrics_exporter import (
     prediction_reliability,
 )
 
+from .roi_scorer import CompositeWorkflowScorer
+from .neuroplasticity import PathwayDB
+from .data_bot import MetricsDB
+
 router = GLOBAL_ROUTER or init_db_router("self_improvement_engine")
 from alert_dispatcher import dispatch_alert
 import json
@@ -810,6 +814,11 @@ class SelfImprovementEngine:
             self.roi_tracker = None
             self._adaptive_roi_last_train = 0.0
             self.adaptive_roi_train_interval = ADAPTIVE_ROI_TRAIN_INTERVAL
+        metrics_db = data_bot.db if data_bot else MetricsDB()
+        self.pathway_db = PathwayDB()
+        self.workflow_scorer = CompositeWorkflowScorer(
+            metrics_db, self.pathway_db, tracker=self.roi_tracker
+        )
         self.foresight_tracker = foresight_tracker or ForesightTracker()
         self.truth_adapter = TruthAdapter()
         self._truth_adapter_needs_retrain = False
@@ -6081,6 +6090,14 @@ class SelfImprovementEngine:
                 if risk_info:
                     result.warnings["foresight_risk"].append(risk_info)
                 result.warnings["workflow_high_risk"] = [{"value": high_risk}]
+            if getattr(self, "workflow_scorer", None):
+                try:
+                    self.workflow_scorer.score_workflow(
+                        "self_improvement_cycle",
+                        {"cycle": lambda: True},
+                    )
+                except Exception:
+                    self.logger.exception("workflow scoring failed")
             self.logger.info(
                 "cycle complete",
                 extra=log_record(roi=roi_realish, predicted_roi=pred_realish),
