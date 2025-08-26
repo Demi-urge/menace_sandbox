@@ -38,6 +38,7 @@ class Scorecard:
 
 
 LOCAL_TABLES.add("workflow_results")
+LOCAL_TABLES.add("workflow_module_deltas")
 router = GLOBAL_ROUTER or init_db_router("roi_scorer")
 if tb is not None:  # align telemetry router
     tb.GLOBAL_ROUTER = router
@@ -194,6 +195,25 @@ class ROIScorer:
             """,
         )
         cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_module_deltas(
+                id INTEGER PRIMARY KEY,
+                workflow_id TEXT,
+                run_id TEXT,
+                module TEXT,
+                runtime REAL,
+                roi_delta REAL,
+                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_module_deltas_wf_run_mod
+                ON workflow_module_deltas(workflow_id, run_id, module)
+            """,
+        )
+        cur.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='roi_results'"
         )
         if cur.fetchone():
@@ -258,12 +278,18 @@ class CompositeWorkflowScorer(ROIScorer):
         super().__init__(**kwargs)
         self.metrics_db = metrics_db
         self.pathway_db = pathway_db
+        self._module_offsets: Dict[str, int] = {
+            m: len(d) for m, d in self.tracker.module_deltas.items()
+        }
+        self._last_module_deltas: Dict[str, float] = {}
 
     def score(
         self, workflow_id: str, workflow_callable: Callable[[], bool]
     ) -> Tuple[str, Scorecard]:
         """Execute *workflow_callable* and persist scoring information."""
-
+        start_counts = {
+            m: len(d) for m, d in self.tracker.module_deltas.items()
+        }
         try:
             prev_rows = self.metrics_db.fetch_eval(workflow_id)
         except sqlite3.ProgrammingError:
@@ -322,6 +348,28 @@ class CompositeWorkflowScorer(ROIScorer):
             bottleneck_index,
             patchability,
         )
+        mod_deltas: Dict[str, float] = {}
+        for mod, deltas in self.tracker.module_deltas.items():
+            start = start_counts.get(mod, 0)
+            if start < len(deltas):
+                mod_deltas[mod] = sum(float(x) for x in deltas[start:])
+        self._last_module_deltas = mod_deltas
+        self._module_offsets = {
+            m: len(d) for m, d in self.tracker.module_deltas.items()
+        }
+        cur = self.conn.cursor()
+        for mod in set(mod_deltas) | set(timings):
+            runtime_mod = timings.get(mod, (0.0, 0.0))[0]
+            delta = mod_deltas.get(mod, 0.0)
+            cur.execute(
+                """
+                INSERT INTO workflow_module_deltas(
+                    workflow_id, run_id, module, runtime, roi_delta
+                ) VALUES(?,?,?,?,?)
+                """,
+                (workflow_id, run_id, mod, runtime_mod, delta),
+            )
+        self.conn.commit()
         for key, value in metrics.items():
             self.tracker.metrics_history.setdefault(key, []).append(value)
         scorecard = Scorecard(
@@ -335,6 +383,10 @@ class CompositeWorkflowScorer(ROIScorer):
             patchability,
         )
         return run_id, scorecard
+
+    def module_deltas(self) -> Dict[str, float]:
+        """Return ROI contribution per module from the last ``score`` call."""
+        return dict(self._last_module_deltas)
 
 
 __all__ = [
