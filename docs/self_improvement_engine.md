@@ -11,8 +11,10 @@ engine = SelfImprovementEngine(bot_name="alpha",
 registry = ImprovementEngineRegistry()
 registry.register_engine("alpha", engine)
 
-# Execute one cycle for all registered engines
-registry.run_all_cycles()
+# Execute one cycle for all registered engines and inspect the results
+results = registry.run_all_cycles(energy=2)
+for name, outcome in results.items():
+    print(name, outcome.roi.roi_gain)
 ```
 
 When a `SelfCodingEngine` is supplied, the engine may patch helper code before running the automation pipeline. See [self_coding_engine.md](self_coding_engine.md) for more information.
@@ -25,9 +27,20 @@ Each engine may use its own databases, event bus and automation pipeline allowin
 
 Invoke `run_cycle()` to process a single improvement step or register the engine
 with `ImprovementEngineRegistry` and call `run_all_cycles()` to iterate over all
-registered bots.  Provide `state_path` to persist ROI history between runs and
-set environment variables like `SANDBOX_ENV_PRESETS` when running inside the
-sandbox to reuse scenario presets.
+registered bots. The method returns a mapping of engine names to
+`AutomationResult` objects so callers can inspect ROI gains. Provide
+`state_path` to persist ROI history between runs and set environment variables
+like `SANDBOX_ENV_PRESETS` when running inside the sandbox to reuse scenario
+presets.
+
+## Workflow evolution
+
+During a cycle the engine can refine workflow definitions through
+``WorkflowEvolutionManager``. The manager benchmarks the current sequence with
+``CompositeWorkflowScorer``, generates candidate variants via
+``WorkflowEvolutionBot`` and records ROI deltas in ``ROIResultsDB``. The
+best‑performing variant is promoted when it beats the baseline, with outcomes
+logged through ``mutation_logger`` for later analysis.
 
 ## Algorithm Details
 
