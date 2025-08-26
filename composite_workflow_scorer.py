@@ -14,6 +14,7 @@ from dataclasses import dataclass, asdict
 from typing import Any, Callable, Dict, Iterable, Mapping, Tuple
 import time
 import uuid
+from collections import defaultdict, deque
 
 import numpy as np
 
@@ -29,70 +30,42 @@ from . import sandbox_runner
 
 
 def compute_workflow_synergy(
-    tracker: ROITracker, modules: Iterable[str] | None = None
+    roi_history: Iterable[float],
+    module_history: Mapping[str, Iterable[float]],
+    window: int = 5,
 ) -> float:
-    """Aggregate pairwise synergy metrics for ``modules``."""
+    """Ratio of summed per-module ROI gains to combined ROI gain."""
 
-    mods = {str(m) for m in (modules if modules is not None else tracker.module_deltas)}
-    try:
-        from . import synergy_history_db as shd  # type: ignore
-
-        history = shd.load_history()
-        vals: list[float] = []
-        for entry in history:
-            for pair, score in entry.items():
-                if not isinstance(score, (int, float)):
-                    continue
-                parts = str(pair).split(",")
-                if len(parts) == 2 and {parts[0], parts[1]} <= mods:
-                    vals.append(float(score))
-        if vals:
-            return float(sum(vals) / len(vals))
-    except Exception:
-        pass
-
-    try:  # pragma: no cover - best effort
-        from .sandbox_runner.environment import aggregate_synergy_metrics
-
-        results = aggregate_synergy_metrics(list(mods))
-        if results:
-            return float(sum(val for _, val in results) / len(results))
-    except Exception:
-        pass
-    return 0.0
+    combined = sum(list(roi_history)[-window:])
+    if combined == 0:
+        return 0.0
+    individual = 0.0
+    for deltas in module_history.values():
+        individual += sum(list(deltas)[-window:])
+    return individual / combined
 
 
-def compute_bottleneck_index(tracker: ROITracker, workflow_id: str) -> float:
-    """Return worst runtime-to-ROI ratio adjusted by workflow variance."""
+def compute_bottleneck_index(tracker: ROITracker, _workflow_id: str | None = None) -> float:
+    """Return max module runtime divided by total runtime."""
 
     runtimes: Mapping[str, float] = getattr(tracker, "timings", {})
-    ratios: Dict[str, float] = {}
-    for mod, runtime in runtimes.items():
-        roi = sum(float(x) for x in tracker.module_deltas.get(mod, []))
-        if roi == 0:
-            roi = 1e-9
-        ratios[mod] = float(runtime) / roi
-    if not ratios:
+    total = sum(runtimes.values())
+    if total <= 0:
         return 0.0
-    worst_ratio = max(ratios.values())
-    variance = 0.0
-    if hasattr(tracker, "workflow_variance"):
-        try:
-            variance = float(tracker.workflow_variance(workflow_id))
-        except Exception:
-            variance = 0.0
-    return worst_ratio * (1.0 + variance)
+    return max(runtimes.values()) / total
 
 
 def compute_patchability(history: Iterable[float], window: int = 5) -> float:
-    """Return ROI slope over recent runs using linear regression."""
+    """Derivative of ROI trend adjusted by historical volatility."""
 
-    hist_list = list(history)[-window:]
+    hist_list = list(history)
     if len(hist_list) < 2:
         return 0.0
-    x = np.arange(len(hist_list))
-    slope = float(np.polyfit(x, hist_list, 1)[0])
-    return slope
+    recent = hist_list[-window:]
+    x = np.arange(len(recent))
+    slope = float(np.polyfit(x, recent, 1)[0])
+    volatility = float(np.std(hist_list))
+    return slope / (1.0 + volatility)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +136,10 @@ class CompositeWorkflowScorer(ROIScorer):
         self._roi_start: int = 0
         self._module_start: Dict[str, int] = {}
         self._module_successes: Dict[str, bool] = {}
+        self.history_window = 20
+        self._module_roi_history: Dict[str, deque[float]] = defaultdict(
+            lambda: deque(maxlen=self.history_window)
+        )
 
     # ------------------------------------------------------------------
     def run(
@@ -183,10 +160,6 @@ class CompositeWorkflowScorer(ROIScorer):
         roi_gain = sum(
             float(x) for x in self.tracker.roi_history[self._roi_start :]
         )
-        modules = list(self.tracker.module_deltas)
-        workflow_synergy_score = compute_workflow_synergy(self.tracker, modules)
-        bottleneck_index = compute_bottleneck_index(self.tracker, workflow_id)
-        patchability_score = compute_patchability(self.tracker.roi_history)
 
         per_module: Dict[str, Dict[str, float]] = {}
         timings = getattr(self.tracker, "timings", {})
@@ -198,6 +171,15 @@ class CompositeWorkflowScorer(ROIScorer):
                 "roi_delta": roi_delta,
                 "success_rate": 1.0 if self._module_successes.get(mod) else 0.0,
             }
+            self._module_roi_history[mod].append(roi_delta)
+
+        workflow_synergy_score = compute_workflow_synergy(
+            self.tracker.roi_history, self._module_roi_history, self.history_window
+        )
+        bottleneck_index = compute_bottleneck_index(self.tracker, workflow_id)
+        patchability_score = compute_patchability(
+            self.tracker.roi_history, self.history_window
+        )
 
         self.results_db.log_result(
             workflow_id=workflow_id,
@@ -304,16 +286,21 @@ class CompositeWorkflowScorer(ROIScorer):
 
         success_rate = success / total if total else 0.0
         roi_gain = sum(float(r) for r in getattr(tracker, "roi_history", []))
-        modules = list(per_module_counts)
-        workflow_synergy_score = compute_workflow_synergy(tracker, modules)
-        bottleneck_index = compute_bottleneck_index(tracker, workflow_id)
-        patchability_score = compute_patchability(getattr(tracker, "roi_history", []))
 
         per_module_metrics: Dict[str, Dict[str, float]] = {}
         for mod, counts in per_module_counts.items():
             roi_delta = sum(float(x) for x in tracker.module_deltas.get(mod, []))
             sr = counts["success"] / counts["total"] if counts["total"] else 0.0
             per_module_metrics[mod] = {"success_rate": sr, "roi_delta": roi_delta}
+            self._module_roi_history[mod].append(roi_delta)
+
+        workflow_synergy_score = compute_workflow_synergy(
+            getattr(tracker, "roi_history", []), self._module_roi_history, self.history_window
+        )
+        bottleneck_index = compute_bottleneck_index(tracker, workflow_id)
+        patchability_score = compute_patchability(
+            getattr(tracker, "roi_history", []), self.history_window
+        )
 
         run_id = uuid.uuid4().hex
         self.results_db.log_result(

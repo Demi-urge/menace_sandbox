@@ -16,6 +16,7 @@ import sys
 import types
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from menace_sandbox.db_router import init_db_router
@@ -99,9 +100,10 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
     # Basic sanity checks on aggregate metrics.
     assert result.runtime > 0
     assert 0.0 <= result.success_rate <= 1.0
-    assert isinstance(result.workflow_synergy_score, float)
-    assert isinstance(result.bottleneck_index, float)
-    assert isinstance(result.patchability_score, float)
+    assert result.workflow_synergy_score == pytest.approx((1.0 + 2.0 - 0.5) / 6.0)
+    assert result.bottleneck_index == pytest.approx(0.3 / (0.1 + 0.2 + 0.3))
+    expected_patch = 1.0 / (1.0 + np.std([1.0, 2.0, 3.0]))
+    assert result.patchability_score == pytest.approx(expected_patch)
 
     # Ensure results persisted with workflow/run identifiers and per-module deltas.
     cur = scorer.results_db.conn.cursor()
