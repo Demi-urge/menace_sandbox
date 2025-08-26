@@ -30,6 +30,7 @@
   for details.
 - Evolution orchestrator coordinating self improvement and structural evolution
 - System evolution manager runs GA-driven structural updates ([docs/system_evolution_manager.md](docs/system_evolution_manager.md))
+- Workflow evolution manager benchmarks variant sequences and promotes higher-ROI versions with diminishing-returns gating ([docs/workflow_evolution.md](docs/workflow_evolution.md))
 - Experiment manager for automated A/B testing of bot variants
 - Neuroplasticity tracking via PathwayDB ([docs/neuroplasticity.md](docs/neuroplasticity.md))
 - Atomic write mirroring with `TransactionManager`
