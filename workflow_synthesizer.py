@@ -186,6 +186,7 @@ class WorkflowSynthesizer:
     intent_db_path: Path | None
     generated_workflows: List[List[WorkflowStep]]
     workflow_scores: List[float]
+    workflow_score_details: List[Dict[str, float]]
 
     # ------------------------------------------------------------------
     def __init__(
@@ -233,6 +234,7 @@ class WorkflowSynthesizer:
 
         self.generated_workflows = []
         self.workflow_scores = []
+        self.workflow_score_details = []
 
     # ------------------------------------------------------------------
     def load_intent_clusters(self) -> None:
@@ -786,7 +788,7 @@ class WorkflowSynthesizer:
             except Exception:  # pragma: no cover - best effort
                 pass
 
-        entries: List[Tuple[float, List[WorkflowStep]]] = []
+        entries: List[Tuple[float, List[WorkflowStep], float, float, float]] = []
         for order in orders:
             workflow = [step_map[m] for m in order]
             synergy_score = 0.0
@@ -810,16 +812,25 @@ class WorkflowSynthesizer:
                     dep_counts[dep] = dep_counts.get(dep, 0) + 1
             duplicate_penalty = sum(v - 1 for v in dep_counts.values() if v > 1)
 
-            score = (
-                synergy_weight * synergy_norm
-                + intent_weight * intent_norm
-                - (unresolved_penalty + duplicate_penalty)
-            )
-            entries.append((score, workflow))
+            penalty = unresolved_penalty + duplicate_penalty
+            score = synergy_weight * synergy_norm + intent_weight * intent_norm - penalty
+            entries.append((score, workflow, synergy_norm, intent_norm, penalty))
 
         entries.sort(key=lambda x: x[0], reverse=True)
-        self.workflow_scores = [score for score, _wf in entries][:limit]
-        self.generated_workflows = [wf for _score, wf in entries][:limit]
+        self.workflow_scores = []
+        self.generated_workflows = []
+        self.workflow_score_details = []
+        for score, wf, syn, intent, penalty in entries[:limit]:
+            self.workflow_scores.append(score)
+            self.generated_workflows.append(wf)
+            self.workflow_score_details.append(
+                {
+                    "score": score,
+                    "synergy": syn,
+                    "intent": intent,
+                    "penalty": penalty,
+                }
+            )
 
         out_dir = Path("sandbox_data/generated_workflows")
         out_dir.mkdir(parents=True, exist_ok=True)
