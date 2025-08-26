@@ -14,6 +14,7 @@ from .truth_adapter import TruthAdapter
 from .foresight_tracker import ForesightTracker
 from .upgrade_forecaster import UpgradeForecaster
 from .workflow_synthesizer import WorkflowSynthesizer
+from .composite_workflow_scorer import CompositeWorkflowScorer
 try:  # pragma: no cover - optional heavy dependency
     from .intent_clusterer import IntentClusterer
 except Exception:  # pragma: no cover - gracefully degrade
@@ -277,6 +278,7 @@ __all__ = [
     "synergy_auto_trainer",
     "variant_manager",
     "cognition_layer",
+    "CompositeWorkflowScorer",
 ]
 __all__.append("readiness_index")
 __version__ = "0.1.0"
