@@ -5,14 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
-import time
 import sqlite3
+import uuid
 from itertools import combinations
 from statistics import stdev
 
 import numpy as np
 
-from db_router import GLOBAL_ROUTER, init_db_router, LOCAL_TABLES
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .roi_tracker import ROITracker
 from .roi_calculator import ROICalculator
 from .data_bot import MetricsDB
@@ -37,7 +37,7 @@ class Scorecard:
     patchability: float = 0.0
 
 
-LOCAL_TABLES.add("roi_results")
+LOCAL_TABLES.add("workflow_results")
 router = GLOBAL_ROUTER or init_db_router("roi_scorer")
 if tb is not None:  # align telemetry router
     tb.GLOBAL_ROUTER = router
@@ -105,6 +105,51 @@ def compute_patchability(history: list[float]) -> float:
     return slope * (1.0 / (sigma + 1.0))
 
 
+def insert_workflow_result(
+    cur: sqlite3.Cursor,
+    workflow_id: str,
+    run_id: str,
+    runtime: float,
+    success: bool,
+    roi_gain: float,
+    workflow_synergy: float,
+    bottleneck_index: float,
+    patchability: float,
+) -> None:
+    """Insert a workflow result into ``workflow_results``.
+
+    Parameters
+    ----------
+    cur:
+        Database cursor targeting ``workflow_results``.
+    workflow_id:
+        Identifier of the evaluated workflow.
+    run_id:
+        Generated run identifier.
+    runtime, success, roi_gain, workflow_synergy, bottleneck_index, patchability:
+        Recorded metrics for the workflow execution.
+    """
+
+    cur.execute(
+        """
+        INSERT INTO workflow_results(
+            workflow_id, run_id, runtime, success, roi_gain,
+            workflow_synergy_score, bottleneck_index, patchability_score
+        ) VALUES(?,?,?,?,?,?,?,?)
+        """,
+        (
+            workflow_id,
+            run_id,
+            runtime,
+            int(success),
+            roi_gain,
+            workflow_synergy,
+            bottleneck_index,
+            patchability,
+        ),
+    )
+
+
 class ROIScorer:
     """Base scorer storing ROI results in ``roi_results.db``."""
 
@@ -123,31 +168,56 @@ class ROIScorer:
 
     # internal
     def _init_db(self) -> None:
-        conn = router.get_connection("roi_results", operation="write")
-        conn.execute(
+        self._db = DBRouter('roi_results', str(self.db_path), str(self.db_path))
+        self.conn = self._db.get_connection('workflow_results', operation='write')
+        cur = self.conn.cursor()
+        cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS roi_results (
-                run_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                workflow_id TEXT NOT NULL,
-                runtime REAL NOT NULL,
-                success INTEGER NOT NULL,
-                roi_gain REAL NOT NULL,
-                workflow_synergy REAL DEFAULT 0,
-                bottleneck_index REAL DEFAULT 0,
-                patchability REAL DEFAULT 0,
-                ts REAL NOT NULL
+            CREATE TABLE IF NOT EXISTS workflow_results(
+                id INTEGER PRIMARY KEY,
+                workflow_id TEXT,
+                run_id TEXT,
+                runtime REAL,
+                success INTEGER,
+                roi_gain REAL,
+                workflow_synergy_score REAL,
+                bottleneck_index REAL,
+                patchability_score REAL,
+                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-            """
+            """,
         )
-        # ensure columns exist for existing tables
-        for col in ("workflow_synergy", "bottleneck_index", "patchability"):
-            try:
-                conn.execute(
-                    f"ALTER TABLE roi_results ADD COLUMN {col} REAL DEFAULT 0"
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_workflow_results_wf_run
+                ON workflow_results(workflow_id, run_id)
+            """,
+        )
+        cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='roi_results'"
+        )
+        if cur.fetchone():
+            cur.execute(
+                """
+                INSERT INTO workflow_results(
+                    workflow_id, run_id, runtime, success, roi_gain,
+                    workflow_synergy_score, bottleneck_index, patchability_score, ts
                 )
-            except sqlite3.OperationalError:
-                pass
-        conn.commit()
+                SELECT
+                    workflow_id,
+                    CAST(run_id AS TEXT),
+                    runtime,
+                    success,
+                    roi_gain,
+                    workflow_synergy,
+                    bottleneck_index,
+                    patchability,
+                    datetime(ts, 'unixepoch')
+                FROM roi_results
+                """,
+            )
+            cur.execute("DROP TABLE roi_results")
+        self.conn.commit()
 
     def _persist(
         self,
@@ -158,33 +228,22 @@ class ROIScorer:
         workflow_synergy: float,
         bottleneck_index: float,
         patchability: float,
-    ) -> int:
-        global router
-        conn = router.get_connection("roi_results", operation="write")
-        try:
-            cur = conn.cursor()
-        except sqlite3.ProgrammingError:
-            router = init_db_router("roi_scorer")
-            if tb is not None:
-                tb.GLOBAL_ROUTER = router
-            conn = router.get_connection("roi_results", operation="write")
-            cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO roi_results (workflow_id, runtime, success, roi_gain, workflow_synergy, bottleneck_index, patchability, ts) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                workflow_id,
-                runtime,
-                int(success),
-                roi_gain,
-                workflow_synergy,
-                bottleneck_index,
-                patchability,
-                time.time(),
-            ),
+    ) -> str:
+        cur = self.conn.cursor()
+        run_id = uuid.uuid4().hex
+        insert_workflow_result(
+            cur,
+            workflow_id,
+            run_id,
+            runtime,
+            success,
+            roi_gain,
+            workflow_synergy,
+            bottleneck_index,
+            patchability,
         )
-        conn.commit()
-        return int(cur.lastrowid)
+        self.conn.commit()
+        return run_id
 
 
 class CompositeWorkflowScorer(ROIScorer):
@@ -202,7 +261,7 @@ class CompositeWorkflowScorer(ROIScorer):
 
     def score(
         self, workflow_id: str, workflow_callable: Callable[[], bool]
-    ) -> Tuple[int, Scorecard]:
+    ) -> Tuple[str, Scorecard]:
         """Execute *workflow_callable* and persist scoring information."""
 
         try:
@@ -285,4 +344,5 @@ __all__ = [
     "compute_workflow_synergy",
     "compute_bottleneck_index",
     "compute_patchability",
+    "insert_workflow_result",
 ]
