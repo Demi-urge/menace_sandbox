@@ -5,7 +5,7 @@ reside in the local or the shared SQLite database.  Shared tables are
 available to every Menace instance while local tables are isolated per
 ``menace_id``.  Connections returned by :func:`DBRouter.get_connection` are
 wrapped so that any ``execute`` call automatically records the number of rows
-read or written via :func:`audit_db_access.log_db_access`.
+read or written via :func:`audit.log_db_access`.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Set, Iterable, Mapping, Any
 
-from audit_db_access import log_db_access
+from audit import log_db_access
 
 
 __all__ = [
@@ -347,7 +347,7 @@ def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
         logger.info(msg)
 
         append_record(table, record, menace_id, queue_dir=queue_dir)
-        log_db_access("write", table, 1, menace_id)
+        log_db_access("write", table, 1, menace_id, log_path=_audit_log_path)
 
         _record_audit(entry)
     elif table in LOCAL_TABLES:
@@ -398,7 +398,7 @@ class LoggedCursor(sqlite3.Cursor):
         return table.strip('"`[]')
 
     def _log(self, action: str, table: str, row_count: int) -> None:
-        log_db_access(action, table, row_count, self.menace_id)
+        log_db_access(action, table, row_count, self.menace_id, log_path=_audit_log_path)
 
     def execute(self, sql: str, parameters: Iterable | None = None):  # type: ignore[override]
         super().execute(sql, parameters or ())
@@ -660,7 +660,7 @@ class DBRouter:
         from db_write_queue import append_record, queue_insert as queue_insert_record
         append_record(table_name, values, self.menace_id)
         queue_insert_record(table_name, values, hash_fields)
-        log_db_access("write", table_name, 1, self.menace_id)
+        log_db_access("write", table_name, 1, self.menace_id, log_path=_audit_log_path)
 
     # ------------------------------------------------------------------
     def close(self) -> None:

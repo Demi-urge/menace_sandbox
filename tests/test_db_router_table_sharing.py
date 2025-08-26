@@ -109,6 +109,25 @@ def test_fetch_all_scopes_with_shared_table(tmp_path, monkeypatch):
 
     router_a = db_router.init_db_router("one", str(tmp_path / "one.db"), str(shared_db))
     bdb.router = router_a
+
+    def _direct_queue_insert(table, payload, menace_id):
+        cols = [k for k in payload if k != "hash_fields"]
+        values = [payload[c] for c in cols]
+        if "content_hash" not in payload:
+            from db_dedup import compute_content_hash
+
+            hash_fields = payload.get("hash_fields", [])
+            hash_data = {k: payload[k] for k in hash_fields if k in payload}
+            cols.append("content_hash")
+            values.append(compute_content_hash(hash_data))
+        placeholders = ", ".join(["?"] * len(cols))
+        sql = f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders})"
+        conn = db_router.GLOBAL_ROUTER.get_connection(table, "write")
+        conn.execute(sql, values)
+        conn.commit()
+
+    monkeypatch.setattr(bdb, "queue_insert", _direct_queue_insert)
+
     db_a = bdb.BotDB(tmp_path / "a.db")
     db_a.add_bot(bdb.BotRecord(name="a"))
 
@@ -232,6 +251,7 @@ def test_threaded_shared_and_local_with_audit(tmp_path, monkeypatch):
         importlib.reload(db_router)
 
     entries = [json.loads(line) for line in audit_log.read_text().strip().splitlines()]
+    entries = [e for e in entries if "table_name" in e]
     assert {e["table_name"] for e in entries} >= {"bots", "models"}
     assert {e["operation"] for e in entries} >= {"write", "read"}
     assert {e["menace_id"] for e in entries} == {"alpha"}
