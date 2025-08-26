@@ -11,11 +11,17 @@ from .workflow_evolution_bot import WorkflowEvolutionBot
 from .roi_results_db import ROIResultsDB
 from .roi_tracker import ROITracker
 from .workflow_stability_db import WorkflowStabilityDB
+try:
+    from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
+except Exception:  # pragma: no cover - optional dependency
+    EvolutionHistoryDB = None  # type: ignore
+    EvolutionEvent = None  # type: ignore
 from . import mutation_logger as MutationLogger
 
 logger = logging.getLogger(__name__)
 
 STABLE_WORKFLOWS = WorkflowStabilityDB()
+EVOLUTION_DB = EvolutionHistoryDB() if EvolutionHistoryDB is not None else None
 
 
 def _build_callable(sequence: str) -> Callable[[], bool]:
@@ -134,28 +140,52 @@ def evolve(
             roi_delta=roi_delta,
         )
 
+        parent_id = bot._rearranged_events.get(seq)
+        event_id = MutationLogger.log_mutation(
+            change=seq,
+            reason="benchmark",
+            trigger="workflow_evolution_manager",
+            performance=roi_delta,
+            workflow_id=int(workflow_id),
+            before_metric=baseline_roi,
+            after_metric=variant_result.roi_gain,
+            parent_id=parent_id,
+        )
+
+        if EVOLUTION_DB is not None and EvolutionEvent is not None:
+            try:
+                EVOLUTION_DB.add(
+                    EvolutionEvent(
+                        action=seq,
+                        before_metric=baseline_roi,
+                        after_metric=variant_result.roi_gain,
+                        roi=roi_delta,
+                        workflow_id=int(workflow_id),
+                        reason="benchmark",
+                        trigger="workflow_evolution_manager",
+                        performance=roi_delta,
+                        parent_event_id=parent_id,
+                    )
+                )
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed logging variant benchmark")
+
         log_evo = getattr(MutationLogger, "log_workflow_evolution", None)
         if callable(log_evo):
-            event_id = log_evo(
-                workflow_id=int(workflow_id),
-                variant=seq,
-                baseline_roi=baseline_roi,
-                variant_roi=variant_result.roi_gain,
-                baseline_synergy=baseline_synergy,
-                variant_synergy=getattr(
-                    variant_result, "workflow_synergy_score", 0.0
-                ),
-                mutation_id=bot._rearranged_events.get(seq),
-            )
-        else:
-            event_id = bot._rearranged_events.get(seq)
-        if event_id is not None:
-            MutationLogger.record_mutation_outcome(
-                event_id,
-                after_metric=variant_result.roi_gain,
-                roi=roi_delta,
-                performance=roi_delta,
-            )
+            try:
+                log_evo(
+                    workflow_id=int(workflow_id),
+                    variant=seq,
+                    baseline_roi=baseline_roi,
+                    variant_roi=variant_result.roi_gain,
+                    baseline_synergy=baseline_synergy,
+                    variant_synergy=getattr(
+                        variant_result, "workflow_synergy_score", 0.0
+                    ),
+                    mutation_id=event_id,
+                )
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed logging workflow evolution")
 
         if roi_delta > (best_roi - baseline_roi):
             best_roi = variant_result.roi_gain
