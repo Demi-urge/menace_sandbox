@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List
 import json
+from statistics import fmean, pvariance
 
 from db_router import DBRouter, LOCAL_TABLES
 
@@ -48,13 +49,18 @@ class ROIResultsDB:
     """
 
     def __init__(
-        self, path: str | Path = "roi_results.db", *, router: DBRouter | None = None
+        self,
+        path: str | Path = "roi_results.db",
+        *,
+        router: DBRouter | None = None,
+        window: int = 5,
     ) -> None:
         self.path = Path(path)
         self.router = router or DBRouter(
             "workflow_results", str(self.path), str(self.path)
         )
         self.conn = self.router.get_connection("workflow_results", operation="write")
+        self.ma_window = window
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -106,7 +112,8 @@ class ROIResultsDB:
             """,
         )
         existing = {
-            r[1] for r in cur.execute("PRAGMA table_info(workflow_module_deltas)").fetchall()
+            r[1]
+            for r in cur.execute("PRAGMA table_info(workflow_module_deltas)").fetchall()
         }
         if "success_rate" not in existing:
             cur.execute(
@@ -210,12 +217,30 @@ class ROIResultsDB:
         runtime: float,
         success_rate: float,
         roi_delta: float,
-        roi_delta_ma: float,
-        roi_delta_var: float,
+        *,
+        window: int | None = None,
     ) -> None:
-        """Persist per-module delta statistics for a workflow run."""
+        """Persist per-module delta statistics for a workflow run.
 
+        ``roi_delta_ma`` and ``roi_delta_var`` are derived from the latest
+        ``window`` entries for the given workflow/module pair.
+        """
+
+        win = window or self.ma_window
         cur = self.conn.cursor()
+        limit = max(win - 1, 0)
+        cur.execute(
+            """
+            SELECT roi_delta FROM workflow_module_deltas
+            WHERE workflow_id=? AND module=?
+            ORDER BY ts DESC LIMIT ?
+            """,
+            (workflow_id, module, limit),
+        )
+        prev = [float(r[0]) for r in cur.fetchall()]
+        values = prev + [roi_delta]
+        roi_delta_ma = fmean(values)
+        roi_delta_var = pvariance(values) if len(values) > 1 else 0.0
         cur.execute(
             """
             INSERT INTO workflow_module_deltas(
@@ -237,7 +262,9 @@ class ROIResultsDB:
         self.conn.commit()
 
     # ------------------------------------------------------------------
-    def log_module_attribution(self, module: str, roi_delta: float, bottleneck: float) -> None:
+    def log_module_attribution(
+        self, module: str, roi_delta: float, bottleneck: float
+    ) -> None:
         """Update per-module attribution stats."""
 
         cur = self.conn.cursor()
@@ -258,7 +285,9 @@ class ROIResultsDB:
         """Return cumulative per-module attribution metrics."""
 
         cur = self.conn.cursor()
-        cur.execute("SELECT module, roi_delta, bottleneck, runs FROM module_attribution")
+        cur.execute(
+            "SELECT module, roi_delta, bottleneck, runs FROM module_attribution"
+        )
         rows = cur.fetchall()
         return {
             str(m): {"roi_delta": float(r), "bottleneck": float(b), "runs": int(n)}
@@ -285,7 +314,9 @@ class ROIResultsDB:
         )
 
     # ------------------------------------------------------------------
-    def fetch_results(self, workflow_id: str, run_id: str | None = None) -> List[ROIResult]:
+    def fetch_results(
+        self, workflow_id: str, run_id: str | None = None
+    ) -> List[ROIResult]:
         """Return logged results for ``workflow_id``.
 
         If ``run_id`` is provided, only matching entries are returned.
@@ -397,7 +428,9 @@ class ROIResultsDB:
         return trajectories
 
     # ------------------------------------------------------------------
-    def module_impact_report(self, workflow_id: str, run_id: str) -> Dict[str, Dict[str, float]]:
+    def module_impact_report(
+        self, workflow_id: str, run_id: str
+    ) -> Dict[str, Dict[str, float]]:
         """Return modules grouped by improvement sign for ``run_id``."""
 
         cur = self.conn.cursor()
@@ -431,6 +464,25 @@ class ROIResultsDB:
 
         return {"improved": {}, "regressed": {}}
 
+    def fetch_module_volatility(
+        self, workflow_id: str, module: str
+    ) -> Dict[str, float]:
+        """Return latest moving average and variance for ``module``."""
+
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            SELECT roi_delta_ma, roi_delta_var FROM workflow_module_deltas
+            WHERE workflow_id=? AND module=?
+            ORDER BY ts DESC LIMIT 1
+            """,
+            (workflow_id, module),
+        )
+        row = cur.fetchone()
+        if row:
+            return {"moving_avg": float(row[0]), "variance": float(row[1])}
+        return {"moving_avg": 0.0, "variance": 0.0}
+
 
 def module_impact_report(
     workflow_id: str, run_id: str, db_path: str | Path = "roi_results.db"
@@ -450,6 +502,17 @@ def module_performance_trajectories(
 
     db = ROIResultsDB(db_path)
     return db.fetch_module_trajectories(workflow_id, module)
+
+
+def module_volatility(
+    workflow_id: str,
+    module: str,
+    db_path: str | Path = "roi_results.db",
+) -> Dict[str, float]:
+    """Convenience wrapper returning latest volatility metrics."""
+
+    db = ROIResultsDB(db_path)
+    return db.fetch_module_volatility(workflow_id, module)
 
 
 def workflow_trends(
@@ -512,6 +575,7 @@ __all__ = [
     "ROIResultsDB",
     "module_impact_report",
     "module_performance_trajectories",
+    "module_volatility",
     "workflow_trends",
     "compute_rolling_metrics",
 ]
