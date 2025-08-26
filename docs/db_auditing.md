@@ -2,9 +2,8 @@
 
 `audit.log_db_access` captures a tamper-resistant trail of database actions. Each
 entry records what happened and which Menace instance performed it so access to
-shared resources can be monitored. The legacy
-`audit_db_access.log_db_access` wrapper now simply forwards to this unified API
-and will be removed in a future release.
+shared resources can be monitored. The legacy `audit_db_access` wrapper has been
+removed; import `log_db_access` directly from `audit`.
 
 ## Log format
 
