@@ -224,6 +224,19 @@ def test_generate_workflows_max_depth(tmp_path, monkeypatch):
     assert any(order == ["mod_a", "mod_b", "mod_c"] for order in flat)
 
 
+def test_generate_workflows_min_score_prunes(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    grapher = StubGrapher()
+    synth = ws.WorkflowSynthesizer(module_synergy_grapher=grapher)
+
+    workflows = synth.generate_workflows(
+        start_module="mod_a", limit=5, max_depth=2, min_score=0.1
+    )
+    assert [[step.module for step in wf] for wf in workflows] == [["mod_a"]]
+
+
 def test_generate_workflows_rich_returns(tmp_path, monkeypatch):
     _copy_modules(tmp_path)
     monkeypatch.chdir(tmp_path)
