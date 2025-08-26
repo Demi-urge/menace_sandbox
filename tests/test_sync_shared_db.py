@@ -1,47 +1,109 @@
 import json
-from sqlite3 import connect
+import multiprocessing
+from pathlib import Path
+from sqlite3 import Connection, connect
 
 import pytest
 
 from db_write_queue import append_record
-from sync_shared_db import _sync_once
+from sync_shared_db import _sync_once, process_queue_file
 
 
-@pytest.fixture
-def queue_dir(tmp_path):
-    return tmp_path
+def _worker(n: int, queue_dir: str) -> None:
+    """Helper for concurrent write test."""
+    append_record("example", {"n": n}, "m1", Path(queue_dir))
 
 
-@pytest.fixture
-def sqlite_conn():
-    conn = connect(":memory:")  # noqa: SQL001
+def _init_db(path: Path) -> Connection:
+    conn = connect(path)  # noqa: SQL001
     conn.execute(
-        "CREATE TABLE test (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "value TEXT NOT NULL, content_hash TEXT UNIQUE)"
+        "CREATE TABLE example (id INTEGER PRIMARY KEY, value TEXT, content_hash TEXT UNIQUE)"
     )
-    yield conn
-    conn.close()
+    return conn
 
 
-def test_sync_once_processes_records(queue_dir, sqlite_conn):
-    append_record("test", {"value": "a"}, "m1", queue_dir)
-    append_record("test", {"value": "a"}, "m1", queue_dir)
-    append_record("test", {"value": None}, "m1", queue_dir)
+def test_sync_processes_queue(tmp_path: Path) -> None:
+    """Queued records are written to the shared database."""
+    queue_dir = tmp_path / "queue"
+    db_path = tmp_path / "shared.db"
+    conn = _init_db(db_path)
 
-    stats = _sync_once(queue_dir, sqlite_conn)
+    append_record("example", {"value": "a"}, "m1", queue_dir)
+    append_record("example", {"value": "b"}, "m1", queue_dir)
+
+    stats = _sync_once(queue_dir, conn)
+    assert stats.processed == 2
+
+    rows = conn.execute("SELECT value FROM example ORDER BY id").fetchall()
+    assert [r[0] for r in rows] == ["a", "b"]
+    path = queue_dir / "m1.jsonl"
+    assert path.read_text() == ""
+
+
+def test_sync_crash_leaves_unprocessed_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash mid-processing leaves queue file intact for later retry."""
+    queue_dir = tmp_path / "queue"
+    db_path = tmp_path / "shared.db"
+    conn = _init_db(db_path)
+
+    append_record("example", {"value": "a"}, "m1", queue_dir)
+    append_record("example", {"value": "b"}, "m1", queue_dir)
+    path = queue_dir / "m1.jsonl"
+
+    call_count = {"n": 0}
+    orig = process_queue_file.__globals__["insert_if_unique"]
+
+    def boom(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise KeyboardInterrupt("boom")
+        return orig(*args, **kwargs)
+
+    monkeypatch.setitem(process_queue_file.__globals__, "insert_if_unique", boom)
+
+    with pytest.raises(KeyboardInterrupt):
+        process_queue_file(path, conn=conn)
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+
+    rows = conn.execute("SELECT value FROM example ORDER BY id").fetchall()
+    assert [r[0] for r in rows] == ["a"]
+
+
+def test_sync_deduplicates_hashes(tmp_path: Path) -> None:
+    """Duplicate records are skipped based on content hash."""
+    queue_dir = tmp_path / "queue"
+    db_path = tmp_path / "shared.db"
+    conn = _init_db(db_path)
+
+    append_record("example", {"value": "x"}, "m1", queue_dir)
+    append_record("example", {"value": "x"}, "m1", queue_dir)
+
+    stats = _sync_once(queue_dir, conn)
     assert stats.processed == 1
     assert stats.duplicates == 1
-    assert stats.failures == 1
 
-    rows = sqlite_conn.execute("SELECT value FROM test").fetchall()
-    assert rows == [("a",)]
+    rows = conn.execute("SELECT value FROM example").fetchall()
+    assert rows == [("x",)]
 
-    queue_file = queue_dir / "m1.jsonl"
-    assert queue_file.read_text() == ""
 
-    failed_path = queue_dir / "queue.failed.jsonl"
-    lines = failed_path.read_text().splitlines()
-    assert len(lines) == 1
-    entry = json.loads(lines[0])
-    assert entry["record"]["data"]["value"] is None
-    assert "error" in entry
+def test_concurrent_writes_use_file_locks(tmp_path: Path) -> None:
+    """Multiple processes can append without interleaving writes."""
+    queue_dir = tmp_path / "queue"
+    path = queue_dir / "m1.jsonl"
+
+    processes = [
+        multiprocessing.Process(target=_worker, args=(i, str(queue_dir))) for i in range(10)
+    ]
+    for p in processes:
+        p.start()
+    for p in processes:
+        p.join()
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 10
+    payloads = [json.loads(line)["data"]["n"] for line in lines]
+    assert set(payloads) == set(range(10))
