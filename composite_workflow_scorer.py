@@ -17,6 +17,7 @@ import uuid
 from collections import defaultdict, deque
 import concurrent.futures
 import logging
+import traceback
 from pathlib import Path
 
 import yaml
@@ -129,9 +130,14 @@ class CompositeWorkflowScorer(ROIScorer):
         calculator_factory: Callable[[], ROICalculator] | None = None,
         results_db: ROIResultsDB | None = None,
         profile_type: str | None = None,
+        failure_logger: logging.Logger | None = None,
     ) -> None:
         super().__init__(tracker, calculator_factory, profile_type)
         self.results_db = results_db or ROIResultsDB()
+        self.failure_logger = failure_logger or logging.getLogger(
+            f"{__name__}.failures"
+        )
+        self.failure_details: list[Dict[str, Any]] = []
         # offsets used to compute deltas for individual runs
         self._roi_start: int = 0
         self._module_start: Dict[str, int] = {}
@@ -157,7 +163,23 @@ class CompositeWorkflowScorer(ROIScorer):
         start = time.perf_counter()
         try:
             success = bool(workflow_callable())
-        except Exception:
+        except Exception as exc:
+            tb = traceback.format_exc()
+            self.failure_logger.error(
+                "Workflow %s run %s raised an exception:\n%s",
+                workflow_id,
+                run_id,
+                tb,
+            )
+            self.failure_details.append(
+                {
+                    "scope": "workflow",
+                    "workflow_id": workflow_id,
+                    "run_id": run_id,
+                    "exception": exc,
+                    "traceback": tb,
+                }
+            )
             success = False
         runtime = time.perf_counter() - start
 
@@ -259,6 +281,7 @@ class CompositeWorkflowScorer(ROIScorer):
         }
         self._module_successes = {}
         self._module_failures = {}
+        self.failure_details = []
         self.tracker.timings = {}
         self.tracker.scheduling_overhead = {}
 
@@ -271,9 +294,26 @@ class CompositeWorkflowScorer(ROIScorer):
             try:
                 ok = bool(func())
             except Exception as exc:
-                logging.exception("Module %s execution failed", name)
+                tb = traceback.format_exc()
+                self.failure_logger.error(
+                    "Module %s in workflow %s run %s failed:\n%s",
+                    name,
+                    workflow_id,
+                    run_id,
+                    tb,
+                )
                 ok = False
                 self._module_failures[name] = f"{type(exc).__name__}: {exc}"
+                self.failure_details.append(
+                    {
+                        "scope": "module",
+                        "module": name,
+                        "workflow_id": workflow_id,
+                        "run_id": run_id,
+                        "exception": exc,
+                        "traceback": tb,
+                    }
+                )
             duration = time.perf_counter() - start
             self.tracker.timings[name] = duration
             self._module_successes[name] = ok
