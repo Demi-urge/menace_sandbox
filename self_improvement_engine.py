@@ -5284,6 +5284,35 @@ class SelfImprovementEngine:
                 except Exception:
                     continue
 
+                delta = variant_res.roi_gain - baseline_result.roi_gain
+                try:
+                    if self.roi_tracker is not None:
+                        self.roi_tracker.record_scenario_delta(run_id, delta)
+                    scorer.results_db.log_module_delta(
+                        str(wf_id),
+                        run_id,
+                        "workflow",
+                        float(getattr(variant_res, "runtime", 0.0)),
+                        float(getattr(variant_res, "success_rate", 0.0)),
+                        delta,
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "variant delta logging failed",
+                        extra=log_record(workflow_id=wf_id, run_id=run_id),
+                    )
+                try:
+                    conn = shd.connect()
+                    try:
+                        shd.insert_entry(conn, {run_id: delta})
+                    finally:
+                        conn.close()
+                except Exception:
+                    self.logger.exception(
+                        "variant delta history logging failed",
+                        extra=log_record(workflow_id=wf_id, run_id=run_id),
+                    )
+
                 if variant_res.roi_gain > best_roi:
                     best_roi = variant_res.roi_gain
                     best_seq = v_seq
