@@ -189,6 +189,67 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
     )
 
 
+def test_patch_success_modulates_patchability(tmp_path, monkeypatch):
+    """Global patch success rate scales patchability_score."""
+
+    _copy_fixture_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    init_db_router(
+        "test_patch_success",
+        local_db_path=str(tmp_path / "local.db"),
+        shared_db_path=str(tmp_path / "shared.db"),
+    )
+
+    class StubTracker:
+        def __init__(self) -> None:
+            self.roi_history = [1.0, 2.0, 3.0]
+            self.module_deltas = {"mod_a": [1.0], "mod_b": [2.0], "mod_c": [-0.5]}
+            self.timings = {"mod_a": 0.1, "mod_b": 0.2, "mod_c": 0.3}
+            self.correlation_history: dict[tuple[str, str], list[float]] = {}
+
+        def cache_correlations(self, pairs):  # pragma: no cover - passthrough
+            for k, v in pairs.items():
+                self.correlation_history.setdefault(k, []).append(v)
+
+    tracker = StubTracker()
+
+    def fake_run_workflow_simulations(**_kwargs):
+        details = {
+            "group": [
+                {"module": "mod_a", "result": {"exit_code": 0}},
+                {"module": "mod_b", "result": {"exit_code": 1}},
+                {"module": "mod_c", "result": {"exit_code": 0}},
+            ]
+        }
+        return tracker, details
+
+    import menace_sandbox.sandbox_runner as sandbox_runner
+    sandbox_runner.environment = types.SimpleNamespace(
+        run_workflow_simulations=fake_run_workflow_simulations
+    )
+
+    from menace_sandbox.roi_results_db import ROIResultsDB
+    import menace_sandbox.composite_workflow_scorer as scorer_mod
+    from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
+
+    db_path = tmp_path / "roi_results.db"
+    scorer = CompositeWorkflowScorer(
+        tracker=tracker,
+        results_db=ROIResultsDB(db_path),
+        calculator_factory=_stub_calculator_factory,
+    )
+    workflow_id = "wf_example"
+
+    monkeypatch.setattr(scorer_mod, "PATCH_SUCCESS_RATE", 1.0)
+    high = scorer.evaluate(workflow_id).patchability_score
+
+    monkeypatch.setattr(scorer_mod, "PATCH_SUCCESS_RATE", 0.25)
+    low = scorer.evaluate(workflow_id).patchability_score
+
+    assert low == pytest.approx(high * 0.25)
+
+
 def test_fetch_trends_returns_time_ordered_metrics(tmp_path, monkeypatch):
     """Recorded results expose aggregate trend metrics in order."""
 
