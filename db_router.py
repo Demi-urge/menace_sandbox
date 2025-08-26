@@ -351,14 +351,13 @@ def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
     elif table in LOCAL_TABLES:
         if GLOBAL_ROUTER is None:
             raise RuntimeError("GLOBAL_ROUTER is not initialised")
-        conn = GLOBAL_ROUTER.get_connection(table, "write")
         columns = ", ".join(record.keys())
         placeholders = ", ".join(["?"] * len(record))
-        conn.execute(
+        GLOBAL_ROUTER.execute_and_log(
+            table,
             f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
             tuple(record.values()),
         )
-        conn.commit()
         _record_audit(
             {
                 "menace_id": menace_id,
@@ -608,6 +607,39 @@ class DBRouter:
             _record_audit(entry)
 
             return conn
+
+    # ------------------------------------------------------------------
+    def execute_and_log(
+        self,
+        table_name: str,
+        sql: str,
+        parameters: Iterable | Mapping | None = None,
+    ):
+        """Execute *sql* against *table_name* and log the access.
+
+        Parameters
+        ----------
+        table_name:
+            Name of the table being accessed.
+        sql:
+            SQL statement to execute.
+        parameters:
+            Parameters for the SQL statement.
+        """
+
+        is_read = sql.lstrip().upper().startswith("SELECT")
+        conn = self.get_connection(table_name, "read" if is_read else "write")
+        cursor = conn.execute(sql, parameters or ())
+        if is_read:
+            rows = cursor.fetchall()
+            row_count = len(rows)
+            log_db_access("read", table_name, row_count, self.menace_id)
+            return rows
+
+        row_count = cursor.rowcount if cursor.rowcount != -1 else 0
+        conn.commit()
+        log_db_access("write", table_name, row_count, self.menace_id)
+        return cursor
 
     # ------------------------------------------------------------------
     def queue_write(
