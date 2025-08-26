@@ -287,3 +287,50 @@ def test_generate_workflows_intent_db_scoring(tmp_path, monkeypatch):
     assert [step.module for step in workflows[1]] == ["mod_a", "mod_b", "mod_c"]
     assert synth.workflow_score_details[0]["intent"] == pytest.approx(0.5)
     assert synth.workflow_score_details[1]["intent"] == pytest.approx(1 / 3)
+
+
+def test_scoring_normalisation_and_penalty(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    grapher = StubGrapher()
+
+    class MultiIntent:
+        def __init__(self, base: Path) -> None:
+            self.base = base
+
+        def find_modules_related_to(self, _problem: str, top_k: int = 10):
+            return [
+                SimpleNamespace(path=str(self.base / "mod_b.py"), score=0.5),
+                SimpleNamespace(path=str(self.base / "mod_c.py"), score=1.0),
+            ]
+
+    intent = MultiIntent(tmp_path)
+    synth = ws.WorkflowSynthesizer(module_synergy_grapher=grapher, intent_clusterer=intent)
+    workflows = synth.generate_workflows(
+        start_module="mod_a",
+        problem="finalise",
+        limit=5,
+        max_depth=3,
+        synergy_weight=0.6,
+        intent_weight=0.4,
+    )
+
+    first = synth.workflow_score_details[0]
+    assert [step.module for step in workflows[0]] == ["mod_a", "mod_b"]
+    assert first["synergy"] == pytest.approx(1.0)
+    assert first["intent"] == pytest.approx(0.5 / 2)
+    expected = 0.6 * first["synergy"] + 0.4 * first["intent"] - first["penalty"]
+    assert synth.workflow_scores[0] == pytest.approx(expected)
+
+    for wf, info, score in zip(
+        synth.generated_workflows, synth.workflow_score_details, synth.workflow_scores
+    ):
+        modules = [step.module for step in wf]
+        if modules == ["mod_a", "mod_b", "mod_c"]:
+            assert info["penalty"] == 1
+            expected = 0.6 * info["synergy"] + 0.4 * info["intent"] - info["penalty"]
+            assert score == pytest.approx(expected)
+            break
+    else:  # pragma: no cover - ensure penalty path exists
+        pytest.fail("penalised workflow missing")
