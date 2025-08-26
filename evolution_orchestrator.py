@@ -541,47 +541,11 @@ class EvolutionOrchestrator:
         if not self.workflow_evolver:
             return
         try:
-            suggestions = list(self.workflow_evolver.analyse(limit))
-        except Exception:
-            suggestions = []
-        scored: list[tuple[str, float, str]] = []
-        workflow_id = 0
-        parent_event_id = self._workflow_event_ids.get(workflow_id)
-        for s in suggestions:
-            seq = "-".join(reversed(s.sequence.split("-")))
-            features = [[s.expected_roi, 0.0]]
-            try:
-                try:
-                    seq_preds, category, _, _ = self.roi_predictor.predict(
-                        features, horizon=len(features)
-                    )
-                except TypeError:
-                    val, category, _, _ = self.roi_predictor.predict(features)
-                    seq_preds = [float(val)]
-                roi_est = float(seq_preds[-1]) if seq_preds else s.expected_roi
-            except Exception:
-                roi_est, category = s.expected_roi, "unknown"
-            self.logger.info(
-                "workflow candidate",
-                extra={"workflow": seq, "roi_category": category, "roi_estimate": roi_est},
+            proposals = list(
+                self.workflow_evolver.generate_variants(limit, workflow_id=0)
             )
-            try:
-                event_id = MutationLogger.log_mutation(
-                    change=seq,
-                    reason="rearrangement",
-                    trigger="workflow_evolution_bot",
-                    performance=0.0,
-                    workflow_id=workflow_id,
-                    parent_id=parent_event_id,
-                )
-                if hasattr(self.workflow_evolver, "_rearranged_events"):
-                    self.workflow_evolver._rearranged_events[seq] = event_id
-            except Exception:
-                pass
-            scored.append((seq, roi_est, category))
-        scored = [s for s in scored if s[2] == "exponential" or s[1] > 0]
-        scored.sort(key=lambda x: (-growth_score(x[2]), -x[1]))
-        proposals = [s[0] for s in scored]
+        except Exception:
+            proposals = []
         main_wf = None
         if self.resource_optimizer and (
             time.time() - self._last_workflow_benchmark >= self._benchmark_interval
