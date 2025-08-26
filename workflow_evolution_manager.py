@@ -11,6 +11,11 @@ from .workflow_evolution_bot import WorkflowEvolutionBot
 from .roi_results_db import ROIResultsDB
 from .roi_tracker import ROITracker
 from .workflow_stability_db import WorkflowStabilityDB
+from .workflow_summary_db import WorkflowSummaryDB
+try:  # pragma: no cover - optional at runtime
+    from .workflow_graph import WorkflowGraph
+except Exception:  # pragma: no cover - best effort
+    WorkflowGraph = None  # type: ignore
 try:
     from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 except Exception:  # pragma: no cover - optional dependency
@@ -121,6 +126,7 @@ def evolve(
     best_roi = baseline_roi
     best_variant_seq: Optional[str] = None
     best_variant_result: Optional[object] = None
+    best_delta = 0.0
 
     for seq in bot.generate_variants(limit=variants, workflow_id=int(workflow_id)):
         variant_callable = _build_callable(seq)
@@ -187,21 +193,26 @@ def evolve(
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed logging workflow evolution")
 
-        if roi_delta > (best_roi - baseline_roi):
+        if roi_delta > best_delta:
+            best_delta = roi_delta
             best_roi = variant_result.roi_gain
             best_callable = variant_callable
             best_variant_seq = seq
             best_variant_result = variant_result
 
-    delta = best_roi - baseline_roi
+    delta = best_delta
 
     # Record final RAROI for history
     _, final_raroi, _ = tracker.calculate_raroi(best_roi)
     tracker.score_workflow(wf_id_str, final_raroi)
 
-    if delta <= tracker.diminishing():
+    if delta <= 0:
         STABLE_WORKFLOWS.mark_stable(wf_id_str, baseline_roi)
         logger.info("workflow %s stable (delta=%.4f)", wf_id_str, delta)
+        try:
+            WorkflowSummaryDB().set_summary(int(workflow_id), "stable")
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to flag workflow %s as stable", workflow_id)
         MutationLogger.log_mutation(
             change="stable",
             reason="stable",
@@ -213,7 +224,7 @@ def evolve(
         )
         return workflow_callable
 
-    if best_variant_seq is not None and best_roi > baseline_roi:
+    if best_variant_seq is not None and delta > 0:
         STABLE_WORKFLOWS.clear(wf_id_str)
         event_id = MutationLogger.log_mutation(
             change=best_variant_seq,
@@ -240,6 +251,13 @@ def evolve(
                 )
             except Exception:
                 logger.exception("record promotion failed")
+        try:  # Persist promotion in workflow graph when available
+            if WorkflowGraph is not None:
+                graph = WorkflowGraph()
+                graph.update_workflow(wf_id_str, roi=best_roi)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed updating workflow graph for %s", workflow_id)
+
         try:
             from .workflow_benchmark import benchmark_workflow
             from .data_bot import MetricsDB
