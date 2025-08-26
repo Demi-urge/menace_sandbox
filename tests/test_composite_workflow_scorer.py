@@ -184,6 +184,85 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
     )
 
 
+def test_fetch_trends_returns_time_ordered_metrics(tmp_path, monkeypatch):
+    """Recorded results expose aggregate trend metrics in order."""
+
+    _copy_fixture_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    init_db_router(
+        "test_trend_fetch", local_db_path=str(tmp_path / "local.db"), shared_db_path=str(tmp_path / "shared.db")
+    )
+
+    class StubTracker:
+        def __init__(self) -> None:
+            self.roi_history = [1.0, 2.0, 3.0]
+            self.module_deltas = {
+                "mod_a": [1.0],
+                "mod_b": [2.0],
+                "mod_c": [-0.5],
+            }
+            self.timings = {"mod_a": 0.1, "mod_b": 0.2, "mod_c": 0.3}
+
+        def workflow_variance(self, workflow_id: str) -> float:  # pragma: no cover - trivial
+            return 0.0
+
+    tracker = StubTracker()
+    sys.modules.setdefault(
+        "menace_sandbox.roi_tracker", types.SimpleNamespace(ROITracker=StubTracker)
+    )
+    sys.modules.setdefault(
+        "menace_sandbox.synergy_history_db",
+        types.SimpleNamespace(load_history=lambda: [{"mod_a,mod_b": 0.5}]),
+    )
+
+    import menace_sandbox.code_database as code_db_mod
+
+    monkeypatch.setattr(
+        code_db_mod.PatchHistoryDB, "success_rate", lambda self, limit=50: 0.5
+    )
+
+    from menace_sandbox.roi_results_db import ROIResultsDB
+    from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
+    import menace_sandbox.sandbox_runner as sandbox_runner
+
+    def fake_run_workflow_simulations(**_kwargs):
+        details = {
+            "group": [
+                {"module": "mod_a", "result": {"exit_code": 0}},
+                {"module": "mod_b", "result": {"exit_code": 1}},
+                {"module": "mod_c", "result": {"exit_code": 0}},
+            ]
+        }
+        return tracker, details
+
+    sandbox_runner.environment = types.SimpleNamespace(
+        run_workflow_simulations=fake_run_workflow_simulations
+    )
+
+    db_path = tmp_path / "roi_results.db"
+    scorer = CompositeWorkflowScorer(
+        tracker=tracker,
+        results_db=ROIResultsDB(db_path),
+        calculator_factory=_stub_calculator_factory,
+    )
+    workflow_id = "wf_trend"
+    first = scorer.evaluate(workflow_id)
+
+    # adjust tracker for a second run with different ROI gain
+    tracker.roi_history = [2.0, 3.0, 4.0]
+    tracker.module_deltas = {"mod_a": [2.0], "mod_b": [1.0], "mod_c": [0.0]}
+    second = scorer.evaluate(workflow_id)
+
+    trends = scorer.results_db.fetch_trends(workflow_id)
+    assert [t["roi_gain"] for t in trends] == [first.roi_gain, second.roi_gain]
+    assert [t["bottleneck_index"] for t in trends] == [
+        first.bottleneck_index,
+        second.bottleneck_index,
+    ]
+    assert trends[0]["timestamp"] <= trends[1]["timestamp"]
+
+
 def test_score_workflow_parallel_execution(tmp_path):
     """Modules run concurrently when concurrency hints are provided."""
 
