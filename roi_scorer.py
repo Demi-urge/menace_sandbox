@@ -85,6 +85,7 @@ class ROIScorer(CoreROIScorer):
                 run_id TEXT,
                 module TEXT,
                 runtime REAL,
+                success_rate REAL,
                 roi_delta REAL,
                 roi_delta_ma REAL DEFAULT 0.0,
                 roi_delta_var REAL DEFAULT 0.0,
@@ -101,6 +102,10 @@ class ROIScorer(CoreROIScorer):
         existing = {
             r[1] for r in cur.execute("PRAGMA table_info(workflow_module_deltas)").fetchall()
         }
+        if "success_rate" not in existing:
+            cur.execute(
+                "ALTER TABLE workflow_module_deltas ADD COLUMN success_rate REAL DEFAULT 0.0"
+            )
         if "roi_delta_ma" not in existing:
             cur.execute(
                 "ALTER TABLE workflow_module_deltas ADD COLUMN roi_delta_ma REAL DEFAULT 0.0"
@@ -244,9 +249,11 @@ class CompositeWorkflowScorer(ROIScorer):
         )
 
         # Compute per-module ROI and update tracker
+        success_rates: Dict[str, float] = {}
         for mod in modules:
             runtime_mod = timings.get(mod, 0.0)
             success_rate_mod = 0.0 if failures.get(mod, 0.0) else 1.0
+            success_rates[mod] = success_rate_mod
             mod_metrics = {
                 "reliability": 1.0 if success_rate_mod else 0.0,
                 "efficiency": 1.0 / runtime_mod if runtime_mod > 0 else 0.0,
@@ -283,16 +290,17 @@ class CompositeWorkflowScorer(ROIScorer):
         for mod in set(mod_deltas) | set(timings):
             runtime_mod = timings.get(mod, 0.0)
             delta = mod_deltas.get(mod, 0.0)
+            sr_mod = success_rates.get(mod, 0.0)
             vals = self.tracker.module_deltas.get(mod, [])
             ma = float(statistics.fmean(vals)) if vals else 0.0
             var = float(statistics.pvariance(vals)) if len(vals) > 1 else 0.0
             cur.execute(
                 """
                 INSERT INTO workflow_module_deltas(
-                    workflow_id, run_id, module, runtime, roi_delta, roi_delta_ma, roi_delta_var
-                ) VALUES(?,?,?,?,?,?,?)
+                    workflow_id, run_id, module, runtime, success_rate, roi_delta, roi_delta_ma, roi_delta_var
+                ) VALUES(?,?,?,?,?,?,?,?)
                 """,
-                (workflow_id, run_id, mod, runtime_mod, delta, ma, var),
+                (workflow_id, run_id, mod, runtime_mod, sr_mod, delta, ma, var),
             )
         self.conn.commit()
         # Record aggregate workflow result with per-module deltas
@@ -305,7 +313,10 @@ class CompositeWorkflowScorer(ROIScorer):
             workflow_synergy_score=workflow_synergy_score,
             bottleneck_index=bottleneck_index,
             patchability_score=patchability_score,
-            module_deltas={m: {"roi_delta": d} for m, d in mod_deltas.items()},
+            module_deltas={
+                m: {"roi_delta": d, "success_rate": success_rates.get(m, 0.0)}
+                for m, d in mod_deltas.items()
+            },
         )
         for key, value in metrics.items():
             self.tracker.metrics_history.setdefault(key, []).append(value)

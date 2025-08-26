@@ -51,9 +51,9 @@ class _StubPatchDB:
 sys.modules.setdefault(
     "menace_sandbox.code_database", types.SimpleNamespace(PatchHistoryDB=_StubPatchDB)
 )
-sys.modules.setdefault(
-    "menace_sandbox.sandbox_runner", types.SimpleNamespace(environment=types.SimpleNamespace())
-)
+sys.modules[
+    "menace_sandbox.sandbox_runner"
+] = types.SimpleNamespace(environment=types.SimpleNamespace())
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "workflow_modules"
@@ -171,13 +171,18 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
     assert run_id  # run identifier was generated
     deltas = json.loads(deltas_json)
     assert deltas["mod_a"]["roi_delta"] == pytest.approx(1.0)
+    assert deltas["mod_a"]["success_rate"] == pytest.approx(1.0)
     assert deltas["mod_b"]["roi_delta"] == pytest.approx(2.0)
+    assert deltas["mod_b"]["success_rate"] == pytest.approx(0.0)
     assert deltas["mod_c"]["roi_delta"] == pytest.approx(-0.5)
+    assert deltas["mod_c"]["success_rate"] == pytest.approx(1.0)
 
     # Regression coverage for module attribution utilities.
     report = scorer.results_db.module_impact_report(workflow_id, run_id)
-    assert report["improved"]["mod_a"] == pytest.approx(1.0)
-    assert report["regressed"]["mod_c"] == pytest.approx(-0.5)
+    assert report["improved"]["mod_a"]["roi_delta"] == pytest.approx(1.0)
+    assert report["improved"]["mod_a"]["success_rate"] == pytest.approx(1.0)
+    assert report["regressed"]["mod_c"]["roi_delta"] == pytest.approx(-0.5)
+    assert report["regressed"]["mod_c"]["success_rate"] == pytest.approx(1.0)
 
     # Module attribution records were stored and exposed
     attrib = scorer.results_db.fetch_module_attribution()
