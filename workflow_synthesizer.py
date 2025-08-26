@@ -341,19 +341,26 @@ class WorkflowSynthesizer:
                 else:
                     self.intent_clusterer = IntentClusterer()
                 return
-            except Exception as exc:  # pragma: no cover - ignore init errors
+            except (FileNotFoundError, RuntimeError) as exc:  # pragma: no cover
                 logger.warning(
-                    "Failed to initialise IntentClusterer with %s: %s",
-                    self.intent_db_path or "<default>",
-                    exc,
+                    "IntentClusterer initialisation failed",
+                    exc_info=exc,
+                    extra={
+                        "operation": "IntentClusterer.__init__",
+                        "path": str(self.intent_db_path or "<default>"),
+                    },
                 )
                 self.intent_clusterer = None
         if IntentDB is not None and self.intent_db is None:
             try:
                 path = self.intent_db_path or Path("intent.db")
                 self.intent_db = IntentDB(path)
-            except Exception as exc:  # pragma: no cover - ignore
-                logger.warning("Failed to load IntentDB from %s: %s", path, exc)
+            except (FileNotFoundError, RuntimeError) as exc:  # pragma: no cover
+                logger.warning(
+                    "IntentDB load failed",
+                    exc_info=exc,
+                    extra={"operation": "IntentDB", "path": str(path)},
+                )
                 self.intent_db = None
 
     # ------------------------------------------------------------------
@@ -574,8 +581,15 @@ class WorkflowSynthesizer:
                             visited.add(neigh)
                             modules.add(neigh)
                             queue.append((neigh, depth + 1))
-            except Exception:  # pragma: no cover - best effort
-                pass
+            except (FileNotFoundError, RuntimeError) as exc:  # pragma: no cover
+                logger.warning(
+                    "Synergy graph expansion failed",
+                    exc_info=exc,
+                    extra={
+                        "operation": "expand_cluster_synergy",
+                        "path": str(self.synergy_graph_path),
+                    },
+                )
 
         if problem:
             if self.intent_clusterer is None and self.intent_db is None:
@@ -590,8 +604,15 @@ class WorkflowSynthesizer:
                         if path:
                             p = Path(str(path))
                             modules.add(p.stem)
-                except Exception:  # pragma: no cover - best effort
-                    pass
+                except (FileNotFoundError, RuntimeError) as exc:  # pragma: no cover
+                    logger.warning(
+                        "Intent search via clusterer failed",
+                        exc_info=exc,
+                        extra={
+                            "operation": "IntentClusterer.find_modules_related_to",
+                            "path": str(self.intent_db_path or "<default>"),
+                        },
+                    )
             elif self.intent_db is not None:
                 try:
                     vec = self.intent_db.encode_text(problem)  # type: ignore[attr-defined]
@@ -606,8 +627,21 @@ class WorkflowSynthesizer:
                             path = row["path"] if row else None
                         if path:
                             modules.add(Path(str(path)).stem)
-                except Exception:  # pragma: no cover - best effort
-                    pass
+                except (FileNotFoundError, RuntimeError) as exc:  # pragma: no cover
+                    logger.warning(
+                        "IntentDB search failed",
+                        exc_info=exc,
+                        extra={
+                            "operation": "IntentDB.search",
+                            "path": str(
+                                getattr(
+                                    self.intent_db,
+                                    "path",
+                                    self.intent_db_path or "intent.db",
+                                )
+                            ),
+                        },
+                    )
 
         return modules
 
