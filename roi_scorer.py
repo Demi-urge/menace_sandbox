@@ -46,40 +46,56 @@ if tb is not None:  # align telemetry router
 
 
 def compute_workflow_synergy(tracker: "ROITracker", window: int = 5) -> float:
-    """Return average of recent ``synergy_*`` metrics.
+    """Mean correlation between per-module ROI deltas and overall ROI.
 
-    The score blends ``synergy_efficiency`` and ``synergy_reliability`` from
-    :class:`ROITracker` metrics, averaging the last ``window`` values of each
-    metric.  Missing data yields ``0.0``.
+    The function retrieves the tracker’s ROI history and module delta history
+    and computes the Pearson correlation coefficient for each module over the
+    last ``window`` values.  The average correlation is returned, ignoring
+    modules with insufficient history or variance.  Values approach ``1.0``
+    when modules move in lockstep with the overall ROI and ``0.0`` when no
+    relationship is present.
     """
 
-    eff_hist = tracker.metrics_history.get("synergy_efficiency", [])
-    rel_hist = tracker.metrics_history.get("synergy_reliability", [])
-    eff_avg = sum(eff_hist[-window:]) / len(eff_hist[-window:]) if eff_hist else None
-    rel_avg = sum(rel_hist[-window:]) / len(rel_hist[-window:]) if rel_hist else None
-    vals = [v for v in (eff_avg, rel_avg) if v is not None]
-    return float(sum(vals) / len(vals)) if vals else 0.0
+    roi_hist = tracker.roi_history[-window:]
+    if len(roi_hist) < 2 or not tracker.module_deltas:
+        return 0.0
+    correlations: list[float] = []
+    for deltas in tracker.module_deltas.values():
+        mod_hist = deltas[-window:]
+        if len(mod_hist) != len(roi_hist):
+            continue
+        if np.std(mod_hist) == 0 or np.std(roi_hist) == 0:
+            continue
+        correlations.append(float(np.corrcoef(roi_hist, mod_hist)[0, 1]))
+    return float(np.mean(correlations)) if correlations else 0.0
 
 
 def compute_bottleneck_index(timings: Dict[str, float]) -> float:
-    """Return proportion of total latency from the slowest module."""
+    """Root mean square deviation of normalised module runtimes.
+
+    Runtimes are normalised so they sum to one.  The root mean square
+    deviation from a perfectly balanced runtime distribution is returned,
+    providing a smooth indicator of how dominant the slowest modules are.
+    """
 
     if not timings:
         return 0.0
     total_runtime = sum(timings.values())
     if total_runtime <= 0:
         return 0.0
-    slowest_rt = max(timings.values())
-    return slowest_rt / total_runtime
+    norm = np.array(list(timings.values()), dtype=float) / total_runtime
+    uniform = 1.0 / len(norm)
+    return float(np.sqrt(np.mean((norm - uniform) ** 2)))
 
 
 def compute_patchability(history: list[float], patch_success: float = 1.0) -> float:
-    """Return patchability score from ROI history and patch success rate.
+    """Volatility-adjusted ROI slope scaled by patch success rate.
 
-    The metric multiplies the slope of ROI improvement (via linear regression)
-    by ``1/(sigma + 1)`` where ``sigma`` is the standard deviation of
-    ``history`` and further scales by ``patch_success`` (0-1).  A positive slope
-    with low volatility and high patch success yields higher patchability.
+    A linear regression is applied to ``history`` to obtain the ROI improvement
+    slope.  This slope is divided by the standard deviation of the ROI values,
+    yielding a volatility-adjusted figure which is then scaled by
+    ``patch_success``.  Higher scores indicate a stable upward trend with
+    successful patches.
     """
 
     if not history or len(history) < 2:
@@ -90,7 +106,9 @@ def compute_patchability(history: list[float], patch_success: float = 1.0) -> fl
         sigma = stdev(history)
     except Exception:
         sigma = 0.0
-    return slope * (1.0 / (sigma + 1.0)) * float(patch_success)
+    if sigma == 0:
+        return 0.0
+    return slope / sigma * float(patch_success)
 
 
 
