@@ -306,6 +306,7 @@ class ROITracker:
         self.module_deltas: Dict[str, List[float]] = {}
         self.module_raroi: Dict[str, List[float]] = {}
         self.module_entropy_deltas: Dict[str, List[float]] = {}
+        self.correlation_history: Dict[tuple[str, str], List[float]] = defaultdict(list)
         # Historical ROI deltas grouped by origin database.  The latest values
         # are exposed via :meth:`origin_db_deltas` for external consumers while
         # the full history remains available through
@@ -1739,6 +1740,13 @@ class ROITracker:
         if entropy_avg == 0:
             return 0.0
         return roi_avg / entropy_avg
+
+    def cache_correlations(self, correlations: Mapping[tuple[str, str], float]) -> None:
+        """Record pairwise correlation values for later volatility analysis."""
+
+        for pair, value in correlations.items():
+            key = tuple(sorted(pair))
+            self.correlation_history.setdefault(key, []).append(float(value))
 
     # ------------------------------------------------------------------
     def entropy_ceiling(self, threshold: float, window: int = 5) -> bool:

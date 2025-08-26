@@ -125,7 +125,7 @@ class CompositeWorkflowScorer(ROIScorer):
         }
 
         workflow_synergy_score = compute_workflow_synergy(
-            self.tracker.roi_history, self._module_roi_history, self.history_window
+            self.tracker, self.history_window
         )
         bottleneck_index = compute_bottleneck_index(timings)
         patch_success = 1.0
@@ -300,7 +300,7 @@ class CompositeWorkflowScorer(ROIScorer):
         }
 
         workflow_synergy_score = compute_workflow_synergy(
-            getattr(tracker, "roi_history", []), self._module_roi_history, self.history_window
+            tracker, self.history_window
         )
         bottleneck_index = compute_bottleneck_index(getattr(tracker, "timings", {}))
         patch_success = 1.0

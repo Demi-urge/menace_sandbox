@@ -214,10 +214,6 @@ class CompositeWorkflowScorer(ROIScorer):
         roi_after, _, _ = self.calculator.calculate(calc_metrics, self.profile_type)
         roi_gain = roi_after - roi_before
 
-        workflow_synergy_score = compute_workflow_synergy(
-            self.tracker.roi_history, self.tracker.module_deltas
-        )
-
         timings: Dict[str, float] = {}
         failures: Dict[str, float] = {}
         for name, val in metrics.items():
@@ -236,13 +232,8 @@ class CompositeWorkflowScorer(ROIScorer):
             patch_success = PatchHistoryDB().success_rate()
         except Exception:
             pass
-        patchability_score = compute_patchability(
-            self.tracker.roi_history, patch_success=patch_success
-        )
 
-        metrics["workflow_synergy_score"] = workflow_synergy_score
         metrics["bottleneck_index"] = bottleneck_index
-        metrics["patchability_score"] = patchability_score
 
         # Update tracker with overall workflow ROI
         self.tracker.update(
@@ -271,6 +262,12 @@ class CompositeWorkflowScorer(ROIScorer):
                 metrics=mod_metrics,
                 profile_type=self.profile_type,
             )
+        workflow_synergy_score = compute_workflow_synergy(self.tracker)
+        patchability_score = compute_patchability(
+            self.tracker.roi_history, patch_success=patch_success
+        )
+        metrics["workflow_synergy_score"] = workflow_synergy_score
+        metrics["patchability_score"] = patchability_score
 
         run_id = run_id or uuid.uuid4().hex
         mod_deltas: Dict[str, float] = {}
