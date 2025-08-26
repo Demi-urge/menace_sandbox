@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
@@ -13,7 +16,57 @@ from fcntl_compat import LOCK_EX, LOCK_UN, flock
 DEFAULT_LOG_PATH = Path(__file__).resolve().parent / "logs" / "shared_db_access.log"
 DEFAULT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+MAX_BYTES = _env_int("DB_AUDIT_LOG_MAX_BYTES", 10 * 1024 * 1024)
+BACKUP_COUNT = _env_int("DB_AUDIT_LOG_BACKUPS", 5)
+
+
 _write_lock = Lock()
+_logger_lock = Lock()
+_loggers: dict[Path, logging.Logger] = {}
+
+
+class _LockedRotatingFileHandler(RotatingFileHandler):
+    """RotatingFileHandler that locks the file during writes."""
+
+    def emit(self, record: logging.LogRecord) -> None:  # type: ignore[override]
+        with _write_lock:
+            if self.stream is None:
+                self.stream = self._open()
+            fd = self.stream.fileno()
+            flock(fd, LOCK_EX)
+            try:
+                if self.shouldRollover(record):
+                    self.doRollover()
+                logging.FileHandler.emit(self, record)
+            finally:
+                flock(fd, LOCK_UN)
+
+
+def _get_logger(path: Path) -> logging.Logger:
+    with _logger_lock:
+        logger = _loggers.get(path)
+        if logger is None:
+            logger = logging.getLogger(f"db_audit_{path}")
+            logger.setLevel(logging.INFO)
+            handler = _LockedRotatingFileHandler(
+                path,
+                maxBytes=MAX_BYTES,
+                backupCount=BACKUP_COUNT,
+                encoding="utf-8",
+            )
+            handler.setFormatter(logging.Formatter("%(message)s"))
+            logger.addHandler(handler)
+            logger.propagate = False
+            _loggers[path] = logger
+        return logger
 
 
 def log_db_access(
@@ -54,18 +107,12 @@ def log_db_access(
     }
 
     # Determine log path and ensure directory exists
-    path = Path(log_path) if log_path is not None else DEFAULT_LOG_PATH
+    path = Path(log_path).resolve() if log_path is not None else DEFAULT_LOG_PATH
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         data = json.dumps(record, sort_keys=True)
-        with _write_lock:
-            with path.open("a", encoding="utf-8") as fh:
-                flock(fh.fileno(), LOCK_EX)
-                try:
-                    fh.write(data)
-                    fh.write("\n")
-                finally:
-                    flock(fh.fileno(), LOCK_UN)
+        logger = _get_logger(path)
+        logger.info(data)
     except OSError:
         # Logging failures are non-fatal
         pass
