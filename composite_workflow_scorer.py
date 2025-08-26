@@ -216,8 +216,17 @@ class CompositeWorkflowScorer(ROIScorer):
             self.tracker.roi_history, self._module_roi_history, self.history_window
         )
         bottleneck_index = compute_bottleneck_index(timings)
+        patch_success = 1.0
+        try:  # pragma: no cover - optional dependency
+            from .code_database import PatchHistoryDB
+
+            patch_success = PatchHistoryDB().success_rate()
+        except Exception:
+            pass
         patchability_score = compute_patchability(
-            self.tracker.roi_history, window=self.history_window
+            self.tracker.roi_history,
+            window=self.history_window,
+            patch_success=patch_success,
         )
 
         self.results_db.log_result(
@@ -374,8 +383,17 @@ class CompositeWorkflowScorer(ROIScorer):
             getattr(tracker, "roi_history", []), self._module_roi_history, self.history_window
         )
         bottleneck_index = compute_bottleneck_index(getattr(tracker, "timings", {}))
+        patch_success = 1.0
+        try:  # pragma: no cover - optional dependency
+            from .code_database import PatchHistoryDB
+
+            patch_success = PatchHistoryDB().success_rate()
+        except Exception:
+            pass
         patchability_score = compute_patchability(
-            getattr(tracker, "roi_history", []), window=self.history_window
+            getattr(tracker, "roi_history", []),
+            window=self.history_window,
+            patch_success=patch_success,
         )
 
         run_id = uuid.uuid4().hex

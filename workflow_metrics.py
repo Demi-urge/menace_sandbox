@@ -55,7 +55,13 @@ def compute_patchability(
     window: int | None = None,
     patch_success: float = 1.0,
 ) -> float:
-    """Volatility-adjusted ROI slope scaled by patch success rate."""
+    """Volatility-adjusted ROI slope scaled by patch success rate.
+
+    Args:
+        history: Sequence of ROI values.
+        window: Optional number of recent values to consider.
+        patch_success: Fraction of patches that improved ROI (0-1 range).
+    """
 
     hist_list = list(history)
     if window is not None:

@@ -6,6 +6,7 @@ from collections import defaultdict
 from unittest import mock
 
 import pytest
+import numpy as np
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +52,14 @@ sys.modules.setdefault(
     types.SimpleNamespace(environment=types.SimpleNamespace()),
 )
 sys.modules.setdefault("sandbox_runner", sys.modules["menace_sandbox.sandbox_runner"])
+class _StubPatchDB:
+    def success_rate(self, limit: int = 50) -> float:
+        return 1.0
+
+sys.modules.setdefault(
+    "menace_sandbox.code_database", types.SimpleNamespace(PatchHistoryDB=_StubPatchDB)
+)
+sys.modules.setdefault("code_database", sys.modules["menace_sandbox.code_database"])
 
 from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
 
@@ -60,7 +69,7 @@ from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
 # ---------------------------------------------------------------------------
 
 
-def test_run_records_metrics_and_ids():
+def test_run_records_metrics_and_ids(monkeypatch):
     """``run`` persists metrics with workflow/run identifiers."""
 
     class Tracker:
@@ -77,6 +86,14 @@ def test_run_records_metrics_and_ids():
     scorer._module_start = {"mod1": 0, "mod2": 0}
     scorer._module_successes = {"mod1": True, "mod2": False}
 
+    import menace_sandbox.code_database as code_db_mod
+
+    monkeypatch.setattr(
+        code_db_mod.PatchHistoryDB,
+        "success_rate",
+        lambda self, limit=50: 0.25,
+    )
+
     run_id = "run1"
     wf_id = "wf1"
     result = scorer.run(lambda: True, wf_id, run_id)
@@ -87,6 +104,9 @@ def test_run_records_metrics_and_ids():
     assert set(kwargs["module_deltas"].keys()) == {"mod1", "mod2"}
     assert result.roi_gain == pytest.approx(3.0)
     assert results_db.log_module_attribution.call_count == 2
+    expected_patch = (1.0 / np.std([1.0, 2.0])) * 0.25
+    assert kwargs["patchability_score"] == pytest.approx(expected_patch)
+    assert result.patchability_score == pytest.approx(expected_patch)
 
 
 def test_score_workflow_persists_results_and_ids():
