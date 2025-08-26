@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Callable, Mapping
 from time import perf_counter, sleep
+import argparse
+import importlib
+import json
 import logging
 import os
 
@@ -284,3 +287,45 @@ def benchmark_registered_workflows(
 
 
 __all__ = ["benchmark_workflow", "benchmark_registered_workflows"]
+
+
+def _load_callable(path: str) -> Callable[[], bool]:
+    """Return a callable referenced by ``path``.
+
+    ``path`` should be in ``module:func`` or ``module.func`` format.
+    """
+
+    if ":" in path:
+        mod_name, func_name = path.split(":", 1)
+    else:
+        mod_name, func_name = path.rsplit(".", 1)
+    func = getattr(importlib.import_module(mod_name), func_name)
+    if not callable(func):  # pragma: no cover - defensive
+        raise TypeError(f"{path} is not callable")
+    return func
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point for benchmarking a workflow.
+
+    The callable should return ``True`` on success. Metrics and ROI results are
+    stored in the default local databases including ``roi_results.db``.
+    """
+
+    parser = argparse.ArgumentParser(description="Benchmark a workflow and log results")
+    parser.add_argument("callable", help="Dotted path to the workflow callable")
+    parser.add_argument("--workflow-id", required=True, help="Workflow identifier")
+    parser.add_argument("--run-id", help="Optional run identifier")
+    args = parser.parse_args(argv)
+
+    func = _load_callable(args.callable)
+    scorer = CompositeWorkflowScorer()
+    run_id, result = scorer.score_workflow(
+        args.workflow_id, {func.__name__: func}, run_id=args.run_id
+    )
+    print(json.dumps({"run_id": run_id, **result}, indent=2))
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - manual invocation
+    raise SystemExit(main())
