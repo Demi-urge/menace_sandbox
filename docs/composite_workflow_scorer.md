@@ -89,3 +89,22 @@ PY
 ```
 
 This snippet runs the workflow, stores metrics in `roi_results.db`, and prints a module impact report for the most recent run.
+
+## Trend analysis
+
+Repeated evaluations of the same workflow can be visualised by querying the
+stored trend metrics:
+
+```python
+from menace_sandbox.roi_results_db import ROIResultsDB, compute_rolling_metrics
+
+db = ROIResultsDB("roi_results.db")
+trends = db.fetch_trends("wf_example")
+enriched = compute_rolling_metrics(trends, window=3)
+for point in enriched:
+    print(point["timestamp"], point["roi_gain"], point["roi_gain_avg"], point["roi_gain_slope"])
+```
+
+`fetch_trends` returns the raw ROI gain, synergy, bottleneck and patchability
+metrics ordered by evaluation time. `compute_rolling_metrics` augments the data
+with rolling averages and slope values suitable for plotting.

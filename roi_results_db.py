@@ -291,6 +291,31 @@ class ROIResultsDB:
         return results
 
     # ------------------------------------------------------------------
+    def fetch_trends(self, workflow_id: str) -> List[Dict[str, float]]:
+        """Return time ordered aggregate metrics for ``workflow_id``."""
+
+        cur = self.conn.cursor()
+        cur.execute(
+            (
+                "SELECT timestamp, roi_gain, workflow_synergy_score, "
+                "bottleneck_index, patchability_score "
+                "FROM workflow_results WHERE workflow_id=? ORDER BY timestamp"
+            ),
+            (workflow_id,),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "timestamp": str(ts),
+                "roi_gain": float(roi),
+                "workflow_synergy_score": float(syn),
+                "bottleneck_index": float(bot),
+                "patchability_score": float(patch),
+            }
+            for ts, roi, syn, bot, patch in rows
+        ]
+
+    # ------------------------------------------------------------------
     def fetch_module_trajectories(
         self, workflow_id: str, module: str | None = None
     ) -> Dict[str, List[Dict[str, float]]]:
@@ -384,9 +409,66 @@ def module_performance_trajectories(
     return db.fetch_module_trajectories(workflow_id, module)
 
 
+def workflow_trends(
+    workflow_id: str, db_path: str | Path = "roi_results.db"
+) -> List[Dict[str, float]]:
+    """Convenience wrapper returning aggregate workflow trends from ``db_path``."""
+
+    db = ROIResultsDB(db_path)
+    return db.fetch_trends(workflow_id)
+
+
+def compute_rolling_metrics(
+    trends: List[Dict[str, float]], window: int = 5
+) -> List[Dict[str, float]]:
+    """Append rolling average and slope for each metric in ``trends``.
+
+    Returns a new list of dictionaries where each item includes additional
+    ``<metric>_avg`` and ``<metric>_slope`` keys based on the preceding ``window``
+    entries (including the current one).  Slope is calculated as the difference
+    between the first and last values over the window divided by the number of
+    steps.
+    """
+
+    def _rolling(values: List[float]) -> List[tuple[float, float]]:
+        stats: List[tuple[float, float]] = []
+        for i in range(len(values)):
+            start = max(0, i - window + 1)
+            segment = values[start : i + 1]
+            avg = sum(segment) / len(segment)
+            if len(segment) > 1:
+                slope = (segment[-1] - segment[0]) / (len(segment) - 1)
+            else:
+                slope = 0.0
+            stats.append((avg, slope))
+        return stats
+
+    metrics = [
+        "roi_gain",
+        "workflow_synergy_score",
+        "bottleneck_index",
+        "patchability_score",
+    ]
+    series: Dict[str, List[float]] = {m: [t[m] for t in trends] for m in metrics}
+    rolling: Dict[str, List[tuple[float, float]]] = {
+        m: _rolling(vals) for m, vals in series.items()
+    }
+    out: List[Dict[str, float]] = []
+    for i, base in enumerate(trends):
+        entry = dict(base)
+        for m in metrics:
+            avg, slope = rolling[m][i]
+            entry[f"{m}_avg"] = avg
+            entry[f"{m}_slope"] = slope
+        out.append(entry)
+    return out
+
+
 __all__ = [
     "ROIResult",
     "ROIResultsDB",
     "module_impact_report",
     "module_performance_trajectories",
+    "workflow_trends",
+    "compute_rolling_metrics",
 ]
