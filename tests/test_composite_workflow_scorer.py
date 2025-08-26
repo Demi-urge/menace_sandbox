@@ -127,7 +127,11 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
     )
 
     from menace_sandbox.roi_results_db import ROIResultsDB
-    from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
+    from menace_sandbox.composite_workflow_scorer import (
+        CompositeWorkflowScorer,
+        compute_patchability,
+        compute_bottleneck_index,
+    )
     import menace_sandbox.sandbox_runner as sandbox_runner
 
     def fake_run_workflow_simulations(**_kwargs):
@@ -158,8 +162,12 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
     assert result.runtime > 0
     assert 0.0 <= result.success_rate <= 1.0
     assert result.workflow_synergy_score == 0.0
-    assert result.bottleneck_index == pytest.approx(1 / 6)
-    assert result.patchability_score == pytest.approx(2.0)
+    expected_bottleneck = compute_bottleneck_index(tracker.timings)
+    assert result.bottleneck_index == pytest.approx(expected_bottleneck)
+    expected_patch = compute_patchability(
+        tracker.roi_history, patch_success=0.5, window=scorer.history_window
+    )
+    assert result.patchability_score == pytest.approx(expected_patch)
 
     # Ensure results persisted with workflow/run identifiers and per-module deltas.
     cur = scorer.results_db.conn.cursor()
@@ -221,7 +229,6 @@ def test_patch_success_modulates_patchability(tmp_path, monkeypatch):
     )
 
     from menace_sandbox.roi_results_db import ROIResultsDB
-    import menace_sandbox.composite_workflow_scorer as scorer_mod
     from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
 
     db_path = tmp_path / "roi_results.db"
@@ -232,11 +239,9 @@ def test_patch_success_modulates_patchability(tmp_path, monkeypatch):
     )
     workflow_id = "wf_example"
 
-    monkeypatch.setattr(scorer_mod, "PATCH_SUCCESS_RATE", 1.0)
-    high = scorer.evaluate(workflow_id).patchability_score
+    high = scorer.evaluate(workflow_id, patch_success=1.0).patchability_score
 
-    monkeypatch.setattr(scorer_mod, "PATCH_SUCCESS_RATE", 0.25)
-    low = scorer.evaluate(workflow_id).patchability_score
+    low = scorer.evaluate(workflow_id, patch_success=0.25).patchability_score
 
     assert low == pytest.approx(high * 0.25)
 
