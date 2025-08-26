@@ -278,7 +278,7 @@ class WorkflowSynthesizer:
     intent_db_path: Path | None
     generated_workflows: List[List[WorkflowStep]]
     workflow_scores: List[float]
-    workflow_score_details: List[Dict[str, float]]
+    workflow_score_details: List[Dict[str, Any]]
 
     # ------------------------------------------------------------------
     def __init__(
@@ -710,6 +710,7 @@ class WorkflowSynthesizer:
         max_depth: int | None = None,
         synergy_weight: float = 1.0,
         intent_weight: float = 1.0,
+        auto_evaluate: bool = False,
     ) -> List[List[WorkflowStep]]:
         """Generate candidate workflows beginning at ``start_module``.
 
@@ -735,6 +736,10 @@ class WorkflowSynthesizer:
             workflows.
         intent_weight:
             Multiplier applied to intent match scores when scoring workflows.
+        auto_evaluate:
+            When ``True``, each generated workflow is executed via
+            :func:`evaluate_workflow` and the success flag is stored alongside
+            score details.
         """
 
         if ModuleSignature is None or get_io_signature is None:
@@ -982,31 +987,41 @@ class WorkflowSynthesizer:
         self.workflow_scores = []
         self.generated_workflows = []
         self.workflow_score_details = []
-        for score, wf, syn, intent, penalty in entries[:limit]:
-            self.workflow_scores.append(score)
-            self.generated_workflows.append(wf)
-            self.workflow_score_details.append(
-                {
-                    "score": score,
-                    "synergy": syn,
-                    "intent": intent,
-                    "penalty": penalty,
-                }
-            )
-
         out_dir = Path("sandbox_data/generated_workflows")
         out_dir.mkdir(parents=True, exist_ok=True)
-        for idx, wf in enumerate(self.generated_workflows):
+        for idx, (score, wf, syn, intent, penalty) in enumerate(entries[:limit]):
+            details: Dict[str, Any] = {
+                "score": score,
+                "synergy": syn,
+                "intent": intent,
+                "penalty": penalty,
+            }
+            if auto_evaluate:
+                try:
+                    success = evaluate_workflow(to_workflow_spec(wf))
+                except Exception:
+                    logger.exception("auto evaluation failed")
+                    success = False
+                details["success"] = success
+            self.workflow_scores.append(score)
+            self.generated_workflows.append(wf)
+            self.workflow_score_details.append(details)
+
             name = wf[0].module.replace(".", "_") if wf else f"workflow_{idx}"
             path = out_dir / f"{name}_{idx}.workflow.json"
-            path.write_text(to_json(wf), encoding="utf-8")
+            path.write_text(to_json(wf, metadata=details), encoding="utf-8")
 
         return self.generated_workflows
 
     # ------------------------------------------------------------------
     def to_dict(self) -> Dict[str, Any]:
         """Return a JSON‑serialisable representation of generated workflows."""
-        return {"workflows": [workflow_to_dict(wf) for wf in self.generated_workflows]}
+        return {
+            "workflows": [
+                workflow_to_dict(wf, metadata=info)
+                for wf, info in zip(self.generated_workflows, self.workflow_score_details)
+            ]
+        }
 
     # ------------------------------------------------------------------
     def save(self, path: Path | str | None = None) -> Path:
@@ -1051,7 +1066,11 @@ class WorkflowSynthesizer:
 
 
 # ---------------------------------------------------------------------------
-def workflow_to_dict(workflow: List[WorkflowStep] | List[Dict[str, Any]]) -> Dict[str, Any]:
+def workflow_to_dict(
+    workflow: List[WorkflowStep] | List[Dict[str, Any]],
+    *,
+    metadata: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     """Return ``workflow`` in the simplified serialisable format."""
 
     steps: List[Dict[str, Any]] = []
@@ -1072,24 +1091,37 @@ def workflow_to_dict(workflow: List[WorkflowStep] | List[Dict[str, Any]]) -> Dic
                     "outputs": step.get("outputs") or step.get("provides", []),
                 }
             )
-    return {"steps": steps}
+    data: Dict[str, Any] = {"steps": steps}
+    if metadata:
+        data.update(metadata)
+    return data
 
 
-def to_json(workflow: List[WorkflowStep] | List[Dict[str, Any]]) -> str:
+def to_json(
+    workflow: List[WorkflowStep] | List[Dict[str, Any]],
+    *,
+    metadata: Dict[str, Any] | None = None,
+) -> str:
     """Serialize ``workflow`` to a JSON string."""
 
-    return json.dumps(workflow_to_dict(workflow), indent=2)
+    return json.dumps(workflow_to_dict(workflow, metadata=metadata), indent=2)
 
 
-def to_yaml(workflow: List[WorkflowStep] | List[Dict[str, Any]]) -> str:
+def to_yaml(
+    workflow: List[WorkflowStep] | List[Dict[str, Any]],
+    *,
+    metadata: Dict[str, Any] | None = None,
+) -> str:
     """Serialize ``workflow`` to a YAML string."""
 
     try:  # pragma: no cover - YAML optional
         import yaml  # type: ignore
 
-        return yaml.safe_dump(workflow_to_dict(workflow), sort_keys=False)  # type: ignore[arg-type]
+        return yaml.safe_dump(
+            workflow_to_dict(workflow, metadata=metadata), sort_keys=False
+        )  # type: ignore[arg-type]
     except Exception:
-        return to_json(workflow)
+        return to_json(workflow, metadata=metadata)
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,8 @@
 Workflows are ranked by combining synergy graph and intent scores using
 configurable weights that are normalised by workflow length. Generated
 specifications can be written to the local sandbox and existing ones listed
-via the ``--list`` flag."""
+via the ``--list`` flag.  The ``--auto-evaluate`` option executes each
+candidate workflow and records whether it succeeds or fails."""
 
 from __future__ import annotations
 
@@ -50,6 +51,7 @@ def run(args: argparse.Namespace) -> int:
         max_depth=getattr(args, "max_depth", None),
         synergy_weight=getattr(args, "synergy_weight", 1.0),
         intent_weight=getattr(args, "intent_weight", 1.0),
+        auto_evaluate=getattr(args, "auto_evaluate", False),
     )
     details = getattr(synth, "workflow_score_details", [])
     for idx, (wf, info) in enumerate(zip(workflows, details), start=1):
@@ -58,8 +60,10 @@ def run(args: argparse.Namespace) -> int:
         syn = info.get("synergy", 0.0)
         intent = info.get("intent", 0.0)
         penalty = info.get("penalty", 0.0)
+        success = info.get("success")
+        status = "" if success is None else (" ✅" if success else " ❌")
         print(
-            f"{idx}. score={score:.4f} (syn={syn:.4f}, intent={intent:.4f}, penalty={penalty:.4f}) {modules}"
+            f"{idx}. score={score:.4f} (syn={syn:.4f}, intent={intent:.4f}, penalty={penalty:.4f}){status} {modules}"
         )
 
     selected = 0
@@ -169,6 +173,11 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
         "--evaluate",
         action="store_true",
         help="Execute the generated workflow and report success",
+    )
+    parser.add_argument(
+        "--auto-evaluate",
+        action="store_true",
+        help="Automatically execute each generated workflow and record the result",
     )
     parser.add_argument(
         "--select",
