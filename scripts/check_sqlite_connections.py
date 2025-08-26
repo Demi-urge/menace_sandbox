@@ -21,6 +21,7 @@ ALLOWLIST = {
     REPO_ROOT / "scripts/new_db_template.py",
     REPO_ROOT / "scripts/scaffold_db.py",
     REPO_ROOT / "scripts/new_vector_module.py",
+    REPO_ROOT / "sync_shared_db.py",
 }
 
 

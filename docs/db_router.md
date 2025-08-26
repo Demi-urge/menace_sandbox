@@ -6,6 +6,10 @@ Menace instance or to a shared database used by all instances.
 Buffered writes destined for the shared database are described in
 [write_buffer.md](write_buffer.md).
 
+The maintenance script `sync_shared_db.py` performs low-level database
+synchronisation and therefore calls `sqlite3.connect` directly. It is explicitly
+allowlisted by the repository's `forbid-sqlite3-connect` pre-commit hook.
+
 ## Instantiation
 
 Initialise a router via `init_db_router(menace_id)` or directly by creating a

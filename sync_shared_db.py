@@ -61,6 +61,40 @@ def _append_lines(path: Path, lines: Iterable[str]) -> None:
             fh.write(line)
 
 
+def replay_failed(queue_dir: Path) -> None:
+    """Requeue entries from ``queue.failed.jsonl`` if it exists."""
+
+    failed_path = queue_dir / "queue.failed.jsonl"
+    if not failed_path.exists():
+        return
+
+    try:
+        lines = failed_path.read_text(encoding="utf-8").splitlines(True)
+    except Exception:  # pragma: no cover - unable to read file
+        return
+
+    # Preserve failed log for manual inspection
+    bak_path = failed_path.with_suffix(failed_path.suffix + ".bak")
+    failed_path.rename(bak_path)
+
+    for raw in lines:
+        try:
+            entry = json.loads(raw)
+        except Exception:  # pragma: no cover - skip unparsable
+            continue
+        record = entry.get("record")
+        if isinstance(record, str):
+            try:
+                record = json.loads(record)
+            except Exception:
+                continue
+        if not isinstance(record, dict):
+            continue
+        menace_id = record.get("menace_id") or record.get("source_menace_id", "")
+        target = queue_dir / (f"{menace_id}.jsonl" if menace_id else "replay.jsonl")
+        _append_lines(target, [json.dumps(record, sort_keys=True) + "\n"])
+
+
 def process_queue_file(path: Path, *, conn: sqlite3.Connection) -> Stats:
     """Process all records from ``path`` returning :class:`Stats`.
 
@@ -121,7 +155,12 @@ def process_queue_file(path: Path, *, conn: sqlite3.Connection) -> Stats:
                 if existing:
                     stats.duplicates += 1
                     logger.info(
-                        "duplicate", extra={"table": table, "menace_id": menace_id, "id": existing[0]}
+                        "duplicate",
+                        extra={
+                            "table": table,
+                            "menace_id": menace_id,
+                            "id": existing[0],
+                        },
                     )
                     continue
 
@@ -165,10 +204,28 @@ def _sync_once(queue_dir: Path, conn: sqlite3.Connection) -> Stats:
     if not queue_dir.exists():
         return stats
 
+    failed_path = queue_dir / "queue.failed.jsonl"
+
     for file in sorted(queue_dir.glob("*.jsonl")):
         if file.name == "queue.failed.jsonl":
             continue
-        file_stats = process_queue_file(file, conn=conn)
+        try:
+            file_stats = process_queue_file(file, conn=conn)
+        except Exception as exc:  # pragma: no cover - logged then recorded
+            _append_lines(
+                failed_path,
+                [
+                    json.dumps(
+                        {"record": {"file": str(file)}, "error": str(exc)}, sort_keys=True
+                    )
+                    + "\n",
+                ],
+            )
+            stats.failures += 1
+            logger.error(
+                "file_failed", extra={"file": str(file), "error": str(exc)}
+            )
+            continue
         stats.processed += file_stats.processed
         stats.duplicates += file_stats.duplicates
         stats.failures += file_stats.failures
@@ -222,15 +279,20 @@ def main() -> None:  # pragma: no cover - CLI entry point
     parser.add_argument("--db-path", default="menace.db")
     parser.add_argument("--interval", type=float, default=10.0)
     parser.add_argument("--once", action="store_true", help="Process queues once and exit")
+    parser.add_argument(
+        "--replay-failed", action="store_true", help="Requeue entries from queue.failed.jsonl"
+    )
     parser.add_argument("--watch", action="store_true", help="Watch for filesystem events")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    conn = sqlite3.connect(args.db_path)
+    conn = sqlite3.connect(args.db_path)  # noqa: SQL001
     queue_dir = Path(args.queue_dir)
     try:
+        if args.replay_failed:
+            replay_failed(queue_dir)
         if args.watch:
             _run_watch(queue_dir, conn, args.interval, args.once)
         else:
@@ -241,4 +303,3 @@ def main() -> None:  # pragma: no cover - CLI entry point
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-

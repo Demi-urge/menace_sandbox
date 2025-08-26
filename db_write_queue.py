@@ -109,15 +109,25 @@ def read_queue(path: Path) -> List[dict]:
 
 
 def remove_processed_lines(path: Path, processed: int) -> None:
-    """Remove the first ``processed`` lines from ``path``."""
+    """Remove the first ``processed`` lines from ``path``.
+
+    Removed lines are appended to ``queue.log.bak`` in the same directory to
+    allow manual rollback if required.
+    """
 
     if processed <= 0 or not path.exists():
         return
+
+    backup_path = path.parent / "queue.log.bak"
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
 
     with _write_lock:
         with path.open("r+", encoding="utf-8") as fh:
             flock(fh.fileno(), LOCK_EX)
             lines = fh.readlines()
+            # Write processed lines to backup before removal
+            with backup_path.open("a", encoding="utf-8") as bak:
+                bak.writelines(lines[:processed])
             fh.seek(0)
             fh.writelines(lines[processed:])
             fh.truncate()
