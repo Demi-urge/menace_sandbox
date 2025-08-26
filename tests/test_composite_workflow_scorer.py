@@ -105,7 +105,7 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
 
     # Ensure results persisted with workflow/run identifiers and per-module deltas.
     cur = scorer.results_db.conn.cursor()
-    cur.execute("SELECT workflow_id, run_id, module_deltas FROM roi_results")
+    cur.execute("SELECT workflow_id, run_id, module_deltas FROM workflow_results")
     wf, run_id, deltas_json = cur.fetchone()
     assert wf == workflow_id
     assert run_id  # run identifier was generated

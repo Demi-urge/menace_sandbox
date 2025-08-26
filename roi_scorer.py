@@ -17,7 +17,7 @@ from .roi_tracker import ROITracker
 from .roi_calculator import ROICalculator
 from .data_bot import MetricsDB
 from .neuroplasticity import PathwayDB
-from .roi_results_db import ROIResult, ROIResultsDB
+from .roi_results_db import ROIResultsDB
 try:  # ensure telemetry backend uses same router
     from . import telemetry_backend as tb
 except Exception:  # pragma: no cover - optional
@@ -93,49 +93,6 @@ def compute_patchability(history: list[float], patch_success: float = 1.0) -> fl
     return slope * (1.0 / (sigma + 1.0)) * float(patch_success)
 
 
-def insert_workflow_result(
-    cur: sqlite3.Cursor,
-    workflow_id: str,
-    run_id: str,
-    runtime: float,
-    success: bool,
-    roi_gain: float,
-    workflow_synergy_score: float,
-    bottleneck_index: float,
-    patchability_score: float,
-) -> None:
-    """Insert a workflow result into ``workflow_results``.
-
-    Parameters
-    ----------
-    cur:
-        Database cursor targeting ``workflow_results``.
-    workflow_id:
-        Identifier of the evaluated workflow.
-    run_id:
-        Generated run identifier.
-    runtime, success, roi_gain, workflow_synergy_score, bottleneck_index, patchability_score:
-        Recorded metrics for the workflow execution.
-    """
-
-    cur.execute(
-        """
-        INSERT INTO workflow_results(
-            workflow_id, run_id, runtime, success, roi_gain,
-            workflow_synergy_score, bottleneck_index, patchability_score
-        ) VALUES(?,?,?,?,?,?,?,?)
-        """,
-        (
-            workflow_id,
-            run_id,
-            runtime,
-            int(success),
-            roi_gain,
-            workflow_synergy_score,
-            bottleneck_index,
-            patchability_score,
-        ),
-    )
 
 
 class ROIScorer:
@@ -156,22 +113,22 @@ class ROIScorer:
 
     # internal
     def _init_db(self) -> None:
-        self._db = DBRouter('roi_results', str(self.db_path), str(self.db_path))
+        self._db = DBRouter('workflow_results', str(self.db_path), str(self.db_path))
         self.conn = self._db.get_connection('workflow_results', operation='write')
         cur = self.conn.cursor()
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS workflow_results(
-                id INTEGER PRIMARY KEY,
                 workflow_id TEXT,
                 run_id TEXT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
                 runtime REAL,
-                success INTEGER,
+                success_rate REAL,
                 roi_gain REAL,
                 workflow_synergy_score REAL,
                 bottleneck_index REAL,
                 patchability_score REAL,
-                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                module_deltas TEXT
             )
             """,
         )
@@ -207,52 +164,25 @@ class ROIScorer:
             cur.execute(
                 """
                 INSERT INTO workflow_results(
-                    workflow_id, run_id, runtime, success, roi_gain,
-                    workflow_synergy_score, bottleneck_index, patchability_score, ts
+                    workflow_id, run_id, timestamp, runtime, success_rate, roi_gain,
+                    workflow_synergy_score, bottleneck_index, patchability_score, module_deltas
                 )
                 SELECT
                     workflow_id,
                     CAST(run_id AS TEXT),
+                    datetime(ts, 'unixepoch'),
                     runtime,
                     success,
                     roi_gain,
                     workflow_synergy,
                     bottleneck_index,
                     patchability,
-                    datetime(ts, 'unixepoch')
+                    '{}'
                 FROM roi_results
                 """,
             )
             cur.execute("DROP TABLE roi_results")
         self.conn.commit()
-
-    def _persist(
-        self,
-        workflow_id: str,
-        runtime: float,
-        success: bool,
-        roi_gain: float,
-        workflow_synergy_score: float,
-        bottleneck_index: float,
-        patchability_score: float,
-        run_id: str | None = None,
-    ) -> str:
-        cur = self.conn.cursor()
-        run_id = run_id or uuid.uuid4().hex
-        insert_workflow_result(
-            cur,
-            workflow_id,
-            run_id,
-            runtime,
-            success,
-            roi_gain,
-            workflow_synergy_score,
-            bottleneck_index,
-            patchability_score,
-        )
-        self.conn.commit()
-        return run_id
-
 
 class CompositeWorkflowScorer(ROIScorer):
     """Run complete workflows and record ROI metrics."""
@@ -285,8 +215,12 @@ class CompositeWorkflowScorer(ROIScorer):
         }
         baseline_rois: Dict[str, float] = {}
         for mod in modules:
-            runs = self.results_db.fetch_runs(workflow_id, mod)
-            baseline_rois[mod] = runs[-1].roi_gain if runs else 0.0
+            runs = self.results_db.fetch_results(workflow_id)
+            if runs:
+                last = runs[-1].module_deltas.get(mod, {})
+                baseline_rois[mod] = float(last.get("roi_delta", 0.0))
+            else:
+                baseline_rois[mod] = 0.0
         try:
             prev_rows = self.metrics_db.fetch_eval(workflow_id)
         except sqlite3.ProgrammingError:
@@ -383,16 +317,7 @@ class CompositeWorkflowScorer(ROIScorer):
                 profile_type=self.profile_type,
             )
 
-        run_id = self._persist(
-            workflow_id,
-            runtime,
-            success,
-            roi_gain,
-            workflow_synergy_score,
-            bottleneck_index,
-            patchability_score,
-            run_id=run_id,
-        )
+        run_id = run_id or uuid.uuid4().hex
         mod_deltas: Dict[str, float] = {}
         for mod, deltas in self.tracker.module_deltas.items():
             start = start_counts.get(mod, 0)
@@ -415,34 +340,18 @@ class CompositeWorkflowScorer(ROIScorer):
                 (workflow_id, run_id, mod, runtime_mod, delta),
             )
         self.conn.commit()
-        # Record aggregate workflow result
-        self.results_db.add(
-            ROIResult(
-                workflow_id=workflow_id,
-                run_id=run_id,
-                module=None,
-                runtime=runtime,
-                success_rate=1.0 if success else 0.0,
-                roi_gain=roi_gain,
-                workflow_synergy_score=workflow_synergy_score,
-                bottleneck_index=bottleneck_index,
-                patchability_score=patchability_score,
-            )
+        # Record aggregate workflow result with per-module deltas
+        self.results_db.log_result(
+            workflow_id=workflow_id,
+            run_id=run_id,
+            runtime=runtime,
+            success_rate=1.0 if success else 0.0,
+            roi_gain=roi_gain,
+            workflow_synergy_score=workflow_synergy_score,
+            bottleneck_index=bottleneck_index,
+            patchability_score=patchability_score,
+            module_deltas={m: {"roi_delta": d} for m, d in mod_deltas.items()},
         )
-        # Record per-module results
-        for mod in set(mod_deltas) | set(timings):
-            runtime_mod = timings.get(mod, 0.0)
-            success_rate_mod = 0.0 if failures.get(mod, 0.0) else 1.0
-            self.results_db.add(
-                ROIResult(
-                    workflow_id=workflow_id,
-                    run_id=run_id,
-                    module=mod,
-                    runtime=runtime_mod,
-                    success_rate=success_rate_mod,
-                    roi_gain=mod_deltas.get(mod, 0.0),
-                )
-            )
         for key, value in metrics.items():
             self.tracker.metrics_history.setdefault(key, []).append(value)
         result = {
@@ -473,5 +382,4 @@ __all__ = [
     "compute_workflow_synergy",
     "compute_bottleneck_index",
     "compute_patchability",
-    "insert_workflow_result",
 ]

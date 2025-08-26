@@ -33,12 +33,13 @@ print(result.success_rate, result.roi_gain)
 
 ## Database schema
 
-`ROIResultsDB` creates a local SQLite table `roi_results`:
+`ROIResultsDB` creates a local SQLite table `workflow_results`:
 
 | column | type | description |
 | --- | --- | --- |
 | `workflow_id` | TEXT | identifier of the evaluated workflow |
 | `run_id` | TEXT | unique identifier for this evaluation run |
+| `timestamp` | TEXT | insertion timestamp |
 | `runtime` | REAL | total execution time in seconds |
 | `success_rate` | REAL | successes divided by total module runs |
 | `roi_gain` | REAL | sum of `roi_history` deltas |
@@ -46,7 +47,6 @@ print(result.success_rate, result.roi_gain)
 | `bottleneck_index` | REAL | worst runtime/ROI ratio adjusted by variance |
 | `patchability_score` | REAL | regression slope of ROI history |
 | `module_deltas` | TEXT | JSON mapping `module -> {success_rate, roi_delta}` |
-| `ts` | TEXT | insertion timestamp |
 
 ## CLI example
 
@@ -61,7 +61,7 @@ scorer = CompositeWorkflowScorer()
 res = scorer.evaluate("wf_example")
 cur = scorer.results_db.conn.cursor()
 run_id = cur.execute(
-    "SELECT run_id FROM roi_results WHERE workflow_id=? ORDER BY ts DESC LIMIT 1",
+    "SELECT run_id FROM workflow_results WHERE workflow_id=? ORDER BY timestamp DESC LIMIT 1",
     ("wf_example",),
 ).fetchone()[0]
 print(module_impact_report("wf_example", run_id, scorer.results_db.path))

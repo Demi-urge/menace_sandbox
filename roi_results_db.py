@@ -9,15 +9,16 @@ encoded as JSON.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 import json
 
 from db_router import DBRouter, LOCAL_TABLES
 
-# ``roi_results`` is always treated as a local table so unit tests can operate
-# on ephemeral SQLite files without touching shared resources.
-LOCAL_TABLES.add("roi_results")
+# ``workflow_results`` is always treated as a local table so unit tests can
+# operate on ephemeral SQLite files without touching shared resources.
+LOCAL_TABLES.add("workflow_results")
 
 
 @dataclass
@@ -26,6 +27,7 @@ class ROIResult:
 
     workflow_id: str
     run_id: str
+    timestamp: str
     runtime: float
     success_rate: float
     roi_gain: float
@@ -38,15 +40,15 @@ class ROIResult:
 class ROIResultsDB:
     """Lightweight SQLite helper for workflow ROI results.
 
-    The schema mirrors the specification from the user instructions.  Each
-    call to :meth:`add_result` inserts a single row capturing aggregate metrics
-    and JSON encoded per-module deltas.
+    The schema mirrors the specification from the user instructions. Each call
+    to :meth:`log_result` inserts a single row capturing aggregate metrics and
+    JSON encoded per-module deltas.
     """
 
     def __init__(self, path: str | Path = "roi_results.db", *, router: DBRouter | None = None) -> None:
         self.path = Path(path)
-        self.router = router or DBRouter("roi_results", str(self.path), str(self.path))
-        self.conn = self.router.get_connection("roi_results", operation="write")
+        self.router = router or DBRouter("workflow_results", str(self.path), str(self.path))
+        self.conn = self.router.get_connection("workflow_results", operation="write")
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -54,27 +56,50 @@ class ROIResultsDB:
         cur = self.conn.cursor()
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS roi_results(
+            CREATE TABLE IF NOT EXISTS workflow_results(
                 workflow_id TEXT,
                 run_id TEXT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
                 runtime REAL,
                 success_rate REAL,
                 roi_gain REAL,
                 workflow_synergy_score REAL,
                 bottleneck_index REAL,
                 patchability_score REAL,
-                module_deltas TEXT,
-                ts TEXT DEFAULT CURRENT_TIMESTAMP
+                module_deltas TEXT
             )
             """,
         )
         cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_roi_results_wf_run ON roi_results(workflow_id, run_id)"
+            """
+            CREATE INDEX IF NOT EXISTS idx_workflow_results_wf_run
+                ON workflow_results(workflow_id, run_id)
+            """,
         )
+        # migrate legacy ``roi_results`` table if present
+        cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='roi_results'"
+        )
+        if cur.fetchone():
+            cur.execute(
+                """
+                INSERT INTO workflow_results(
+                    workflow_id, run_id, timestamp, runtime, success_rate,
+                    roi_gain, workflow_synergy_score, bottleneck_index,
+                    patchability_score, module_deltas
+                )
+                SELECT
+                    workflow_id, run_id, ts, runtime, success_rate,
+                    roi_gain, workflow_synergy_score, bottleneck_index,
+                    patchability_score, module_deltas
+                FROM roi_results
+                """,
+            )
+            cur.execute("DROP TABLE roi_results")
         self.conn.commit()
 
     # ------------------------------------------------------------------
-    def add_result(
+    def log_result(
         self,
         *,
         workflow_id: str,
@@ -86,35 +111,23 @@ class ROIResultsDB:
         bottleneck_index: float,
         patchability_score: float,
         module_deltas: Dict[str, Dict[str, float]] | None = None,
+        timestamp: str | None = None,
     ) -> int:
-        """Insert a workflow evaluation result.
-
-        Parameters
-        ----------
-        workflow_id:
-            Identifier of the evaluated workflow.
-        run_id:
-            Unique identifier for this evaluation run.
-        runtime, success_rate, roi_gain, workflow_synergy_score,
-        bottleneck_index, patchability_score:
-            Aggregate metrics from the evaluation.
-        module_deltas:
-            Mapping of module name to metric dictionary.  The mapping is JSON
-            encoded before storage.
-        """
+        """Insert a workflow evaluation result."""
 
         cur = self.conn.cursor()
         cur.execute(
             """
-            INSERT INTO roi_results(
-                workflow_id, run_id, runtime, success_rate, roi_gain,
-                workflow_synergy_score, bottleneck_index, patchability_score,
-                module_deltas
-            ) VALUES(?,?,?,?,?,?,?,?,?)
+            INSERT INTO workflow_results(
+                workflow_id, run_id, timestamp, runtime, success_rate,
+                roi_gain, workflow_synergy_score, bottleneck_index,
+                patchability_score, module_deltas
+            ) VALUES(?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 workflow_id,
                 run_id,
+                timestamp or datetime.utcnow().isoformat(),
                 runtime,
                 success_rate,
                 roi_gain,
@@ -127,13 +140,68 @@ class ROIResultsDB:
         self.conn.commit()
         return int(cur.lastrowid or 0)
 
+    # backward compatibility -------------------------------------------------
+    def add_result(self, **kwargs: Any) -> int:  # pragma: no cover - legacy alias
+        return self.log_result(**kwargs)
+
+    def add(self, result: ROIResult) -> int:  # pragma: no cover - legacy alias
+        return self.log_result(
+            workflow_id=result.workflow_id,
+            run_id=result.run_id,
+            runtime=result.runtime,
+            success_rate=result.success_rate,
+            roi_gain=result.roi_gain,
+            workflow_synergy_score=result.workflow_synergy_score,
+            bottleneck_index=result.bottleneck_index,
+            patchability_score=result.patchability_score,
+            module_deltas=result.module_deltas,
+            timestamp=result.timestamp,
+        )
+
+    # ------------------------------------------------------------------
+    def fetch_results(self, workflow_id: str, run_id: str | None = None) -> List[ROIResult]:
+        """Return logged results for ``workflow_id``.
+
+        If ``run_id`` is provided, only matching entries are returned.
+        """
+
+        cur = self.conn.cursor()
+        if run_id is None:
+            cur.execute(
+                "SELECT workflow_id, run_id, timestamp, runtime, success_rate, roi_gain, workflow_synergy_score, bottleneck_index, patchability_score, module_deltas FROM workflow_results WHERE workflow_id=? ORDER BY timestamp",
+                (workflow_id,),
+            )
+        else:
+            cur.execute(
+                "SELECT workflow_id, run_id, timestamp, runtime, success_rate, roi_gain, workflow_synergy_score, bottleneck_index, patchability_score, module_deltas FROM workflow_results WHERE workflow_id=? AND run_id=? ORDER BY timestamp",
+                (workflow_id, run_id),
+            )
+        rows = cur.fetchall()
+        results: List[ROIResult] = []
+        for row in rows:
+            results.append(
+                ROIResult(
+                    workflow_id=row[0],
+                    run_id=row[1],
+                    timestamp=str(row[2]),
+                    runtime=float(row[3]),
+                    success_rate=float(row[4]),
+                    roi_gain=float(row[5]),
+                    workflow_synergy_score=float(row[6]),
+                    bottleneck_index=float(row[7]),
+                    patchability_score=float(row[8]),
+                    module_deltas=json.loads(row[9] or "{}"),
+                )
+            )
+        return results
+
     # ------------------------------------------------------------------
     def module_impact_report(self, workflow_id: str, run_id: str) -> Dict[str, Dict[str, float]]:
         """Return modules grouped by improvement sign for ``run_id``."""
 
         cur = self.conn.cursor()
         cur.execute(
-            "SELECT run_id, module_deltas FROM roi_results WHERE workflow_id=? ORDER BY ts",
+            "SELECT run_id, module_deltas FROM workflow_results WHERE workflow_id=? ORDER BY timestamp",
             (workflow_id,),
         )
         rows = cur.fetchall()
