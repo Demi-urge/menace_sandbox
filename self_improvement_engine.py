@@ -5251,7 +5251,26 @@ class SelfImprovementEngine:
         results: dict[int, dict[str, float]] = {}
         bot = WorkflowEvolutionBot(self.pathway_db)
 
+        roi_thr = 0.0
+        wf_flags: set[str] = set()
+        if self.roi_tracker:
+            try:
+                roi_thr = float(self.roi_tracker.diminishing())
+            except Exception:
+                self.logger.exception("workflow roi threshold computation failed")
+        if getattr(self, "meta_logger", None):
+            try:
+                flagged = self.meta_logger.diminishing(roi_thr)
+                wf_flags = {f for f in flagged if f.startswith("workflow:")}
+                # avoid persisting workflow flags alongside module flags
+                self.meta_logger.flagged_sections.difference_update(wf_flags)
+            except Exception:
+                pass
+
         for wf_id, seq in workflows:
+            wf_key = f"workflow:{wf_id}"
+            if wf_key in wf_flags:
+                continue
             try:
                 baseline_callable = self.workflow_evolver.build_callable(seq)
             except Exception:
@@ -5317,6 +5336,18 @@ class SelfImprovementEngine:
                     best_roi = variant_res.roi_gain
                     best_seq = v_seq
 
+            overall_delta = best_roi - baseline_result.roi_gain
+            if getattr(self, "meta_logger", None):
+                try:
+                    self.meta_logger.module_deltas.setdefault(wf_key, []).append(overall_delta)
+                    self.meta_logger.entropy_delta(wf_key)
+                except Exception:
+                    self.logger.exception(
+                        "workflow delta meta logging failed",
+                        extra=log_record(workflow_id=wf_id),
+                    )
+            if overall_delta <= roi_thr:
+                continue
             results[int(wf_id)] = {
                 "baseline": baseline_result.roi_gain,
                 "best": best_roi,
