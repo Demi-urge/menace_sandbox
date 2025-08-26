@@ -5,11 +5,7 @@ import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
-from menace_sandbox.roi_results_db import (  # noqa: E402
-    ROIResultsDB,
-    module_performance_trajectories,
-    module_volatility,
-)
+from menace_sandbox.roi_results_db import ROIResultsDB  # noqa: E402
 
 
 def test_module_trajectories_expose_moving_stats(tmp_path):
@@ -30,7 +26,7 @@ def test_module_trajectories_expose_moving_stats(tmp_path):
             module_deltas={"alpha": {"roi_delta": delta, "success_rate": 1.0}},
         )
 
-    trajectories = module_performance_trajectories("wf", "alpha", db_path)["alpha"]
+    trajectories = db.fetch_module_trajectories("wf", "alpha")["alpha"]
 
     expected_ma = []
     expected_var = []
@@ -42,6 +38,6 @@ def test_module_trajectories_expose_moving_stats(tmp_path):
     assert [t["moving_avg"] for t in trajectories] == pytest.approx(expected_ma)
     assert [t["variance"] for t in trajectories] == pytest.approx(expected_var)
 
-    latest = module_volatility("wf", "alpha", db_path)
+    latest = db.fetch_module_volatility("wf", "alpha")
     assert latest["moving_avg"] == pytest.approx(expected_ma[-1])
     assert latest["variance"] == pytest.approx(expected_var[-1])
