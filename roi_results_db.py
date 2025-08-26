@@ -384,8 +384,9 @@ class ROIResultsDB:
             cur.execute(
                 (
                     "SELECT workflow_id, run_id, timestamp, runtime, success_rate, roi_gain, "
-                    "workflow_synergy_score, bottleneck_index, patchability_score, module_deltas, failure_reason "
-                    "FROM workflow_results WHERE workflow_id=? ORDER BY timestamp"
+                    "workflow_synergy_score, bottleneck_index, patchability_score, "
+                    "module_deltas, failure_reason FROM workflow_results "
+                    "WHERE workflow_id=? ORDER BY timestamp"
                 ),
                 (workflow_id,),
             )
@@ -393,8 +394,9 @@ class ROIResultsDB:
             cur.execute(
                 (
                     "SELECT workflow_id, run_id, timestamp, runtime, success_rate, roi_gain, "
-                    "workflow_synergy_score, bottleneck_index, patchability_score, module_deltas, failure_reason "
-                    "FROM workflow_results WHERE workflow_id=? AND run_id=? ORDER BY timestamp"
+                    "workflow_synergy_score, bottleneck_index, patchability_score, "
+                    "module_deltas, failure_reason FROM workflow_results "
+                    "WHERE workflow_id=? AND run_id=? ORDER BY timestamp"
                 ),
                 (workflow_id, run_id),
             )
@@ -447,7 +449,14 @@ class ROIResultsDB:
     def fetch_module_trajectories(
         self, workflow_id: str, module: str | None = None
     ) -> Dict[str, List[Dict[str, float]]]:
-        """Return per-run trend metrics for modules in ``workflow_id``."""
+        """Return per-run trend metrics for modules in ``workflow_id``.
+
+        Each trajectory entry includes the raw ROI delta along with its moving
+        average and variance as stored in the ``roi_delta_ma`` and
+        ``roi_delta_var`` columns of the ``workflow_module_deltas`` table.  The
+        presence of these statistics enables analysis of patchability and
+        volatility over time for individual modules.
+        """
 
         cur = self.conn.cursor()
         if module is None:
@@ -456,7 +465,7 @@ class ROIResultsDB:
                 SELECT module, run_id, success_rate, roi_delta, roi_delta_ma, roi_delta_var
                 FROM workflow_module_deltas
                 WHERE workflow_id=?
-                ORDER BY ts
+                ORDER BY ts, id
                 """,
                 (workflow_id,),
             )
@@ -466,7 +475,7 @@ class ROIResultsDB:
                 SELECT module, run_id, success_rate, roi_delta, roi_delta_ma, roi_delta_var
                 FROM workflow_module_deltas
                 WHERE workflow_id=? AND module=?
-                ORDER BY ts
+                ORDER BY ts, id
                 """,
                 (workflow_id, module),
             )
@@ -524,14 +533,20 @@ class ROIResultsDB:
     def fetch_module_volatility(
         self, workflow_id: str, module: str
     ) -> Dict[str, float]:
-        """Return latest moving average and variance for ``module``."""
+        """Return latest moving average and variance for ``module``.
+
+        The metrics are read from the most recent entry in the
+        ``workflow_module_deltas`` table and correspond to the ``moving_avg``
+        and ``variance`` fields provided by
+        :meth:`fetch_module_trajectories`.
+        """
 
         cur = self.conn.cursor()
         cur.execute(
             """
             SELECT roi_delta_ma, roi_delta_var FROM workflow_module_deltas
             WHERE workflow_id=? AND module=?
-            ORDER BY ts DESC LIMIT 1
+            ORDER BY id DESC LIMIT 1
             """,
             (workflow_id, module),
         )
@@ -555,7 +570,12 @@ def module_performance_trajectories(
     module: str | None = None,
     db_path: str | Path = "roi_results.db",
 ) -> Dict[str, List[Dict[str, float]]]:
-    """Convenience wrapper returning module trend data from ``db_path``."""
+    """Convenience wrapper returning module trend data from ``db_path``.
+
+    The returned structure mirrors
+    :meth:`ROIResultsDB.fetch_module_trajectories` and therefore includes
+    per-run moving averages and variance for each module.
+    """
 
     db = ROIResultsDB(db_path)
     return db.fetch_module_trajectories(workflow_id, module)
@@ -597,7 +617,7 @@ def compute_rolling_metrics(
         stats: List[tuple[float, float]] = []
         for i in range(len(values)):
             start = max(0, i - window + 1)
-            segment = values[start : i + 1]
+            segment = values[start:i + 1]
             avg = sum(segment) / len(segment)
             if len(segment) > 1:
                 slope = (segment[-1] - segment[0]) / (len(segment) - 1)
