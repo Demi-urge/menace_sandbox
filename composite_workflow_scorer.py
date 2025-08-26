@@ -17,6 +17,9 @@ import uuid
 from collections import defaultdict, deque
 import concurrent.futures
 import logging
+from pathlib import Path
+
+import yaml
 
 from .roi_tracker import ROITracker
 from .roi_calculator import ROICalculator
@@ -65,7 +68,31 @@ class ROIScorer(BaseROIScorer):
             )
         except Exception as exc:  # pragma: no cover - configuration errors
             logging.critical("Failed to initialise ROICalculator: %s", exc)
-            raise
+            try:
+                with Path("configs/roi_profiles.yaml").open(
+                    "r", encoding="utf-8"
+                ) as fh:
+                    profiles: Dict[str, Dict[str, Any]] = yaml.safe_load(fh) or {}
+                default_type, default_profile = next(iter(profiles.items()))
+            except Exception as profile_exc:  # pragma: no cover - missing config
+                raise RuntimeError(
+                    "ROICalculator unavailable and no default ROI profile could be loaded"
+                ) from profile_exc
+
+            calc = ROICalculator.__new__(ROICalculator)
+            calc.profiles = {default_type: default_profile}
+            calc.hard_fail = False
+            calc.logger = logging.getLogger(__name__)
+            try:
+                calc._validate_profiles()
+            except Exception as validation_exc:  # pragma: no cover - invalid profile
+                raise RuntimeError(
+                    "Default ROI profile is invalid; check configs/roi_profiles.yaml"
+                ) from validation_exc
+
+            self.tracker = tracker or ROITracker()
+            self.calculator = calc
+            self.profile_type = profile_type or default_type
 
 
 class CompositeWorkflowScorer(ROIScorer):
