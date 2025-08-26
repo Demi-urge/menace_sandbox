@@ -12,11 +12,13 @@ module.
 from .composite_workflow_scorer import (
     ROIScorer,
     CompositeWorkflowScorer,
+)
+from .workflow_scorer_core import (
+    Scorecard,
     compute_workflow_synergy,
     compute_bottleneck_index,
     compute_patchability,
 )
-from .workflow_scorer_core import Scorecard
 
 __all__ = [
     "ROIScorer",
