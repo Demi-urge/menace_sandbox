@@ -29,9 +29,11 @@ python workflow_synthesizer_cli.py --list
   defaults to the start argument.
 * `--list` – print the names of previously saved workflows and exit.
 
-The command prints numbered candidate workflows with their scores. When
-`--save`, `--out` or `--evaluate` is supplied you are prompted to choose a
-workflow to persist or execute.
+The command prints numbered candidate workflows with their scores and lists any
+unresolved inputs to aid manual selection. When `--save`, `--out` or
+`--evaluate` is supplied you are prompted to choose a workflow to persist or
+execute. Automatic or manual evaluation reports a brief summary indicating
+success or failure together with the score components.
 
 ## Output format
 

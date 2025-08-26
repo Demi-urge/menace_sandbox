@@ -17,7 +17,6 @@ from workflow_synthesizer import (
     WorkflowSynthesizer,
     to_workflow_spec,
     evaluate_workflow,
-    workflow_to_dict,
     save_workflow,
 )
 
@@ -55,7 +54,7 @@ def run(args: argparse.Namespace) -> int:
     )
     details = getattr(synth, "workflow_score_details", [])
     for idx, (wf, info) in enumerate(zip(workflows, details), start=1):
-        modules = " -> ".join(step["module"] for step in workflow_to_dict(wf)["steps"])
+        modules = " -> ".join(step.module for step in wf)
         score = info.get("score", 0.0)
         syn = info.get("synergy", 0.0)
         intent = info.get("intent", 0.0)
@@ -65,6 +64,27 @@ def run(args: argparse.Namespace) -> int:
         print(
             f"{idx}. score={score:.4f} (syn={syn:.4f}, intent={intent:.4f}, penalty={penalty:.4f}){status} {modules}"
         )
+        unresolved = [
+            (step.module, step.unresolved)
+            for step in wf
+            if getattr(step, "unresolved", [])
+        ]
+        if unresolved:
+            parts = [f"{m}: {', '.join(u)}" for m, u in unresolved]
+            print("   unresolved:", "; ".join(parts))
+
+    if getattr(args, "auto_evaluate", False):
+        print("Evaluation summary:")
+        for idx, info in enumerate(details, start=1):
+            success = info.get("success")
+            status = "succeeded" if success else "failed"
+            score = info.get("score", 0.0)
+            syn = info.get("synergy", 0.0)
+            intent = info.get("intent", 0.0)
+            penalty = info.get("penalty", 0.0)
+            print(
+                f"  {idx}. {status} (score={score:.4f}, syn={syn:.4f}, intent={intent:.4f}, penalty={penalty:.4f})"
+            )
 
     selected = 0
     if getattr(args, "select", None) is not None:
@@ -102,7 +122,15 @@ def run(args: argparse.Namespace) -> int:
     if getattr(args, "evaluate", False):
         spec = to_workflow_spec(chosen)
         ok = evaluate_workflow(spec)
-        print("evaluation succeeded" if ok else "evaluation failed")
+        info = details[selected] if selected < len(details) else {}
+        score = info.get("score", 0.0)
+        syn = info.get("synergy", 0.0)
+        intent = info.get("intent", 0.0)
+        penalty = info.get("penalty", 0.0)
+        status = "succeeded" if ok else "failed"
+        print(
+            f"evaluation {status} (score={score:.4f}, syn={syn:.4f}, intent={intent:.4f}, penalty={penalty:.4f})"
+        )
         return 0 if ok else 1
     return 0
 
@@ -114,7 +142,8 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
         description=(
             "Generate candidate workflows from a starting module. Scores blend "
             "synergy graph edge weights with intent matches and are normalised "
-            "by workflow length."
+            "by workflow length. Listings show unresolved inputs for each step "
+            "and evaluation summaries report score breakdowns."
         ),
     )
     parser.add_argument(
@@ -172,12 +201,12 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
     parser.add_argument(
         "--evaluate",
         action="store_true",
-        help="Execute the generated workflow and report success",
+        help="Execute the generated workflow and report success with score summary",
     )
     parser.add_argument(
         "--auto-evaluate",
         action="store_true",
-        help="Automatically execute each generated workflow and record the result",
+        help="Automatically execute each generated workflow and include result summary",
     )
     parser.add_argument(
         "--select",
