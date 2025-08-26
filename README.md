@@ -171,6 +171,7 @@
    score drops below `raroi_borderline_threshold` the method also returns
    bottleneck suggestions via `propose_fix`. RAROI feeds into module ranking
    and guides self-improvement decisions.
+- Composite workflow evaluation and persistence via `CompositeWorkflowScorer` ([docs/composite_workflow_scorer.md](docs/composite_workflow_scorer.md))
 - Scenario scorecards collate baseline and stress ROI plus metric and synergy
   deltas for each stress preset. `sandbox_runner.environment.run_scenarios`
   returns a mapping of these scorecards keyed by scenario. They can also be
