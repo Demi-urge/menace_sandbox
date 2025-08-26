@@ -28,7 +28,7 @@ except Exception:  # pragma: no cover - optional dependency
 from .data_bot import MetricsDB
 from .neuroplasticity import PathwayDB, PathwayRecord, Outcome
 from .roi_tracker import ROITracker
-from .roi_scorer import CompositeWorkflowScorer
+from .composite_workflow_scorer import CompositeWorkflowScorer
 
 
 def benchmark_workflow(

@@ -49,7 +49,7 @@ from .metrics_exporter import (
     prediction_reliability,
 )
 
-from .roi_scorer import CompositeWorkflowScorer
+from .composite_workflow_scorer import CompositeWorkflowScorer
 from .neuroplasticity import PathwayDB
 from .data_bot import MetricsDB
 

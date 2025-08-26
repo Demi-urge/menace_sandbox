@@ -1,5 +1,6 @@
 import sys
 import types
+import json
 
 import pytest
 
@@ -33,45 +34,32 @@ def test_sample_workflow_scoring(tmp_path):
         "menace_sandbox.roi_tracker", types.SimpleNamespace(ROITracker=StubTracker)
     )
 
-    from menace_sandbox.data_bot import MetricsDB
-    from menace_sandbox.neuroplasticity import PathwayDB
-    from menace_sandbox.roi_scorer import CompositeWorkflowScorer
+    from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
+    from menace_sandbox.roi_results_db import ROIResultsDB
 
-    metrics_db = MetricsDB(tmp_path / "metrics.db")
-    pathway_db = PathwayDB(tmp_path / "pathways.db")
     tracker = StubTracker()
-    scorer = CompositeWorkflowScorer(
-        metrics_db, pathway_db, db_path=tmp_path / "roi.db", tracker=tracker
-    )
+    results_db = ROIResultsDB(tmp_path / "roi.db")
+    scorer = CompositeWorkflowScorer(tracker=tracker, results_db=results_db)
 
     workflow_id = "demo"
 
     def step1() -> bool:
-        metrics_db.log_eval(workflow_id, "step1_runtime", 0.01)
         return True
 
     def step2() -> bool:
-        metrics_db.log_eval(workflow_id, "step2_runtime", 0.02)
         return True
 
     run_id, result = scorer.score_workflow(
         workflow_id, {"step1": step1, "step2": step2}
     )
 
-    assert result["success"] is True
+    assert result["success_rate"] == pytest.approx(1.0)
 
-    cur = scorer.conn.cursor()
+    cur = results_db.conn.cursor()
     cur.execute(
-        "SELECT workflow_id, run_id FROM workflow_results WHERE workflow_id=? AND run_id=?",
+        "SELECT module_deltas FROM workflow_results WHERE workflow_id=? AND run_id=?",
         (workflow_id, run_id),
     )
-    assert cur.fetchone() == (workflow_id, run_id)
-
-    cur.execute(
-        "SELECT module, success_rate FROM workflow_module_deltas WHERE workflow_id=? AND run_id=?",
-        (workflow_id, run_id),
-    )
-    sr_map = {m: sr for m, sr in cur.fetchall()}
-    assert sr_map["step1"] == pytest.approx(1.0)
-    assert sr_map["step2"] == pytest.approx(1.0)
-
+    deltas = json.loads(cur.fetchone()[0])
+    assert deltas["step1"]["success_rate"] == pytest.approx(1.0)
+    assert deltas["step2"]["success_rate"] == pytest.approx(1.0)
