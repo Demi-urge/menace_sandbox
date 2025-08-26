@@ -7,6 +7,7 @@ from unittest import mock
 
 import pytest
 import numpy as np
+import yaml
 
 
 # ---------------------------------------------------------------------------
@@ -22,12 +23,17 @@ class _StubTracker:
         self.module_deltas = defaultdict(list)
         self.timings = {}
         self.scheduling_overhead = {}
+        self.correlation_history = {}
 
     def update(self, _before, roi_after, *, modules=None, **_kw):
         self.roi_history.append(roi_after)
         if modules:
             for m in modules:
                 self.module_deltas[m].append(roi_after)
+
+    def cache_correlations(self, pairs):
+        for k, v in pairs.items():
+            self.correlation_history.setdefault(k, []).append(v)
 
 
 class _StubResultsDB:
@@ -36,15 +42,6 @@ class _StubResultsDB:
     def __init__(self, *a, **k):
         self.log_result = mock.Mock()
         self.log_module_attribution = mock.Mock()
-
-
-class _StubCalc:
-    """Minimal ROICalculator replacement."""
-
-    profiles = {"default": {}}
-
-    def calculate(self, metrics, _profile):
-        return float(sum(float(v) for v in metrics.values())), False, []
 
 
 # Register stubs before importing the scorer to avoid heavy imports.
@@ -56,24 +53,24 @@ sys.modules.setdefault(
     "menace_sandbox.roi_results_db", types.SimpleNamespace(ROIResultsDB=_StubResultsDB)
 )
 sys.modules.setdefault("roi_results_db", sys.modules["menace_sandbox.roi_results_db"])
-sys.modules.setdefault(
-    "menace_sandbox.sandbox_runner",
-    types.SimpleNamespace(environment=types.SimpleNamespace()),
+sys.modules["menace_sandbox.sandbox_runner"] = types.SimpleNamespace(
+    environment=types.SimpleNamespace()
 )
-sys.modules.setdefault("sandbox_runner", sys.modules["menace_sandbox.sandbox_runner"])
-sys.modules.setdefault(
-    "menace_sandbox.roi_calculator", types.SimpleNamespace(ROICalculator=_StubCalc)
-)
+sys.modules["sandbox_runner"] = sys.modules["menace_sandbox.sandbox_runner"]
+
+
 class _StubPatchDB:
     def success_rate(self, limit: int = 50) -> float:
         return 1.0
+
 
 sys.modules.setdefault(
     "menace_sandbox.code_database", types.SimpleNamespace(PatchHistoryDB=_StubPatchDB)
 )
 sys.modules.setdefault("code_database", sys.modules["menace_sandbox.code_database"])
 
-from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
+from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer  # noqa: E402
+from menace_sandbox.roi_calculator import ROICalculator  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +78,7 @@ from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
 # ---------------------------------------------------------------------------
 
 
-def test_run_records_metrics_and_ids(monkeypatch):
+def test_run_records_metrics_and_ids(monkeypatch, tmp_path):
     """``run`` persists metrics with workflow/run identifiers."""
 
     class Tracker:
@@ -90,11 +87,34 @@ def test_run_records_metrics_and_ids(monkeypatch):
             self.module_deltas = {"mod1": [0.5], "mod2": [1.5]}
             self.timings = {"mod1": 0.1, "mod2": 0.2}
             self.scheduling_overhead = {"mod1": 0.01, "mod2": 0.02}
+            self.correlation_history: dict[tuple[str, str], list[float]] = {}
+
+        def cache_correlations(self, pairs):
+            for k, v in pairs.items():
+                self.correlation_history.setdefault(k, []).append(v)
 
     tracker = Tracker()
     results_db = _StubResultsDB()
+    profile = {
+        "default": {
+            "weights": {
+                "profitability": 0.125,
+                "efficiency": 0.125,
+                "reliability": 0.125,
+                "resilience": 0.125,
+                "maintainability": 0.125,
+                "security": 0.125,
+                "latency": 0.125,
+                "energy": 0.125,
+            }
+        }
+    }
+    profile_path = tmp_path / "profiles.yaml"
+    profile_path.write_text(yaml.safe_dump(profile))
     scorer = CompositeWorkflowScorer(
-        tracker=tracker, results_db=results_db, calculator_factory=_StubCalc
+        tracker=tracker,
+        results_db=results_db,
+        calculator_factory=lambda: ROICalculator(profiles_path=profile_path),
     )
     scorer._roi_start = 0
     scorer._module_start = {"mod1": 0, "mod2": 0}
@@ -107,6 +127,8 @@ def test_run_records_metrics_and_ids(monkeypatch):
         "success_rate",
         lambda self, limit=50: 0.25,
     )
+    import menace_sandbox.composite_workflow_scorer as cws_mod
+    monkeypatch.setattr(cws_mod, "PATCH_SUCCESS_RATE", 0.25)
 
     run_id = "run1"
     wf_id = "wf1"
@@ -123,13 +145,31 @@ def test_run_records_metrics_and_ids(monkeypatch):
     assert result.patchability_score == pytest.approx(expected_patch)
 
 
-def test_score_workflow_persists_results_and_ids():
+def test_score_workflow_persists_results_and_ids(tmp_path):
     """``score_workflow`` records metrics via ``log_result``."""
 
     tracker = _StubTracker()
     results_db = _StubResultsDB()
+    profile = {
+        "default": {
+            "weights": {
+                "profitability": 0.125,
+                "efficiency": 0.125,
+                "reliability": 0.125,
+                "resilience": 0.125,
+                "maintainability": 0.125,
+                "security": 0.125,
+                "latency": 0.125,
+                "energy": 0.125,
+            }
+        }
+    }
+    profile_path = tmp_path / "profiles.yaml"
+    profile_path.write_text(yaml.safe_dump(profile))
     scorer = CompositeWorkflowScorer(
-        tracker=tracker, results_db=results_db, calculator_factory=_StubCalc
+        tracker=tracker,
+        results_db=results_db,
+        calculator_factory=lambda: ROICalculator(profiles_path=profile_path),
     )
 
     def mod_a():
@@ -150,13 +190,31 @@ def test_score_workflow_persists_results_and_ids():
     assert tracker.roi_history  # tracker.update was invoked
 
 
-def test_score_workflow_logs_failure_reason(caplog):
+def test_score_workflow_logs_failure_reason(caplog, tmp_path):
     """Exceptions during module execution are logged and persisted."""
 
     tracker = _StubTracker()
     results_db = _StubResultsDB()
+    profile = {
+        "default": {
+            "weights": {
+                "profitability": 0.125,
+                "efficiency": 0.125,
+                "reliability": 0.125,
+                "resilience": 0.125,
+                "maintainability": 0.125,
+                "security": 0.125,
+                "latency": 0.125,
+                "energy": 0.125,
+            }
+        }
+    }
+    profile_path = tmp_path / "profiles.yaml"
+    profile_path.write_text(yaml.safe_dump(profile))
     scorer = CompositeWorkflowScorer(
-        tracker=tracker, results_db=results_db, calculator_factory=_StubCalc
+        tracker=tracker,
+        results_db=results_db,
+        calculator_factory=lambda: ROICalculator(profiles_path=profile_path),
     )
 
     def ok():
@@ -180,7 +238,7 @@ def test_score_workflow_logs_failure_reason(caplog):
     assert "boom: ValueError" in kwargs["failure_reason"]
 
 
-def test_evaluate_logs_run_and_workflow(monkeypatch):
+def test_evaluate_logs_run_and_workflow(monkeypatch, tmp_path):
     """``evaluate`` obtains metrics from sandbox simulations."""
 
     class Tracker:
@@ -189,6 +247,11 @@ def test_evaluate_logs_run_and_workflow(monkeypatch):
             self.module_deltas = {"m1": [0.5], "m2": [1.0]}
             self.timings = {"m1": 0.1, "m2": 0.2}
             self.scheduling_overhead = {"m1": 0.01, "m2": 0.02}
+            self.correlation_history: dict[tuple[str, str], list[float]] = {}
+
+        def cache_correlations(self, pairs):
+            for k, v in pairs.items():
+                self.correlation_history.setdefault(k, []).append(v)
 
     tracker = Tracker()
     results_db = _StubResultsDB()
@@ -202,16 +265,34 @@ def test_evaluate_logs_run_and_workflow(monkeypatch):
         }
         return tracker, details
 
-    import menace_sandbox.sandbox_runner as sandbox_runner
+    import menace_sandbox.composite_workflow_scorer as cws_mod
 
-    monkeypatch.setattr(
-        sandbox_runner,
-        "environment",
-        types.SimpleNamespace(run_workflow_simulations=fake_run_workflow_simulations),
+    cws_mod.sandbox_runner = types.SimpleNamespace(
+        environment=types.SimpleNamespace(
+            run_workflow_simulations=fake_run_workflow_simulations
+        )
     )
 
+    profile = {
+        "default": {
+            "weights": {
+                "profitability": 0.125,
+                "efficiency": 0.125,
+                "reliability": 0.125,
+                "resilience": 0.125,
+                "maintainability": 0.125,
+                "security": 0.125,
+                "latency": 0.125,
+                "energy": 0.125,
+            }
+        }
+    }
+    profile_path = tmp_path / "profiles.yaml"
+    profile_path.write_text(yaml.safe_dump(profile))
     scorer = CompositeWorkflowScorer(
-        tracker=tracker, results_db=results_db, calculator_factory=_StubCalc
+        tracker=tracker,
+        results_db=results_db,
+        calculator_factory=lambda: ROICalculator(profiles_path=profile_path),
     )
     result = scorer.evaluate("wf3")
 

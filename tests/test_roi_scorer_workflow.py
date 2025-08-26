@@ -3,24 +3,13 @@
 import sys
 import time
 import types
+import yaml
 import pytest
 
 
 # Stub heavy dependencies before importing the scorer module
 sys.modules.setdefault(
     "menace_sandbox.roi_tracker", types.SimpleNamespace(ROITracker=object)
-)
-
-
-class _StubCalc:
-    profiles = {"default": {}}
-
-    def calculate(self, metrics, _profile):
-        return float(sum(float(v) for v in metrics.values())), False, []
-
-
-sys.modules.setdefault(
-    "menace_sandbox.roi_calculator", types.SimpleNamespace(ROICalculator=_StubCalc)
 )
 sys.modules.setdefault(
     "menace_sandbox.sandbox_runner", types.SimpleNamespace()
@@ -33,6 +22,7 @@ from menace_sandbox.workflow_scorer_core import (  # noqa: E402
     compute_patchability,
     compute_workflow_synergy,
 )
+from menace_sandbox.roi_calculator import ROICalculator  # noqa: E402
 from menace_sandbox.roi_results_db import ROIResultsDB  # noqa: E402
 
 
@@ -95,17 +85,29 @@ def test_composite_scorer_end_to_end(tmp_path, monkeypatch):
             for m in modules or []:
                 self.module_deltas.setdefault(m, []).append(roi_after - roi_before)
 
-    class StubCalc:
-        profiles = {"default": {}}
-
-        def calculate(self, metrics, _profile):
-            return float(sum(metrics.values())), False, []
-
     tracker = StubTracker()
     db_path = tmp_path / "roi_results.db"
     results_db = ROIResultsDB(db_path)
+    profile = {
+        "default": {
+            "weights": {
+                "profitability": 0.125,
+                "efficiency": 0.125,
+                "reliability": 0.125,
+                "resilience": 0.125,
+                "maintainability": 0.125,
+                "security": 0.125,
+                "latency": 0.125,
+                "energy": 0.125,
+            }
+        }
+    }
+    profile_path = tmp_path / "profiles.yaml"
+    profile_path.write_text(yaml.safe_dump(profile))
     scorer = CompositeWorkflowScorer(
-        tracker=tracker, calculator_factory=StubCalc, results_db=results_db
+        tracker=tracker,
+        calculator_factory=lambda: ROICalculator(profiles_path=profile_path),
+        results_db=results_db,
     )
 
     modules = {"mod_a": lambda: True, "mod_b": lambda: True}
@@ -117,7 +119,7 @@ def test_composite_scorer_end_to_end(tmp_path, monkeypatch):
     rid, metrics = scorer.score_workflow("wf1", modules, run_id=run_id)
     assert rid == run_id
 
-    assert metrics["roi_gain"] == pytest.approx(3.5)
+    assert metrics["roi_gain"] == pytest.approx(0.4375)
     assert metrics["workflow_synergy_score"] == pytest.approx(0.0)
     assert metrics["bottleneck_index"] == pytest.approx(1.0 / 6.0)
     expected_patch = compute_patchability(tracker.roi_history, scorer.history_window)
@@ -127,10 +129,10 @@ def test_composite_scorer_end_to_end(tmp_path, monkeypatch):
     assert len(results) == 1
     row = results[0]
     assert row.workflow_id == "wf1" and row.run_id == run_id
-    assert row.module_deltas["mod_a"]["roi_delta"] == pytest.approx(1.5)
-    assert row.module_deltas["mod_b"]["roi_delta"] == pytest.approx(2.0)
+    assert row.module_deltas["mod_a"]["roi_delta"] == pytest.approx(0.1875)
+    assert row.module_deltas["mod_b"]["roi_delta"] == pytest.approx(0.25)
 
     attrib = results_db.fetch_module_attribution()
-    assert attrib["mod_a"]["roi_delta"] == pytest.approx(1.5)
+    assert attrib["mod_a"]["roi_delta"] == pytest.approx(0.1875)
     assert attrib["mod_a"]["bottleneck"] == pytest.approx(2.0 / 3.0)
     assert scorer.module_attribution["mod_b"]["bottleneck_contribution"] == pytest.approx(1.0 / 3.0)
