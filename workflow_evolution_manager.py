@@ -119,6 +119,7 @@ def evolve(
     baseline_scorer = CompositeWorkflowScorer(results_db=results_db)
     baseline_result = baseline_scorer.run(workflow_callable, wf_id_str, run_id="baseline")
     baseline_roi = baseline_result.roi_gain
+    baseline_synergy = getattr(baseline_result, "workflow_synergy_score", 0.0)
 
     bot = WorkflowEvolutionBot()
 
@@ -133,6 +134,7 @@ def evolve(
         scorer = CompositeWorkflowScorer(results_db=results_db)
         variant_result = scorer.run(variant_callable, wf_id_str, run_id=run_id)
         roi_delta = variant_result.roi_gain - baseline_roi
+        variant_synergy = getattr(variant_result, "workflow_synergy_score", 0.0)
 
         # Persist ROI delta with variant identifier
         results_db.log_module_delta(
@@ -151,6 +153,10 @@ def evolve(
                 variant=seq,
                 baseline_roi=baseline_roi,
                 variant_roi=variant_result.roi_gain,
+                baseline_synergy=baseline_synergy,
+                variant_synergy=getattr(
+                    variant_result, "workflow_synergy_score", 0.0
+                ),
                 mutation_id=bot._rearranged_events.get(seq),
             )
         else:

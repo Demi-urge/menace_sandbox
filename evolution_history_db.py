@@ -43,6 +43,9 @@ class WorkflowEvolutionRecord:
     baseline_roi: float
     variant_roi: float
     roi_delta: float
+    baseline_synergy: float = 0.0
+    variant_synergy: float = 0.0
+    synergy_delta: float = 0.0
     mutation_id: int | None = None
     ts: str = datetime.utcnow().isoformat()
 
@@ -139,6 +142,9 @@ class EvolutionHistoryDB:
                 baseline_roi REAL,
                 variant_roi REAL,
                 roi_delta REAL,
+                baseline_synergy REAL DEFAULT 0,
+                variant_synergy REAL DEFAULT 0,
+                synergy_delta REAL DEFAULT 0,
                 mutation_id INTEGER,
                 ts TEXT
             )
@@ -149,6 +155,18 @@ class EvolutionHistoryDB:
             self.conn.execute("ALTER TABLE workflow_evolution ADD COLUMN mutation_id INTEGER")
         if "ts" not in cols:
             self.conn.execute("ALTER TABLE workflow_evolution ADD COLUMN ts TEXT")
+        if "baseline_synergy" not in cols:
+            self.conn.execute(
+                "ALTER TABLE workflow_evolution ADD COLUMN baseline_synergy REAL DEFAULT 0"
+            )
+        if "variant_synergy" not in cols:
+            self.conn.execute(
+                "ALTER TABLE workflow_evolution ADD COLUMN variant_synergy REAL DEFAULT 0"
+            )
+        if "synergy_delta" not in cols:
+            self.conn.execute(
+                "ALTER TABLE workflow_evolution ADD COLUMN synergy_delta REAL DEFAULT 0"
+            )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS "
             "idx_evolution_history_source_menace_id ON evolution_history("
@@ -201,17 +219,27 @@ class EvolutionHistoryDB:
         variant_roi: float,
         roi_delta: float,
         mutation_id: int | None = None,
+        baseline_synergy: float = 0.0,
+        variant_synergy: float = 0.0,
+        synergy_delta: float | None = None,
     ) -> int:
         """Persist details of a workflow variant evaluation."""
-
+        if synergy_delta is None:
+            synergy_delta = float(variant_synergy) - float(baseline_synergy)
         cur = self.conn.execute(
-            "INSERT INTO workflow_evolution(workflow_id, variant, baseline_roi, variant_roi, roi_delta, mutation_id, ts) VALUES(?,?,?,?,?,?,?)",
+            "INSERT INTO workflow_evolution(" \
+            "workflow_id, variant, baseline_roi, variant_roi, roi_delta, " \
+            "baseline_synergy, variant_synergy, synergy_delta, mutation_id, ts) " \
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
             (
                 int(workflow_id),
                 variant,
                 float(baseline_roi),
                 float(variant_roi),
                 float(roi_delta),
+                float(baseline_synergy),
+                float(variant_synergy),
+                float(synergy_delta),
                 mutation_id,
                 datetime.utcnow().isoformat(),
             ),

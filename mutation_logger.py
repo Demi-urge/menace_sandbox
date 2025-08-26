@@ -97,10 +97,13 @@ def log_workflow_evolution(
     variant_roi: float,
     *,
     mutation_id: int | None = None,
+    baseline_synergy: float = 0.0,
+    variant_synergy: float = 0.0,
 ) -> int:
     """Record evaluation of a workflow variant and return the mutation id."""
 
     roi_delta = variant_roi - baseline_roi
+    synergy_delta = variant_synergy - baseline_synergy
     if mutation_id is None:
         mutation_id = log_mutation(
             change=variant,
@@ -119,6 +122,9 @@ def log_workflow_evolution(
             variant_roi=variant_roi,
             roi_delta=roi_delta,
             mutation_id=mutation_id,
+            baseline_synergy=baseline_synergy,
+            variant_synergy=variant_synergy,
+            synergy_delta=synergy_delta,
         )
     return mutation_id
 
