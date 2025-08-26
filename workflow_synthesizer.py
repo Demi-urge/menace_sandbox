@@ -434,7 +434,7 @@ class WorkflowSynthesizer:
         *,
         problem: str | None = None,
         threshold: float = 0.0,
-        max_depth: int = 1,
+        max_depth: int | None = None,
     ) -> Set[str]:
         """Expand from ``start_module`` and/or ``problem`` to related modules.
 
@@ -448,8 +448,9 @@ class WorkflowSynthesizer:
         threshold:
             Minimum edge weight when traversing the synergy graph.
         max_depth:
-            Maximum graph depth to explore from ``start_module``.  ``1`` restricts
-            expansion to direct neighbours.
+            Maximum graph depth to explore from ``start_module``.  ``None``
+            explores the entire reachable graph. ``1`` restricts expansion to
+            direct neighbours.
         """
 
         modules: Set[str] = set()
@@ -469,7 +470,7 @@ class WorkflowSynthesizer:
                     queue: deque[tuple[str, int]] = deque([(start_module, 0)])
                     while queue:
                         node, depth = queue.popleft()
-                        if depth >= max_depth:
+                        if max_depth is not None and depth >= max_depth:
                             continue
                         for neigh, data in graph[node].items():
                             weight = float(data.get("weight", 0.0))
@@ -538,7 +539,10 @@ class WorkflowSynthesizer:
             raise ValueError("Structural analysis helpers are unavailable")
 
         modules: Set[str] = self.expand_cluster(
-            start_module=start_module, problem=problem, threshold=threshold
+            start_module=start_module,
+            problem=problem,
+            threshold=threshold,
+            max_depth=1,
         )
 
         if start_module:
@@ -629,8 +633,8 @@ class WorkflowSynthesizer:
         limit:
             Maximum number of workflows to return.
         max_depth:
-            Maximum graph depth to explore from ``start_module``.  ``1``
-            restricts exploration to direct neighbours.
+            Maximum graph depth to explore from ``start_module``. ``None``
+            explores the entire reachable graph.
         synergy_weight:
             Multiplier applied to synergy graph edge weights when scoring
             workflows.
@@ -641,9 +645,8 @@ class WorkflowSynthesizer:
         if ModuleSignature is None or get_io_signature is None:
             raise ValueError("Structural analysis helpers are unavailable")
 
-        depth = max_depth if max_depth is not None else 1
         modules = self.expand_cluster(
-            start_module=start_module, problem=problem, max_depth=depth
+            start_module=start_module, problem=problem, max_depth=max_depth
         )
         modules.add(start_module)
 

@@ -52,7 +52,9 @@ def test_expand_cluster_merges_sources(tmp_path, monkeypatch):
     intent = StubIntent(tmp_path)
     synth = ws.WorkflowSynthesizer(module_synergy_grapher=grapher, intent_clusterer=intent)
 
-    modules = synth.expand_cluster(start_module="mod_a", problem="finalise")
+    modules = synth.expand_cluster(
+        start_module="mod_a", problem="finalise", max_depth=2
+    )
     assert modules == {"mod_a", "mod_b", "mod_c"}
 
 
@@ -63,8 +65,11 @@ def test_expand_cluster_bfs_multi_hop(tmp_path, monkeypatch):
     grapher = StubGrapher()
     synth = ws.WorkflowSynthesizer(module_synergy_grapher=grapher)
 
-    # default depth is 1 -> only direct neighbour
-    assert synth.expand_cluster(start_module="mod_a") == {"mod_a", "mod_b"}
+    # depth 1 restricts exploration to the direct neighbour
+    assert synth.expand_cluster(start_module="mod_a", max_depth=1) == {
+        "mod_a",
+        "mod_b",
+    }
 
     # expanding to depth 2 pulls in mod_c
     modules = synth.expand_cluster(start_module="mod_a", max_depth=2)
@@ -115,7 +120,9 @@ def test_generate_workflows_persist_and_rank(tmp_path, monkeypatch):
     intent = StubIntent(tmp_path)
     synth = ws.WorkflowSynthesizer(module_synergy_grapher=grapher, intent_clusterer=intent)
 
-    workflows = synth.generate_workflows(start_module="mod_a", problem="finalise", limit=2)
+    workflows = synth.generate_workflows(
+        start_module="mod_a", problem="finalise", limit=2, max_depth=2
+    )
     assert len(workflows) == 2
     assert [step.module for step in workflows[0]] == ["mod_a", "mod_b"]
     # The second best workflow follows the next step in the synergy chain
