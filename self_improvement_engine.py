@@ -6426,6 +6426,13 @@ class SelfImprovementEngine:
                             "workflow evolution failed",
                             extra=log_record(workflow_id=wf_id),
                         )
+                try:
+                    evo_results = self._evolve_workflows()
+                    for wf_id, summary in evo_results.items():
+                        detail = {"workflow_id": wf_id, **summary}
+                        workflow_evolution_details.append(detail)
+                except Exception:
+                    self.logger.exception("workflow evolution layer failed")
             try:
                 flags = radar_scan()
                 if flags:

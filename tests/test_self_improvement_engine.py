@@ -217,6 +217,40 @@ def test_run_cycle(tmp_path, monkeypatch):
     assert isinstance(res, mp.AutomationResult)
 
 
+def test_run_cycle_triggers_workflow_evolution(tmp_path, monkeypatch):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def run(self, model: str, energy: int = 1):
+            return mp.AutomationResult(
+                package=None,
+                roi=prb.ROIResult(1.0, 0.0, 0.0, 1.0, 0.0),
+            )
+
+    pipe = StubPipeline()
+    monkeypatch.setattr(sie, "bootstrap", lambda: 0)
+    engine = sie.SelfImprovementEngine(interval=0, pipeline=pipe, diagnostics=diag, info_db=info)
+    monkeypatch.setattr(engine, "_should_trigger", lambda: True)
+    monkeypatch.setattr(engine.pathway_db, "top_sequences", lambda limit=3: [])
+
+    called: dict[str, object] = {}
+
+    def fake_evolve(limit: int = 10):
+        called["ran"] = True
+        return {1: {"baseline": 0.1, "best": 0.2, "sequence": "a-b"}}
+
+    monkeypatch.setattr(engine, "_evolve_workflows", fake_evolve)
+
+    mdb.add(db.MetricRecord("bot", 5.0, 10.0, 3.0, 1.0, 1.0, 1))
+    edb.log_discrepancy("fail")
+    res = engine.run_cycle()
+    assert called.get("ran") is True
+    assert res.workflow_evolution[0]["workflow_id"] == 1
+
+
 def test_schedule_energy_threshold(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
