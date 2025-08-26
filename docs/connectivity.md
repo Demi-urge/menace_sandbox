@@ -6,9 +6,11 @@ link together for maximum emergent behaviour.
 ## Database Router
 
 Bots should interact with data through `DBRouter`. The router decides whether
-tables reside in the local or shared SQLite database and returns a connection
-via :meth:`get_connection`. The legacy `database_router` module has been
-removed; import `DBRouter` from `db_router` instead:
+tables reside in the local or shared SQLite database and returns a
+``LoggedConnection`` via :meth:`get_connection`. These wrappers automatically
+log the number of rows read or written for each statement. The legacy
+`database_router` module has been removed; import `DBRouter` from `db_router`
+instead:
 
 ```python
 from menace.db_router import DBRouter

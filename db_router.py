@@ -3,7 +3,9 @@
 This module exposes a :class:`DBRouter` that decides whether a table should
 reside in the local or the shared SQLite database.  Shared tables are
 available to every Menace instance while local tables are isolated per
-``menace_id``.
+``menace_id``.  Connections returned by :func:`DBRouter.get_connection` are
+wrapped so that any ``execute`` call automatically records the number of rows
+read or written via :func:`audit_db_access.log_db_access`.
 """
 
 from __future__ import annotations
@@ -370,7 +372,7 @@ def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
         raise ValueError(f"Unknown table: {table}")
 
 
-class AuditCursor(sqlite3.Cursor):
+class LoggedCursor(sqlite3.Cursor):
     """Cursor that records database access via :func:`log_db_access`."""
 
     menace_id: str
@@ -454,34 +456,22 @@ class AuditCursor(sqlite3.Cursor):
             yield from super().__iter__()
 
 
-class _AuditConnection:
-    """Lightweight wrapper ensuring cursors are :class:`AuditCursor`."""
+class LoggedConnection(sqlite3.Connection):
+    """Connection whose cursors automatically log row counts."""
 
-    def __init__(self, conn: sqlite3.Connection, menace_id: str) -> None:
-        self._conn = conn
-        self._menace_id = menace_id
+    menace_id: str
 
-    def cursor(self, *args, **kwargs):
-        kwargs.setdefault("factory", AuditCursor)
-        cur: AuditCursor = self._conn.cursor(*args, **kwargs)  # type: ignore[assignment]
-        cur.menace_id = self._menace_id
+    def cursor(self, *args, **kwargs):  # type: ignore[override]
+        kwargs.setdefault("factory", LoggedCursor)
+        cur: LoggedCursor = super().cursor(*args, **kwargs)  # type: ignore[assignment]
+        cur.menace_id = self.menace_id
         return cur
 
-    def execute(self, *args, **kwargs):
+    def execute(self, *args, **kwargs):  # type: ignore[override]
         return self.cursor().execute(*args, **kwargs)
 
-    def executemany(self, *args, **kwargs):
+    def executemany(self, *args, **kwargs):  # type: ignore[override]
         return self.cursor().executemany(*args, **kwargs)
-
-    def __getattr__(self, name: str):  # pragma: no cover - delegation
-        return getattr(self._conn, name)
-
-    def __enter__(self):
-        self._conn.__enter__()
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return self._conn.__exit__(exc_type, exc, tb)
 
 
 class DBRouter:
@@ -512,12 +502,16 @@ class DBRouter:
             else local_db_path
         )
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        self.local_conn = sqlite3.connect(local_path, check_same_thread=False)  # noqa: SQL001
+        self.local_conn: LoggedConnection = sqlite3.connect(  # type: ignore[assignment]
+            local_path, check_same_thread=False, factory=LoggedConnection
+        )  # noqa: SQL001
+        self.local_conn.menace_id = menace_id
 
         os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
-        self.shared_conn = sqlite3.connect(  # noqa: SQL001
-            shared_db_path, check_same_thread=False
-        )
+        self.shared_conn: LoggedConnection = sqlite3.connect(  # type: ignore[assignment]
+            shared_db_path, check_same_thread=False, factory=LoggedConnection
+        )  # noqa: SQL001
+        self.shared_conn.menace_id = menace_id
 
         # ``threading.Lock`` protects against concurrent access when deciding
         # which connection to return.
@@ -566,7 +560,9 @@ class DBRouter:
 
         A :class:`ValueError` is raised for unknown tables.  Shared table
         accesses emit a structured log entry for observability while local table
-        accesses are silent except for the optional audit log.
+        accesses are silent except for the optional audit log.  The returned
+        :class:`LoggedConnection` automatically records the number of rows read
+        or written for each executed statement.
         """
 
         if not table_name:
@@ -584,7 +580,7 @@ class DBRouter:
                 "timestamp": timestamp,
             }
 
-            conn: sqlite3.Connection
+            conn: LoggedConnection
             if table_name in SHARED_TABLES:
                 if operation == "write":
                     logger.warning(
@@ -597,7 +593,7 @@ class DBRouter:
                     msg = json.dumps(entry)
                 logger.info(msg)
                 self._access_counts["shared"][table_name] += 1
-                conn = _AuditConnection(self.shared_conn, self.menace_id)
+                conn = self.shared_conn
             elif table_name in LOCAL_TABLES:
                 self._access_counts["local"][table_name] += 1
                 conn = self.local_conn
@@ -615,7 +611,11 @@ class DBRouter:
         sql: str,
         parameters: Iterable | Mapping | None = None,
     ):
-        """Execute *sql* against *table_name* and log the access.
+        """Execute *sql* against *table_name*.
+
+        The returned :class:`LoggedConnection` handles auditing automatically.
+        For ``SELECT`` statements the fetched rows are returned; for writes the
+        cursor is returned after committing the transaction.
 
         Parameters
         ----------
@@ -631,14 +631,9 @@ class DBRouter:
         conn = self.get_connection(table_name, "read" if is_read else "write")
         cursor = conn.execute(sql, parameters or ())
         if is_read:
-            rows = cursor.fetchall()
-            row_count = len(rows)
-            log_db_access("read", table_name, row_count, self.menace_id)
-            return rows
+            return cursor.fetchall()
 
-        row_count = cursor.rowcount if cursor.rowcount != -1 else 0
         conn.commit()
-        log_db_access("write", table_name, row_count, self.menace_id)
         return cursor
 
     # ------------------------------------------------------------------

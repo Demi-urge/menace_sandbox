@@ -252,11 +252,13 @@ export DB_ROUTER_DENY_TABLES="capital_ledger,finance_logs"
 
 ## Retrieving connections
 
-Use `DBRouter.get_connection(table_name, operation="read")` to obtain an
-`sqlite3.Connection` for a given table. The router returns the shared
-connection for names in `SHARED_TABLES` and the local connection for
-`LOCAL_TABLES` entries. The optional `operation` argument is recorded in audit
-logs and metrics and can be set to values such as `"read"` or `"write"`:
+Use `DBRouter.get_connection(table_name, operation="read")` to obtain a
+`LoggedConnection` for a given table. The router returns the shared connection
+for names in `SHARED_TABLES` and the local connection for `LOCAL_TABLES`
+entries. Every `execute` call on the returned connection records the row count
+via `audit_db_access.log_db_access`. The optional `operation` argument is
+recorded in audit logs and metrics and can be set to values such as `"read"` or
+`"write"`:
 
 ```python
 from db_router import init_db_router
@@ -270,8 +272,9 @@ cursor = conn.execute("SELECT * FROM bots")
 
 Modules should avoid calling `sqlite3.connect()` directly. Instead, initialise
 the router and obtain connections via `get_connection` so table placement
-remains centralised. Services must call `init_db_router(menace_id)` once at
-startup before any database operations. A typical refactor looks like:
+remains centralised and access is logged automatically. Services must call
+`init_db_router(menace_id)` once at startup before any database operations. A
+typical refactor looks like:
 
 ```python
 # Before
@@ -357,6 +360,8 @@ aggregated across deployments to monitor cross‑Menace behaviour. Local table
 accesses are silent unless audit logging is enabled. Configure the verbosity via
 the `DB_ROUTER_LOG_LEVEL` environment variable. The output format defaults to
 JSON but can be set to key-value pairs by defining `DB_ROUTER_LOG_FORMAT=kv`.
+Connections obtained via `get_connection` automatically call
+`audit_db_access.log_db_access` with the number of rows read or written.
 
 ### Access log helper
 
