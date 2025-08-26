@@ -11,7 +11,7 @@ import logging
 from typing import Literal
 
 from db_dedup import insert_if_unique, ensure_content_hash_column
-from db_write_queue import queue_insert
+from db_router import queue_insert, SHARED_TABLES
 
 from .env_config import DATABASE_URL
 from .scope_utils import build_scope_clause, apply_scope
@@ -849,18 +849,30 @@ class MenaceDB:
         return int(inserted)
 
     def link_error_bot(self, error_id: int, bot_id: int) -> None:
-        if self.use_queue:
+        if (
+            self.use_queue
+            and self.error_bots.name in SHARED_TABLES
+            and self.bot_errors.name in SHARED_TABLES
+        ):
+            payload = {
+                "error_id": error_id,
+                "bot_id": bot_id,
+                "hash_fields": ["error_id", "bot_id"],
+            }
             queue_insert(
                 self.error_bots.name,
-                {"error_id": error_id, "bot_id": bot_id},
-                ["error_id", "bot_id"],
-                self.queue_path,
+                payload,
+                os.getenv("MENACE_ID", ""),
             )
+            payload = {
+                "bot_id": bot_id,
+                "error_id": error_id,
+                "hash_fields": ["bot_id", "error_id"],
+            }
             queue_insert(
                 self.bot_errors.name,
-                {"bot_id": bot_id, "error_id": error_id},
-                ["bot_id", "error_id"],
-                self.queue_path,
+                payload,
+                os.getenv("MENACE_ID", ""),
             )
             return
         with self.engine.begin() as conn:
@@ -872,18 +884,30 @@ class MenaceDB:
             )
 
     def link_error_model(self, error_id: int, model_id: int) -> None:
-        if self.use_queue:
+        if (
+            self.use_queue
+            and self.error_models.name in SHARED_TABLES
+            and self.model_errors.name in SHARED_TABLES
+        ):
+            payload = {
+                "error_id": error_id,
+                "model_id": model_id,
+                "hash_fields": ["error_id", "model_id"],
+            }
             queue_insert(
                 self.error_models.name,
-                {"error_id": error_id, "model_id": model_id},
-                ["error_id", "model_id"],
-                self.queue_path,
+                payload,
+                os.getenv("MENACE_ID", ""),
             )
+            payload = {
+                "model_id": model_id,
+                "error_id": error_id,
+                "hash_fields": ["model_id", "error_id"],
+            }
             queue_insert(
                 self.model_errors.name,
-                {"model_id": model_id, "error_id": error_id},
-                ["model_id", "error_id"],
-                self.queue_path,
+                payload,
+                os.getenv("MENACE_ID", ""),
             )
             return
         with self.engine.begin() as conn:
@@ -895,12 +919,16 @@ class MenaceDB:
             )
 
     def link_error_code(self, error_id: int, code_id: int) -> None:
-        if self.use_queue:
+        if self.use_queue and self.error_codes.name in SHARED_TABLES:
+            payload = {
+                "error_id": error_id,
+                "code_id": code_id,
+                "hash_fields": ["error_id", "code_id"],
+            }
             queue_insert(
                 self.error_codes.name,
-                {"error_id": error_id, "code_id": code_id},
-                ["error_id", "code_id"],
-                self.queue_path,
+                payload,
+                os.getenv("MENACE_ID", ""),
             )
             return
         with self.engine.begin() as conn:
@@ -934,12 +962,17 @@ class MenaceDB:
             "resolution_notes": notes,
             "source_menace_id": menace_id,
         }
-        if self.use_queue:
+        if self.use_queue and self.discrepancies.name in SHARED_TABLES:
+            payload = dict(values)
+            payload["hash_fields"] = [
+                "description",
+                "resolution_notes",
+                "source_menace_id",
+            ]
             queue_insert(
                 self.discrepancies.name,
-                values,
-                ["description", "resolution_notes", "source_menace_id"],
-                self.queue_path,
+                payload,
+                menace_id,
             )
             return 0
         with self.engine.begin() as conn:
@@ -947,18 +980,30 @@ class MenaceDB:
             return int(res.inserted_primary_key[0])
 
     def link_discrepancy_model(self, disc_id: int, model_id: int) -> None:
-        if self.use_queue:
+        if (
+            self.use_queue
+            and self.discrepancy_models.name in SHARED_TABLES
+            and self.model_discrepancies.name in SHARED_TABLES
+        ):
+            payload = {
+                "discrepancy_id": disc_id,
+                "model_id": model_id,
+                "hash_fields": ["discrepancy_id", "model_id"],
+            }
             queue_insert(
                 self.discrepancy_models.name,
-                {"discrepancy_id": disc_id, "model_id": model_id},
-                ["discrepancy_id", "model_id"],
-                self.queue_path,
+                payload,
+                os.getenv("MENACE_ID", ""),
             )
+            payload = {
+                "model_id": model_id,
+                "discrepancy_id": disc_id,
+                "hash_fields": ["model_id", "discrepancy_id"],
+            }
             queue_insert(
                 self.model_discrepancies.name,
-                {"model_id": model_id, "discrepancy_id": disc_id},
-                ["model_id", "discrepancy_id"],
-                self.queue_path,
+                payload,
+                os.getenv("MENACE_ID", ""),
             )
             return
         with self.engine.begin() as conn:
@@ -974,12 +1019,16 @@ class MenaceDB:
             )
 
     def link_discrepancy_bot(self, disc_id: int, bot_id: int) -> None:
-        if self.use_queue:
+        if self.use_queue and self.discrepancy_bots.name in SHARED_TABLES:
+            payload = {
+                "discrepancy_id": disc_id,
+                "bot_id": bot_id,
+                "hash_fields": ["discrepancy_id", "bot_id"],
+            }
             queue_insert(
                 self.discrepancy_bots.name,
-                {"discrepancy_id": disc_id, "bot_id": bot_id},
-                ["discrepancy_id", "bot_id"],
-                self.queue_path,
+                payload,
+                os.getenv("MENACE_ID", ""),
             )
             return
         with self.engine.begin() as conn:
@@ -990,12 +1039,16 @@ class MenaceDB:
             )
 
     def link_discrepancy_workflow(self, disc_id: int, workflow_id: int) -> None:
-        if self.use_queue:
+        if self.use_queue and self.discrepancy_workflows.name in SHARED_TABLES:
+            payload = {
+                "discrepancy_id": disc_id,
+                "workflow_id": workflow_id,
+                "hash_fields": ["discrepancy_id", "workflow_id"],
+            }
             queue_insert(
                 self.discrepancy_workflows.name,
-                {"discrepancy_id": disc_id, "workflow_id": workflow_id},
-                ["discrepancy_id", "workflow_id"],
-                self.queue_path,
+                payload,
+                os.getenv("MENACE_ID", ""),
             )
             return
         with self.engine.begin() as conn:
@@ -1006,12 +1059,16 @@ class MenaceDB:
             )
 
     def link_discrepancy_enhancement(self, disc_id: int, enh_id: int) -> None:
-        if self.use_queue:
+        if self.use_queue and self.discrepancy_enhancements.name in SHARED_TABLES:
+            payload = {
+                "discrepancy_id": disc_id,
+                "enhancement_id": enh_id,
+                "hash_fields": ["discrepancy_id", "enhancement_id"],
+            }
             queue_insert(
                 self.discrepancy_enhancements.name,
-                {"discrepancy_id": disc_id, "enhancement_id": enh_id},
-                ["discrepancy_id", "enhancement_id"],
-                self.queue_path,
+                payload,
+                os.getenv("MENACE_ID", ""),
             )
             return
         with self.engine.begin() as conn:
@@ -1023,12 +1080,16 @@ class MenaceDB:
 
     def link_workflow_bot(self, workflow_id: int, bot_id: int) -> None:
         """Associate a bot with a workflow."""
-        if self.use_queue:
+        if self.use_queue and self.workflow_bots.name in SHARED_TABLES:
+            payload = {
+                "workflow_id": workflow_id,
+                "bot_id": bot_id,
+                "hash_fields": ["workflow_id", "bot_id"],
+            }
             queue_insert(
                 self.workflow_bots.name,
-                {"workflow_id": workflow_id, "bot_id": bot_id},
-                ["workflow_id", "bot_id"],
-                self.queue_path,
+                payload,
+                os.getenv("MENACE_ID", ""),
             )
             return
         with self.engine.begin() as conn:

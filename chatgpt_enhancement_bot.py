@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Iterator, Sequence, Literal
 
-from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from db_router import DBRouter, GLOBAL_ROUTER, SHARED_TABLES, init_db_router, queue_insert
 from db_dedup import insert_if_unique
 from .override_policy import OverridePolicyManager
 
@@ -358,29 +358,36 @@ class EnhancementDB(EmbeddableDBMixin):
             "associated_bots": assoc,
             "triggered_by": enh.triggered_by,
         }
-        with self._connect() as conn:
-            enh_id = insert_if_unique(
-                "enhancements",
-                values,
-                _ENHANCEMENT_HASH_FIELDS,
-                menace_id,
-                conn=conn,
-                logger=logger,
-            )
-        # generate vector embedding for the newly inserted record
-        try:
-            self.add_embedding(enh_id, enh, "enhancement", source_id=str(enh_id))
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.exception("failed to add enhancement embedding: %s", exc)
-            if RAISE_ERRORS:
-                raise
-        if self.event_bus:
-            try:
-                self.event_bus.publish(
-                    "embedding:backfill", {"db": self.__class__.__name__}
+        if "enhancements" in SHARED_TABLES:
+            payload = dict(values)
+            payload["hash_fields"] = _ENHANCEMENT_HASH_FIELDS
+            queue_insert("enhancements", payload, menace_id)
+            enh_id = 0
+        else:
+            with self._connect() as conn:
+                enh_id = insert_if_unique(
+                    "enhancements",
+                    values,
+                    _ENHANCEMENT_HASH_FIELDS,
+                    menace_id,
+                    conn=conn,
+                    logger=logger,
                 )
-            except Exception:
-                logger.exception("failed to publish embedding event")
+
+        if enh_id:
+            try:
+                self.add_embedding(enh_id, enh, "enhancement", source_id=str(enh_id))
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.exception("failed to add enhancement embedding: %s", exc)
+                if RAISE_ERRORS:
+                    raise
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "embedding:backfill", {"db": self.__class__.__name__}
+                    )
+                except Exception:
+                    logger.exception("failed to publish embedding event")
         return enh_id
 
     def update(self, enhancement_id: int, enh: Enhancement) -> None:
