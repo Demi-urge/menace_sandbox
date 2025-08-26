@@ -144,7 +144,17 @@ def evolve(
             roi_delta=roi_delta,
         )
 
-        event_id = bot._rearranged_events.get(seq)
+        log_evo = getattr(MutationLogger, "log_workflow_evolution", None)
+        if callable(log_evo):
+            event_id = log_evo(
+                workflow_id=int(workflow_id),
+                variant=seq,
+                baseline_roi=baseline_roi,
+                variant_roi=variant_result.roi_gain,
+                mutation_id=bot._rearranged_events.get(seq),
+            )
+        else:
+            event_id = bot._rearranged_events.get(seq)
         if event_id is not None:
             MutationLogger.record_mutation_outcome(
                 event_id,
