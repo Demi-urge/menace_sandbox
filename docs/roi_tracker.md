@@ -4,6 +4,9 @@
 It exposes utilities to record history, forecast the next ROI change and plot
 trends.
 
+For end-to-end workflow evaluation and persistent metric storage see the
+[CompositeWorkflowScorer](composite_workflow_scorer.md).
+
 For profile based scoring see the [ROI calculator](roi_calculator.md).
 
 ## Adaptive Forecasting
