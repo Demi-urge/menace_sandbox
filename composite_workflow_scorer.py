@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Tuple
 import time
 import uuid
 from collections import defaultdict, deque
+import concurrent.futures
 
 import numpy as np
 
@@ -197,6 +198,7 @@ class CompositeWorkflowScorer(ROIScorer):
 
         per_module: Dict[str, Dict[str, float]] = {}
         timings = getattr(self.tracker, "timings", {})
+        overheads = getattr(self.tracker, "scheduling_overhead", {})
         total_runtime = sum(float(t) for t in timings.values())
         for mod, deltas in self.tracker.module_deltas.items():
             start_idx = self._module_start.get(mod, 0)
@@ -208,6 +210,7 @@ class CompositeWorkflowScorer(ROIScorer):
                 "roi_delta": roi_delta,
                 "success_rate": 1.0 if self._module_successes.get(mod) else 0.0,
                 "bottleneck_contribution": bottleneck,
+                "scheduling_overhead": float(overheads.get(mod, 0.0)),
             }
             self._module_roi_history[mod].append(roi_delta)
             self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
@@ -255,8 +258,10 @@ class CompositeWorkflowScorer(ROIScorer):
         workflow_id: str,
         modules: Mapping[str, Callable[[], bool]],
         run_id: str | None = None,
+        *,
+        concurrency_hints: Mapping[str, Any] | None = None,
     ) -> Tuple[str, Dict[str, Any]]:
-        """Execute ``modules`` sequentially and return aggregate metrics."""
+        """Execute ``modules`` possibly in parallel and return metrics."""
 
         run_id = run_id or uuid.uuid4().hex
         self._roi_start = len(self.tracker.roi_history)
@@ -265,33 +270,49 @@ class CompositeWorkflowScorer(ROIScorer):
         }
         self._module_successes = {}
         self.tracker.timings = {}
+        self.tracker.scheduling_overhead = {}
+
+        hints = dict(concurrency_hints or {})
+        max_workers = int(hints.get("max_workers", 1)) or 1
+
+        def _run_module(name: str, func: Callable[[], bool], scheduled: float) -> bool:
+            start = time.perf_counter()
+            self.tracker.scheduling_overhead[name] = start - scheduled
+            try:
+                ok = bool(func())
+            except Exception:
+                ok = False
+            duration = time.perf_counter() - start
+            self.tracker.timings[name] = duration
+            self._module_successes[name] = ok
+            metrics = {
+                "reliability": 1.0 if ok else 0.0,
+                "efficiency": 1.0 / duration if duration > 0 else 0.0,
+            }
+            roi_after, _, _ = self.calculator.calculate(
+                metrics, self.profile_type
+            )
+            self.tracker.update(
+                0.0,
+                roi_after,
+                modules=[name],
+                metrics=metrics,
+                profile_type=self.profile_type,
+            )
+            return ok
 
         def workflow_callable() -> bool:
             overall = True
-            for name, func in modules.items():
-                t0 = time.perf_counter()
-                try:
-                    ok = bool(func())
-                except Exception:
-                    ok = False
-                duration = time.perf_counter() - t0
-                self.tracker.timings[name] = duration
-                self._module_successes[name] = ok
-                metrics = {
-                    "reliability": 1.0 if ok else 0.0,
-                    "efficiency": 1.0 / duration if duration > 0 else 0.0,
-                }
-                roi_after, _, _ = self.calculator.calculate(
-                    metrics, self.profile_type
-                )
-                self.tracker.update(
-                    0.0,
-                    roi_after,
-                    modules=[name],
-                    metrics=metrics,
-                    profile_type=self.profile_type,
-                )
-                overall = overall and ok
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max_workers
+            ) as pool:
+                futures: Dict[concurrent.futures.Future[bool], str] = {}
+                for name, func in modules.items():
+                    scheduled = time.perf_counter()
+                    futures[pool.submit(_run_module, name, func, scheduled)] = name
+                for fut in concurrent.futures.as_completed(futures):
+                    ok = bool(fut.result())
+                    overall = overall and ok
             return overall
 
         result = self.run(workflow_callable, workflow_id, run_id)
@@ -335,6 +356,7 @@ class CompositeWorkflowScorer(ROIScorer):
 
         per_module_metrics: Dict[str, Dict[str, float]] = {}
         timings = getattr(tracker, "timings", {})
+        overheads = getattr(tracker, "scheduling_overhead", {})
         total_runtime = sum(float(t) for t in timings.values())
         for mod, counts in per_module_counts.items():
             roi_delta = sum(float(x) for x in tracker.module_deltas.get(mod, []))
@@ -346,6 +368,7 @@ class CompositeWorkflowScorer(ROIScorer):
                 "roi_delta": roi_delta,
                 "runtime": runtime,
                 "bottleneck_contribution": bottleneck,
+                "scheduling_overhead": float(overheads.get(mod, 0.0)),
             }
             self._module_roi_history[mod].append(roi_delta)
             self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
