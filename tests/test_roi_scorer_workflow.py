@@ -8,8 +8,15 @@ import pytest
 sys.modules.setdefault(
     "menace_sandbox.roi_tracker", types.SimpleNamespace(ROITracker=object)
 )
+class _StubCalc:
+    profiles = {"default": {}}
+
+    def calculate(self, metrics, _profile):
+        return float(sum(float(v) for v in metrics.values())), False, []
+
+
 sys.modules.setdefault(
-    "menace_sandbox.roi_calculator", types.SimpleNamespace(ROICalculator=object)
+    "menace_sandbox.roi_calculator", types.SimpleNamespace(ROICalculator=_StubCalc)
 )
 sys.modules.setdefault(
     "menace_sandbox.sandbox_runner", types.SimpleNamespace()
@@ -72,10 +79,11 @@ def test_composite_scorer_end_to_end(tmp_path, monkeypatch):
             return float(sum(metrics.values())), False, []
 
     tracker = StubTracker()
-    calc = StubCalc()
     db_path = tmp_path / "roi_results.db"
     results_db = ROIResultsDB(db_path)
-    scorer = CompositeWorkflowScorer(tracker=tracker, calculator=calc, results_db=results_db)
+    scorer = CompositeWorkflowScorer(
+        tracker=tracker, calculator_factory=StubCalc, results_db=results_db
+    )
 
     modules = {"mod_a": lambda: True, "mod_b": lambda: True}
 

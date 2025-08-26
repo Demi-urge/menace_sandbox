@@ -2,6 +2,26 @@
 
 `CompositeWorkflowScorer` runs workflows under simulated environments and aggregates ROI metrics. It wraps `ROITracker` and persists results in `roi_results.db` via `ROIResultsDB`.
 
+## ROI profile configuration
+
+`CompositeWorkflowScorer` initialises an `ROICalculator` which expects ROI
+profiles in `configs/roi_profiles.yaml`. If this configuration file is missing
+or invalid, a `RuntimeError` is raised. Tests or lightweight setups can inject a
+minimal calculator by providing the `calculator_factory` parameter:
+
+```python
+from types import SimpleNamespace
+from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
+
+def stub_calculator():
+    return SimpleNamespace(
+        calculate=lambda metrics, _p: (sum(metrics.values()), False, []),
+        profiles={"default": {}},
+    )
+
+scorer = CompositeWorkflowScorer(calculator_factory=stub_calculator)
+```
+
 ## API overview
 
 ```python
