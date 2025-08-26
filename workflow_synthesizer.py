@@ -37,7 +37,7 @@ import os
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Set, Tuple, Union, get_args, get_origin, get_type_hints
+from typing import Any, Dict, List, Set, Tuple, Union, Sequence, get_args, get_origin, get_type_hints
 
 try:  # pragma: no cover - support running as a package
     from .fcntl_compat import flock, LOCK_EX, LOCK_SH, LOCK_UN
@@ -1538,6 +1538,125 @@ def synthesise_workflow(**kwargs: Any) -> Dict[str, Any]:
     return synthesizer.synthesize(**kwargs)
 
 
+def generate_variants(
+    workflow: Sequence[str],
+    n: int,
+    synergy_graph: Any | None,
+    intent_clusterer: Any | None,
+) -> List[List[str]]:
+    """Generate up to ``n`` variant workflows.
+
+    Variants are created by swapping modules using synergy suggestions,
+    reordering steps when structurally valid and inserting modules suggested by
+    ``intent_clusterer``.
+    """
+
+    base = list(workflow)
+    variants: List[List[str]] = []
+    seen: Set[Tuple[str, ...]] = {tuple(base)}
+    analyzer = ModuleIOAnalyzer()
+    checker = WorkflowSynthesizer(
+        module_synergy_grapher=synergy_graph
+        if isinstance(synergy_graph, ModuleSynergyGrapher)
+        else None
+    )
+
+    def _is_valid(order: List[str]) -> bool:
+        try:
+            modules = [analyzer.analyze(Path(m)) for m in order]
+            steps = checker.resolve_dependencies(modules)
+            if any(step.unresolved for step in steps):
+                return False
+            return [s.module for s in steps] == order
+        except Exception:
+            return False
+
+    def _add(order: List[str]) -> None:
+        if len(variants) >= n:
+            return
+        key = tuple(order)
+        if key in seen:
+            return
+        if _is_valid(order):
+            variants.append(order)
+            seen.add(key)
+
+    # 1. Swap modules based on synergy suggestions
+    if synergy_graph is not None:
+        for idx, mod in enumerate(base):
+            suggestions: Set[str] = set()
+            try:
+                if hasattr(synergy_graph, "get_synergy_cluster"):
+                    suggestions = set(synergy_graph.get_synergy_cluster(mod))
+                else:
+                    graph = getattr(synergy_graph, "graph", None) or synergy_graph
+                    neigh: Set[str] = set()
+                    if hasattr(graph, "successors"):
+                        try:
+                            neigh.update(graph.successors(mod))
+                        except Exception:
+                            pass
+                    if hasattr(graph, "predecessors"):
+                        try:
+                            neigh.update(graph.predecessors(mod))
+                        except Exception:
+                            pass
+                    suggestions = neigh
+            except Exception:
+                suggestions = set()
+            for s in suggestions:
+                if s == mod:
+                    continue
+                variant = base.copy()
+                variant[idx] = s
+                _add(variant)
+                if len(variants) >= n:
+                    return variants
+
+    # 2. Reorder steps by swapping adjacent modules
+    for i in range(len(base) - 1):
+        variant = base.copy()
+        variant[i], variant[i + 1] = variant[i + 1], variant[i]
+        _add(variant)
+        if len(variants) >= n:
+            return variants
+
+    # 3. Insert modules suggested by intent_clusterer
+    if intent_clusterer is not None:
+        suggestions: List[str] = []
+        try:
+            query_text = " ".join(base)
+            if hasattr(intent_clusterer, "query"):
+                hits = intent_clusterer.query(query_text, top_k=n)
+            elif hasattr(intent_clusterer, "search"):
+                hits = intent_clusterer.search(query_text, top_k=n)
+            elif hasattr(intent_clusterer, "_search_related"):
+                hits = intent_clusterer._search_related(query_text, top_k=n)
+            else:
+                hits = []
+            for h in hits or []:
+                path = getattr(h, "path", None)
+                members = getattr(h, "members", None)
+                if path:
+                    suggestions.append(Path(path).stem)
+                elif members:
+                    suggestions.extend(Path(m).stem for m in members)
+        except Exception:
+            suggestions = []
+
+        for mod in suggestions:
+            if mod in base:
+                continue
+            for pos in range(len(base) + 1):
+                variant = base.copy()
+                variant.insert(pos, mod)
+                _add(variant)
+                if len(variants) >= n:
+                    return variants
+
+    return variants[:n]
+
+
 def main(argv: List[str] | None = None) -> None:
     """Command line interface for :mod:`workflow_synthesizer`.
 
@@ -1596,6 +1715,7 @@ __all__ = [
     "evaluate_workflow",
     "save_workflow",
     "synthesise_workflow",
+    "generate_variants",
     "main",
 ]
 
