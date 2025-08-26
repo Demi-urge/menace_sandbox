@@ -71,9 +71,9 @@ def test_composite_workflow_scorer_records_metrics(tmp_path):
     assert result["roi_gain"] > 0
     assert "fast_runtime" in result["metrics"]
     assert "slow_runtime" in result["metrics"]
-    assert "workflow_synergy" in result["metrics"]
+    assert "workflow_synergy_score" in result["metrics"]
     assert "bottleneck_index" in result["metrics"]
-    assert "patchability" in result["metrics"]
+    assert "patchability_score" in result["metrics"]
 
     cur = scorer.conn.cursor()
     cur.execute(
