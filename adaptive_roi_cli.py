@@ -207,7 +207,7 @@ def _workflow_eval(args: argparse.Namespace) -> None:
     scorer.evaluate(args.workflow_id, env_presets=presets)
     cur = scorer.results_db.conn.cursor()
     row = cur.execute(
-        "SELECT run_id FROM roi_results WHERE workflow_id=? ORDER BY ts DESC LIMIT 1",
+        "SELECT run_id FROM workflow_results WHERE workflow_id=? ORDER BY timestamp DESC LIMIT 1",
         (args.workflow_id,),
     ).fetchone()
     if row:

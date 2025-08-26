@@ -199,7 +199,7 @@ class CompositeWorkflowScorer(ROIScorer):
                 "success_rate": 1.0 if self._module_successes.get(mod) else 0.0,
             }
 
-        self.results_db.add_result(
+        self.results_db.log_result(
             workflow_id=workflow_id,
             run_id=run_id,
             runtime=runtime,
@@ -316,7 +316,7 @@ class CompositeWorkflowScorer(ROIScorer):
             per_module_metrics[mod] = {"success_rate": sr, "roi_delta": roi_delta}
 
         run_id = uuid.uuid4().hex
-        self.results_db.add_result(
+        self.results_db.log_result(
             workflow_id=workflow_id,
             run_id=run_id,
             runtime=runtime,

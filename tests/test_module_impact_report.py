@@ -12,7 +12,7 @@ def test_module_impact_report(tmp_path):
     db_path = tmp_path / "roi.db"
     db = ROIResultsDB(db_path)
 
-    db.add_result(
+    db.log_result(
         workflow_id="wf",
         run_id="r1",
         runtime=1.0,
@@ -23,7 +23,7 @@ def test_module_impact_report(tmp_path):
         patchability_score=0.0,
         module_deltas={"alpha": {"roi_delta": 0.1}, "beta": {"roi_delta": -0.1}},
     )
-    db.add_result(
+    db.log_result(
         workflow_id="wf",
         run_id="r2",
         runtime=1.0,

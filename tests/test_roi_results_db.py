@@ -15,7 +15,7 @@ def test_roi_results_db_add_and_report(tmp_path):
     db_path = tmp_path / "roi.db"
     db = ROIResultsDB(db_path)
 
-    db.add_result(
+    db.log_result(
         workflow_id="wf",
         run_id="r1",
         runtime=1.0,
@@ -26,7 +26,7 @@ def test_roi_results_db_add_and_report(tmp_path):
         patchability_score=0.0,
         module_deltas={"alpha": {"roi_delta": 0.1}, "beta": {"roi_delta": -0.1}},
     )
-    db.add_result(
+    db.log_result(
         workflow_id="wf",
         run_id="r2",
         runtime=1.0,
@@ -39,7 +39,7 @@ def test_roi_results_db_add_and_report(tmp_path):
     )
 
     cur = db.conn.cursor()
-    cur.execute("SELECT workflow_id, run_id, module_deltas FROM roi_results WHERE run_id='r2'")
+    cur.execute("SELECT workflow_id, run_id, module_deltas FROM workflow_results WHERE run_id='r2'")
     wf, run, deltas_json = cur.fetchone()
     assert wf == "wf"
     assert run == "r2"
