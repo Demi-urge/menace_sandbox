@@ -10,21 +10,31 @@ each other. Buffering writes to disk lets processes append new records quickly a
 replay them later without holding a database write lock.
 
 ## Queue file format
-Each shared table receives a queue file named `<table>_queue.jsonl` under the
+Each Menace instance writes to a queue file named `<menace_id>.jsonl` under the
 configured queue directory. Every line is a JSON object containing:
 
 - `table` – the destination table name
-- `data` or `values` – column mapping for the row
+- `data` – column mapping for the row
 - `source_menace_id` – identifier of the Menace instance that generated the entry
-- `hash_fields` or `content_hash` – fields used to deduplicate queued rows
+- `hash` – content hash used to deduplicate queued rows
+- `hash_fields` – list of fields used to compute the hash (optional)
+
+Example entry:
+
+```json
+{"table": "bots", "data": {"id": 1}, "source_menace_id": "m1", "hash": "abcd"}
+```
+
+Use `db_write_queue.append_record` to generate these entries. It supersedes the
+older per-table helpers such as `db_write_queue.queue_insert`.
 
 ## How `sync_shared_db.py` processes queues
 `sync_shared_db.py` scans the queue directory for pending files produced by
-`db_write_queue.queue_insert` and attempts to insert each record into the shared
-database. Successful inserts, or rows that already exist, are removed from the
-queue. Malformed entries are moved to `<table>_queue.error.jsonl` while failures
-are appended to `<table>_queue.failed.jsonl` with error details. The script may
-run once or loop continuously based on its polling interval.
+`db_write_queue.append_record` and attempts to insert each record into the
+shared database. Successful inserts, or rows that already exist, are removed
+from the queue. Malformed entries and other failures are appended to
+`queue.failed.jsonl` with error details. The script may run once or loop
+continuously based on its polling interval.
 
 ## Configuration variables
 - `MENACE_QUEUE_DIR` – base directory for queue files. Defaults to `./queue` but
@@ -33,8 +43,8 @@ run once or loop continuously based on its polling interval.
   continuously.
 
 ## Monitoring and cleanup
-1. Inspect the queue directory for `<table>_queue.failed.jsonl` files to identify
-   records that could not be written to the shared database.
+1. Inspect the queue directory for `queue.failed.jsonl` to identify records that
+   could not be written to the shared database.
 2. Review their contents using tools like `cat`, `jq` or `tail -f` to view error
    details.
 3. Periodically run `python queue_cleanup.py --queue-dir <dir> --days <retention>`
