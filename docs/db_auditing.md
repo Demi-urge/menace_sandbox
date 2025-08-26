@@ -15,11 +15,19 @@ Events are appended as JSON lines with the following fields:
 - `table` – table name that was touched
 - `rows` – number of rows affected
 - `menace_id` – identifier of the Menace instance
+- `hash` – SHA256 of the previous hash plus this entry's contents
 
 Example log line:
 
 ```json
-{"timestamp": "2024-05-01T12:00:00Z", "action": "write", "table": "telemetry", "rows": 1, "menace_id": "alpha"}
+{
+  "timestamp": "2024-05-01T12:00:00Z",
+  "action": "write",
+  "table": "telemetry",
+  "rows": 1,
+  "menace_id": "alpha",
+  "hash": "e3b0c44298fc1c149afbf4c8996fb924..."
+}
 ```
 
 ## Environment configuration
@@ -28,6 +36,9 @@ Example log line:
 `DB_ROUTER_AUDIT_LOG` environment variable. If unset, logs default to
 `logs/shared_db_access.log`. Callers of `audit.log_db_access` may also override
 the destination by passing the `log_path` argument directly.
+
+For each log file a companion state file `<log_path>.state` stores the last
+emitted hash so the chain can resume after restarts.
 
 ## Log rotation
 
@@ -43,6 +54,17 @@ Both settings are optional; sensible defaults are applied when the variables are
 unset or invalid. Rotation occurs with the same file-locking semantics as
 regular writes, so multiple processes can safely append to the log without
 interleaving.
+
+## Verifying the log
+
+Use `tools/verify_audit_log.py` to recompute and validate the hash chain:
+
+```bash
+python tools/verify_audit_log.py logs/shared_db_access.log
+```
+
+The script checks each entry's hash and compares the final value with the
+associated `.state` file.
 
 ## Querying the audit table
 

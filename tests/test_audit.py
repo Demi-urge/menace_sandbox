@@ -1,5 +1,6 @@
 import json
 import threading
+import hashlib
 from pathlib import Path
 
 from audit import log_db_access
@@ -22,3 +23,15 @@ def test_log_db_access(tmp_path: Path) -> None:
     records = [json.loads(line) for line in lines]
     assert {r["table"] for r in records} == {"table0", "table1"}
     assert all(r["action"] == "read" for r in records)
+    prev_hash = "0" * 64
+    for rec in records:
+        assert "hash" in rec
+        data = {k: v for k, v in rec.items() if k != "hash"}
+        expected = hashlib.sha256(
+            (prev_hash + json.dumps(data, sort_keys=True)).encode()
+        ).hexdigest()
+        assert rec["hash"] == expected
+        prev_hash = rec["hash"]
+
+    state = Path(f"{log_file}.state").read_text().strip()
+    assert state == prev_hash
