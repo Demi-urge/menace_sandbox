@@ -14,6 +14,9 @@ import json
 import logging
 import os
 import sqlite3
+import sqlparse
+from sqlparse.sql import Identifier, IdentifierList, Parenthesis
+from sqlparse.tokens import Keyword
 import threading
 from collections import defaultdict
 from datetime import datetime
@@ -379,23 +382,62 @@ class LoggedCursor(sqlite3.Cursor):
     _rows: list[Any] | None = None
 
     def _table_from_sql(self, sql: str) -> str:
-        tokens = sql.strip().split()
-        if not tokens:
-            return "unknown"
-        upper = [t.upper() for t in tokens]
-        table = "unknown"
         try:
-            if upper[0] == "SELECT" and "FROM" in upper:
-                table = tokens[upper.index("FROM") + 1]
-            elif upper[0] == "INSERT" and "INTO" in upper:
-                table = tokens[upper.index("INTO") + 1]
-            elif upper[0] == "UPDATE" and len(tokens) > 1:
-                table = tokens[1]
-            elif upper[0] == "DELETE" and "FROM" in upper:
-                table = tokens[upper.index("FROM") + 1]
+            statement = sqlparse.parse(sql)[0]
         except Exception:
-            table = "unknown"
-        return table.strip('"`[]')
+            return "unknown"
+
+        def extract_identifier(token):
+            if isinstance(token, Identifier):
+                real = token.get_real_name()
+                if real and not (
+                    token.is_group
+                    and token.tokens
+                    and isinstance(token.tokens[0], Parenthesis)
+                ):
+                    return real
+                # Handle sub-selects or identifiers containing groups
+                for sub in token.tokens:
+                    name = extract_identifier(sub)
+                    if name:
+                        return name
+                return real or token.get_name()
+            if isinstance(token, IdentifierList):
+                first = next(token.get_identifiers(), None)
+                if first:
+                    return extract_identifier(first)
+            if token.is_group:
+                for sub in token.tokens:
+                    name = extract_identifier(sub)
+                    if name:
+                        return name
+            return None
+
+        stmt_type = statement.get_type()
+        if stmt_type == "UPDATE":
+            tokens = [t for t in statement.tokens if not t.is_whitespace]
+            if len(tokens) > 1:
+                name = extract_identifier(tokens[1])
+                return name.strip('"`[]') if name else "unknown"
+            return "unknown"
+
+        keyword = {"SELECT": "FROM", "DELETE": "FROM", "INSERT": "INTO"}.get(
+            stmt_type
+        )
+        if not keyword:
+            return "unknown"
+
+        from_seen = False
+        for token in statement.tokens:
+            if token.is_whitespace:
+                continue
+            if from_seen:
+                name = extract_identifier(token)
+                if name:
+                    return name.strip('"`[]')
+            elif token.ttype is Keyword and token.value.upper() == keyword:
+                from_seen = True
+        return "unknown"
 
     def _log(self, action: str, table: str, row_count: int) -> None:
         log_db_access(action, table, row_count, self.menace_id, log_path=_audit_log_path)

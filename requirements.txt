@@ -411,6 +411,8 @@ sqlalchemy==2.0.41
     # via
     #   menace (pyproject.toml)
     #   alembic
+sqlparse==0.5.3
+    # via menace (pyproject.toml)
 stable-baselines3==2.6.0
     # via menace (pyproject.toml)
 starlette==0.46.2
