@@ -2,7 +2,9 @@
 
 `audit.log_db_access` captures a tamper-resistant trail of database actions. Each
 entry records what happened and which Menace instance performed it so access to
-shared resources can be monitored.
+shared resources can be monitored. The legacy
+`audit_db_access.log_db_access` wrapper now simply forwards to this unified API
+and will be removed in a future release.
 
 ## Log format
 
@@ -22,12 +24,10 @@ Example log line:
 
 ## Environment configuration
 
-Two environment variables control where audit records are stored:
-
-- `DB_ROUTER_AUDIT_LOG` – when set, `DBRouter` writes audit entries to this
-  path. If unset, logs default to `logs/shared_db_access.log`.
-- `DB_ACCESS_LOG_PATH` – legacy modules that call `audit_db_access.log_db_access`
-  honour this variable for their log file location.
+`DBRouter` writes audit entries to the file specified by the
+`DB_ROUTER_AUDIT_LOG` environment variable. If unset, logs default to
+`logs/shared_db_access.log`. Callers of `audit.log_db_access` may also override
+the destination by passing the `log_path` argument directly.
 
 ## Querying the audit table
 

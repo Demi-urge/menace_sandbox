@@ -42,9 +42,10 @@
   - Run `python table_usage_cli.py --flush` to view shared vs. local usage per
     Menace ID.
   - Audit logs captured via `audit.log_db_access` include the menace ID. Entries
-    default to `logs/shared_db_access.log` (override with `DB_ACCESS_LOG_PATH`) and
-    can also be inserted into the `db_access_audit` table by passing
-    `log_to_db=True`. Summarise logs for metrics or anomaly detection with
+    default to `logs/shared_db_access.log` (override with `DB_ROUTER_AUDIT_LOG` or
+    via the function's `log_path` parameter) and can also be inserted into the
+    `db_access_audit` table by passing `log_to_db=True`. Summarise logs for
+    metrics or anomaly detection with
     `analysis/db_router_log_analysis.py`.
   - Read helpers accept a `scope` parameter (`"local"`, `"global"`, `"all"`)
     to filter records by menace ID, replacing `include_cross_instance` and
