@@ -3,8 +3,7 @@ from __future__ import annotations
 """Lightweight workflow scoring utilities for sandbox evaluation."""
 
 from dataclasses import dataclass
-from statistics import stdev
-from typing import Any, Dict, Mapping, Iterable
+from typing import Any, Dict, Iterable, Mapping
 import time
 import uuid
 
@@ -19,42 +18,71 @@ from .roi_results_db import ROIResultsDB
 # Metric helpers copied from ``roi_scorer`` to avoid heavy dependencies.
 # ---------------------------------------------------------------------------
 
-def compute_workflow_synergy(tracker: ROITracker, window: int = 5) -> float:
-    """Return average of recent ``synergy_*`` metrics."""
+def compute_workflow_synergy(
+    tracker: ROITracker, modules: Iterable[str] | None = None
+) -> float:
+    """Aggregate pairwise synergy metrics for ``modules``."""
 
-    eff_hist = tracker.metrics_history.get("synergy_efficiency", [])
-    rel_hist = tracker.metrics_history.get("synergy_reliability", [])
-    eff_avg = sum(eff_hist[-window:]) / len(eff_hist[-window:]) if eff_hist else None
-    rel_avg = sum(rel_hist[-window:]) / len(rel_hist[-window:]) if rel_hist else None
-    vals = [v for v in (eff_avg, rel_avg) if v is not None]
-    return float(sum(vals) / len(vals)) if vals else 0.0
+    mods = {str(m) for m in (modules if modules is not None else tracker.module_deltas)}
+    try:
+        from . import synergy_history_db as shd  # type: ignore
+
+        history = shd.load_history()
+        vals: list[float] = []
+        for entry in history:
+            for pair, score in entry.items():
+                if not isinstance(score, (int, float)):
+                    continue
+                parts = str(pair).split(",")
+                if len(parts) == 2 and {parts[0], parts[1]} <= mods:
+                    vals.append(float(score))
+        if vals:
+            return float(sum(vals) / len(vals))
+    except Exception:
+        pass
+
+    try:  # pragma: no cover - best effort
+        from .sandbox_runner.environment import aggregate_synergy_metrics
+
+        results = aggregate_synergy_metrics(list(mods))
+        if results:
+            return float(sum(val for _, val in results) / len(results))
+    except Exception:
+        pass
+    return 0.0
 
 
-def compute_bottleneck_index(timings: Mapping[str, float]) -> float:
-    """Return proportion of total latency from the slowest module."""
+def compute_bottleneck_index(tracker: ROITracker, workflow_id: str) -> float:
+    """Return worst runtime-to-ROI ratio adjusted by workflow variance."""
 
-    if not timings:
+    runtimes: Mapping[str, float] = getattr(tracker, "timings", {})
+    ratios: Dict[str, float] = {}
+    for mod, runtime in runtimes.items():
+        roi = sum(float(x) for x in tracker.module_deltas.get(mod, []))
+        if roi == 0:
+            roi = 1e-9
+        ratios[mod] = float(runtime) / roi
+    if not ratios:
         return 0.0
-    total_runtime = sum(timings.values())
-    if total_runtime <= 0:
-        return 0.0
-    slowest_rt = max(timings.values())
-    return slowest_rt / total_runtime
+    worst_ratio = max(ratios.values())
+    variance = 0.0
+    if hasattr(tracker, "workflow_variance"):
+        try:
+            variance = float(tracker.workflow_variance(workflow_id))
+        except Exception:
+            variance = 0.0
+    return worst_ratio * (1.0 + variance)
 
 
-def compute_patchability(history: Iterable[float], patch_success: float = 1.0) -> float:
-    """Return patchability score from ROI history and patch success rate."""
+def compute_patchability(history: Iterable[float], window: int = 5) -> float:
+    """Return ROI slope over recent runs using linear regression."""
 
-    hist_list = list(history)
+    hist_list = list(history)[-window:]
     if len(hist_list) < 2:
         return 0.0
     x = np.arange(len(hist_list))
     slope = float(np.polyfit(x, hist_list, 1)[0])
-    try:
-        sigma = stdev(hist_list)
-    except Exception:
-        sigma = 0.0
-    return slope * (1.0 / (sigma + 1.0)) * float(patch_success)
+    return slope
 
 
 # ---------------------------------------------------------------------------
@@ -128,8 +156,9 @@ class CompositeWorkflowScorer(ROIScorer):
 
         success_rate = success / total if total else 0.0
         roi_gain = sum(float(r) for r in getattr(tracker, "roi_history", []))
-        workflow_synergy_score = compute_workflow_synergy(tracker)
-        bottleneck_index = compute_bottleneck_index(getattr(tracker, "timings", {}))
+        modules = list(per_module_counts)
+        workflow_synergy_score = compute_workflow_synergy(tracker, modules)
+        bottleneck_index = compute_bottleneck_index(tracker, workflow_id)
         patchability_score = compute_patchability(getattr(tracker, "roi_history", []))
 
         per_module_metrics: Dict[str, Dict[str, float]] = {}
