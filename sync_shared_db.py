@@ -35,12 +35,7 @@ from db_write_queue import remove_processed_lines
 from env_config import SHARED_QUEUE_DIR, SYNC_INTERVAL
 from fcntl_compat import LOCK_EX, LOCK_UN, flock
 
-try:  # pragma: no cover - optional dependency
-    from audit import log_db_access
-except Exception:  # pragma: no cover - optional dependency
-    def log_db_access(*_args: object, **_kwargs: object) -> None:
-        """Fallback when audit logging is unavailable."""
-        return
+from audit import log_db_access
 
 
 logger = logging.getLogger(__name__)
