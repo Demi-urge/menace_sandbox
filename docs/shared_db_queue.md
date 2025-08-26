@@ -10,13 +10,15 @@ shared database write lock.
 ## Queue file format and location
 Queued writes are stored as JSON Lines files.  Each line contains a mapping::
 
-    {"table": "<table>", "data": {...}, "source_menace_id": "<id>"}
+    {"table": "<table>", "data": {...}, "source_menace_id": "<id>", "hash": "<digest>"}
 
 Files are grouped by menace under the directory defined by `SHARED_QUEUE_DIR`
 (defaults to `logs/queue`). The `env_config` module ensures this directory
-exists. Each instance appends records to `<menace_id>.jsonl`.
-`DBRouter.queue_insert` respects an optional `DB_ROUTER_QUEUE_DIR` which
-overrides the base location when routing writes.
+exists. Each instance appends records to `<menace_id>.jsonl` using
+`db_write_queue.append_record`, which supersedes older per-table helpers such as
+`db_write_queue.queue_insert`. `DBRouter.queue_insert` remains for compatibility
+and respects an optional `DB_ROUTER_QUEUE_DIR` which overrides the base location
+when routing writes.
 
 ## How `sync_shared_db.py` processes queues
 The synchroniser scans the queue directory for `*.jsonl` files and handles

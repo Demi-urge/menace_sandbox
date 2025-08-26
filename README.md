@@ -186,8 +186,8 @@
 
 SQLite's coarse file locking can stall concurrent writers. When `USE_DB_QUEUE`
 is set, calls to `insert_if_unique` are queued as JSONL records under
-`SANDBOX_DATA_DIR/queues`. Each entry stores the source `MENACE_ID` and a
-content hash for deduplication. See
+`SANDBOX_DATA_DIR/queues`, grouped per menace in `<menace_id>.jsonl` files. Each
+entry stores the source `MENACE_ID` and a content hash for deduplication. See
 [docs/shared_db_queue.md](docs/shared_db_queue.md) for queue layout,
 environment variables and recovery steps.
 
@@ -198,7 +198,7 @@ python sync_shared_db.py --db-url sqlite:///menace.db --queue-dir sandbox_data/q
 ```
 
 Successful rows are committed and removed, retries happen up to three times and
-then move to `<table>_queue.failed.jsonl`. Override the queue directory with
+then move to `queue.failed.jsonl`. Override the queue directory with
 `SHARED_QUEUE_DIR` (or `DB_ROUTER_QUEUE_DIR` when using `DBRouter`) when running
 multiple instances. The daemon polls for new records every `SYNC_INTERVAL`
 seconds (default `10`) and creates the queue directory if it is missing.
