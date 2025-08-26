@@ -31,10 +31,12 @@ import argparse
 import ast
 import json
 import logging
+import importlib
+import types
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple, Union, get_args, get_origin, get_type_hints
 
 # lightweight structural analysis helpers
 try:  # Optional import; makes the synthesizer work in minimal environments
@@ -82,6 +84,8 @@ def _extract_type_names(type_str: str | None) -> List[str]:
 
     names: List[str] = []
 
+    GENERIC_NAMES = {"tuple", "list", "set", "dict", "sequence", "union", "optional"}
+
     def _visit(n: ast.AST) -> None:
         if isinstance(n, ast.Name):
             names.append(n.id)
@@ -98,25 +102,28 @@ def _extract_type_names(type_str: str | None) -> List[str]:
                 except Exception:  # pragma: no cover - best effort
                     base = None
             base_lower = base.lower() if isinstance(base, str) else ""
+            if base and base_lower not in GENERIC_NAMES:
+                names.append(base)
             slice_node = n.slice
-            if base_lower in {"tuple", "list", "set", "dict", "sequence"}:
-                if isinstance(slice_node, ast.Tuple):
-                    elts = slice_node.elts
-                else:
-                    elts = [slice_node]
-                if base_lower == "dict" and len(elts) == 2:
-                    _visit(elts[1])
-                else:
-                    for elt in elts:
-                        _visit(elt)
+            if isinstance(slice_node, (ast.Tuple, ast.List)):
+                elts = slice_node.elts
             else:
-                try:
-                    names.append(ast.unparse(n))
-                except Exception:  # pragma: no cover - best effort
-                    pass
+                elts = [slice_node]
+            if base_lower == "dict" and len(elts) == 2:
+                _visit(elts[1])
+            else:
+                for elt in elts:
+                    _visit(elt)
+        elif isinstance(n, ast.BinOp) and isinstance(n.op, ast.BitOr):
+            _visit(n.left)
+            _visit(n.right)
         elif isinstance(n, (ast.Tuple, ast.List)):
             for elt in n.elts:
                 _visit(elt)
+        elif isinstance(n, ast.Constant):
+            # Skip ``None`` used in Optional types
+            if n.value is None:
+                return
 
     _visit(node)
     return names
@@ -416,16 +423,68 @@ class WorkflowSynthesizer:
         produced_files: Dict[str, Set[str]] = {}
         produced_by_type: Dict[str, Set[str]] = {}
         func_args: Dict[str, Set[str]] = {}
+        annotations_cache: Dict[str, Dict[str, Set[str]]] = {}
+
+        def _hint_to_names(hint: Any) -> Set[str]:
+            names: Set[str] = set()
+            origin = get_origin(hint)
+            if origin in {list, set, tuple}:
+                for arg in get_args(hint):
+                    names.update(_hint_to_names(arg))
+            elif origin is dict:
+                args = get_args(hint)
+                if len(args) == 2:
+                    names.update(_hint_to_names(args[1]))
+            elif origin in {types.UnionType, Union}:
+                for arg in get_args(hint):
+                    names.update(_hint_to_names(arg))
+            elif origin is not None:
+                names.update(_hint_to_names(origin))
+                for arg in get_args(hint):
+                    names.update(_hint_to_names(arg))
+            else:
+                if hint is type(None):
+                    return names
+                if hasattr(hint, "__module__") and hasattr(hint, "__qualname__"):
+                    names.add(f"{hint.__module__}.{hint.__qualname__}")
+            return names
+
         for mod in modules:
             name = mod.name or getattr(mod, "module", "")
             if not name:
                 raise ValueError("ModuleSignature missing name attribute")
 
             args: Set[str] = set()
-            for fn in mod.functions.values():
+            annotations_cache[name] = {}
+
+            module_obj = None
+            try:
+                module_obj = importlib.import_module(name)
+            except Exception:  # pragma: no cover - best effort
+                module_obj = None
+
+            for fn_name, fn in mod.functions.items():
                 args.update(fn.get("args", []))
-                for ret in fn.get("return_types", []):
-                    produced_by_type.setdefault(ret, set()).add(name)
+                if module_obj is not None and hasattr(module_obj, fn_name):
+                    try:
+                        obj = getattr(module_obj, fn_name)
+                        hints = get_type_hints(obj, globalns=vars(module_obj))
+                    except Exception:  # pragma: no cover - best effort
+                        hints = {}
+                    for arg, hint in hints.items():
+                        if arg == "return":
+                            for t in _hint_to_names(hint):
+                                produced_by_type.setdefault(t, set()).add(name)
+                        else:
+                            annotations_cache[name].setdefault(arg, set()).update(
+                                _hint_to_names(hint)
+                            )
+                else:
+                    for arg, ann in fn.get("annotations", {}).items():
+                        for t in _extract_type_names(ann):
+                            annotations_cache[name].setdefault(arg, set()).add(t)
+                    for ret in fn.get("return_types", []):
+                        produced_by_type.setdefault(ret, set()).add(name)
             func_args[name] = args
 
             globals_out = set(mod.globals) | set(getattr(mod, "outputs", []))
@@ -439,14 +498,6 @@ class WorkflowSynthesizer:
         # Build dependency mapping for topological sort
         deps: Dict[str, Set[str]] = {}
         unresolved: Dict[str, Set[str]] = {}
-        annotations_cache: Dict[str, Dict[str, str]] = {
-            mod.name: {
-                k: v
-                for fn in mod.functions.values()
-                for k, v in fn.get("annotations", {}).items()
-            }
-            for mod in modules
-        }
 
         # Inspect function signatures to separate required and optional args
         sig_required: Dict[str, Set[str]] = {}
@@ -491,16 +542,15 @@ class WorkflowSynthesizer:
             # function args
             for item in all_args:
                 matched = False
-                ann = annotations_cache[name].get(item)
-                if ann:
-                    for t in _extract_type_names(ann):
-                        producers = produced_by_type.get(t)
-                        if producers:
-                            producer = _select_best(name, producers)
-                            if producer != name:
-                                dependencies.add(producer)
-                            matched = True
-                            break
+                ann = annotations_cache.get(name, {}).get(item, set())
+                for t in ann:
+                    producers = produced_by_type.get(t)
+                    if producers:
+                        producer = _select_best(name, producers)
+                        if producer != name:
+                            dependencies.add(producer)
+                        matched = True
+                        break
                 if not matched:
                     producers = produced_globals.get(item)
                     if producers:
