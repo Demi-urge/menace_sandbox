@@ -4215,6 +4215,42 @@ class ROITracker:
         return bias
 
 
+def load_workflow_module_deltas(
+    workflow_id: str, run_id: str | None = None, db_path: str = "roi_results.db"
+) -> Dict[str, float]:
+    """Return aggregated ROI deltas per module for a workflow run."""
+
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    if run_id is not None:
+        cur.execute(
+            "SELECT module, roi_delta FROM workflow_module_deltas WHERE workflow_id=? AND run_id=?",
+            (workflow_id, run_id),
+        )
+    else:
+        cur.execute(
+            "SELECT module, SUM(roi_delta) FROM workflow_module_deltas WHERE workflow_id=? GROUP BY module",
+            (workflow_id,),
+        )
+    rows = cur.fetchall()
+    conn.close()
+    return {str(m): float(d) for m, d in rows}
+
+
+def apply_workflow_module_deltas(
+    tracker: "ROITracker",
+    workflow_id: str,
+    run_id: str | None = None,
+    db_path: str = "roi_results.db",
+) -> Dict[str, float]:
+    """Load module deltas and append them to ``tracker`` for refinement."""
+
+    deltas = load_workflow_module_deltas(workflow_id, run_id, db_path)
+    for mod, delta in deltas.items():
+        tracker.module_deltas.setdefault(str(mod), []).append(float(delta))
+    return deltas
+
+
 def cli(argv: List[str] | None = None) -> None:
     """Command line interface for ``ROITracker`` utilities."""
 
