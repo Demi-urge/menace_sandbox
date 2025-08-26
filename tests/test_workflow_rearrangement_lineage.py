@@ -39,10 +39,14 @@ def test_rearranged_workflow_lineage(tmp_path, monkeypatch):
     monkeypatch.setattr(ml, "_history_db", hist)
     monkeypatch.setattr(ml, "_event_bus", None)
     root_id = ml.log_mutation("1-2-3", "original", "test", 0.0, workflow_id=1)
-    bot = WorkflowEvolutionBot(pdb)
-    seqs = list(bot.propose_rearrangements(limit=1, workflow_id=1, parent_event_id=root_id))
-    assert seqs == ["3-2-1"]
-    bot.record_benchmark("3-2-1", after_metric=1.0, roi=0.5, performance=0.1)
+    dummy_clusterer = types.SimpleNamespace(find_modules_related_to=lambda *a, **k: [])
+    bot = WorkflowEvolutionBot(pdb, intent_clusterer=dummy_clusterer)
+    seqs = list(
+        bot.generate_variants(limit=1, workflow_id=1, parent_event_id=root_id)
+    )
+    assert seqs
+    variant = seqs[0]
+    bot.record_benchmark(variant, after_metric=1.0, roi=0.5, performance=0.1)
     tree = ml.build_lineage(1)
     assert tree and tree[0]["rowid"] == root_id
-    assert tree[0]["children"] and tree[0]["children"][0]["action"] == "3-2-1"
+    assert tree[0]["children"] and tree[0]["children"][0]["action"] == variant
