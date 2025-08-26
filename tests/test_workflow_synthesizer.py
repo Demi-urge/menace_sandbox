@@ -43,8 +43,10 @@ class StubIntent:
 
     def __init__(self, base: Path) -> None:
         self.base = base
+        self.top_k_seen: int | None = None
 
     def find_modules_related_to(self, _problem: str, top_k: int = 10):  # pragma: no cover - simple
+        self.top_k_seen = top_k
         return [SimpleNamespace(path=str(self.base / "mod_c.py"), score=1.0)]
 
 
@@ -85,6 +87,17 @@ def test_expand_cluster_bfs_multi_hop(tmp_path, monkeypatch):
 
     modules = synth.expand_cluster(start_module="mod_a", max_depth=3, threshold=1.5)
     assert modules == {"mod_a", "mod_b"}
+
+
+def test_expand_cluster_intent_limit(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    intent = StubIntent(tmp_path)
+    synth = ws.WorkflowSynthesizer(intent_clusterer=intent)
+
+    synth.expand_cluster(problem="finalise", intent_limit=5)
+    assert intent.top_k_seen == 5
 
 
 def test_resolve_dependencies_ordering_and_unresolved(tmp_path, monkeypatch):
@@ -154,6 +167,7 @@ def test_resolve_dependencies_optional_args_missing(tmp_path, monkeypatch):
     steps = synth.resolve_dependencies(mods)
     unresolved = {s.module: s.unresolved for s in steps}
     assert unresolved["mod_p"] == ["data"]
+
 
 def test_generate_workflows_persist_and_rank(tmp_path, monkeypatch):
     _copy_modules(tmp_path)
