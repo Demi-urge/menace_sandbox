@@ -202,6 +202,41 @@ class ROIResultsDB:
         return int(cur.lastrowid or 0)
 
     # ------------------------------------------------------------------
+    def log_module_deltas(
+        self,
+        workflow_id: str,
+        run_id: str,
+        module: str,
+        runtime: float,
+        success_rate: float,
+        roi_delta: float,
+        roi_delta_ma: float,
+        roi_delta_var: float,
+    ) -> None:
+        """Persist per-module delta statistics for a workflow run."""
+
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO workflow_module_deltas(
+                workflow_id, run_id, module, runtime, success_rate,
+                roi_delta, roi_delta_ma, roi_delta_var
+            ) VALUES(?,?,?,?,?,?,?,?)
+            """,
+            (
+                workflow_id,
+                run_id,
+                module,
+                runtime,
+                success_rate,
+                roi_delta,
+                roi_delta_ma,
+                roi_delta_var,
+            ),
+        )
+        self.conn.commit()
+
+    # ------------------------------------------------------------------
     def log_module_attribution(self, module: str, roi_delta: float, bottleneck: float) -> None:
         """Update per-module attribution stats."""
 

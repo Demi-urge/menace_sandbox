@@ -42,6 +42,7 @@ class _StubResultsDB:
     def __init__(self, *a, **k):
         self.log_result = mock.Mock()
         self.log_module_attribution = mock.Mock()
+        self.log_module_deltas = mock.Mock()
 
 
 # Register stubs before importing the scorer to avoid heavy imports.
