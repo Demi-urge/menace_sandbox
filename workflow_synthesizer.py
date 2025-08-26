@@ -37,7 +37,19 @@ import os
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Set, Tuple, Union, Sequence, get_args, get_origin, get_type_hints
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Set,
+    Tuple,
+    Union,
+    Sequence,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 try:  # pragma: no cover - support running as a package
     from .fcntl_compat import flock, LOCK_EX, LOCK_SH, LOCK_UN
@@ -52,7 +64,11 @@ except Exception:  # pragma: no cover - best effort fall back
     get_io_signature = None  # type: ignore[misc]
 
 try:  # Optional imports; fall back to stubs in tests
-    from module_synergy_grapher import ModuleSynergyGrapher, load_graph
+    from module_synergy_grapher import (
+        ModuleSynergyGrapher,
+        get_synergy_cluster,
+        load_graph,
+    )
 except Exception:  # pragma: no cover - graceful degradation
     ModuleSynergyGrapher = None  # type: ignore[misc]
     get_synergy_cluster = None  # type: ignore[misc]
@@ -1538,6 +1554,148 @@ def synthesise_workflow(**kwargs: Any) -> Dict[str, Any]:
     return synthesizer.synthesize(**kwargs)
 
 
+def generate_workflow_variants(
+    workflow_spec: Sequence[Any],
+    *,
+    limit: int = 5,
+    validator: Callable[[List[str]], bool] | None = None,
+    intent_clusterer: Any | None = None,
+    synergy_threshold: float = 0.7,
+) -> List[List[str]]:
+    """Return up to ``limit`` workflow variations.
+
+    Parameters
+    ----------
+    workflow_spec:
+        Either a sequence of module names or a sequence of step mappings with
+        ``module``, ``inputs`` and ``outputs`` fields as produced by
+        :mod:`workflow_spec`.
+    limit:
+        Maximum number of variants to return.
+    validator:
+        Optional callback invoked with each candidate sequence.  Only sequences
+        for which the callback returns ``True`` are yielded.  When omitted a
+        lightweight structural check is performed using
+        :meth:`WorkflowSynthesizer.resolve_dependencies`.
+    intent_clusterer:
+        Optional :class:`intent_clusterer.IntentClusterer` instance used to
+        locate additional modules for injection.
+    synergy_threshold:
+        Threshold passed to :func:`module_synergy_grapher.get_synergy_cluster`
+        when retrieving swap candidates.
+    """
+
+    base: List[str] = []
+    steps: List[Dict[str, Set[str]]] = []
+    for item in workflow_spec:
+        if isinstance(item, str):
+            base.append(item)
+            steps.append({"inputs": set(), "outputs": set()})
+        else:
+            mod = getattr(item, "module", None) or item.get("module")
+            ins = set(getattr(item, "inputs", None) or item.get("inputs", []) or [])
+            outs = set(getattr(item, "outputs", None) or item.get("outputs", []) or [])
+            base.append(str(mod))
+            steps.append({"inputs": ins, "outputs": outs})
+
+    variants: List[List[str]] = []
+    seen: Set[Tuple[str, ...]] = {tuple(base)}
+
+    if validator is None:
+        analyzer = ModuleIOAnalyzer()
+        checker = WorkflowSynthesizer()
+
+        def _default_validator(order: List[str]) -> bool:
+            try:
+                modules = [analyzer.analyze(Path(m)) for m in order]
+                resolved = checker.resolve_dependencies(modules)
+                if any(step.unresolved for step in resolved):
+                    return False
+                return [s.module for s in resolved] == order
+            except Exception:
+                return False
+
+        validator = _default_validator
+
+    def _add(candidate: List[str]) -> None:
+        if len(variants) >= limit:
+            return
+        key = tuple(candidate)
+        if key in seen:
+            return
+        if validator(candidate):
+            variants.append(candidate)
+            seen.add(key)
+
+    # 1. Swap modules using synergy clusters
+    if get_synergy_cluster is not None:
+        for idx, mod in enumerate(base):
+            try:
+                cluster = set(get_synergy_cluster(mod, threshold=synergy_threshold))
+            except Exception:
+                cluster = {mod}
+            for alt in cluster - {mod}:
+                variant = base.copy()
+                variant[idx] = alt
+                _add(variant)
+                if len(variants) >= limit:
+                    return variants
+
+    # 2. Reorder adjacent steps when allowed by dependency rules
+    for i in range(len(base) - 1):
+        a, b = steps[i], steps[i + 1]
+        if a["outputs"] & b["inputs"]:
+            continue
+        if b["outputs"] & a["inputs"]:
+            continue
+        variant = base.copy()
+        variant[i], variant[i + 1] = variant[i + 1], variant[i]
+        _add(variant)
+        if len(variants) >= limit:
+            return variants
+
+    # 3. Inject additional modules suggested by intent clusterer
+    if intent_clusterer is None and IntentClusterer is not None:
+        try:
+            intent_clusterer = IntentClusterer()
+        except Exception:  # pragma: no cover - optional dependency
+            intent_clusterer = None
+
+    if intent_clusterer is not None:
+        suggestions: List[str] = []
+        try:
+            query_text = " ".join(base)
+            if hasattr(intent_clusterer, "query"):
+                hits = intent_clusterer.query(query_text, top_k=limit)
+            elif hasattr(intent_clusterer, "search"):
+                hits = intent_clusterer.search(query_text, top_k=limit)
+            elif hasattr(intent_clusterer, "_search_related"):
+                hits = intent_clusterer._search_related(query_text, top_k=limit)
+            else:
+                hits = []
+            for h in hits or []:
+                path = getattr(h, "path", None)
+                members = getattr(h, "members", None)
+                if path:
+                    suggestions.append(Path(path).stem)
+                elif members:
+                    suggestions.extend(Path(m).stem for m in members)
+        except Exception:
+            suggestions = []
+
+        for mod in suggestions:
+            if mod in base:
+                continue
+            for pos in range(len(base) + 1):
+                variant = base.copy()
+                variant.insert(pos, mod)
+                _add(variant)
+                if len(variants) >= limit:
+                    return variants
+
+    return variants
+
+
 def generate_variants(
     workflow: Sequence[str],
     n: int,
@@ -1715,6 +1873,7 @@ __all__ = [
     "evaluate_workflow",
     "save_workflow",
     "synthesise_workflow",
+    "generate_workflow_variants",
     "generate_variants",
     "main",
 ]
