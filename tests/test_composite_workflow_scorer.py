@@ -183,3 +183,29 @@ def test_score_workflow_parallel_execution(tmp_path):
     assert tracker.scheduling_overhead["mod_a"] >= 0.0
     assert result["per_module"]["mod_a"]["scheduling_overhead"] >= 0.0
 
+
+def test_compute_workflow_synergy_history_weighting():
+    sys.modules.setdefault(
+        "menace_sandbox.roi_tracker", types.SimpleNamespace(ROITracker=object)
+    )
+    sys.modules.setdefault(
+        "menace_sandbox.roi_calculator", types.SimpleNamespace(ROICalculator=object)
+    )
+    sys.modules.setdefault(
+        "menace_sandbox.sandbox_runner", types.SimpleNamespace()
+    )
+    from menace_sandbox.composite_workflow_scorer import compute_workflow_synergy
+
+    roi_hist = [1.0, 2.0, 3.0]
+    module_hist = {
+        "mod_a": [1.0, 2.0, 3.0],
+        "mod_b": [1.0, 2.0, 3.0],
+        "mod_c": [3.0, 2.0, 1.0],
+    }
+    baseline = compute_workflow_synergy(roi_hist, module_hist, window=3, history_loader=lambda: [])
+    assert baseline == pytest.approx((1.0 + 1.0 - 1.0) / 3.0)
+
+    loader = lambda: [{"mod_a|mod_b": 1.0}]
+    weighted = compute_workflow_synergy(roi_hist, module_hist, window=3, history_loader=loader)
+    assert weighted == pytest.approx(1.0)
+

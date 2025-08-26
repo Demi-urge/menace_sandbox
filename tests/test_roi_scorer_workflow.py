@@ -27,8 +27,17 @@ from menace_sandbox.roi_results_db import ROIResultsDB
 
 def test_compute_metric_helpers():
     roi_hist = [1.0, 2.0, 3.0]
-    module_hist = {"a": [0.5, 1.0, 1.5], "b": [0.5, 1.0, 1.5]}
-    assert compute_workflow_synergy(roi_hist, module_hist, window=3) == pytest.approx(1.0)
+    module_hist = {
+        "a": [1.0, 2.0, 3.0],
+        "b": [1.0, 2.0, 3.0],
+        "c": [3.0, 2.0, 1.0],
+    }
+    baseline = compute_workflow_synergy(roi_hist, module_hist, window=3, history_loader=lambda: [])
+    assert baseline == pytest.approx((1.0 + 1.0 - 1.0) / 3.0)
+
+    loader = lambda: [{"a|b": 1.0}]
+    weighted = compute_workflow_synergy(roi_hist, module_hist, window=3, history_loader=loader)
+    assert weighted == pytest.approx(1.0)
 
     tracker = types.SimpleNamespace(timings={"a": 2.0, "b": 1.0})
     assert compute_bottleneck_index(tracker) == pytest.approx(1.0 / 6.0)
