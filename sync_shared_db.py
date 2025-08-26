@@ -2,15 +2,17 @@
 """Synchronise queued database writes with the shared database.
 
 This utility scans a directory for ``*.jsonl`` queue files.  Each line in a
-queue file is expected to be a JSON mapping of the form::
+queue file is expected to be a JSON mapping similar to::
 
-    {"table": "<table>", "record": {...}, "menace_id": "<id>"}
+    {"table": "<table>", "data": {...}, "hash": "<hash>",
+     "hash_fields": ["<field>", ...], "menace_id": "<id>"}
 
-The ``record`` mapping is inserted into ``table`` using
-``db_dedup.insert_if_unique``.  The hash used for deduplication is computed from
-all fields in ``record``.  If the hash already exists, the insert is skipped and
-the queue entry is discarded.  Failed inserts are moved to
-``queue.failed.jsonl`` for later inspection.
+Older entries may use ``record`` instead of ``data`` or omit the ``hash`` and
+``hash_fields`` keys.  When processing an entry the pre-computed ``hash`` is
+first checked against previously processed hashes recorded in ``processed.log``
+and the destination table.  Successful inserts append the hash to this log so
+that re-running the daemon after a crash skips already committed rows.  Failed
+inserts are moved to ``queue.failed.jsonl`` for later inspection.
 
 The script may run once via ``--once`` or loop with a configurable polling
 ``--interval``.  When ``--watch`` is provided and the optional ``watchdog``
@@ -29,7 +31,7 @@ from pathlib import Path
 from typing import Iterable
 
 from db_dedup import compute_content_hash, insert_if_unique
-from db_write_queue import DEFAULT_QUEUE_DIR
+from db_write_queue import DEFAULT_QUEUE_DIR, remove_processed_lines
 from fcntl_compat import LOCK_EX, LOCK_UN, flock
 
 
@@ -100,99 +102,122 @@ def process_queue_file(path: Path, *, conn: sqlite3.Connection) -> Stats:
 
     Each line in ``path`` is handled independently.  Successful inserts and
     detected duplicates are removed from the queue file.  Lines that raise an
-    exception are moved to ``queue.failed.jsonl`` along with error details.
+    exception are moved to ``queue.failed.jsonl`` along with error details.  A
+    ``processed.log`` file records hashes of successfully committed rows so that
+    rerunning after a crash avoids duplicating work.
     """
 
     failed_path = path.parent / "queue.failed.jsonl"
+    processed_log = path.parent / "processed.log"
     stats = Stats()
 
-    with path.open("r+", encoding="utf-8") as fh:
+    processed_hashes: set[str] = set()
+    if processed_log.exists():
+        try:
+            with processed_log.open("r", encoding="utf-8") as pf:
+                processed_hashes = {line.strip() for line in pf if line.strip()}
+        except Exception:  # pragma: no cover - unreadable log
+            processed_hashes = set()
+
+    processed_lines = 0
+
+    with path.open("r", encoding="utf-8") as fh:
         flock(fh.fileno(), LOCK_EX)
         lines = fh.readlines()
-        fh.seek(0)
-        fh.truncate()
-
-        for raw in lines:
-            line = raw.strip()
-            if not line:
-                continue
-
-            try:
-                payload = json.loads(line)
-            except Exception as exc:  # pragma: no cover - logged then skipped
-                stats.failures += 1
-                _append_lines(
-                    failed_path,
-                    [json.dumps({"record": raw.rstrip("\n"), "error": str(exc)}) + "\n"],
-                )
-                continue
-
-            table = payload.get("table")
-            record = payload.get("record") or payload.get("data", {})
-            menace_id = payload.get("menace_id") or payload.get("source_menace_id", "")
-
-            if not table or not isinstance(record, dict):
-                stats.failures += 1
-                _append_lines(
-                    failed_path,
-                    [
-                        json.dumps(
-                            {"record": payload, "error": "missing table or record"},
-                            sort_keys=True,
-                        )
-                        + "\n"
-                    ],
-                )
-                continue
-
-            hash_fields = list(record.keys())
-            content_hash = compute_content_hash({k: record[k] for k in hash_fields})
-
-            try:
-                existing = conn.execute(
-                    f"SELECT id FROM {table} WHERE content_hash=?", (content_hash,)
-                ).fetchone()
-                if existing:
-                    stats.duplicates += 1
-                    logger.info(
-                        "duplicate",
-                        extra={
-                            "table": table,
-                            "menace_id": menace_id,
-                            "id": existing[0],
-                        },
-                    )
-                    continue
-
-                insert_if_unique(
-                    table,
-                    record,
-                    hash_fields,
-                    menace_id,
-                    logger=logger,
-                    conn=conn,
-                )
-                conn.commit()
-                stats.processed += 1
-                logger.info(
-                    "inserted",
-                    extra={"table": table, "menace_id": menace_id, "hash": content_hash},
-                )
-            except Exception as exc:  # pragma: no cover - logged then moved to failed
-                conn.rollback()
-                stats.failures += 1
-                logger.error(
-                    "failed",
-                    extra={"table": table, "menace_id": menace_id, "error": str(exc)},
-                )
-                _append_lines(
-                    failed_path,
-                    [
-                        json.dumps({"record": payload, "error": str(exc)}, sort_keys=True) + "\n"
-                    ],
-                )
-
         flock(fh.fileno(), LOCK_UN)
+
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            processed_lines += 1
+            continue
+
+        try:
+            payload = json.loads(line)
+        except Exception as exc:  # pragma: no cover - logged then skipped
+            stats.failures += 1
+            _append_lines(
+                failed_path,
+                [json.dumps({"record": raw.rstrip("\n"), "error": str(exc)}) + "\n"],
+            )
+            processed_lines += 1
+            continue
+
+        table = payload.get("table")
+        record = payload.get("record") or payload.get("data", {})
+        menace_id = payload.get("menace_id") or payload.get("source_menace_id", "")
+        hash_fields = payload.get("hash_fields") or list(record.keys())
+        content_hash = (
+            payload.get("hash")
+            or payload.get("content_hash")
+            or compute_content_hash({k: record[k] for k in hash_fields})
+        )
+
+        if not table or not isinstance(record, dict):
+            stats.failures += 1
+            _append_lines(
+                failed_path,
+                [
+                    json.dumps(
+                        {"record": payload, "error": "missing table or record"},
+                        sort_keys=True,
+                    )
+                    + "\n",
+                ],
+            )
+            processed_lines += 1
+            continue
+
+        if content_hash in processed_hashes:
+            stats.duplicates += 1
+            processed_lines += 1
+            continue
+
+        try:
+            existing = conn.execute(
+                f"SELECT id FROM {table} WHERE content_hash=?", (content_hash,)
+            ).fetchone()
+            if existing:
+                stats.duplicates += 1
+                logger.info(
+                    "duplicate",
+                    extra={"table": table, "menace_id": menace_id, "id": existing[0]},
+                )
+                _append_lines(processed_log, [content_hash + "\n"])
+                processed_hashes.add(content_hash)
+                processed_lines += 1
+                continue
+
+            insert_if_unique(
+                table,
+                record,
+                hash_fields,
+                menace_id,
+                logger=logger,
+                conn=conn,
+            )
+            conn.commit()
+            stats.processed += 1
+            _append_lines(processed_log, [content_hash + "\n"])
+            processed_hashes.add(content_hash)
+            logger.info(
+                "inserted",
+                extra={"table": table, "menace_id": menace_id, "hash": content_hash},
+            )
+        except Exception as exc:  # pragma: no cover - logged then moved to failed
+            conn.rollback()
+            stats.failures += 1
+            logger.error(
+                "failed", extra={"table": table, "menace_id": menace_id, "error": str(exc)}
+            )
+            _append_lines(
+                failed_path,
+                [json.dumps({"record": payload, "error": str(exc)}, sort_keys=True) + "\n"],
+            )
+
+        processed_lines += 1
+
+    remove_processed_lines(path, processed_lines)
 
     return stats
 

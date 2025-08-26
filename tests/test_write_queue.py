@@ -1,6 +1,7 @@
 import json
 import threading
 
+from db_dedup import compute_content_hash
 from db_write_queue import append_record, read_queue, remove_processed_lines
 
 
@@ -12,10 +13,23 @@ def test_append_read_remove(tmp_path):
 
     path = queue_dir / "m1.jsonl"
     records = read_queue(path)
-    assert records == [
-        {"table": "example", "data": {"a": 1}, "source_menace_id": "m1"},
-        {"table": "example", "data": {"b": 2}, "source_menace_id": "m1"},
+    expected = [
+        {
+            "table": "example",
+            "data": {"a": 1},
+            "source_menace_id": "m1",
+            "hash": compute_content_hash({"a": 1}),
+            "hash_fields": ["a"],
+        },
+        {
+            "table": "example",
+            "data": {"b": 2},
+            "source_menace_id": "m1",
+            "hash": compute_content_hash({"b": 2}),
+            "hash_fields": ["b"],
+        },
     ]
+    assert records == expected
 
     remove_processed_lines(path, 1)
     assert read_queue(path) == [records[1]]
@@ -23,7 +37,7 @@ def test_append_read_remove(tmp_path):
     backup = queue_dir / "queue.log.bak"
     with backup.open("r", encoding="utf-8") as fh:
         bak_records = [json.loads(line) for line in fh if line.strip()]
-    assert bak_records == [records[0]]
+    assert bak_records == [expected[0]]
 
 
 def test_threaded_writes_are_atomic(tmp_path):
