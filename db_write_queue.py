@@ -76,10 +76,15 @@ def append_record(
     base.mkdir(parents=True, exist_ok=True)
     path = base / f"{menace_id}.jsonl"
 
+    hash_fields = list(payload.keys())
+    content_hash = compute_content_hash({k: payload[k] for k in hash_fields})
+
     record = {
         "table": table,
         "data": dict(payload),
         "source_menace_id": menace_id,
+        "hash": content_hash,
+        "hash_fields": hash_fields,
     }
 
     _write_record(path, record)
@@ -172,7 +177,8 @@ def queue_insert(
         "table": table,
         "op": "insert",
         "data": dict(values),
-        "content_hash": content_hash,
+        "hash": content_hash,
+        "hash_fields": list(hash_fields),
         "source_menace_id": os.getenv("MENACE_ID", ""),
     }
 
