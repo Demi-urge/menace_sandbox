@@ -185,7 +185,9 @@
 SQLite's coarse file locking can stall concurrent writers. When `USE_DB_QUEUE`
 is set, calls to `insert_if_unique` are queued as JSONL records under
 `SANDBOX_DATA_DIR/queues`. Each entry stores the source `MENACE_ID` and a
-content hash for deduplication.
+content hash for deduplication. See
+[docs/shared_db_queue.md](docs/shared_db_queue.md) for queue layout,
+environment variables and recovery steps.
 
 A background daemon flushes the queue into the shared database:
 
@@ -195,7 +197,8 @@ python sync_shared_db.py --db-url sqlite:///menace.db --queue-dir sandbox_data/q
 
 Successful rows are committed and removed, retries happen up to three times and
 then move to `<table>_queue.failed.jsonl`. Override the queue directory with
-`SANDBOX_DATA_DIR` when running multiple instances.
+`DB_QUEUE_DIR` (or `DB_ROUTER_QUEUE_DIR` when using `DBRouter`) when running
+multiple instances.
 
 For PostgreSQL or other backends that handle concurrent writes, disable the
 buffer by unsetting `USE_DB_QUEUE` (or passing `queue_path=None`) so inserts go
