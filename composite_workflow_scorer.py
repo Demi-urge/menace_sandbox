@@ -154,7 +154,7 @@ class CompositeWorkflowScorer(ROIScorer):
             success = False
         runtime = time.perf_counter() - start
 
-        roi_gain = sum(float(x) for x in self.tracker.roi_history[self._roi_start :])
+        roi_gain = sum(float(x) for x in self.tracker.roi_history[self._roi_start:])
 
         per_module: Dict[str, Dict[str, float]] = {}
         timings = getattr(self.tracker, "timings", {})
@@ -164,11 +164,12 @@ class CompositeWorkflowScorer(ROIScorer):
             start_idx = self._module_start.get(mod, 0)
             roi_delta = sum(float(x) for x in deltas[start_idx:])
             runtime = float(timings.get(mod, 0.0))
+            success_rate = 1.0 if self._module_successes.get(mod) else 0.0
             bottleneck = runtime / total_runtime if total_runtime > 0 else 0.0
             per_module[mod] = {
                 "runtime": runtime,
                 "roi_delta": roi_delta,
-                "success_rate": 1.0 if self._module_successes.get(mod) else 0.0,
+                "success_rate": success_rate,
                 "bottleneck_contribution": bottleneck,
                 "scheduling_overhead": float(overheads.get(mod, 0.0)),
             }
@@ -176,13 +177,23 @@ class CompositeWorkflowScorer(ROIScorer):
             if failure_reason is not None:
                 per_module[mod]["failure_reason"] = failure_reason
             self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
-            if hasattr(self.results_db, "log_module_deltas"):
+            if hasattr(self.results_db, "log_module_delta"):
+                self.results_db.log_module_delta(
+                    workflow_id,
+                    run_id,
+                    mod,
+                    runtime,
+                    success_rate,
+                    roi_delta,
+                    window=self.history_window,
+                )
+            elif hasattr(self.results_db, "log_module_deltas"):
                 self.results_db.log_module_deltas(
                     workflow_id,
                     run_id,
                     mod,
                     runtime,
-                    1.0 if self._module_successes.get(mod) else 0.0,
+                    success_rate,
                     roi_delta,
                     window=self.history_window,
                 )
@@ -381,7 +392,17 @@ class CompositeWorkflowScorer(ROIScorer):
                 "scheduling_overhead": float(overheads.get(mod, 0.0)),
             }
             self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
-            if hasattr(self.results_db, "log_module_deltas"):
+            if hasattr(self.results_db, "log_module_delta"):
+                self.results_db.log_module_delta(
+                    workflow_id,
+                    run_id,
+                    mod,
+                    runtime,
+                    sr,
+                    roi_delta,
+                    window=self.history_window,
+                )
+            elif hasattr(self.results_db, "log_module_deltas"):
                 self.results_db.log_module_deltas(
                     workflow_id,
                     run_id,
