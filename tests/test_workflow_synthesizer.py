@@ -160,6 +160,31 @@ def test_generate_workflows_persist_and_rank(tmp_path, monkeypatch):
     assert 0.0 <= synth.workflow_score_details[1]["intent"] <= 1.0
 
 
+def test_generate_workflows_auto_evaluate(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    grapher = StubGrapher()
+    synth = ws.WorkflowSynthesizer(module_synergy_grapher=grapher)
+
+    results = [True, False]
+
+    def fake_eval(_spec):
+        return results.pop(0)
+
+    monkeypatch.setattr(ws, "evaluate_workflow", fake_eval)
+
+    synth.generate_workflows(
+        start_module="mod_a", limit=2, max_depth=2, auto_evaluate=True
+    )
+    assert synth.workflow_score_details[0]["success"] is True
+    assert synth.workflow_score_details[1]["success"] is False
+
+    saved = sorted(Path("sandbox_data/generated_workflows").glob("*.workflow.json"))
+    data = json.loads(saved[0].read_text())
+    assert data.get("success") is True
+
+
 def test_generate_workflows_max_depth(tmp_path, monkeypatch):
     _copy_modules(tmp_path)
     monkeypatch.chdir(tmp_path)
