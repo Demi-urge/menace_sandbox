@@ -181,32 +181,35 @@ class ROIResultsDB:
         failure_reason: str | None = None,
     ) -> int:
         """Insert a workflow evaluation result."""
-
         cur = self.conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO workflow_results(
-                workflow_id, run_id, timestamp, runtime, success_rate,
-                roi_gain, workflow_synergy_score, bottleneck_index,
-                patchability_score, module_deltas, failure_reason
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                workflow_id,
-                run_id,
-                timestamp or datetime.utcnow().isoformat(),
-                runtime,
-                success_rate,
-                roi_gain,
-                workflow_synergy_score,
-                bottleneck_index,
-                patchability_score,
-                json.dumps(module_deltas or {}, sort_keys=True),
-                failure_reason,
-            ),
-        )
-        self.conn.commit()
-        return int(cur.lastrowid or 0)
+        try:
+            cur.execute(
+                """
+                INSERT INTO workflow_results(
+                    workflow_id, run_id, timestamp, runtime, success_rate,
+                    roi_gain, workflow_synergy_score, bottleneck_index,
+                    patchability_score, module_deltas, failure_reason
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    workflow_id,
+                    run_id,
+                    timestamp or datetime.utcnow().isoformat(),
+                    runtime,
+                    success_rate,
+                    roi_gain,
+                    workflow_synergy_score,
+                    bottleneck_index,
+                    patchability_score,
+                    json.dumps(module_deltas or {}, sort_keys=True),
+                    failure_reason,
+                ),
+            )
+            self.conn.commit()
+            return int(cur.lastrowid or 0)
+        except Exception:
+            self.conn.rollback()
+            raise
 
     # ------------------------------------------------------------------
     def log_module_deltas(
@@ -228,38 +231,42 @@ class ROIResultsDB:
 
         win = window or self.ma_window
         cur = self.conn.cursor()
-        limit = max(win - 1, 0)
-        cur.execute(
-            """
-            SELECT roi_delta FROM workflow_module_deltas
-            WHERE workflow_id=? AND module=?
-            ORDER BY ts DESC LIMIT ?
-            """,
-            (workflow_id, module, limit),
-        )
-        prev = [float(r[0]) for r in cur.fetchall()]
-        values = prev + [roi_delta]
-        roi_delta_ma = fmean(values)
-        roi_delta_var = pvariance(values) if len(values) > 1 else 0.0
-        cur.execute(
-            """
-            INSERT INTO workflow_module_deltas(
-                workflow_id, run_id, module, runtime, success_rate,
-                roi_delta, roi_delta_ma, roi_delta_var
-            ) VALUES(?,?,?,?,?,?,?,?)
-            """,
-            (
-                workflow_id,
-                run_id,
-                module,
-                runtime,
-                success_rate,
-                roi_delta,
-                roi_delta_ma,
-                roi_delta_var,
-            ),
-        )
-        self.conn.commit()
+        try:
+            limit = max(win - 1, 0)
+            cur.execute(
+                """
+                SELECT roi_delta FROM workflow_module_deltas
+                WHERE workflow_id=? AND module=?
+                ORDER BY ts DESC LIMIT ?
+                """,
+                (workflow_id, module, limit),
+            )
+            prev = [float(r[0]) for r in cur.fetchall()]
+            values = prev + [roi_delta]
+            roi_delta_ma = fmean(values)
+            roi_delta_var = pvariance(values) if len(values) > 1 else 0.0
+            cur.execute(
+                """
+                INSERT INTO workflow_module_deltas(
+                    workflow_id, run_id, module, runtime, success_rate,
+                    roi_delta, roi_delta_ma, roi_delta_var
+                ) VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    workflow_id,
+                    run_id,
+                    module,
+                    runtime,
+                    success_rate,
+                    roi_delta,
+                    roi_delta_ma,
+                    roi_delta_var,
+                ),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     # ------------------------------------------------------------------
     def log_module_attribution(
