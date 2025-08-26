@@ -37,7 +37,25 @@ def test_sync_processes_queue(tmp_path: Path) -> None:
     rows = conn.execute("SELECT value FROM example ORDER BY id").fetchall()
     assert [r[0] for r in rows] == ["a", "b"]
     path = queue_dir / "m1.jsonl"
-    assert path.read_text() == ""
+    assert not path.exists()
+
+
+def test_sync_removes_empty_file_backup_preserved(tmp_path: Path) -> None:
+    """Processed queue file is removed and logged to backup."""
+    queue_dir = tmp_path / "queue"
+    db_path = tmp_path / "shared.db"
+    conn = _init_db(db_path)
+
+    append_record("example", {"value": "c"}, "m1", queue_dir)
+
+    _sync_once(queue_dir, conn)
+
+    path = queue_dir / "m1.jsonl"
+    backup = queue_dir / "queue.log.bak"
+    assert not path.exists()
+    assert backup.exists()
+    contents = backup.read_text(encoding="utf-8")
+    assert "\"value\": \"c\"" in contents
 
 
 def test_sync_crash_leaves_unprocessed_lines(
