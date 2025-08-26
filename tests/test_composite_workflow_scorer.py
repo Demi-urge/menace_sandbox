@@ -99,6 +99,11 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
                 "mod_c": [-0.5],
             }
             self.timings = {"mod_a": 0.1, "mod_b": 0.2, "mod_c": 0.3}
+            self.correlation_history: dict[tuple[str, str], list[float]] = {}
+
+        def cache_correlations(self, pairs):
+            for k, v in pairs.items():
+                self.correlation_history.setdefault(k, []).append(v)
 
         def workflow_variance(self, workflow_id: str) -> float:  # pragma: no cover - trivial
             return 0.0
@@ -203,6 +208,11 @@ def test_fetch_trends_returns_time_ordered_metrics(tmp_path, monkeypatch):
                 "mod_c": [-0.5],
             }
             self.timings = {"mod_a": 0.1, "mod_b": 0.2, "mod_c": 0.3}
+            self.correlation_history: dict[tuple[str, str], list[float]] = {}
+
+        def cache_correlations(self, pairs):
+            for k, v in pairs.items():
+                self.correlation_history.setdefault(k, []).append(v)
 
         def workflow_variance(self, workflow_id: str) -> float:  # pragma: no cover - trivial
             return 0.0
@@ -274,12 +284,17 @@ def test_score_workflow_parallel_execution(tmp_path):
             self.module_deltas: Dict[str, list[float]] = defaultdict(list)
             self.timings: Dict[str, float] = {}
             self.scheduling_overhead: Dict[str, float] = {}
+            self.correlation_history: dict[tuple[str, str], list[float]] = {}
 
         def update(self, _before, roi_after, *, modules=None, **_kw):
             self.roi_history.append(roi_after)
             if modules:
                 for m in modules:
                     self.module_deltas[m].append(roi_after)
+
+        def cache_correlations(self, pairs):
+            for k, v in pairs.items():
+                self.correlation_history.setdefault(k, []).append(v)
 
     tracker = StubTracker()
     sys.modules.setdefault(
@@ -325,19 +340,29 @@ def test_compute_workflow_synergy_history_weighting():
     )
     from menace_sandbox.workflow_scorer_core import compute_workflow_synergy
 
-    roi_hist = [1.0, 2.0, 3.0]
     module_hist = {
         "mod_a": [1.0, 2.0, 3.0],
         "mod_b": [1.0, 2.0, 3.0],
         "mod_c": [3.0, 2.0, 1.0],
     }
-    baseline = compute_workflow_synergy(roi_hist, module_hist, window=3, history_loader=lambda: [])
-    assert baseline == pytest.approx((1.0 + 1.0 - 1.0) / 3.0)
 
-    def loader() -> list[dict[str, float]]:
-        return [{"mod_a|mod_b": 1.0}]
+    class Tracker:
+        def __init__(self, history=None):
+            self.module_deltas = module_hist
+            self.correlation_history = history or {}
 
-    weighted = compute_workflow_synergy(
-        roi_hist, module_hist, window=3, history_loader=loader
-    )
-    assert weighted == pytest.approx(1.0)
+        def cache_correlations(self, pairs):
+            for k, v in pairs.items():
+                self.correlation_history.setdefault(k, []).append(v)
+
+    tracker = Tracker()
+    baseline = compute_workflow_synergy(tracker, window=3)
+    assert baseline == pytest.approx((-1.0) / 3.0)
+
+    tracker.correlation_history = {
+        ("mod_a", "mod_b"): [0.8, 0.9, 0.95],
+        ("mod_a", "mod_c"): [0.1, -0.2, 0.2],
+        ("mod_b", "mod_c"): [0.0, -0.3, 0.3],
+    }
+    weighted = compute_workflow_synergy(tracker, window=3)
+    assert weighted > baseline

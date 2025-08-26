@@ -37,22 +37,32 @@ from menace_sandbox.roi_results_db import ROIResultsDB  # noqa: E402
 
 
 def test_compute_metric_helpers():
-    roi_hist = [1.0, 2.0, 3.0]
     module_hist = {
         "a": [1.0, 2.0, 3.0],
         "b": [1.0, 2.0, 3.0],
         "c": [3.0, 2.0, 1.0],
     }
-    baseline = compute_workflow_synergy(roi_hist, module_hist, window=3, history_loader=lambda: [])
-    assert baseline == pytest.approx((1.0 + 1.0 - 1.0) / 3.0)
 
-    def loader() -> list[dict[str, float]]:
-        return [{"a|b": 1.0}]
+    class Tracker:
+        def __init__(self, history=None):
+            self.module_deltas = module_hist
+            self.correlation_history = history or {}
 
-    weighted = compute_workflow_synergy(
-        roi_hist, module_hist, window=3, history_loader=loader
-    )
-    assert weighted == pytest.approx(1.0)
+        def cache_correlations(self, pairs):
+            for k, v in pairs.items():
+                self.correlation_history.setdefault(k, []).append(v)
+
+    tracker = Tracker()
+    baseline = compute_workflow_synergy(tracker, window=3)
+    assert baseline == pytest.approx((-1.0) / 3.0)
+
+    tracker.correlation_history = {
+        ("a", "b"): [0.8, 0.9, 0.95],
+        ("a", "c"): [0.1, -0.2, 0.2],
+        ("b", "c"): [0.0, -0.3, 0.3],
+    }
+    weighted = compute_workflow_synergy(tracker, window=3)
+    assert weighted > baseline
 
     tracker = types.SimpleNamespace(timings={"a": 2.0, "b": 1.0})
     assert compute_bottleneck_index(tracker) == pytest.approx(1.0 / 6.0)
@@ -74,6 +84,11 @@ def test_composite_scorer_end_to_end(tmp_path, monkeypatch):
             self.roi_history = [1.0, 2.0, 3.0]
             self.module_deltas: dict[str, list[float]] = {}
             self.timings: dict[str, float] = {}
+            self.correlation_history: dict[tuple[str, str], list[float]] = {}
+
+        def cache_correlations(self, pairs):
+            for k, v in pairs.items():
+                self.correlation_history.setdefault(k, []).append(v)
 
         def update(self, roi_before, roi_after, modules=None, **_kwargs):
             self.roi_history.append(roi_after)

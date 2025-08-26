@@ -9,6 +9,7 @@ and the heavier :mod:`roi_scorer` module.
 
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Mapping
+from itertools import combinations
 
 import numpy as np
 
@@ -21,70 +22,48 @@ from .roi_calculator import ROICalculator
 # ---------------------------------------------------------------------------
 
 
-def compute_workflow_synergy(
-    roi_history: Iterable[float],
-    module_history: Mapping[str, Iterable[float]],
-    window: int = 5,
-    history_loader: Callable[[], Iterable[Dict[str, float]]] | None = None,
-) -> float:
-    """Weighted correlation between module ROI deltas and overall ROI.
+def compute_workflow_synergy(tracker: ROITracker, window: int = 5) -> float:
+    """Correlation-based workflow cohesion score.
 
-    Historical co-performance data from ``synergy_history_db`` is used to
-    weight module correlations. ``history_loader`` can be injected to supply a
-    custom loader (e.g. by tests); when not provided the loader defaults to
-    :func:`synergy_history_db.load_history`.
+    Pairwise correlations between module ROI deltas are computed for the most
+    recent ``window`` observations.  Each correlation is weighted by the recent
+    slope-to-volatility ratio of its historical correlation values to favour
+    stable, improving interactions.  The weighted average of pairwise
+    correlations is returned.  Computed correlations are cached on ``tracker``
+    via :meth:`ROITracker.cache_correlations`.
     """
 
-    roi_list = list(roi_history)[-window:]
-    if len(roi_list) < 2 or not module_history:
+    module_history = getattr(tracker, "module_deltas", {})
+    if not module_history or len(module_history) < 2:
         return 0.0
 
-    if history_loader is None:
-        try:
-            from .synergy_history_db import load_history as history_loader
-        except Exception:  # pragma: no cover - optional dependency
-            def history_loader() -> Iterable[Dict[str, float]]:  # type: ignore
-                return []
-
-    history = list(history_loader() or [])
-    pair_totals: Dict[tuple[str, str], float] = {}
-    pair_counts: Dict[tuple[str, str], int] = {}
-    for entry in history:
-        for key, val in entry.items():
-            key = key.replace(",", "|")
-            parts = [p.strip() for p in key.split("|") if p.strip()]
-            if len(parts) != 2:
-                continue
-            a, b = parts
-            pair_totals[(a, b)] = pair_totals.get((a, b), 0.0) + float(val)
-            pair_totals[(b, a)] = pair_totals.get((b, a), 0.0) + float(val)
-            pair_counts[(a, b)] = pair_counts.get((a, b), 0) + 1
-            pair_counts[(b, a)] = pair_counts.get((b, a), 0) + 1
-    pair_avg = {p: pair_totals[p] / pair_counts[p] for p in pair_totals}
-
-    correlations: list[float] = []
+    correlations: Dict[tuple[str, str], float] = {}
+    corrs: list[float] = []
     weights: list[float] = []
-    for mod, deltas in module_history.items():
-        mod_list = list(deltas)[-window:]
-        if len(mod_list) != len(roi_list):
+    for a, b in combinations(module_history.keys(), 2):
+        a_hist = list(module_history.get(a, []))[-window:]
+        b_hist = list(module_history.get(b, []))[-window:]
+        if len(a_hist) < 2 or len(b_hist) < 2:
             continue
-        if np.std(mod_list) == 0 or np.std(roi_list) == 0:
-            continue
-        corr = float(np.corrcoef(roi_list, mod_list)[0, 1])
-        if pair_avg:
-            w_vals = [
-                pair_avg.get((mod, other), 0.0) for other in module_history if other != mod
-            ]
-            w_pos = [v for v in w_vals if v > 0]
-            if not w_pos:
-                continue
-            weight = float(np.mean(w_pos))
+        if np.std(a_hist) == 0 or np.std(b_hist) == 0:
+            corr = 0.0
+        else:
+            corr = float(np.corrcoef(a_hist, b_hist)[0, 1])
+        pair = tuple(sorted((a, b)))
+        correlations[pair] = corr
+        history = list(tracker.correlation_history.get(pair, []))[-window:]
+        if len(history) >= 2:
+            x = np.arange(len(history))
+            slope = float(np.polyfit(x, history, 1)[0])
+            volatility = float(np.std(history))
+            weight = abs(slope) / (volatility + 1e-9)
         else:
             weight = 1.0
-        correlations.append(corr)
+        corrs.append(corr)
         weights.append(weight)
 
-    return float(np.average(correlations, weights=weights)) if correlations else 0.0
+    tracker.cache_correlations(correlations)
+    return float(np.average(corrs, weights=weights)) if corrs else 0.0
 
 
 def compute_bottleneck_index(timings: Mapping[str, float] | Any) -> float:
