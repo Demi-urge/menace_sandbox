@@ -5190,6 +5190,112 @@ class SelfImprovementEngine:
                 self.logger.exception("workflow variant meta logging failed")
         return status
 
+    def _evolve_workflows(self, limit: int = 10) -> dict[int, dict[str, float]]:
+        """Benchmark stored workflows against generated variants.
+
+        The method retrieves the latest workflow definitions either from
+        :class:`task_handoff_bot.WorkflowDB` or, if unavailable, from
+        :class:`workflow_graph.WorkflowGraph`.  Each workflow is executed as a
+        baseline using :class:`CompositeWorkflowScorer`.  Variants suggested by
+        :class:`WorkflowEvolutionBot` are evaluated in the same manner so their
+        ROI can be compared against the baseline.
+
+        Parameters
+        ----------
+        limit:
+            Maximum number of workflows to benchmark.  Only a subset is needed
+            during tests so the default keeps the operation lightweight.
+
+        Returns
+        -------
+        dict
+            Mapping of workflow identifiers to a summary containing the
+            baseline ROI, the best ROI achieved and the sequence that produced
+            that ROI.
+        """
+
+        workflows: list[tuple[int, str]] = []
+
+        if WorkflowDB is not None and WorkflowRecord is not None:
+            try:
+                db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
+                for rec in db.fetch_workflows(limit=limit):
+                    seq = rec.get("workflow") or []
+                    seq_str = "-".join(seq) if isinstance(seq, list) else str(seq)
+                    wf_id = int(rec.get("id") or rec.get("wid") or 0)
+                    if seq_str:
+                        workflows.append((wf_id, seq_str))
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("workflow fetch failed")
+
+        if not workflows and "WorkflowGraph" in globals():
+            try:
+                graph_obj = WorkflowGraph()
+                graph = getattr(graph_obj, "graph", None)
+                nodes = []
+                if hasattr(graph, "nodes") and callable(getattr(graph, "nodes")):
+                    nodes = list(graph.nodes(data=True))  # type: ignore[assignment]
+                elif isinstance(graph, dict):
+                    nodes = list(graph.get("nodes", {}).items())  # type: ignore[assignment]
+                for wid, data in nodes:
+                    seq = None
+                    if isinstance(data, dict):
+                        seq = data.get("sequence") or data.get("workflow")
+                    if seq:
+                        seq_str = "-".join(seq) if isinstance(seq, list) else str(seq)
+                        if seq_str:
+                            workflows.append((int(wid), seq_str))
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("workflow graph retrieval failed")
+
+        results: dict[int, dict[str, float]] = {}
+        bot = WorkflowEvolutionBot(self.pathway_db)
+
+        for wf_id, seq in workflows:
+            try:
+                baseline_callable = self.workflow_evolver.build_callable(seq)
+            except Exception:
+                self.logger.exception(
+                    "baseline build failed", extra=log_record(workflow_id=wf_id)
+                )
+                continue
+
+            scorer = CompositeWorkflowScorer(results_db=ROIResultsDB(), tracker=self.roi_tracker)
+            try:
+                baseline_result = scorer.run(baseline_callable, str(wf_id), run_id="baseline")
+            except Exception:
+                self.logger.exception(
+                    "baseline execution failed", extra=log_record(workflow_id=wf_id)
+                )
+                continue
+
+            best_roi = baseline_result.roi_gain
+            best_seq = seq
+
+            for v_seq in bot.generate_variants(workflow_id=wf_id):
+                try:
+                    variant_callable = self.workflow_evolver.build_callable(v_seq)
+                except Exception:
+                    continue
+
+                run_id = f"variant-{hash(v_seq) & 0xFFFFFFFF:x}"
+                try:
+                    variant_res = scorer.run(variant_callable, str(wf_id), run_id=run_id)
+                except Exception:
+                    continue
+
+                if variant_res.roi_gain > best_roi:
+                    best_roi = variant_res.roi_gain
+                    best_seq = v_seq
+
+            results[int(wf_id)] = {
+                "baseline": baseline_result.roi_gain,
+                "best": best_roi,
+                "sequence": best_seq,
+            }
+
+        return results
+
     @radar.track
     def run_cycle(self, energy: int = 1) -> AutomationResult:
         """Execute a self-improvement cycle.
