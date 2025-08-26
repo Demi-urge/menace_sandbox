@@ -20,6 +20,8 @@
   [docs/cli.md](docs/cli.md)). Semantic search falls back to full-text
   search when needed and cached results expire after one hour. Scaffolding
   commands expose hooks for router registration and migrations.
+- Workflow synthesizer CLI lists unresolved inputs for candidates and
+  summarises evaluation outcomes with score components.
 - Memory-aware GPT wrapper injects prior feedback and fixes into prompts when
   calling ChatGPT. Callers pass a module/action key so retrieved context and the
   resulting interaction are logged with standard tags via
