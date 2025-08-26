@@ -448,6 +448,40 @@ The router also aggregates simple access counts per table, accessible via
   database, keeping data isolated between different `menace_id` values. Table
   names outside these sets are rejected.
 
+## Shared DB Access Audit
+
+The router can emit a separate audit stream for operations against shared
+tables. These logs allow infrastructure or security teams to trace how instances
+interact with globally visible data.
+
+### Configuration options
+
+- **`log_path`** – absolute or relative destination for the audit log. Define it
+  with the `DB_ROUTER_AUDIT_LOG` environment variable or by adding an
+  `"audit_log"` entry to the JSON file referenced by `DB_ROUTER_CONFIG`.
+- **`DB_ACCESS_LOG_PATH`** – optional high‑level metrics file used by
+  `audit_db_access.log_db_access` to record row counts per action. Defaults to
+  `logs/shared_db_access.log` if unset.
+- The regular router log level and format can be tuned via
+  `DB_ROUTER_LOG_LEVEL` and `DB_ROUTER_LOG_FORMAT` (``json`` or ``kv``).
+
+### Log format
+
+Each audit entry is a single JSON object written on its own line. Fields
+include the menace identifier, table, operation type and timestamp, along with
+an optional `rows` count when emitted through `log_db_access`:
+
+```json
+{"timestamp": "2024-05-14T12:00:00Z", "menace_id": "alpha", "table": "bots", "operation": "write", "rows": 1}
+```
+
+### Consumption by IGI/Security AI
+
+Because the log is structured and time‑stamped, IGI or Security AI pipelines can
+tail the file, ship it to central observability platforms, or ingest it directly
+for anomaly detection. Metrics such as writes per menace or unexpected table
+touches can be aggregated to flag suspicious cross‑instance behaviour.
+
 ## Tests
 
 The automated test suite enforces correct routing behaviour:
