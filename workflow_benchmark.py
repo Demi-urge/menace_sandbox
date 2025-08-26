@@ -223,7 +223,7 @@ def benchmark_registered_workflows(
                     os.environ.clear()
                     os.environ.update(env_backup)
 
-            scorer.score(name, _run)
+            scorer.score_workflow(name, {name: _run})
 
     # statistical significance tests for key metrics
     for name in workflows:
