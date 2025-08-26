@@ -12,3 +12,13 @@ consult `vector_service_api.py` for usage details.
 Recursive discovery of orphan module dependencies is now enabled by default.
 To restore the previous behaviour, pass `--no-recursive-include` or set
 `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`.
+
+## Workflow evolution in autonomous cycles
+
+`ImprovementEngineRegistry.run_all_cycles()` now triggers workflow evolution.
+`WorkflowEvolutionManager` benchmarks the baseline with
+`CompositeWorkflowScorer`, generates variants via
+`WorkflowEvolutionBot.generate_variants(limit)` and promotes those with a higher
+ROI. The number of variants is controlled by the `limit` argument while
+`ROI_GATING_THRESHOLD` and `ROI_GATING_CONSECUTIVE` gate further evolution once
+ROI gains stagnate.
