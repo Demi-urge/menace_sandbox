@@ -35,6 +35,13 @@ from db_write_queue import remove_processed_lines
 from env_config import SHARED_QUEUE_DIR, SYNC_INTERVAL
 from fcntl_compat import LOCK_EX, LOCK_UN, flock
 
+try:  # pragma: no cover - optional dependency
+    from audit_db_access import log_db_access
+except Exception:  # pragma: no cover - optional dependency
+    def log_db_access(*_args: object, **_kwargs: object) -> None:
+        """Fallback when audit logging is unavailable."""
+        return
+
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +178,7 @@ def process_queue_file(path: Path, *, conn: sqlite3.Connection) -> Stats:
 
         if content_hash in processed_hashes:
             stats.duplicates += 1
+            log_db_access("write", table, 0, menace_id)
             processed_lines += 1
             continue
 
@@ -184,6 +192,7 @@ def process_queue_file(path: Path, *, conn: sqlite3.Connection) -> Stats:
                     "duplicate",
                     extra={"table": table, "menace_id": menace_id, "id": existing[0]},
                 )
+                log_db_access("write", table, 0, menace_id)
                 _append_lines(processed_log, [content_hash + "\n"])
                 processed_hashes.add(content_hash)
                 processed_lines += 1
@@ -198,6 +207,7 @@ def process_queue_file(path: Path, *, conn: sqlite3.Connection) -> Stats:
                 conn=conn,
             )
             conn.commit()
+            log_db_access("write", table, 1, menace_id)
             stats.processed += 1
             _append_lines(processed_log, [content_hash + "\n"])
             processed_hashes.add(content_hash)
