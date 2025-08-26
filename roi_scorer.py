@@ -33,9 +33,9 @@ class Scorecard:
     success: bool
     roi_gain: float
     metrics: Dict[str, float]
-    workflow_synergy: float = 0.0
+    workflow_synergy_score: float = 0.0
     bottleneck_index: float = 0.0
-    patchability: float = 0.0
+    patchability_score: float = 0.0
 
 
 LOCAL_TABLES.add("workflow_results")
@@ -45,66 +45,52 @@ if tb is not None:  # align telemetry router
     tb.GLOBAL_ROUTER = router
 
 
-def compute_workflow_synergy(mod_metrics: Dict[str, list[float]]) -> float:
-    """Return average pairwise correlation across module ROI histories.
+def compute_workflow_synergy(tracker: "ROITracker", window: int = 5) -> float:
+    """Return average of recent ``synergy_*`` metrics.
 
-    ``mod_metrics`` should map module names to lists of ROI deltas or scores
-    over time.  The helper computes the Pearson correlation for every pair of
-    modules and returns their mean.  If insufficient data is provided the
-    function returns ``0.0``.
+    The score blends ``synergy_efficiency`` and ``synergy_reliability`` from
+    :class:`ROITracker` metrics, averaging the last ``window`` values of each
+    metric.  Missing data yields ``0.0``.
     """
 
-    arrays = [np.asarray(v, dtype=float) for v in mod_metrics.values() if len(v) >= 2]
-    if len(arrays) < 2:
-        return 0.0
-    total = 0.0
-    count = 0
-    for a, b in combinations(arrays, 2):
-        if a.std() == 0 or b.std() == 0:
-            continue
-        total += float(np.corrcoef(a, b)[0, 1])
-        count += 1
-    return total / count if count else 0.0
+    eff_hist = tracker.metrics_history.get("synergy_efficiency", [])
+    rel_hist = tracker.metrics_history.get("synergy_reliability", [])
+    eff_avg = sum(eff_hist[-window:]) / len(eff_hist[-window:]) if eff_hist else None
+    rel_avg = sum(rel_hist[-window:]) / len(rel_hist[-window:]) if rel_hist else None
+    vals = [v for v in (eff_avg, rel_avg) if v is not None]
+    return float(sum(vals) / len(vals)) if vals else 0.0
 
 
-def compute_bottleneck_index(timings: Dict[str, Tuple[float, float]]) -> float:
-    """Return bottleneck ratio adjusted by failure frequency.
-
-    ``timings`` maps module name to a tuple of ``(runtime, failures)``.  The
-    ratio of the slowest runtime to total runtime is scaled by how frequently
-    that module fails relative to the whole workflow.  Missing or empty data
-    yields ``0.0``.
-    """
+def compute_bottleneck_index(timings: Dict[str, float]) -> float:
+    """Return proportion of total latency from the slowest module."""
 
     if not timings:
         return 0.0
-    total_runtime = sum(t for t, _ in timings.values())
+    total_runtime = sum(timings.values())
     if total_runtime <= 0:
         return 0.0
-    slowest_mod, (slowest_rt, slowest_fail) = max(
-        timings.items(), key=lambda x: x[1][0]
-    )
-    total_fail = sum(f for _, f in timings.values())
-    fail_freq = slowest_fail / total_fail if total_fail > 0 else 0.0
-    return (slowest_rt / total_runtime) * (1 + fail_freq)
+    slowest_rt = max(timings.values())
+    return slowest_rt / total_runtime
 
 
-def compute_patchability(history: list[float]) -> float:
-    """Return patchability score from ROI history.
+def compute_patchability(history: list[float], patch_success: float = 1.0) -> float:
+    """Return patchability score from ROI history and patch success rate.
 
-    The metric multiplies the slope of ROI improvement by ``1/(sigma + 1)``
-    where ``sigma`` is the standard deviation of ``history``.  A positive slope
-    with low volatility yields higher patchability.
+    The metric multiplies the slope of ROI improvement (via linear regression)
+    by ``1/(sigma + 1)`` where ``sigma`` is the standard deviation of
+    ``history`` and further scales by ``patch_success`` (0-1).  A positive slope
+    with low volatility and high patch success yields higher patchability.
     """
 
     if not history or len(history) < 2:
         return 0.0
-    slope = (history[-1] - history[0]) / (len(history) - 1)
+    x = np.arange(len(history))
+    slope = float(np.polyfit(x, history, 1)[0])
     try:
         sigma = stdev(history)
     except Exception:
         sigma = 0.0
-    return slope * (1.0 / (sigma + 1.0))
+    return slope * (1.0 / (sigma + 1.0)) * float(patch_success)
 
 
 def insert_workflow_result(
@@ -114,9 +100,9 @@ def insert_workflow_result(
     runtime: float,
     success: bool,
     roi_gain: float,
-    workflow_synergy: float,
+    workflow_synergy_score: float,
     bottleneck_index: float,
-    patchability: float,
+    patchability_score: float,
 ) -> None:
     """Insert a workflow result into ``workflow_results``.
 
@@ -128,7 +114,7 @@ def insert_workflow_result(
         Identifier of the evaluated workflow.
     run_id:
         Generated run identifier.
-    runtime, success, roi_gain, workflow_synergy, bottleneck_index, patchability:
+    runtime, success, roi_gain, workflow_synergy_score, bottleneck_index, patchability_score:
         Recorded metrics for the workflow execution.
     """
 
@@ -145,9 +131,9 @@ def insert_workflow_result(
             runtime,
             int(success),
             roi_gain,
-            workflow_synergy,
+            workflow_synergy_score,
             bottleneck_index,
-            patchability,
+            patchability_score,
         ),
     )
 
@@ -246,9 +232,9 @@ class ROIScorer:
         runtime: float,
         success: bool,
         roi_gain: float,
-        workflow_synergy: float,
+        workflow_synergy_score: float,
         bottleneck_index: float,
-        patchability: float,
+        patchability_score: float,
         run_id: str | None = None,
     ) -> str:
         cur = self.conn.cursor()
@@ -260,9 +246,9 @@ class ROIScorer:
             runtime,
             success,
             roi_gain,
-            workflow_synergy,
+            workflow_synergy_score,
             bottleneck_index,
-            patchability,
+            patchability_score,
         )
         self.conn.commit()
         return run_id
@@ -337,32 +323,42 @@ class CompositeWorkflowScorer(ROIScorer):
         roi_after, _, _ = self.calculator.calculate(calc_metrics, self.profile_type)
         roi_gain = roi_after - roi_before
 
-        workflow_synergy = compute_workflow_synergy(self.tracker.metrics_history)
+        workflow_synergy_score = compute_workflow_synergy(self.tracker)
 
-        timings: Dict[str, Tuple[float, float]] = {}
+        timings: Dict[str, float] = {}
+        failures: Dict[str, float] = {}
         for name, val in metrics.items():
             if name.endswith("_runtime") or name.endswith("_time"):
                 base = name.rsplit("_", 1)[0]
-                failures = float(
-                    metrics.get(f"{base}_failures", metrics.get(f"{base}_failure_rate", 0.0))
-                )
-                timings[base] = (float(val), failures)
+                timings[base] = float(val)
+            elif name.endswith("_failures") or name.endswith("_failure_rate"):
+                base = name.rsplit("_", 1)[0]
+                failures[base] = float(val)
         bottleneck_index = compute_bottleneck_index(timings)
 
-        patchability = compute_patchability(self.tracker.roi_history)
+        patch_success = 1.0
+        try:  # pragma: no cover - best effort
+            from .code_database import PatchHistoryDB
 
-        metrics["workflow_synergy"] = workflow_synergy
+            patch_success = PatchHistoryDB().success_rate()
+        except Exception:
+            pass
+        patchability_score = compute_patchability(
+            self.tracker.roi_history, patch_success
+        )
+
+        metrics["workflow_synergy_score"] = workflow_synergy_score
         metrics["bottleneck_index"] = bottleneck_index
-        metrics["patchability"] = patchability
+        metrics["patchability_score"] = patchability_score
 
         run_id = self._persist(
             workflow_id,
             runtime,
             success,
             roi_gain,
-            workflow_synergy,
+            workflow_synergy_score,
             bottleneck_index,
-            patchability,
+            patchability_score,
             run_id=run_id,
         )
         mod_deltas: Dict[str, float] = {}
@@ -376,7 +372,7 @@ class CompositeWorkflowScorer(ROIScorer):
         }
         cur = self.conn.cursor()
         for mod in set(mod_deltas) | set(timings):
-            runtime_mod = timings.get(mod, (0.0, 0.0))[0]
+            runtime_mod = timings.get(mod, 0.0)
             delta = mod_deltas.get(mod, 0.0)
             cur.execute(
                 """
@@ -396,15 +392,15 @@ class CompositeWorkflowScorer(ROIScorer):
                 runtime=runtime,
                 success_rate=1.0 if success else 0.0,
                 roi_gain=roi_gain,
-                workflow_synergy_score=workflow_synergy,
+                workflow_synergy_score=workflow_synergy_score,
                 bottleneck_index=bottleneck_index,
-                patchability_score=patchability,
+                patchability_score=patchability_score,
             )
         )
         # Record per-module results
         for mod in set(mod_deltas) | set(timings):
-            runtime_mod, failures = timings.get(mod, (0.0, 0.0))
-            success_rate_mod = 0.0 if failures else 1.0
+            runtime_mod = timings.get(mod, 0.0)
+            success_rate_mod = 0.0 if failures.get(mod, 0.0) else 1.0
             self.results_db.add(
                 ROIResult(
                     workflow_id=workflow_id,
