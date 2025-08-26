@@ -16,6 +16,7 @@ import time
 import uuid
 from collections import defaultdict, deque
 import concurrent.futures
+import logging
 
 import numpy as np
 
@@ -155,6 +156,7 @@ class CompositeWorkflowScorer(ROIScorer):
         self._roi_start: int = 0
         self._module_start: Dict[str, int] = {}
         self._module_successes: Dict[str, bool] = {}
+        self._module_failures: Dict[str, str] = {}
         self.history_window = 20
         self._module_roi_history: Dict[str, deque[float]] = defaultdict(
             lambda: deque(maxlen=self.history_window)
@@ -197,6 +199,9 @@ class CompositeWorkflowScorer(ROIScorer):
                 "bottleneck_contribution": bottleneck,
                 "scheduling_overhead": float(overheads.get(mod, 0.0)),
             }
+            failure_reason = self._module_failures.get(mod)
+            if failure_reason is not None:
+                per_module[mod]["failure_reason"] = failure_reason
             self._module_roi_history[mod].append(roi_delta)
             self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
         self.module_attribution = {
@@ -224,6 +229,10 @@ class CompositeWorkflowScorer(ROIScorer):
             patch_success=patch_success,
         )
 
+        failure_reason = "; ".join(
+            f"{m}: {r}" for m, r in self._module_failures.items()
+        ) or None
+
         self.results_db.log_result(
             workflow_id=workflow_id,
             run_id=run_id,
@@ -234,6 +243,7 @@ class CompositeWorkflowScorer(ROIScorer):
             bottleneck_index=bottleneck_index,
             patchability_score=patchability_score,
             module_deltas=per_module,
+            failure_reason=failure_reason,
         )
 
         return EvaluationResult(
@@ -263,6 +273,7 @@ class CompositeWorkflowScorer(ROIScorer):
             m: len(d) for m, d in self.tracker.module_deltas.items()
         }
         self._module_successes = {}
+        self._module_failures = {}
         self.tracker.timings = {}
         self.tracker.scheduling_overhead = {}
 
@@ -274,8 +285,10 @@ class CompositeWorkflowScorer(ROIScorer):
             self.tracker.scheduling_overhead[name] = start - scheduled
             try:
                 ok = bool(func())
-            except Exception:
+            except Exception as exc:
+                logging.exception("Module %s execution failed", name)
                 ok = False
+                self._module_failures[name] = f"{type(exc).__name__}: {exc}"
             duration = time.perf_counter() - start
             self.tracker.timings[name] = duration
             self._module_successes[name] = ok
@@ -402,6 +415,7 @@ class CompositeWorkflowScorer(ROIScorer):
             bottleneck_index=bottleneck_index,
             patchability_score=patchability_score,
             module_deltas=per_module_metrics,
+            failure_reason=None,
         )
 
         return EvaluationResult(

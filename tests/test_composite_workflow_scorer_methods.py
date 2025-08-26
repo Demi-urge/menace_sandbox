@@ -150,6 +150,36 @@ def test_score_workflow_persists_results_and_ids():
     assert tracker.roi_history  # tracker.update was invoked
 
 
+def test_score_workflow_logs_failure_reason(caplog):
+    """Exceptions during module execution are logged and persisted."""
+
+    tracker = _StubTracker()
+    results_db = _StubResultsDB()
+    scorer = CompositeWorkflowScorer(
+        tracker=tracker, results_db=results_db, calculator_factory=_StubCalc
+    )
+
+    def ok():
+        return True
+
+    def boom():
+        raise ValueError("boom")
+
+    with caplog.at_level("ERROR"):
+        run_id, data = scorer.score_workflow(
+            "wf_fail", {"ok": ok, "boom": boom}, run_id="rid1"
+        )
+
+    assert run_id == "rid1"
+    assert "failure_reason" in data["per_module"]["boom"]
+    assert "ValueError" in data["per_module"]["boom"]["failure_reason"]
+    assert any("Module boom execution failed" in r.getMessage() for r in caplog.records)
+
+    kwargs = results_db.log_result.call_args.kwargs
+    assert "failure_reason" in kwargs
+    assert "boom: ValueError" in kwargs["failure_reason"]
+
+
 def test_evaluate_logs_run_and_workflow(monkeypatch):
     """``evaluate`` obtains metrics from sandbox simulations."""
 

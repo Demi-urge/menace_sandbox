@@ -36,6 +36,7 @@ class ROIResult:
     bottleneck_index: float
     patchability_score: float
     module_deltas: Dict[str, Dict[str, float]]
+    failure_reason: str | None = None
 
 
 class ROIResultsDB:
@@ -71,7 +72,8 @@ class ROIResultsDB:
                 workflow_synergy_score REAL,
                 bottleneck_index REAL,
                 patchability_score REAL,
-                module_deltas TEXT
+                module_deltas TEXT,
+                failure_reason TEXT
             )
             """,
         )
@@ -133,16 +135,21 @@ class ROIResultsDB:
                 INSERT INTO workflow_results(
                     workflow_id, run_id, timestamp, runtime, success_rate,
                     roi_gain, workflow_synergy_score, bottleneck_index,
-                    patchability_score, module_deltas
+                    patchability_score, module_deltas, failure_reason
                 )
                 SELECT
                     workflow_id, run_id, ts, runtime, success_rate,
                     roi_gain, workflow_synergy_score, bottleneck_index,
-                    patchability_score, module_deltas
+                    patchability_score, module_deltas, NULL
                 FROM roi_results
                 """,
             )
             cur.execute("DROP TABLE roi_results")
+        existing = {
+            r[1] for r in cur.execute("PRAGMA table_info(workflow_results)").fetchall()
+        }
+        if "failure_reason" not in existing:
+            cur.execute("ALTER TABLE workflow_results ADD COLUMN failure_reason TEXT")
         self.conn.commit()
 
     # ------------------------------------------------------------------
@@ -159,6 +166,7 @@ class ROIResultsDB:
         patchability_score: float,
         module_deltas: Dict[str, Dict[str, float]] | None = None,
         timestamp: str | None = None,
+        failure_reason: str | None = None,
     ) -> int:
         """Insert a workflow evaluation result."""
 
@@ -168,8 +176,8 @@ class ROIResultsDB:
             INSERT INTO workflow_results(
                 workflow_id, run_id, timestamp, runtime, success_rate,
                 roi_gain, workflow_synergy_score, bottleneck_index,
-                patchability_score, module_deltas
-            ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                patchability_score, module_deltas, failure_reason
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 workflow_id,
@@ -182,6 +190,7 @@ class ROIResultsDB:
                 bottleneck_index,
                 patchability_score,
                 json.dumps(module_deltas or {}, sort_keys=True),
+                failure_reason,
             ),
         )
         self.conn.commit()
@@ -232,6 +241,7 @@ class ROIResultsDB:
             patchability_score=result.patchability_score,
             module_deltas=result.module_deltas,
             timestamp=result.timestamp,
+            failure_reason=result.failure_reason,
         )
 
     # ------------------------------------------------------------------
@@ -246,7 +256,7 @@ class ROIResultsDB:
             cur.execute(
                 (
                     "SELECT workflow_id, run_id, timestamp, runtime, success_rate, roi_gain, "
-                    "workflow_synergy_score, bottleneck_index, patchability_score, module_deltas "
+                    "workflow_synergy_score, bottleneck_index, patchability_score, module_deltas, failure_reason "
                     "FROM workflow_results WHERE workflow_id=? ORDER BY timestamp"
                 ),
                 (workflow_id,),
@@ -255,7 +265,7 @@ class ROIResultsDB:
             cur.execute(
                 (
                     "SELECT workflow_id, run_id, timestamp, runtime, success_rate, roi_gain, "
-                    "workflow_synergy_score, bottleneck_index, patchability_score, module_deltas "
+                    "workflow_synergy_score, bottleneck_index, patchability_score, module_deltas, failure_reason "
                     "FROM workflow_results WHERE workflow_id=? AND run_id=? ORDER BY timestamp"
                 ),
                 (workflow_id, run_id),
@@ -275,6 +285,7 @@ class ROIResultsDB:
                     bottleneck_index=float(row[7]),
                     patchability_score=float(row[8]),
                     module_deltas=json.loads(row[9] or "{}"),
+                    failure_reason=row[10],
                 )
             )
         return results
