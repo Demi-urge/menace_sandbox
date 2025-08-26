@@ -4,7 +4,8 @@ The `DBRouter` routes SQLite queries to either a local database specific to a
 Menace instance or to a shared database used by all instances.
 
 Buffered writes destined for the shared database are described in
-[write_buffer.md](write_buffer.md).
+[write_buffer.md](write_buffer.md); queue layout and synchroniser behaviour
+are detailed in [shared_db_queue.md](shared_db_queue.md).
 
 The maintenance script `sync_shared_db.py` performs low-level database
 synchronisation and therefore calls `sqlite3.connect` directly. It is explicitly

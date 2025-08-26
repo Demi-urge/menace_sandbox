@@ -1,5 +1,8 @@
 # SQLite Write Buffer
 
+For queue layout, environment variables and recovery procedures see
+[shared_db_queue.md](shared_db_queue.md).
+
 ## Why SQLite needs buffering
 SQLite uses file-level locks and permits only one writer at a time. Multiple Menace
 instances writing directly to the shared database can contend for locks or block
