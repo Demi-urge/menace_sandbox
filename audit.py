@@ -135,7 +135,7 @@ def log_db_access(
 
     if db_conn is not None:
         try:
-            cur = db_conn.cursor()
+            cur = sqlite3.Connection.cursor(db_conn, factory=sqlite3.Cursor)
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS shared_db_audit (
@@ -154,8 +154,10 @@ def log_db_access(
             )
             db_conn.commit()
         except sqlite3.Error:
-            # Database logging is best-effort
-            pass
+            try:
+                db_conn.rollback()
+            except sqlite3.Error:
+                pass
 
 
 __all__ = ["log_db_access"]
