@@ -15,8 +15,11 @@ import sqlite3
 import threading
 from collections import defaultdict
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Set, Iterable, Mapping, Any
+
+from audit_db_access import log_db_access
 
 
 __all__ = [
@@ -368,6 +371,88 @@ def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
         raise ValueError(f"Unknown table: {table}")
 
 
+class LoggingCursor(sqlite3.Cursor):
+    """Cursor that logs database access for auditing."""
+
+    menace_id: str
+    _last_sql: str | None = None
+    _last_table: str | None = None
+    _last_action: str | None = None
+
+    def _table_from_sql(self, sql: str) -> str:
+        tokens = sql.strip().split()
+        if not tokens:
+            return "unknown"
+        upper = [t.upper() for t in tokens]
+        table = "unknown"
+        try:
+            if upper[0] == "SELECT" and "FROM" in upper:
+                table = tokens[upper.index("FROM") + 1]
+            elif upper[0] == "INSERT" and "INTO" in upper:
+                table = tokens[upper.index("INTO") + 1]
+            elif upper[0] == "UPDATE" and len(tokens) > 1:
+                table = tokens[1]
+            elif upper[0] == "DELETE" and "FROM" in upper:
+                table = tokens[upper.index("FROM") + 1]
+        except Exception:
+            table = "unknown"
+        return table.strip('"`[]')
+
+    def _log(self, action: str, row_count: int) -> None:
+        table = self._last_table or "unknown"
+        log_db_access(action, table, row_count, self.menace_id)
+
+    def execute(self, sql: str, parameters: Iterable | None = None):  # type: ignore[override]
+        result = super().execute(sql, parameters or ())
+        self._last_sql = sql
+        self._last_table = self._table_from_sql(sql)
+        self._last_action = "read" if sql.lstrip().upper().startswith("SELECT") else "write"
+        row_count = self.rowcount if self.rowcount != -1 else 0
+        self._log(self._last_action, row_count)
+        return result
+
+    def executemany(
+        self, sql: str, seq_of_parameters: Iterable[Iterable]
+    ):  # type: ignore[override]
+        result = super().executemany(sql, seq_of_parameters)
+        self._last_sql = sql
+        self._last_table = self._table_from_sql(sql)
+        self._last_action = "read" if sql.lstrip().upper().startswith("SELECT") else "write"
+        row_count = self.rowcount if self.rowcount != -1 else 0
+        self._log(self._last_action, row_count)
+        return result
+
+    def fetchone(self):  # type: ignore[override]
+        row = super().fetchone()
+        count = 1 if row is not None else 0
+        self._log(self._last_action or "read", count)
+        return row
+
+    def fetchall(self):  # type: ignore[override]
+        rows = super().fetchall()
+        self._log(self._last_action or "read", len(rows))
+        return rows
+
+    def fetchmany(self, size: int | None = None):  # type: ignore[override]
+        rows = super().fetchmany(size)
+        self._log(self._last_action or "read", len(rows))
+        return rows
+
+
+class LoggingConnection(sqlite3.Connection):
+    """Connection returning :class:`LoggingCursor` instances."""
+
+    def __init__(self, *args, menace_id: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._menace_id = menace_id
+
+    def cursor(self, *args, **kwargs):  # type: ignore[override]
+        kwargs.setdefault("factory", LoggingCursor)
+        cur: LoggingCursor = super().cursor(*args, **kwargs)  # type: ignore[assignment]
+        cur.menace_id = self._menace_id
+        return cur
+
+
 class DBRouter:
     """Route table operations to local or shared SQLite databases."""
 
@@ -399,7 +484,10 @@ class DBRouter:
         self.local_conn = sqlite3.connect(local_path, check_same_thread=False)  # noqa: SQL001
 
         os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
-        self.shared_conn = sqlite3.connect(shared_db_path, check_same_thread=False)  # noqa: SQL001
+        factory = partial(LoggingConnection, menace_id=menace_id)
+        self.shared_conn = sqlite3.connect(  # noqa: SQL001
+            shared_db_path, check_same_thread=False, factory=factory
+        )
 
         # ``threading.Lock`` protects against concurrent access when deciding
         # which connection to return.
