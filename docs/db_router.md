@@ -358,6 +358,24 @@ accesses are silent unless audit logging is enabled. Configure the verbosity via
 the `DB_ROUTER_LOG_LEVEL` environment variable. The output format defaults to
 JSON but can be set to key-value pairs by defining `DB_ROUTER_LOG_FORMAT=kv`.
 
+### Access log helper
+
+The lightweight `log_db_access` utility records summary information about each
+database operation. Entries are written to the path defined by the
+`DB_ACCESS_LOG_PATH` environment variable, which defaults to
+`logs/shared_db_access.log`. Each line in the file is a JSONL object capturing
+the timestamp, action, table and affected row count:
+
+```json
+{"timestamp": "2024-05-14T12:00:00Z", "action": "write", "table": "bots", "rows": 1, "menace_id": "alpha"}
+```
+
+Once row counts have been collected, summarise the log with:
+
+```bash
+python -m analysis.db_router_log_analysis logs/shared_db_access.log
+```
+
 ### Audit log
 
 Enable detailed auditing of every table access by following these steps:
