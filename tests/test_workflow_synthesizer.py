@@ -8,11 +8,11 @@ import networkx as nx
 import pytest
 
 # Stub optional heavy dependencies before importing module under test.
-sys.modules.setdefault("intent_clusterer", SimpleNamespace(IntentClusterer=None))
-sys.modules.setdefault(
-    "module_synergy_grapher",
-    SimpleNamespace(ModuleSynergyGrapher=None, get_synergy_cluster=None),
-)
+sys.modules["intent_clusterer"] = SimpleNamespace(IntentClusterer=None)
+sys.modules[
+    "module_synergy_grapher"
+] = SimpleNamespace(ModuleSynergyGrapher=None, get_synergy_cluster=None)
+sys.modules["intent_db"] = SimpleNamespace(IntentDB=None)
 
 import workflow_synthesizer as ws  # noqa: E402
 
@@ -136,6 +136,8 @@ def test_generate_workflows_persist_and_rank(tmp_path, monkeypatch):
     assert data["steps"][0]["module"] == "mod_a"
     # Scores are stored in descending order
     assert synth.workflow_scores == sorted(synth.workflow_scores, reverse=True)
+    assert synth.workflow_score_details[1]["intent"] == pytest.approx(1 / 3)
+    assert 0.0 <= synth.workflow_score_details[1]["intent"] <= 1.0
 
 
 def test_generate_workflows_max_depth(tmp_path, monkeypatch):
@@ -192,3 +194,34 @@ def test_generate_workflows_penalties_and_tiebreak(tmp_path, monkeypatch):
     # The deepest explored path incurs the highest penalty
     assert flat[-1] == ["mod_a", "mod_b", "mod_c", "mod_d"]
     assert synth.workflow_scores[-1] < 0
+
+
+class StubIntentDB:
+    def __init__(self, base: Path) -> None:
+        self.base = base
+
+    def encode_text(self, _text: str):  # pragma: no cover - simple
+        return [0.1]
+
+    def search_by_vector(self, _vec, top_k: int = 50):  # pragma: no cover - simple
+        return [(str(self.base / "mod_b.py"), 0.1)]
+
+
+def test_generate_workflows_intent_db_scoring(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    grapher = StubGrapher()
+    synth = ws.WorkflowSynthesizer(module_synergy_grapher=grapher)
+    synth.intent_db = StubIntentDB(tmp_path)
+    synth.intent_clusterer = None
+
+    workflows = synth.generate_workflows(
+        start_module="mod_a", problem="finalise", limit=2, max_depth=2
+    )
+
+    assert len(workflows) == 2
+    assert [step.module for step in workflows[0]] == ["mod_a", "mod_b"]
+    assert [step.module for step in workflows[1]] == ["mod_a", "mod_b", "mod_c"]
+    assert synth.workflow_score_details[0]["intent"] == pytest.approx(0.5)
+    assert synth.workflow_score_details[1]["intent"] == pytest.approx(1 / 3)
