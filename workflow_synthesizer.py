@@ -33,10 +33,16 @@ import json
 import logging
 import importlib
 import types
+import os
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple, Union, get_args, get_origin, get_type_hints
+
+try:  # pragma: no cover - support running as a package
+    from .fcntl_compat import flock, LOCK_EX, LOCK_SH, LOCK_UN
+except Exception:  # pragma: no cover - allow running as script
+    from fcntl_compat import flock, LOCK_EX, LOCK_SH, LOCK_UN
 
 # lightweight structural analysis helpers
 try:  # Optional import; makes the synthesizer work in minimal environments
@@ -144,10 +150,14 @@ class ModuleIOAnalyzer:
 
     def __init__(self, cache_path: Path = Path("sandbox_data/io_signatures.json")) -> None:
         self.cache_path = cache_path
+        self._cache: Dict[str, Dict[str, Any]] = {}
         try:
-            self._cache: Dict[str, Dict[str, Any]] = json.loads(
-                cache_path.read_text(encoding="utf-8")
-            )
+            with cache_path.open("r", encoding="utf-8") as fh:
+                flock(fh.fileno(), LOCK_SH)
+                try:
+                    self._cache = json.load(fh)
+                finally:
+                    flock(fh.fileno(), LOCK_UN)
         except Exception:  # pragma: no cover - empty or corrupt cache
             self._cache = {}
 
@@ -258,7 +268,21 @@ class ModuleIOAnalyzer:
         }
         self._cache[key] = record
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.cache_path.write_text(json.dumps(self._cache, indent=2), encoding="utf-8")
+
+        lock_fh = self.cache_path.open("a+")
+        try:
+            flock(lock_fh.fileno(), LOCK_EX)
+            tmp_path = self.cache_path.with_suffix(self.cache_path.suffix + ".tmp")
+            with tmp_path.open("w", encoding="utf-8") as fh:
+                json.dump(self._cache, fh, indent=2)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_path, self.cache_path)
+        finally:
+            try:
+                flock(lock_fh.fileno(), LOCK_UN)
+            finally:
+                lock_fh.close()
         return sig
 
 
