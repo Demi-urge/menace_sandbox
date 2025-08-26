@@ -185,4 +185,34 @@ def evolve(
     return workflow_callable
 
 
-__all__ = ["evolve", "is_stable"]
+class WorkflowEvolutionManager:
+    """Lightweight wrapper exposing workflow evolution helpers.
+
+    This class allows embedding the evolution utilities as a dependency
+    without relying on module level functions.  It simply delegates to the
+    functional implementations defined in this module.
+    """
+
+    @staticmethod
+    def build_callable(sequence: str) -> Callable[[], bool]:
+        """Return a callable constructed from *sequence* steps."""
+
+        return _build_callable(sequence)
+
+    def evolve(
+        self,
+        workflow_callable: Callable[[], bool],
+        workflow_id: int | str,
+        variants: int = 5,
+    ) -> Callable[[], bool]:
+        """Proxy to :func:`evolve`."""
+
+        return evolve(workflow_callable, workflow_id, variants)
+
+    def is_stable(self, workflow_id: int | str) -> bool:
+        """Proxy to :func:`is_stable`."""
+
+        return is_stable(workflow_id)
+
+
+__all__ = ["evolve", "is_stable", "WorkflowEvolutionManager"]
