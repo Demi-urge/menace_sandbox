@@ -64,6 +64,64 @@ except Exception:  # pragma: no cover - gracefully degrade
 logger = logging.getLogger(__name__)
 
 
+def _extract_type_names(type_str: str | None) -> List[str]:
+    """Return atomic type names from an annotation expression.
+
+    The parser understands common generic containers like ``Tuple``/``list``/
+    ``Dict`` and returns the constituent element types.  Unknown expressions fall
+    back to the raw string representation.  The helper intentionally keeps
+    dependencies light by operating directly on :mod:`ast` nodes.
+    """
+
+    if not type_str:
+        return []
+    try:
+        node = ast.parse(type_str, mode="eval").body
+    except SyntaxError:
+        return [type_str]
+
+    names: List[str] = []
+
+    def _visit(n: ast.AST) -> None:
+        if isinstance(n, ast.Name):
+            names.append(n.id)
+        elif isinstance(n, ast.Attribute):
+            try:  # Python <3.9 compatibility
+                names.append(ast.unparse(n))
+            except Exception:  # pragma: no cover - best effort
+                pass
+        elif isinstance(n, ast.Subscript):
+            base = getattr(n.value, "id", None)
+            if base is None and isinstance(n.value, ast.Attribute):
+                try:
+                    base = ast.unparse(n.value)
+                except Exception:  # pragma: no cover - best effort
+                    base = None
+            base_lower = base.lower() if isinstance(base, str) else ""
+            slice_node = n.slice
+            if base_lower in {"tuple", "list", "set", "dict", "sequence"}:
+                if isinstance(slice_node, ast.Tuple):
+                    elts = slice_node.elts
+                else:
+                    elts = [slice_node]
+                if base_lower == "dict" and len(elts) == 2:
+                    _visit(elts[1])
+                else:
+                    for elt in elts:
+                        _visit(elt)
+            else:
+                try:
+                    names.append(ast.unparse(n))
+                except Exception:  # pragma: no cover - best effort
+                    pass
+        elif isinstance(n, (ast.Tuple, ast.List)):
+            for elt in n.elts:
+                _visit(elt)
+
+    _visit(node)
+    return names
+
+
 @dataclass
 class WorkflowStep:
     """Lightweight representation of an ordered workflow step."""
@@ -125,22 +183,56 @@ class ModuleIOAnalyzer:
 
         inputs: Set[str] = set(sig.files_read) | all_args | module_globals
 
-        return_names: Set[str] = set()
+        # Extract return names and keys per function
+        return_names: Dict[str, Set[str]] = {}
+
+        class _ReturnVisitor(ast.NodeVisitor):
+            def __init__(self) -> None:
+                self.stack: List[str] = []
+
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: D401
+                self.stack.append(node.name)
+                self.generic_visit(node)
+                self.stack.pop()
+
+            def visit_Return(self, node: ast.Return) -> None:  # noqa: D401
+                if not self.stack:
+                    return
+                fname = self.stack[-1]
+
+                def _collect(v: ast.AST) -> Set[str]:
+                    names: Set[str] = set()
+                    if isinstance(v, ast.Name):
+                        names.add(v.id)
+                    elif isinstance(v, (ast.Tuple, ast.List)):
+                        for elt in v.elts:
+                            names.update(_collect(elt))
+                    elif isinstance(v, ast.Dict):
+                        for k, val in zip(v.keys, v.values):
+                            if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                                names.add(str(k.value))
+                            names.update(_collect(val))
+                    return names
+
+                return_names.setdefault(fname, set()).update(_collect(node.value))
+
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Return):
-                    val = node.value
-                    if isinstance(val, ast.Name):
-                        return_names.add(val.id)
-                    elif isinstance(val, ast.Tuple):
-                        for elt in val.elts:
-                            if isinstance(elt, ast.Name):
-                                return_names.add(elt.id)
+            _ReturnVisitor().visit(tree)
         except Exception:  # pragma: no cover - best effort
             pass
 
-        outputs: Set[str] = set(sig.files_written) | module_globals | return_names
+        # Augment function metadata with return types and names
+        for fname, info in sig.functions.items():
+            ret = info.get("returns")
+            info["return_types"] = _extract_type_names(ret)
+            info["return_names"] = sorted(return_names.get(fname, set()))
+
+        flat_return_names: Set[str] = set()
+        for names in return_names.values():
+            flat_return_names.update(names)
+
+        outputs: Set[str] = set(sig.files_written) | module_globals | flat_return_names
         sig.inputs = sorted(inputs)
         sig.outputs = sorted(outputs)
 
@@ -325,8 +417,7 @@ class WorkflowSynthesizer:
             args: Set[str] = set()
             for fn in mod.functions.values():
                 args.update(fn.get("args", []))
-                ret = fn.get("returns")
-                if ret:
+                for ret in fn.get("return_types", []):
                     produced_by_type.setdefault(ret, set()).add(name)
             func_args[name] = args
 
@@ -363,16 +454,20 @@ class WorkflowSynthesizer:
             # function args
             for item in required_args:
                 matched = False
-                producers = produced_globals.get(item)
-                if producers:
-                    producer = _select_best(name, producers)
-                    if producer != name:
-                        dependencies.add(producer)
-                    matched = True
-                else:
-                    ann = annotations_cache[name].get(item)
-                    if ann and ann in produced_by_type:
-                        producer = _select_best(name, produced_by_type[ann])
+                ann = annotations_cache[name].get(item)
+                if ann:
+                    for t in _extract_type_names(ann):
+                        producers = produced_by_type.get(t)
+                        if producers:
+                            producer = _select_best(name, producers)
+                            if producer != name:
+                                dependencies.add(producer)
+                            matched = True
+                            break
+                if not matched:
+                    producers = produced_globals.get(item)
+                    if producers:
+                        producer = _select_best(name, producers)
                         if producer != name:
                             dependencies.add(producer)
                         matched = True
@@ -670,8 +765,7 @@ class WorkflowSynthesizer:
             for out in outputs:
                 produced_by_name.setdefault(out, set()).add(mod.name)
             for fn in mod.functions.values():
-                ret = fn.get("returns")
-                if ret:
+                for ret in fn.get("return_types", []):
                     produced_by_type.setdefault(ret, set()).add(mod.name)
 
         annotations_cache: Dict[str, Dict[str, str]] = {
@@ -712,16 +806,20 @@ class WorkflowSynthesizer:
             unresolved: List[str] = []
             for item in required:
                 matched = False
-                producers = produced_by_name.get(item)
-                if producers:
-                    producer = _select_best(name, producers)
-                    if producer != name:
-                        dependencies.add(producer)
-                    matched = True
-                else:
-                    ann = annotations_cache[name].get(item)
-                    if ann and ann in produced_by_type:
-                        producer = _select_best(name, produced_by_type[ann])
+                ann = annotations_cache[name].get(item)
+                if ann:
+                    for t in _extract_type_names(ann):
+                        producers = produced_by_type.get(t)
+                        if producers:
+                            producer = _select_best(name, producers)
+                            if producer != name:
+                                dependencies.add(producer)
+                            matched = True
+                            break
+                if not matched:
+                    producers = produced_by_name.get(item)
+                    if producers:
+                        producer = _select_best(name, producers)
                         if producer != name:
                             dependencies.add(producer)
                         matched = True
