@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
 
 from fcntl_compat import LOCK_EX, LOCK_UN, flock
-import db_router
 
+
+# Default log file within the repository
+DEFAULT_LOG_PATH = Path(__file__).resolve().parent / "logs" / "shared_db_access.log"
+DEFAULT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 _write_lock = Lock()
 
@@ -18,10 +22,10 @@ def log_db_access(
     row_count: int,
     menace_id: str,
     *,
-    log_to_db: bool = False,
-    log_path: str = "logs/shared_db_access.log",
+    log_path: Path | None = None,
+    db_conn: sqlite3.Connection | None = None,
 ) -> None:
-    """Append a database access record to ``log_path`` and optionally to SQLite.
+    """Record a database access event to a JSONL file and optional SQLite table.
 
     Parameters
     ----------
@@ -33,11 +37,12 @@ def log_db_access(
         Number of rows affected by the action.
     menace_id:
         Identifier of the menace instance performing the operation.
-    log_to_db:
-        When ``True`` the entry is inserted into the ``db_access_audit`` table
-        using the local database connection.
     log_path:
-        File to append the log line to. Defaults to ``"logs/shared_db_access.log"``.
+        Optional path of the log file. Defaults to ``logs/shared_db_access.log``
+        within the repository.
+    db_conn:
+        Optional sqlite3 connection used to persist the record into the
+        ``shared_db_audit`` table.
     """
 
     record = {
@@ -48,10 +53,11 @@ def log_db_access(
         "menace_id": menace_id,
     }
 
-    path = Path(log_path)
-    data = json.dumps(record, sort_keys=True)
+    # Determine log path and ensure directory exists
+    path = Path(log_path) if log_path is not None else DEFAULT_LOG_PATH
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        data = json.dumps(record, sort_keys=True)
         with _write_lock:
             with path.open("a", encoding="utf-8") as fh:
                 flock(fh.fileno(), LOCK_EX)
@@ -64,35 +70,27 @@ def log_db_access(
         # Logging failures are non-fatal
         pass
 
-    if log_to_db:
+    if db_conn is not None:
         try:
-            router = db_router.GLOBAL_ROUTER or db_router.init_db_router(menace_id)
-            conn = router.local_conn
-            cur = conn.cursor()
+            cur = db_conn.cursor()
             cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS db_access_audit (
-                    timestamp TEXT,
+                CREATE TABLE IF NOT EXISTS shared_db_audit (
                     action TEXT,
-                    table_name TEXT,
-                    row_count INTEGER,
-                    menace_id TEXT
+                    "table" TEXT,
+                    rows INTEGER,
+                    menace_id TEXT,
+                    timestamp TEXT
                 )
                 """
             )
             cur.execute(
-                "INSERT INTO db_access_audit (timestamp, action, table_name, row_count, menace_id)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (
-                    record["timestamp"],
-                    action,
-                    table_name,
-                    row_count,
-                    menace_id,
-                ),
+                'INSERT INTO shared_db_audit (action, "table", rows, menace_id, timestamp)'
+                ' VALUES (?, ?, ?, ?, ?)',
+                (action, table_name, row_count, menace_id, record["timestamp"]),
             )
-            conn.commit()
-        except Exception:
+            db_conn.commit()
+        except sqlite3.Error:
             # Database logging is best-effort
             pass
 
