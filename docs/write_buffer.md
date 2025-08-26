@@ -36,3 +36,20 @@ continuously based on its polling interval.
    details.
 3. Periodically run `python queue_cleanup.py --queue-dir <dir> --days <retention>`
    to prune stale `.failed.jsonl` and temporary queue files.
+
+## Manual rollback
+
+Processed lines removed from a queue file are appended to `queue.log.bak` in the
+same directory. To roll back a previous sync, copy the relevant lines from this
+backup back into the original queue file and rerun the synchroniser.
+
+Failed inserts accumulate in `queue.failed.jsonl`. Requeue them automatically
+with:
+
+```bash
+python sync_shared_db.py --queue-dir <dir> --db-path <db> --once --replay-failed
+```
+
+This command restores entries from the failed log into their queue files. The
+original failed log is preserved as `queue.failed.jsonl.bak` for manual
+inspection.
