@@ -47,6 +47,36 @@ Possible risk labels returned by `predict_roi_collapse` are:
 
 The result also includes a `brittle` flag when small entropy changes cause outsized ROI drops.
 
+## Workflow evolution
+
+`SelfImprovementEngine` embeds a `WorkflowEvolutionManager` to refine workflow
+definitions. The manager benchmarks the current sequence with
+`CompositeWorkflowScorer`, generates variants via
+`WorkflowEvolutionBot.generate_variants` and promotes the highest‑ROI option.
+The `limit` argument controls how many variants are produced (default `5`).
+
+Tune the gating behaviour with the environment variables
+`ROI_GATING_THRESHOLD` and `ROI_GATING_CONSECUTIVE`. Evolution is skipped when
+the exponential moving average of ROI deltas fails to exceed these thresholds.
+
+Example:
+
+```python
+from menace_sandbox.self_improvement_engine import (
+    SelfImprovementEngine,
+    ImprovementEngineRegistry,
+)
+
+engine = SelfImprovementEngine(bot_name="alpha")
+registry = ImprovementEngineRegistry()
+registry.register_engine("alpha", engine)
+results = registry.run_all_cycles()
+print(results["alpha"].workflow_evolution)
+```
+
+The `workflow_evolution` field summarises whether a variant was promoted or the
+workflow was deemed stable.
+
 ## Foresight promotion gate
 
 Before final promotion the sandbox invokes
