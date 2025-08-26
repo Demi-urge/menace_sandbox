@@ -29,6 +29,21 @@ Example log line:
 `logs/shared_db_access.log`. Callers of `audit.log_db_access` may also override
 the destination by passing the `log_path` argument directly.
 
+## Log rotation
+
+`audit.log_db_access` uses Python's `RotatingFileHandler` to automatically
+rotate the JSONL log. Rotation thresholds can be configured via environment
+variables:
+
+- `DB_AUDIT_LOG_MAX_BYTES` – maximum size in bytes before a new file is created
+  (defaults to 10MB).
+- `DB_AUDIT_LOG_BACKUPS` – number of rotated log files to retain (defaults to 5).
+
+Both settings are optional; sensible defaults are applied when the variables are
+unset or invalid. Rotation occurs with the same file-locking semantics as
+regular writes, so multiple processes can safely append to the log without
+interleaving.
+
 ## Querying the audit table
 
 If `log_db_access` receives a SQLite connection via the `db_conn` parameter the
