@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Tuple
 import sqlite3
 import uuid
-from itertools import combinations
-from statistics import stdev
 
-import numpy as np
+from .workflow_metrics import (
+    compute_bottleneck_index,
+    compute_patchability,
+    compute_workflow_synergy,
+)
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .roi_tracker import ROITracker
@@ -43,75 +45,6 @@ LOCAL_TABLES.add("workflow_module_deltas")
 router = GLOBAL_ROUTER or init_db_router("roi_scorer")
 if tb is not None:  # align telemetry router
     tb.GLOBAL_ROUTER = router
-
-
-def compute_workflow_synergy(tracker: "ROITracker", window: int = 5) -> float:
-    """Mean correlation between per-module ROI deltas and overall ROI.
-
-    The function retrieves the tracker’s ROI history and module delta history
-    and computes the Pearson correlation coefficient for each module over the
-    last ``window`` values.  The average correlation is returned, ignoring
-    modules with insufficient history or variance.  Values approach ``1.0``
-    when modules move in lockstep with the overall ROI and ``0.0`` when no
-    relationship is present.
-    """
-
-    roi_hist = tracker.roi_history[-window:]
-    if len(roi_hist) < 2 or not tracker.module_deltas:
-        return 0.0
-    correlations: list[float] = []
-    for deltas in tracker.module_deltas.values():
-        mod_hist = deltas[-window:]
-        if len(mod_hist) != len(roi_hist):
-            continue
-        if np.std(mod_hist) == 0 or np.std(roi_hist) == 0:
-            continue
-        correlations.append(float(np.corrcoef(roi_hist, mod_hist)[0, 1]))
-    return float(np.mean(correlations)) if correlations else 0.0
-
-
-def compute_bottleneck_index(timings: Dict[str, float]) -> float:
-    """Root mean square deviation of normalised module runtimes.
-
-    Runtimes are normalised so they sum to one.  The root mean square
-    deviation from a perfectly balanced runtime distribution is returned,
-    providing a smooth indicator of how dominant the slowest modules are.
-    """
-
-    if not timings:
-        return 0.0
-    total_runtime = sum(timings.values())
-    if total_runtime <= 0:
-        return 0.0
-    norm = np.array(list(timings.values()), dtype=float) / total_runtime
-    uniform = 1.0 / len(norm)
-    return float(np.sqrt(np.mean((norm - uniform) ** 2)))
-
-
-def compute_patchability(history: list[float], patch_success: float = 1.0) -> float:
-    """Volatility-adjusted ROI slope scaled by patch success rate.
-
-    A linear regression is applied to ``history`` to obtain the ROI improvement
-    slope.  This slope is divided by the standard deviation of the ROI values,
-    yielding a volatility-adjusted figure which is then scaled by
-    ``patch_success``.  Higher scores indicate a stable upward trend with
-    successful patches.
-    """
-
-    if not history or len(history) < 2:
-        return 0.0
-    x = np.arange(len(history))
-    slope = float(np.polyfit(x, history, 1)[0])
-    try:
-        sigma = stdev(history)
-    except Exception:
-        sigma = 0.0
-    if sigma == 0:
-        return 0.0
-    return slope / sigma * float(patch_success)
-
-
-
 
 class ROIScorer:
     """Base scorer storing ROI results in ``roi_results.db``."""
@@ -279,7 +212,9 @@ class CompositeWorkflowScorer(ROIScorer):
         roi_after, _, _ = self.calculator.calculate(calc_metrics, self.profile_type)
         roi_gain = roi_after - roi_before
 
-        workflow_synergy_score = compute_workflow_synergy(self.tracker)
+        workflow_synergy_score = compute_workflow_synergy(
+            self.tracker.roi_history, self.tracker.module_deltas
+        )
 
         timings: Dict[str, float] = {}
         failures: Dict[str, float] = {}
@@ -300,7 +235,7 @@ class CompositeWorkflowScorer(ROIScorer):
         except Exception:
             pass
         patchability_score = compute_patchability(
-            self.tracker.roi_history, patch_success
+            self.tracker.roi_history, patch_success=patch_success
         )
 
         metrics["workflow_synergy_score"] = workflow_synergy_score

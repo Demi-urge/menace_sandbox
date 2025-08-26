@@ -17,89 +17,15 @@ import uuid
 from collections import defaultdict, deque
 import concurrent.futures
 
-import numpy as np
-
 from .roi_tracker import ROITracker
 from .roi_calculator import ROICalculator
 from .roi_results_db import ROIResultsDB
 from . import sandbox_runner
-
-
-# ---------------------------------------------------------------------------
-# Helper metrics copied from ``roi_scorer`` to avoid heavy dependencies.
-# ---------------------------------------------------------------------------
-
-
-def compute_workflow_synergy(
-    roi_history: Iterable[float],
-    module_history: Mapping[str, Iterable[float]],
-    window: int = 5,
-) -> float:
-    """Mean correlation between module ROI deltas and overall ROI.
-
-    The score examines the ``window`` most recent ROI values along with the
-    corresponding per-module ROI deltas.  For each module a Pearson
-    correlation coefficient with the overall ROI history is computed and the
-    average of all valid correlations is returned.  Modules with insufficient
-    variance or history are ignored.  A value close to ``1.0`` indicates strong
-    positive alignment between modules and overall ROI while ``0.0`` denotes no
-    discernible relationship.
-    """
-
-    roi_list = list(roi_history)[-window:]
-    if len(roi_list) < 2 or not module_history:
-        return 0.0
-    correlations: list[float] = []
-    for deltas in module_history.values():
-        mod_list = list(deltas)[-window:]
-        if len(mod_list) != len(roi_list):
-            continue
-        if np.std(mod_list) == 0 or np.std(roi_list) == 0:
-            continue
-        corr = float(np.corrcoef(roi_list, mod_list)[0, 1])
-        correlations.append(corr)
-    return float(np.mean(correlations)) if correlations else 0.0
-
-
-def compute_bottleneck_index(tracker: ROITracker, _workflow_id: str | None = None) -> float:
-    """Root mean square deviation of normalised module runtimes.
-
-    The metric first normalises module runtimes so they sum to one.  It then
-    computes the root mean square deviation from an ideal uniform distribution
-    where all modules consume equal runtime.  Higher values therefore indicate
-    a more pronounced bottleneck.
-    """
-
-    runtimes: Mapping[str, float] = getattr(tracker, "timings", {})
-    if not runtimes:
-        return 0.0
-    total = sum(runtimes.values())
-    if total <= 0:
-        return 0.0
-    norm = np.array(list(runtimes.values()), dtype=float) / total
-    uniform = 1.0 / len(norm)
-    return float(np.sqrt(np.mean((norm - uniform) ** 2)))
-
-
-def compute_patchability(history: Iterable[float], window: int = 5) -> float:
-    """ROI trend slope normalised by recent volatility.
-
-    A simple linear regression is fit to the last ``window`` ROI values to
-    obtain the improvement slope.  This slope is divided by the standard
-    deviation of the same window, yielding a volatility-adjusted indicator of
-    how patchable the workflow appears.  Higher values indicate a consistent
-    upward trend with low variance.
-    """
-
-    hist_list = list(history)[-window:]
-    if len(hist_list) < 2:
-        return 0.0
-    x = np.arange(len(hist_list))
-    slope = float(np.polyfit(x, hist_list, 1)[0])
-    volatility = float(np.std(hist_list))
-    if volatility == 0:
-        return 0.0
-    return slope / volatility
+from .workflow_metrics import (
+    compute_bottleneck_index,
+    compute_patchability,
+    compute_workflow_synergy,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -225,9 +151,9 @@ class CompositeWorkflowScorer(ROIScorer):
         workflow_synergy_score = compute_workflow_synergy(
             self.tracker.roi_history, self._module_roi_history, self.history_window
         )
-        bottleneck_index = compute_bottleneck_index(self.tracker, workflow_id)
+        bottleneck_index = compute_bottleneck_index(timings)
         patchability_score = compute_patchability(
-            self.tracker.roi_history, self.history_window
+            self.tracker.roi_history, window=self.history_window
         )
 
         self.results_db.log_result(
@@ -308,7 +234,7 @@ class CompositeWorkflowScorer(ROIScorer):
             ) as pool:
                 futures: Dict[concurrent.futures.Future[bool], str] = {}
                 for name, func in modules.items():
-                    scheduled = time.perf_counter()
+                    scheduled = time.perf_counter() if max_workers > 1 else 0.0
                     futures[pool.submit(_run_module, name, func, scheduled)] = name
                 for fut in concurrent.futures.as_completed(futures):
                     ok = bool(fut.result())
@@ -383,9 +309,9 @@ class CompositeWorkflowScorer(ROIScorer):
         workflow_synergy_score = compute_workflow_synergy(
             getattr(tracker, "roi_history", []), self._module_roi_history, self.history_window
         )
-        bottleneck_index = compute_bottleneck_index(tracker, workflow_id)
+        bottleneck_index = compute_bottleneck_index(getattr(tracker, "timings", {}))
         patchability_score = compute_patchability(
-            getattr(tracker, "roi_history", []), self.history_window
+            getattr(tracker, "roi_history", []), window=self.history_window
         )
 
         run_id = uuid.uuid4().hex
