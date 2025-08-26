@@ -159,7 +159,7 @@
 - Self-provisioning of missing packages through `SystemProvisioner`
 - Distributed rollback verification via `RollbackValidator`
 - ROI-driven autoscaling with `ROIScalingPolicy`
-- Profile-based ROI evaluation via `ROICalculator` using YAML-configured weights and veto rules
+- Profile-based ROI evaluation via `ROICalculator` using YAML-configured weights and veto rules. A valid ROI profile file (such as `configs/roi_profiles.yaml`) must be available; otherwise calculator initialisation fails.
 - ROI history forecasting via `ROITracker` ([docs/roi_tracker.md](docs/roi_tracker.md))
  - `calculate_raroi` derives a risk-adjusted ROI (RAROI) by applying
    catastrophic risk, recent stability and safety multipliers. Impact

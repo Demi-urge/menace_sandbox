@@ -57,11 +57,15 @@ class ROIScorer(BaseROIScorer):
         calculator_factory: Callable[[], ROICalculator] | None = None,
         profile_type: str | None = None,
     ) -> None:
-        super().__init__(
-            tracker=tracker,
-            calculator_factory=calculator_factory,
-            profile_type=profile_type,
-        )
+        try:
+            super().__init__(
+                tracker=tracker,
+                calculator_factory=calculator_factory,
+                profile_type=profile_type,
+            )
+        except Exception as exc:  # pragma: no cover - configuration errors
+            logging.critical("Failed to initialise ROICalculator: %s", exc)
+            raise
 
 
 class CompositeWorkflowScorer(ROIScorer):
