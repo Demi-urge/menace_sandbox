@@ -614,9 +614,10 @@ class WorkflowSynthesizer:
     ) -> List[List[WorkflowStep]]:
         """Generate candidate workflows beginning at ``start_module``.
 
-        Candidate workflows are constructed by exploring different
-        permutations of modules that satisfy dependency constraints.  Each
-        candidate is scored and the best ``limit`` workflows are returned.
+        Candidate workflows are constructed by traversing the synergy graph
+        from ``start_module`` to discover alternate module orderings that
+        satisfy dependency constraints.  Each candidate is scored and the best
+        ``limit`` workflows are returned.
 
         Parameters
         ----------
@@ -747,34 +748,67 @@ class WorkflowSynthesizer:
         if start_module not in step_map:
             raise ValueError(f"Start module {start_module!r} not found")
 
-        # Explore dependency‑resolved chains using a BFS that records all
-        # prefixes.  ``max_candidates`` prevents pathological explosions when
-        # many permutations are possible while still allowing richer exploration
-        # than the previous greedy approach.
-        orders: List[List[str]] = []
-        queue: deque[Tuple[List[str], Set[str]]] = deque()
-        queue.append(([start_module], set(step_map) - {start_module}))
-        seen: Set[Tuple[str, ...]] = set()
-        max_candidates = max(limit * 10, 10)
-
-        while queue and len(orders) < max_candidates:
-            order, remaining = queue.popleft()
-            key = tuple(order)
-            if key in seen:
-                continue
-            seen.add(key)
-            orders.append(order.copy())
-
-            if max_depth is not None and len(order) - 1 >= max_depth:
-                continue
-
-            available = [m for m in remaining if deps[m].issubset(order)]
-            for mod in sorted(available):
-                new_order = order + [mod]
-                new_remaining = remaining - {mod}
-                queue.append((new_order, new_remaining))
+        # Explore alternative chains by traversing the synergy graph rather
+        # than following a single greedy dependency order.  A breadth first
+        # search enumerates candidate paths starting from ``start_module`` and
+        # only extends a path when the next module's dependencies are satisfied
+        # by modules already in the path.  ``max_candidates`` bounds exploration
+        # to avoid combinatorial explosion while still surfacing diverse
+        # orderings.
 
         graph = getattr(self.module_synergy_grapher, "graph", None)
+        orders: List[List[str]] = []
+        max_candidates = max(limit * 10, 10)
+
+        if graph is None or start_module not in graph:
+            queue: deque[Tuple[List[str], Set[str]]] = deque()
+            queue.append(([start_module], set(step_map) - {start_module}))
+            seen: Set[Tuple[str, ...]] = set()
+            while queue and len(orders) < max_candidates:
+                order, remaining = queue.popleft()
+                key = tuple(order)
+                if key in seen:
+                    continue
+                seen.add(key)
+                orders.append(order.copy())
+
+                if max_depth is not None and len(order) - 1 >= max_depth:
+                    continue
+
+                available = [m for m in remaining if deps[m].issubset(order)]
+                for mod in sorted(available):
+                    new_order = order + [mod]
+                    new_remaining = remaining - {mod}
+                    queue.append((new_order, new_remaining))
+        else:
+            queue: deque[List[str]] = deque([[start_module]])
+            seen: Set[Tuple[str, ...]] = set()
+            while queue and len(orders) < max_candidates:
+                order = queue.popleft()
+                key = tuple(order)
+                if key in seen:
+                    continue
+                seen.add(key)
+                orders.append(order.copy())
+
+                if max_depth is not None and len(order) - 1 >= max_depth:
+                    continue
+
+                last = order[-1]
+                neighbours = graph[last]
+                neigh_items = sorted(
+                    neighbours.items(),
+                    key=lambda item: float(item[1].get("weight", 0.0)),
+                    reverse=True,
+                )
+                for neigh, _data in neigh_items:
+                    if neigh not in step_map:
+                        continue
+                    if neigh in order:
+                        continue
+                    if not deps[neigh].issubset(order):
+                        continue
+                    queue.append(order + [neigh])
 
         score_map: Dict[str, float] = {}
         if problem and self.intent_clusterer is not None:
