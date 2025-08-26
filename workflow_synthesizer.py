@@ -628,8 +628,8 @@ class WorkflowSynthesizer:
         start_module:
             Dotted name of the module that should start each workflow.
         problem:
-            Optional textual description used for intent matching.  Only
-            available when ``intent_clusterer`` is provided.
+            Optional textual description used for intent matching.  Requires
+            either ``intent_clusterer`` or ``intent_db`` to be available.
         limit:
             Maximum number of workflows to return.
         max_depth:
@@ -814,16 +814,43 @@ class WorkflowSynthesizer:
                     queue.append(order + [neigh])
 
         score_map: Dict[str, float] = {}
-        if problem and self.intent_clusterer is not None:
-            try:
-                matches = self.intent_clusterer.find_modules_related_to(problem, top_k=50)
-                for m in matches:
-                    path = getattr(m, "path", None) or getattr(m, "module", None)
-                    if path:
-                        mod = Path(str(path)).stem
-                        score_map[mod] = float(getattr(m, "score", 1.0))
-            except Exception:  # pragma: no cover - best effort
-                pass
+        if problem:
+            if self.intent_clusterer is None and self.intent_db is None:
+                self.load_intent_clusters()
+            if self.intent_clusterer is not None:
+                try:
+                    matches = self.intent_clusterer.find_modules_related_to(problem, top_k=50)
+                    for m in matches:
+                        path = getattr(m, "path", None) or getattr(m, "module", None)
+                        if path:
+                            mod = Path(str(path)).stem
+                            score = float(
+                                getattr(m, "score", getattr(m, "similarity", 1.0))
+                            )
+                            score_map[mod] = score
+                except Exception:  # pragma: no cover - best effort
+                    pass
+            elif self.intent_db is not None:
+                try:
+                    vec = self.intent_db.encode_text(problem)  # type: ignore[attr-defined]
+                    results = self.intent_db.search_by_vector(vec, top_k=50)
+                    for rid, dist in results:
+                        path = rid
+                        if isinstance(rid, int) and hasattr(self.intent_db, "conn"):
+                            row = self.intent_db.conn.execute(
+                                "SELECT path FROM intent_modules WHERE id=?",
+                                (rid,),
+                            ).fetchone()
+                            path = row["path"] if row else None
+                        if path:
+                            mod = Path(str(path)).stem
+                            score_map[mod] = 1.0 / (1.0 + float(dist))
+                except Exception:  # pragma: no cover - best effort
+                    pass
+            if score_map:
+                max_score = max(score_map.values()) or 1.0
+                for mod in list(score_map):
+                    score_map[mod] /= max_score
 
         entries: List[Tuple[float, List[WorkflowStep], float, float, float]] = []
         for order in orders:
