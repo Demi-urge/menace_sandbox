@@ -15,7 +15,6 @@ import sqlite3
 import threading
 from collections import defaultdict
 from datetime import datetime
-from functools import partial
 from pathlib import Path
 from typing import Set, Iterable, Mapping, Any
 
@@ -346,6 +345,7 @@ def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
         logger.info(msg)
 
         append_record(table, record, menace_id, queue_dir=queue_dir)
+        log_db_access("write", table, 1, menace_id)
 
         _record_audit(entry)
     elif table in LOCAL_TABLES:
@@ -371,13 +371,11 @@ def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
         raise ValueError(f"Unknown table: {table}")
 
 
-class LoggingCursor(sqlite3.Cursor):
-    """Cursor that logs database access for auditing."""
+class AuditCursor(sqlite3.Cursor):
+    """Cursor that records database access via :func:`log_db_access`."""
 
     menace_id: str
-    _last_sql: str | None = None
-    _last_table: str | None = None
-    _last_action: str | None = None
+    _rows: list[Any] | None = None
 
     def _table_from_sql(self, sql: str) -> str:
         tokens = sql.strip().split()
@@ -398,59 +396,93 @@ class LoggingCursor(sqlite3.Cursor):
             table = "unknown"
         return table.strip('"`[]')
 
-    def _log(self, action: str, row_count: int) -> None:
-        table = self._last_table or "unknown"
+    def _log(self, action: str, table: str, row_count: int) -> None:
         log_db_access(action, table, row_count, self.menace_id)
 
     def execute(self, sql: str, parameters: Iterable | None = None):  # type: ignore[override]
-        result = super().execute(sql, parameters or ())
-        self._last_sql = sql
-        self._last_table = self._table_from_sql(sql)
-        self._last_action = "read" if sql.lstrip().upper().startswith("SELECT") else "write"
-        row_count = self.rowcount if self.rowcount != -1 else 0
-        self._log(self._last_action, row_count)
-        return result
+        super().execute(sql, parameters or ())
+        table = self._table_from_sql(sql)
+        is_read = sql.lstrip().upper().startswith("SELECT")
+        if is_read:
+            self._rows = super().fetchall()
+            row_count = len(self._rows)
+        else:
+            self._rows = None
+            row_count = self.rowcount if self.rowcount != -1 else 0
+        self._log("read" if is_read else "write", table, row_count)
+        return self
 
     def executemany(
         self, sql: str, seq_of_parameters: Iterable[Iterable]
     ):  # type: ignore[override]
-        result = super().executemany(sql, seq_of_parameters)
-        self._last_sql = sql
-        self._last_table = self._table_from_sql(sql)
-        self._last_action = "read" if sql.lstrip().upper().startswith("SELECT") else "write"
-        row_count = self.rowcount if self.rowcount != -1 else 0
-        self._log(self._last_action, row_count)
-        return result
+        super().executemany(sql, seq_of_parameters)
+        table = self._table_from_sql(sql)
+        is_read = sql.lstrip().upper().startswith("SELECT")
+        if is_read:
+            self._rows = super().fetchall()
+            row_count = len(self._rows)
+        else:
+            self._rows = None
+            row_count = self.rowcount if self.rowcount != -1 else 0
+        self._log("read" if is_read else "write", table, row_count)
+        return self
 
     def fetchone(self):  # type: ignore[override]
-        row = super().fetchone()
-        count = 1 if row is not None else 0
-        self._log(self._last_action or "read", count)
-        return row
+        if self._rows is not None:
+            return self._rows.pop(0) if self._rows else None
+        return super().fetchone()
 
     def fetchall(self):  # type: ignore[override]
-        rows = super().fetchall()
-        self._log(self._last_action or "read", len(rows))
-        return rows
+        if self._rows is not None:
+            rows, self._rows = self._rows, []
+            return rows
+        return super().fetchall()
 
     def fetchmany(self, size: int | None = None):  # type: ignore[override]
-        rows = super().fetchmany(size)
-        self._log(self._last_action or "read", len(rows))
-        return rows
+        if self._rows is not None:
+            if size is None:
+                size = 1
+            rows = self._rows[:size]
+            self._rows = self._rows[size:]
+            return rows
+        return super().fetchmany(size)
+
+    def __iter__(self):  # type: ignore[override]
+        if self._rows is not None:
+            while self._rows:
+                yield self._rows.pop(0)
+        else:
+            yield from super().__iter__()
 
 
-class LoggingConnection(sqlite3.Connection):
-    """Connection returning :class:`LoggingCursor` instances."""
+class _AuditConnection:
+    """Lightweight wrapper ensuring cursors are :class:`AuditCursor`."""
 
-    def __init__(self, *args, menace_id: str, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, conn: sqlite3.Connection, menace_id: str) -> None:
+        self._conn = conn
         self._menace_id = menace_id
 
-    def cursor(self, *args, **kwargs):  # type: ignore[override]
-        kwargs.setdefault("factory", LoggingCursor)
-        cur: LoggingCursor = super().cursor(*args, **kwargs)  # type: ignore[assignment]
+    def cursor(self, *args, **kwargs):
+        kwargs.setdefault("factory", AuditCursor)
+        cur: AuditCursor = self._conn.cursor(*args, **kwargs)  # type: ignore[assignment]
         cur.menace_id = self._menace_id
         return cur
+
+    def execute(self, *args, **kwargs):
+        return self.cursor().execute(*args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        return self.cursor().executemany(*args, **kwargs)
+
+    def __getattr__(self, name: str):  # pragma: no cover - delegation
+        return getattr(self._conn, name)
+
+    def __enter__(self):
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._conn.__exit__(exc_type, exc, tb)
 
 
 class DBRouter:
@@ -484,9 +516,8 @@ class DBRouter:
         self.local_conn = sqlite3.connect(local_path, check_same_thread=False)  # noqa: SQL001
 
         os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
-        factory = partial(LoggingConnection, menace_id=menace_id)
         self.shared_conn = sqlite3.connect(  # noqa: SQL001
-            shared_db_path, check_same_thread=False, factory=factory
+            shared_db_path, check_same_thread=False
         )
 
         # ``threading.Lock`` protects against concurrent access when deciding
@@ -567,7 +598,7 @@ class DBRouter:
                     msg = json.dumps(entry)
                 logger.info(msg)
                 self._access_counts["shared"][table_name] += 1
-                conn = self.shared_conn
+                conn = _AuditConnection(self.shared_conn, self.menace_id)
             elif table_name in LOCAL_TABLES:
                 self._access_counts["local"][table_name] += 1
                 conn = self.local_conn
@@ -602,6 +633,7 @@ class DBRouter:
         from db_write_queue import append_record, queue_insert as queue_insert_record
         append_record(table_name, values, self.menace_id)
         queue_insert_record(table_name, values, hash_fields)
+        log_db_access("write", table_name, 1, self.menace_id)
 
     # ------------------------------------------------------------------
     def close(self) -> None:
