@@ -14,14 +14,12 @@ from dataclasses import asdict
 from typing import Any, Callable, Dict, Mapping, Tuple
 import time
 import uuid
-from collections import defaultdict, deque
 import concurrent.futures
 import logging
 import traceback
 from pathlib import Path
 
 import yaml
-import numpy as np
 
 from .roi_tracker import ROITracker
 from .roi_calculator import ROICalculator
@@ -120,9 +118,6 @@ class CompositeWorkflowScorer(ROIScorer):
         self._module_successes: Dict[str, bool] = {}
         self._module_failures: Dict[str, str] = {}
         self.history_window = 20
-        self._module_roi_history: Dict[str, deque[float]] = defaultdict(
-            lambda: deque(maxlen=self.history_window)
-        )
         self.module_attribution: Dict[str, Dict[str, float]] = {}
 
     # ------------------------------------------------------------------
@@ -159,9 +154,7 @@ class CompositeWorkflowScorer(ROIScorer):
             success = False
         runtime = time.perf_counter() - start
 
-        roi_gain = sum(
-            float(x) for x in self.tracker.roi_history[self._roi_start:]
-        )
+        roi_gain = sum(float(x) for x in self.tracker.roi_history[self._roi_start :])
 
         per_module: Dict[str, Dict[str, float]] = {}
         timings = getattr(self.tracker, "timings", {})
@@ -182,10 +175,6 @@ class CompositeWorkflowScorer(ROIScorer):
             failure_reason = self._module_failures.get(mod)
             if failure_reason is not None:
                 per_module[mod]["failure_reason"] = failure_reason
-            self._module_roi_history[mod].append(roi_delta)
-            history = list(self._module_roi_history[mod])
-            roi_delta_ma = float(np.mean(history)) if history else 0.0
-            roi_delta_var = float(np.var(history)) if len(history) > 1 else 0.0
             self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
             if hasattr(self.results_db, "log_module_deltas"):
                 self.results_db.log_module_deltas(
@@ -195,8 +184,7 @@ class CompositeWorkflowScorer(ROIScorer):
                     runtime,
                     1.0 if self._module_successes.get(mod) else 0.0,
                     roi_delta,
-                    roi_delta_ma,
-                    roi_delta_var,
+                    window=self.history_window,
                 )
         self.module_attribution = {
             mod: {
@@ -225,9 +213,9 @@ class CompositeWorkflowScorer(ROIScorer):
             patch_success=rate,
         )
 
-        failure_reason = "; ".join(
-            f"{m}: {r}" for m, r in self._module_failures.items()
-        ) or None
+        failure_reason = (
+            "; ".join(f"{m}: {r}" for m, r in self._module_failures.items()) or None
+        )
 
         self.results_db.log_result(
             workflow_id=workflow_id,
@@ -266,9 +254,7 @@ class CompositeWorkflowScorer(ROIScorer):
 
         run_id = run_id or uuid.uuid4().hex
         self._roi_start = len(self.tracker.roi_history)
-        self._module_start = {
-            m: len(d) for m, d in self.tracker.module_deltas.items()
-        }
+        self._module_start = {m: len(d) for m, d in self.tracker.module_deltas.items()}
         self._module_successes = {}
         self._module_failures = {}
         self.failure_details = []
@@ -311,9 +297,7 @@ class CompositeWorkflowScorer(ROIScorer):
                 "reliability": 1.0 if ok else 0.0,
                 "efficiency": 1.0 / duration if duration > 0 else 0.0,
             }
-            roi_after, _, _ = self.calculator.calculate(
-                metrics, self.profile_type
-            )
+            roi_after, _, _ = self.calculator.calculate(metrics, self.profile_type)
             self.tracker.update(
                 0.0,
                 roi_after,
@@ -325,9 +309,7 @@ class CompositeWorkflowScorer(ROIScorer):
 
         def workflow_callable() -> bool:
             overall = True
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=max_workers
-            ) as pool:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures: Dict[concurrent.futures.Future[bool], str] = {}
                 for name, func in modules.items():
                     scheduled = time.perf_counter() if max_workers > 1 else 0.0
@@ -346,7 +328,9 @@ class CompositeWorkflowScorer(ROIScorer):
     def evaluate(
         self,
         workflow_id: str,
-        env_presets: Mapping[str, list[Dict[str, Any]]] | list[Dict[str, Any]] | None = None,
+        env_presets: (
+            Mapping[str, list[Dict[str, Any]]] | list[Dict[str, Any]] | None
+        ) = None,
         *,
         patch_success: float | None = None,
     ) -> EvaluationResult:
@@ -396,10 +380,6 @@ class CompositeWorkflowScorer(ROIScorer):
                 "bottleneck_contribution": bottleneck,
                 "scheduling_overhead": float(overheads.get(mod, 0.0)),
             }
-            self._module_roi_history[mod].append(roi_delta)
-            history = list(self._module_roi_history[mod])
-            roi_delta_ma = float(np.mean(history)) if history else 0.0
-            roi_delta_var = float(np.var(history)) if len(history) > 1 else 0.0
             self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
             if hasattr(self.results_db, "log_module_deltas"):
                 self.results_db.log_module_deltas(
@@ -409,8 +389,7 @@ class CompositeWorkflowScorer(ROIScorer):
                     runtime,
                     sr,
                     roi_delta,
-                    roi_delta_ma,
-                    roi_delta_var,
+                    window=self.history_window,
                 )
         self.module_attribution = {
             mod: {
@@ -420,9 +399,7 @@ class CompositeWorkflowScorer(ROIScorer):
             for mod, data in per_module_metrics.items()
         }
 
-        workflow_synergy_score = compute_workflow_synergy(
-            tracker, self.history_window
-        )
+        workflow_synergy_score = compute_workflow_synergy(tracker, self.history_window)
         bottleneck_index = compute_bottleneck_index(getattr(tracker, "timings", {}))
         rate = (
             patch_success
