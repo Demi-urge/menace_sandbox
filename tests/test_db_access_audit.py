@@ -7,10 +7,8 @@ def test_db_access_audit(tmp_path, monkeypatch):
     local_db = tmp_path / "local.db"
     shared_db = tmp_path / "shared.db"
 
-    monkeypatch.setenv("DB_ACCESS_LOG_PATH", str(log_path))
-    import audit_db_access
+    monkeypatch.setenv("DB_ROUTER_AUDIT_LOG", str(log_path))
     import db_router
-    importlib.reload(audit_db_access)
     importlib.reload(db_router)
 
     router = db_router.init_db_router("alpha", str(local_db), str(shared_db))
@@ -24,6 +22,7 @@ def test_db_access_audit(tmp_path, monkeypatch):
         cur.execute("INSERT INTO telemetry (data) VALUES (?)", ("foo",))
         conn.commit()
         entries = [json.loads(line) for line in log_path.read_text().splitlines()]
+        entries = [e for e in entries if "action" in e]
         assert len(entries) == 2
         read, write = entries
         assert read["action"] == "read"

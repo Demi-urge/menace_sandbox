@@ -256,7 +256,7 @@ Use `DBRouter.get_connection(table_name, operation="read")` to obtain a
 `LoggedConnection` for a given table. The router returns the shared connection
 for names in `SHARED_TABLES` and the local connection for `LOCAL_TABLES`
 entries. Every `execute` call on the returned connection records the row count
-via `audit_db_access.log_db_access`. The optional `operation` argument is
+via `audit.log_db_access`. The optional `operation` argument is
 recorded in audit logs and metrics and can be set to values such as `"read"` or
 `"write"`:
 
@@ -361,15 +361,16 @@ accesses are silent unless audit logging is enabled. Configure the verbosity via
 the `DB_ROUTER_LOG_LEVEL` environment variable. The output format defaults to
 JSON but can be set to key-value pairs by defining `DB_ROUTER_LOG_FORMAT=kv`.
 Connections obtained via `get_connection` automatically call
-`audit_db_access.log_db_access` with the number of rows read or written.
+`audit.log_db_access` with the number of rows read or written.
 
 ### Access log helper
 
 The lightweight `log_db_access` utility records summary information about each
 database operation. Entries are written to the path defined by the
-`DB_ACCESS_LOG_PATH` environment variable, which defaults to
-`logs/shared_db_access.log`. Each line in the file is a JSONL object capturing
-the timestamp, action, table and affected row count:
+`DB_ROUTER_AUDIT_LOG` environment variable or the `log_path` argument. If
+neither is provided, logs default to `logs/shared_db_access.log`. Each line in
+the file is a JSONL object capturing the timestamp, action, table and affected
+row count:
 
 ```json
 {"timestamp": "2024-05-14T12:00:00Z", "action": "write", "table": "bots", "rows": 1, "menace_id": "alpha"}
@@ -464,9 +465,6 @@ interact with globally visible data.
 - **`log_path`** – absolute or relative destination for the audit log. Define it
   with the `DB_ROUTER_AUDIT_LOG` environment variable or by adding an
   `"audit_log"` entry to the JSON file referenced by `DB_ROUTER_CONFIG`.
-- **`DB_ACCESS_LOG_PATH`** – optional high‑level metrics file used by
-  `audit_db_access.log_db_access` to record row counts per action. Defaults to
-  `logs/shared_db_access.log` if unset.
 - The regular router log level and format can be tuned via
   `DB_ROUTER_LOG_LEVEL` and `DB_ROUTER_LOG_FORMAT` (``json`` or ``kv``).
 

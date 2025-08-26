@@ -6,9 +6,10 @@ instances can be monitored across deployments.
 
 ## Log storage
 
-Entries are written as JSON lines to the location defined by the
-`DB_ACCESS_LOG_PATH` environment variable. If unset, the log defaults to
-`logs/shared_db_access.log`.
+Entries are written as JSON lines to `logs/shared_db_access.log` by default.
+Override the destination by passing a `log_path` argument to
+`audit.log_db_access` or by setting the `DB_ROUTER_AUDIT_LOG` environment
+variable when using `DBRouter`.
 
 ## Configuration
 
