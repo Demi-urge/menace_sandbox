@@ -11,7 +11,7 @@ tests can exercise the scoring pipeline in isolation.
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any, Callable, Dict, Mapping, Tuple
+from typing import Any, Callable, Dict, Iterable, Mapping, Tuple
 import time
 import uuid
 from collections import defaultdict, deque
@@ -20,6 +20,7 @@ import logging
 from pathlib import Path
 
 import yaml
+import numpy as np
 
 from .roi_tracker import ROITracker
 from .roi_calculator import ROICalculator
@@ -30,7 +31,6 @@ from .workflow_scorer_core import (
     EvaluationResult,
     compute_workflow_synergy,
     compute_bottleneck_index,
-    compute_patchability,
 )
 
 try:  # pragma: no cover - optional dependency
@@ -44,6 +44,31 @@ try:  # pragma: no cover - runtime failures should not break scoring
     )
 except Exception:  # pragma: no cover - defensive fallback
     PATCH_SUCCESS_RATE = 1.0
+
+
+# ---------------------------------------------------------------------------
+# Metric helpers
+# ---------------------------------------------------------------------------
+
+
+def compute_patchability(
+    history: Iterable[float],
+    window: int | None = None,
+    patch_success: float = 1.0,
+) -> float:
+    """Volatility-adjusted ROI slope scaled by patch success rate."""
+
+    hist_list = list(history)
+    if window is not None:
+        hist_list = hist_list[-window:]
+    if len(hist_list) < 2:
+        return 0.0
+    x = np.arange(len(hist_list))
+    slope = float(np.polyfit(x, hist_list, 1)[0])
+    sigma = float(np.std(hist_list))
+    if sigma == 0:
+        return 0.0
+    return slope / sigma * float(patch_success)
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +149,8 @@ class CompositeWorkflowScorer(ROIScorer):
         workflow_callable: Callable[[], bool],
         workflow_id: str,
         run_id: str,
+        *,
+        patch_success: float | None = None,
     ) -> EvaluationResult:
         """Execute ``workflow_callable`` and persist aggregated metrics."""
 
@@ -171,10 +198,19 @@ class CompositeWorkflowScorer(ROIScorer):
             self.tracker, self.history_window
         )
         bottleneck_index = compute_bottleneck_index(timings)
+        rate = (
+            patch_success
+            if patch_success is not None
+            else getattr(
+                self.tracker,
+                "patch_success",
+                getattr(self.tracker, "patch_success_rate", PATCH_SUCCESS_RATE),
+            )
+        )
         patchability_score = compute_patchability(
             self.tracker.roi_history,
             window=self.history_window,
-            patch_success=PATCH_SUCCESS_RATE,
+            patch_success=rate,
         )
 
         failure_reason = "; ".join(
@@ -212,6 +248,7 @@ class CompositeWorkflowScorer(ROIScorer):
         run_id: str | None = None,
         *,
         concurrency_hints: Mapping[str, Any] | None = None,
+        patch_success: float | None = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Execute ``modules`` possibly in parallel and return metrics."""
 
@@ -270,7 +307,9 @@ class CompositeWorkflowScorer(ROIScorer):
                     overall = overall and ok
             return overall
 
-        result = self.run(workflow_callable, workflow_id, run_id)
+        result = self.run(
+            workflow_callable, workflow_id, run_id, patch_success=patch_success
+        )
         return run_id, asdict(result)
 
     # ------------------------------------------------------------------
@@ -278,6 +317,8 @@ class CompositeWorkflowScorer(ROIScorer):
         self,
         workflow_id: str,
         env_presets: Mapping[str, list[Dict[str, Any]]] | list[Dict[str, Any]] | None = None,
+        *,
+        patch_success: float | None = None,
     ) -> EvaluationResult:
         """Backwards compatible wrapper executing sandbox simulations."""
 
@@ -339,10 +380,19 @@ class CompositeWorkflowScorer(ROIScorer):
             tracker, self.history_window
         )
         bottleneck_index = compute_bottleneck_index(getattr(tracker, "timings", {}))
+        rate = (
+            patch_success
+            if patch_success is not None
+            else getattr(
+                tracker,
+                "patch_success",
+                getattr(tracker, "patch_success_rate", PATCH_SUCCESS_RATE),
+            )
+        )
         patchability_score = compute_patchability(
             getattr(tracker, "roi_history", []),
             window=self.history_window,
-            patch_success=PATCH_SUCCESS_RATE,
+            patch_success=rate,
         )
 
         run_id = uuid.uuid4().hex
