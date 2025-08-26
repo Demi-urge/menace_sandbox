@@ -23,7 +23,7 @@ except Exception:  # pragma: no cover - optional dependency
     MenaceDB = None  # type: ignore
     warnings.warn("MenaceDB unavailable, Menace integration disabled.")
 
-from db_router import GLOBAL_ROUTER as router
+from db_router import GLOBAL_ROUTER as router, SHARED_TABLES, queue_insert
 from .scope_utils import Scope, build_scope_clause, apply_scope
 from db_dedup import insert_if_unique, ensure_content_hash_column
 
@@ -406,17 +406,25 @@ class BotDB(EmbeddableDBMixin):
             "toolchain": _serialize_list(rec.toolchain),
             "version": rec.version,
         }
-        bot_id = insert_if_unique(
-            "bots",
-            values,
-            _BOT_HASH_FIELDS,
-            menace_id,
-            conn=self.conn,
-            logger=logger,
-        )
-        self.conn.commit()
+        if "bots" in SHARED_TABLES:
+            payload = dict(values)
+            payload["hash_fields"] = _BOT_HASH_FIELDS
+            queue_insert("bots", payload, menace_id)
+            bot_id = 0
+        else:
+            bot_id = insert_if_unique(
+                "bots",
+                values,
+                _BOT_HASH_FIELDS,
+                menace_id,
+                conn=self.conn,
+                logger=logger,
+            )
+            self.conn.commit()
+
         rec.bid = bot_id
-        self._embed_record_on_write(rec.bid, rec)
+        if bot_id:
+            self._embed_record_on_write(rec.bid, rec)
         if self.menace_db:
             try:
                 self._insert_menace(

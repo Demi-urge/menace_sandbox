@@ -14,7 +14,14 @@ import sqlite3
 from .unified_event_bus import UnifiedEventBus
 from .workflow_graph import WorkflowGraph
 from vector_service import EmbeddableDBMixin
-from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from db_router import (
+    DBRouter,
+    GLOBAL_ROUTER,
+    LOCAL_TABLES,
+    SHARED_TABLES,
+    init_db_router,
+    queue_insert,
+)
 from db_dedup import insert_if_unique, ensure_content_hash_column
 from scope_utils import Scope, build_scope_clause
 try:
@@ -324,20 +331,27 @@ class WorkflowDB(EmbeddableDBMixin):
             "estimated_profit_per_bot": wf.estimated_profit_per_bot,
             "timestamp": wf.timestamp,
         }
-        with self.router.get_connection("workflows", "write") as conn:
-            wf.wid = insert_if_unique(
-                "workflows",
-                values,
-                _WORKFLOW_HASH_FIELDS,
-                menace_id,
-                conn=conn,
-                logger=logger,
-            )
+        if "workflows" in SHARED_TABLES:
+            payload = dict(values)
+            payload["hash_fields"] = _WORKFLOW_HASH_FIELDS
+            queue_insert("workflows", payload, menace_id)
+            wf.wid = 0
+        else:
+            with self.router.get_connection("workflows", "write") as conn:
+                wf.wid = insert_if_unique(
+                    "workflows",
+                    values,
+                    _WORKFLOW_HASH_FIELDS,
+                    menace_id,
+                    conn=conn,
+                    logger=logger,
+                )
 
-        try:
-            self.add_embedding(wf.wid, wf, "workflow", source_id=str(wf.wid))
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.exception("embedding hook failed for %s: %s", wf.wid, exc)
+        if wf.wid:
+            try:
+                self.add_embedding(wf.wid, wf, "workflow", source_id=str(wf.wid))
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.exception("embedding hook failed for %s: %s", wf.wid, exc)
 
         if self.event_bus:
             try:

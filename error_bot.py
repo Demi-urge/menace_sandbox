@@ -18,7 +18,13 @@ from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence, Itera
 
 from .unified_event_bus import EventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
-from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from db_router import (
+    DBRouter,
+    GLOBAL_ROUTER,
+    SHARED_TABLES,
+    init_db_router,
+    queue_insert,
+)
 import asyncio
 import threading
 from jinja2 import Template
@@ -447,14 +453,20 @@ class ErrorDB(EmbeddableDBMixin):
             "ts": datetime.utcnow().isoformat(),
         }
         hash_fields = sorted(["type", "description", "resolution"])
-        err_id = insert_if_unique(
-            "errors",
-            values,
-            hash_fields,
-            menace_id,
-            router=self.router,
-            logger=logger,
-        )
+        if "errors" in SHARED_TABLES:
+            payload = dict(values)
+            payload["hash_fields"] = hash_fields
+            queue_insert("errors", payload, menace_id)
+            err_id = None
+        else:
+            err_id = insert_if_unique(
+                "errors",
+                values,
+                hash_fields,
+                menace_id,
+                conn=self.conn,
+                logger=logger,
+            )
         if err_id is not None:
             try:
                 self.add_embedding(

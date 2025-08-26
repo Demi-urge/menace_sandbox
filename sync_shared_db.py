@@ -74,7 +74,8 @@ def process_queue_file(path: Path, *, conn: sqlite3.Connection, max_retries: int
             data = record.get("data", {})
             menace_id = record.get("source_menace_id", "")
             retries = int(record.get("retries", 0))
-            hash_fields = list(data.keys())
+            hash_fields = record.get("hash_fields") or data.pop("hash_fields", None)
+            hash_fields = list(hash_fields or data.keys())
 
             try:
                 payload = {k: data[k] for k in hash_fields}
