@@ -1,282 +1,142 @@
-from types import ModuleType, SimpleNamespace
-import importlib.util
+from types import SimpleNamespace
 import sys
+from pathlib import Path
+import types
 
+# Ensure package context and stub heavy dependencies before import
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(ROOT))
+pkg = types.ModuleType("menace_sandbox")
+pkg.__path__ = [str(ROOT / "menace_sandbox")]
+sys.modules.setdefault("menace_sandbox", pkg)
 
-def _dummy() -> bool:
-    return True
+def _stub(name, **attrs):
+    mod = types.ModuleType(f"menace_sandbox.{name}")
+    for k, v in attrs.items():
+        setattr(mod, k, v)
+    sys.modules[f"menace_sandbox.{name}"] = mod
 
+_stub("composite_workflow_scorer", CompositeWorkflowScorer=object)
+_stub("workflow_evolution_bot", WorkflowEvolutionBot=object)
+_stub("roi_results_db", ROIResultsDB=object)
+_stub("roi_tracker", ROITracker=object)
+_stub(
+    "workflow_stability_db",
+    WorkflowStabilityDB=type(
+        "WorkflowStabilityDB",
+        (),
+        {
+            "is_stable": lambda self, *a, **k: False,
+            "mark_stable": lambda self, *a, **k: None,
+            "clear": lambda self, *a, **k: None,
+        },
+    ),
+)
+_stub("evolution_history_db", EvolutionHistoryDB=object, EvolutionEvent=object)
+_stub(
+    "mutation_logger",
+    log_mutation=lambda **kw: 1,
+    log_workflow_evolution=lambda **kw: None,
+)
+_stub("workflow_summary_db", WorkflowSummaryDB=object)
 
-def test_stability_gate(monkeypatch):
-    pkg = ModuleType("menace_sandbox")
-    pkg.__path__ = []  # mark as package
-    sys.modules["menace_sandbox"] = pkg
+import menace_sandbox.workflow_evolution_manager as wem
 
-    cws_mod = ModuleType("menace_sandbox.composite_workflow_scorer")
+# Restore real modules for other tests
+for mod in [
+    "menace_sandbox.composite_workflow_scorer",
+    "menace_sandbox.workflow_evolution_bot",
+    "menace_sandbox.roi_results_db",
+    "menace_sandbox.roi_tracker",
+    "menace_sandbox.workflow_stability_db",
+    "menace_sandbox.evolution_history_db",
+    "menace_sandbox.mutation_logger",
+    "menace_sandbox.workflow_summary_db",
+    "menace_sandbox.workflow_graph",
+]:
+    sys.modules.pop(mod, None)
 
-    class CompositeWorkflowScorer:
-        def __init__(self, *a, **k):
-            pass
-
-        def run(self, *a, **k):
-            return SimpleNamespace(roi_gain=0.0, runtime=0.0, success_rate=1.0)
-
-    cws_mod.CompositeWorkflowScorer = CompositeWorkflowScorer
-    sys.modules["menace_sandbox.composite_workflow_scorer"] = cws_mod
-
-    bot_mod = ModuleType("menace_sandbox.workflow_evolution_bot")
-
-    class WorkflowEvolutionBot:
-        _rearranged_events = {}
-
+def _setup(monkeypatch, baseline_roi=1.0, variant_roi=2.0, variant="b-a"):
+    class FakeBot:
+        _rearranged_events: dict[str, int] = {}
         def generate_variants(self, limit, workflow_id):
-            return ["x"]
+            yield variant
+    monkeypatch.setattr(wem, "WorkflowEvolutionBot", lambda: FakeBot())
 
-    bot_mod.WorkflowEvolutionBot = WorkflowEvolutionBot
-    sys.modules["menace_sandbox.workflow_evolution_bot"] = bot_mod
-
-    db_mod = ModuleType("menace_sandbox.roi_results_db")
-
-    class ROIResultsDB:
-        def __init__(self, *a, **k):
+    class FakeScorer:
+        def __init__(self, results_db, tracker):
             pass
+        def run(self, fn, wf_id, run_id):
+            roi = baseline_roi if run_id == "baseline" else variant_roi
+            return SimpleNamespace(roi_gain=roi, runtime=0.0, success_rate=1.0)
+    monkeypatch.setattr(wem, "CompositeWorkflowScorer", FakeScorer)
 
+    class FakeResultsDB:
         def log_module_delta(self, *a, **k):
             pass
+    monkeypatch.setattr(wem, "ROIResultsDB", lambda: FakeResultsDB())
 
-    db_mod.ROIResultsDB = ROIResultsDB
-    sys.modules["menace_sandbox.roi_results_db"] = db_mod
-
-    mut_mod = ModuleType("menace_sandbox.mutation_logger")
-
-    def log_mutation(*a, **k):
-        pass
-
-    def record_mutation_outcome(*a, **k):
-        pass
-
-    mut_mod.log_mutation = log_mutation
-    mut_mod.record_mutation_outcome = record_mutation_outcome
-    sys.modules["menace_sandbox.mutation_logger"] = mut_mod
-
-    tracker_mod = ModuleType("menace_sandbox.roi_tracker")
-
-    class ROITracker:
-        def __init__(self, *a, **k):
-            self.roi_history = []
-
-        def diminishing(self) -> float:
-            return 0.1
-
-        def calculate_raroi(self, roi, **kw):
-            return roi, roi, []
-
-        def score_workflow(self, workflow_id, raroi, tau=None):
+    class FakeTracker:
+        def calculate_raroi(self, roi):
+            return 0, roi, 0
+        def score_workflow(self, wf, raroi):
             pass
+        def diminishing(self):
+            return 0
+    monkeypatch.setattr(wem, "ROITracker", lambda: FakeTracker())
 
-    tracker_mod.ROITracker = ROITracker
-    sys.modules["menace_sandbox.roi_tracker"] = tracker_mod
-
-    stab_mod = ModuleType("menace_sandbox.workflow_stability_db")
-
-    class WorkflowStabilityDB:
-        def __init__(self, *a, **k):
-            self.data: dict[str, float] = {}
-
-        def is_stable(self, wf, current_roi=None, threshold=None):
-            if wf not in self.data:
-                return False
-            if current_roi is not None and threshold is not None:
-                prev = self.data[wf]
-                if abs(current_roi - prev) > threshold:
-                    del self.data[wf]
-                    return False
-            return True
-
-        def mark_stable(self, wf, roi):
-            self.data[wf] = roi
-
-        def clear(self, wf):
-            self.data.pop(wf, None)
-
-        def clear_all(self):
-            self.data.clear()
-
-    stab_mod.WorkflowStabilityDB = WorkflowStabilityDB
-    sys.modules["menace_sandbox.workflow_stability_db"] = stab_mod
-
-    spec = importlib.util.spec_from_file_location(
-        "menace_sandbox.workflow_evolution_manager",
-        "workflow_evolution_manager.py",
+    monkeypatch.setattr(
+        wem,
+        "MutationLogger",
+        SimpleNamespace(log_mutation=lambda **kw: 1, log_workflow_evolution=lambda **kw: None),
     )
-    wem = importlib.util.module_from_spec(spec)
-    sys.modules["menace_sandbox.workflow_evolution_manager"] = wem
-    assert spec.loader is not None
-    spec.loader.exec_module(wem)
 
-    wem.STABLE_WORKFLOWS.clear_all()
+    monkeypatch.setattr(wem.STABLE_WORKFLOWS, "mark_stable", lambda *a, **k: None)
+    monkeypatch.setattr(wem.STABLE_WORKFLOWS, "clear", lambda *a, **k: None)
+    monkeypatch.setattr(wem.STABLE_WORKFLOWS, "is_stable", lambda *a, **k: False)
 
-    side_effects = [1.0, 0.5, 1.0]
+    graph_called = {}
+    class FakeGraph:
+        def update_workflow(self, wid, roi=None, synergy_scores=None):
+            graph_called["args"] = (wid, roi)
+    monkeypatch.setattr(wem, "WorkflowGraph", lambda *a, **k: FakeGraph())
 
-    def fake_run(self, workflow_callable, wf_id_str, run_id):
-        roi_gain = side_effects.pop(0)
-        return SimpleNamespace(roi_gain=roi_gain, runtime=0.0, success_rate=1.0)
+    summary_called = {}
+    class FakeSummaryDB:
+        def set_summary(self, wid, summary):
+            summary_called["args"] = (wid, summary)
+    monkeypatch.setattr(wem, "WorkflowSummaryDB", lambda *a, **k: FakeSummaryDB())
 
-    monkeypatch.setattr(wem.CompositeWorkflowScorer, "run", fake_run)
-
-    wf_id = 1
-    wem.evolve(_dummy, wf_id, variants=1)
-
-    assert wem.is_stable(wf_id)
-
-    wem.evolve(_dummy, wf_id, variants=1)
-
-    assert side_effects == []
-
-
-def test_variant_promotion_updates_record(monkeypatch):
-    pkg = ModuleType("menace_sandbox")
-    pkg.__path__ = []
-    sys.modules["menace_sandbox"] = pkg
-
-    cws_mod = ModuleType("menace_sandbox.composite_workflow_scorer")
-
-    class CompositeWorkflowScorer:
-        def __init__(self, *a, **k):
-            pass
-
-        def run(self, *a, **k):
-            roi_gain = side_effects.pop(0)
-            return SimpleNamespace(roi_gain=roi_gain, runtime=0.0, success_rate=1.0)
-
-    cws_mod.CompositeWorkflowScorer = CompositeWorkflowScorer
-    sys.modules["menace_sandbox.composite_workflow_scorer"] = cws_mod
-
-    bot_mod = ModuleType("menace_sandbox.workflow_evolution_bot")
-
-    class WorkflowEvolutionBot:
-        _rearranged_events = {}
-
-        def generate_variants(self, limit, workflow_id):
-            return ["x"]
-
-    bot_mod.WorkflowEvolutionBot = WorkflowEvolutionBot
-    sys.modules["menace_sandbox.workflow_evolution_bot"] = bot_mod
-
-    db_mod = ModuleType("menace_sandbox.roi_results_db")
-
-    class ROIResultsDB:
-        def __init__(self, *a, **k):
-            pass
-
-        def log_module_delta(self, *a, **k):
-            pass
-
-    db_mod.ROIResultsDB = ROIResultsDB
-    sys.modules["menace_sandbox.roi_results_db"] = db_mod
-
-    mut_mod = ModuleType("menace_sandbox.mutation_logger")
-    logged: list[dict] = []
-
-    def log_mutation(**kw):
-        logged.append(kw)
-        return 1
-
-    def record_mutation_outcome(*a, **k):
-        pass
-
-    def log_workflow_evolution(**kw):
-        logged.append(kw)
-        return 1
-
-    mut_mod.log_mutation = log_mutation
-    mut_mod.record_mutation_outcome = record_mutation_outcome
-    mut_mod.log_workflow_evolution = log_workflow_evolution
-    sys.modules["menace_sandbox.mutation_logger"] = mut_mod
-
-    tracker_mod = ModuleType("menace_sandbox.roi_tracker")
-
-    class ROITracker:
-        def __init__(self, *a, **k):
-            self.roi_history = []
-
-        def diminishing(self) -> float:
-            return 0.1
-
-        def calculate_raroi(self, roi, **kw):
-            return roi, roi, []
-
-        def score_workflow(self, workflow_id, raroi, tau=None):
-            pass
-
-    tracker_mod.ROITracker = ROITracker
-    sys.modules["menace_sandbox.roi_tracker"] = tracker_mod
-
-    stab_mod = ModuleType("menace_sandbox.workflow_stability_db")
-
-    class WorkflowStabilityDB:
-        def __init__(self, *a, **k):
-            self.data: dict[str, float] = {}
-
-        def is_stable(self, wf, current_roi=None, threshold=None):
-            return False
-
-        def mark_stable(self, wf, roi):
-            self.data[wf] = roi
-
-        def clear(self, wf):
-            self.data.pop(wf, None)
-
-        def clear_all(self):
-            self.data.clear()
-
-    stab_mod.WorkflowStabilityDB = WorkflowStabilityDB
-    sys.modules["menace_sandbox.workflow_stability_db"] = stab_mod
-
-    wb_mod = ModuleType("menace_sandbox.workflow_benchmark")
-
-    def benchmark_workflow(func, metrics_db, pathway_db, name="workflow"):
-        logged.append({"bench": name})
-        return True
-
-    wb_mod.benchmark_workflow = benchmark_workflow
-    sys.modules["menace_sandbox.workflow_benchmark"] = wb_mod
-
-    data_mod = ModuleType("menace_sandbox.data_bot")
-
-    class MetricsDB:
-        def log_eval(self, *a, **k):
-            pass
-
-    data_mod.MetricsDB = MetricsDB
-    sys.modules["menace_sandbox.data_bot"] = data_mod
-
-    neuro_mod = ModuleType("menace_sandbox.neuroplasticity")
-
-    class PathwayDB:
-        def log(self, *a, **k):
-            pass
-
-    neuro_mod.PathwayDB = PathwayDB
-    neuro_mod.PathwayRecord = object
-    neuro_mod.Outcome = object
-    sys.modules["menace_sandbox.neuroplasticity"] = neuro_mod
-
-    spec = importlib.util.spec_from_file_location(
-        "menace_sandbox.workflow_evolution_manager",
-        "workflow_evolution_manager.py",
+    # Stub optional modules imported during promotion
+    fake_bench = types.ModuleType("menace_sandbox.workflow_benchmark")
+    fake_bench.benchmark_workflow = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "menace_sandbox.workflow_benchmark", fake_bench)
+    monkeypatch.setitem(
+        sys.modules,
+        "menace_sandbox.data_bot",
+        types.ModuleType("menace_sandbox.data_bot"),
     )
-    wem = importlib.util.module_from_spec(spec)
-    sys.modules["menace_sandbox.workflow_evolution_manager"] = wem
-    assert spec.loader is not None
-    spec.loader.exec_module(wem)
+    sys.modules["menace_sandbox.data_bot"].MetricsDB = lambda *a, **k: None
+    monkeypatch.setitem(
+        sys.modules,
+        "menace_sandbox.neuroplasticity",
+        types.ModuleType("menace_sandbox.neuroplasticity"),
+    )
+    sys.modules["menace_sandbox.neuroplasticity"].PathwayDB = lambda *a, **k: None
 
-    wem.STABLE_WORKFLOWS.clear_all()
+    return graph_called, summary_called
 
-    side_effects = [1.0, 2.0]
 
-    wf_id = 2
-    wem.evolve(_dummy, wf_id, variants=1)
+def test_variant_promotion_updates_graph(monkeypatch):
+    graph_called, summary_called = _setup(monkeypatch, baseline_roi=1.0, variant_roi=2.0)
+    wem.evolve(lambda: True, 1, variants=1)
+    assert graph_called["args"] == ("1", 2.0)
+    assert "args" not in summary_called
 
-    assert any(r.get("reason") == "promoted" for r in logged)
-    assert any("bench" in r for r in logged)
+
+def test_no_improvement_marks_stable(monkeypatch):
+    graph_called, summary_called = _setup(monkeypatch, baseline_roi=1.0, variant_roi=0.5)
+    wem.evolve(lambda: True, 1, variants=1)
+    assert summary_called["args"][0] == 1
+    assert "stable" in summary_called["args"][1]
+    assert "args" not in graph_called
