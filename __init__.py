@@ -14,7 +14,7 @@ from .truth_adapter import TruthAdapter
 from .foresight_tracker import ForesightTracker
 from .upgrade_forecaster import UpgradeForecaster
 from .workflow_synthesizer import WorkflowSynthesizer
-from .composite_workflow_scorer import CompositeWorkflowScorer
+CompositeWorkflowScorer = None  # type: ignore
 try:  # pragma: no cover - optional heavy dependency
     from .intent_clusterer import IntentClusterer
 except Exception:  # pragma: no cover - gracefully degrade
