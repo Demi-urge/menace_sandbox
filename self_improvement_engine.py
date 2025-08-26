@@ -56,18 +56,15 @@ from .data_bot import MetricsDB
 from .roi_results_db import ROIResultsDB
 from .workflow_scorer_core import EvaluationResult
 from .workflow_evolution_bot import WorkflowEvolutionBot
-try:  # pragma: no cover - optional dependency
-    from .workflow_evolution_manager import _update_ema
-except Exception:  # pragma: no cover - fallback for tests
-    def _update_ema(*_: object, **__: object) -> None:
-        """Fallback no-op when workflow evolution manager is unavailable."""
-        return None
+from .workflow_evolution_manager import _update_ema
+from .workflow_stability_db import WorkflowStabilityDB
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB, WorkflowRecord
 except Exception:  # pragma: no cover - best effort fallback
     WorkflowDB = WorkflowRecord = None  # type: ignore
 
 router = GLOBAL_ROUTER or init_db_router("self_improvement_engine")
+STABLE_WORKFLOWS = WorkflowStabilityDB()
 neuro_stub = sys.modules.get("neurosales")
 if neuro_stub:
     if not hasattr(neuro_stub, "get_recent_messages"):
@@ -5150,10 +5147,28 @@ class SelfImprovementEngine:
                 best_name = name
                 best_result = res
         delta = best_result.roi_gain - baseline_roi
+        stable = False
         try:
-            _update_ema(str(wf_id), delta)
+            stable = _update_ema(str(wf_id), delta)
         except Exception:
             pass
+        if stable:
+            try:
+                STABLE_WORKFLOWS.mark_stable(str(wf_id), baseline_roi)
+            except Exception:
+                self.logger.exception(
+                    "workflow stability mark failed",
+                    extra=log_record(workflow_id=wf_id),
+                )
+            if self.meta_logger and hasattr(self.meta_logger, "audit"):
+                try:
+                    self.meta_logger.audit.record(
+                        {"workflow_id": wf_id, "roi_delta": delta, "status": "stable"}
+                    )
+                except Exception:
+                    self.logger.exception("workflow variant meta logging failed")
+            return "stable"
+
         status = "stable"
         if best_name != "baseline" and best_result.roi_gain > threshold:
             status = "promoted"
