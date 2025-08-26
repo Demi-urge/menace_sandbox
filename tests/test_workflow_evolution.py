@@ -64,6 +64,53 @@ def _load_manager(variant_seq="mod_a", variant_roi=1.5):
     mut_mod.record_mutation_outcome = record_mutation_outcome
     sys.modules["menace_sandbox.mutation_logger"] = mut_mod
 
+    # Stub ROITracker and stability DB
+    tracker_mod = ModuleType("menace_sandbox.roi_tracker")
+
+    class ROITracker:
+        def __init__(self, *a, **k):
+            self.roi_history = []
+
+        def diminishing(self) -> float:
+            return 0.05
+
+        def calculate_raroi(self, roi, **kw):  # type: ignore[override]
+            return roi, roi, []
+
+        def score_workflow(self, workflow_id, raroi, tau=None):
+            pass
+
+    tracker_mod.ROITracker = ROITracker
+    sys.modules["menace_sandbox.roi_tracker"] = tracker_mod
+
+    stab_mod = ModuleType("menace_sandbox.workflow_stability_db")
+
+    class WorkflowStabilityDB:
+        def __init__(self, *a, **k):
+            self.data: dict[str, float] = {}
+
+        def is_stable(self, wf, current_roi=None, threshold=None):
+            if wf not in self.data:
+                return False
+            if current_roi is not None and threshold is not None:
+                prev = self.data[wf]
+                if abs(current_roi - prev) > threshold:
+                    del self.data[wf]
+                    return False
+            return True
+
+        def mark_stable(self, wf, roi):
+            self.data[wf] = roi
+
+        def clear(self, wf):
+            self.data.pop(wf, None)
+
+        def clear_all(self):
+            self.data.clear()
+
+    stab_mod.WorkflowStabilityDB = WorkflowStabilityDB
+    sys.modules["menace_sandbox.workflow_stability_db"] = stab_mod
+
     # Load the workflow_evolution_manager module under the package namespace
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.workflow_evolution_manager", "workflow_evolution_manager.py"
@@ -72,8 +119,7 @@ def _load_manager(variant_seq="mod_a", variant_roi=1.5):
     sys.modules["menace_sandbox.workflow_evolution_manager"] = wem
     assert spec.loader is not None
     spec.loader.exec_module(wem)
-    wem._roi_delta_ema.clear()
-    wem._gating_counts.clear()
+    wem.STABLE_WORKFLOWS.clear_all()
     return wem, db_calls, mut_calls
 
 
@@ -85,7 +131,10 @@ def test_variant_generation_and_benchmarking():
 
     wem, db_calls, _ = _load_manager(variant_seq="mod_a", variant_roi=1.5)
 
-    baseline = lambda: run_log.append("baseline") or True
+    def baseline() -> bool:
+        run_log.append("baseline")
+        return True
+
     wem.evolve(baseline, workflow_id=1, variants=1)
 
     assert "baseline" in run_log
@@ -104,7 +153,10 @@ def test_promotion_logic():
 
     wem, _, mut_calls = _load_manager(variant_seq="mod_b", variant_roi=2.0)
 
-    baseline = lambda: run_log.append("baseline") or True
+    def baseline() -> bool:
+        run_log.append("baseline")
+        return True
+
     promoted = wem.evolve(baseline, workflow_id=1, variants=1)
 
     assert any(c[0] == "log" and c[1]["reason"] == "promoted" for c in mut_calls)

@@ -94,6 +94,52 @@ def evolution_setup():
     bot_mod.WorkflowEvolutionBot = WorkflowEvolutionBot
     sys.modules["menace_sandbox.workflow_evolution_bot"] = bot_mod
 
+    tracker_mod = ModuleType("menace_sandbox.roi_tracker")
+
+    class ROITracker:
+        def __init__(self, *a, **k):
+            self.roi_history = []
+
+        def diminishing(self) -> float:
+            return 0.05
+
+        def calculate_raroi(self, roi, **kw):
+            return roi, roi, []
+
+        def score_workflow(self, workflow_id, raroi, tau=None):
+            pass
+
+    tracker_mod.ROITracker = ROITracker
+    sys.modules["menace_sandbox.roi_tracker"] = tracker_mod
+
+    stab_mod = ModuleType("menace_sandbox.workflow_stability_db")
+
+    class WorkflowStabilityDB:
+        def __init__(self, *a, **k):
+            self.data: dict[str, float] = {}
+
+        def is_stable(self, wf, current_roi=None, threshold=None):
+            if wf not in self.data:
+                return False
+            if current_roi is not None and threshold is not None:
+                prev = self.data[wf]
+                if abs(current_roi - prev) > threshold:
+                    del self.data[wf]
+                    return False
+            return True
+
+        def mark_stable(self, wf, roi):
+            self.data[wf] = roi
+
+        def clear(self, wf):
+            self.data.pop(wf, None)
+
+        def clear_all(self):
+            self.data.clear()
+
+    stab_mod.WorkflowStabilityDB = WorkflowStabilityDB
+    sys.modules["menace_sandbox.workflow_stability_db"] = stab_mod
+
     # finally load workflow evolution manager --------------------------
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.workflow_evolution_manager",
@@ -103,6 +149,8 @@ def evolution_setup():
     sys.modules["menace_sandbox.workflow_evolution_manager"] = wem
     assert spec.loader is not None
     spec.loader.exec_module(wem)
+
+    wem.STABLE_WORKFLOWS.clear_all()
 
     return SimpleNamespace(
         module=wem,
@@ -168,22 +216,18 @@ def test_gating_prevents_further_evolution(evolution_setup, baseline_workflow):
     wem = evolution_setup.module
     scorer = evolution_setup.scorer
 
-    wem._roi_delta_ema.clear()
-    wem._gating_counts.clear()
-    wem.GATING_THRESHOLD = 0.2
-    wem.GATING_CONSECUTIVE = 2
-
-    scorer.roi_values = [1.0, 1.1, 1.0, 1.1]
+    scorer.roi_values = [1.0, 1.02]
     scorer.run_ids.clear()
 
-    # two evolutions with low ROI deltas to trigger gating
+    # First evolution marks workflow stable
     wem.evolve(baseline_workflow, workflow_id=3, variants=1)
-    wem.evolve(baseline_workflow, workflow_id=3, variants=1)
-
     assert wem.is_stable(3)
-    assert len(scorer.run_ids) == 4  # 2 runs * (baseline+variant)
+    assert scorer.run_ids[0] == "baseline"
+    assert len(scorer.run_ids) == 2
 
-    # Third attempt should be gated and not call scorer again
+    # Second attempt should skip variant benchmarking
+    scorer.roi_values = [1.0]
+    scorer.run_ids.clear()
     result = wem.evolve(baseline_workflow, workflow_id=3, variants=1)
     assert result is baseline_workflow
-    assert len(scorer.run_ids) == 4
+    assert scorer.run_ids == ["baseline"]
