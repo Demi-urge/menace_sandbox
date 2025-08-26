@@ -138,6 +138,8 @@ def test_run_records_metrics_and_ids(monkeypatch, tmp_path):
     assert kwargs["workflow_id"] == wf_id
     assert kwargs["run_id"] == run_id
     assert set(kwargs["module_deltas"].keys()) == {"mod1", "mod2"}
+    assert kwargs["module_deltas"]["mod1"]["success_rate"] == pytest.approx(1.0)
+    assert kwargs["module_deltas"]["mod2"]["success_rate"] == pytest.approx(0.0)
     assert result.roi_gain == pytest.approx(3.0)
     assert results_db.log_module_attribution.call_count == 2
     expected_patch = (1.0 / np.std([1.0, 2.0])) * 0.25
@@ -187,6 +189,8 @@ def test_score_workflow_persists_results_and_ids(tmp_path):
     assert kwargs["workflow_id"] == "wf2"
     assert kwargs["run_id"] == "rid123"
     assert set(kwargs["module_deltas"].keys()) == {"mod_a", "mod_b"}
+    assert kwargs["module_deltas"]["mod_a"]["success_rate"] == pytest.approx(1.0)
+    assert kwargs["module_deltas"]["mod_b"]["success_rate"] == pytest.approx(0.0)
     assert tracker.roi_history  # tracker.update was invoked
 
 
@@ -300,4 +304,6 @@ def test_evaluate_logs_run_and_workflow(monkeypatch, tmp_path):
     assert kwargs["workflow_id"] == "wf3"
     assert kwargs["run_id"]
     assert set(kwargs["module_deltas"].keys()) == {"m1", "m2"}
+    assert kwargs["module_deltas"]["m1"]["success_rate"] == pytest.approx(1.0)
+    assert kwargs["module_deltas"]["m2"]["success_rate"] == pytest.approx(0.0)
     assert result.success_rate == pytest.approx(0.5)

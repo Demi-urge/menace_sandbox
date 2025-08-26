@@ -46,7 +46,10 @@ def test_roi_results_db_add_and_report(tmp_path):
         workflow_synergy_score=0.0,
         bottleneck_index=0.0,
         patchability_score=0.0,
-        module_deltas={"alpha": {"roi_delta": 0.1}, "beta": {"roi_delta": -0.1}},
+        module_deltas={
+            "alpha": {"roi_delta": 0.1, "success_rate": 0.5},
+            "beta": {"roi_delta": -0.1, "success_rate": 1.0},
+        },
         failure_reason=None,
     )
     db.log_result(
@@ -58,7 +61,10 @@ def test_roi_results_db_add_and_report(tmp_path):
         workflow_synergy_score=0.0,
         bottleneck_index=0.0,
         patchability_score=0.0,
-        module_deltas={"alpha": {"roi_delta": 0.2}, "beta": {"roi_delta": -0.2}},
+        module_deltas={
+            "alpha": {"roi_delta": 0.2, "success_rate": 0.25},
+            "beta": {"roi_delta": -0.2, "success_rate": 0.5},
+        },
         failure_reason="alpha: boom",
     )
 
@@ -69,9 +75,12 @@ def test_roi_results_db_add_and_report(tmp_path):
     assert run == "r2"
     deltas = json.loads(deltas_json)
     assert deltas["alpha"]["roi_delta"] == pytest.approx(0.2)
+    assert deltas["alpha"]["success_rate"] == pytest.approx(0.25)
     assert failure_reason == "alpha: boom"
 
     report = module_impact_report("wf", "r2", db_path)
-    assert report["improved"] == {"alpha": pytest.approx(0.1)}
-    assert report["regressed"] == {"beta": pytest.approx(-0.1)}
+    assert report["improved"]["alpha"]["roi_delta"] == pytest.approx(0.1)
+    assert report["improved"]["alpha"]["success_rate"] == pytest.approx(0.25)
+    assert report["regressed"]["beta"]["roi_delta"] == pytest.approx(-0.1)
+    assert report["regressed"]["beta"]["success_rate"] == pytest.approx(0.5)
 

@@ -91,6 +91,7 @@ class ROIResultsDB:
                 run_id TEXT,
                 module TEXT,
                 runtime REAL,
+                success_rate REAL,
                 roi_delta REAL,
                 roi_delta_ma REAL DEFAULT 0.0,
                 roi_delta_var REAL DEFAULT 0.0,
@@ -107,6 +108,10 @@ class ROIResultsDB:
         existing = {
             r[1] for r in cur.execute("PRAGMA table_info(workflow_module_deltas)").fetchall()
         }
+        if "success_rate" not in existing:
+            cur.execute(
+                "ALTER TABLE workflow_module_deltas ADD COLUMN success_rate REAL DEFAULT 0.0"
+            )
         if "roi_delta_ma" not in existing:
             cur.execute(
                 "ALTER TABLE workflow_module_deltas ADD COLUMN roi_delta_ma REAL DEFAULT 0.0"
@@ -325,7 +330,7 @@ class ROIResultsDB:
         if module is None:
             cur.execute(
                 """
-                SELECT module, run_id, roi_delta, roi_delta_ma, roi_delta_var
+                SELECT module, run_id, success_rate, roi_delta, roi_delta_ma, roi_delta_var
                 FROM workflow_module_deltas
                 WHERE workflow_id=?
                 ORDER BY ts
@@ -335,7 +340,7 @@ class ROIResultsDB:
         else:
             cur.execute(
                 """
-                SELECT module, run_id, roi_delta, roi_delta_ma, roi_delta_var
+                SELECT module, run_id, success_rate, roi_delta, roi_delta_ma, roi_delta_var
                 FROM workflow_module_deltas
                 WHERE workflow_id=? AND module=?
                 ORDER BY ts
@@ -344,10 +349,11 @@ class ROIResultsDB:
             )
         rows = cur.fetchall()
         trajectories: Dict[str, List[Dict[str, float]]] = {}
-        for mod, r_id, delta, ma, var in rows:
+        for mod, r_id, sr, delta, ma, var in rows:
             trajectories.setdefault(str(mod), []).append(
                 {
                     "run_id": str(r_id),
+                    "success_rate": float(sr),
                     "roi_delta": float(delta),
                     "moving_avg": float(ma),
                     "variance": float(var),
@@ -373,15 +379,17 @@ class ROIResultsDB:
         for r_id, deltas_json in rows:
             deltas = json.loads(deltas_json or "{}")
             if r_id == run_id:
-                improved: Dict[str, float] = {}
-                regressed: Dict[str, float] = {}
+                improved: Dict[str, Dict[str, float]] = {}
+                regressed: Dict[str, Dict[str, float]] = {}
                 for mod, metrics in deltas.items():
                     curr = float(metrics.get("roi_delta", 0.0))
+                    sr = float(metrics.get("success_rate", 0.0))
                     diff = curr - prev.get(mod, 0.0)
+                    entry = {"roi_delta": diff, "success_rate": sr}
                     if diff >= 0:
-                        improved[mod] = diff
+                        improved[mod] = entry
                     else:
-                        regressed[mod] = diff
+                        regressed[mod] = entry
                 return {"improved": improved, "regressed": regressed}
             for mod, metrics in deltas.items():
                 prev[mod] = float(metrics.get("roi_delta", 0.0))

@@ -5,6 +5,9 @@ import sys
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
+# ensure real roi_tracker module is imported
+sys.modules.pop("menace_sandbox.roi_tracker", None)
+
 sys.modules.setdefault("menace_sandbox.self_test_service", types.ModuleType("self_test_service"))
 sys.modules.setdefault("menace_sandbox.error_bot", types.ModuleType("error_bot"))
 sys.modules.setdefault(
@@ -64,6 +67,9 @@ class DummyTracker:
                 self.module_deltas.setdefault(m, []).append(delta)
         return None, [], False, False
 
+    def cache_correlations(self, pairs):
+        pass
+
 
 def test_module_deltas_persistence(tmp_path, monkeypatch):
     tracker = DummyTracker()
@@ -104,15 +110,15 @@ def test_module_deltas_persistence(tmp_path, monkeypatch):
     )
     rows = conn.execute(
         (
-            "SELECT module, runtime, roi_delta, roi_delta_ma, roi_delta_var "
+            "SELECT module, runtime, success_rate, roi_delta, roi_delta_ma, roi_delta_var "
             "FROM workflow_module_deltas "
             "WHERE workflow_id=? AND run_id=? ORDER BY module"
         ),
         ("wf", run_id),
     ).fetchall()
     assert rows == [
-        ("alpha", 1.0, 0.3, 0.3, 0.0),
-        ("beta", 2.0, -0.1, -0.1, 0.0),
+        ("alpha", 1.0, 1.0, 0.3, 0.3, 0.0),
+        ("beta", 2.0, 1.0, -0.1, -0.1, 0.0),
     ]
 
     deltas = load_workflow_module_deltas("wf", run_id, db_path)
@@ -124,6 +130,7 @@ def test_module_deltas_persistence(tmp_path, monkeypatch):
 
     db = ROIResultsDB(db_path)
     traj = db.fetch_module_trajectories("wf")
+    assert traj["alpha"][0]["success_rate"] == 1.0
     assert traj["alpha"][0]["roi_delta"] == 0.3
     assert traj["alpha"][0]["moving_avg"] == 0.3
     assert traj["alpha"][0]["variance"] == 0.0

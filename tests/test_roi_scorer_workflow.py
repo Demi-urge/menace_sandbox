@@ -130,7 +130,9 @@ def test_composite_scorer_end_to_end(tmp_path, monkeypatch):
     row = results[0]
     assert row.workflow_id == "wf1" and row.run_id == run_id
     assert row.module_deltas["mod_a"]["roi_delta"] == pytest.approx(0.1875)
+    assert row.module_deltas["mod_a"]["success_rate"] == pytest.approx(1.0)
     assert row.module_deltas["mod_b"]["roi_delta"] == pytest.approx(0.25)
+    assert row.module_deltas["mod_b"]["success_rate"] == pytest.approx(1.0)
 
     attrib = results_db.fetch_module_attribution()
     assert attrib["mod_a"]["roi_delta"] == pytest.approx(0.1875)

@@ -26,6 +26,9 @@ def test_sample_workflow_scoring(tmp_path):
                 for m in modules:
                     self.module_deltas.setdefault(m, []).append(delta)
 
+        def cache_correlations(self, pairs):
+            pass
+
     sys.modules.setdefault(
         "menace_sandbox.roi_tracker", types.SimpleNamespace(ROITracker=StubTracker)
     )
@@ -65,9 +68,10 @@ def test_sample_workflow_scoring(tmp_path):
     assert cur.fetchone() == (workflow_id, run_id)
 
     cur.execute(
-        "SELECT module FROM workflow_module_deltas WHERE workflow_id=? AND run_id=?",
+        "SELECT module, success_rate FROM workflow_module_deltas WHERE workflow_id=? AND run_id=?",
         (workflow_id, run_id),
     )
-    modules = {row[0] for row in cur.fetchall()}
-    assert {"step1", "step2"}.issubset(modules)
+    sr_map = {m: sr for m, sr in cur.fetchall()}
+    assert sr_map["step1"] == pytest.approx(1.0)
+    assert sr_map["step2"] == pytest.approx(1.0)
 
