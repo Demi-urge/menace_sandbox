@@ -350,7 +350,8 @@ def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
         logger.info(msg)
 
         append_record(table, record, menace_id, queue_dir=queue_dir)
-        log_db_access("write", table, 1, menace_id, log_path=_audit_log_path)
+        conn = GLOBAL_ROUTER.shared_conn if GLOBAL_ROUTER else None
+        log_db_access("write", table, 1, menace_id, db_conn=conn)
 
         _record_audit(entry)
     elif table in LOCAL_TABLES:
@@ -440,7 +441,13 @@ class LoggedCursor(sqlite3.Cursor):
         return "unknown"
 
     def _log(self, action: str, table: str, row_count: int) -> None:
-        log_db_access(action, table, row_count, self.menace_id, log_path=_audit_log_path)
+        log_db_access(
+            action,
+            table,
+            row_count,
+            self.menace_id,
+            db_conn=self.connection,
+        )
 
     def execute(self, sql: str, parameters: Iterable | None = None):  # type: ignore[override]
         super().execute(sql, parameters or ())
@@ -544,15 +551,15 @@ class DBRouter:
             else local_db_path
         )
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        self.local_conn: LoggedConnection = sqlite3.connect(  # type: ignore[assignment]
+        self.local_conn: LoggedConnection = sqlite3.connect(  # noqa: SQL001
             local_path, check_same_thread=False, factory=LoggedConnection
-        )  # noqa: SQL001
+        )  # type: ignore[assignment]
         self.local_conn.menace_id = menace_id
 
         os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
-        self.shared_conn: LoggedConnection = sqlite3.connect(  # type: ignore[assignment]
+        self.shared_conn: LoggedConnection = sqlite3.connect(  # noqa: SQL001
             shared_db_path, check_same_thread=False, factory=LoggedConnection
-        )  # noqa: SQL001
+        )  # type: ignore[assignment]
         self.shared_conn.menace_id = menace_id
 
         # ``threading.Lock`` protects against concurrent access when deciding
@@ -702,7 +709,13 @@ class DBRouter:
         from db_write_queue import append_record, queue_insert as queue_insert_record
         append_record(table_name, values, self.menace_id)
         queue_insert_record(table_name, values, hash_fields)
-        log_db_access("write", table_name, 1, self.menace_id, log_path=_audit_log_path)
+        log_db_access(
+            "write",
+            table_name,
+            1,
+            self.menace_id,
+            db_conn=self.shared_conn,
+        )
 
     # ------------------------------------------------------------------
     def close(self) -> None:
