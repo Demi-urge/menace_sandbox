@@ -63,9 +63,8 @@ def test_registry_runs_multiple(tmp_path, monkeypatch):
     reg.register_engine("alpha", eng2)
     monkeypatch.setattr(eng1, "_should_trigger", lambda: True)
     monkeypatch.setattr(eng2, "_should_trigger", lambda: True)
-    res, wf = reg.run_all_cycles()
+    res = reg.run_all_cycles()
     assert set(res) == {"menace", "alpha"}
-    assert wf == {}
     assert isinstance(res["menace"], mp.AutomationResult)
     assert pipe1.calls and pipe2.calls
 
