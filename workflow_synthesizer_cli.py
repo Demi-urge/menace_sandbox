@@ -5,7 +5,9 @@ Workflows are ranked by combining synergy graph and intent scores using
 configurable weights that are normalised by workflow length. Generated
 specifications can be written to the local sandbox and existing ones listed
 via the ``--list`` flag.  The ``--auto-evaluate`` option executes each
-candidate workflow and records whether it succeeds or fails."""
+candidate workflow and records whether it succeeds or fails. The
+``--min-score`` option prunes exploration when partial scores drop below the
+given threshold."""
 
 from __future__ import annotations
 
@@ -50,6 +52,7 @@ def run(args: argparse.Namespace) -> int:
         max_depth=getattr(args, "max_depth", None),
         synergy_weight=getattr(args, "synergy_weight", 1.0),
         intent_weight=getattr(args, "intent_weight", 1.0),
+        min_score=getattr(args, "min_score", float("-inf")),
         auto_evaluate=getattr(args, "auto_evaluate", False),
     )
     details = getattr(synth, "workflow_score_details", [])
@@ -197,6 +200,15 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
         type=float,
         default=1.0,
         help="Weight applied to intent scores when ranking workflows",
+    )
+    parser.add_argument(
+        "--min-score",
+        type=float,
+        default=float("-inf"),
+        help=(
+            "Minimum partial score required to continue exploring a workflow; "
+            "extensions falling below this threshold are pruned"
+        ),
     )
     parser.add_argument(
         "--evaluate",

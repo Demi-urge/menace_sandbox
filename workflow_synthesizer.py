@@ -774,6 +774,7 @@ class WorkflowSynthesizer:
         max_depth: int | None = None,
         synergy_weight: float = 1.0,
         intent_weight: float = 1.0,
+        min_score: float = float("-inf"),
         auto_evaluate: bool = False,
     ) -> List[List[WorkflowStep]]:
         """Generate candidate workflows beginning at ``start_module``.
@@ -800,6 +801,10 @@ class WorkflowSynthesizer:
             workflows.
         intent_weight:
             Multiplier applied to intent match scores when scoring workflows.
+        min_score:
+            Minimum partial score required to continue exploring a workflow
+            extension.  Partial scores that fall below this threshold are
+            pruned to reduce search space.
         auto_evaluate:
             When ``True``, each generated workflow is executed via
             :func:`evaluate_workflow` and the success flag is stored alongside
@@ -918,68 +923,6 @@ class WorkflowSynthesizer:
         if start_module not in step_map:
             raise ValueError(f"Start module {start_module!r} not found")
 
-        # Explore alternative chains by traversing the synergy graph rather
-        # than following a single greedy dependency order.  A breadth first
-        # search enumerates candidate paths starting from ``start_module`` and
-        # only extends a path when the next module's dependencies are satisfied
-        # by modules already in the path.  ``max_candidates`` bounds exploration
-        # to avoid combinatorial explosion while still surfacing diverse
-        # orderings.
-
-        graph = getattr(self.module_synergy_grapher, "graph", None)
-        orders: List[List[str]] = []
-        max_candidates = max(limit * 10, 10)
-
-        if graph is None or start_module not in graph:
-            queue: deque[Tuple[List[str], Set[str]]] = deque()
-            queue.append(([start_module], set(step_map) - {start_module}))
-            seen: Set[Tuple[str, ...]] = set()
-            while queue and len(orders) < max_candidates:
-                order, remaining = queue.popleft()
-                key = tuple(order)
-                if key in seen:
-                    continue
-                seen.add(key)
-                orders.append(order.copy())
-
-                if max_depth is not None and len(order) - 1 >= max_depth:
-                    continue
-
-                available = [m for m in remaining if deps[m].issubset(order)]
-                for mod in sorted(available):
-                    new_order = order + [mod]
-                    new_remaining = remaining - {mod}
-                    queue.append((new_order, new_remaining))
-        else:
-            queue: deque[List[str]] = deque([[start_module]])
-            seen: Set[Tuple[str, ...]] = set()
-            while queue and len(orders) < max_candidates:
-                order = queue.popleft()
-                key = tuple(order)
-                if key in seen:
-                    continue
-                seen.add(key)
-                orders.append(order.copy())
-
-                if max_depth is not None and len(order) - 1 >= max_depth:
-                    continue
-
-                last = order[-1]
-                neighbours = graph[last]
-                neigh_items = sorted(
-                    neighbours.items(),
-                    key=lambda item: float(item[1].get("weight", 0.0)),
-                    reverse=True,
-                )
-                for neigh, _data in neigh_items:
-                    if neigh not in step_map:
-                        continue
-                    if neigh in order:
-                        continue
-                    if not deps[neigh].issubset(order):
-                        continue
-                    queue.append(order + [neigh])
-
         score_map: Dict[str, float] = {}
         if problem:
             if self.intent_clusterer is None and self.intent_db is None:
@@ -1018,6 +961,208 @@ class WorkflowSynthesizer:
                 max_score = max(score_map.values()) or 1.0
                 for mod in list(score_map):
                     score_map[mod] /= max_score
+
+        # Explore alternative chains by traversing the synergy graph rather
+        # than following a single greedy dependency order.  A breadth first
+        # search enumerates candidate paths starting from ``start_module`` and
+        # only extends a path when the next module's dependencies are satisfied
+        # by modules already in the path.  ``max_candidates`` bounds exploration
+        # to avoid combinatorial explosion while still surfacing diverse
+        # orderings.
+
+        graph = getattr(self.module_synergy_grapher, "graph", None)
+        orders: List[List[str]] = []
+        max_candidates = max(limit * 10, 10)
+
+        init_dep_counts = {dep: 1 for dep in deps[start_module]}
+        init_unresolved = len(step_map[start_module].unresolved)
+        init_intent = score_map.get(start_module, 0.0)
+        init_synergy = 0.0
+        init_dup = 0.0
+        init_length = 1
+        init_diversity = 1.0
+        init_syn_norm = (init_synergy / init_length) * init_diversity
+        init_int_norm = (init_intent / init_length) * init_diversity
+        init_score = (
+            synergy_weight * init_syn_norm
+            + intent_weight * init_int_norm
+            - (init_unresolved + init_dup)
+        )
+
+        if graph is None or start_module not in graph:
+            queue: deque[
+                Tuple[
+                    List[str],
+                    Set[str],
+                    float,
+                    float,
+                    Dict[str, int],
+                    float,
+                    float,
+                    float,
+                ]
+            ] = deque()
+            queue.append(
+                (
+                    [start_module],
+                    set(step_map) - {start_module},
+                    init_synergy,
+                    init_intent,
+                    init_dep_counts,
+                    init_unresolved,
+                    init_dup,
+                    init_score,
+                )
+            )
+            seen: Set[Tuple[str, ...]] = set()
+            while queue and len(orders) < max_candidates:
+                (
+                    order,
+                    remaining,
+                    syn_sum,
+                    intent_sum,
+                    dep_counts,
+                    unresolved_pen,
+                    dup_pen,
+                    score,
+                ) = queue.popleft()
+                key = tuple(order)
+                if key in seen:
+                    continue
+                seen.add(key)
+                orders.append(order.copy())
+
+                if (max_depth is not None and len(order) - 1 >= max_depth) or score < min_score:
+                    continue
+
+                available = [m for m in remaining if deps[m].issubset(order)]
+                for mod in sorted(available):
+                    prev = order[-1]
+                    weight = 0.0
+                    if graph is not None:
+                        if graph.has_edge(prev, mod):
+                            weight = float(graph[prev][mod].get("weight", 0.0))
+                        elif graph.has_edge(mod, prev):
+                            weight = float(graph[mod][prev].get("weight", 0.0))
+                    new_syn = syn_sum + weight
+                    new_int = intent_sum + score_map.get(mod, 0.0)
+                    new_dep_counts = dep_counts.copy()
+                    inc_dup = sum(1 for d in deps[mod] if new_dep_counts.get(d, 0) >= 1)
+                    for d in deps[mod]:
+                        new_dep_counts[d] = new_dep_counts.get(d, 0) + 1
+                    new_unresolved = unresolved_pen + len(step_map[mod].unresolved)
+                    new_dup = dup_pen + inc_dup
+                    new_order = order + [mod]
+                    length = len(new_order)
+                    diversity = len(set(new_order)) / length
+                    syn_norm = (new_syn / length) * diversity
+                    int_norm = (new_int / length) * diversity
+                    new_score = (
+                        synergy_weight * syn_norm
+                        + intent_weight * int_norm
+                        - (new_unresolved + new_dup)
+                    )
+                    if new_score >= min_score:
+                        queue.append(
+                            (
+                                new_order,
+                                remaining - {mod},
+                                new_syn,
+                                new_int,
+                                new_dep_counts,
+                                new_unresolved,
+                                new_dup,
+                                new_score,
+                            )
+                        )
+        else:
+            queue: deque[
+                Tuple[
+                    List[str],
+                    float,
+                    float,
+                    Dict[str, int],
+                    float,
+                    float,
+                    float,
+                ]
+            ] = deque()
+            queue.append(
+                (
+                    [start_module],
+                    init_synergy,
+                    init_intent,
+                    init_dep_counts,
+                    init_unresolved,
+                    init_dup,
+                    init_score,
+                )
+            )
+            seen: Set[Tuple[str, ...]] = set()
+            while queue and len(orders) < max_candidates:
+                (
+                    order,
+                    syn_sum,
+                    intent_sum,
+                    dep_counts,
+                    unresolved_pen,
+                    dup_pen,
+                    score,
+                ) = queue.popleft()
+                key = tuple(order)
+                if key in seen:
+                    continue
+                seen.add(key)
+                orders.append(order.copy())
+
+                if (max_depth is not None and len(order) - 1 >= max_depth) or score < min_score:
+                    continue
+
+                last = order[-1]
+                neighbours = graph[last]
+                neigh_items = sorted(
+                    neighbours.items(),
+                    key=lambda item: float(item[1].get("weight", 0.0)),
+                    reverse=True,
+                )
+                for neigh, data in neigh_items:
+                    if neigh not in step_map:
+                        continue
+                    if neigh in order:
+                        continue
+                    if not deps[neigh].issubset(order):
+                        continue
+                    weight = float(data.get("weight", 0.0))
+                    new_syn = syn_sum + weight
+                    new_int = intent_sum + score_map.get(neigh, 0.0)
+                    new_dep_counts = dep_counts.copy()
+                    inc_dup = sum(1 for d in deps[neigh] if new_dep_counts.get(d, 0) >= 1)
+                    for d in deps[neigh]:
+                        new_dep_counts[d] = new_dep_counts.get(d, 0) + 1
+                    new_unresolved = unresolved_pen + len(step_map[neigh].unresolved)
+                    new_dup = dup_pen + inc_dup
+                    new_order = order + [neigh]
+                    length = len(new_order)
+                    diversity = len(set(new_order)) / length
+                    syn_norm = (new_syn / length) * diversity
+                    int_norm = (new_int / length) * diversity
+                    new_score = (
+                        synergy_weight * syn_norm
+                        + intent_weight * int_norm
+                        - (new_unresolved + new_dup)
+                    )
+                    if new_score >= min_score:
+                        queue.append(
+                            (
+                                new_order,
+                                new_syn,
+                                new_int,
+                                new_dep_counts,
+                                new_unresolved,
+                                new_dup,
+                                new_score,
+                            )
+                        )
 
         entries: List[Tuple[float, List[WorkflowStep], float, float, float]] = []
         for order in orders:
