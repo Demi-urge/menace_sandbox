@@ -28,6 +28,7 @@ import csv
 import json
 import os
 import sqlite3
+from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES
 from collections import Counter, defaultdict
 
 import numpy as np
@@ -55,6 +56,8 @@ from .borderline_bucket import BorderlineBucket
 from .truth_adapter import TruthAdapter
 from .roi_calculator import ROICalculator, propose_fix
 from .readiness_index import compute_readiness
+LOCAL_TABLES.add("workflow_module_deltas")
+
 try:  # pragma: no cover - optional dependency
     from . import self_test_service as _sts
 except Exception:  # pragma: no cover - self-test service may be absent
@@ -4220,20 +4223,32 @@ def load_workflow_module_deltas(
 ) -> Dict[str, float]:
     """Return aggregated ROI deltas per module for a workflow run."""
 
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    if run_id is not None:
-        cur.execute(
-            "SELECT module, roi_delta FROM workflow_module_deltas WHERE workflow_id=? AND run_id=?",
-            (workflow_id, run_id),
-        )
+    def _conn_db_path(conn: sqlite3.Connection) -> str:
+        return conn.execute("PRAGMA database_list").fetchone()[2]
+
+    router: DBRouter
+    if GLOBAL_ROUTER is not None and _conn_db_path(GLOBAL_ROUTER.local_conn) == str(db_path):
+        router = GLOBAL_ROUTER
     else:
-        cur.execute(
-            "SELECT module, SUM(roi_delta) FROM workflow_module_deltas WHERE workflow_id=? GROUP BY module",
-            (workflow_id,),
-        )
-    rows = cur.fetchall()
-    conn.close()
+        router = DBRouter("workflow_results", str(db_path), str(db_path))
+    conn = router.get_connection("workflow_module_deltas")
+    cur = conn.cursor()
+    try:
+        if run_id is not None:
+            cur.execute(
+                "SELECT module, roi_delta FROM workflow_module_deltas WHERE workflow_id=? AND run_id=?",
+                (workflow_id, run_id),
+            )
+        else:
+            cur.execute(
+                "SELECT module, SUM(roi_delta) FROM workflow_module_deltas WHERE workflow_id=? GROUP BY module",
+                (workflow_id,),
+            )
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        if router is not GLOBAL_ROUTER:
+            router.close()
     return {str(m): float(d) for m, d in rows}
 
 
