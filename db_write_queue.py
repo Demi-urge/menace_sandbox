@@ -134,9 +134,13 @@ def remove_processed_lines(path: Path, processed: int) -> None:
             # Write processed lines to backup before removal
             with backup_path.open("a", encoding="utf-8") as bak:
                 bak.writelines(lines[:processed])
+            remaining = lines[processed:]
             fh.seek(0)
-            fh.writelines(lines[processed:])
+            fh.writelines(remaining)
             fh.truncate()
+            if not remaining:
+                # Atomically remove the empty queue file while holding the lock
+                os.unlink(fh.name)
             flock(fh.fileno(), LOCK_UN)
 
 
