@@ -448,18 +448,48 @@ class WorkflowSynthesizer:
             for mod in modules
         }
 
+        # Inspect function signatures to separate required and optional args
+        sig_required: Dict[str, Set[str]] = {}
+        sig_optional: Dict[str, Set[str]] = {}
+        for mod in modules:
+            req: Set[str] = set()
+            opt: Set[str] = set()
+            path = Path(mod.name.replace(".", "/")).with_suffix(".py")
+            try:
+                source = path.read_text(encoding="utf-8")
+                tree = ast.parse(source, filename=str(path))
+                for node in tree.body:
+                    if isinstance(node, ast.FunctionDef) and node.name in mod.functions:
+                        pos_args = node.args.posonlyargs + node.args.args
+                        num_required = len(pos_args) - len(node.args.defaults)
+                        for a in pos_args[:num_required]:
+                            req.add(a.arg)
+                        for a in pos_args[num_required:]:
+                            opt.add(a.arg)
+                        for a, default in zip(node.args.kwonlyargs, node.args.kw_defaults):
+                            (req if default is None else opt).add(a.arg)
+                        if node.args.vararg:
+                            opt.add(node.args.vararg.arg)
+                        if node.args.kwarg:
+                            opt.add(node.args.kwarg.arg)
+            except OSError:
+                for fn in mod.functions.values():
+                    req.update(fn.get("args", []))
+            sig_required[mod.name] = req
+            sig_optional[mod.name] = opt
+
         for mod in modules:
             name = mod.name
-            required_args: Set[str] = set()
-            for fn in mod.functions.values():
-                required_args.update(fn.get("args", []))
+            required_args = sig_required.get(name, set())
+            optional_args = sig_optional.get(name, set())
+            all_args = required_args | optional_args
             required_files: Set[str] = set(mod.files_read)
             required_globals: Set[str] = set(mod.globals)
 
             dependencies: Set[str] = set()
 
             # function args
-            for item in required_args:
+            for item in all_args:
                 matched = False
                 ann = annotations_cache[name].get(item)
                 if ann:
@@ -478,7 +508,7 @@ class WorkflowSynthesizer:
                         if producer != name:
                             dependencies.add(producer)
                         matched = True
-                if not matched:
+                if not matched and item in required_args:
                     unresolved.setdefault(name, set()).add(item)
 
             # file dependencies

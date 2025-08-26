@@ -132,6 +132,29 @@ def test_resolve_dependencies_rich_returns(tmp_path, monkeypatch):
     assert order.index("mod_m") < order.index("mod_n")
 
 
+def test_resolve_dependencies_optional_args(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    synth = ws.WorkflowSynthesizer()
+    mods = [ws.inspect_module(m) for m in ["mod_o", "mod_p"]]
+    steps = synth.resolve_dependencies(mods)
+    order = [s.module for s in steps]
+    assert order.index("mod_o") < order.index("mod_p")
+    unresolved = {s.module: s.unresolved for s in steps}
+    assert unresolved["mod_p"] == []
+
+
+def test_resolve_dependencies_optional_args_missing(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    synth = ws.WorkflowSynthesizer()
+    mods = [ws.inspect_module(m) for m in ["mod_p"]]
+    steps = synth.resolve_dependencies(mods)
+    unresolved = {s.module: s.unresolved for s in steps}
+    assert unresolved["mod_p"] == ["data"]
+
 def test_generate_workflows_persist_and_rank(tmp_path, monkeypatch):
     _copy_modules(tmp_path)
     monkeypatch.chdir(tmp_path)
