@@ -100,7 +100,12 @@ def replay_failed(queue_dir: Path) -> None:
         _append_lines(target, [json.dumps(record, sort_keys=True) + "\n"])
 
 
-def process_queue_file(path: Path, *, conn: sqlite3.Connection) -> Stats:
+def process_queue_file(
+    path: Path,
+    *,
+    conn: sqlite3.Connection,
+    preserve_empty: bool = True,
+) -> Stats:
     """Process all records from ``path`` returning :class:`Stats`.
 
     Each line in ``path`` is handled independently.  Successful inserts and
@@ -181,6 +186,7 @@ def process_queue_file(path: Path, *, conn: sqlite3.Connection) -> Stats:
             existing = conn.execute(
                 f"SELECT id FROM {table} WHERE content_hash=?", (content_hash,)
             ).fetchone()
+            log_db_access("read", table, 1 if existing else 0, menace_id)
             if existing:
                 stats.duplicates += 1
                 logger.info(
@@ -224,11 +230,12 @@ def process_queue_file(path: Path, *, conn: sqlite3.Connection) -> Stats:
         processed_lines += 1
 
     remove_processed_lines(path, processed_lines)
-
+    if preserve_empty and not path.exists():
+        path.touch()
     return stats
 
 
-def _sync_once(queue_dir: Path, conn: sqlite3.Connection) -> Stats:
+def _sync_once(queue_dir: Path, conn: sqlite3.Connection, preserve_empty: bool = False) -> Stats:
     """Process all queue files under ``queue_dir`` returning cumulative stats."""
 
     stats = Stats()
@@ -241,7 +248,7 @@ def _sync_once(queue_dir: Path, conn: sqlite3.Connection) -> Stats:
         if file.name == "queue.failed.jsonl":
             continue
         try:
-            file_stats = process_queue_file(file, conn=conn)
+            file_stats = process_queue_file(file, conn=conn, preserve_empty=preserve_empty)
         except Exception as exc:  # pragma: no cover - logged then recorded
             _append_lines(
                 failed_path,
@@ -265,7 +272,7 @@ def _sync_once(queue_dir: Path, conn: sqlite3.Connection) -> Stats:
 
 def _run_polling(queue_dir: Path, conn: sqlite3.Connection, interval: float, once: bool) -> None:
     while True:
-        stats = _sync_once(queue_dir, conn)
+        stats = _sync_once(queue_dir, conn, preserve_empty=once)
         logger.info("sync_stats", extra=stats.as_dict())
         if once:
             break
