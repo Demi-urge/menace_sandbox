@@ -1,13 +1,17 @@
-import sys
-import types
-import time
+"""Tests for ROI scoring utilities using the composite scorer."""
 
+import sys
+import time
+import types
 import pytest
+
 
 # Stub heavy dependencies before importing the scorer module
 sys.modules.setdefault(
     "menace_sandbox.roi_tracker", types.SimpleNamespace(ROITracker=object)
 )
+
+
 class _StubCalc:
     profiles = {"default": {}}
 
@@ -22,14 +26,14 @@ sys.modules.setdefault(
     "menace_sandbox.sandbox_runner", types.SimpleNamespace()
 )
 
-from menace_sandbox.db_router import init_db_router
-from menace_sandbox.composite_workflow_scorer import (
-    CompositeWorkflowScorer,
+from menace_sandbox.db_router import init_db_router  # noqa: E402
+from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer  # noqa: E402
+from menace_sandbox.workflow_scorer_core import (  # noqa: E402
     compute_bottleneck_index,
     compute_patchability,
     compute_workflow_synergy,
 )
-from menace_sandbox.roi_results_db import ROIResultsDB
+from menace_sandbox.roi_results_db import ROIResultsDB  # noqa: E402
 
 
 def test_compute_metric_helpers():
@@ -42,8 +46,12 @@ def test_compute_metric_helpers():
     baseline = compute_workflow_synergy(roi_hist, module_hist, window=3, history_loader=lambda: [])
     assert baseline == pytest.approx((1.0 + 1.0 - 1.0) / 3.0)
 
-    loader = lambda: [{"a|b": 1.0}]
-    weighted = compute_workflow_synergy(roi_hist, module_hist, window=3, history_loader=loader)
+    def loader() -> list[dict[str, float]]:
+        return [{"a|b": 1.0}]
+
+    weighted = compute_workflow_synergy(
+        roi_hist, module_hist, window=3, history_loader=loader
+    )
     assert weighted == pytest.approx(1.0)
 
     tracker = types.SimpleNamespace(timings={"a": 2.0, "b": 1.0})

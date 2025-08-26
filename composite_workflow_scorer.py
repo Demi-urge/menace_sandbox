@@ -10,87 +10,25 @@ tests can exercise the scoring pipeline in isolation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from typing import Any, Callable, Dict, Iterable, Mapping, Tuple
+from dataclasses import asdict
+from typing import Any, Callable, Dict, Mapping, Tuple
 import time
 import uuid
 from collections import defaultdict, deque
 import concurrent.futures
 import logging
 
-import numpy as np
-
 from .roi_tracker import ROITracker
 from .roi_calculator import ROICalculator
 from .roi_results_db import ROIResultsDB
 from . import sandbox_runner
-from .workflow_metrics import (
+from .workflow_scorer_core import (
+    ROIScorer as BaseROIScorer,
+    EvaluationResult,
+    compute_workflow_synergy,
     compute_bottleneck_index,
     compute_patchability,
 )
-
-
-def compute_workflow_synergy(
-    roi_history: Iterable[float],
-    module_history: Mapping[str, Iterable[float]],
-    window: int = 5,
-    history_loader: Callable[[], Iterable[Dict[str, float]]] | None = None,
-) -> float:
-    """Weighted correlation between module ROI deltas and overall ROI.
-
-    Historical co-performance data from ``synergy_history_db`` is used to weight
-    module correlations.  ``history_loader`` can be injected to supply a custom
-    loader (e.g. by tests); when not provided the loader defaults to
-    :func:`synergy_history_db.load_history`.
-    """
-
-    roi_list = list(roi_history)[-window:]
-    if len(roi_list) < 2 or not module_history:
-        return 0.0
-
-    if history_loader is None:
-        try:
-            from .synergy_history_db import load_history as history_loader
-        except Exception:  # pragma: no cover - optional dependency
-            history_loader = lambda: []  # type: ignore
-
-    history = list(history_loader() or [])
-    pair_totals: Dict[tuple[str, str], float] = {}
-    pair_counts: Dict[tuple[str, str], int] = {}
-    for entry in history:
-        for key, val in entry.items():
-            key = key.replace(",", "|")
-            parts = [p.strip() for p in key.split("|") if p.strip()]
-            if len(parts) != 2:
-                continue
-            a, b = parts
-            pair_totals[(a, b)] = pair_totals.get((a, b), 0.0) + float(val)
-            pair_totals[(b, a)] = pair_totals.get((b, a), 0.0) + float(val)
-            pair_counts[(a, b)] = pair_counts.get((a, b), 0) + 1
-            pair_counts[(b, a)] = pair_counts.get((b, a), 0) + 1
-    pair_avg = {p: pair_totals[p] / pair_counts[p] for p in pair_totals}
-
-    correlations: list[float] = []
-    weights: list[float] = []
-    for mod, deltas in module_history.items():
-        mod_list = list(deltas)[-window:]
-        if len(mod_list) != len(roi_list):
-            continue
-        if np.std(mod_list) == 0 or np.std(roi_list) == 0:
-            continue
-        corr = float(np.corrcoef(roi_list, mod_list)[0, 1])
-        if pair_avg:
-            w_vals = [pair_avg.get((mod, other), 0.0) for other in module_history if other != mod]
-            w_pos = [v for v in w_vals if v > 0]
-            if not w_pos:
-                continue
-            weight = float(np.mean(w_pos))
-        else:
-            weight = 1.0
-        correlations.append(corr)
-        weights.append(weight)
-
-    return float(np.average(correlations, weights=weights)) if correlations else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -98,25 +36,7 @@ def compute_workflow_synergy(
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class EvaluationResult:
-    """Structured outcome of a workflow evaluation."""
-
-    runtime: float
-    success_rate: float
-    roi_gain: float
-    workflow_synergy_score: float
-    bottleneck_index: float
-    patchability_score: float
-    per_module: Dict[str, Dict[str, float]]
-
-
-# ---------------------------------------------------------------------------
-# Scorers
-# ---------------------------------------------------------------------------
-
-
-class ROIScorer:
+class ROIScorer(BaseROIScorer):
     """Thin wrapper around :class:`ROITracker` and ``ROICalculator``."""
 
     def __init__(
@@ -125,19 +45,11 @@ class ROIScorer:
         calculator_factory: Callable[[], ROICalculator] | None = None,
         profile_type: str | None = None,
     ) -> None:
-        self.tracker = tracker or ROITracker()
-        try:
-            self.calculator = (
-                calculator_factory()
-                if calculator_factory is not None
-                else ROICalculator()
-            )
-        except Exception as exc:  # pragma: no cover - configuration errors
-            raise RuntimeError(
-                "ROICalculator initialization failed. Ensure ROI profile"
-                " configuration is available or provide a calculator_factory"
-            ) from exc
-        self.profile_type = profile_type or next(iter(self.calculator.profiles))
+        super().__init__(
+            tracker=tracker,
+            calculator_factory=calculator_factory,
+            profile_type=profile_type,
+        )
 
 
 class CompositeWorkflowScorer(ROIScorer):
@@ -180,7 +92,7 @@ class CompositeWorkflowScorer(ROIScorer):
         runtime = time.perf_counter() - start
 
         roi_gain = sum(
-            float(x) for x in self.tracker.roi_history[self._roi_start :]
+            float(x) for x in self.tracker.roi_history[self._roi_start:]
         )
 
         per_module: Dict[str, Dict[str, float]] = {}
@@ -437,4 +349,3 @@ __all__ = [
     "compute_bottleneck_index",
     "compute_patchability",
 ]
-

@@ -15,19 +15,20 @@ import shutil
 import sys
 import types
 import time
-import sqlite3
+import sqlite3 as sqlite3_mod
 from pathlib import Path
 from typing import Dict
 
 import numpy as np
 import pytest
 
+
 class _StubDBRouter:
     def __init__(self, _name, local_path, _shared_path):
         self.path = local_path
 
     def get_connection(self, _name, operation: str | None = None):
-        return sqlite3.connect(self.path)
+        return sqlite3_mod.connect(self.path)
 
 
 sys.modules.setdefault(
@@ -39,7 +40,7 @@ sys.modules.setdefault(
     ),
 )
 sys.modules.setdefault("db_router", sys.modules["menace_sandbox.db_router"])
-from menace_sandbox.db_router import init_db_router
+from menace_sandbox.db_router import init_db_router  # noqa: E402
 
 
 class _StubPatchDB:
@@ -178,7 +179,9 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
     total = 0.1 + 0.2 + 0.3
     assert attrib["mod_a"]["roi_delta"] == pytest.approx(1.0)
     assert attrib["mod_a"]["bottleneck"] == pytest.approx(0.1 / total)
-    assert scorer.module_attribution["mod_c"]["bottleneck_contribution"] == pytest.approx(0.3 / total)
+    assert scorer.module_attribution["mod_c"]["bottleneck_contribution"] == pytest.approx(
+        0.3 / total
+    )
 
 
 def test_score_workflow_parallel_execution(tmp_path):
@@ -241,7 +244,7 @@ def test_compute_workflow_synergy_history_weighting():
     sys.modules.setdefault(
         "menace_sandbox.sandbox_runner", types.SimpleNamespace()
     )
-    from menace_sandbox.composite_workflow_scorer import compute_workflow_synergy
+    from menace_sandbox.workflow_scorer_core import compute_workflow_synergy
 
     roi_hist = [1.0, 2.0, 3.0]
     module_hist = {
@@ -252,7 +255,10 @@ def test_compute_workflow_synergy_history_weighting():
     baseline = compute_workflow_synergy(roi_hist, module_hist, window=3, history_loader=lambda: [])
     assert baseline == pytest.approx((1.0 + 1.0 - 1.0) / 3.0)
 
-    loader = lambda: [{"mod_a|mod_b": 1.0}]
-    weighted = compute_workflow_synergy(roi_hist, module_hist, window=3, history_loader=loader)
-    assert weighted == pytest.approx(1.0)
+    def loader() -> list[dict[str, float]]:
+        return [{"mod_a|mod_b": 1.0}]
 
+    weighted = compute_workflow_synergy(
+        roi_hist, module_hist, window=3, history_loader=loader
+    )
+    assert weighted == pytest.approx(1.0)

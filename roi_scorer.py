@@ -2,81 +2,20 @@ from __future__ import annotations
 
 """ROI scoring utilities for workflow evaluation."""
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Tuple, Iterable
+from typing import Any, Callable, Dict, Mapping, Tuple
 import sqlite3
 import uuid
 import statistics
 
-import numpy as np
-
-from .workflow_metrics import (
+from .workflow_scorer_core import (
+    ROIScorer as CoreROIScorer,
+    Scorecard,
+    compute_workflow_synergy,
     compute_bottleneck_index,
     compute_patchability,
 )
 
-
-def compute_workflow_synergy(
-    roi_history: Iterable[float],
-    module_history: Mapping[str, Iterable[float]],
-    window: int = 5,
-    history_loader: Callable[[], Iterable[Dict[str, float]]] | None = None,
-) -> float:
-    """Weighted correlation between module ROI deltas and overall ROI.
-
-    Uses pairwise module synergy from ``synergy_history_db`` to weight
-    correlations.  ``history_loader`` may be provided to inject a custom
-    loader in tests.
-    """
-
-    roi_list = list(roi_history)[-window:]
-    if len(roi_list) < 2 or not module_history:
-        return 0.0
-
-    if history_loader is None:
-        try:
-            from .synergy_history_db import load_history as history_loader
-        except Exception:  # pragma: no cover - optional dependency
-            history_loader = lambda: []  # type: ignore
-
-    history = list(history_loader() or [])
-    pair_totals: Dict[tuple[str, str], float] = {}
-    pair_counts: Dict[tuple[str, str], int] = {}
-    for entry in history:
-        for key, val in entry.items():
-            key = key.replace(",", "|")
-            parts = [p.strip() for p in key.split("|") if p.strip()]
-            if len(parts) != 2:
-                continue
-            a, b = parts
-            pair_totals[(a, b)] = pair_totals.get((a, b), 0.0) + float(val)
-            pair_totals[(b, a)] = pair_totals.get((b, a), 0.0) + float(val)
-            pair_counts[(a, b)] = pair_counts.get((a, b), 0) + 1
-            pair_counts[(b, a)] = pair_counts.get((b, a), 0) + 1
-    pair_avg = {p: pair_totals[p] / pair_counts[p] for p in pair_totals}
-
-    correlations: list[float] = []
-    weights: list[float] = []
-    for mod, deltas in module_history.items():
-        mod_list = list(deltas)[-window:]
-        if len(mod_list) != len(roi_list):
-            continue
-        if np.std(mod_list) == 0 or np.std(roi_list) == 0:
-            continue
-        corr = float(np.corrcoef(roi_list, mod_list)[0, 1])
-        if pair_avg:
-            w_vals = [pair_avg.get((mod, other), 0.0) for other in module_history if other != mod]
-            w_pos = [v for v in w_vals if v > 0]
-            if not w_pos:
-                continue
-            weight = float(np.mean(w_pos))
-        else:
-            weight = 1.0
-        correlations.append(corr)
-        weights.append(weight)
-
-    return float(np.average(correlations, weights=weights)) if correlations else 0.0
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .roi_tracker import ROITracker
@@ -90,20 +29,6 @@ except Exception:  # pragma: no cover - optional
     tb = None  # type: ignore
 
 
-@dataclass
-class Scorecard:
-    """Structured result for a single workflow run."""
-
-    workflow_id: str
-    runtime: float
-    success: bool
-    roi_gain: float
-    metrics: Dict[str, float]
-    workflow_synergy_score: float = 0.0
-    bottleneck_index: float = 0.0
-    patchability_score: float = 0.0
-
-
 LOCAL_TABLES.add("workflow_results")
 LOCAL_TABLES.add("workflow_module_deltas")
 router = GLOBAL_ROUTER or init_db_router("roi_scorer")
@@ -111,7 +36,7 @@ if tb is not None:  # align telemetry router
     tb.GLOBAL_ROUTER = router
 
 
-class ROIScorer:
+class ROIScorer(CoreROIScorer):
     """Base scorer storing ROI results in ``roi_results.db``."""
 
     def __init__(
@@ -122,9 +47,7 @@ class ROIScorer:
         profile_type: str | None = None,
     ) -> None:
         self.db_path = Path(db_path)
-        self.tracker = tracker or ROITracker()
-        self.calculator = calculator or ROICalculator()
-        self.profile_type = profile_type or next(iter(self.calculator.profiles))
+        super().__init__(tracker=tracker, calculator=calculator, profile_type=profile_type)
         self._init_db()
 
     # internal
