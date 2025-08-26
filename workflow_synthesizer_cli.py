@@ -9,6 +9,7 @@ via the ``--list`` flag."""
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from workflow_synthesizer import (
@@ -50,15 +51,23 @@ def run(args: argparse.Namespace) -> int:
         synergy_weight=getattr(args, "synergy_weight", 1.0),
         intent_weight=getattr(args, "intent_weight", 1.0),
     )
-    scores = getattr(synth, "workflow_scores", [])
-    for idx, (wf, score) in enumerate(zip(workflows, scores), start=1):
+    details = getattr(synth, "workflow_score_details", [])
+    for idx, (wf, info) in enumerate(zip(workflows, details), start=1):
         modules = " -> ".join(step["module"] for step in workflow_to_dict(wf)["steps"])
-        print(f"{idx}. {score:.4f} {modules}")
+        score = info.get("score", 0.0)
+        syn = info.get("synergy", 0.0)
+        intent = info.get("intent", 0.0)
+        penalty = info.get("penalty", 0.0)
+        print(
+            f"{idx}. score={score:.4f} (syn={syn:.4f}, intent={intent:.4f}, penalty={penalty:.4f}) {modules}"
+        )
 
     selected = 0
-    if len(workflows) > 1 and (
+    if getattr(args, "select", None) is not None:
+        selected = max(0, min(len(workflows) - 1, args.select - 1))
+    elif len(workflows) > 1 and (
         getattr(args, "out", None) or args.save is not None or getattr(args, "evaluate", False)
-    ):
+    ) and sys.stdin.isatty():
         while True:
             choice = input(f"Select workflow [1-{len(workflows)}] (default 1): ").strip()
             if not choice:
@@ -160,6 +169,11 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
         "--evaluate",
         action="store_true",
         help="Execute the generated workflow and report success",
+    )
+    parser.add_argument(
+        "--select",
+        type=int,
+        help="Select workflow index to save/evaluate in non-interactive mode (1-based)",
     )
     return parser
 
