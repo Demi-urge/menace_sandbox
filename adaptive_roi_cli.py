@@ -19,6 +19,8 @@ from .adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
 from .adaptive_roi_dataset import build_dataset
 from .roi_tracker import ROITracker
 from .truth_adapter import TruthAdapter
+from .composite_workflow_scorer import CompositeWorkflowScorer
+from .roi_results_db import ROIResultsDB
 import db_router
 
 
@@ -192,6 +194,24 @@ def _scorecard(args: argparse.Namespace) -> None:
         print(f"scorecard saved -> {args.output}")
     else:
         print(text)
+
+
+# ---------------------------------------------------------------------------
+def _workflow_eval(args: argparse.Namespace) -> None:
+    """Evaluate a workflow and persist metrics, printing the run id."""
+
+    presets = json.loads(args.presets) if args.presets else None
+    scorer = CompositeWorkflowScorer(
+        tracker=ROITracker(), results_db=ROIResultsDB(args.db_path)
+    )
+    scorer.evaluate(args.workflow_id, env_presets=presets)
+    cur = scorer.results_db.conn.cursor()
+    row = cur.execute(
+        "SELECT run_id FROM roi_results WHERE workflow_id=? ORDER BY ts DESC LIMIT 1",
+        (args.workflow_id,),
+    ).fetchone()
+    if row:
+        print(row[0])
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +404,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     p_card.add_argument("--output", default=None, help="Write scorecard JSON to file")
     p_card.set_defaults(func=_scorecard)
+
+    p_eval = sub.add_parser("workflow-eval", help="evaluate a workflow and store metrics")
+    p_eval.add_argument("workflow_id", help="Workflow identifier")
+    p_eval.add_argument(
+        "--presets",
+        default=None,
+        help="JSON encoded environment presets",
+    )
+    p_eval.add_argument(
+        "--db-path", default="roi_results.db", help="ROI results database path"
+    )
+    p_eval.set_defaults(func=_workflow_eval)
 
     p_sched = sub.add_parser(
         "schedule", help="periodically load data and retrain the model"
