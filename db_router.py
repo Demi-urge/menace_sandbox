@@ -18,6 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Set, Iterable, Mapping, Any
 
+from lock_utils import _ContextFileLock
+
 __all__ = [
     "DBRouter",
     "SHARED_TABLES",
@@ -26,6 +28,7 @@ __all__ = [
     "init_db_router",
     "GLOBAL_ROUTER",
     "queue_insert",
+    "queue_shared_write",
 ]
 
 
@@ -307,6 +310,66 @@ def _record_audit(entry: dict[str, str]) -> None:
 GLOBAL_ROUTER: "DBRouter" | None = None
 
 
+def queue_shared_write(
+    table: str,
+    payload: Mapping[str, Any],
+    menace_id: str,
+    *,
+    operation: str = "insert",
+    queue_dir: Path | None = None,
+) -> None:
+    """Append a planned write to a menace-specific queue file.
+
+    Parameters
+    ----------
+    table:
+        Target table name.  Must be one of :data:`SHARED_TABLES`.
+    payload:
+        Mapping of column names to values describing the write.
+    menace_id:
+        Identifier of the menace instance originating the write.
+    operation:
+        Type of database operation being queued.  Defaults to ``"insert"``.
+    queue_dir:
+        Optional base directory for queue files.  When omitted a directory is
+        resolved from ``DB_ROUTER_QUEUE_DIR`` or ``DB_QUEUE_DIR`` with a default
+        of ``logs/queue``.
+    """
+
+    if table not in SHARED_TABLES:
+        raise ValueError("queue_shared_write is only supported for shared tables")
+
+    base_dir = queue_dir
+    if base_dir is None:
+        base_env = os.getenv("DB_ROUTER_QUEUE_DIR") or os.getenv(
+            "DB_QUEUE_DIR", "logs/queue"
+        )
+        base_dir = Path(base_env)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    path = base_dir / f"{menace_id}.jsonl"
+
+    record = {
+        "table": table,
+        "op": operation,
+        "data": dict(payload),
+        "source_menace_id": menace_id,
+    }
+
+    lock = _ContextFileLock(str(path) + ".lock")
+    lock_logger = logging.getLogger("lock_utils")
+    prev_level = lock_logger.level
+    prev_prop = lock_logger.propagate
+    lock_logger.setLevel(logging.CRITICAL)
+    lock_logger.propagate = False
+    try:
+        with lock.acquire():
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record) + "\n")
+    finally:
+        lock_logger.setLevel(prev_level)
+        lock_logger.propagate = prev_prop
+
+
 def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
     """Queue an ``INSERT`` operation for *table*.
 
@@ -326,10 +389,6 @@ def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
     queue_dir = Path(queue_dir_env) if queue_dir_env else None
 
     if table in SHARED_TABLES:
-        from db_write_queue import append_record
-
-        append_record(table, record, menace_id, queue_dir=queue_dir)
-
         timestamp = datetime.utcnow().isoformat()
         entry = {
             "menace_id": menace_id,
@@ -342,6 +401,9 @@ def queue_insert(table: str, record: dict[str, Any], menace_id: str) -> None:
         else:
             msg = json.dumps(entry)
         logger.info(msg)
+
+        queue_shared_write(table, record, menace_id, queue_dir=queue_dir)
+
         _record_audit(entry)
     elif table in LOCAL_TABLES:
         if GLOBAL_ROUTER is None:
@@ -509,6 +571,7 @@ class DBRouter:
 
         if table_name not in SHARED_TABLES:
             raise ValueError("queue_write is only supported for shared tables")
+        queue_shared_write(table_name, values, self.menace_id)
 
         from db_write_buffer import buffer_shared_insert
 
