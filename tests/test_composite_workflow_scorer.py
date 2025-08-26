@@ -127,11 +127,13 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
     )
 
     from menace_sandbox.roi_results_db import ROIResultsDB
+    import menace_sandbox.composite_workflow_scorer as composite_mod
+    monkeypatch.setattr(composite_mod, "PATCH_SUCCESS_RATE", 0.5)
     from menace_sandbox.composite_workflow_scorer import (
         CompositeWorkflowScorer,
-        compute_patchability,
         compute_bottleneck_index,
     )
+    from menace_sandbox.workflow_scorer_core import compute_patchability
     import menace_sandbox.sandbox_runner as sandbox_runner
 
     def fake_run_workflow_simulations(**_kwargs):
