@@ -31,7 +31,8 @@ from pathlib import Path
 from typing import Iterable
 
 from db_dedup import compute_content_hash, insert_if_unique
-from db_write_queue import DEFAULT_QUEUE_DIR, remove_processed_lines
+from db_write_queue import remove_processed_lines
+from env_config import SHARED_QUEUE_DIR, SYNC_INTERVAL
 from fcntl_compat import LOCK_EX, LOCK_UN, flock
 
 
@@ -300,9 +301,9 @@ def _run_watch(queue_dir: Path, conn: sqlite3.Connection, interval: float, once:
 
 def main() -> None:  # pragma: no cover - CLI entry point
     parser = ArgumentParser(description=__doc__)
-    parser.add_argument("--queue-dir", default=str(DEFAULT_QUEUE_DIR))
+    parser.add_argument("--queue-dir", default=SHARED_QUEUE_DIR)
     parser.add_argument("--db-path", default="menace.db")
-    parser.add_argument("--interval", type=float, default=10.0)
+    parser.add_argument("--interval", type=float, default=SYNC_INTERVAL)
     parser.add_argument("--once", action="store_true", help="Process queues once and exit")
     parser.add_argument(
         "--replay-failed", action="store_true", help="Requeue entries from queue.failed.jsonl"
@@ -315,6 +316,7 @@ def main() -> None:  # pragma: no cover - CLI entry point
 
     conn = sqlite3.connect(args.db_path)  # noqa: SQL001
     queue_dir = Path(args.queue_dir)
+    queue_dir.mkdir(parents=True, exist_ok=True)
     try:
         if args.replay_failed:
             replay_failed(queue_dir)

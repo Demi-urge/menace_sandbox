@@ -197,8 +197,9 @@ python sync_shared_db.py --db-url sqlite:///menace.db --queue-dir sandbox_data/q
 
 Successful rows are committed and removed, retries happen up to three times and
 then move to `<table>_queue.failed.jsonl`. Override the queue directory with
-`DB_QUEUE_DIR` (or `DB_ROUTER_QUEUE_DIR` when using `DBRouter`) when running
-multiple instances.
+`SHARED_QUEUE_DIR` (or `DB_ROUTER_QUEUE_DIR` when using `DBRouter`) when running
+multiple instances. The daemon polls for new records every `SYNC_INTERVAL`
+seconds (default `10`) and creates the queue directory if it is missing.
 
 For PostgreSQL or other backends that handle concurrent writes, disable the
 buffer by unsetting `USE_DB_QUEUE` (or passing `queue_path=None`) so inserts go

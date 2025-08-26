@@ -15,6 +15,7 @@ def load_env(path: str | None = None) -> None:
         key, value = line.split('=', 1)
         os.environ.setdefault(key.strip(), value.strip())
 
+
 # Optionally load variables from MENACE_ENV_FILE if set
 load_env(os.getenv('MENACE_ENV_FILE'))
 
@@ -73,6 +74,11 @@ BOT_PERFORMANCE_DB = os.getenv('BOT_PERFORMANCE_DB', 'bot_performance_history.db
 MAINTENANCE_DB = os.getenv('MAINTENANCE_DB', 'maintenance.db')
 # Optional PostgreSQL connection string for Maintenance logs
 MAINTENANCE_DB_URL = os.getenv('MAINTENANCE_DB_URL')
+
+# Shared queue configuration
+SHARED_QUEUE_DIR = os.getenv("SHARED_QUEUE_DIR", "logs/queue")
+Path(SHARED_QUEUE_DIR).mkdir(parents=True, exist_ok=True)
+SYNC_INTERVAL = float(os.getenv("SYNC_INTERVAL", "10"))
 
 # Cloud configuration ---------------------------------------------------------
 # DATABASE_URL defines the persistent database connection string.  When unset

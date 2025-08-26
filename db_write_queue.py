@@ -9,7 +9,7 @@ shared database:
 * :func:`append_record` – new helper that appends records to per-menace queue
   files.  These files may later be processed by a background worker.
 
-Queue files live under the directory specified by the ``DB_QUEUE_DIR"
+Queue files live under the directory specified by the ``SHARED_QUEUE_DIR"
 environment variable (``logs/queue`` by default).  ``fcntl_compat`` file locks
 are used to avoid interleaving writes from concurrent threads or processes.
 """
@@ -22,10 +22,11 @@ from typing import Iterable, Iterator, List, Mapping, Any
 
 from fcntl_compat import flock, LOCK_EX, LOCK_UN
 from db_dedup import compute_content_hash
+from env_config import SHARED_QUEUE_DIR
 
-# Base directory for queue files.  Allow overriding via the ``DB_QUEUE_DIR``
-# environment variable.  By default queue files are stored under ``logs/queue``.
-DEFAULT_QUEUE_DIR = Path(os.getenv("DB_QUEUE_DIR", "logs/queue"))
+# Base directory for queue files defined by ``SHARED_QUEUE_DIR``.
+DEFAULT_QUEUE_DIR = Path(SHARED_QUEUE_DIR)
+DEFAULT_QUEUE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Global lock for in-process thread safety.  File locks handle cross-process
 # coordination.
@@ -69,7 +70,7 @@ def append_record(
     queue_dir:
         Optional base directory for queue files.  If omitted the directory is
         derived from :data:`DEFAULT_QUEUE_DIR` which may be overridden via the
-        ``DB_QUEUE_DIR`` environment variable.
+        ``SHARED_QUEUE_DIR`` environment variable.
     """
 
     base = queue_dir if queue_dir is not None else DEFAULT_QUEUE_DIR
