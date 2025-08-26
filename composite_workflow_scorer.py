@@ -30,6 +30,18 @@ from .workflow_scorer_core import (
     compute_patchability,
 )
 
+try:  # pragma: no cover - optional dependency
+    from .code_database import PatchHistoryDB
+except Exception:  # pragma: no cover - fallback when DB unavailable
+    PatchHistoryDB = None  # type: ignore
+
+try:  # pragma: no cover - runtime failures should not break scoring
+    PATCH_SUCCESS_RATE = (
+        PatchHistoryDB().success_rate() if PatchHistoryDB is not None else 1.0
+    )
+except Exception:  # pragma: no cover - defensive fallback
+    PATCH_SUCCESS_RATE = 1.0
+
 
 # ---------------------------------------------------------------------------
 # Result container
@@ -128,17 +140,10 @@ class CompositeWorkflowScorer(ROIScorer):
             self.tracker, self.history_window
         )
         bottleneck_index = compute_bottleneck_index(timings)
-        patch_success = 1.0
-        try:  # pragma: no cover - optional dependency
-            from .code_database import PatchHistoryDB
-
-            patch_success = PatchHistoryDB().success_rate()
-        except Exception:
-            pass
         patchability_score = compute_patchability(
             self.tracker.roi_history,
             window=self.history_window,
-            patch_success=patch_success,
+            patch_success=PATCH_SUCCESS_RATE,
         )
 
         failure_reason = "; ".join(
@@ -303,17 +308,10 @@ class CompositeWorkflowScorer(ROIScorer):
             tracker, self.history_window
         )
         bottleneck_index = compute_bottleneck_index(getattr(tracker, "timings", {}))
-        patch_success = 1.0
-        try:  # pragma: no cover - optional dependency
-            from .code_database import PatchHistoryDB
-
-            patch_success = PatchHistoryDB().success_rate()
-        except Exception:
-            pass
         patchability_score = compute_patchability(
             getattr(tracker, "roi_history", []),
             window=self.history_window,
-            patch_success=patch_success,
+            patch_success=PATCH_SUCCESS_RATE,
         )
 
         run_id = uuid.uuid4().hex
