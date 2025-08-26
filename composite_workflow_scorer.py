@@ -177,26 +177,6 @@ class CompositeWorkflowScorer(ROIScorer):
             if failure_reason is not None:
                 per_module[mod]["failure_reason"] = failure_reason
             self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
-            if hasattr(self.results_db, "log_module_delta"):
-                self.results_db.log_module_delta(
-                    workflow_id,
-                    run_id,
-                    mod,
-                    runtime,
-                    success_rate,
-                    roi_delta,
-                    window=self.history_window,
-                )
-            elif hasattr(self.results_db, "log_module_deltas"):
-                self.results_db.log_module_deltas(
-                    workflow_id,
-                    run_id,
-                    mod,
-                    runtime,
-                    success_rate,
-                    roi_delta,
-                    window=self.history_window,
-                )
         self.module_attribution = {
             mod: {
                 "roi_delta": data["roi_delta"],
@@ -392,26 +372,6 @@ class CompositeWorkflowScorer(ROIScorer):
                 "scheduling_overhead": float(overheads.get(mod, 0.0)),
             }
             self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
-            if hasattr(self.results_db, "log_module_delta"):
-                self.results_db.log_module_delta(
-                    workflow_id,
-                    run_id,
-                    mod,
-                    runtime,
-                    sr,
-                    roi_delta,
-                    window=self.history_window,
-                )
-            elif hasattr(self.results_db, "log_module_deltas"):
-                self.results_db.log_module_deltas(
-                    workflow_id,
-                    run_id,
-                    mod,
-                    runtime,
-                    sr,
-                    roi_delta,
-                    window=self.history_window,
-                )
         self.module_attribution = {
             mod: {
                 "roi_delta": data["roi_delta"],
