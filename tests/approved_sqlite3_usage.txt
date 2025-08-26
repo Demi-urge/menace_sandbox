@@ -51,3 +51,4 @@ tests/test_visual_agent_concurrency.py
 tests/test_visual_agent_queue_validation.py
 tests/test_db_initialization.py
 tests/test_codex_db_helpers.py
+tests/test_audit_db_log_to_db.py

@@ -10,6 +10,7 @@ from pathlib import Path
 from threading import Lock
 
 from fcntl_compat import LOCK_EX, LOCK_UN, flock
+import hashlib
 
 
 # Default log file within the repository
@@ -108,11 +109,26 @@ def log_db_access(
 
     # Determine log path and ensure directory exists
     path = Path(log_path).resolve() if log_path is not None else DEFAULT_LOG_PATH
+    state_path = Path(f"{path}.state")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = json.dumps(record, sort_keys=True)
-        logger = _get_logger(path)
-        logger.info(data)
+
+        with state_path.open("a+") as sf:
+            fd = sf.fileno()
+            flock(fd, LOCK_EX)
+            sf.seek(0)
+            prev_hash = sf.read().strip() or "0" * 64
+            data = json.dumps(record, sort_keys=True)
+            new_hash = hashlib.sha256((prev_hash + data).encode()).hexdigest()
+            record["hash"] = new_hash
+            logger = _get_logger(path)
+            logger.info(json.dumps(record, sort_keys=True))
+            sf.seek(0)
+            sf.truncate()
+            sf.write(new_hash)
+            sf.flush()
+            os.fsync(fd)
+            flock(fd, LOCK_UN)
     except OSError:
         # Logging failures are non-fatal
         pass
