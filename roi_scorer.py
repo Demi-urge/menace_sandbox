@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Mapping, Tuple
 import sqlite3
 import uuid
 from itertools import combinations
@@ -248,9 +248,10 @@ class ROIScorer:
         workflow_synergy: float,
         bottleneck_index: float,
         patchability: float,
+        run_id: str | None = None,
     ) -> str:
         cur = self.conn.cursor()
-        run_id = uuid.uuid4().hex
+        run_id = run_id or uuid.uuid4().hex
         insert_workflow_result(
             cur,
             workflow_id,
@@ -283,10 +284,13 @@ class CompositeWorkflowScorer(ROIScorer):
         }
         self._last_module_deltas: Dict[str, float] = {}
 
-    def score(
-        self, workflow_id: str, workflow_callable: Callable[[], bool]
-    ) -> Tuple[str, Scorecard]:
-        """Execute *workflow_callable* and persist scoring information."""
+    def score_workflow(
+        self,
+        workflow_id: str,
+        modules: Mapping[str, Callable[[], bool]],
+        run_id: str | None = None,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Execute ``modules`` sequentially and persist scoring information."""
         start_counts = {
             m: len(d) for m, d in self.tracker.module_deltas.items()
         }
@@ -300,7 +304,16 @@ class CompositeWorkflowScorer(ROIScorer):
             self.metrics_db.router = router
             self.pathway_db.router = router
             prev_rows = self.metrics_db.fetch_eval(workflow_id)
-        from .workflow_benchmark import benchmark_workflow  # local import to avoid circular
+        from .workflow_benchmark import benchmark_workflow  # local import
+
+        def workflow_callable() -> bool:
+            overall = True
+            for func in modules.values():
+                try:
+                    overall = bool(func()) and overall
+                except Exception:
+                    overall = False
+            return overall
 
         success = benchmark_workflow(
             workflow_callable, self.metrics_db, self.pathway_db, name=workflow_id
@@ -347,6 +360,7 @@ class CompositeWorkflowScorer(ROIScorer):
             workflow_synergy,
             bottleneck_index,
             patchability,
+            run_id=run_id,
         )
         mod_deltas: Dict[str, float] = {}
         for mod, deltas in self.tracker.module_deltas.items():
@@ -372,17 +386,21 @@ class CompositeWorkflowScorer(ROIScorer):
         self.conn.commit()
         for key, value in metrics.items():
             self.tracker.metrics_history.setdefault(key, []).append(value)
-        scorecard = Scorecard(
-            workflow_id,
-            runtime,
-            success,
-            roi_gain,
-            metrics,
-            workflow_synergy,
-            bottleneck_index,
-            patchability,
-        )
-        return run_id, scorecard
+        result = {
+            "workflow_id": workflow_id,
+            "runtime": runtime,
+            "success": success,
+            "roi_gain": roi_gain,
+            "metrics": metrics,
+            "module_deltas": mod_deltas,
+        }
+        return run_id, result
+
+    # backward compatibility
+    def score(
+        self, workflow_id: str, workflow_callable: Callable[[], bool]
+    ) -> Tuple[str, Dict[str, Any]]:
+        return self.score_workflow(workflow_id, {"workflow": workflow_callable})
 
     def module_deltas(self) -> Dict[str, float]:
         """Return ROI contribution per module from the last ``score`` call."""
