@@ -1,23 +1,27 @@
 import os
-import sqlite3
 from collections import defaultdict
-
-os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-
 import types
 import sys
 
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
 sys.modules.setdefault("menace_sandbox.self_test_service", types.ModuleType("self_test_service"))
 sys.modules.setdefault("menace_sandbox.error_bot", types.ModuleType("error_bot"))
-sys.modules.setdefault("menace_sandbox.menace_memory_manager", types.ModuleType("menace_memory_manager"))
-sys.modules.setdefault("menace_sandbox.chatgpt_enhancement_bot", types.ModuleType("chatgpt_enhancement_bot"))
-sys.modules.setdefault("menace_sandbox.chatgpt_idea_bot", types.ModuleType("chatgpt_idea_bot"))
+sys.modules.setdefault(
+    "menace_sandbox.menace_memory_manager", types.ModuleType("menace_memory_manager")
+)
+sys.modules.setdefault(
+    "menace_sandbox.chatgpt_enhancement_bot", types.ModuleType("chatgpt_enhancement_bot")
+)
+sys.modules.setdefault(
+    "menace_sandbox.chatgpt_idea_bot", types.ModuleType("chatgpt_idea_bot")
+)
 run_auto = types.ModuleType("run_autonomous")
 run_auto._verify_required_dependencies = lambda: None
 sys.modules.setdefault("menace_sandbox.run_autonomous", run_auto)
 
-import menace_sandbox.roi_scorer as rs
-from menace_sandbox.roi_tracker import (
+import menace_sandbox.roi_scorer as rs  # noqa: E402
+from menace_sandbox.roi_tracker import (  # noqa: E402
     load_workflow_module_deltas,
     apply_workflow_module_deltas,
 )
@@ -61,20 +65,32 @@ def test_module_deltas_persistence(tmp_path, monkeypatch):
         metrics_db.log_eval(name, "alpha_runtime", 1.0)
         metrics_db.log_eval(name, "beta_time", 2.0)
         return func()
+
     import menace_sandbox.workflow_benchmark as wb
     monkeypatch.setattr(wb, "benchmark_workflow", stub_benchmark)
 
-    def wf():
+    def alpha() -> bool:
         tracker.module_deltas.setdefault("alpha", []).append(0.3)
+        return True
+
+    def beta() -> bool:
         tracker.module_deltas.setdefault("beta", []).append(-0.1)
         return True
 
-    run_id, _ = scorer.score("wf", wf)
+    run_id, _ = scorer.score_workflow("wf", {"alpha": alpha, "beta": beta})
     assert scorer.module_deltas() == {"alpha": 0.3, "beta": -0.1}
 
-    conn = sqlite3.connect(db_path)
+    from menace_sandbox.db_router import DBRouter, LOCAL_TABLES
+
+    LOCAL_TABLES.add("workflow_module_deltas")
+    conn = DBRouter("test", str(db_path), str(db_path)).get_connection(
+        "workflow_module_deltas", operation="read"
+    )
     rows = conn.execute(
-        "SELECT module, runtime, roi_delta FROM workflow_module_deltas WHERE workflow_id=? AND run_id=? ORDER BY module",
+        (
+            "SELECT module, runtime, roi_delta FROM workflow_module_deltas "
+            "WHERE workflow_id=? AND run_id=? ORDER BY module"
+        ),
         ("wf", run_id),
     ).fetchall()
     assert rows == [("alpha", 1.0, 0.3), ("beta", 2.0, -0.1)]

@@ -50,27 +50,30 @@ def test_composite_workflow_scorer_records_metrics(tmp_path):
 
     workflow_id = "demo_workflow"
 
-    def workflow():
+    def fast() -> bool:
         metrics_db.log_eval(workflow_id, "fast_runtime", 0.01)
         metrics_db.log_eval(workflow_id, "fast_failures", 0.0)
         tracker.update(0.0, 1.0, modules=["fast"])
+        return True
 
+    def slow() -> bool:
         metrics_db.log_eval(workflow_id, "slow_runtime", 0.05)
         metrics_db.log_eval(workflow_id, "slow_failures", 0.0)
         tracker.update(0.0, 2.0, modules=["slow"])
         return True
 
-    run_id, scorecard = scorer.score(workflow_id, workflow)
+    modules = {"fast": fast, "slow": slow}
+    run_id, result = scorer.score_workflow(workflow_id, modules)
 
-    assert scorecard.workflow_id == workflow_id
-    assert scorecard.success is True
-    assert scorecard.runtime > 0
-    assert scorecard.roi_gain > 0
-    assert "fast_runtime" in scorecard.metrics
-    assert "slow_runtime" in scorecard.metrics
-    assert "workflow_synergy" in scorecard.metrics
-    assert "bottleneck_index" in scorecard.metrics
-    assert "patchability" in scorecard.metrics
+    assert result["workflow_id"] == workflow_id
+    assert result["success"] is True
+    assert result["runtime"] > 0
+    assert result["roi_gain"] > 0
+    assert "fast_runtime" in result["metrics"]
+    assert "slow_runtime" in result["metrics"]
+    assert "workflow_synergy" in result["metrics"]
+    assert "bottleneck_index" in result["metrics"]
+    assert "patchability" in result["metrics"]
 
     cur = scorer.conn.cursor()
     cur.execute(
@@ -80,7 +83,10 @@ def test_composite_workflow_scorer_records_metrics(tmp_path):
     assert cur.fetchone() == (workflow_id, run_id)
 
     cur.execute(
-        "SELECT module, runtime, roi_delta FROM workflow_module_deltas WHERE workflow_id=? AND run_id=?",
+        (
+            "SELECT module, runtime, roi_delta FROM workflow_module_deltas "
+            "WHERE workflow_id=? AND run_id=?"
+        ),
         (workflow_id, run_id),
     )
     rows = cur.fetchall()
@@ -90,4 +96,3 @@ def test_composite_workflow_scorer_records_metrics(tmp_path):
     assert mod_data["slow"][1] > mod_data["fast"][1]
     assert scorer.module_deltas()["fast"] == pytest.approx(1.0)
     assert scorer.module_deltas()["slow"] == pytest.approx(2.0)
-
