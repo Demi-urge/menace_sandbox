@@ -201,6 +201,10 @@ try:  # pragma: no cover - allow flat imports
     from .forecast_logger import ForecastLogger, log_forecast_record
 except Exception:  # pragma: no cover - fallback for flat layout
     from forecast_logger import ForecastLogger, log_forecast_record  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .workflow_evolution_manager import WorkflowEvolutionManager
+except Exception:  # pragma: no cover - fallback for flat layout
+    from workflow_evolution_manager import WorkflowEvolutionManager  # type: ignore
 
 logger = get_logger(__name__)
 
@@ -730,6 +734,7 @@ class SelfImprovementEngine:
         knowledge_service: GPTKnowledgeService | None = None,
         relevancy_radar: RelevancyRadar | None = None,
         intent_clusterer: IntentClusterer | None = None,
+        workflow_evolver: WorkflowEvolutionManager | None = None,
         tau: float = 0.5,
         **kwargs: Any,
     ) -> None:
@@ -780,6 +785,7 @@ class SelfImprovementEngine:
                 self.intent_clusterer = IntentClusterer(UniversalRetriever())
             except Exception:
                 self.intent_clusterer = None
+        self.workflow_evolver = workflow_evolver or WorkflowEvolutionManager()
         self.pre_roi_bot = pre_roi_bot
         self.pre_roi_scale = (
             pre_roi_scale if pre_roi_scale is not None else PRE_ROI_SCALE
@@ -5009,6 +5015,7 @@ class SelfImprovementEngine:
         cid = f"cycle-{self._cycle_count}"
         set_correlation_id(cid)
         try:
+            workflow_evolution_details: list[dict[str, object]] = []
             if self.meta_logger:
                 try:
                     settings = SandboxSettings()
@@ -5100,6 +5107,26 @@ class SelfImprovementEngine:
                 self._evaluate_module_relevance()
                 self._last_relevancy_eval = now
             self._process_preventative_queue()
+            if self.workflow_evolver:
+                try:
+                    candidates = self.pathway_db.top_sequences(limit=3)
+                except Exception:
+                    candidates = []
+                for seq, _score in candidates:
+                    wf_id = hash(seq) & 0xFFFFFFFF
+                    try:
+                        if self.workflow_evolver.is_stable(wf_id):
+                            continue
+                        baseline = self.workflow_evolver.build_callable(seq)
+                        self.workflow_evolver.evolve(baseline, wf_id)
+                        workflow_evolution_details.append(
+                            {"workflow_id": wf_id, "sequence": seq}
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "workflow evolution failed",
+                            extra=log_record(workflow_id=wf_id),
+                        )
             if self.error_bot:
                 try:
                     predictions = (
@@ -6090,6 +6117,8 @@ class SelfImprovementEngine:
                 if risk_info:
                     result.warnings["foresight_risk"].append(risk_info)
                 result.warnings["workflow_high_risk"] = [{"value": high_risk}]
+            if workflow_evolution_details:
+                result.workflow_evolution = workflow_evolution_details
             if getattr(self, "workflow_scorer", None):
                 try:
                     self.workflow_scorer.score_workflow(
@@ -6224,17 +6253,29 @@ class ImprovementEngineRegistry:
         """Remove the engine referenced by *name* if present."""
         self.engines.pop(name, None)
 
-    def run_all_cycles(self, energy: int = 1) -> dict[str, AutomationResult]:
-        """Execute ``run_cycle`` on all registered engines."""
+    def run_all_cycles(self, energy: int = 1) -> tuple[dict[str, AutomationResult], dict[str, object]]:
+        """Execute ``run_cycle`` on all registered engines.
+
+        Returns a tuple ``(results, workflow_results)`` where ``results`` maps
+        engine names to :class:`AutomationResult` instances and
+        ``workflow_results`` contains any workflow evolution data emitted by the
+        engines.
+        """
+
         results: dict[str, AutomationResult] = {}
+        workflow_results: dict[str, object] = {}
         for name, eng in self.engines.items():
             if eng._should_trigger():
-                results[name] = eng.run_cycle(energy=energy)
-        return results
+                res = eng.run_cycle(energy=energy)
+                results[name] = res
+                wf_res = getattr(res, "workflow_evolution", None)
+                if wf_res is not None:
+                    workflow_results[name] = wf_res
+        return results, workflow_results
 
     async def run_all_cycles_async(
         self, energy: int = 1
-    ) -> dict[str, AutomationResult]:
+    ) -> tuple[dict[str, AutomationResult], dict[str, object]]:
         """Asynchronously execute ``run_cycle`` on all registered engines."""
 
         async def _run(name: str, eng: SelfImprovementEngine):
@@ -6245,11 +6286,16 @@ class ImprovementEngineRegistry:
 
         tasks = [asyncio.create_task(_run(n, e)) for n, e in self.engines.items()]
         results: dict[str, AutomationResult] = {}
+        workflow_results: dict[str, object] = {}
         for t in tasks:
             out = await t
             if out:
-                results[out[0]] = out[1]
-        return results
+                name, res = out
+                results[name] = res
+                wf_res = getattr(res, "workflow_evolution", None)
+                if wf_res is not None:
+                    workflow_results[name] = wf_res
+        return results, workflow_results
 
     def schedule_all(
         self, energy: int = 1, *, loop: asyncio.AbstractEventLoop | None = None
@@ -6342,7 +6388,8 @@ def auto_x(
             registry.register_engine(f"engine{idx}", eng)
     else:
         registry.register_engine("default", SelfImprovementEngine())
-    return registry.run_all_cycles(energy=energy)
+    results, _ = registry.run_all_cycles(energy=energy)
+    return results
 
 
 def load_synergy_history(path: str | Path) -> list[dict[str, float]]:

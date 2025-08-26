@@ -2,6 +2,23 @@ import pytest
 
 pytest.importorskip("pandas")
 
+import types
+import sys
+
+od_stub = types.ModuleType("sandbox_runner.orphan_discovery")
+for _fn in (
+    "append_orphan_cache",
+    "append_orphan_classifications",
+    "prune_orphan_cache",
+    "load_orphan_cache",
+):
+    setattr(od_stub, _fn, lambda *a, **k: None)
+sys.modules.setdefault("sandbox_runner.orphan_discovery", od_stub)
+sys.modules.setdefault("orphan_discovery", od_stub)
+neuro_stub = types.ModuleType("neurosales")
+neuro_stub.add_message = lambda *a, **k: None
+sys.modules.setdefault("neurosales", neuro_stub)
+
 import menace.self_improvement_engine as sie
 import asyncio
 import menace.diagnostic_manager as dm
@@ -46,8 +63,9 @@ def test_registry_runs_multiple(tmp_path, monkeypatch):
     reg.register_engine("alpha", eng2)
     monkeypatch.setattr(eng1, "_should_trigger", lambda: True)
     monkeypatch.setattr(eng2, "_should_trigger", lambda: True)
-    res = reg.run_all_cycles()
+    res, wf = reg.run_all_cycles()
     assert set(res) == {"menace", "alpha"}
+    assert wf == {}
     assert isinstance(res["menace"], mp.AutomationResult)
     assert pipe1.calls and pipe2.calls
 
