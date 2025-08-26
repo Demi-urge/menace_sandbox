@@ -1,178 +1,164 @@
+"""Persistent storage for workflow ROI evaluation results.
+
+This module provides a thin wrapper around :class:`sqlite3.Connection`
+managed by :class:`~menace_sandbox.db_router.DBRouter`.  Each recorded
+evaluation captures aggregate workflow metrics along with per-module deltas
+encoded as JSON.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
-
-import sqlite3
+from typing import Dict, Any
+import json
 
 from db_router import DBRouter, LOCAL_TABLES
 
-# Ensure router treats ``roi_results`` as a local table so test environments can
-# operate on ephemeral SQLite files without external dependencies.
+# ``roi_results`` is always treated as a local table so unit tests can operate
+# on ephemeral SQLite files without touching shared resources.
 LOCAL_TABLES.add("roi_results")
 
 
 @dataclass
 class ROIResult:
-    """Record of a single module or workflow ROI measurement."""
+    """Aggregate ROI metrics for a workflow evaluation."""
 
     workflow_id: str
     run_id: str
-    module: Optional[str]
     runtime: float
     success_rate: float
     roi_gain: float
-    workflow_synergy_score: Optional[float] = None
-    bottleneck_index: Optional[float] = None
-    patchability_score: Optional[float] = None
-    ts: str = datetime.utcnow().isoformat()
+    workflow_synergy_score: float
+    bottleneck_index: float
+    patchability_score: float
+    module_deltas: Dict[str, Dict[str, float]]
 
 
 class ROIResultsDB:
-    """SQLite helper providing longitudinal ROI result storage and queries."""
+    """Lightweight SQLite helper for workflow ROI results.
 
-    def __init__(
-        self,
-        db_path: str | Path = "roi_results.db",
-        router: DBRouter | None = None,
-    ) -> None:
-        self.db_path = Path(db_path)
-        # Reuse provided router to share connections with other helpers, falling
-        # back to a standalone ``DBRouter`` if necessary.
-        self.router = router or DBRouter(
-            "roi_results", str(self.db_path), str(self.db_path)
-        )
+    The schema mirrors the specification from the user instructions.  Each
+    call to :meth:`add_result` inserts a single row capturing aggregate metrics
+    and JSON encoded per-module deltas.
+    """
+
+    def __init__(self, path: str | Path = "roi_results.db", *, router: DBRouter | None = None) -> None:
+        self.path = Path(path)
+        self.router = router or DBRouter("roi_results", str(self.path), str(self.path))
         self.conn = self.router.get_connection("roi_results", operation="write")
         self._init_db()
 
+    # ------------------------------------------------------------------
     def _init_db(self) -> None:
         cur = self.conn.cursor()
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS roi_results(
-                id INTEGER PRIMARY KEY,
                 workflow_id TEXT,
                 run_id TEXT,
-                module TEXT,
                 runtime REAL,
                 success_rate REAL,
                 roi_gain REAL,
                 workflow_synergy_score REAL,
                 bottleneck_index REAL,
                 patchability_score REAL,
-                ts TEXT
+                module_deltas TEXT,
+                ts TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """,
         )
         cur.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_roi_results_wf_run_mod
-                ON roi_results(workflow_id, run_id, module)
-            """,
+            "CREATE INDEX IF NOT EXISTS idx_roi_results_wf_run ON roi_results(workflow_id, run_id)"
         )
         self.conn.commit()
 
-    # write ---------------------------------------------------------------
-    def add(self, rec: ROIResult) -> None:
-        """Persist an :class:`ROIResult` record."""
+    # ------------------------------------------------------------------
+    def add_result(
+        self,
+        *,
+        workflow_id: str,
+        run_id: str,
+        runtime: float,
+        success_rate: float,
+        roi_gain: float,
+        workflow_synergy_score: float,
+        bottleneck_index: float,
+        patchability_score: float,
+        module_deltas: Dict[str, Dict[str, float]] | None = None,
+    ) -> int:
+        """Insert a workflow evaluation result.
+
+        Parameters
+        ----------
+        workflow_id:
+            Identifier of the evaluated workflow.
+        run_id:
+            Unique identifier for this evaluation run.
+        runtime, success_rate, roi_gain, workflow_synergy_score,
+        bottleneck_index, patchability_score:
+            Aggregate metrics from the evaluation.
+        module_deltas:
+            Mapping of module name to metric dictionary.  The mapping is JSON
+            encoded before storage.
+        """
 
         cur = self.conn.cursor()
         cur.execute(
             """
             INSERT INTO roi_results(
-                workflow_id, run_id, module, runtime, success_rate, roi_gain,
-                workflow_synergy_score, bottleneck_index, patchability_score, ts
-            ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                workflow_id, run_id, runtime, success_rate, roi_gain,
+                workflow_synergy_score, bottleneck_index, patchability_score,
+                module_deltas
+            ) VALUES(?,?,?,?,?,?,?,?,?)
             """,
             (
-                rec.workflow_id,
-                rec.run_id,
-                rec.module,
-                rec.runtime,
-                rec.success_rate,
-                rec.roi_gain,
-                rec.workflow_synergy_score,
-                rec.bottleneck_index,
-                rec.patchability_score,
-                rec.ts,
+                workflow_id,
+                run_id,
+                runtime,
+                success_rate,
+                roi_gain,
+                workflow_synergy_score,
+                bottleneck_index,
+                patchability_score,
+                json.dumps(module_deltas or {}, sort_keys=True),
             ),
         )
         self.conn.commit()
+        return int(cur.lastrowid or 0)
 
-    # read ----------------------------------------------------------------
-    def fetch_runs(
-        self, workflow_id: str, module: Optional[str] = None
-    ) -> List[ROIResult]:
-        """Return all recorded runs for ``workflow_id`` optionally filtered by module."""
-
-        cur = self.conn.cursor()
-        base = (
-            "SELECT workflow_id, run_id, module, runtime, success_rate, roi_gain, "
-            "workflow_synergy_score, bottleneck_index, patchability_score, ts "
-            "FROM roi_results WHERE workflow_id=?"
-        )
-        params: list[object] = [workflow_id]
-        if module is not None:
-            base += " AND module=?"
-            params.append(module)
-        base += " ORDER BY ts"
-        cur.execute(base, params)
-        rows = cur.fetchall()
-        return [ROIResult(*row) for row in rows]
-
-    def trend(self, workflow_id: str, metric: str, module: Optional[str] = None) -> float:
-        """Return linear trend slope for ``metric`` across runs.
-
-        The computation uses ordinary least squares on the sequential runs.  If
-        fewer than two points are present, ``0.0`` is returned.
-        """
-
-        rows = self.fetch_runs(workflow_id, module)
-        values = [getattr(r, metric) for r in rows if getattr(r, metric) is not None]
-        n = len(values)
-        if n < 2:
-            return 0.0
-        mean_x = (n - 1) / 2
-        mean_y = sum(values) / n
-        num = sum((i - mean_x) * (v - mean_y) for i, v in enumerate(values))
-        den = sum((i - mean_x) ** 2 for i in range(n))
-        return num / den if den else 0.0
-
+    # ------------------------------------------------------------------
     def module_impact_report(self, workflow_id: str, run_id: str) -> Dict[str, Dict[str, float]]:
         """Return modules grouped by improvement sign for ``run_id``."""
 
         cur = self.conn.cursor()
         cur.execute(
-            "SELECT module, roi_gain FROM roi_results WHERE workflow_id=? AND run_id=? AND module IS NOT NULL",
-            (workflow_id, run_id),
+            "SELECT run_id, module_deltas FROM roi_results WHERE workflow_id=? ORDER BY ts",
+            (workflow_id,),
         )
-        current = {str(m): float(g) for m, g in cur.fetchall()}
-        improved: Dict[str, float] = {}
-        regressed: Dict[str, float] = {}
-        for mod in current:
-            history = self.fetch_runs(workflow_id, mod)
-            cumulative = 0.0
-            prev_total = 0.0
-            cur_total = 0.0
-            for rec in history:
-                cumulative += rec.roi_gain
-                if rec.run_id == run_id:
-                    cur_total = cumulative
-                    break
-                prev_total = cumulative
-            delta = cur_total - prev_total
-            if delta >= 0:
-                improved[mod] = delta
-            else:
-                regressed[mod] = delta
-        return {"improved": improved, "regressed": regressed}
+        rows = cur.fetchall()
+
+        prev: Dict[str, float] = {}
+        for r_id, deltas_json in rows:
+            deltas = json.loads(deltas_json or "{}")
+            if r_id == run_id:
+                improved: Dict[str, float] = {}
+                regressed: Dict[str, float] = {}
+                for mod, metrics in deltas.items():
+                    curr = float(metrics.get("roi_delta", 0.0))
+                    diff = curr - prev.get(mod, 0.0)
+                    if diff >= 0:
+                        improved[mod] = diff
+                    else:
+                        regressed[mod] = diff
+                return {"improved": improved, "regressed": regressed}
+            for mod, metrics in deltas.items():
+                prev[mod] = float(metrics.get("roi_delta", 0.0))
+
+        return {"improved": {}, "regressed": {}}
 
 
-def module_impact_report(
-    workflow_id: str, run_id: str, db_path: str | Path = "roi_results.db"
-) -> Dict[str, Dict[str, float]]:
+def module_impact_report(workflow_id: str, run_id: str, db_path: str | Path = "roi_results.db") -> Dict[str, Dict[str, float]]:
     """Convenience wrapper returning module impact report from ``db_path``."""
 
     db = ROIResultsDB(db_path)
@@ -180,3 +166,4 @@ def module_impact_report(
 
 
 __all__ = ["ROIResult", "ROIResultsDB", "module_impact_report"]
+

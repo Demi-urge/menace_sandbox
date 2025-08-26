@@ -6,11 +6,13 @@ from dataclasses import dataclass
 from statistics import stdev
 from typing import Any, Dict, Mapping, Iterable
 import time
+import uuid
 
 import numpy as np
 
 from .roi_tracker import ROITracker
 from . import sandbox_runner
+from .roi_results_db import ROIResultsDB
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +90,10 @@ class ROIScorer:
 class CompositeWorkflowScorer(ROIScorer):
     """Execute workflows and compute aggregate ROI metrics."""
 
+    def __init__(self, tracker: ROITracker | None = None, results_db: ROIResultsDB | None = None) -> None:
+        super().__init__(tracker)
+        self.results_db = results_db or ROIResultsDB()
+
     def evaluate(
         self,
         workflow_id: str,
@@ -131,6 +137,19 @@ class CompositeWorkflowScorer(ROIScorer):
             roi_delta = sum(float(x) for x in tracker.module_deltas.get(mod, []))
             sr = counts["success"] / counts["total"] if counts["total"] else 0.0
             per_module_metrics[mod] = {"success_rate": sr, "roi_delta": roi_delta}
+
+        run_id = uuid.uuid4().hex
+        self.results_db.add_result(
+            workflow_id=workflow_id,
+            run_id=run_id,
+            runtime=runtime,
+            success_rate=success_rate,
+            roi_gain=roi_gain,
+            workflow_synergy_score=workflow_synergy_score,
+            bottleneck_index=bottleneck_index,
+            patchability_score=patchability_score,
+            module_deltas=per_module_metrics,
+        )
 
         return EvaluationResult(
             runtime=runtime,
