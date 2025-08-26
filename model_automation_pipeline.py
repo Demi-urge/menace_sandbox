@@ -85,6 +85,7 @@ class AutomationResult:
     package: Optional[TaskPackage]
     roi: Optional[ROIResult]
     warnings: Dict[str, List[Dict[str, Any]]] | None = None
+    workflow_evolution: List[Dict[str, Any]] | None = None
 
 
 class ModelAutomationPipeline:
