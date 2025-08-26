@@ -25,6 +25,10 @@ from menace_sandbox.roi_tracker import (  # noqa: E402
     load_workflow_module_deltas,
     apply_workflow_module_deltas,
 )
+from menace_sandbox.roi_results_db import (  # noqa: E402
+    ROIResultsDB,
+    module_performance_trajectories,
+)
 
 
 class DummyMetricsDB:
@@ -100,12 +104,16 @@ def test_module_deltas_persistence(tmp_path, monkeypatch):
     )
     rows = conn.execute(
         (
-            "SELECT module, runtime, roi_delta FROM workflow_module_deltas "
+            "SELECT module, runtime, roi_delta, roi_delta_ma, roi_delta_var "
+            "FROM workflow_module_deltas "
             "WHERE workflow_id=? AND run_id=? ORDER BY module"
         ),
         ("wf", run_id),
     ).fetchall()
-    assert rows == [("alpha", 1.0, 0.3), ("beta", 2.0, -0.1)]
+    assert rows == [
+        ("alpha", 1.0, 0.3, 0.3, 0.0),
+        ("beta", 2.0, -0.1, -0.1, 0.0),
+    ]
 
     deltas = load_workflow_module_deltas("wf", run_id, db_path)
     assert deltas == {"alpha": 0.3, "beta": -0.1}
@@ -113,3 +121,12 @@ def test_module_deltas_persistence(tmp_path, monkeypatch):
     new_tracker = DummyTracker()
     apply_workflow_module_deltas(new_tracker, "wf", run_id, db_path)
     assert new_tracker.module_deltas == {"alpha": [0.3], "beta": [-0.1]}
+
+    db = ROIResultsDB(db_path)
+    traj = db.fetch_module_trajectories("wf")
+    assert traj["alpha"][0]["roi_delta"] == 0.3
+    assert traj["alpha"][0]["moving_avg"] == 0.3
+    assert traj["alpha"][0]["variance"] == 0.0
+    # convenience wrapper
+    traj2 = module_performance_trajectories("wf", db_path=db_path)
+    assert traj2 == traj
