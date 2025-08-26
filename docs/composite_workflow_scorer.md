@@ -13,22 +13,22 @@ print(result.success_rate, result.roi_gain)
 
 ## Metric formulas
 
-- **Workflow synergy** – average pairwise synergy value for participating modules. History loads from `synergy_history_db` or sandbox metrics:
+- **Workflow synergy** – ratio of summed individual module ROI gains to the combined ROI gain:
 
   ```
-  workflow_synergy_score = mean(synergy_scores(mod_i, mod_j) for i,j in modules)
+  workflow_synergy_score = sum(roi_gain_m for m in modules) / total_roi_gain
   ```
 
-- **Bottleneck index** – worst runtime-to-ROI ratio adjusted by workflow variance:
+- **Bottleneck index** – slowest module runtime divided by total workflow runtime:
 
   ```
-  bottleneck_index = max(runtime_m / roi_m) * (1 + workflow_variance(workflow_id))
+  bottleneck_index = max(runtime_m) / sum(runtime_m for m in modules)
   ```
 
-- **Patchability** – slope of a linear regression fitted to the last `n` ROI deltas (`n=5`):
+- **Patchability** – derivative of the ROI trend over recent runs adjusted by historical volatility:
 
   ```
-  patchability_score = slope(linear_fit(range(len(hist)), hist))
+  patchability_score = slope(recent_roi_history) / (1 + std(all_roi_history))
   ```
 
 ## Database schema
@@ -43,9 +43,9 @@ print(result.success_rate, result.roi_gain)
 | `runtime` | REAL | total execution time in seconds |
 | `success_rate` | REAL | successes divided by total module runs |
 | `roi_gain` | REAL | sum of `roi_history` deltas |
-| `workflow_synergy_score` | REAL | average synergy score |
-| `bottleneck_index` | REAL | worst runtime/ROI ratio adjusted by variance |
-| `patchability_score` | REAL | regression slope of ROI history |
+| `workflow_synergy_score` | REAL | summed module ROI gains divided by combined gain |
+| `bottleneck_index` | REAL | max module runtime divided by total runtime |
+| `patchability_score` | REAL | ROI slope adjusted by volatility |
 | `module_deltas` | TEXT | JSON mapping `module -> {success_rate, roi_delta}` |
 
 ## CLI example
