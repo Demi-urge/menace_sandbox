@@ -121,26 +121,21 @@ class ROIScorer:
     def __init__(
         self,
         tracker: ROITracker | None = None,
-        calculator: ROICalculator | None = None,
+        calculator_factory: Callable[[], ROICalculator] | None = None,
         profile_type: str | None = None,
     ) -> None:
         self.tracker = tracker or ROITracker()
-        if calculator is not None:
-            self.calculator = calculator
-        else:
-            try:
-                self.calculator = ROICalculator()
-            except Exception:
-                # Fall back to a tiny stub that sums provided metrics.  This keeps
-                # unit tests lightweight when the full ROI profile configuration is
-                # unavailable.
-                class _StubCalc:
-                    profiles = {"default": {}}
-
-                    def calculate(self, metrics: Dict[str, Any], _profile: str) -> Tuple[float, bool, list[str]]:
-                        return float(sum(float(v) for v in metrics.values())), False, []
-
-                self.calculator = _StubCalc()
+        try:
+            self.calculator = (
+                calculator_factory()
+                if calculator_factory is not None
+                else ROICalculator()
+            )
+        except Exception as exc:  # pragma: no cover - configuration errors
+            raise RuntimeError(
+                "ROICalculator initialization failed. Ensure ROI profile"
+                " configuration is available or provide a calculator_factory"
+            ) from exc
         self.profile_type = profile_type or next(iter(self.calculator.profiles))
 
 
@@ -150,11 +145,11 @@ class CompositeWorkflowScorer(ROIScorer):
     def __init__(
         self,
         tracker: ROITracker | None = None,
-        calculator: ROICalculator | None = None,
+        calculator_factory: Callable[[], ROICalculator] | None = None,
         results_db: ROIResultsDB | None = None,
         profile_type: str | None = None,
     ) -> None:
-        super().__init__(tracker, calculator, profile_type)
+        super().__init__(tracker, calculator_factory, profile_type)
         self.results_db = results_db or ROIResultsDB()
         # offsets used to compute deltas for individual runs
         self._roi_start: int = 0

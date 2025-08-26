@@ -38,6 +38,15 @@ class _StubResultsDB:
         self.log_module_attribution = mock.Mock()
 
 
+class _StubCalc:
+    """Minimal ROICalculator replacement."""
+
+    profiles = {"default": {}}
+
+    def calculate(self, metrics, _profile):
+        return float(sum(float(v) for v in metrics.values())), False, []
+
+
 # Register stubs before importing the scorer to avoid heavy imports.
 sys.modules.setdefault(
     "menace_sandbox.roi_tracker", types.SimpleNamespace(ROITracker=_StubTracker)
@@ -52,6 +61,9 @@ sys.modules.setdefault(
     types.SimpleNamespace(environment=types.SimpleNamespace()),
 )
 sys.modules.setdefault("sandbox_runner", sys.modules["menace_sandbox.sandbox_runner"])
+sys.modules.setdefault(
+    "menace_sandbox.roi_calculator", types.SimpleNamespace(ROICalculator=_StubCalc)
+)
 class _StubPatchDB:
     def success_rate(self, limit: int = 50) -> float:
         return 1.0
@@ -81,7 +93,9 @@ def test_run_records_metrics_and_ids(monkeypatch):
 
     tracker = Tracker()
     results_db = _StubResultsDB()
-    scorer = CompositeWorkflowScorer(tracker=tracker, results_db=results_db)
+    scorer = CompositeWorkflowScorer(
+        tracker=tracker, results_db=results_db, calculator_factory=_StubCalc
+    )
     scorer._roi_start = 0
     scorer._module_start = {"mod1": 0, "mod2": 0}
     scorer._module_successes = {"mod1": True, "mod2": False}
@@ -114,12 +128,8 @@ def test_score_workflow_persists_results_and_ids():
 
     tracker = _StubTracker()
     results_db = _StubResultsDB()
-    calculator = types.SimpleNamespace(
-        calculate=lambda metrics, _p: (sum(metrics.values()), False, []),
-        profiles={"default": {}},
-    )
     scorer = CompositeWorkflowScorer(
-        tracker=tracker, calculator=calculator, results_db=results_db
+        tracker=tracker, results_db=results_db, calculator_factory=_StubCalc
     )
 
     def mod_a():
@@ -170,7 +180,9 @@ def test_evaluate_logs_run_and_workflow(monkeypatch):
         types.SimpleNamespace(run_workflow_simulations=fake_run_workflow_simulations),
     )
 
-    scorer = CompositeWorkflowScorer(tracker=tracker, results_db=results_db)
+    scorer = CompositeWorkflowScorer(
+        tracker=tracker, results_db=results_db, calculator_factory=_StubCalc
+    )
     result = scorer.evaluate("wf3")
 
     kwargs = results_db.log_result.call_args.kwargs

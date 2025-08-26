@@ -65,6 +65,17 @@ def _copy_fixture_modules(tmp_path: Path) -> None:
         shutil.copy(FIXTURES / name, tmp_path / name)
 
 
+def _stub_calculator_factory():
+    return types.SimpleNamespace(
+        calculate=lambda metrics, _p: (
+            sum(float(v) for v in metrics.values()),
+            False,
+            [],
+        ),
+        profiles={"default": {}},
+    )
+
+
 def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
     """Composite scorer emits metrics and persists results."""
 
@@ -131,7 +142,9 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
 
     db_path = tmp_path / "roi_results.db"
     scorer = CompositeWorkflowScorer(
-        tracker=tracker, results_db=ROIResultsDB(db_path)
+        tracker=tracker,
+        results_db=ROIResultsDB(db_path),
+        calculator_factory=_stub_calculator_factory,
     )
     workflow_id = "wf_example"
     result = scorer.evaluate(workflow_id)
@@ -186,11 +199,6 @@ def test_score_workflow_parallel_execution(tmp_path):
                 for m in modules:
                     self.module_deltas[m].append(roi_after)
 
-    calculator = types.SimpleNamespace(
-        calculate=lambda metrics, _p: (sum(metrics.values()), False, []),
-        profiles={"default": {}},
-    )
-
     tracker = StubTracker()
     sys.modules.setdefault(
         "menace_sandbox.roi_tracker", types.SimpleNamespace(ROITracker=StubTracker)
@@ -199,7 +207,9 @@ def test_score_workflow_parallel_execution(tmp_path):
     from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
 
     scorer = CompositeWorkflowScorer(
-        tracker=tracker, calculator=calculator, results_db=ROIResultsDB(tmp_path / "db.sqlite")
+        tracker=tracker,
+        calculator_factory=_stub_calculator_factory,
+        results_db=ROIResultsDB(tmp_path / "db.sqlite"),
     )
 
     def mod_a():
