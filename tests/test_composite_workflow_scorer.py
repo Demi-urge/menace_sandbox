@@ -15,13 +15,44 @@ import shutil
 import sys
 import types
 import time
+import sqlite3
 from pathlib import Path
 from typing import Dict
 
 import numpy as np
 import pytest
 
+class _StubDBRouter:
+    def __init__(self, _name, local_path, _shared_path):
+        self.path = local_path
+
+    def get_connection(self, _name, operation: str | None = None):
+        return sqlite3.connect(self.path)
+
+
+sys.modules.setdefault(
+    "menace_sandbox.db_router",
+    types.SimpleNamespace(
+        init_db_router=lambda *a, **k: None,
+        DBRouter=_StubDBRouter,
+        LOCAL_TABLES=set(),
+    ),
+)
+sys.modules.setdefault("db_router", sys.modules["menace_sandbox.db_router"])
 from menace_sandbox.db_router import init_db_router
+
+
+class _StubPatchDB:
+    def success_rate(self, limit: int = 50) -> float:
+        return 1.0
+
+
+sys.modules.setdefault(
+    "menace_sandbox.code_database", types.SimpleNamespace(PatchHistoryDB=_StubPatchDB)
+)
+sys.modules.setdefault(
+    "menace_sandbox.sandbox_runner", types.SimpleNamespace(environment=types.SimpleNamespace())
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "workflow_modules"
@@ -73,6 +104,12 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
         types.SimpleNamespace(load_history=lambda: [{"mod_a,mod_b": 0.5}]),
     )
 
+    import menace_sandbox.code_database as code_db_mod
+
+    monkeypatch.setattr(
+        code_db_mod.PatchHistoryDB, "success_rate", lambda self, limit=50: 0.5
+    )
+
     from menace_sandbox.roi_results_db import ROIResultsDB
     from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
     import menace_sandbox.sandbox_runner as sandbox_runner
@@ -104,7 +141,7 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
     assert 0.0 <= result.success_rate <= 1.0
     assert result.workflow_synergy_score == 0.0
     assert result.bottleneck_index == pytest.approx(0.13608276348795434)
-    expected_patch = 1.0 / np.std([1.0, 2.0, 3.0])
+    expected_patch = 0.5 * (1.0 / np.std([1.0, 2.0, 3.0]))
     assert result.patchability_score == pytest.approx(expected_patch)
 
     # Ensure results persisted with workflow/run identifiers and per-module deltas.
