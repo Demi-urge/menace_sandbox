@@ -12,10 +12,11 @@ Queued writes are stored as JSON Lines files.  Each line contains a mapping::
 
     {"table": "<table>", "data": {...}, "source_menace_id": "<id>"}
 
-Files are grouped by menace under the directory defined by `DB_QUEUE_DIR`
-(`logs/queue` by default).  Each instance appends records to
-`<menace_id>.jsonl`.  `DBRouter.queue_insert` respects an optional
-`DB_ROUTER_QUEUE_DIR` which overrides the base location when routing writes.
+Files are grouped by menace under the directory defined by `SHARED_QUEUE_DIR`
+(defaults to `logs/queue`). The `env_config` module ensures this directory
+exists. Each instance appends records to `<menace_id>.jsonl`.
+`DBRouter.queue_insert` respects an optional `DB_ROUTER_QUEUE_DIR` which
+overrides the base location when routing writes.
 
 ## How `sync_shared_db.py` processes queues
 The synchroniser scans the queue directory for `*.jsonl` files and handles
@@ -30,12 +31,13 @@ Processed lines are trimmed from the queue and backed up to `queue.log.bak`
 for manual rollback.
 
 ## Environment variables and daemon options
-- `DB_QUEUE_DIR` – base directory for queue files (`logs/queue` by default).
+- `SHARED_QUEUE_DIR` – base directory for queue files (defaults to
+  `logs/queue` and created automatically by `env_config`).
 - `DB_ROUTER_QUEUE_DIR` – override used by `DBRouter.queue_insert` when
   queuing shared writes.
 - `sync_shared_db.py` options:
   - `--queue-dir` – directory to scan for queues (defaults to
-    `DB_QUEUE_DIR`).
+    `SHARED_QUEUE_DIR`).
   - `--db-path` – path to the shared SQLite database.
   - `--interval` – polling interval in seconds when running continuously.
   - `--once` – process queues once and exit.
