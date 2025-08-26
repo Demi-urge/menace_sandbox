@@ -9,7 +9,7 @@ def test_log_db_access(tmp_path: Path) -> None:
     log_file = tmp_path / "log.jsonl"
 
     def writer(idx: int) -> None:
-        log_db_access("read", f"table{idx}", idx, f"id{idx}", log_path=str(log_file))
+        log_db_access("read", f"table{idx}", idx, f"id{idx}", log_path=log_file)
 
     threads = [threading.Thread(target=writer, args=(i,)) for i in range(2)]
     for t in threads:
