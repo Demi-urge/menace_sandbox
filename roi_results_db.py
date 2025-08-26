@@ -205,6 +205,17 @@ class ROIResultsDB:
                     failure_reason,
                 ),
             )
+            if module_deltas:
+                for mod, metrics in module_deltas.items():
+                    self.log_module_delta(
+                        workflow_id,
+                        run_id,
+                        mod,
+                        float(metrics.get("runtime", 0.0)),
+                        float(metrics.get("success_rate", 0.0)),
+                        float(metrics.get("roi_delta", 0.0)),
+                        commit=False,
+                    )
             self.conn.commit()
             return int(cur.lastrowid or 0)
         except Exception:
@@ -212,7 +223,7 @@ class ROIResultsDB:
             raise
 
     # ------------------------------------------------------------------
-    def log_module_deltas(
+    def log_module_delta(
         self,
         workflow_id: str,
         run_id: str,
@@ -222,16 +233,30 @@ class ROIResultsDB:
         roi_delta: float,
         *,
         window: int | None = None,
+        commit: bool = True,
     ) -> None:
         """Persist per-module delta statistics for a workflow run.
 
         ``roi_delta_ma`` and ``roi_delta_var`` are derived from the latest
-        ``window`` entries for the given workflow/module pair.
+        ``window`` entries for the given workflow/module pair. If an entry
+        already exists for ``workflow_id``/``run_id``/``module`` the call is
+        ignored so callers may safely invoke this multiple times.
         """
 
         win = window or self.ma_window
         cur = self.conn.cursor()
         try:
+            # skip if this run/module has already been recorded
+            cur.execute(
+                """
+                SELECT 1 FROM workflow_module_deltas
+                WHERE workflow_id=? AND run_id=? AND module=? LIMIT 1
+                """,
+                (workflow_id, run_id, module),
+            )
+            if cur.fetchone():
+                return
+
             limit = max(win - 1, 0)
             cur.execute(
                 """
@@ -263,10 +288,35 @@ class ROIResultsDB:
                     roi_delta_var,
                 ),
             )
-            self.conn.commit()
+            if commit:
+                self.conn.commit()
         except Exception:
             self.conn.rollback()
             raise
+
+    # backward compatibility -------------------------------------------------
+    def log_module_deltas(
+        self,
+        workflow_id: str,
+        run_id: str,
+        module: str,
+        runtime: float,
+        success_rate: float,
+        roi_delta: float,
+        *,
+        window: int | None = None,
+    ) -> None:  # pragma: no cover - legacy alias
+        """Alias for :meth:`log_module_delta` for backwards compatibility."""
+
+        self.log_module_delta(
+            workflow_id,
+            run_id,
+            module,
+            runtime,
+            success_rate,
+            roi_delta,
+            window=window,
+        )
 
     # ------------------------------------------------------------------
     def log_module_attribution(
