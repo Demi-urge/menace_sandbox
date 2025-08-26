@@ -32,6 +32,10 @@ class StubGrapher:
         self.graph.add_edge("mod_a", "mod_b", weight=2.0)
         self.graph.add_edge("mod_b", "mod_c", weight=1.0)
         self.graph.add_edge("mod_c", "mod_d", weight=1.0)
+        # edges for multi-return fixtures
+        self.graph.add_edge("mod_i", "mod_j", weight=1.0)
+        self.graph.add_edge("mod_k", "mod_l", weight=1.0)
+        self.graph.add_edge("mod_m", "mod_n", weight=1.0)
 
 
 class StubIntent:
@@ -112,6 +116,22 @@ def test_resolve_dependencies_types_and_files(tmp_path, monkeypatch):
     assert order.index("mod_g") < order.index("mod_h")
 
 
+def test_resolve_dependencies_rich_returns(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    synth = ws.WorkflowSynthesizer()
+    mods = [
+        ws.inspect_module(m)
+        for m in ["mod_j", "mod_l", "mod_n", "mod_i", "mod_k", "mod_m"]
+    ]
+    steps = synth.resolve_dependencies(mods)
+    order = [s.module for s in steps]
+    assert order.index("mod_i") < order.index("mod_j")
+    assert order.index("mod_k") < order.index("mod_l")
+    assert order.index("mod_m") < order.index("mod_n")
+
+
 def test_generate_workflows_persist_and_rank(tmp_path, monkeypatch):
     _copy_modules(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -154,6 +174,23 @@ def test_generate_workflows_max_depth(tmp_path, monkeypatch):
     workflows = synth.generate_workflows(start_module="mod_a", limit=5, max_depth=2)
     flat = [[step.module for step in wf] for wf in workflows]
     assert any(order == ["mod_a", "mod_b", "mod_c"] for order in flat)
+
+
+def test_generate_workflows_rich_returns(tmp_path, monkeypatch):
+    _copy_modules(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    grapher = StubGrapher()
+    synth = ws.WorkflowSynthesizer(module_synergy_grapher=grapher)
+
+    workflows = synth.generate_workflows(start_module="mod_i", limit=1, max_depth=1)
+    assert [step.module for step in workflows[0]] == ["mod_i", "mod_j"]
+
+    workflows = synth.generate_workflows(start_module="mod_k", limit=1, max_depth=1)
+    assert [step.module for step in workflows[0]] == ["mod_k", "mod_l"]
+
+    workflows = synth.generate_workflows(start_module="mod_m", limit=1, max_depth=1)
+    assert [step.module for step in workflows[0]] == ["mod_m", "mod_n"]
 
 
 def test_resolve_dependencies_cycles():
