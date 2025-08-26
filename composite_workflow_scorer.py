@@ -207,7 +207,21 @@ class CompositeWorkflowScorer(ROIScorer):
             if failure_reason is not None:
                 per_module[mod]["failure_reason"] = failure_reason
             self._module_roi_history[mod].append(roi_delta)
+            history = list(self._module_roi_history[mod])
+            roi_delta_ma = float(np.mean(history)) if history else 0.0
+            roi_delta_var = float(np.var(history)) if len(history) > 1 else 0.0
             self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
+            if hasattr(self.results_db, "log_module_deltas"):
+                self.results_db.log_module_deltas(
+                    workflow_id,
+                    run_id,
+                    mod,
+                    runtime,
+                    1.0 if self._module_successes.get(mod) else 0.0,
+                    roi_delta,
+                    roi_delta_ma,
+                    roi_delta_var,
+                )
         self.module_attribution = {
             mod: {
                 "roi_delta": data["roi_delta"],
@@ -296,7 +310,7 @@ class CompositeWorkflowScorer(ROIScorer):
             except Exception as exc:
                 tb = traceback.format_exc()
                 self.failure_logger.error(
-                    "Module %s in workflow %s run %s failed:\n%s",
+                    "Module %s execution failed in workflow %s run %s:\n%s",
                     name,
                     workflow_id,
                     run_id,
@@ -389,7 +403,7 @@ class CompositeWorkflowScorer(ROIScorer):
 
         success_rate = success / total if total else 0.0
         roi_gain = sum(float(r) for r in getattr(tracker, "roi_history", []))
-
+        run_id = uuid.uuid4().hex
         per_module_metrics: Dict[str, Dict[str, float]] = {}
         timings = getattr(tracker, "timings", {})
         overheads = getattr(tracker, "scheduling_overhead", {})
@@ -407,7 +421,21 @@ class CompositeWorkflowScorer(ROIScorer):
                 "scheduling_overhead": float(overheads.get(mod, 0.0)),
             }
             self._module_roi_history[mod].append(roi_delta)
+            history = list(self._module_roi_history[mod])
+            roi_delta_ma = float(np.mean(history)) if history else 0.0
+            roi_delta_var = float(np.var(history)) if len(history) > 1 else 0.0
             self.results_db.log_module_attribution(mod, roi_delta, bottleneck)
+            if hasattr(self.results_db, "log_module_deltas"):
+                self.results_db.log_module_deltas(
+                    workflow_id,
+                    run_id,
+                    mod,
+                    runtime,
+                    sr,
+                    roi_delta,
+                    roi_delta_ma,
+                    roi_delta_var,
+                )
         self.module_attribution = {
             mod: {
                 "roi_delta": data["roi_delta"],
@@ -434,8 +462,6 @@ class CompositeWorkflowScorer(ROIScorer):
             window=self.history_window,
             patch_success=rate,
         )
-
-        run_id = uuid.uuid4().hex
         self.results_db.log_result(
             workflow_id=workflow_id,
             run_id=run_id,
