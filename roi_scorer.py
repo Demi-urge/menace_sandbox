@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Tuple
 import sqlite3
 import uuid
+import statistics
 
 from .workflow_metrics import (
     compute_bottleneck_index,
@@ -45,6 +46,7 @@ LOCAL_TABLES.add("workflow_module_deltas")
 router = GLOBAL_ROUTER or init_db_router("roi_scorer")
 if tb is not None:  # align telemetry router
     tb.GLOBAL_ROUTER = router
+
 
 class ROIScorer:
     """Base scorer storing ROI results in ``roi_results.db``."""
@@ -98,6 +100,8 @@ class ROIScorer:
                 module TEXT,
                 runtime REAL,
                 roi_delta REAL,
+                roi_delta_ma REAL DEFAULT 0.0,
+                roi_delta_var REAL DEFAULT 0.0,
                 ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
@@ -108,8 +112,19 @@ class ROIScorer:
                 ON workflow_module_deltas(workflow_id, run_id, module)
             """,
         )
+        existing = {
+            r[1] for r in cur.execute("PRAGMA table_info(workflow_module_deltas)").fetchall()
+        }
+        if "roi_delta_ma" not in existing:
+            cur.execute(
+                "ALTER TABLE workflow_module_deltas ADD COLUMN roi_delta_ma REAL DEFAULT 0.0"
+            )
+        if "roi_delta_var" not in existing:
+            cur.execute(
+                "ALTER TABLE workflow_module_deltas ADD COLUMN roi_delta_var REAL DEFAULT 0.0"
+            )
         cur.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='roi_results'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='roi_results'",
         )
         if cur.fetchone():
             cur.execute(
@@ -134,6 +149,7 @@ class ROIScorer:
             )
             cur.execute("DROP TABLE roi_results")
         self.conn.commit()
+
 
 class CompositeWorkflowScorer(ROIScorer):
     """Run complete workflows and record ROI metrics."""
@@ -284,13 +300,16 @@ class CompositeWorkflowScorer(ROIScorer):
         for mod in set(mod_deltas) | set(timings):
             runtime_mod = timings.get(mod, 0.0)
             delta = mod_deltas.get(mod, 0.0)
+            vals = self.tracker.module_deltas.get(mod, [])
+            ma = float(statistics.fmean(vals)) if vals else 0.0
+            var = float(statistics.pvariance(vals)) if len(vals) > 1 else 0.0
             cur.execute(
                 """
                 INSERT INTO workflow_module_deltas(
-                    workflow_id, run_id, module, runtime, roi_delta
-                ) VALUES(?,?,?,?,?)
+                    workflow_id, run_id, module, runtime, roi_delta, roi_delta_ma, roi_delta_var
+                ) VALUES(?,?,?,?,?,?,?)
                 """,
-                (workflow_id, run_id, mod, runtime_mod, delta),
+                (workflow_id, run_id, mod, runtime_mod, delta, ma, var),
             )
         self.conn.commit()
         # Record aggregate workflow result with per-module deltas

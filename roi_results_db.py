@@ -19,6 +19,7 @@ from db_router import DBRouter, LOCAL_TABLES
 # ``workflow_results`` is always treated as a local table so unit tests can
 # operate on ephemeral SQLite files without touching shared resources.
 LOCAL_TABLES.add("workflow_results")
+LOCAL_TABLES.add("workflow_module_deltas")
 
 
 @dataclass
@@ -45,9 +46,13 @@ class ROIResultsDB:
     JSON encoded per-module deltas.
     """
 
-    def __init__(self, path: str | Path = "roi_results.db", *, router: DBRouter | None = None) -> None:
+    def __init__(
+        self, path: str | Path = "roi_results.db", *, router: DBRouter | None = None
+    ) -> None:
         self.path = Path(path)
-        self.router = router or DBRouter("workflow_results", str(self.path), str(self.path))
+        self.router = router or DBRouter(
+            "workflow_results", str(self.path), str(self.path)
+        )
         self.conn = self.router.get_connection("workflow_results", operation="write")
         self._init_db()
 
@@ -76,6 +81,38 @@ class ROIResultsDB:
                 ON workflow_results(workflow_id, run_id)
             """,
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_module_deltas(
+                id INTEGER PRIMARY KEY,
+                workflow_id TEXT,
+                run_id TEXT,
+                module TEXT,
+                runtime REAL,
+                roi_delta REAL,
+                roi_delta_ma REAL DEFAULT 0.0,
+                roi_delta_var REAL DEFAULT 0.0,
+                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_module_deltas_wf_run_mod
+                ON workflow_module_deltas(workflow_id, run_id, module)
+            """,
+        )
+        existing = {
+            r[1] for r in cur.execute("PRAGMA table_info(workflow_module_deltas)").fetchall()
+        }
+        if "roi_delta_ma" not in existing:
+            cur.execute(
+                "ALTER TABLE workflow_module_deltas ADD COLUMN roi_delta_ma REAL DEFAULT 0.0"
+            )
+        if "roi_delta_var" not in existing:
+            cur.execute(
+                "ALTER TABLE workflow_module_deltas ADD COLUMN roi_delta_var REAL DEFAULT 0.0"
+            )
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS module_attribution(
@@ -207,12 +244,20 @@ class ROIResultsDB:
         cur = self.conn.cursor()
         if run_id is None:
             cur.execute(
-                "SELECT workflow_id, run_id, timestamp, runtime, success_rate, roi_gain, workflow_synergy_score, bottleneck_index, patchability_score, module_deltas FROM workflow_results WHERE workflow_id=? ORDER BY timestamp",
+                (
+                    "SELECT workflow_id, run_id, timestamp, runtime, success_rate, roi_gain, "
+                    "workflow_synergy_score, bottleneck_index, patchability_score, module_deltas "
+                    "FROM workflow_results WHERE workflow_id=? ORDER BY timestamp"
+                ),
                 (workflow_id,),
             )
         else:
             cur.execute(
-                "SELECT workflow_id, run_id, timestamp, runtime, success_rate, roi_gain, workflow_synergy_score, bottleneck_index, patchability_score, module_deltas FROM workflow_results WHERE workflow_id=? AND run_id=? ORDER BY timestamp",
+                (
+                    "SELECT workflow_id, run_id, timestamp, runtime, success_rate, roi_gain, "
+                    "workflow_synergy_score, bottleneck_index, patchability_score, module_deltas "
+                    "FROM workflow_results WHERE workflow_id=? AND run_id=? ORDER BY timestamp"
+                ),
                 (workflow_id, run_id),
             )
         rows = cur.fetchall()
@@ -235,12 +280,55 @@ class ROIResultsDB:
         return results
 
     # ------------------------------------------------------------------
+    def fetch_module_trajectories(
+        self, workflow_id: str, module: str | None = None
+    ) -> Dict[str, List[Dict[str, float]]]:
+        """Return per-run trend metrics for modules in ``workflow_id``."""
+
+        cur = self.conn.cursor()
+        if module is None:
+            cur.execute(
+                """
+                SELECT module, run_id, roi_delta, roi_delta_ma, roi_delta_var
+                FROM workflow_module_deltas
+                WHERE workflow_id=?
+                ORDER BY ts
+                """,
+                (workflow_id,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT module, run_id, roi_delta, roi_delta_ma, roi_delta_var
+                FROM workflow_module_deltas
+                WHERE workflow_id=? AND module=?
+                ORDER BY ts
+                """,
+                (workflow_id, module),
+            )
+        rows = cur.fetchall()
+        trajectories: Dict[str, List[Dict[str, float]]] = {}
+        for mod, r_id, delta, ma, var in rows:
+            trajectories.setdefault(str(mod), []).append(
+                {
+                    "run_id": str(r_id),
+                    "roi_delta": float(delta),
+                    "moving_avg": float(ma),
+                    "variance": float(var),
+                }
+            )
+        return trajectories
+
+    # ------------------------------------------------------------------
     def module_impact_report(self, workflow_id: str, run_id: str) -> Dict[str, Dict[str, float]]:
         """Return modules grouped by improvement sign for ``run_id``."""
 
         cur = self.conn.cursor()
         cur.execute(
-            "SELECT run_id, module_deltas FROM workflow_results WHERE workflow_id=? ORDER BY timestamp",
+            (
+                "SELECT run_id, module_deltas FROM workflow_results "
+                "WHERE workflow_id=? ORDER BY timestamp"
+            ),
             (workflow_id,),
         )
         rows = cur.fetchall()
@@ -265,12 +353,29 @@ class ROIResultsDB:
         return {"improved": {}, "regressed": {}}
 
 
-def module_impact_report(workflow_id: str, run_id: str, db_path: str | Path = "roi_results.db") -> Dict[str, Dict[str, float]]:
+def module_impact_report(
+    workflow_id: str, run_id: str, db_path: str | Path = "roi_results.db"
+) -> Dict[str, Dict[str, float]]:
     """Convenience wrapper returning module impact report from ``db_path``."""
 
     db = ROIResultsDB(db_path)
     return db.module_impact_report(workflow_id, run_id)
 
 
-__all__ = ["ROIResult", "ROIResultsDB", "module_impact_report"]
+def module_performance_trajectories(
+    workflow_id: str,
+    module: str | None = None,
+    db_path: str | Path = "roi_results.db",
+) -> Dict[str, List[Dict[str, float]]]:
+    """Convenience wrapper returning module trend data from ``db_path``."""
 
+    db = ROIResultsDB(db_path)
+    return db.fetch_module_trajectories(workflow_id, module)
+
+
+__all__ = [
+    "ROIResult",
+    "ROIResultsDB",
+    "module_impact_report",
+    "module_performance_trajectories",
+]
