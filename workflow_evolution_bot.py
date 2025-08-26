@@ -39,6 +39,14 @@ except Exception:  # pragma: no cover - fallback for flat layout
     except Exception:  # pragma: no cover - best effort
         ModuleIOAnalyzer = None  # type: ignore[misc]
 
+try:  # ``analysis.get_io_signature`` for lightweight compatibility checks
+    from analysis import get_io_signature
+except Exception:  # pragma: no cover - fallback for flat layout
+    try:
+        from .analysis import get_io_signature  # type: ignore
+    except Exception:  # pragma: no cover - best effort
+        get_io_signature = None  # type: ignore[misc]
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,6 +113,17 @@ class WorkflowEvolutionBot:
                     sig_b = analyzer.analyze(b)
                     if sig_a.outputs and sig_b.inputs and not (
                         set(sig_a.outputs) & set(sig_b.inputs)
+                    ):
+                        return False
+            except Exception:
+                pass
+        elif get_io_signature is not None:
+            try:
+                for a, b in zip(modules, modules[1:]):
+                    sig_a = get_io_signature(a)
+                    sig_b = get_io_signature(b)
+                    if sig_a.globals and sig_b.globals and not (
+                        sig_a.globals & sig_b.globals
                     ):
                         return False
             except Exception:
@@ -222,4 +241,88 @@ class WorkflowEvolutionBot:
             )
 
 
-__all__ = ["WorkflowEvolutionBot", "WorkflowSuggestion"]
+def generate_variants(
+    workflow: Iterable[str] | str,
+    n: int,
+    *,
+    workflow_id: int = 0,
+    parent_event_id: int | None = None,
+) -> List[str]:
+    """Return up to ``n`` valid workflow variants derived from ``workflow``.
+
+    The function performs three mutation strategies:
+    swapping modules with synergistic alternatives, generating step
+    reorderings and injecting intent-related modules.  Each candidate is
+    validated using :func:`analysis.get_io_signature` or the more advanced
+    ``ModuleIOAnalyzer`` when available, and recorded via
+    :func:`mutation_logger.log_mutation`.
+    """
+
+    bot = WorkflowEvolutionBot()
+    parts = list(workflow.split("-") if isinstance(workflow, str) else workflow)
+    emitted: set[str] = set()
+    variants: List[str] = []
+
+    def _emit(mods: List[str]) -> None:
+        if len(variants) >= n:
+            return
+        if not bot._validate_sequence(mods):
+            return
+        seq = "-".join(str(m) for m in mods)
+        if seq in emitted:
+            return
+        emitted.add(seq)
+        MutationLogger.log_mutation(
+            change=seq,
+            reason="variant",
+            trigger="workflow_evolution_bot",
+            performance=0.0,
+            workflow_id=workflow_id,
+            parent_id=parent_event_id,
+        )
+        variants.append(seq)
+
+    # ---- swap modules with synergy alternatives
+    for idx, mod in enumerate(parts):
+        cluster: set[str] = {str(mod)}
+        if get_synergy_cluster is not None:
+            try:
+                cluster = get_synergy_cluster(str(mod)) or {str(mod)}
+            except Exception:
+                cluster = {str(mod)}
+        for cand in cluster:
+            if cand == mod:
+                continue
+            swapped = parts.copy()
+            swapped[idx] = str(cand)
+            _emit(swapped)
+            if len(variants) >= n:
+                return variants
+
+    # ---- reorder steps (pairwise swaps)
+    for i in range(len(parts)):
+        for j in range(i + 1, len(parts)):
+            swapped = parts.copy()
+            swapped[i], swapped[j] = swapped[j], swapped[i]
+            _emit(swapped)
+            if len(variants) >= n:
+                return variants
+
+    # ---- inject intent-related modules
+    try:
+        matches = bot.intent_clusterer.find_modules_related_to("-".join(parts))
+    except Exception:
+        matches = []
+    for match in matches:
+        path = getattr(match, "path", None)
+        if not path:
+            continue
+        candidate = parts + [str(path)]
+        _emit(candidate)
+        if len(variants) >= n:
+            return variants
+
+    return variants
+
+
+__all__ = ["WorkflowEvolutionBot", "WorkflowSuggestion", "generate_variants"]
