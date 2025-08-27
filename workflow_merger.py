@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import difflib
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -148,7 +148,7 @@ def merge_workflows(base: Path, branch_a: Path, branch_b: Path, out_path: Path) 
             "workflow_id": str(uuid4()),
             "parent_id": ancestor_id,
             "mutation_description": "merge",
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
     )
     merged_spec["metadata"] = metadata

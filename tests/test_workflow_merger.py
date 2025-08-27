@@ -70,6 +70,7 @@ def test_merge_workflows_three_way(tmp_path):
     assert metadata["workflow_id"] not in {"base-id", "branch-a-id", "branch-b-id"}
     assert metadata["mutation_description"] == "merge"
     datetime.fromisoformat(metadata["created_at"])
+    assert metadata["created_at"].endswith("+00:00")
 
     modules = {step["module"] for step in merged_data["steps"]}
     assert modules == {"mod_a", "mod_b", "mod_c"}
