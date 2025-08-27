@@ -97,7 +97,7 @@ def test_benchmark_workflow_variants_calculates_roi_delta():
 
 def _import_wem(side_effects, generate_calls=None):
     pkg = ModuleType("menace_sandbox")
-    pkg.__path__ = []
+    pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
     sys.modules["menace_sandbox"] = pkg
 
     cws_mod = ModuleType("menace_sandbox.composite_workflow_scorer")
@@ -221,6 +221,27 @@ def _import_wem(side_effects, generate_calls=None):
             pass
     summary_mod.WorkflowSummaryDB = WorkflowSummaryDB
     sys.modules["menace_sandbox.workflow_summary_db"] = summary_mod
+
+    run_summary_mod = ModuleType("menace_sandbox.workflow_run_summary")
+    run_summary_mod.record_run = lambda *a, **k: None
+    run_summary_mod.save_all_summaries = lambda *a, **k: None
+    sys.modules["menace_sandbox.workflow_run_summary"] = run_summary_mod
+
+    benchmark_mod = ModuleType("menace_sandbox.workflow_benchmark")
+    benchmark_mod.benchmark_workflow = lambda *a, **k: None
+    sys.modules["menace_sandbox.workflow_benchmark"] = benchmark_mod
+
+    data_bot_mod = ModuleType("menace_sandbox.data_bot")
+    data_bot_mod.MetricsDB = object
+    sys.modules["menace_sandbox.data_bot"] = data_bot_mod
+
+    neuro_mod = ModuleType("menace_sandbox.neuroplasticity")
+    neuro_mod.PathwayDB = object
+    sys.modules["menace_sandbox.neuroplasticity"] = neuro_mod
+
+    graph_mod = ModuleType("menace_sandbox.workflow_graph")
+    graph_mod.WorkflowGraph = object
+    sys.modules["menace_sandbox.workflow_graph"] = graph_mod
 
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.workflow_evolution_manager", "workflow_evolution_manager.py"

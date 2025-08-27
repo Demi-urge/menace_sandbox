@@ -129,12 +129,14 @@ class CompositeWorkflowScorer(ROIScorer):
         *,
         patch_success: float | None = None,
     ) -> EvaluationResult:
-        """Execute ``workflow_callable`` and persist aggregated metrics."""
+        """Execute ``workflow_callable`` within a sandbox and persist metrics."""
 
         start = time.perf_counter()
+        runner = sandbox_runner.WorkflowSandboxRunner()
         try:
-            success = bool(workflow_callable())
-        except Exception as exc:
+            result = runner.run(workflow_callable, safe_mode=True)
+            success = False if isinstance(result, Exception) else bool(result)
+        except Exception as exc:  # pragma: no cover - runner failures
             tb = traceback.format_exc()
             self.failure_logger.error(
                 "Workflow %s run %s raised an exception:\n%s",

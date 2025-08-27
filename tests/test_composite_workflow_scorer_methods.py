@@ -55,7 +55,10 @@ sys.modules.setdefault(
 )
 sys.modules.setdefault("roi_results_db", sys.modules["menace_sandbox.roi_results_db"])
 sys.modules["menace_sandbox.sandbox_runner"] = types.SimpleNamespace(
-    environment=types.SimpleNamespace()
+    environment=types.SimpleNamespace(),
+    WorkflowSandboxRunner=lambda: types.SimpleNamespace(
+        run=lambda fn, **kw: fn()
+    ),
 )
 sys.modules["sandbox_runner"] = sys.modules["menace_sandbox.sandbox_runner"]
 
@@ -275,7 +278,10 @@ def test_evaluate_logs_run_and_workflow(monkeypatch, tmp_path):
     cws_mod.sandbox_runner = types.SimpleNamespace(
         environment=types.SimpleNamespace(
             run_workflow_simulations=fake_run_workflow_simulations
-        )
+        ),
+        WorkflowSandboxRunner=lambda: types.SimpleNamespace(
+            run=lambda fn, **kw: fn()
+        ),
     )
 
     profile = {
