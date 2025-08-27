@@ -42,6 +42,11 @@ During a cycle the engine can refine workflow definitions through
 best‑performing variant is promoted when it beats the baseline, with outcomes
 logged through ``mutation_logger`` for later analysis.
 
+Calling ``run_all_cycles()`` on an :class:`ImprovementEngineRegistry` simply
+invokes each engine's ``run_cycle``, which now delegates to
+``WorkflowEvolutionManager.evolve`` after the refactor. No additional wiring is
+required to benefit from automatic workflow evolution and gating in batch runs.
+
 ## Algorithm Details
 
 `SelfImprovementEngine` orchestrates a short loop during each cycle:

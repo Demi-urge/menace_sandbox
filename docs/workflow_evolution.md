@@ -26,9 +26,10 @@ Workflow ROI improvements are tracked with an exponential moving average (EMA).
 Each workflow's EMA and consecutive failure count are stored alongside stability
 data in `WorkflowStabilityDB`, allowing the gate to survive process restarts.
 The EMA is updated with `alpha * delta + (1 - alpha) * previous_ema` where
-`alpha` defaults to ``SandboxSettings.roi_ema_alpha``. When the EMA remains
-below `ROI_GATING_THRESHOLD` for `ROI_GATING_CONSECUTIVE` consecutive runs,
-`is_stable()` returns `True` and further evolution is skipped.
+`alpha` defaults to ``SandboxSettings.roi_ema_alpha`` (configurable via
+`ROI_EMA_ALPHA`). When the EMA remains below `ROI_GATING_THRESHOLD` for
+`ROI_GATING_CONSECUTIVE` consecutive runs, `is_stable()` returns `True` and
+further evolution is skipped.
 
 The counter resets automatically whenever the EMA rises above the threshold or a
 variant is promoted. Clear the workflow from `WorkflowStabilityDB` to reset the
@@ -39,6 +40,8 @@ Tune the gating behaviour with environment variables:
 ```bash
 export ROI_GATING_THRESHOLD=0.05
 export ROI_GATING_CONSECUTIVE=5
+# Optional smoothing factor for the EMA
+export ROI_EMA_ALPHA=0.1
 ```
 
 ## Enabling in self-improvement cycles
@@ -54,4 +57,6 @@ registry.register_engine("alpha", engine)
 registry.run_all_cycles()
 ```
 
-This executes baseline runs, benchmarks generated variants and promotes the best-performing workflow.
+`run_all_cycles()` delegates to `WorkflowEvolutionManager.evolve()` after the
+refactor, so each cycle benchmarks variants, promotes improvements and marks
+stable workflows automatically.
