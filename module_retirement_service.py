@@ -76,6 +76,14 @@ class ModuleRetirementService:
             patch_id = generate_patch(str(path))
             if patch_id is not None:
                 compressed_modules_total.inc()
+                try:
+                    from sandbox_runner import integrate_new_orphans
+
+                    integrate_new_orphans(self.root)
+                except Exception:
+                    self.logger.exception(
+                        "integrate_new_orphans after compression failed"
+                    )
                 return True
         except Exception:  # pragma: no cover - patching issues
             self.logger.exception("compression failed for %s", module)
@@ -92,7 +100,17 @@ class ModuleRetirementService:
             patch_id = generate_patch(str(path))
             if patch_id is not None:
                 replaced_modules_total.inc()
-                self.logger.info("generated replacement patch %s for %s", patch_id, module)
+                self.logger.info(
+                    "generated replacement patch %s for %s", patch_id, module
+                )
+                try:
+                    from sandbox_runner import integrate_new_orphans
+
+                    integrate_new_orphans(self.root)
+                except Exception:
+                    self.logger.exception(
+                        "integrate_new_orphans after replacement failed"
+                    )
                 return True
             self.logger.info("no replacement patch generated for %s", module)
         except Exception:  # pragma: no cover - patching issues
@@ -130,4 +148,3 @@ class ModuleRetirementService:
 
 
 __all__ = ["ModuleRetirementService"]
-
