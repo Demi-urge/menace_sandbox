@@ -1619,6 +1619,29 @@ def generate_workflow_variants(
     variants: List[List[str]] = []
     seen: Set[Tuple[str, ...]] = {tuple(base)}
 
+    def _finalize() -> List[List[str]]:
+        from db_router import GLOBAL_ROUTER
+
+        os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+        try:  # pragma: no cover - optional dependency
+            import sandbox_runner
+
+            added = sandbox_runner.integrate_new_orphans(
+                Path.cwd(), router=GLOBAL_ROUTER
+            )
+            if added:
+                try:
+                    sandbox_runner.try_integrate_into_workflows(
+                        sorted(added), router=GLOBAL_ROUTER
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.warning(
+                        "workflow integration failed", exc_info=True
+                    )
+        except Exception:  # pragma: no cover - best effort
+            logger.warning("orphan integration failed", exc_info=True)
+        return variants
+
     if validator is None:
         analyzer = ModuleIOAnalyzer()
         checker = WorkflowSynthesizer()
@@ -1657,7 +1680,7 @@ def generate_workflow_variants(
                 variant[idx] = alt
                 _add(variant)
                 if len(variants) >= limit:
-                    return variants
+                    return _finalize()
 
     # 2. Reorder adjacent steps when allowed by dependency rules
     for i in range(len(base) - 1):
@@ -1670,7 +1693,7 @@ def generate_workflow_variants(
         variant[i], variant[i + 1] = variant[i + 1], variant[i]
         _add(variant)
         if len(variants) >= limit:
-            return variants
+            return _finalize()
 
     # 3. Inject additional modules suggested by intent clusterer
     if intent_clusterer is None and IntentClusterer is not None:
@@ -1709,9 +1732,9 @@ def generate_workflow_variants(
                 variant.insert(pos, mod)
                 _add(variant)
                 if len(variants) >= limit:
-                    return variants
+                    return _finalize()
 
-    return variants
+    return _finalize()
 
 
 def generate_variants(
@@ -1737,6 +1760,29 @@ def generate_variants(
         and isinstance(synergy_graph, ModuleSynergyGrapher)
         else None
     )
+
+    def _finalize() -> List[List[str]]:
+        from db_router import GLOBAL_ROUTER
+
+        os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+        try:  # pragma: no cover - optional dependency
+            import sandbox_runner
+
+            added = sandbox_runner.integrate_new_orphans(
+                Path.cwd(), router=GLOBAL_ROUTER
+            )
+            if added:
+                try:
+                    sandbox_runner.try_integrate_into_workflows(
+                        sorted(added), router=GLOBAL_ROUTER
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.warning(
+                        "workflow integration failed", exc_info=True
+                    )
+        except Exception:  # pragma: no cover - best effort
+            logger.warning("orphan integration failed", exc_info=True)
+        return variants[:n]
 
     def _is_valid(order: List[str]) -> bool:
         try:
@@ -1788,7 +1834,7 @@ def generate_variants(
                 variant[idx] = s
                 _add(variant)
                 if len(variants) >= n:
-                    return variants
+                    return _finalize()
 
     # 2. Reorder steps by swapping adjacent modules
     for i in range(len(base) - 1):
@@ -1796,7 +1842,7 @@ def generate_variants(
         variant[i], variant[i + 1] = variant[i + 1], variant[i]
         _add(variant)
         if len(variants) >= n:
-            return variants
+            return _finalize()
 
     # 3. Insert modules suggested by intent_clusterer
     if intent_clusterer is not None:
@@ -1829,9 +1875,9 @@ def generate_variants(
                 variant.insert(pos, mod)
                 _add(variant)
                 if len(variants) >= n:
-                    return variants
+                    return _finalize()
 
-    return variants[:n]
+    return _finalize()
 
 
 def main(argv: List[str] | None = None) -> None:
