@@ -1652,6 +1652,13 @@ class SelfImprovementEngine:
                                         self.logger.exception(
                                             "post_patch_orphan_integration_failed"
                                         )
+                                    try:
+                                        self._include_recursive_orphans()
+                                    except Exception:
+                                        self.logger.exception(
+                                            "recursive orphan inclusion failed",
+                                            extra=log_record(module=name),
+                                        )
                                 except Exception:
                                     self.logger.exception(
                                         "alignment review failed for %s",
@@ -4916,6 +4923,13 @@ class SelfImprovementEngine:
                             self.logger.exception(
                                 "post_patch_orphan_integration_failed"
                             )
+                        try:
+                            self._include_recursive_orphans()
+                        except Exception:
+                            self.logger.exception(
+                                "recursive orphan inclusion failed",
+                                extra=log_record(module=mod),
+                            )
                 if self.error_bot and hasattr(self.error_bot, "db"):
                     try:
                         self.error_bot.db.add_telemetry(
@@ -5057,6 +5071,13 @@ class SelfImprovementEngine:
                             except Exception:
                                 self.logger.exception(
                                     "post_patch_orphan_integration_failed"
+                                )
+                            try:
+                                self._include_recursive_orphans()
+                            except Exception:
+                                self.logger.exception(
+                                    "recursive orphan inclusion failed",
+                                    extra=log_record(module=mod),
                                 )
                     if self.error_bot and hasattr(self.error_bot, "db"):
                         try:
