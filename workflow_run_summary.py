@@ -44,6 +44,34 @@ def _load_history() -> None:
                 _WORKFLOW_ROI_HISTORY[str(wid)] = [float(v) for v in vals]
 
 
+def _load_summaries() -> None:
+    """Populate ROI history from existing workflow summary files.
+
+    Each ``*.summary.json`` in the shared summary store contains cumulative
+    statistics about past runs.  We approximate the run history by repeating the
+    average ROI value ``num_runs`` times.  This allows new runs to build upon
+    previously recorded values even if the explicit ``workflow_roi_history``
+    file is missing.
+    """
+
+    if not _SUMMARY_STORE.exists():
+        return
+
+    for path in _SUMMARY_STORE.glob("*.summary.json"):
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            continue
+
+        wid = str(data.get("workflow_id") or path.stem.replace(".summary", ""))
+        runs = int(data.get("num_runs", 0))
+        avg = float(data.get("average_roi", 0.0))
+
+        hist = _WORKFLOW_ROI_HISTORY.setdefault(wid, [])
+        if len(hist) < runs:
+            hist.extend([avg] * (runs - len(hist)))
+
+
 def _persist_history() -> None:
     """Persist the in-memory ROI history."""
     try:
@@ -52,8 +80,47 @@ def _persist_history() -> None:
         pass
 
 
+def _merge_history_from_summary(wid: str, directory: Path) -> None:
+    """Ensure in-memory ROI history includes data from existing summaries.
+
+    Parameters
+    ----------
+    wid:
+        Workflow identifier.
+    directory:
+        Directory where a summary may already exist.  The shared summary store
+        is also consulted.
+    """
+
+    hist = _WORKFLOW_ROI_HISTORY.setdefault(wid, [])
+    initial_len = len(hist)
+    existing_runs = 0
+    avg = 0.0
+
+    # Look for summaries in both the provided directory and the shared store.
+    candidates = [Path(directory), Path(directory) / "workflows", _SUMMARY_STORE]
+    for base in candidates:
+        path = base / f"{wid}.summary.json"
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            continue
+
+        runs = int(data.get("num_runs", 0))
+        if runs > existing_runs:
+            existing_runs = runs
+            avg = float(data.get("average_roi", 0.0))
+
+    needed = existing_runs + initial_len
+    if existing_runs and len(hist) < needed:
+        hist.extend([avg] * (needed - len(hist)))
+
+
 # Load any previously persisted data on import.
 _load_history()
+_load_summaries()
 
 
 def record_run(workflow_id: str, roi: float) -> None:
@@ -69,6 +136,7 @@ def save_summary(
     """Write a ``<workflow_id>.summary.json`` file and return its path."""
 
     wid = str(workflow_id)
+    _merge_history_from_summary(wid, Path(directory))
     history = _WORKFLOW_ROI_HISTORY.get(wid, [])
     cumulative = float(sum(history))
     runs = len(history)
