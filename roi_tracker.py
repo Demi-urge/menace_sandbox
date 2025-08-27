@@ -28,6 +28,7 @@ import csv
 import json
 import os
 import sqlite3
+from pathlib import Path
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES
 from collections import Counter, defaultdict
 
@@ -40,6 +41,7 @@ from .config_loader import (
     get_impact_severity,
     impact_severity_map as load_impact_severity_map,
 )
+from .workflow_run_summary import record_run, save_all_summaries
 try:  # pragma: no cover - telemetry optional during tests
     from .telemetry_backend import TelemetryBackend
     from . import telemetry_backend as tb
@@ -1551,6 +1553,7 @@ class ROITracker:
             ]
         final_score = float(raroi) * conf
         self.final_roi_history.setdefault(wf, []).append(final_score)
+        record_run(wf, final_score)
         threshold = self.confidence_threshold if tau is None else float(tau)
         needs_review = conf < threshold
         self.last_confidence = conf
@@ -3279,6 +3282,8 @@ class ROITracker:
                         for k, v in self.drift_metrics.items()
                     ],
                 )
+
+        save_all_summaries(Path(path).parent)
 
     # ------------------------------------------------------------------
     def load_history(self, path: str) -> None:
