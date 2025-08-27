@@ -19,6 +19,7 @@ disk.
 
 from dataclasses import asdict, is_dataclass
 import json
+import difflib
 from pathlib import Path
 from typing import Any, Iterable
 from datetime import datetime, timezone
@@ -86,7 +87,10 @@ def save_spec(spec: dict, path: Path) -> Path:
     The extension of ``path`` determines the output format: ``.workflow.json``
     results in JSON while ``.workflow.yaml``/``.workflow.yml`` produces YAML.
     Regardless of the provided location the file is written beneath a
-    ``workflows`` folder, which is created if necessary.
+    ``workflows`` folder, which is created if necessary.  When a ``parent_id``
+    is provided in the metadata, a unified diff against the parent workflow is
+    written alongside the specification and its path recorded in the metadata
+    for quick access.
     """
 
     # Ensure metadata block is present with required fields
@@ -105,14 +109,46 @@ def save_spec(spec: dict, path: Path) -> Path:
     parent.mkdir(parents=True, exist_ok=True)
 
     name = path.name
+    out_path = parent / name
+
+    # Compare against parent workflow when available
+    parent_id = metadata.get("parent_id")
+    if parent_id:
+        parent_path = parent / f"{parent_id}.workflow.json"
+        if not parent_path.exists():
+            for candidate in parent.glob("*.workflow.json"):
+                try:
+                    data = json.loads(candidate.read_text())
+                except Exception:  # pragma: no cover - ignore corrupt files
+                    continue
+                if data.get("metadata", {}).get("workflow_id") == parent_id:
+                    parent_path = candidate
+                    break
+        if parent_path.exists():
+            new_lines = json.dumps(spec, indent=2, sort_keys=True).splitlines()
+            try:
+                parent_lines = parent_path.read_text().splitlines()
+            except Exception:  # pragma: no cover - best effort
+                parent_lines = []
+            diff_lines = list(
+                difflib.unified_diff(
+                    parent_lines,
+                    new_lines,
+                    fromfile=parent_path.name,
+                    tofile=name,
+                    lineterm="",
+                )
+            )
+            diff_file = parent / f"{metadata['workflow_id']}.diff"
+            diff_file.write_text("\n".join(diff_lines), encoding="utf-8")
+            metadata["diff_path"] = str(diff_file)
+
     if name.endswith(".workflow.json"):
-        out_path = parent / name
         with out_path.open("w", encoding="utf-8") as fh:
             json.dump(spec, fh, indent=2, sort_keys=True)
-    elif name.endswith(('.workflow.yaml', '.workflow.yml')):
+    elif name.endswith((".workflow.yaml", ".workflow.yml")):
         if yaml is None:  # pragma: no cover - YAML optional
             raise RuntimeError("PyYAML is required for YAML output")
-        out_path = parent / name
         with out_path.open("w", encoding="utf-8") as fh:
             yaml.safe_dump(spec, fh, sort_keys=False)  # type: ignore[arg-type]
     else:

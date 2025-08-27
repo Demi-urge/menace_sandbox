@@ -27,9 +27,14 @@ def test_to_spec_and_save(tmp_path, monkeypatch):
 
 
 def test_save_workflow_with_parent(tmp_path):
-    steps = [
-        {"module": "step1", "inputs": [], "outputs": []},
-    ]
+    parent_spec = {
+        "steps": [{"module": "base", "inputs": [], "outputs": []}],
+        "metadata": {"workflow_id": "orig"},
+    }
+    # Persist parent workflow so a diff can be generated
+    ws.save(parent_spec, tmp_path / "orig.workflow.json")
+
+    steps = [{"module": "step1", "inputs": [], "outputs": []}]
     path = tmp_path / "wf.workflow.json"
     out = save_workflow(steps, path, parent_id="orig", mutation_description="tweak")
     data = json.loads(out.read_text())
@@ -38,3 +43,6 @@ def test_save_workflow_with_parent(tmp_path):
     assert md["mutation_description"] == "tweak"
     assert md["workflow_id"]
     assert md["created_at"]
+    diff_path = Path(md["diff_path"])
+    assert diff_path.is_file()
+    assert diff_path.name == f"{md['workflow_id']}.diff"
