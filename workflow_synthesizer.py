@@ -886,6 +886,7 @@ class WorkflowSynthesizer:
         intent_weight: float = 1.0,
         min_score: float = float("-inf"),
         auto_evaluate: bool = False,
+        runner_config: Dict[str, Any] | None = None,
     ) -> List[List[WorkflowStep]]:
         """Generate candidate workflows beginning at ``start_module``.
 
@@ -1317,7 +1318,9 @@ class WorkflowSynthesizer:
             }
             if auto_evaluate:
                 try:
-                    success = evaluate_workflow(to_workflow_spec(wf))
+                    success = evaluate_workflow(
+                        to_workflow_spec(wf), runner_config=runner_config
+                    )
                 except Exception:
                     logger.exception("auto evaluation failed")
                     success = False
@@ -1558,7 +1561,9 @@ def save_workflow(
     return out_path, metadata
 
 
-def evaluate_workflow(workflow: Dict[str, Any]) -> bool:
+def evaluate_workflow(
+    workflow: Dict[str, Any], runner_config: Dict[str, Any] | None = None
+) -> bool:
     """Execute ``workflow`` using the sandbox runner.
 
     Parameters
@@ -1575,21 +1580,35 @@ def evaluate_workflow(workflow: Dict[str, Any]) -> bool:
 
     import logging
 
-    try:  # pragma: no cover - sandbox_runner is optional in tests
-        from sandbox_runner import run_generated_workflow
-    except Exception as exc:  # pragma: no cover - provide clear error
-        raise RuntimeError(
-            "sandbox_runner.run_generated_workflow is unavailable"
-        ) from exc
+    from sandbox_runner import WorkflowSandboxRunner
 
     logger = logging.getLogger(__name__)
+    steps = workflow.get("steps", [])
+
+    def _call() -> bool:
+        ok = True
+        for step in steps:
+            module = step.get("module")
+            func_name = step.get("func") or step.get("function") or "main"
+            try:
+                mod = importlib.import_module(module)
+                fn = getattr(mod, func_name, getattr(mod, "main", None))
+                if callable(fn):
+                    fn()
+            except Exception:
+                ok = False
+        return ok
+
     try:
-        result = run_generated_workflow(workflow)
+        runner = WorkflowSandboxRunner()
+        rc = dict(runner_config or {})
+        rc.setdefault("safe_mode", True)
+        metrics = runner.run(_call, **rc)
+        success = all(m.success for m in getattr(metrics, "modules", []))
     except Exception:
         logger.exception("workflow evaluation failed")
         return False
 
-    success = bool(result)
     logger.info("workflow evaluation %s", "succeeded" if success else "failed")
     return success
 

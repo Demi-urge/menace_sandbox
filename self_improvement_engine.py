@@ -83,7 +83,7 @@ import shutil
 import ast
 import yaml
 from pathlib import Path
-from typing import Mapping, Callable, Iterable
+from typing import Mapping, Callable, Iterable, Dict, Any
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
 try:  # pragma: no cover - allow flat imports
@@ -854,6 +854,7 @@ class SelfImprovementEngine:
         intent_clusterer: IntentClusterer | None = None,
         workflow_evolver: WorkflowEvolutionManager | None = None,
         tau: float = 0.5,
+        runner_config: Dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         if gpt_memory is None:
@@ -904,6 +905,7 @@ class SelfImprovementEngine:
             except Exception:
                 self.intent_clusterer = None
         self.workflow_evolver = workflow_evolver or WorkflowEvolutionManager()
+        self.runner_config = runner_config
         self.pre_roi_bot = pre_roi_bot
         self.pre_roi_scale = (
             pre_roi_scale if pre_roi_scale is not None else PRE_ROI_SCALE
@@ -3527,7 +3529,9 @@ class SelfImprovementEngine:
             flat_presets = [p for levels in canonical.values() for p in levels.values()]
             env_map = {m: flat_presets for m in modules}
             tracker_wf, wf_details = environment.run_workflow_simulations(
-                env_presets=env_map, return_details=True
+                env_presets=env_map,
+                return_details=True,
+                runner_config=self.runner_config,
             )
             scenario_synergy = getattr(tracker_wf, "scenario_synergy", {})
             for runs in wf_details.values():
