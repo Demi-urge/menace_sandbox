@@ -4158,37 +4158,38 @@ class SelfImprovementEngine:
         created modules are traced through their import chains and
         automatically included into the sandbox environment.
         """
-
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
 
         try:
-            from sandbox_runner import discover_recursive_orphans as _discover
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception("discover_recursive_orphans import failed")
-            return
-
-        try:
-            trace = _discover(str(repo), module_map=data_dir / "module_map.json")
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception("discover_recursive_orphans failed")
-            return
-
-        modules = [str(Path(*m.split(".")).with_suffix(".py")) for m in trace]
-        if not modules:
-            return
-
-        try:
-            _tracker, tested = environment.auto_include_modules(
-                sorted(modules), recursive=True, validate=True
+            from sandbox_runner.orphan_integration import (
+                integrate_and_graph_orphans,
             )
-            record_new = getattr(self, "_record_new_modules", None)
-            if record_new:
-                record_new(set(tested.get("added", [])))
-            abs_paths = [str(repo / p) for p in modules]
-            self._integrate_orphans(abs_paths)
         except Exception:  # pragma: no cover - best effort
-            self.logger.exception("recursive orphan inclusion failed")
+            self.logger.exception("integrate_and_graph_orphans import failed")
+            return
+
+        try:
+            _tracker, tested, updated_wfs, _, _ = integrate_and_graph_orphans(
+                repo, logger=self.logger, router=GLOBAL_ROUTER
+            )
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("recursive orphan integration failed")
+            return
+
+        record_new = getattr(self, "_record_new_modules", None)
+        if record_new:
+            try:
+                record_new(set(tested.get("added", [])))
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("record new modules failed")
+
+        if updated_wfs:
+            try:
+                self.logger.info(
+                    "workflows updated", extra=log_record(workflows=updated_wfs)
+                )
+            except Exception:  # pragma: no cover - best effort
+                pass
 
     # ------------------------------------------------------------------
     def _update_orphan_modules(self, modules: Iterable[str] | None = None) -> None:
