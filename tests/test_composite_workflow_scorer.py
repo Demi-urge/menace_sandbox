@@ -52,7 +52,12 @@ sys.modules.setdefault(
 )
 sys.modules[
     "menace_sandbox.sandbox_runner"
-] = types.SimpleNamespace(environment=types.SimpleNamespace())
+] = types.SimpleNamespace(
+    environment=types.SimpleNamespace(),
+    WorkflowSandboxRunner=lambda: types.SimpleNamespace(
+        run=lambda fn, **kw: fn()
+    ),
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "workflow_modules"
@@ -397,7 +402,12 @@ def test_compute_workflow_synergy_history_weighting():
         "menace_sandbox.roi_calculator", types.SimpleNamespace(ROICalculator=object)
     )
     sys.modules.setdefault(
-        "menace_sandbox.sandbox_runner", types.SimpleNamespace()
+        "menace_sandbox.sandbox_runner",
+        types.SimpleNamespace(
+            WorkflowSandboxRunner=lambda: types.SimpleNamespace(
+                run=lambda fn, **kw: fn()
+            )
+        ),
     )
     from menace_sandbox.workflow_scorer_core import compute_workflow_synergy
 

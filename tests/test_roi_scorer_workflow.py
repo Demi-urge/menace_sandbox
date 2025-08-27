@@ -12,7 +12,12 @@ sys.modules.setdefault(
     "menace_sandbox.roi_tracker", types.SimpleNamespace(ROITracker=object)
 )
 sys.modules.setdefault(
-    "menace_sandbox.sandbox_runner", types.SimpleNamespace()
+    "menace_sandbox.sandbox_runner",
+    types.SimpleNamespace(
+        WorkflowSandboxRunner=lambda: types.SimpleNamespace(
+            run=lambda fn, **kw: fn()
+        )
+    ),
 )
 
 from menace_sandbox.db_router import init_db_router  # noqa: E402
