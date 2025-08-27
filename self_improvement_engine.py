@@ -3120,7 +3120,7 @@ class SelfImprovementEngine:
     def _record_new_modules(self, modules: Iterable[str]) -> None:
         """Update synergy graph and intent clusters for ``modules``."""
 
-        mods = [m for m in modules if m]
+        mods = {m for m in modules if m}
         if not mods:
             return
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
@@ -3136,7 +3136,7 @@ class SelfImprovementEngine:
                 except Exception:
                     pass
                 self.module_synergy_grapher = grapher
-            grapher.update_graph(mods)
+            grapher.update_graph(sorted(mods))
         except Exception:
             self.logger.exception("failed to update synergy graph")
 
@@ -3151,8 +3151,8 @@ class SelfImprovementEngine:
                     shared_db_path=data_dir / "intent.db",
                 )
                 self.intent_clusterer = clusterer
-            paths = [repo / f"{m}.py" for m in mods]
-            clusterer.update_modules(paths)
+            paths = {repo / f"{m}.py" for m in mods}
+            clusterer.index_modules(paths)
         except Exception:
             self.logger.exception("failed to index intent modules")
 
@@ -3427,21 +3427,23 @@ class SelfImprovementEngine:
                 pass
             return set()
 
-        added_modules: list[str] = []
+        added_modules: set[str] = set()
         try:
             _tracker, tested = environment.auto_include_modules(
                 sorted(modules), recursive=True, validate=True
             )
-            added_modules.extend(tested.get("added", []))
+            added_modules.update(tested.get("added", []))
         except Exception:
             try:
                 _tracker, tested = environment.auto_include_modules(
                     sorted(modules), recursive=True
                 )
-                added_modules.extend(tested.get("added", []))
+                added_modules.update(tested.get("added", []))
             except Exception:
                 tested = {}
-        self._record_new_modules(added_modules)
+        record_new = getattr(self, "_record_new_modules", None)
+        if record_new:
+            record_new(added_modules)
 
         reuse_scores: dict[str, float] = {}
         try:
@@ -3941,7 +3943,9 @@ class SelfImprovementEngine:
                 _tracker, tested = environment.auto_include_modules(
                     sorted(mods), recursive=True, validate=True
                 )
-                self._record_new_modules(tested.get("added", []))
+                record_new = getattr(self, "_record_new_modules", None)
+                if record_new:
+                    record_new(set(tested.get("added", [])))
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("auto inclusion failed: %s", exc)
             updated_wfs: list[int] = []
@@ -4248,12 +4252,12 @@ class SelfImprovementEngine:
                     else:
                         safe.append(m)
                 if safe:
-                    added_modules: list[str] = []
+                    added_modules: set[str] = set()
                     try:
                         _tracker, tested = environment.auto_include_modules(
                             sorted(safe), recursive=True, validate=True
                         )
-                        added_modules.extend(tested.get("added", []))
+                        added_modules.update(tested.get("added", []))
                         try:
                             kwargs: dict[str, object] = {}
                             try:
@@ -4275,7 +4279,9 @@ class SelfImprovementEngine:
                             pass
                     except Exception as exc:  # pragma: no cover - best effort
                         self.logger.exception("auto inclusion failed: %s", exc)
-                    self._record_new_modules(added_modules)
+                    record_new = getattr(self, "_record_new_modules", None)
+                    if record_new:
+                        record_new(added_modules)
 
                     abs_paths = [str(repo / p) for p in safe]
                     integrated: set[str] = set()
@@ -4382,7 +4388,7 @@ class SelfImprovementEngine:
             p = Path(m)
             info = self.orphan_traces.setdefault(m, {"parents": []})
             try:
-                cls = classify_module(p)
+                cls, _ = classify_module(p)
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("classification failed for %s: %s", p, exc)
                 cls = "candidate"
@@ -4449,12 +4455,12 @@ class SelfImprovementEngine:
                 else:
                     safe.append(m)
             if safe:
-                added_modules: list[str] = []
+                added_modules: set[str] = set()
                 try:
                     _tracker, tested = environment.auto_include_modules(
                         sorted(safe), recursive=True, validate=True
                     )
-                    added_modules.extend(tested.get("added", []))
+                    added_modules.update(tested.get("added", []))
                     try:
                         kwargs: dict[str, object] = {}
                         try:
@@ -4474,7 +4480,9 @@ class SelfImprovementEngine:
                         pass
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
-                self._record_new_modules(added_modules)
+                record_new = getattr(self, "_record_new_modules", None)
+                if record_new:
+                    record_new(added_modules)
 
                 repo_paths = [str(repo / p) for p in safe]
                 try:
@@ -4562,15 +4570,17 @@ class SelfImprovementEngine:
         ]
         if not redundant:
             return
-        added_modules: list[str] = []
+        added_modules: set[str] = set()
         try:
             _tracker, tested = environment.auto_include_modules(
                 sorted(redundant), recursive=True, validate=True
             )
-            added_modules.extend(tested.get("added", []))
+            added_modules.update(tested.get("added", []))
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("redundant module recheck failed: %s", exc)
-        self._record_new_modules(added_modules)
+        record_new = getattr(self, "_record_new_modules", None)
+        if record_new:
+            record_new(added_modules)
 
     # ------------------------------------------------------------------
     def _refresh_module_map(self, modules: Iterable[str] | None = None) -> None:
@@ -4587,27 +4597,29 @@ class SelfImprovementEngine:
             passing = self._test_orphan_modules(repo_mods)
             if passing:
                 repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-                added_modules: list[str] = []
+                added_modules: set[str] = set()
                 try:
                     _tracker, tested = environment.auto_include_modules(
                         sorted(passing), recursive=True, validate=True
                     )
-                    added_modules.extend(tested.get("added", []))
+                    added_modules.update(tested.get("added", []))
                 except Exception:
                     try:
                         _tracker, tested = auto_include_modules(
                             sorted(passing), recursive=True, validate=True
                         )
-                        added_modules.extend(tested.get("added", []))
+                        added_modules.update(tested.get("added", []))
                     except TypeError:
                         _tracker, tested = auto_include_modules(
                             sorted(passing), recursive=True
                         )
-                        added_modules.extend(tested.get("added", []))
+                        added_modules.update(tested.get("added", []))
                     except Exception as exc:  # pragma: no cover - best effort
                         self.logger.exception("auto inclusion failed: %s", exc)
                         tested = {}
-                self._record_new_modules(added_modules)
+                record_new = getattr(self, "_record_new_modules", None)
+                if record_new:
+                    record_new(added_modules)
                 integrated: set[str] = set()
                 try:
                     abs_paths = [str(repo / p) for p in passing]
@@ -4723,7 +4735,9 @@ class SelfImprovementEngine:
                     _tracker, tested = environment.auto_include_modules(
                         sorted(deps), recursive=True, validate=True
                     )
-                    self._record_new_modules(tested.get("added", []))
+                    record_new = getattr(self, "_record_new_modules", None)
+                    if record_new:
+                        record_new(set(tested.get("added", [])))
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
                 deps_integrated: set[str] = set()
@@ -5358,15 +5372,17 @@ class SelfImprovementEngine:
             if orphans:
                 passing = self._test_orphan_modules(orphans)
                 if passing:
-                    added_modules: list[str] = []
+                    added_modules: set[str] = set()
                     try:
                         _tracker, tested = environment.auto_include_modules(
                             sorted(passing), recursive=True, validate=True
                         )
-                        added_modules.extend(tested.get("added", []))
+                        added_modules.update(tested.get("added", []))
                     except Exception as exc:  # pragma: no cover - best effort
                         self.logger.exception("auto inclusion failed: %s", exc)
-                    self._record_new_modules(added_modules)
+                    record_new = getattr(self, "_record_new_modules", None)
+                    if record_new:
+                        record_new(added_modules)
                     repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
                     abs_paths = [str(repo / p) for p in passing]
                     integrated: set[str] = set()
