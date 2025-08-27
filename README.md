@@ -1051,11 +1051,61 @@ metrics = runner.run(writer, safe_mode=True)  # network disabled
 failed. Callers can interpret these values to evaluate resource usage and error
 rates.
 
-Configuration options include ``test_data`` to seed files, ``expected_outputs``
-for validation, ``mock_injectors`` for additional patching and ``allowed_domains``
-or ``allowed_files`` to permit specific network or filesystem access when
-``safe_mode`` is enabled. The runner itself does not rely on any environment
-variables; all behaviour is controlled via these arguments.
+Key arguments include:
+
+* ``test_data`` – mapping of file paths or URLs to initial contents or
+  responses written into the sandbox before execution.
+* ``network_mocks`` – mapping of networking helpers (``"requests"``,
+  ``"httpx"``, ``"urllib"`` and others) to callables returning custom
+  responses.
+* ``fs_mocks`` – mapping of filesystem helpers (``"open"``,
+  ``"pathlib.Path.write_text"`` …) to callables intercepting file mutations.
+* ``module_fixtures`` – per-module ``files`` and ``env`` mappings applied prior
+  to running each callable.
+* ``safe_mode`` – when enabled, outbound network access is blocked unless a
+  corresponding network mock handles the request.
+
+The runner itself does not rely on any environment variables; all behaviour is
+controlled via these arguments.
+
+Example network mock:
+
+```python
+from sandbox_runner import WorkflowSandboxRunner
+from types import SimpleNamespace
+
+def fetch():
+    import requests
+    return requests.get("https://example.com").text
+
+runner = WorkflowSandboxRunner()
+metrics = runner.run(
+    fetch,
+    safe_mode=True,
+    network_mocks={"requests": lambda self, method, url, *a, **kw: SimpleNamespace(text="stubbed")},
+)
+print(metrics.modules[0].result)
+```
+
+Example file mock:
+
+```python
+from sandbox_runner import WorkflowSandboxRunner
+
+def writer():
+    from pathlib import Path
+    Path("out.txt").write_text("hi")
+
+written = {}
+
+def capture(path, data, *a, **kw):
+    written[path.name] = data
+    return len(data)
+
+runner = WorkflowSandboxRunner()
+runner.run(writer, fs_mocks={"pathlib.Path.write_text": capture})
+print(written["out.txt"])
+```
 
 The environment records ``sandbox_data/last_autopurge`` and runs
 ``purge_leftovers()`` automatically on import when the previous purge is older
