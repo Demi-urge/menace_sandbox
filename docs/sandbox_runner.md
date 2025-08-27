@@ -488,34 +488,28 @@ module discovery.
 
 ## WorkflowSandboxRunner
 
-`WorkflowSandboxRunner` executes a list of workflow steps inside a temporary
-directory. For each callable it generates argument dictionaries via
-`generate_input_stubs` and uses them when invoking the step. File mutations like
-`open`, `os.rename` or `shutil.copy` are patched so they operate inside the
-sandboxed root. When ``safe_mode=True`` the runner also monkeypatches
-`requests`, `httpx`, `urllib` and raw sockets so outbound network attempts raise
-``RuntimeError``.  Optional ``network_mocks`` and ``fs_mocks`` dictionaries can
-provide custom handlers for these patched helpers, allowing tests to return
-stubbed responses or capture file writes in memory.  Telemetry such as duration,
-memory and exceptions is exposed through ``runner.telemetry``.
+`WorkflowSandboxRunner` runs one or more callables inside an isolated temporary
+directory. File mutations such as `open` or `shutil.copy` are redirected into
+this sandbox so the host filesystem remains untouched. When `safe_mode=True`
+the runner monkeypatches `requests`, `httpx`, `urllib` and raw sockets so that
+any outbound network attempt raises `RuntimeError` unless a matching stub is
+provided. Per‑module telemetry reporting execution time, peak memory and crash
+frequency is available through `runner.telemetry`.
 
-Example:
+### Example with injected test data
 
 ```python
 from sandbox_runner import WorkflowSandboxRunner
 
-def writer(path="out.txt"):
-    with open(path, "w") as fh:
-        fh.write("hello")
-
-def reader(path="out.txt"):
-    with open(path) as fh:
+def read_file():
+    with open("payload.txt") as fh:
         return fh.read()
 
-runner = WorkflowSandboxRunner([writer, reader], safe_mode=True)
-metrics = runner.run()
-print(metrics["modules"][1]["result"])
-print(runner.telemetry["modules"][0]["duration"])
+runner = WorkflowSandboxRunner()
+metrics = runner.run(read_file, safe_mode=True,
+                     test_data={"payload.txt": "fake"})
+print(metrics.modules[0].success)
+print(runner.telemetry["time_per_module"]["read_file"])
 ```
 
 Per-module fixtures can be supplied via the ``module_fixtures`` argument. The
