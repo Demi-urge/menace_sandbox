@@ -1329,6 +1329,22 @@ class WorkflowSynthesizer:
             name = wf[0].module.replace(".", "_") if wf else f"workflow_{idx}"
             path = out_dir / f"{name}_{idx}.workflow.json"
             path.write_text(to_json(wf, metadata=details), encoding="utf-8")
+        try:  # Discover and integrate any newly referenced modules
+            from sandbox_runner.orphan_discovery import discover_recursive_orphans
+            from sandbox_runner.environment import auto_include_modules
+
+            repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+            mapping = discover_recursive_orphans(str(repo))
+            if mapping:
+                auto_include_modules(
+                    [
+                        Path(name.replace(".", "/")).with_suffix(".py").as_posix()
+                        for name in mapping
+                    ],
+                    recursive=True,
+                )
+        except Exception:
+            logger.exception("post-generation orphan integration failed")
 
         return self.generated_workflows
 

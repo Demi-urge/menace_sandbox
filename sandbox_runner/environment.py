@@ -6457,6 +6457,25 @@ def generate_workflows_for_modules(
                 logger.warning("duplicate workflow ignored for %s", dotted)
         except Exception:
             logger.exception("failed to store workflow for %s", dotted)
+    try:  # Best effort recursive orphan integration
+        from .orphan_discovery import discover_recursive_orphans
+
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        mapping = discover_recursive_orphans(str(repo))
+        if mapping:
+            try:
+                auto_include_modules(
+                    [
+                        Path(name.replace(".", "/")).with_suffix(".py").as_posix()
+                        for name in mapping
+                    ],
+                    recursive=True,
+                    router=router,
+                )
+            except Exception:
+                logger.exception("auto include of discovered orphans failed")
+    except Exception:
+        logger.exception("discover_recursive_orphans after workflow generation failed")
     return ids
 
 
