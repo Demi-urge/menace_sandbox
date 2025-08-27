@@ -95,6 +95,7 @@ class WorkflowSandboxRunner:
         test_data: Mapping[str, str | bytes] | None = None,
         network_mocks: Mapping[str, Callable[..., Any]] | None = None,
         fs_mocks: Mapping[str, Callable[..., Any]] | None = None,
+        module_fixtures: Mapping[str, Mapping[str, Any]] | None = None,
         roi_delta: float | None = None,
     ) -> RunMetrics:
         """Execute ``workflow`` inside a sandbox and return telemetry.
@@ -110,11 +111,18 @@ class WorkflowSandboxRunner:
         functions for the patched network and filesystem helpers respectively.
         Keys correspond to the fully-qualified helper name such as ``"requests"``
         or ``"pathlib.Path.write_text"``.
+
+        ``module_fixtures`` maps module names to fixture dictionaries.  Each
+        fixture may contain ``"files"`` and ``"env"`` mappings that are applied
+        before the module executes.  File fixtures are written into the sandbox
+        and environment variables are temporarily set for the duration of the
+        module's execution and restored afterwards.
         """
 
         test_data = dict(test_data or {})
         network_mocks = dict(network_mocks or {})
         fs_mocks = dict(fs_mocks or {})
+        module_fixtures = {k: dict(v) for k, v in (module_fixtures or {}).items()}
 
         file_data: dict[str, str | bytes] = {}
         network_data: dict[str, str | bytes] = {}
@@ -463,6 +471,23 @@ class WorkflowSandboxRunner:
 
             for fn in funcs:
                 name = getattr(fn, "__name__", repr(fn))
+                fixtures = module_fixtures.get(name, {})
+                files = dict(fixtures.get("files", {}))
+                env_vars = dict(fixtures.get("env", {}))
+
+                # Write per-module file fixtures
+                for fname, content in files.items():
+                    real = self._resolve(root, fname)
+                    real.parent.mkdir(parents=True, exist_ok=True)
+                    mode = "wb" if isinstance(content, (bytes, bytearray)) else "w"
+                    with original_open(real, mode) as fh:
+                        fh.write(content)
+
+                # Temporarily set environment variables for the module
+                old_env: dict[str, str | None] = {}
+                for key, value in env_vars.items():
+                    old_env[key] = os.environ.get(key)
+                    os.environ[key] = value
 
                 start = perf_counter()
                 mem_before = mem_after = 0
@@ -489,6 +514,12 @@ class WorkflowSandboxRunner:
                     if not safe_mode:
                         raise
                 finally:
+                    for key, original in old_env.items():
+                        if original is None:
+                            os.environ.pop(key, None)
+                        else:
+                            os.environ[key] = original
+
                     duration = perf_counter() - start
 
                     if use_psutil:
