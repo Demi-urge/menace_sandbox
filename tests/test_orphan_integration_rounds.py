@@ -79,7 +79,7 @@ def _load_qfe(monkeypatch):
     return importlib.import_module("menace_sandbox.quick_fix_engine")
 
 
-def test_generate_workflows_calls_integrate_new_orphans(tmp_path, monkeypatch):
+def test_generate_workflows_calls_post_round_scan(tmp_path, monkeypatch):
     """generate_workflows should invoke orphan integration helper."""
     _copy_modules(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -87,14 +87,13 @@ def test_generate_workflows_calls_integrate_new_orphans(tmp_path, monkeypatch):
 
     called = {"integrate": False}
 
-    def fake_integrate(repo, router=None):
+    def fake_scan(repo, modules=None, *, logger=None, router=None):
         called["integrate"] = True
         return []
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
-    pkg.integrate_new_orphans = fake_integrate
-    pkg.try_integrate_into_workflows = lambda *a, **k: None
+    pkg.post_round_orphan_scan = fake_scan
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
     monkeypatch.setitem(
         sys.modules, "db_router", types.SimpleNamespace(GLOBAL_ROUTER=None)
@@ -189,19 +188,23 @@ def test_quick_fix_patch_cycle_indexes_orphans(tmp_path, monkeypatch):
     ic_mod.IntentClusterer = DummyClusterer
     monkeypatch.setitem(sys.modules, "intent_clusterer", ic_mod)
 
-    def integrate_new_orphans(repo, router=None):
-        from sandbox_runner.environment import auto_include_modules
+    def post_round_orphan_scan(repo, modules=None, *, logger=None, router=None):
+        from sandbox_runner.environment import (
+            auto_include_modules,
+            try_integrate_into_workflows,
+        )
 
         auto_include_modules(["extra/mod.py"], recursive=True, router=router)
         from module_synergy_grapher import ModuleSynergyGrapher
         ModuleSynergyGrapher(repo).update_graph(["extra.mod"])
         from intent_clusterer import IntentClusterer
         IntentClusterer(None, None).index_modules([Path(repo) / "extra/mod.py"])
+        try_integrate_into_workflows(["extra/mod.py"], router=router)
         return ["extra/mod.py"]
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
-    pkg.integrate_new_orphans = integrate_new_orphans
+    pkg.post_round_orphan_scan = post_round_orphan_scan
     pkg.try_integrate_into_workflows = fake_try
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
     monkeypatch.setitem(

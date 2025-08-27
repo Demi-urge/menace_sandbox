@@ -927,12 +927,11 @@ class SelfCodingEngine:
                     except Exception:
                         self.logger.exception("event bus publish failed")
             try:
-                from sandbox_runner import integrate_new_orphans, try_integrate_into_workflows
-                added_modules = integrate_new_orphans(Path.cwd(), router=self.router)
-                try_integrate_into_workflows(added_modules)
+                from sandbox_runner import post_round_orphan_scan
+                post_round_orphan_scan(Path.cwd(), router=self.router)
             except Exception:
                 self.logger.exception(
-                    "integrate_new_orphans after apply_patch failed"
+                    "post_round_orphan_scan after apply_patch failed"
                 )
         elif patch_id is not None and self.rollback_mgr:
             self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)

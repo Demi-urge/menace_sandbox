@@ -60,21 +60,18 @@ def test_generate_variants_integrates_orphans(monkeypatch, tmp_path):
     integrate_called: dict[str, object] = {}
     workflow_called: dict[str, list[str]] = {}
 
-    def integrate_new_orphans(repo: Path, router=None):
+    def post_round_orphan_scan(repo: Path, modules=None, *, logger=None, router=None):
         integrate_called["called"] = True
         from module_synergy_grapher import ModuleSynergyGrapher
         ModuleSynergyGrapher(repo).update_graph(["helper"])
         from intent_clusterer import IntentClusterer
         IntentClusterer().index_modules([repo / "helper.py"])
+        workflow_called["mods"] = ["helper.py"]
         return ["helper.py"]
-
-    def fake_try(mods, router=None):
-        workflow_called["mods"] = list(mods)
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
-    pkg.integrate_new_orphans = integrate_new_orphans
-    pkg.try_integrate_into_workflows = fake_try
+    pkg.post_round_orphan_scan = post_round_orphan_scan
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
     monkeypatch.setitem(sys.modules, "db_router", types.SimpleNamespace(GLOBAL_ROUTER=None))
 

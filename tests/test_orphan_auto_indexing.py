@@ -24,18 +24,15 @@ def test_generate_workflows_indexes_discovered_modules(tmp_path, monkeypatch):
     # Stub orphan integration via centralized helper and record indexing calls
     calls: dict[str, list] = {}
 
-    def fake_integrate(repo, router=None):
+    def fake_scan(repo, modules=None, *, logger=None, router=None):
         calls["synergy"] = ["extra.mod"]
         calls["intent"] = [Path(repo) / "extra/mod.py"]
+        calls["workflow"] = ["extra/mod.py"]
         return ["extra/mod.py"]
-
-    def fake_try(mods, router=None):
-        calls["workflow"] = list(mods)
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
-    pkg.integrate_new_orphans = fake_integrate
-    pkg.try_integrate_into_workflows = fake_try
+    pkg.post_round_orphan_scan = fake_scan
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
     monkeypatch.setitem(sys.modules, "db_router", SimpleNamespace(GLOBAL_ROUTER=None))
 

@@ -36,9 +36,9 @@ from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
 from .error_cluster_predictor import ErrorClusterPredictor
 try:
-    from .sandbox_runner import integrate_new_orphans
+    from .sandbox_runner import post_round_orphan_scan
 except Exception:  # pragma: no cover - fallback for flat layout
-    from sandbox_runner import integrate_new_orphans  # type: ignore
+    from sandbox_runner import post_round_orphan_scan  # type: ignore
 
 
 class CoverageSubprocessError(RuntimeError):
@@ -219,10 +219,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     patch_id = generate_patch(mod, self.engine)
                     if patch_id is not None:
                         try:
-                            integrate_new_orphans(Path.cwd(), router=router)
+                            post_round_orphan_scan(
+                                Path.cwd(), logger=self.logger, router=router
+                            )
                         except Exception:
                             self.logger.exception(
-                                "integrate_new_orphans after preemptive patch failed",
+                                "post_round_orphan_scan after preemptive patch failed",
                                 extra=log_record(module=mod),
                             )
                         after_target = Path(after_dir) / rel
@@ -1125,11 +1127,14 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         )
                         try:
                             await asyncio.to_thread(
-                                integrate_new_orphans, Path.cwd(), router=router
+                                post_round_orphan_scan,
+                                Path.cwd(),
+                                logger=self.logger,
+                                router=router,
                             )
                         except Exception:
                             self.logger.exception(
-                                "integrate_new_orphans after apply_patch failed"
+                                "post_round_orphan_scan after apply_patch failed"
                             )
                         after_cov, after_runtime = await asyncio.to_thread(
                             self._run_tests, root_test
@@ -1305,10 +1310,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     trigger="self_debugger_sandbox",
                 )
                 try:
-                    integrate_new_orphans(Path.cwd(), router=router)
+                    post_round_orphan_scan(
+                        Path.cwd(), logger=self.logger, router=router
+                    )
                 except Exception:
                     self.logger.exception(
-                        "integrate_new_orphans after apply_patch failed"
+                        "post_round_orphan_scan after apply_patch failed"
                     )
                 if self.policy:
                     try:
