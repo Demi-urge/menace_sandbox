@@ -482,6 +482,39 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         module_map = pre_mods | added
         ctx.module_map = module_map
 
+        if added:
+            try:  # best effort – graph updates are non-critical
+                grapher = getattr(ctx, "module_synergy_grapher", None)
+                if grapher is None:
+                    from module_synergy_grapher import ModuleSynergyGrapher
+
+                    grapher = ModuleSynergyGrapher(root=ctx.repo)
+                    graph_path = ctx.repo / "sandbox_data" / "module_synergy_graph.json"
+                    try:
+                        grapher.load(graph_path)
+                    except Exception:
+                        pass
+                    ctx.module_synergy_grapher = grapher
+                grapher.update_graph(sorted(added))
+            except Exception:
+                logger.exception("failed to update synergy graph")
+
+            try:
+                clusterer = getattr(ctx, "intent_clusterer", None)
+                if clusterer is None:
+                    from intent_clusterer import IntentClusterer
+
+                    data_dir = ctx.repo / "sandbox_data"
+                    clusterer = IntentClusterer(
+                        local_db_path=data_dir / "intent.db",
+                        shared_db_path=data_dir / "intent.db",
+                    )
+                    ctx.intent_clusterer = clusterer
+                paths = [ctx.repo / m for m in added]
+                clusterer.update_modules(paths)
+            except Exception:
+                logger.exception("failed to index intent modules")
+
         post_cache: Dict[str, Dict[str, Any]] = {}
         try:
             post_cache = load_orphan_cache(ctx.repo)
