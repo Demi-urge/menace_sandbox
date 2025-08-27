@@ -178,9 +178,13 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from universal_retriever import UniversalRetriever  # type: ignore
 try:  # pragma: no cover - optional dependency
-    from sandbox_runner.orphan_discovery import append_orphan_classifications
+    from sandbox_runner.orphan_discovery import (
+        append_orphan_classifications,
+        append_orphan_cache,
+        append_orphan_traces,
+    )
 except Exception:  # pragma: no cover - best effort fallback
-    append_orphan_classifications = None  # type: ignore
+    append_orphan_classifications = append_orphan_cache = append_orphan_traces = None  # type: ignore
 from .human_alignment_flagger import (
     HumanAlignmentFlagger,
     flag_improvement,
@@ -6376,6 +6380,53 @@ class SelfImprovementEngine:
                         workflow_evolution_details.append(detail)
                 except Exception:
                     self.logger.exception("workflow evolution layer failed")
+                finally:
+                    try:
+                        self._update_orphan_modules()
+                        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                        traces = getattr(self, "orphan_traces", {})
+                        if append_orphan_cache:
+                            cache_entries = {
+                                m: {
+                                    "parents": info.get("parents", []),
+                                    "classification": info.get("classification", "candidate"),
+                                    "redundant": info.get("redundant", False),
+                                }
+                                for m, info in traces.items()
+                            }
+                            try:
+                                append_orphan_cache(repo, cache_entries)
+                            except Exception:
+                                self.logger.exception("orphan cache update failed")
+                        if append_orphan_classifications:
+                            class_entries = {
+                                m: {
+                                    "parents": info.get("parents", []),
+                                    "classification": info.get("classification", "candidate"),
+                                    "redundant": info.get("redundant", False),
+                                }
+                                for m, info in traces.items()
+                            }
+                            try:
+                                append_orphan_classifications(repo, class_entries)
+                            except Exception:
+                                self.logger.exception("orphan classification update failed")
+                        if append_orphan_traces:
+                            trace_entries = {
+                                m: {
+                                    "classification_history": info.get("classification_history", []),
+                                    "roi_history": info.get("roi_history", []),
+                                }
+                                for m, info in traces.items()
+                                if info.get("classification_history") or info.get("roi_history")
+                            }
+                            if trace_entries:
+                                try:
+                                    append_orphan_traces(repo, trace_entries)
+                                except Exception:
+                                    self.logger.exception("orphan trace update failed")
+                    except Exception:
+                        self.logger.exception("post evolution orphan update failed")
             try:
                 flags = radar_scan()
                 if flags:
