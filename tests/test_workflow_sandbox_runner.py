@@ -115,3 +115,21 @@ def test_httpx_and_fs_wrappers():
     src.unlink()
     if dst.exists():
         dst.unlink()
+
+
+def test_callable_results_captured():
+    def step1():
+        return "alpha"
+
+    def step2():
+        return 123
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run([step1, step2], safe_mode=True)
+
+    assert [m.result for m in metrics.modules] == ["alpha", 123]
+
+    telemetry = runner.telemetry
+    assert telemetry is not None
+    assert telemetry["results"]["step1"] == "alpha"
+    assert telemetry["results"]["step2"] == 123

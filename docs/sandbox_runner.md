@@ -493,8 +493,8 @@ directory. File mutations such as `open` or `shutil.copy` are redirected into
 this sandbox so the host filesystem remains untouched. When `safe_mode=True`
 the runner monkeypatches `requests`, `httpx`, `urllib` and raw sockets so that
 any outbound network attempt raises `RuntimeError` unless a matching stub is
-provided. Per‑module telemetry reporting execution time, peak memory and crash
-frequency is available through `runner.telemetry`.
+provided. Per‑module telemetry reporting execution time, peak memory, crash
+frequency and return values is available through `runner.telemetry`.
 
 ### Example with injected test data
 

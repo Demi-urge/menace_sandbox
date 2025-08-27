@@ -57,6 +57,7 @@ class ModuleMetrics:
     memory_delta: int
     success: bool
     exception: str | None = None
+    result: Any | None = None
 
 
 @dataclass
@@ -477,9 +478,10 @@ class WorkflowSandboxRunner:
 
                 success = True
                 error: str | None = None
+                result: Any | None = None
 
                 try:
-                    fn()
+                    result = fn()
                 except Exception as exc:  # pragma: no cover - exercise failure path
                     success = False
                     error = str(exc)
@@ -506,12 +508,14 @@ class WorkflowSandboxRunner:
                         memory_delta=mem_after - mem_before,
                         success=success,
                         exception=error,
+                        result=result,
                     )
                     metrics.modules.append(module_metric)
 
             # ------------------------------------------------------------------
             # Aggregate metrics into a simple telemetry dictionary
             times = {m.name: m.duration for m in metrics.modules}
+            results = {m.name: m.result for m in metrics.modules}
             peak_mem = max((m.memory_after for m in metrics.modules), default=0)
             crash_freq = (
                 metrics.crash_count / len(metrics.modules)
@@ -520,6 +524,7 @@ class WorkflowSandboxRunner:
             )
             telemetry: dict[str, Any] = {
                 "time_per_module": times,
+                "results": results,
                 "crash_frequency": crash_freq,
                 "peak_memory": peak_mem,
             }
@@ -528,7 +533,9 @@ class WorkflowSandboxRunner:
 
             # Persist metrics inside the sandbox for debugging or analysis.
             try:
-                (root / "telemetry.json").write_text(json.dumps(telemetry))
+                (root / "telemetry.json").write_text(
+                    json.dumps(telemetry, default=repr)
+                )
             except Exception:
                 pass
 
