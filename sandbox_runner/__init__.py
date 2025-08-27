@@ -141,6 +141,7 @@ from .stub_providers import (
 )
 
 from .orphan_discovery import discover_orphan_modules, discover_recursive_orphans
+from .orphan_integration import post_round_orphan_scan, integrate_and_graph_orphans, integrate_orphans
 
 __all__ = [
     "simulate_execution_environment",
@@ -155,6 +156,9 @@ __all__ = [
     "integrate_new_orphans",
     "discover_orphan_modules",
     "discover_recursive_orphans",
+    "integrate_and_graph_orphans",
+    "integrate_orphans",
+    "post_round_orphan_scan",
     "simulate_full_environment",
     "generate_input_stubs",
     "record_module_usage",

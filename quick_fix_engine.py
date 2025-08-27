@@ -202,17 +202,12 @@ def generate_patch(
                     except BaseException:  # pragma: no cover - best effort
                         logger.debug("embedding backfill failed", exc_info=True)
             try:
-                from sandbox_runner import (
-                    integrate_new_orphans,
-                    try_integrate_into_workflows,
-                )
+                from sandbox_runner import post_round_orphan_scan
 
-                added_modules = integrate_new_orphans(Path.cwd())
-                if added_modules:
-                    try_integrate_into_workflows(added_modules)
+                post_round_orphan_scan(Path.cwd())
             except Exception:
                 logger.exception(
-                    "integrate_new_orphans after preemptive patch failed"
+                    "post_round_orphan_scan after preemptive patch failed"
                 )
             return patch_id
     except Exception as exc:  # pragma: no cover - runtime issues

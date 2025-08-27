@@ -121,6 +121,28 @@ def integrate_and_graph_orphans(
     return tracker, tested, updated, synergy_ok, cluster_ok
 
 
+def post_round_orphan_scan(
+    repo: Path,
+    modules: Iterable[str] | None = None,
+    *,
+    logger=None,
+    router=None,
+) -> List[str]:
+    """Integrate orphan modules discovered after a round of code changes.
+
+    This helper wraps :func:`integrate_and_graph_orphans` to perform
+    recursive discovery via :func:`discover_recursive_orphans`, include any
+    modules using :func:`auto_include_modules`, update the module synergy graph
+    and intent clustering, and finally return the list of newly added module
+    paths.
+    """
+
+    _tracker, tested, _updated, _syn_ok, _cl_ok = integrate_and_graph_orphans(
+        repo, modules, logger=logger, router=router
+    )
+    return tested.get("added", [])
+
+
 # Backwards compatibility -------------------------------------------------
 # Historically this utility was exported as ``integrate_orphans``.  Preserve
 # the old name so existing callers continue to function while new code uses the

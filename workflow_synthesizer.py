@@ -1335,16 +1335,9 @@ class WorkflowSynthesizer:
         try:
             import sandbox_runner
 
-            added = sandbox_runner.integrate_new_orphans(
+            sandbox_runner.post_round_orphan_scan(
                 Path.cwd(), router=GLOBAL_ROUTER
             )
-            if added:
-                try:
-                    sandbox_runner.try_integrate_into_workflows(
-                        sorted(added), router=GLOBAL_ROUTER
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    logger.warning("workflow integration failed", exc_info=True)
         except Exception:  # pragma: no cover - best effort
             logger.warning("orphan integration failed", exc_info=True)
 
@@ -1626,18 +1619,9 @@ def generate_workflow_variants(
         try:  # pragma: no cover - optional dependency
             import sandbox_runner
 
-            added = sandbox_runner.integrate_new_orphans(
+            sandbox_runner.post_round_orphan_scan(
                 Path.cwd(), router=GLOBAL_ROUTER
             )
-            if added:
-                try:
-                    sandbox_runner.try_integrate_into_workflows(
-                        sorted(added), router=GLOBAL_ROUTER
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    logger.warning(
-                        "workflow integration failed", exc_info=True
-                    )
         except Exception:  # pragma: no cover - best effort
             logger.warning("orphan integration failed", exc_info=True)
         return variants
@@ -1768,18 +1752,9 @@ def generate_variants(
         try:  # pragma: no cover - optional dependency
             import sandbox_runner
 
-            added = sandbox_runner.integrate_new_orphans(
+            sandbox_runner.post_round_orphan_scan(
                 Path.cwd(), router=GLOBAL_ROUTER
             )
-            if added:
-                try:
-                    sandbox_runner.try_integrate_into_workflows(
-                        sorted(added), router=GLOBAL_ROUTER
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    logger.warning(
-                        "workflow integration failed", exc_info=True
-                    )
         except Exception:  # pragma: no cover - best effort
             logger.warning("orphan integration failed", exc_info=True)
         return variants[:n]

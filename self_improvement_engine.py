@@ -95,7 +95,7 @@ try:
 except Exception:  # pragma: no cover - fallback for flat layout
     import security_auditor  # type: ignore
 import sandbox_runner.environment as environment
-from sandbox_runner.orphan_integration import integrate_orphans
+from sandbox_runner.orphan_integration import integrate_orphans, post_round_orphan_scan
 from .self_test_service import SelfTestService
 try:
     from . import self_test_service as sts
@@ -1653,7 +1653,7 @@ class SelfImprovementEngine:
                                             "post_patch_orphan_integration_failed"
                                         )
                                     try:
-                                        self._include_recursive_orphans()
+                                        self._post_round_orphan_scan()
                                     except Exception:
                                         self.logger.exception(
                                             "recursive orphan inclusion failed",
@@ -4150,26 +4150,12 @@ class SelfImprovementEngine:
         return deps | set(initial.keys())
 
     # ------------------------------------------------------------------
-    def _include_recursive_orphans(self) -> None:
-        """Discover and include orphan modules recursively.
+    def _post_round_orphan_scan(self) -> None:
+        """Run a post-round orphan discovery and integration pass."""
 
-        The helper re-runs :func:`discover_recursive_orphans` using the
-        existing ``sandbox_data/module_map.json`` mapping so that any newly
-        created modules are traced through their import chains and
-        automatically included into the sandbox environment.
-        """
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-
         try:
-            from sandbox_runner.orphan_integration import (
-                integrate_and_graph_orphans,
-            )
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception("integrate_and_graph_orphans import failed")
-            return
-
-        try:
-            _tracker, tested, updated_wfs, _, _ = integrate_and_graph_orphans(
+            added = post_round_orphan_scan(
                 repo, logger=self.logger, router=GLOBAL_ROUTER
             )
         except Exception:  # pragma: no cover - best effort
@@ -4179,17 +4165,9 @@ class SelfImprovementEngine:
         record_new = getattr(self, "_record_new_modules", None)
         if record_new:
             try:
-                record_new(set(tested.get("added", [])))
+                record_new(set(added))
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("record new modules failed")
-
-        if updated_wfs:
-            try:
-                self.logger.info(
-                    "workflows updated", extra=log_record(workflows=updated_wfs)
-                )
-            except Exception:  # pragma: no cover - best effort
-                pass
 
     # ------------------------------------------------------------------
     def _update_orphan_modules(self, modules: Iterable[str] | None = None) -> None:
@@ -4915,7 +4893,7 @@ class SelfImprovementEngine:
                                 "post_patch_orphan_integration_failed"
                             )
                         try:
-                            self._include_recursive_orphans()
+                            self._post_round_orphan_scan()
                         except Exception:
                             self.logger.exception(
                                 "recursive orphan inclusion failed",
@@ -5064,7 +5042,7 @@ class SelfImprovementEngine:
                                     "post_patch_orphan_integration_failed"
                                 )
                             try:
-                                self._include_recursive_orphans()
+                                self._post_round_orphan_scan()
                             except Exception:
                                 self.logger.exception(
                                     "recursive orphan inclusion failed",
@@ -5330,7 +5308,7 @@ class SelfImprovementEngine:
             except Exception:
                 self.logger.exception("workflow variant meta logging failed")
         try:
-            self._include_recursive_orphans()
+            self._post_round_orphan_scan()
         except Exception:
             self.logger.exception(
                 "recursive orphan inclusion failed",
@@ -5407,7 +5385,7 @@ class SelfImprovementEngine:
                 )
             results[int(wf_id)] = {"status": status}
             try:
-                self._include_recursive_orphans()
+                self._post_round_orphan_scan()
             except Exception:
                 self.logger.exception(
                     "recursive orphan inclusion failed",
