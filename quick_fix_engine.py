@@ -9,7 +9,7 @@ import shutil
 import tempfile
 import os
 import uuid
-from typing import Tuple, Iterable, Dict, Any, List
+from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING
 
 from codebase_diff_checker import generate_code_diff, flag_risky_changes
 try:  # pragma: no cover - optional dependency
@@ -22,6 +22,9 @@ from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
 from vector_service import ContextBuilder, Retriever, FallbackResult, EmbeddingBackfill
 from patch_provenance import PatchLogger
+
+if TYPE_CHECKING:  # pragma: no cover - import for type checking only
+    from .self_coding_engine import SelfCodingEngine
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when unavailable
@@ -46,6 +49,7 @@ except Exception:  # pragma: no cover - fallback for tests
 
 
 _VEC_METRICS = None
+
 
 def generate_patch(
     module: str,
@@ -134,7 +138,10 @@ def generate_patch(
 
     try:
         patch_id: int | None
-        with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
+        with (
+            tempfile.TemporaryDirectory() as before_dir,
+            tempfile.TemporaryDirectory() as after_dir,
+        ):
             rel = path.name if path.is_absolute() else path
             before_target = Path(before_dir) / rel
             before_target.parent.mkdir(parents=True, exist_ok=True)
@@ -194,6 +201,19 @@ def generate_patch(
                         )
                     except BaseException:  # pragma: no cover - best effort
                         logger.debug("embedding backfill failed", exc_info=True)
+            try:
+                from sandbox_runner import (
+                    integrate_new_orphans,
+                    try_integrate_into_workflows,
+                )
+
+                added_modules = integrate_new_orphans(Path.cwd())
+                if added_modules:
+                    try_integrate_into_workflows(added_modules)
+            except Exception:
+                logger.exception(
+                    "integrate_new_orphans after preemptive patch failed"
+                )
             return patch_id
     except Exception as exc:  # pragma: no cover - runtime issues
         logger.error("quick fix generation failed for %s: %s", module, exc)
@@ -261,7 +281,9 @@ class QuickFixEngine:
         etype, module, mods, count, _ = info
         return etype, module, mods, count
 
-    def _redundant_retrieve(self, query: str, top_k: int) -> Tuple[List[Any], str, List[Tuple[str, str, float]]]:
+    def _redundant_retrieve(
+        self, query: str, top_k: int
+    ) -> Tuple[List[Any], str, List[Tuple[str, str, float]]]:
         if self.retriever is None:
             return [], "", []
         session_id = uuid.uuid4().hex
