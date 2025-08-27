@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import builtins
-import io
+import logging
 import tempfile
-from pathlib import Path
+import pathlib
 from typing import Any, Callable, Mapping
+
+
+logger = logging.getLogger(__name__)
 
 
 class WorkflowSandboxRunner:
@@ -13,8 +16,10 @@ class WorkflowSandboxRunner:
 
     The runner creates a fresh temporary directory for each invocation and
     monkeypatches :func:`open` and :class:`pathlib.Path` so all file accesses are
-    redirected to that directory. Optional ``test_data`` can provide in-memory
-    file contents for reads. Original functions are restored after execution.
+    redirected to that directory. Optional ``test_data`` can pre-populate files
+    within the sandbox before execution. Original functions are restored after
+    execution. Callers may also provide ``expected_outputs`` to validate that
+    specific files were produced with the expected contents.
     """
 
     def run(
@@ -23,7 +28,8 @@ class WorkflowSandboxRunner:
         *,
         safe_mode: bool = False,
         test_data: Mapping[str, str | bytes] | None = None,
-        mock_injectors: list[Callable[[Path], Callable[[], None]]] | None = None,
+        expected_outputs: Mapping[str, str | bytes] | None = None,
+        mock_injectors: list[Callable[[pathlib.Path], Callable[[], None]]] | None = None,
     ) -> Any:
         """Execute ``workflow_callable`` inside a sandbox.
 
@@ -35,9 +41,13 @@ class WorkflowSandboxRunner:
             When ``True``, network access is disabled and exceptions raised by
             the workflow are captured and returned instead of being raised.
         test_data:
-            Optional mapping of file paths to contents. When a path from this
-            mapping is opened for reading, the provided content is returned via
-            an in-memory buffer instead of accessing the filesystem.
+            Optional mapping of file paths to contents. Each entry is written
+            into the sandbox prior to execution so workflows can read them as
+            regular files.
+        expected_outputs:
+            Optional mapping of file paths to expected contents. After the
+            workflow completes each specified file is read and compared to the
+            expected value. Discrepancies are logged as warnings.
         mock_injectors:
             Optional list of callables that receive the sandbox root and return
             a teardown callable.  This allows callers to supply additional
@@ -45,31 +55,31 @@ class WorkflowSandboxRunner:
         """
 
         test_data = dict(test_data or {})
+        expected_outputs = dict(expected_outputs or {})
 
         with tempfile.TemporaryDirectory() as tmp:
             original_open = builtins.open
-            original_path = Path
+            import pathlib as _pathlib
+            original_path = _pathlib.PosixPath
 
-            sandbox_root = Path(tmp)
+            sandbox_root = _pathlib.Path(tmp)
 
-            def _resolve_path(p: str | Path) -> Path:
+            def _resolve_path(p: str | _pathlib.Path) -> _pathlib.Path:
                 p = original_path(p)
                 if p.is_absolute():
                     p = original_path(*p.parts[1:])
                 return sandbox_root / p
 
-            def sandbox_open(file: str | bytes | Path, mode: str = "r", *a, **kw):
+            # Pre-populate any provided test data into the sandbox.
+            for name, content in test_data.items():
+                real_path = _resolve_path(name)
+                real_path.parent.mkdir(parents=True, exist_ok=True)
+                mode = "wb" if isinstance(content, bytes) else "w"
+                with original_open(real_path, mode) as fh:
+                    fh.write(content)
+
+            def sandbox_open(file: str | bytes | _pathlib.Path, mode: str = "r", *a, **kw):
                 path = original_path(file)
-                key = str(path)
-                data = None
-                if "r" in mode and key in test_data:
-                    data = test_data[key]
-                elif "r" in mode and path.name in test_data:
-                    data = test_data[path.name]
-                if data is not None:
-                    if "b" in mode:
-                        return io.BytesIO(data if isinstance(data, bytes) else data.encode())
-                    return io.StringIO(data if isinstance(data, str) else data.decode())
                 real_path = _resolve_path(path)
                 if any(m in mode for m in ("w", "a", "x", "+")):
                     real_path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,8 +89,6 @@ class WorkflowSandboxRunner:
                 return _resolve_path(original_path(*args, **kwargs))
 
             builtins.open = sandbox_open
-            import pathlib as _pathlib
-
             _original_Path = _pathlib.Path
             _pathlib.Path = sandbox_path  # type: ignore[assignment]
 
@@ -175,10 +183,26 @@ class WorkflowSandboxRunner:
             try:
                 if safe_mode:
                     try:
-                        return workflow_callable()
+                        result = workflow_callable()
                     except Exception as exc:  # pragma: no cover - optional path
-                        return exc
-                return workflow_callable()
+                        result = exc
+                else:
+                    result = workflow_callable()
+
+                for name, expected in expected_outputs.items():
+                    target = _resolve_path(name)
+                    try:
+                        with original_open(target, "rb") as fh:
+                            actual_bytes = fh.read()
+                    except FileNotFoundError:
+                        logger.warning("expected output '%s' not found", name)
+                        continue
+                    actual = (
+                        actual_bytes if isinstance(expected, bytes) else actual_bytes.decode()
+                    )
+                    if actual != expected:
+                        logger.warning("output mismatch for '%s'", name)
+                return result
             finally:
                 for td in reversed(teardowns):
                     try:
