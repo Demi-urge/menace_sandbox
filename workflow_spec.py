@@ -81,7 +81,7 @@ def to_spec(steps: list[Any]) -> dict:
     return {"steps": spec_steps}
 
 
-def save_spec(spec: dict, path: Path) -> Path:
+def save_spec(spec: dict, path: Path, *, summary_path: Path | str | None = None) -> Path:
     """Persist ``spec`` to ``path`` within a ``workflows`` directory.
 
     The extension of ``path`` determines the output format: ``.workflow.json``
@@ -91,11 +91,21 @@ def save_spec(spec: dict, path: Path) -> Path:
     is provided in the metadata, a unified diff against the parent workflow is
     written alongside the specification and its path recorded in the metadata
     for quick access.
+    Parameters
+    ----------
+    spec:
+        Mapping describing the workflow specification.
+    path:
+        Destination for the saved workflow.
+    summary_path:
+        Optional path to a workflow summary JSON file stored in the metadata.
     """
 
     # Ensure metadata block is present with required fields
     metadata = dict(spec.get("metadata") or {})
-    if "summary_path" in metadata and metadata["summary_path"] is not None:
+    if summary_path is not None:
+        metadata["summary_path"] = str(summary_path)
+    elif "summary_path" in metadata and metadata["summary_path"] is not None:
         metadata["summary_path"] = str(metadata["summary_path"])
     metadata.setdefault("workflow_id", str(uuid4()))
     metadata.setdefault("parent_id", None)
