@@ -1,131 +1,100 @@
 import importlib.util
-import logging
+import os
+import sys
+import types
 from pathlib import Path
 
-module_path = (
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
+called: dict[str, object] = {}
+
+# Provide a lightweight environment module so importing workflow_runner avoids heavy deps
+fake_env = types.ModuleType("sandbox_runner.environment")
+
+
+def fake_generate_input_stubs(
+    count=None, *, target=None, strategy=None, providers=None
+):
+    called["target"] = target
+    called["providers"] = providers
+    return [{"value": 3}]
+
+
+fake_env.generate_input_stubs = fake_generate_input_stubs
+package = types.ModuleType("sandbox_runner")
+package.__path__ = [
+    str(Path(__file__).resolve().parent.parent / "sandbox_runner")
+]
+sys.modules["sandbox_runner"] = package
+sys.modules["sandbox_runner.environment"] = fake_env
+
+spec = importlib.util.spec_from_file_location(
+    "sandbox_runner.workflow_runner",
     Path(__file__).resolve().parent.parent
     / "sandbox_runner"
-    / "workflow_sandbox_runner.py"
+    / "workflow_runner.py",
 )
-spec = importlib.util.spec_from_file_location(
-    "workflow_sandbox_runner", module_path
-)
-workflow_module = importlib.util.module_from_spec(spec)
-assert spec and spec.loader  # for type checkers
-spec.loader.exec_module(workflow_module)  # type: ignore[attr-defined]
-WorkflowSandboxRunner = workflow_module.WorkflowSandboxRunner
+workflow_runner = importlib.util.module_from_spec(spec)
+assert spec.loader
+spec.loader.exec_module(workflow_runner)
+
+WorkflowSandboxRunner = workflow_runner.WorkflowSandboxRunner
 
 
-def _sample_workflow():
-    with open("input.txt") as fh:
-        data = fh.read()
-    with open("output.txt", "w") as fh:
-        fh.write(data.upper())
+def test_writes_confined_to_temp_dir(tmp_path):
+    outside = tmp_path / "should_not_persist.txt"
 
-
-def test_test_data_injection_and_expected_outputs(caplog):
-    runner = WorkflowSandboxRunner()
-    with caplog.at_level(logging.WARNING):
-        runner.run(
-            _sample_workflow,
-            test_data={"input.txt": "hello"},
-            expected_outputs={"output.txt": "HELLO"},
-        )
-    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
-
-
-def test_expected_output_mismatch_logged(caplog):
-    runner = WorkflowSandboxRunner()
-    with caplog.at_level(logging.WARNING):
-        runner.run(
-            _sample_workflow,
-            test_data={"input.txt": "hello"},
-            expected_outputs={"output.txt": "WRONG"},
-        )
-    assert any("output mismatch" in r.message for r in caplog.records)
-
-
-def test_isolated_file_operations(tmp_path):
-    runner = WorkflowSandboxRunner()
-
-    outside_file = tmp_path / "should_not_exist.txt"
-
-    def _workflow():
-        with open(outside_file, "w") as fh:
+    def writer():
+        with open(outside, "w") as fh:
             fh.write("data")
 
-    runner.run(_workflow)
+    runner = WorkflowSandboxRunner([writer])
+    runner.run()
 
-    assert not outside_file.exists()
+    assert not outside.exists()
 
 
-def test_safe_mode_network_patching():
-    runner = WorkflowSandboxRunner()
+def test_safe_mode_blocks_network_and_file_saves():
+    target = Path("unsafe_output.txt")
 
-    def _workflow():
+    def network_and_file():
+        with open(target, "w") as fh:
+            fh.write("data")
         import urllib.request
 
         urllib.request.urlopen("http://example.com")
 
-    result = runner.run(_workflow, safe_mode=True)
+    runner = WorkflowSandboxRunner([network_and_file], safe_mode=True)
+    metrics = runner.run()
 
-    assert isinstance(result, RuntimeError)
-    assert "network access disabled" in str(result)
-
-
-def test_mock_injector_collects_telemetry():
-    runner = WorkflowSandboxRunner()
-    events: list[str] = []
-
-    def _injector(_root):
-        import builtins
-        import pathlib
-
-        original_open = builtins.open
-
-        def _wrapped(file, mode="r", *a, **kw):
-            events.append(pathlib.Path(file).name)
-            return original_open(file, mode, *a, **kw)
-
-        builtins.open = _wrapped  # type: ignore[assignment]
-        return lambda: setattr(builtins, "open", original_open)
-
-    runner.run(
-        _sample_workflow,
-        test_data={"input.txt": "hello"},
-        mock_injectors=[_injector],
-    )
-
-    assert {"input.txt", "output.txt"} <= set(events)
+    assert metrics["modules"][0]["exception"] is True
+    assert "network access disabled" in metrics["modules"][0]["error"]
+    assert not target.exists()
 
 
-def test_allowed_domain_access(monkeypatch):
-    runner = WorkflowSandboxRunner()
+def test_stub_inputs_and_telemetry_and_crash_counts():
+    called.clear()
 
-    monkeypatch.setattr(
-        "urllib.request.urlopen", lambda url, *a, **kw: b"ok"
-    )
+    def good(value):
+        return value + 1
 
-    def _workflow():
-        import urllib.request
+    def bad():
+        raise RuntimeError("boom")
 
-        return urllib.request.urlopen("http://allowed.com")
+    def provider(stubs, ctx):
+        return stubs
 
-    result = runner.run(
-        _workflow, safe_mode=True, allowed_domains={"allowed.com"}
-    )
+    runner = WorkflowSandboxRunner([good, bad], safe_mode=True, stub_providers=[provider])
+    metrics = runner.run()
 
-    assert result == b"ok"
+    assert called["target"] is good
+    assert called["providers"] == [provider]
 
+    first = metrics["modules"][0]
+    assert first["stub"] == {"value": 3}
+    assert first["result"] == 4
+    assert "duration" in first and "memory_delta" in first and "memory_peak" in first
 
-def test_allowed_file_writes(tmp_path):
-    runner = WorkflowSandboxRunner()
-    allowed = tmp_path / "allowed.txt"
-
-    def _workflow():
-        with open(allowed, "w") as fh:
-            fh.write("data")
-
-    runner.run(_workflow, allowed_files=[allowed])
-
-    assert allowed.exists()
+    assert metrics["modules"][1]["exception"] is True
+    assert runner.crash_counts["bad"] == 1
+    assert metrics["crash_counts"]["bad"] == 1
