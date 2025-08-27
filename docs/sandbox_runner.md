@@ -494,8 +494,10 @@ directory. For each callable it generates argument dictionaries via
 `open`, `os.rename` or `shutil.copy` are patched so they operate inside the
 sandboxed root. When ``safe_mode=True`` the runner also monkeypatches
 `requests`, `httpx`, `urllib` and raw sockets so outbound network attempts raise
-``RuntimeError``. Telemetry such as duration, memory and exceptions is exposed
-through ``runner.telemetry``.
+``RuntimeError``.  Optional ``network_mocks`` and ``fs_mocks`` dictionaries can
+provide custom handlers for these patched helpers, allowing tests to return
+stubbed responses or capture file writes in memory.  Telemetry such as duration,
+memory and exceptions is exposed through ``runner.telemetry``.
 
 Example:
 

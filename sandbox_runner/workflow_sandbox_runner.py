@@ -2,9 +2,12 @@
 
 This module provides :class:`WorkflowSandboxRunner` which runs one or more
 callables inside a temporary directory.  File system access is redirected to
-that directory and common networking libraries are patched so requests can be
-stubbed out.  Each executed callable has execution time, memory usage and
-errors recorded and aggregated into a :class:`RunMetrics` instance.
+that directory and, when ``safe_mode`` is enabled, common networking libraries
+are patched so requests either raise :class:`RuntimeError` or invoke supplied
+mock handlers.  File writes are confined to the sandbox and can also be
+redirected to custom handlers such as in-memory buffers.  Each executed
+callable has execution time, memory usage and errors recorded and aggregated
+into a :class:`RunMetrics` instance.
 """
 
 from __future__ import annotations
@@ -73,6 +76,8 @@ class WorkflowSandboxRunner:
         *,
         safe_mode: bool = False,
         test_data: Mapping[str, str | bytes] | None = None,
+        network_mocks: Mapping[str, Callable[..., Any]] | None = None,
+        fs_mocks: Mapping[str, Callable[..., Any]] | None = None,
     ) -> RunMetrics:
         """Execute ``workflow`` inside a sandbox and return telemetry.
 
@@ -82,9 +87,17 @@ class WorkflowSandboxRunner:
         returned via monkeypatched networking libraries.  All other keys are
         assumed to represent file paths and are written into the sandbox before
         execution.
+
+        ``network_mocks`` and ``fs_mocks`` allow callers to supply custom
+        functions for the patched network and filesystem helpers respectively.
+        Keys correspond to the fully-qualified helper name such as ``"requests"``
+        or ``"pathlib.Path.write_text"``.
         """
 
         test_data = dict(test_data or {})
+        network_mocks = dict(network_mocks or {})
+        fs_mocks = dict(fs_mocks or {})
+
         file_data: dict[str, str | bytes] = {}
         network_data: dict[str, str | bytes] = {}
         for key, value in test_data.items():
@@ -117,6 +130,9 @@ class WorkflowSandboxRunner:
             def sandbox_open(file, mode="r", *a, **kw):
                 path = self._resolve(root, file)
                 if any(m in mode for m in ("w", "a", "x", "+")):
+                    fn = fs_mocks.get("open")
+                    if fn:
+                        return fn(path, mode, *a, **kw)
                     pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
                 return original_open(path, mode, *a, **kw)
 
@@ -132,11 +148,17 @@ class WorkflowSandboxRunner:
                 mode = a[0] if a else kw.get("mode", "r")
                 path = self._resolve(root, path_obj)
                 if any(m in mode for m in ("w", "a", "x", "+")):
+                    fn = fs_mocks.get("pathlib.Path.open")
+                    if fn:
+                        return fn(path, *a, **kw)
                     path.parent.mkdir(parents=True, exist_ok=True)
                 return original_path_open(path, *a, **kw)
 
             def path_write_text(path_obj, data, *a, **kw):
                 path = self._resolve(root, path_obj)
+                fn = fs_mocks.get("pathlib.Path.write_text")
+                if fn:
+                    return fn(path, data, *a, **kw)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 return original_write_text(path, data, *a, **kw)
 
@@ -146,6 +168,9 @@ class WorkflowSandboxRunner:
 
             def path_write_bytes(path_obj, data, *a, **kw):
                 path = self._resolve(root, path_obj)
+                fn = fs_mocks.get("pathlib.Path.write_bytes")
+                if fn:
+                    return fn(path, data, *a, **kw)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 return original_write_bytes(path, data, *a, **kw)
 
@@ -200,6 +225,9 @@ class WorkflowSandboxRunner:
                 def fake_request(self, method, url, *a, **kw):
                     if url in network_data:
                         return _response_for(network_data[url])
+                    fn = network_mocks.get("requests")
+                    if fn:
+                        return fn(self, method, url, *a, **kw)
                     if safe_mode:
                         raise RuntimeError("network access disabled in safe_mode")
                     return orig_request(self, method, url, *a, **kw)
@@ -222,12 +250,47 @@ class WorkflowSandboxRunner:
                         if isinstance(data, str):
                             data = data.encode()
                         return io.BytesIO(data)
+                    fn = network_mocks.get("urllib")
+                    if fn:
+                        return fn(url, *a, **kw)
                     if safe_mode:
                         raise RuntimeError("network access disabled in safe_mode")
                     return orig_urlopen(url, *a, **kw)
 
                 stack.enter_context(
                     mock.patch.object(urllib_request, "urlopen", fake_urlopen)
+                )
+            except Exception:  # pragma: no cover
+                pass
+
+            try:  # pragma: no cover - optional dependency
+                import socket  # type: ignore
+
+                orig_socket = socket.socket
+                orig_create = socket.create_connection
+
+                def blocked(*a, **kw):
+                    raise RuntimeError("network access disabled in safe_mode")
+
+                class _PatchedSocket(orig_socket):
+                    def connect(self, address):  # type: ignore[override]
+                        if "socket" in network_mocks:
+                            return network_mocks["socket"](self, address)
+                        if safe_mode:
+                            return blocked(self, address)
+                        return super().connect(address)
+
+                stack.enter_context(mock.patch.object(socket, "socket", _PatchedSocket))
+
+                def fake_create_connection(address, *a, **kw):
+                    if "socket_create" in network_mocks:
+                        return network_mocks["socket_create"](address, *a, **kw)
+                    if safe_mode:
+                        return blocked(address, *a, **kw)
+                    return orig_create(address, *a, **kw)
+
+                stack.enter_context(
+                    mock.patch.object(socket, "create_connection", fake_create_connection)
                 )
             except Exception:  # pragma: no cover
                 pass
