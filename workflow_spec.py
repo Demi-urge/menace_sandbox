@@ -25,6 +25,9 @@ from typing import Any, Iterable
 from datetime import datetime, timezone
 from uuid import uuid4
 
+
+MAX_ID_ATTEMPTS = 5
+
 try:  # Optional dependency for YAML output
     import yaml  # type: ignore
 except Exception:  # pragma: no cover - YAML support is optional
@@ -153,8 +156,13 @@ def save_spec(spec: dict, path: Path, *, summary_path: Path | str | None = None)
         except Exception:  # pragma: no cover - ignore bad files
             continue
         existing_ids.add(data["metadata"]["workflow_id"])
+
+    attempts = 0
     while metadata["workflow_id"] in existing_ids:
+        if attempts >= MAX_ID_ATTEMPTS:
+            raise RuntimeError("Unable to generate unique workflow_id")
         metadata["workflow_id"] = str(uuid4())
+        attempts += 1
 
     validate_metadata(metadata)
 

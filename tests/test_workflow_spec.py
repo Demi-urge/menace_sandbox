@@ -68,6 +68,19 @@ def test_workflow_id_regenerated_on_collision(tmp_path):
     assert data["metadata"]["workflow_id"] != "dup"
 
 
+def test_workflow_id_collision_max_attempts(tmp_path, monkeypatch):
+    """Raise when a unique ID cannot be generated."""
+
+    first = ws.save_spec({"steps": []}, tmp_path / "first.workflow.json")
+    existing_id = json.loads(first.read_text())["metadata"]["workflow_id"]
+
+    # Force uuid4 to always return an existing ID
+    monkeypatch.setattr(ws, "uuid4", lambda: existing_id)
+
+    with pytest.raises(RuntimeError):
+        ws.save_spec({"steps": []}, tmp_path / "second.workflow.json")
+
+
 def test_parent_validation(tmp_path):
     parent_dir = tmp_path / "workflows"
     parent_dir.mkdir()
