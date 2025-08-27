@@ -11,7 +11,7 @@ if TYPE_CHECKING:  # pragma: no cover - heavy import for type checking only
     from roi_tracker import ROITracker
 
 
-def integrate_orphans(
+def integrate_and_graph_orphans(
     repo: Path,
     modules: Iterable[str] | None = None,
     *,
@@ -119,3 +119,11 @@ def integrate_orphans(
         updated = []
 
     return tracker, tested, updated, synergy_ok, cluster_ok
+
+
+# Backwards compatibility -------------------------------------------------
+# Historically this utility was exported as ``integrate_orphans``.  Preserve
+# the old name so existing callers continue to function while new code uses the
+# more descriptive ``integrate_and_graph_orphans``.
+integrate_orphans = integrate_and_graph_orphans
+
