@@ -97,3 +97,35 @@ def test_mock_injector_collects_telemetry():
     )
 
     assert {"input.txt", "output.txt"} <= set(events)
+
+
+def test_allowed_domain_access(monkeypatch):
+    runner = WorkflowSandboxRunner()
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen", lambda url, *a, **kw: b"ok"
+    )
+
+    def _workflow():
+        import urllib.request
+
+        return urllib.request.urlopen("http://allowed.com")
+
+    result = runner.run(
+        _workflow, safe_mode=True, allowed_domains={"allowed.com"}
+    )
+
+    assert result == b"ok"
+
+
+def test_allowed_file_writes(tmp_path):
+    runner = WorkflowSandboxRunner()
+    allowed = tmp_path / "allowed.txt"
+
+    def _workflow():
+        with open(allowed, "w") as fh:
+            fh.write("data")
+
+    runner.run(_workflow, allowed_files=[allowed])
+
+    assert allowed.exists()

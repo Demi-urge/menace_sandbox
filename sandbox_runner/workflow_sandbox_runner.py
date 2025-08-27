@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import builtins
+import contextlib
 import logging
-import tempfile
 import pathlib
-from typing import Any, Callable, Mapping
+import tempfile
+import urllib.parse
+from typing import Any, Callable, Iterable, Mapping
+from unittest import mock
 
 
 logger = logging.getLogger(__name__)
@@ -30,6 +33,8 @@ class WorkflowSandboxRunner:
         test_data: Mapping[str, str | bytes] | None = None,
         expected_outputs: Mapping[str, str | bytes] | None = None,
         mock_injectors: list[Callable[[pathlib.Path], Callable[[], None]]] | None = None,
+        allowed_domains: Iterable[str] | None = None,
+        allowed_files: Iterable[str | pathlib.Path] | None = None,
     ) -> Any:
         """Execute ``workflow_callable`` inside a sandbox.
 
@@ -38,7 +43,7 @@ class WorkflowSandboxRunner:
         workflow_callable:
             The callable representing the workflow to execute.
         safe_mode:
-            When ``True``, network access is disabled and exceptions raised by
+            When ``True`` network access is disabled and exceptions raised by
             the workflow are captured and returned instead of being raised.
         test_data:
             Optional mapping of file paths to contents. Each entry is written
@@ -52,23 +57,39 @@ class WorkflowSandboxRunner:
             Optional list of callables that receive the sandbox root and return
             a teardown callable.  This allows callers to supply additional
             monkeypatching behaviour.
+        allowed_domains:
+            Iterable of hostnames that are permitted for network access in
+            ``safe_mode``.  When empty, all network requests are blocked.
+        allowed_files:
+            Iterable of file paths that may be accessed outside of the
+            sandbox.  Writes to any other path are redirected into the sandbox
+            directory.
         """
 
         test_data = dict(test_data or {})
         expected_outputs = dict(expected_outputs or {})
+        allowed_domains = set(allowed_domains or [])
+        allowed_files = {
+            pathlib.Path(p).resolve() for p in (allowed_files or [])
+        }
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            sandbox_root = pathlib.Path(tmp)
             original_open = builtins.open
-            import pathlib as _pathlib
-            original_path = _pathlib.PosixPath
+            original_path = pathlib.Path
 
-            sandbox_root = _pathlib.Path(tmp)
-
-            def _resolve_path(p: str | _pathlib.Path) -> _pathlib.Path:
+            def _resolve_path(p: str | pathlib.Path) -> pathlib.Path:
                 p = original_path(p)
                 if p.is_absolute():
                     p = original_path(*p.parts[1:])
                 return sandbox_root / p
+
+            def _is_allowed(path: pathlib.Path) -> bool:
+                resolved = original_path(path).resolve()
+                return any(
+                    resolved == allow or resolved.is_relative_to(allow)
+                    for allow in allowed_files
+                )
 
             # Pre-populate any provided test data into the sandbox.
             for name, content in test_data.items():
@@ -78,107 +99,140 @@ class WorkflowSandboxRunner:
                 with original_open(real_path, mode) as fh:
                     fh.write(content)
 
-            def sandbox_open(file: str | bytes | _pathlib.Path, mode: str = "r", *a, **kw):
+            def sandbox_open(
+                file: str | bytes | pathlib.Path, mode: str = "r", *a, **kw
+            ):
                 path = original_path(file)
-                real_path = _resolve_path(path)
-                if any(m in mode for m in ("w", "a", "x", "+")):
-                    real_path.parent.mkdir(parents=True, exist_ok=True)
-                return original_open(real_path, mode, *a, **kw)
+                if not _is_allowed(path):
+                    path = _resolve_path(path)
+                    if any(m in mode for m in ("w", "a", "x", "+")):
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                return original_open(path, mode, *a, **kw)
 
-            def sandbox_path(*args: Any, **kwargs: Any) -> Path:
-                return _resolve_path(original_path(*args, **kwargs))
+            stack.enter_context(mock.patch("builtins.open", sandbox_open))
 
-            builtins.open = sandbox_open
-            _original_Path = _pathlib.Path
-            _pathlib.Path = sandbox_path  # type: ignore[assignment]
-
-            # Monkeypatch file saving utilities so they operate within the sandbox.
             import os as _os
             import shutil as _shutil
 
-            def _patch_copy(name: str) -> Callable[[], None]:
-                original = getattr(_shutil, name)
-
-                def _wrapped(src, dst, *a, **kw):
-                    src_path = _resolve_path(src)
-                    dst_path = _resolve_path(dst)
-                    dst_path.parent.mkdir(parents=True, exist_ok=True)
-                    return original(src_path, dst_path, *a, **kw)
-
-                setattr(_shutil, name, _wrapped)
-                return lambda: setattr(_shutil, name, original)
-
-            def _patch_rename(name: str) -> Callable[[], None]:
-                original = getattr(_os, name)
-
-                def _wrapped(src, dst, *a, **kw):
-                    src_path = _resolve_path(src)
-                    dst_path = _resolve_path(dst)
-                    dst_path.parent.mkdir(parents=True, exist_ok=True)
-                    return original(src_path, dst_path, *a, **kw)
-
-                setattr(_os, name, _wrapped)
-                return lambda: setattr(_os, name, original)
-
-            teardowns: list[Callable[[], None]] = []
             for _name in ["copy", "copy2", "copyfile", "move"]:
                 if hasattr(_shutil, _name):
-                    teardowns.append(_patch_copy(_name))
+                    _orig = getattr(_shutil, _name)
+
+                    def _wrapped(src, dst, _orig=_orig, *a, **kw):
+                        src_path = _resolve_path(src)
+                        dst_path = _resolve_path(dst)
+                        dst_path.parent.mkdir(parents=True, exist_ok=True)
+                        return _orig(src_path, dst_path, *a, **kw)
+
+                    stack.enter_context(mock.patch.object(_shutil, _name, _wrapped))
+
             for _name in ["rename", "replace"]:
                 if hasattr(_os, _name):
-                    teardowns.append(_patch_rename(_name))
+                    _orig = getattr(_os, _name)
 
-            # Network mocking in safe mode.
+                    def _wrapped(src, dst, _orig=_orig, *a, **kw):
+                        src_path = _resolve_path(src)
+                        dst_path = _resolve_path(dst)
+                        dst_path.parent.mkdir(parents=True, exist_ok=True)
+                        return _orig(src_path, dst_path, *a, **kw)
+
+                    stack.enter_context(mock.patch.object(_os, _name, _wrapped))
+
             if safe_mode:
-                def _patch_requests() -> Callable[[], None]:
+                def _hostname(url: str) -> str:
                     try:
-                        import requests  # type: ignore
-                    except Exception:  # pragma: no cover - optional dependency
-                        return lambda: None
+                        return urllib.parse.urlparse(url).hostname or ""
+                    except Exception:  # pragma: no cover - defensive
+                        return ""
 
-                    original_req = requests.Session.request
+                def _allowed(url: str) -> bool:
+                    return _hostname(url) in allowed_domains
 
-                    def _blocked(self, *a, **kw):  # pragma: no cover - trivial
-                        raise RuntimeError("network access disabled in safe_mode")
+                try:
+                    import requests  # type: ignore
 
-                    requests.Session.request = _blocked  # type: ignore[assignment]
-                    return lambda: setattr(requests.Session, "request", original_req)
+                    _orig = requests.Session.request
 
-                def _patch_httpx() -> Callable[[], None]:
-                    try:
-                        import httpx  # type: ignore
-                    except Exception:  # pragma: no cover - optional dependency
-                        return lambda: None
+                    def _blocked(self, method, url, *a, **kw):
+                        if not _allowed(url):
+                            raise RuntimeError(
+                                "network access disabled in safe_mode"
+                            )
+                        return _orig(self, method, url, *a, **kw)
 
-                    original_req = httpx.Client.request
-                    httpx.Client.request = (  # type: ignore[assignment]
-                        lambda self, *a, **kw: (_ for _ in ()).throw(
-                            RuntimeError("network access disabled in safe_mode")
-                        )
+                    stack.enter_context(
+                        mock.patch.object(requests.Session, "request", _blocked)
                     )
-                    return lambda: setattr(httpx.Client, "request", original_req)
+                except Exception:  # pragma: no cover - optional dependency
+                    pass
 
-                def _patch_urllib() -> Callable[[], None]:
-                    try:
-                        import urllib.request as _urllib_request
-                    except Exception:  # pragma: no cover - optional dependency
-                        return lambda: None
+                try:
+                    import httpx  # type: ignore
 
-                    original_open = _urllib_request.urlopen
+                    _orig = httpx.Client.request
 
-                    def _blocked(*a, **kw):  # pragma: no cover - trivial
-                        raise RuntimeError("network access disabled in safe_mode")
+                    def _blocked(self, method, url, *a, **kw):
+                        if not _allowed(url):
+                            raise RuntimeError(
+                                "network access disabled in safe_mode"
+                            )
+                        return _orig(self, method, url, *a, **kw)
 
-                    _urllib_request.urlopen = _blocked  # type: ignore[assignment]
-                    return lambda: setattr(_urllib_request, "urlopen", original_open)
+                    stack.enter_context(
+                        mock.patch.object(httpx.Client, "request", _blocked)
+                    )
+                except Exception:  # pragma: no cover - optional dependency
+                    pass
 
-                teardowns.extend(
-                    [_patch_requests(), _patch_httpx(), _patch_urllib()]
+                try:
+                    import urllib.request as _urllib_request
+
+                    _orig = _urllib_request.urlopen
+
+                    def _blocked(url, *a, **kw):
+                        if isinstance(url, str) and not _allowed(url):
+                            raise RuntimeError(
+                                "network access disabled in safe_mode"
+                            )
+                        return _orig(url, *a, **kw)
+
+                    stack.enter_context(
+                        mock.patch.object(_urllib_request, "urlopen", _blocked)
+                    )
+                except Exception:  # pragma: no cover - optional dependency
+                    pass
+
+                import socket as _socket
+
+                _orig_socket = _socket.socket
+
+                class _PatchedSocket(_orig_socket):
+                    def connect(self, address):  # type: ignore[override]
+                        host = address[0]
+                        if host not in allowed_domains:
+                            raise RuntimeError(
+                                "network access disabled in safe_mode"
+                            )
+                        return super().connect(address)
+
+                stack.enter_context(
+                    mock.patch.object(_socket, "socket", _PatchedSocket)
                 )
 
-            # Allow callers to inject additional mocks.
+                _orig_create = _socket.create_connection
+
+                def _blocked_create(address, *a, **kw):
+                    host = address[0]
+                    if host not in allowed_domains:
+                        raise RuntimeError("network access disabled in safe_mode")
+                    return _orig_create(address, *a, **kw)
+
+                stack.enter_context(
+                    mock.patch.object(_socket, "create_connection", _blocked_create)
+                )
+
             for injector in mock_injectors or []:
-                teardowns.append(injector(sandbox_root))
+                stack.callback(injector(sandbox_root))
 
             try:
                 if safe_mode:
@@ -204,10 +258,4 @@ class WorkflowSandboxRunner:
                         logger.warning("output mismatch for '%s'", name)
                 return result
             finally:
-                for td in reversed(teardowns):
-                    try:
-                        td()
-                    except Exception:  # pragma: no cover - best effort cleanup
-                        pass
-                builtins.open = original_open
-                _pathlib.Path = _original_Path
+                stack.close()
