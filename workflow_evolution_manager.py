@@ -17,6 +17,7 @@ from .workflow_summary_db import WorkflowSummaryDB
 from .sandbox_settings import SandboxSettings
 from .workflow_synthesizer import save_workflow
 from . import workflow_run_summary
+from . import sandbox_runner
 try:  # pragma: no cover - optional at runtime
     from .workflow_graph import WorkflowGraph
 except Exception:  # pragma: no cover - best effort
@@ -330,6 +331,8 @@ def evolve(
                 )
             except Exception:
                 logger.exception("record promotion failed")
+        new_id = None
+        created_at = None
         try:
             spec_steps = getattr(best_variant_result, "workflow_spec", None)
             if isinstance(spec_steps, list):
@@ -367,30 +370,44 @@ def evolve(
             if created_at is not None:
                 setattr(best_callable, "created_at", created_at)
             logger.info("saved promoted workflow to %s", saved_path)
-            if WorkflowGraph is not None and new_id is not None:
-                graph = WorkflowGraph()
-                graph.add_workflow(new_id, roi=best_roi)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed persisting promoted workflow")
+        if WorkflowGraph is not None:
+            graph = WorkflowGraph()
+            target_id = new_id if new_id is not None else str(workflow_id)
+            if hasattr(graph, "update_workflow"):
+                graph.update_workflow(target_id, roi=best_roi)
+            else:
+                graph.add_workflow(target_id, roi=best_roi)
+            if new_id is not None:
                 graph.add_dependency(
                     str(workflow_id), new_id, dependency_type="evolution"
                 )
-        except Exception:  # pragma: no cover - best effort
-            logger.exception("failed persisting promoted workflow")
 
         try:
             from .workflow_benchmark import benchmark_workflow
             from .data_bot import MetricsDB
             from .neuroplasticity import PathwayDB
 
-            benchmark_workflow(best_callable, MetricsDB(), PathwayDB(), name=wf_id_str)
+            runner = sandbox_runner.WorkflowSandboxRunner()
+
+            def _sandboxed() -> bool:
+                metrics = runner.run(best_callable, safe_mode=True)
+                return all(m.success for m in getattr(metrics, "modules", []))
+
+            benchmark_workflow(_sandboxed, MetricsDB(), PathwayDB(), name=wf_id_str)
         except Exception:
             logger.exception("benchmark promoted workflow failed")
 
         # Post-promotion orphan discovery and integration
-        from db_router import GLOBAL_ROUTER
-        from sandbox_runner.post_update import integrate_orphans
-
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-        integrate_orphans(repo, router=GLOBAL_ROUTER)
+        try:
+            from db_router import GLOBAL_ROUTER
+            from sandbox_runner.post_update import integrate_orphans
+        except Exception:
+            integrate_orphans = None  # type: ignore
+        if integrate_orphans is not None:
+            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+            integrate_orphans(repo, router=GLOBAL_ROUTER)
 
         # ensure promoted callable exposes lineage metadata
         setattr(best_callable, "parent_id", workflow_id)

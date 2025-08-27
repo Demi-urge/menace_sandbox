@@ -53,6 +53,8 @@ from contextlib import asynccontextmanager, suppress
 from filelock import FileLock
 from dataclasses import dataclass, asdict
 
+from .workflow_runner import WorkflowSandboxRunner
+
 try:
     from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord
 except Exception:  # pragma: no cover - optional dependency
@@ -4203,7 +4205,10 @@ def _inject_failure_modes(snippet: str, modes: set[str]) -> str:
 
 
 async def _section_worker(
-    snippet: str, env_input: Dict[str, Any], threshold: float
+    snippet: str,
+    env_input: Dict[str, Any],
+    threshold: float,
+    runner_config: Dict[str, Any] | None = None,
 ) -> tuple[Dict[str, Any], list[tuple[float, float, Dict[str, float]]]]:
     """Execute ``snippet`` with resource limits and return results."""
 
@@ -4221,6 +4226,13 @@ async def _section_worker(
             path.write_text(snip, encoding="utf-8")
             env = os.environ.copy()
             env.update({k: str(v) for k, v in env_input.items()})
+            try:
+                rc = dict(runner_config or {})
+                rc.setdefault("safe_mode", True)
+                runner = WorkflowSandboxRunner()
+                runner.run(lambda: exec(snip, {}), **rc)
+            except Exception:
+                pass
             conc_path = Path(td) / "concurrency.json"
             env["SANDBOX_CONCURRENCY_OUT"] = str(conc_path)
             if "memory" in modes and "MEMORY_LIMIT" not in env_input:
@@ -5452,13 +5464,13 @@ def run_scenarios(
             scenario = env_input.get("SCENARIO_NAME", "")
 
             _, updates_on = await _section_worker(
-                snippet_on, env_input, tracker.diminishing()
+                snippet_on, env_input, tracker.diminishing(), runner_config
             )
             roi_on = updates_on[-1][1] if updates_on else 0.0
             metrics_on = updates_on[-1][2] if updates_on else {}
 
             _, updates_off = await _section_worker(
-                snippet_off, env_input, tracker.diminishing()
+                snippet_off, env_input, tracker.diminishing(), runner_config
             )
             roi_off = updates_off[-1][1] if updates_off else 0.0
             metrics_off = updates_off[-1][2] if updates_off else {}
@@ -5690,7 +5702,7 @@ def simulate_temporal_trajectory(
         except Exception:
             logger.exception("temporal preset %s pre-check failed", name)
         _, updates = asyncio.run(
-            _section_worker(snippet, env_input, tracker.diminishing())
+            _section_worker(snippet, env_input, tracker.diminishing(), runner_config)
         )
         roi = float(updates[-1][1]) if updates else 0.0
         metrics = updates[-1][2] if updates else {}
@@ -6019,6 +6031,7 @@ def run_repo_section_simulations(
                                             code_str,
                                             env_input,
                                             tracker.diminishing(),
+                                            runner_config,
                                         )
                                     except Exception as exc:
                                         record_error(exc)
@@ -6127,6 +6140,7 @@ def run_repo_section_simulations(
                         "\n".join(combined),
                         env_input,
                         tracker.diminishing(),
+                        runner_config,
                     )
                     for prev, actual, metrics in updates:
                         extra = collect_plugin_metrics(plugins, prev, actual, metrics)
@@ -6793,6 +6807,7 @@ def run_workflow_simulations(
     tracker: "ROITracker" | None = None,
     foresight_tracker: "ForesightTracker" | None = None,
     router: DBRouter | None = None,
+    runner_config: Dict[str, Any] | None = None,
 ) -> "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]:
     """Execute stored workflows under optional environment presets.
 
@@ -7020,6 +7035,7 @@ def run_workflow_simulations(
                             snippet,
                             env_input,
                             tracker.diminishing(),
+                            runner_config,
                         )
                     )
                     tasks.append((index, fut, wf.wid, scenario, preset, step, mod_name))
@@ -7100,6 +7116,7 @@ def run_workflow_simulations(
                 combined_snippet,
                 env_input,
                 tracker.diminishing(),
+                runner_config,
             )
             for prev, actual, metrics in updates:
                 specific = _scenario_specific_metrics(scenario, metrics)
