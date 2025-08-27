@@ -172,6 +172,7 @@ class SelfCodingEngine:
         self.patch_logger = patch_logger
         self.roi_tracker = tracker
         self.knowledge_service = knowledge_service
+        self.router = kwargs.get("router")
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
@@ -925,6 +926,14 @@ class SelfCodingEngine:
                         )
                     except Exception:
                         self.logger.exception("event bus publish failed")
+            try:
+                from sandbox_runner import integrate_new_orphans, try_integrate_into_workflows
+                added_modules = integrate_new_orphans(Path.cwd(), router=self.router)
+                try_integrate_into_workflows(added_modules)
+            except Exception:
+                self.logger.exception(
+                    "integrate_new_orphans after apply_patch failed"
+                )
         elif patch_id is not None and self.rollback_mgr:
             self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
         if (
