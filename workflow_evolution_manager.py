@@ -15,7 +15,7 @@ from .roi_tracker import ROITracker
 from .workflow_stability_db import WorkflowStabilityDB
 from .workflow_summary_db import WorkflowSummaryDB
 from .sandbox_settings import SandboxSettings
-from . import workflow_synthesizer
+from .workflow_synthesizer import save_workflow
 from . import workflow_run_summary
 try:  # pragma: no cover - optional at runtime
     from .workflow_graph import WorkflowGraph
@@ -312,13 +312,19 @@ def evolve(
             except Exception:
                 logger.exception("record promotion failed")
         try:
-            steps = [
-                {"module": s, "inputs": [], "outputs": []}
-                for s in best_variant_seq.split("-")
-                if s
-            ]
-            _path, metadata = workflow_synthesizer.save_workflow(
+            spec_steps = getattr(best_variant_result, "workflow_spec", None)
+            if isinstance(spec_steps, list):
+                steps = spec_steps
+            else:
+                steps = [
+                    {"module": s, "inputs": [], "outputs": []}
+                    for s in best_variant_seq.split("-")
+                    if s
+                ]
+            path = Path(f"{workflow_id}.workflow.json")
+            saved_path, metadata = save_workflow(
                 steps,
+                path,
                 parent_id=str(workflow_id),
                 mutation_description=best_variant_seq,
             )
@@ -326,9 +332,22 @@ def evolve(
             created_at = metadata.get("created_at")
             if new_id is not None:
                 workflow_run_summary.record_run(str(new_id), best_roi)
+                tracker.score_workflow(str(new_id), final_raroi)
                 setattr(best_callable, "workflow_id", new_id)
+                try:
+                    if saved_path.name != f"{new_id}.workflow.json":
+                        new_path = saved_path.with_name(
+                            f"{new_id}.workflow.json"
+                        )
+                        saved_path.rename(new_path)
+                        saved_path = new_path
+                except OSError:
+                    logger.exception(
+                        "failed renaming workflow spec to %s", new_id
+                    )
             if created_at is not None:
                 setattr(best_callable, "created_at", created_at)
+            logger.info("saved promoted workflow to %s", saved_path)
             if WorkflowGraph is not None and new_id is not None:
                 graph = WorkflowGraph()
                 graph.add_workflow(new_id, roi=best_roi)
