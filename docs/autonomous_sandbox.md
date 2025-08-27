@@ -59,7 +59,20 @@ Tune the gating behaviour with the environment variables
 `ROI_GATING_THRESHOLD` and `ROI_GATING_CONSECUTIVE`. Evolution is skipped when
 the exponential moving average of ROI deltas fails to exceed these thresholds.
 
-Example:
+Example configuration:
+
+```bash
+export ROI_GATING_THRESHOLD=0.05
+export ROI_GATING_CONSECUTIVE=5
+```
+
+Once the gate fires the manager logs messages such as:
+
+```
+INFO workflow 42 stable (ema gating)
+```
+
+Example usage:
 
 ```python
 from menace_sandbox.self_improvement_engine import (
