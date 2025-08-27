@@ -84,7 +84,7 @@ def test_orphan_inclusion_after_synthesis(monkeypatch, tmp_path):
         added = res.get("added", [])
         if added:
             try_integrate_into_workflows(sorted(added), router=router)
-        return added
+        return added, True, True
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []

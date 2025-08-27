@@ -1335,8 +1335,14 @@ class WorkflowSynthesizer:
         try:
             import sandbox_runner
 
-            sandbox_runner.post_round_orphan_scan(
+            added, syn_ok, intent_ok = sandbox_runner.post_round_orphan_scan(
                 Path.cwd(), router=GLOBAL_ROUTER
+            )
+            logger.info(
+                "post_round_orphan_scan added=%d synergy_ok=%s intent_ok=%s",
+                len(added),
+                syn_ok,
+                intent_ok,
             )
         except Exception:  # pragma: no cover - best effort
             logger.warning("orphan integration failed", exc_info=True)
@@ -1619,8 +1625,14 @@ def generate_workflow_variants(
         try:  # pragma: no cover - optional dependency
             import sandbox_runner
 
-            sandbox_runner.post_round_orphan_scan(
+            added, syn_ok, intent_ok = sandbox_runner.post_round_orphan_scan(
                 Path.cwd(), router=GLOBAL_ROUTER
+            )
+            logger.info(
+                "post_round_orphan_scan added=%d synergy_ok=%s intent_ok=%s",
+                len(added),
+                syn_ok,
+                intent_ok,
             )
         except Exception:  # pragma: no cover - best effort
             logger.warning("orphan integration failed", exc_info=True)
@@ -1752,8 +1764,14 @@ def generate_variants(
         try:  # pragma: no cover - optional dependency
             import sandbox_runner
 
-            sandbox_runner.post_round_orphan_scan(
+            added, syn_ok, intent_ok = sandbox_runner.post_round_orphan_scan(
                 Path.cwd(), router=GLOBAL_ROUTER
+            )
+            logger.info(
+                "post_round_orphan_scan added=%d synergy_ok=%s intent_ok=%s",
+                len(added),
+                syn_ok,
+                intent_ok,
             )
         except Exception:  # pragma: no cover - best effort
             logger.warning("orphan integration failed", exc_info=True)

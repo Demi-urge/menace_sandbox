@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Dict, List, TYPE_CHECKING, Tuple
 
+import yaml
+
 from logging_utils import get_logger
 
 if TYPE_CHECKING:  # pragma: no cover - heavy import for type checking only
@@ -121,26 +123,80 @@ def integrate_and_graph_orphans(
     return tracker, tested, updated, synergy_ok, cluster_ok
 
 
+def _record_orphan_metrics(
+    repo: Path, count: int, syn_ok: bool, cl_ok: bool, log
+) -> None:
+    """Persist orphan integration metrics to ``sandbox_metrics.yaml``.
+
+    Parameters
+    ----------
+    repo:
+        Repository root.
+    count:
+        Number of newly added modules.
+    syn_ok:
+        Whether the module synergy graph update succeeded.
+    cl_ok:
+        Whether intent clustering updated successfully.
+    log:
+        Logger used for diagnostic messages.
+    """
+
+    path = repo / "sandbox_metrics.yaml"
+    data: Dict[str, Dict[str, float]] = {}
+    try:
+        if path.exists():
+            data = yaml.safe_load(path.read_text()) or {}
+    except Exception:  # pragma: no cover - best effort
+        log.warning("failed to load sandbox metrics", exc_info=True)
+        data = {}
+
+    extra = data.setdefault("extra_metrics", {})
+    extra["orphan_modules_added"] = float(count)
+    extra["synergy_update_success"] = 1.0 if syn_ok else 0.0
+    extra["intent_update_success"] = 1.0 if cl_ok else 0.0
+
+    try:
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    except Exception:  # pragma: no cover - best effort
+        log.warning("failed to record sandbox metrics", exc_info=True)
+
+
 def post_round_orphan_scan(
     repo: Path,
     modules: Iterable[str] | None = None,
     *,
     logger=None,
     router=None,
-) -> List[str]:
+) -> Tuple[List[str], bool, bool]:
     """Integrate orphan modules discovered after a round of code changes.
 
     This helper wraps :func:`integrate_and_graph_orphans` to perform
     recursive discovery via :func:`discover_recursive_orphans`, include any
     modules using :func:`auto_include_modules`, update the module synergy graph
     and intent clustering, and finally return the list of newly added module
-    paths.
+    paths along with flags indicating whether the synergy graph and intent
+    cluster updates succeeded.
     """
 
-    _tracker, tested, _updated, _syn_ok, _cl_ok = integrate_and_graph_orphans(
-        repo, modules, logger=logger, router=router
+    log = logger or get_logger(__name__)
+
+    _tracker, tested, _updated, syn_ok, cl_ok = integrate_and_graph_orphans(
+        repo, modules, logger=log, router=router
     )
-    return tested.get("added", [])
+    added = tested.get("added", [])
+    count = len(added)
+
+    log.info(
+        "post_round_orphan_scan added=%d synergy_ok=%s intent_ok=%s",
+        count,
+        syn_ok,
+        cl_ok,
+    )
+
+    _record_orphan_metrics(repo, count, syn_ok, cl_ok, log)
+
+    return added, syn_ok, cl_ok
 
 
 # Backwards compatibility -------------------------------------------------

@@ -67,7 +67,7 @@ def test_generate_variants_integrates_orphans(monkeypatch, tmp_path):
         from intent_clusterer import IntentClusterer
         IntentClusterer().index_modules([repo / "helper.py"])
         workflow_called["mods"] = ["helper.py"]
-        return ["helper.py"]
+        return ["helper.py"], True, True
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
