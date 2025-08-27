@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import builtins
 import importlib
+import inspect
+import logging
 import os
 import tempfile
 from types import ModuleType
 from typing import Iterable, Callable, Any, Dict, List
+
+from .environment import generate_input_stubs
+from .stub_providers import StubProvider
+
+
+logger = logging.getLogger(__name__)
 
 
 class WorkflowSandboxRunner:
@@ -22,11 +30,21 @@ class WorkflowSandboxRunner:
     safe_mode:
         When ``True`` network operations are disabled and exceptions from
         modules are captured instead of bubbling up.
+    stub_providers:
+        Optional list of stub provider callbacks forwarded to
+        :func:`generate_input_stubs` for domain specific payloads.
     """
 
-    def __init__(self, modules: Iterable[str | ModuleType | Callable[..., Any]], *, safe_mode: bool = False) -> None:
+    def __init__(
+        self,
+        modules: Iterable[str | ModuleType | Callable[..., Any]],
+        *,
+        safe_mode: bool = False,
+        stub_providers: List[StubProvider] | None = None,
+    ) -> None:
         self.modules = list(modules)
         self.safe_mode = safe_mode
+        self.stub_providers = stub_providers
 
     # ------------------------------------------------------------------
     def _resolve_path(self, root: str, path: str) -> str:
@@ -152,11 +170,36 @@ class WorkflowSandboxRunner:
             try:
                 for step in self.modules:
                     name, func = self._load_callable(step)
+                    stub: Dict[str, Any] = {}
+                    if inspect.signature(func).parameters:
+                        try:
+                            stubs = generate_input_stubs(
+                                1, target=func, providers=self.stub_providers
+                            )
+                            if stubs:
+                                stub = dict(stubs[0])
+                        except Exception:
+                            logger.exception("stub generation failed for %s", name)
+                    logger.info("running %s with stub %s", name, stub)
                     try:
-                        result = func()
-                        metrics["modules"].append({"module": name, "success": True, "result": result})
+                        result = func(**stub)
+                        metrics["modules"].append(
+                            {
+                                "module": name,
+                                "success": True,
+                                "result": result,
+                                "stub": stub,
+                            }
+                        )
                     except Exception as exc:  # pragma: no cover - exercise safe paths
-                        metrics["modules"].append({"module": name, "success": False, "error": str(exc)})
+                        metrics["modules"].append(
+                            {
+                                "module": name,
+                                "success": False,
+                                "error": str(exc),
+                                "stub": stub,
+                            }
+                        )
                         metrics["success"] = False
                         if not self.safe_mode:
                             raise
