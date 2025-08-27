@@ -102,6 +102,7 @@ from .environment import (
     record_error,
     run_scenarios,
     ERROR_CATEGORY_COUNTS,
+    try_integrate_into_workflows,
 )
 from .resource_tuner import ResourceTuner
 from .orphan_discovery import (
@@ -514,6 +515,59 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                 clusterer.update_modules(paths)
             except Exception:
                 logger.exception("failed to index intent modules")
+
+            associations: Dict[str, Dict[str, list[str]]] = {}
+            try:
+                grapher = getattr(ctx, "module_synergy_grapher", None)
+                clusterer = getattr(ctx, "intent_clusterer", None)
+                for mod in added:
+                    mod_id = map_module_identifier(mod, ctx.repo)
+                    assoc: Dict[str, list[str]] = {}
+                    try:
+                        if grapher and hasattr(grapher, "get_synergy_cluster"):
+                            cluster = grapher.get_synergy_cluster(mod_id)
+                        else:  # pragma: no cover - fallback
+                            from module_synergy_grapher import get_synergy_cluster as _gsc
+
+                            cluster = _gsc(mod_id)
+                        assoc["synergy"] = sorted(cluster)
+                    except Exception:
+                        assoc["synergy"] = []
+                    try:
+                        related: list[str] = []
+                        if clusterer and hasattr(clusterer, "find_modules_related_to"):
+                            matches = clusterer.find_modules_related_to(mod_id)
+                            for r in matches:
+                                p = getattr(r, "path", None)
+                                if not p:
+                                    continue
+                                try:
+                                    rel = Path(p).resolve().relative_to(ctx.repo)
+                                    related.append(rel.as_posix())
+                                except Exception:
+                                    related.append(Path(p).as_posix())
+                        assoc["intent"] = sorted({r for r in related})
+                    except Exception:
+                        assoc["intent"] = []
+                    associations[mod] = assoc
+            except Exception:
+                logger.exception("failed to compute module associations")
+
+            if associations:
+                try:
+                    existing = getattr(ctx, "module_associations", {})
+                    existing.update(associations)
+                    ctx.module_associations = existing
+                except Exception:
+                    ctx.module_associations = associations
+                try:
+                    sig = inspect.signature(try_integrate_into_workflows)
+                    kwargs = {}
+                    if "associations" in sig.parameters:
+                        kwargs["associations"] = associations
+                    try_integrate_into_workflows(added, **kwargs)
+                except Exception:
+                    logger.exception("workflow integration with associations failed")
 
         post_cache: Dict[str, Dict[str, Any]] = {}
         try:
