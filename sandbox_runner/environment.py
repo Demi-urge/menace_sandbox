@@ -7766,6 +7766,7 @@ def integrate_new_orphans(
     if not added:
         return []
 
+    graph_updated = False
     try:
         from module_synergy_grapher import ModuleSynergyGrapher, load_graph
 
@@ -7782,16 +7783,28 @@ def integrate_new_orphans(
         if getattr(grapher, "graph", None) is not None:
             names = [Path(m).with_suffix("").as_posix() for m in added]
             grapher.update_graph(names)
+            graph_updated = True
     except Exception:
         logger.warning("module synergy update failed", exc_info=True)
 
+    clusters_updated = False
     try:
         from intent_clusterer import IntentClusterer
 
         clusterer = IntentClusterer()
         clusterer.index_modules([repo / m for m in added])
+        clusters_updated = True
     except Exception:
         logger.warning("intent clustering update failed", exc_info=True)
+
+    logger.info(
+        "orphan_integration",
+        extra={
+            "added_modules": added,
+            "synergy_graph_updated": graph_updated,
+            "intent_clusters_updated": clusters_updated,
+        },
+    )
 
     return added
 
