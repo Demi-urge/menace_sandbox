@@ -118,7 +118,8 @@ def simulate_temporal_trajectory(
 if not _LIGHT_IMPORTS:
     from .cycle import _sandbox_cycle_runner
 
-from .resource_tuner import ResourceTuner
+from .resource_tuner import ResourceTuner  # noqa: E402
+from .workflow_sandbox_runner import WorkflowSandboxRunner  # noqa: E402
 if _LIGHT_IMPORTS:
     def _run_sandbox(*_a, **_k):
         raise RuntimeError("CLI disabled in light import mode")
@@ -129,19 +130,23 @@ if _LIGHT_IMPORTS:
     def main(*_a, **_k):
         raise RuntimeError("CLI disabled in light import mode")
 else:
-    from .cli import _run_sandbox, rank_scenarios, main
-from .metrics_plugins import (
+    from .cli import _run_sandbox, rank_scenarios, main  # noqa: E402
+from .metrics_plugins import (  # noqa: E402
     discover_metrics_plugins,
     load_metrics_plugins,
     collect_plugin_metrics,
 )
-from .stub_providers import (
+from .stub_providers import (  # noqa: E402
     discover_stub_providers,
     load_stub_providers,
 )
 
-from .orphan_discovery import discover_orphan_modules, discover_recursive_orphans
-from .orphan_integration import post_round_orphan_scan, integrate_and_graph_orphans, integrate_orphans
+from .orphan_discovery import discover_orphan_modules, discover_recursive_orphans  # noqa: E402
+from .orphan_integration import (  # noqa: E402
+    post_round_orphan_scan,
+    integrate_and_graph_orphans,
+    integrate_orphans,
+)  # noqa: E402
 
 __all__ = [
     "simulate_execution_environment",
@@ -180,4 +185,5 @@ __all__ = [
     "discover_stub_providers",
     "load_stub_providers",
     "ResourceTuner",
+    "WorkflowSandboxRunner",
 ]
