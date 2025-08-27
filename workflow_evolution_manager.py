@@ -16,6 +16,7 @@ from .workflow_stability_db import WorkflowStabilityDB
 from .workflow_summary_db import WorkflowSummaryDB
 from .sandbox_settings import SandboxSettings
 from . import workflow_synthesizer
+from . import workflow_run_summary
 try:  # pragma: no cover - optional at runtime
     from .workflow_graph import WorkflowGraph
 except Exception:  # pragma: no cover - best effort
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 STABLE_WORKFLOWS = WorkflowStabilityDB()
 EVOLUTION_DB = EvolutionHistoryDB() if EvolutionHistoryDB is not None else None
+
 
 def _update_ema(workflow_id: str, delta: float) -> bool:
     """Update ROI improvement EMA and return ``True`` when gating triggers."""
@@ -139,6 +141,7 @@ def evolve(
     )
     baseline_roi = baseline_result.roi_gain
     baseline_synergy = getattr(baseline_result, "workflow_synergy_score", 0.0)
+    workflow_run_summary.record_run(wf_id_str, baseline_roi)
 
     # Attach lineage metadata to the baseline callable so it can be returned
     # unchanged while still exposing parent information.
@@ -150,6 +153,7 @@ def evolve(
         logger.info("workflow %s marked stable", wf_id_str)
         _, raroi, _ = tracker.calculate_raroi(baseline_roi)
         tracker.score_workflow(wf_id_str, raroi)
+        workflow_run_summary.save_all_summaries("workflows")
         return workflow_callable
 
     bot = WorkflowEvolutionBot()
@@ -244,6 +248,7 @@ def evolve(
                 before_metric=baseline_roi,
                 after_metric=baseline_roi,
             )
+            workflow_run_summary.save_all_summaries("workflows")
             return workflow_callable
 
         if roi_delta > best_delta:
@@ -276,6 +281,7 @@ def evolve(
             after_metric=baseline_roi,
         )
         # lineage already attached to workflow_callable
+        workflow_run_summary.save_all_summaries("workflows")
         return workflow_callable
 
     if best_variant_seq is not None and delta > 0:
@@ -319,6 +325,7 @@ def evolve(
             new_id = metadata.get("workflow_id")
             created_at = metadata.get("created_at")
             if new_id is not None:
+                workflow_run_summary.record_run(str(new_id), best_roi)
                 setattr(best_callable, "workflow_id", new_id)
             if created_at is not None:
                 setattr(best_callable, "created_at", created_at)
@@ -351,8 +358,10 @@ def evolve(
         setattr(best_callable, "parent_id", workflow_id)
         setattr(best_callable, "mutation_description", best_variant_seq)
 
+        workflow_run_summary.save_all_summaries("workflows")
         return best_callable
 
+    workflow_run_summary.save_all_summaries("workflows")
     return workflow_callable
 
 
