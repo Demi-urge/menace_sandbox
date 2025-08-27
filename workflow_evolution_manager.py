@@ -312,96 +312,19 @@ def evolve(
             logger.exception("benchmark promoted workflow failed")
 
         # Post-promotion orphan discovery and integration
-        try:
-            from sandbox_runner import discover_recursive_orphans
-            from sandbox_runner.environment import auto_include_modules
-        except Exception:  # pragma: no cover - best effort
-            logger.exception("failed importing orphan helpers")
-        else:
-            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-            data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
-            try:
-                trace = discover_recursive_orphans(
-                    str(repo), module_map=data_dir / "module_map.json"
-                )
-            except Exception:  # pragma: no cover - best effort
-                logger.exception(
-                    "discover_recursive_orphans after promotion failed"
-                )
-            else:
-                modules = [
-                    str(Path(*m.split(".")).with_suffix(".py")) for m in trace
-                ]
-                if modules:
-                    added: set[str] = set()
-                    try:
-                        _, tested = auto_include_modules(
-                            sorted(modules), recursive=True, validate=True
-                        )
-                        added = set(tested.get("added", []))
-                        if added:
-                            logger.info(
-                                "auto included modules after promotion: %s",
-                                sorted(added),
-                            )
-                    except Exception:  # pragma: no cover - best effort
-                        logger.exception(
-                            "auto_include_modules after promotion failed"
-                        )
-                    if added:
-                        try:
-                            dotted = {
-                                Path(m)
-                                .with_suffix("")
-                                .as_posix()
-                                .replace("/", ".")
-                                for m in added
-                            }
-                        except Exception:
-                            dotted = {
-                                m.replace("/", ".").rsplit(".py", 1)[0]
-                                for m in added
-                            }
-                        try:  # Update synergy graph
-                            from module_synergy_grapher import ModuleSynergyGrapher
+        from db_router import GLOBAL_ROUTER
+        import sandbox_runner
 
-                            grapher = ModuleSynergyGrapher(root=repo)
-                            graph_path = (
-                                repo / "sandbox_data" / "module_synergy_graph.json"
-                            )
-                            try:
-                                grapher.load(graph_path)
-                            except Exception:
-                                try:
-                                    grapher.build_graph(repo)
-                                except Exception:
-                                    pass
-                            grapher.update_graph(sorted(dotted))
-                        except Exception:  # pragma: no cover - best effort
-                            logger.exception(
-                                "failed to update synergy graph after promotion"
-                            )
-                        try:  # Update intent index
-                            from intent_clusterer import IntentClusterer
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        router = GLOBAL_ROUTER
+        integrate = getattr(
+            sandbox_runner, "integrate_new_orphans", lambda *_a, **_k: []
+        )
+        added_modules = integrate(repo, router=router)
+        try_integrate = getattr(sandbox_runner, "try_integrate_into_workflows", None)
+        if added_modules and callable(try_integrate):
+            try_integrate(added_modules)
 
-                            data_dir = repo / "sandbox_data"
-                            clusterer = IntentClusterer(
-                                local_db_path=data_dir / "intent.db",
-                                shared_db_path=data_dir / "intent.db",
-                            )
-                            paths = [repo / m for m in added]
-                            clusterer.index_modules(paths)
-                            try:
-                                groups = clusterer._load_synergy_groups(repo)
-                                clusterer._index_clusters(groups)
-                            except Exception:
-                                logger.exception(
-                                    "failed to cluster intent modules after promotion"
-                                )
-                        except Exception:  # pragma: no cover - best effort
-                            logger.exception(
-                                "failed to index intent modules after promotion"
-                            )
         return best_callable
 
     return workflow_callable
