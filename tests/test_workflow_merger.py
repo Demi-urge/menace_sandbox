@@ -20,8 +20,15 @@ def test_merge_workflows_three_way(tmp_path):
             "created_at": "2023-01-01T00:00:00",
         },
     }
+    branch_a_step = {
+        "module": "mod_b",
+        "inputs": [],
+        "outputs": [],
+        "files": [],
+        "globals": [],
+    }
     branch_a_data = {
-        "steps": base_data["steps"] + [{"module": "mod_b", "inputs": [], "outputs": [], "files": [], "globals": []}],
+        "steps": base_data["steps"] + [branch_a_step],
         "metadata": {
             "workflow_id": "branch-a-id",
             "parent_id": "base-id",
@@ -29,8 +36,15 @@ def test_merge_workflows_three_way(tmp_path):
             "created_at": "2023-01-02T00:00:00",
         },
     }
+    branch_b_step = {
+        "module": "mod_c",
+        "inputs": [],
+        "outputs": [],
+        "files": [],
+        "globals": [],
+    }
     branch_b_data = {
-        "steps": base_data["steps"] + [{"module": "mod_c", "inputs": [], "outputs": [], "files": [], "globals": []}],
+        "steps": base_data["steps"] + [branch_b_step],
         "metadata": {
             "workflow_id": "branch-b-id",
             "parent_id": "base-id",
@@ -65,3 +79,8 @@ def test_merge_workflows_three_way(tmp_path):
     assert '"module": "mod_b"' in diff_text
     assert '"module": "mod_c"' in diff_text
     assert diff_text.startswith("---")
+
+    summary_path = Path(metadata["summary_path"])
+    assert summary_path.exists()
+    summary_data = json.loads(summary_path.read_text())
+    assert summary_data["workflow_id"] == metadata["workflow_id"]

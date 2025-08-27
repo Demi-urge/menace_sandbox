@@ -113,10 +113,22 @@ def merge_workflows(base: Path, branch_a: Path, branch_b: Path, out_path: Path) 
     a_lines = json.dumps(a_spec_full, indent=2, sort_keys=True).splitlines()
     b_lines = json.dumps(b_spec_full, indent=2, sort_keys=True).splitlines()
     _ = list(
-        difflib.unified_diff(base_lines, a_lines, fromfile=base_path.name, tofile=branch_a_path.name, lineterm="")
+        difflib.unified_diff(
+            base_lines,
+            a_lines,
+            fromfile=base_path.name,
+            tofile=branch_a_path.name,
+            lineterm="",
+        )
     )
     _ = list(
-        difflib.unified_diff(base_lines, b_lines, fromfile=base_path.name, tofile=branch_b_path.name, lineterm="")
+        difflib.unified_diff(
+            base_lines,
+            b_lines,
+            fromfile=base_path.name,
+            tofile=branch_b_path.name,
+            lineterm="",
+        )
     )
 
     # Remove metadata before merging to avoid spurious conflicts
@@ -140,5 +152,27 @@ def merge_workflows(base: Path, branch_a: Path, branch_b: Path, out_path: Path) 
         }
     )
     merged_spec["metadata"] = metadata
+    out_file = workflow_spec.save_spec(merged_spec, out_path)
 
-    return workflow_spec.save_spec(merged_spec, out_path)
+    try:
+        saved = json.loads(out_file.read_text())
+        metadata = saved.get("metadata", metadata)
+    except Exception:  # pragma: no cover - best effort
+        saved = merged_spec
+        metadata = dict(metadata)
+
+    workflow_id = metadata.get("workflow_id")
+    if workflow_id:
+        try:
+            from menace.workflow_run_summary import save_summary as _save_summary
+
+            summary_path = _save_summary(str(workflow_id), out_file.parent)
+            metadata["summary_path"] = str(summary_path)
+            saved_meta = dict(saved.get("metadata") or {})
+            saved_meta["summary_path"] = str(summary_path)
+            saved["metadata"] = saved_meta
+            out_file.write_text(json.dumps(saved, indent=2, sort_keys=True))
+        except Exception:
+            pass
+
+    return out_file
