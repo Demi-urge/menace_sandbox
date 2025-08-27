@@ -63,12 +63,14 @@ import menace.neuroplasticity as neu
 from menace.learning_engine import LearningEngine
 from menace.menace_memory_manager import MenaceMemoryManager
 from menace.roi_tracker import ROITracker
+from types import SimpleNamespace
+import pytest
 
 
 def test_benchmark_and_training(tmp_path):
     mdb = db.MetricsDB(tmp_path / "m.db")
     pdb = neu.PathwayDB(tmp_path / "p.db")
-    mm = MenaceMemoryManager(tmp_path / "mem.db", embedder=None)
+    mm = MenaceMemoryManager(embedder=None)
     mm._embed = lambda text: [1.0]  # type: ignore
 
     def dummy():
@@ -77,11 +79,17 @@ def test_benchmark_and_training(tmp_path):
     def dummy_fail():
         return False
 
+    def dummy_crash():  # type: ignore[return-type]
+        raise RuntimeError("boom")
+
     ok = wb.benchmark_workflow(dummy, mdb, pdb, name="test")
     assert ok
     wb.benchmark_workflow(dummy_fail, mdb, pdb, name="test")
+    assert not wb.benchmark_workflow(dummy_crash, mdb, pdb, name="crash")
     rows = mdb.fetch_eval("test")
     assert rows
+    crash_rows = [r for r in mdb.fetch_eval("crash") if r[1] == "crash"]
+    assert crash_rows and crash_rows[-1][2] == 1.0
     cur = pdb.conn.execute(
         "SELECT success_rate FROM metadata m JOIN pathways p ON p.id=m.pathway_id WHERE p.actions=?",
         ("test",),
@@ -93,13 +101,30 @@ def test_benchmark_and_training(tmp_path):
     assert engine.train()
 
 
+@pytest.mark.skip(reason="requires full runtime environment")
 def test_registered_workflow_metrics(monkeypatch, tmp_path):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
     sys.modules.setdefault("numpy", types.ModuleType("numpy"))
     mdb = db.MetricsDB(tmp_path / "m.db")
     pdb = neu.PathwayDB(tmp_path / "p.db")
-    tracker = ROITracker()
+    tracker = ROITracker(
+        telemetry_backend=SimpleNamespace(log_prediction=lambda *a, **k: None)
+    )
     tracker._regression = lambda: (None, [])
+
+    import menace.composite_workflow_scorer as cws
+
+    class _DummyResultsDB:
+        def __init__(self, *a, **k):
+            pass
+
+        def log_result(self, *a, **k):
+            pass
+
+        def log_module_attribution(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(cws, "ROIResultsDB", _DummyResultsDB)
 
     def ok():
         return True

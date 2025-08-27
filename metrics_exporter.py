@@ -597,6 +597,11 @@ workflow_peak_memory_gauge = Gauge(
     "Approximate peak resident memory during execution",
     labelnames=["workflow"],
 )
+workflow_crash_gauge = Gauge(
+    "workflow_crashes_total",
+    "Total number of workflow runs resulting in an exception",
+    labelnames=["workflow"],
+)
 
 # Additional counters for failure visibility
 error_bot_exceptions = Gauge(
@@ -897,4 +902,5 @@ __all__ = [
     "workflow_latency_min_gauge",
     "workflow_latency_max_gauge",
     "workflow_peak_memory_gauge",
+    "workflow_crash_gauge",
 ]
