@@ -50,11 +50,14 @@ def benchmark_workflow(
     disk_start = psutil.disk_io_counters() if psutil else None
     success = False
     result = None
+    err: Exception | None = None
     try:
         result = func()
         success = bool(result)
-    except Exception:
+    except Exception as exc:  # pragma: no cover - defensive
+        err = exc
         success = False
+        logging.exception("workflow %s crashed", name)
     duration = perf_counter() - start
     cpu_time = 0.0
     cpu_user = 0.0
@@ -95,6 +98,7 @@ def benchmark_workflow(
             metrics_db.log_eval(name, "duration", duration)
             metrics_db.log_eval(name, "latency", latency)
             metrics_db.log_eval(name, "success", 1.0 if success else 0.0)
+            metrics_db.log_eval(name, "crash", 1.0 if err else 0.0)
             metrics_db.log_eval(name, "cpu_time", cpu_time)
             metrics_db.log_eval(name, "cpu_user_time", cpu_user)
             metrics_db.log_eval(name, "cpu_system_time", cpu_system)
@@ -164,6 +168,8 @@ def benchmark_workflow(
                 me.workflow_net_io_gauge.labels(name).set(net_delta)
                 me.workflow_disk_read_gauge.labels(name).set(disk_read)
                 me.workflow_disk_write_gauge.labels(name).set(disk_write)
+                if err:
+                    me.workflow_crash_gauge.labels(name).inc()
             break
         except Exception:
             logging.exception("metrics logging failed on attempt %s", i + 1)
@@ -174,7 +180,7 @@ def benchmark_workflow(
     rec = PathwayRecord(
         actions=name,
         inputs="",
-        outputs=str(result),
+        outputs=str(result) if err is None else f"error: {err}",
         exec_time=duration,
         resources=(
             f"cpu_time={cpu_time:.4f},memory_delta={mem_delta:.2f}MB,"
@@ -213,7 +219,7 @@ def benchmark_registered_workflows(
 
     presets = env_presets or [{}]
     baseline: dict[str, list[tuple]] = {n: metrics_db.fetch_eval(n) for n in workflows}
-    scorer = CompositeWorkflowScorer(metrics_db, pathway_db, tracker=tracker)
+    scorer = CompositeWorkflowScorer(tracker=tracker)
     for preset in presets:
         for name, func in workflows.items():
 
@@ -221,7 +227,7 @@ def benchmark_registered_workflows(
                 env_backup = os.environ.copy()
                 os.environ.update({k: str(v) for k, v in preset.items()})
                 try:
-                    return func()
+                    return benchmark_workflow(func, metrics_db, pathway_db, name)
                 finally:
                     os.environ.clear()
                     os.environ.update(env_backup)
