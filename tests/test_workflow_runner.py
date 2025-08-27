@@ -3,7 +3,6 @@ import importlib.util
 import os
 import sys
 import types
-from pathlib import Path
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -17,6 +16,7 @@ spec = importlib.util.spec_from_file_location(
 )
 workflow_runner = importlib.util.module_from_spec(spec)
 assert spec.loader
+sys.modules[spec.name] = workflow_runner
 spec.loader.exec_module(workflow_runner)
 WorkflowSandboxRunner = workflow_runner.WorkflowSandboxRunner
 
@@ -45,11 +45,13 @@ def test_safe_mode_blocks_network_and_records_error():
         urllib.request.urlopen("http://example.com")
 
     runner = WorkflowSandboxRunner()
-    result, telemetry = runner.run(network_and_file, safe_mode=True)
+    metrics = runner.run(network_and_file, safe_mode=True)
 
-    assert result is None
-    assert telemetry["success"] is False
-    assert "network access disabled" in telemetry["error"]
+    assert metrics.crash_count == 1
+    mod = metrics.modules[0]
+    assert mod.success is False
+    assert mod.result is None
+    assert mod.exception and "network access disabled" in mod.exception
     assert not target.exists()
 
 
@@ -58,10 +60,11 @@ def test_prepopulated_data_and_telemetry():
         return Path("in.txt").read_text()
 
     runner = WorkflowSandboxRunner()
-    result, telemetry = runner.run(reader, test_data={"in.txt": "hello"})
+    metrics = runner.run(reader, test_data={"in.txt": "hello"})
 
-    assert result == "hello"
-    assert telemetry["success"] is True
-    assert "duration" in telemetry and "memory_delta" in telemetry
-    assert runner.telemetry == telemetry
-
+    mod = metrics.modules[0]
+    assert mod.result == "hello"
+    assert mod.success is True
+    assert mod.duration >= 0
+    assert mod.memory_after >= mod.memory_before
+    assert runner.telemetry == metrics
