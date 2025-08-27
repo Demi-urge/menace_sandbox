@@ -1021,6 +1021,42 @@ Sandbox execution helpers live in ``sandbox_runner.py`` with the main entry poin
 ``sandbox_runner.environment`` directly, call ``register_signal_handlers()`` to
 clean up pooled containers on ``Ctrl+C`` or ``SIGTERM``.
 
+### WorkflowSandboxRunner
+
+`WorkflowSandboxRunner` executes workflow callables inside an isolated
+temporary directory. All file operations are redirected to the sandbox so host
+data remains untouched. Setting ``safe_mode=True`` additionally monkeypatches
+common HTTP clients and raw sockets so outbound network access raises
+``RuntimeError``.
+
+```python
+from sandbox_runner import WorkflowSandboxRunner
+
+def writer(path="out.txt"):
+    with open(path, "w") as fh:
+        fh.write("hello")
+    return "done"
+
+runner = WorkflowSandboxRunner()
+metrics = runner.run(writer)  # network allowed
+print(metrics.modules[0].result)
+
+metrics = runner.run(writer, safe_mode=True)  # network disabled
+```
+
+``run`` returns a :class:`RunMetrics` object and the same data is stored on
+``runner.telemetry``. Each ``ModuleMetrics`` entry includes ``duration``,
+``memory_before``, ``memory_after``, ``memory_delta``, ``success``,
+``exception`` and ``result`` fields. ``crash_count`` records how many modules
+failed. Callers can interpret these values to evaluate resource usage and error
+rates.
+
+Configuration options include ``test_data`` to seed files, ``expected_outputs``
+for validation, ``mock_injectors`` for additional patching and ``allowed_domains``
+or ``allowed_files`` to permit specific network or filesystem access when
+``safe_mode`` is enabled. The runner itself does not rely on any environment
+variables; all behaviour is controlled via these arguments.
+
 The environment records ``sandbox_data/last_autopurge`` and runs
 ``purge_leftovers()`` automatically on import when the previous purge is older
 than ``SANDBOX_AUTOPURGE_THRESHOLD`` (24h by default). ``purge_leftovers()``
