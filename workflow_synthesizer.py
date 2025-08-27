@@ -1330,10 +1330,23 @@ class WorkflowSynthesizer:
             path = out_dir / f"{name}_{idx}.workflow.json"
             path.write_text(to_json(wf, metadata=details), encoding="utf-8")
         from db_router import GLOBAL_ROUTER
-        from sandbox_runner.post_update import integrate_orphans
 
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
-        integrate_orphans(repo, router=GLOBAL_ROUTER)
+        os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+        try:
+            import sandbox_runner
+
+            added = sandbox_runner.integrate_new_orphans(
+                Path.cwd(), router=GLOBAL_ROUTER
+            )
+            if added:
+                try:
+                    sandbox_runner.try_integrate_into_workflows(
+                        sorted(added), router=GLOBAL_ROUTER
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.warning("workflow integration failed", exc_info=True)
+        except Exception:  # pragma: no cover - best effort
+            logger.warning("orphan integration failed", exc_info=True)
 
         return self.generated_workflows
 

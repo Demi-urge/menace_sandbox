@@ -23,16 +23,20 @@ def test_generate_workflows_indexes_discovered_modules(tmp_path, monkeypatch):
 
     # Stub orphan integration via centralized helper and record indexing calls
     calls: dict[str, list] = {}
+
     def fake_integrate(repo, router=None):
         calls["synergy"] = ["extra.mod"]
         calls["intent"] = [Path(repo) / "extra/mod.py"]
         return ["extra/mod.py"]
+
+    def fake_try(mods, router=None):
+        calls["workflow"] = list(mods)
+
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
+    pkg.integrate_new_orphans = fake_integrate
+    pkg.try_integrate_into_workflows = fake_try
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
-    oi_mod = types.ModuleType("sandbox_runner.orphan_integration")
-    oi_mod.integrate_orphans = fake_integrate
-    monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_integration", oi_mod)
     monkeypatch.setitem(sys.modules, "db_router", SimpleNamespace(GLOBAL_ROUTER=None))
 
     synth = ws.WorkflowSynthesizer()
@@ -167,15 +171,30 @@ def test_evolve_auto_indexes_promoted_orphans(tmp_path, monkeypatch):
 
     # Prepare sandbox_runner package with orphan helpers
     sr_pkg = types.ModuleType("sandbox_runner")
+    sr_pkg.__path__ = []
     auto_called: dict[str, list[str]] = {}
     sr_pkg.discover_recursive_orphans = lambda repo, module_map=None: {"extra.mod": []}
     sys.modules["sandbox_runner"] = sr_pkg
+
     env_mod = types.ModuleType("sandbox_runner.environment")
     def fake_auto(mods, recursive=True, validate=True, router=None):
         auto_called["mods"] = list(mods)
         return None, {"added": ["extra/mod.py"]}
     env_mod.auto_include_modules = fake_auto
     sys.modules["sandbox_runner.environment"] = env_mod
+
+    def integrate_orphans(repo, router=None):
+        from sandbox_runner.environment import auto_include_modules
+        auto_include_modules(["extra/mod.py"], recursive=True, router=router)
+        from module_synergy_grapher import ModuleSynergyGrapher
+        ModuleSynergyGrapher(repo).update_graph(["extra.mod"])
+        from intent_clusterer import IntentClusterer
+        IntentClusterer(None, None).index_modules([Path(repo) / "extra/mod.py"])
+        return ["extra/mod.py"]
+
+    post_mod = types.ModuleType("sandbox_runner.post_update")
+    post_mod.integrate_orphans = integrate_orphans
+    sys.modules["sandbox_runner.post_update"] = post_mod
 
     synergy_called: dict[str, list[str]] = {}
     class SG:
