@@ -22,7 +22,7 @@ from memory_aware_gpt_client import ask_with_memory
 from vector_service import Retriever, FallbackResult
 from foresight_tracker import ForesightTracker
 from db_router import GLOBAL_ROUTER, init_db_router
-from .post_update import integrate_orphans
+
 
 
 router = GLOBAL_ROUTER or init_db_router("sandbox_cycle")
@@ -101,6 +101,7 @@ from .environment import (
     record_error,
     run_scenarios,
     ERROR_CATEGORY_COUNTS,
+    auto_include_modules,
 )
 from .resource_tuner import ResourceTuner
 from .orphan_discovery import (
@@ -110,6 +111,7 @@ from .orphan_discovery import (
     load_orphan_cache,
     load_orphan_traces,
     append_orphan_traces,
+    discover_recursive_orphans,
 )
 
 _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
@@ -259,9 +261,9 @@ def run_workflow_scenarios(
 def include_orphan_modules(ctx: "SandboxContext") -> None:
     """Discover orphan modules and feed viable ones into the workflow.
 
-    Discovery and integration are delegated to :func:`integrate_orphans`. This
-    wrapper loads existing orphan traces, updates metrics and caches, and prunes
-    successfully integrated modules.
+    This helper loads existing orphan traces, discovers new orphan modules,
+    integrates viable candidates via :func:`environment.auto_include_modules`
+    and updates caches, metrics and auxiliary indexes.
     """
 
     settings = getattr(ctx, "settings", SandboxSettings())
@@ -291,13 +293,81 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         pass
     ctx.orphan_traces = traces
 
-    added = integrate_orphans(ctx.repo, router=GLOBAL_ROUTER)
+    try:
+        mapping = discover_recursive_orphans(str(ctx.repo))
+    except Exception:
+        logger.exception("discover_recursive_orphans failed")
+        return
+
+    if not mapping:
+        return
+
+    paths = [
+        Path(name.replace(".", "/")).with_suffix(".py").as_posix()
+        for name in mapping
+    ]
+
+    try:
+        _, tested = auto_include_modules(paths, recursive=True, router=GLOBAL_ROUTER)
+    except Exception:
+        logger.exception("auto include of discovered orphans failed")
+        return
+
+    added = tested.get("added", [])
+    failed = tested.get("failed", [])
+    redundant = tested.get("redundant", [])
+    legacy = tested.get("legacy", [])
+
     if not added:
+        logger.info(
+            "isolated module tests",
+            extra=log_record(
+                added=[],
+                failed=sorted(failed),
+                redundant=sorted(redundant),
+                legacy=sorted(legacy),
+                synergy_graph=False,
+                intent_clusters=False,
+            ),
+        )
         return
 
     module_map = set(getattr(ctx, "module_map", set()))
     module_map.update(added)
     ctx.module_map = module_map
+
+    synergy_ok = False
+    cluster_ok = False
+    try:
+        from module_synergy_grapher import ModuleSynergyGrapher, load_graph
+
+        grapher = ModuleSynergyGrapher(root=ctx.repo)
+        graph_path = ctx.repo / "sandbox_data" / "module_synergy_graph.json"
+        if graph_path.exists():
+            try:
+                grapher.graph = load_graph(graph_path)
+            except Exception:
+                grapher.graph = None
+        if getattr(grapher, "graph", None) is None:
+            try:
+                grapher.graph = grapher.build_graph(ctx.repo)
+            except Exception:
+                grapher.graph = None
+        if grapher.graph is not None:
+            names = [Path(m).with_suffix("").as_posix() for m in added]
+            grapher.update_graph(names)
+            synergy_ok = True
+    except Exception:
+        logger.warning("module synergy update failed", exc_info=True)
+
+    try:
+        from intent_clusterer import IntentClusterer
+
+        clusterer = IntentClusterer()
+        clusterer.index_modules([ctx.repo / m for m in added])
+        cluster_ok = True
+    except Exception:
+        logger.warning("intent clustering update failed", exc_info=True)
 
     try:
         prune_orphan_cache(ctx.repo, added, traces)
@@ -353,9 +423,11 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         "isolated module tests",
         extra=log_record(
             added=sorted(added),
-            failed=[],
-            redundant=[],
-            legacy=[],
+            failed=sorted(failed),
+            redundant=sorted(redundant),
+            legacy=sorted(legacy),
+            synergy_graph=synergy_ok,
+            intent_clusters=cluster_ok,
         ),
     )
 
