@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 import importlib
-import json
 import logging
 import os
 from pathlib import Path
@@ -312,16 +311,11 @@ def evolve(
                 for s in best_variant_seq.split("-")
                 if s
             ]
-            path = workflow_synthesizer.save_workflow(
+            _path, metadata = workflow_synthesizer.save_workflow(
                 steps,
                 parent_id=str(workflow_id),
                 mutation_description=best_variant_seq,
             )
-            metadata = {}
-            try:
-                metadata = json.loads(Path(path).read_text()).get("metadata", {})
-            except Exception:
-                logger.exception("failed reading workflow metadata")
             new_id = metadata.get("workflow_id")
             created_at = metadata.get("created_at")
             if new_id is not None:
