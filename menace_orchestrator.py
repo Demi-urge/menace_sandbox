@@ -412,6 +412,7 @@ class MenaceOrchestrator:
                 rollback_validator = None
         failure = False
         failing_pid: str | None = None
+        any_success = False
         for node, path in node_paths.items():
             eng = self.engines.get(node)
             if not eng:
@@ -435,6 +436,7 @@ class MenaceOrchestrator:
                     patch_id=str(pid) if pid is not None else "",
                     contribution=1.0 if success else 0.0,
                 )
+                any_success = any_success or success
             except Exception:
                 self.handle_feedback(session_id, False, contribution=0.0)
                 raise
@@ -465,6 +467,57 @@ class MenaceOrchestrator:
                     self.rollback_mgr.rollback(str(pid))
                 if pid is not None:
                     eng.rollback_patch(str(pid))
+        if any_success:
+            try:
+                from sandbox_runner import discover_recursive_orphans
+                import sandbox_runner.environment as environment
+
+                repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                mapping = discover_recursive_orphans(str(repo))
+                modules = set(mapping.keys())
+                if modules:
+                    added_modules: set[str] = set()
+                    try:
+                        _, tested = environment.auto_include_modules(
+                            sorted(modules), recursive=True
+                        )
+                        added_modules.update(tested.get("added", []))
+                    except Exception:
+                        self.logger.exception("auto_include_modules failed")
+                        added_modules = set()
+                    if added_modules:
+                        try:
+                            grapher = getattr(self, "module_synergy_grapher", None)
+                            if grapher is None:
+                                from module_synergy_grapher import ModuleSynergyGrapher
+
+                                grapher = ModuleSynergyGrapher(root=repo)
+                                graph_path = repo / "sandbox_data" / "module_synergy_graph.json"
+                                try:
+                                    grapher.load(graph_path)
+                                except Exception:
+                                    pass
+                                self.module_synergy_grapher = grapher
+                            grapher.update_graph(sorted(added_modules))
+                        except Exception:
+                            self.logger.exception("failed to update synergy graph")
+                        try:
+                            clusterer = getattr(self, "intent_clusterer", None)
+                            if clusterer is None:
+                                from intent_clusterer import IntentClusterer
+
+                                data_dir = repo / "sandbox_data"
+                                clusterer = IntentClusterer(
+                                    local_db_path=data_dir / "intent.db",
+                                    shared_db_path=data_dir / "intent.db",
+                                )
+                                self.intent_clusterer = clusterer
+                            paths = {repo / f"{m}.py" for m in added_modules}
+                            clusterer.index_modules(paths)
+                        except Exception:
+                            self.logger.exception("failed to index intent modules")
+            except Exception:
+                self.logger.exception("recursive orphan auto inclusion failed")
         return results
 
     # ------------------------------------------------------------------
