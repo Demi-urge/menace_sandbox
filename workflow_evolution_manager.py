@@ -139,6 +139,11 @@ def evolve(
     baseline_roi = baseline_result.roi_gain
     baseline_synergy = getattr(baseline_result, "workflow_synergy_score", 0.0)
 
+    # Attach lineage metadata to the baseline callable so it can be returned
+    # unchanged while still exposing parent information.
+    setattr(workflow_callable, "parent_id", workflow_id)
+    setattr(workflow_callable, "mutation_description", None)
+
     # Skip variant generation when workflow marked stable and ROI unchanged
     if STABLE_WORKFLOWS.is_stable(wf_id_str, baseline_roi, tracker.diminishing()):
         logger.info("workflow %s marked stable", wf_id_str)
@@ -156,6 +161,9 @@ def evolve(
 
     for seq in bot.generate_variants(limit=variants, workflow_id=int(workflow_id)):
         variant_callable = _build_callable(seq)
+        # propagate lineage metadata to variant implementations
+        setattr(variant_callable, "parent_id", workflow_id)
+        setattr(variant_callable, "mutation_description", seq)
         run_id = f"variant-{hash(seq) & 0xffffffff:x}"
 
         scorer = CompositeWorkflowScorer(results_db=results_db, tracker=tracker)
@@ -266,6 +274,7 @@ def evolve(
             before_metric=baseline_roi,
             after_metric=baseline_roi,
         )
+        # lineage already attached to workflow_callable
         return workflow_callable
 
     if best_variant_seq is not None and delta > 0:
@@ -317,6 +326,10 @@ def evolve(
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
         integrate_orphans(repo, router=GLOBAL_ROUTER)
+
+        # ensure promoted callable exposes lineage metadata
+        setattr(best_callable, "parent_id", workflow_id)
+        setattr(best_callable, "mutation_description", best_variant_seq)
 
         return best_callable
 

@@ -25,7 +25,10 @@ def test_evolve_workflows_calls_evolver():
 
         def evolve(self, fn, wf_id, variants=5):
             self.called.append(wf_id)
-            return lambda: False  # new callable so promoted
+            out = lambda: False  # new callable so promoted
+            out.parent_id = wf_id
+            out.mutation_description = "variant"
+            return out
 
         def is_stable(self, wf_id):
             return False
@@ -61,6 +64,8 @@ def test_evolve_workflows_calls_evolver():
     results = evolve(self_obj)
     assert ev.called == [1]
     assert results[1]["status"] == "promoted"
+    assert results[1]["parent_id"] == 1
+    assert results[1]["mutation_description"] == "variant"
 
 
 def test_evolve_workflows_skips_flagged_workflow():
