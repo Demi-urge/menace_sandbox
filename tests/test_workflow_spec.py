@@ -36,13 +36,16 @@ def test_save_workflow_with_parent(tmp_path):
 
     steps = [{"module": "step1", "inputs": [], "outputs": []}]
     path = tmp_path / "wf.workflow.json"
-    out = save_workflow(steps, path, parent_id="orig", mutation_description="tweak")
-    data = json.loads(out.read_text())
+    out_path, metadata = save_workflow(
+        steps, path, parent_id="orig", mutation_description="tweak"
+    )
+    data = json.loads(out_path.read_text())
     md = data["metadata"]
-    assert md["parent_id"] == "orig"
-    assert md["mutation_description"] == "tweak"
-    assert md["workflow_id"]
-    assert md["created_at"]
+    assert metadata["parent_id"] == "orig"
+    assert metadata["mutation_description"] == "tweak"
+    assert metadata["workflow_id"]
+    assert metadata["created_at"]
+    assert md == metadata
     diff_path = Path(md["diff_path"])
     assert diff_path.is_file()
     assert diff_path.name == f"{md['workflow_id']}.diff"

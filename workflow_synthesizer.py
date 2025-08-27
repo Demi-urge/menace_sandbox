@@ -1505,7 +1505,7 @@ def save_workflow(
     *,
     parent_id: str | None = None,
     mutation_description: str = "",
-) -> Path:
+) -> Tuple[Path, Dict[str, Any]]:
     """Persist ``workflow`` using :func:`workflow_spec.save_spec`.
 
     Parameters
@@ -1518,6 +1518,13 @@ def save_workflow(
         Identifier of the workflow this was derived from, if any.
     mutation_description:
         Human readable description of how the workflow was changed.
+
+    Returns
+    -------
+    tuple
+        ``(path, metadata)`` where ``path`` is the location of the saved
+        specification and ``metadata`` contains details such as the generated
+        ``workflow_id`` and ``created_at`` timestamp.
     """
 
     from workflow_spec import save_spec as _save_spec
@@ -1528,7 +1535,17 @@ def save_workflow(
         "mutation_description": mutation_description,
     }
     out = Path(path) if path is not None else Path("workflow.workflow.json")
-    return _save_spec(spec, out)
+    out_path = _save_spec(spec, out)
+
+    metadata = spec.get("metadata", {})
+    if "workflow_id" not in metadata or "created_at" not in metadata:
+        try:
+            saved = json.loads(out_path.read_text())
+            metadata = saved.get("metadata", metadata)
+        except Exception:  # pragma: no cover - best effort
+            metadata = dict(metadata)
+
+    return out_path, metadata
 
 
 def evaluate_workflow(workflow: Dict[str, Any]) -> bool:
