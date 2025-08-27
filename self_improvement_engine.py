@@ -5320,7 +5320,10 @@ class SelfImprovementEngine:
         try:
             self._include_recursive_orphans()
         except Exception:
-            self.logger.exception("recursive orphan inclusion failed")
+            self.logger.exception(
+                "recursive orphan inclusion failed",
+                extra=log_record(workflow_id=wf_id),
+            )
         return status
 
     def _evolve_workflows(self, limit: int = 10) -> dict[int, dict[str, str]]:
@@ -5394,7 +5397,10 @@ class SelfImprovementEngine:
             try:
                 self._include_recursive_orphans()
             except Exception:
-                self.logger.exception("recursive orphan inclusion failed")
+                self.logger.exception(
+                    "recursive orphan inclusion failed",
+                    extra=log_record(workflow_id=wf_id),
+                )
 
         return results
 
