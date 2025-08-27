@@ -1336,13 +1336,55 @@ class WorkflowSynthesizer:
             repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
             mapping = discover_recursive_orphans(str(repo))
             if mapping:
-                auto_include_modules(
+                _tracker, tested = auto_include_modules(
                     [
                         Path(name.replace(".", "/")).with_suffix(".py").as_posix()
                         for name in mapping
                     ],
                     recursive=True,
                 )
+                added = set(tested.get("added", []))
+                if added:
+                    try:
+                        dotted = {
+                            Path(m).with_suffix("").as_posix().replace("/", ".")
+                            for m in added
+                        }
+                    except Exception:
+                        dotted = {m.replace("/", ".").rsplit(".py", 1)[0] for m in added}
+                    try:
+                        from module_synergy_grapher import ModuleSynergyGrapher
+
+                        grapher = ModuleSynergyGrapher(root=repo)
+                        graph_path = repo / "sandbox_data" / "module_synergy_graph.json"
+                        try:
+                            grapher.load(graph_path)
+                        except Exception:
+                            try:
+                                grapher.build_graph(repo)
+                            except Exception:
+                                pass
+                        grapher.update_graph(sorted(dotted))
+                    except Exception:
+                        logger.exception("failed to update synergy graph")
+
+                    try:
+                        from intent_clusterer import IntentClusterer
+
+                        data_dir = repo / "sandbox_data"
+                        clusterer = IntentClusterer(
+                            local_db_path=data_dir / "intent.db",
+                            shared_db_path=data_dir / "intent.db",
+                        )
+                        paths = [repo / m for m in added]
+                        clusterer.index_modules(paths)
+                        try:
+                            groups = clusterer._load_synergy_groups(repo)
+                            clusterer._index_clusters(groups)
+                        except Exception:
+                            logger.exception("failed to cluster intent modules")
+                    except Exception:
+                        logger.exception("failed to index intent modules")
         except Exception:
             logger.exception("post-generation orphan integration failed")
 
