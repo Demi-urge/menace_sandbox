@@ -8,8 +8,15 @@ import inspect
 import logging
 import os
 import tempfile
+from collections import Counter
+from time import perf_counter
 from types import ModuleType
 from typing import Iterable, Callable, Any, Dict, List
+
+try:  # pragma: no cover - optional dependency
+    import psutil  # type: ignore
+except Exception:  # pragma: no cover - psutil not installed
+    psutil = None  # type: ignore
 
 from .environment import generate_input_stubs
 from .stub_providers import StubProvider
@@ -41,10 +48,14 @@ class WorkflowSandboxRunner:
         *,
         safe_mode: bool = False,
         stub_providers: List[StubProvider] | None = None,
+        metrics_db: Any | None = None,
     ) -> None:
         self.modules = list(modules)
         self.safe_mode = safe_mode
         self.stub_providers = stub_providers
+        self.metrics_db = metrics_db
+        self.crash_counts: Counter[str] = Counter()
+        self.telemetry: Dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     def _resolve_path(self, root: str, path: str) -> str:
@@ -58,8 +69,13 @@ class WorkflowSandboxRunner:
 
         original_open = builtins.open
 
-        def sandbox_open(file: str | bytes | os.PathLike[str], mode: str = "r", *a, **kw):
-            real_path = self._resolve_path(root, str(file))
+        def sandbox_open(
+            file: str | bytes | os.PathLike[str], mode: str = "r", *a, **kw
+        ):
+            path_str = os.fspath(file)
+            if str(path_str).startswith("/proc"):
+                return original_open(path_str, mode, *a, **kw)
+            real_path = self._resolve_path(root, path_str)
             if any(m in mode for m in ("w", "a", "x", "+")):
                 os.makedirs(os.path.dirname(real_path), exist_ok=True)
             return original_open(real_path, mode, *a, **kw)
@@ -159,6 +175,8 @@ class WorkflowSandboxRunner:
         """Execute the configured workflow and return success metrics."""
         metrics: Dict[str, Any] = {"modules": [], "success": True}
 
+        proc = psutil.Process() if psutil else None
+
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, "repos"), exist_ok=True)
             os.makedirs(os.path.join(tmpdir, "data"), exist_ok=True)
@@ -181,28 +199,59 @@ class WorkflowSandboxRunner:
                         except Exception:
                             logger.exception("stub generation failed for %s", name)
                     logger.info("running %s with stub %s", name, stub)
+                    start = perf_counter()
+                    mem_start = proc.memory_info().rss if proc else 0
+                    success = True
+                    result = None
+                    error: str | None = None
                     try:
                         result = func(**stub)
-                        metrics["modules"].append(
-                            {
-                                "module": name,
-                                "success": True,
-                                "result": result,
-                                "stub": stub,
-                            }
-                        )
                     except Exception as exc:  # pragma: no cover - exercise safe paths
-                        metrics["modules"].append(
-                            {
-                                "module": name,
-                                "success": False,
-                                "error": str(exc),
-                                "stub": stub,
-                            }
-                        )
+                        success = False
+                        error = str(exc)
+                        self.crash_counts[name] += 1
                         metrics["success"] = False
                         if not self.safe_mode:
                             raise
+                    end = perf_counter()
+                    mem_end = proc.memory_info().rss if proc else mem_start
+                    mem_peak_raw = mem_end
+                    if proc:
+                        try:
+                            info = proc.memory_info()
+                            mem_end = info.rss
+                            mem_peak_raw = getattr(
+                                info,
+                                "peak_wset",
+                                getattr(info, "peak_rss", mem_end),
+                            )
+                        except Exception:  # pragma: no cover - platform specific
+                            pass
+                    duration = end - start
+                    mem_delta = max(mem_end - mem_start, 0) / (1024 * 1024)
+                    mem_peak = max(mem_peak_raw - mem_start, 0) / (1024 * 1024)
+                    mod_metrics = {
+                        "module": name,
+                        "success": success,
+                        "result": result,
+                        "error": error,
+                        "stub": stub,
+                        "duration": duration,
+                        "memory_delta": mem_delta,
+                        "memory_peak": mem_peak,
+                        "exception": not success,
+                    }
+                    metrics["modules"].append(mod_metrics)
+                    if self.metrics_db:
+                        try:  # pragma: no cover - external dependency
+                            self.metrics_db.log_eval(name, "duration", duration)
+                            self.metrics_db.log_eval(name, "memory_delta", mem_delta)
+                            self.metrics_db.log_eval(name, "memory_peak", mem_peak)
+                            self.metrics_db.log_eval(name, "crash", 0.0 if success else 1.0)
+                        except Exception:
+                            logger.exception("metrics logging failed for %s", name)
+                metrics["crash_counts"] = dict(self.crash_counts)
+                self.telemetry = metrics
                 return metrics
             finally:
                 for td in reversed(teardowns):
