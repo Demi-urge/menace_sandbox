@@ -11,9 +11,8 @@ class SelfCodingEngine:
 
     def apply_patch(self, path: Path, description: str) -> None:
         self.patch_file(path, description)
-        from sandbox_runner import integrate_new_orphans, try_integrate_into_workflows
-        added = integrate_new_orphans(Path.cwd(), router=None)
-        try_integrate_into_workflows(added)
+        from sandbox_runner.post_update import integrate_orphans
+        integrate_orphans(Path.cwd(), router=None)
 
 
 def test_patch_orphan_integration(monkeypatch, tmp_path):
@@ -56,7 +55,7 @@ def test_patch_orphan_integration(monkeypatch, tmp_path):
         SimpleNamespace(IntentClusterer=DummyClusterer),
     )
 
-    def integrate_new_orphans(repo_path, router=None):
+    def integrate_orphans(repo_path, router=None):
         map_path = Path(repo_path) / "sandbox_data" / "module_map.json"
         data = json.loads(map_path.read_text())
         modules = data.get("modules", data)
@@ -73,10 +72,12 @@ def test_patch_orphan_integration(monkeypatch, tmp_path):
         IntentClusterer().index_modules([Path(repo_path) / "new_mod.py"])
         return ["new_mod.py"]
 
-    sandbox_runner = types.ModuleType("sandbox_runner")
-    sandbox_runner.integrate_new_orphans = integrate_new_orphans
-    sandbox_runner.try_integrate_into_workflows = lambda modules: None
-    monkeypatch.setitem(sys.modules, "sandbox_runner", sandbox_runner)
+    sandbox_runner_pkg = types.ModuleType("sandbox_runner")
+    sandbox_runner_pkg.__path__ = []
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sandbox_runner_pkg)
+    post_update = types.ModuleType("sandbox_runner.post_update")
+    post_update.integrate_orphans = integrate_orphans
+    monkeypatch.setitem(sys.modules, "sandbox_runner.post_update", post_update)
 
     engine = SelfCodingEngine()
 
