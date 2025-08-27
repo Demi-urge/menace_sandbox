@@ -22,6 +22,7 @@ from memory_aware_gpt_client import ask_with_memory
 from vector_service import Retriever, FallbackResult
 from foresight_tracker import ForesightTracker
 from db_router import GLOBAL_ROUTER, init_db_router
+from .post_update import integrate_orphans
 
 
 router = GLOBAL_ROUTER or init_db_router("sandbox_cycle")
@@ -756,6 +757,7 @@ def _sandbox_cycle_runner(
         cycle_start = time.perf_counter()
         # ensure orphan modules are processed before each cycle begins
         include_orphan_modules(ctx)
+        integrate_orphans(ctx.repo, router=GLOBAL_ROUTER)
         if section:
             mapped_sec = map_module_identifier(section, ctx.repo, 0.0)
             if mapped_sec in ctx.meta_log.flagged_sections:
@@ -784,6 +786,7 @@ def _sandbox_cycle_runner(
         finally:
             # Include any newly discovered modules after orchestrator modifications
             include_orphan_modules(ctx)
+            integrate_orphans(ctx.repo, router=GLOBAL_ROUTER)
         logger.info("patch engine start", extra=log_record(cycle=idx))
         try:
             result = ctx.improver.run_cycle()
@@ -793,6 +796,7 @@ def _sandbox_cycle_runner(
         finally:
             # Include modules introduced during the improvement cycle
             include_orphan_modules(ctx)
+            integrate_orphans(ctx.repo, router=GLOBAL_ROUTER)
         warnings = getattr(result, "warnings", None)
         if warnings:
             logger.warning("improvement warnings", extra=log_record(warnings=warnings))
@@ -802,6 +806,7 @@ def _sandbox_cycle_runner(
         )
         # Ensure modules introduced by patches are discovered before testing
         include_orphan_modules(ctx)
+        integrate_orphans(ctx.repo, router=GLOBAL_ROUTER)
         logger.info("tester run", extra=log_record(cycle=idx))
         try:
             ctx.tester.run_once()
@@ -867,6 +872,7 @@ def _sandbox_cycle_runner(
         # Re-run orphan discovery after patches have been applied so that any
         # newly generated modules are considered in subsequent metrics.
         include_orphan_modules(ctx)
+        integrate_orphans(ctx.repo, router=GLOBAL_ROUTER)
         logger.info("patch application", extra=log_record(cycle=idx))
         roi = result.roi.roi if result.roi else 0.0
         logger.info(
