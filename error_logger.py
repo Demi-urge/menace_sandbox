@@ -9,6 +9,7 @@ import traceback
 import json
 import hashlib
 import math
+from pathlib import Path
 try:
     import yaml
 except Exception:  # pragma: no cover - optional dependency
@@ -731,7 +732,18 @@ class ErrorLogger:
 
             if generate_patch is not None and module:
                 try:
-                    generate_patch(module)
+                    patch_id = generate_patch(module)
+                    if patch_id is not None:
+                        try:
+                            from sandbox_runner import integrate_new_orphans
+
+                            integrate_new_orphans(Path.cwd(), router=GLOBAL_ROUTER)
+                        except Exception as e2:  # pragma: no cover - integration issues
+                            self.logger.error(
+                                "integrate_new_orphans after patch for %s failed: %s",
+                                module,
+                                e2,
+                            )
                 except Exception as e:  # pragma: no cover - patch failures
                     self.logger.error(
                         "quick fix generation failed for %s: %s", module, e
