@@ -1329,13 +1329,18 @@ class WorkflowSynthesizer:
             name = wf[0].module.replace(".", "_") if wf else f"workflow_{idx}"
             path = out_dir / f"{name}_{idx}.workflow.json"
             path.write_text(to_json(wf, metadata=details), encoding="utf-8")
-        try:  # Discover and integrate any newly referenced modules
-            from sandbox_runner.environment import integrate_new_orphans
+        from db_router import GLOBAL_ROUTER
+        import sandbox_runner
 
-            repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
-            integrate_new_orphans(repo)
-        except Exception:
-            logger.exception("post-generation orphan integration failed")
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        router = GLOBAL_ROUTER
+        integrate = getattr(
+            sandbox_runner, "integrate_new_orphans", lambda *_a, **_k: []
+        )
+        added_modules = integrate(repo, router=router)
+        try_integrate = getattr(sandbox_runner, "try_integrate_into_workflows", None)
+        if added_modules and callable(try_integrate):
+            try_integrate(added_modules)
 
         return self.generated_workflows
 
@@ -1722,7 +1727,8 @@ def generate_variants(
     analyzer = ModuleIOAnalyzer()
     checker = WorkflowSynthesizer(
         module_synergy_grapher=synergy_graph
-        if isinstance(synergy_graph, ModuleSynergyGrapher)
+        if ModuleSynergyGrapher is not None
+        and isinstance(synergy_graph, ModuleSynergyGrapher)
         else None
     )
 
