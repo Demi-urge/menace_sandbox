@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import os
 from typing import Dict, List
 
 from .workflow_graph import WorkflowGraph
@@ -13,13 +14,52 @@ from . import workflow_spec
 _WORKFLOW_ROI_HISTORY: Dict[str, List[float]] = {}
 
 
+# Location of the persistent history store. Tests can override via the
+# ``WORKFLOW_ROI_HISTORY_PATH`` environment variable.
+_HISTORY_PATH = Path(
+    os.environ.get(
+        "WORKFLOW_ROI_HISTORY_PATH",
+        Path(__file__).with_name("workflow_roi_history.json"),
+    )
+)
+
+
+def _load_history() -> None:
+    """Load persisted ROI history into memory."""
+    if not _HISTORY_PATH.exists():
+        return
+    try:
+        data = json.loads(_HISTORY_PATH.read_text())
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        for wid, vals in data.items():
+            if isinstance(vals, list):
+                _WORKFLOW_ROI_HISTORY[str(wid)] = [float(v) for v in vals]
+
+
+def _persist_history() -> None:
+    """Persist the in-memory ROI history."""
+    try:
+        _HISTORY_PATH.write_text(json.dumps(_WORKFLOW_ROI_HISTORY, indent=2))
+    except Exception:
+        pass
+
+
+# Load any previously persisted data on import.
+_load_history()
+
+
 def record_run(workflow_id: str, roi: float) -> None:
     """Record ``roi`` for ``workflow_id``."""
     hist = _WORKFLOW_ROI_HISTORY.setdefault(str(workflow_id), [])
     hist.append(float(roi))
+    _persist_history()
 
 
-def save_summary(workflow_id: str, directory: Path) -> Path:
+def save_summary(
+    workflow_id: str, directory: Path, graph: WorkflowGraph | None = None
+) -> Path:
     """Write a ``<workflow_id>.summary.json`` file and return its path."""
 
     wid = str(workflow_id)
@@ -28,7 +68,7 @@ def save_summary(workflow_id: str, directory: Path) -> Path:
     runs = len(history)
     avg = cumulative / runs if runs else 0.0
 
-    graph = WorkflowGraph()
+    graph = graph or WorkflowGraph()
     try:
         g = graph.graph
         if hasattr(g, "predecessors"):
@@ -55,6 +95,23 @@ def save_summary(workflow_id: str, directory: Path) -> Path:
             if isinstance(md, dict):
                 metadata = md
 
+    roi_delta: float | None = None
+    avg_roi_delta: float | None = None
+    parent_id = metadata.get("parent_id")
+    if parent_id:
+        parent_summary = Path(directory) / f"{parent_id}.summary.json"
+        if not parent_summary.exists():
+            parent_summary = Path(directory) / "workflows" / f"{parent_id}.summary.json"
+        if parent_summary.exists():
+            try:
+                parent_data = json.loads(parent_summary.read_text())
+                parent_cum = float(parent_data.get("cumulative_roi", 0.0))
+                parent_avg = float(parent_data.get("average_roi", 0.0))
+                roi_delta = cumulative - parent_cum
+                avg_roi_delta = avg - parent_avg
+            except Exception:
+                pass
+
     data = {
         "workflow_id": wid,
         "cumulative_roi": cumulative,
@@ -65,6 +122,8 @@ def save_summary(workflow_id: str, directory: Path) -> Path:
         "mutation_description": metadata.get("mutation_description", ""),
         "parent_id": metadata.get("parent_id"),
         "created_at": metadata.get("created_at"),
+        "roi_delta": roi_delta,
+        "avg_roi_delta": avg_roi_delta,
     }
 
     out_dir = Path(directory)
@@ -82,7 +141,7 @@ def save_all_summaries(directory: str | Path = ".", *, graph: WorkflowGraph | No
     directory:
         Destination directory for summary files.
     graph:
-        Unused parameter retained for backwards compatibility.
+        Optional workflow graph to derive parent/child relationships.
     """
     if not _WORKFLOW_ROI_HISTORY:
         return
@@ -92,7 +151,7 @@ def save_all_summaries(directory: str | Path = ".", *, graph: WorkflowGraph | No
 
     for wid in _WORKFLOW_ROI_HISTORY:
         # Generate and save the summary
-        summary_path = save_summary(wid, out_dir)
+        summary_path = save_summary(wid, out_dir, graph=graph)
 
         # Update the workflow specification with the summary path when possible
         spec_path = out_dir / f"{wid}.workflow.json"
@@ -113,6 +172,10 @@ def save_all_summaries(directory: str | Path = ".", *, graph: WorkflowGraph | No
 def reset_history() -> None:
     """Clear stored ROI history. Primarily intended for tests."""
     _WORKFLOW_ROI_HISTORY.clear()
+    try:
+        _HISTORY_PATH.unlink()
+    except FileNotFoundError:
+        pass
 
 
 __all__ = ["record_run", "save_summary", "save_all_summaries", "reset_history"]
