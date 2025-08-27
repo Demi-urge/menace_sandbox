@@ -169,6 +169,170 @@ run_auto_mod._verify_required_dependencies = lambda: None
 sys.modules["run_autonomous"] = run_auto_mod
 sys.modules["menace.run_autonomous"] = run_auto_mod
 
+od_stub = types.ModuleType("sandbox_runner.orphan_discovery")
+for _fn in (
+    "append_orphan_cache",
+    "append_orphan_classifications",
+    "prune_orphan_cache",
+    "load_orphan_cache",
+):
+    setattr(od_stub, _fn, lambda *a, **k: None)
+sys.modules.setdefault("sandbox_runner.orphan_discovery", od_stub)
+sys.modules.setdefault("orphan_discovery", od_stub)
+
+gpt_mem_mod = types.ModuleType("gpt_memory")
+
+class GPTMemoryManager:
+    def __init__(self, *a, **k):
+        pass
+
+gpt_mem_mod.GPTMemoryManager = GPTMemoryManager
+gpt_mem_mod.INSIGHT = object()
+gpt_mem_mod.STANDARD_TAGS = {}
+sys.modules["gpt_memory"] = gpt_mem_mod
+sys.modules["menace.gpt_memory"] = gpt_mem_mod
+
+gpt_mem_int_mod = types.ModuleType("gpt_memory_interface")
+gpt_mem_int_mod.GPTMemoryInterface = object
+sys.modules["gpt_memory_interface"] = gpt_mem_int_mod
+sys.modules["menace.gpt_memory_interface"] = gpt_mem_int_mod
+
+gpt_knowledge_mod = types.ModuleType("gpt_knowledge_service")
+gpt_knowledge_mod.GPTKnowledgeService = object
+sys.modules["gpt_knowledge_service"] = gpt_knowledge_mod
+sys.modules["menace.gpt_knowledge_service"] = gpt_knowledge_mod
+
+rab_stub = types.ModuleType("research_aggregator_bot")
+
+class InfoDB:
+    def __init__(self, *a, **k):
+        pass
+
+
+class ResearchAggregatorBot:
+    def __init__(self, *a, **k):
+        pass
+
+
+rab_stub.InfoDB = InfoDB
+rab_stub.ResearchAggregatorBot = ResearchAggregatorBot
+class ResearchItem:  # minimal placeholder
+    pass
+
+rab_stub.ResearchItem = ResearchItem
+sys.modules["research_aggregator_bot"] = rab_stub
+sys.modules["menace.research_aggregator_bot"] = rab_stub
+
+arp_stub = types.ModuleType("adaptive_roi_predictor")
+
+class AdaptiveROIPredictor:
+    def __init__(self, *a, **k):
+        pass
+
+def load_training_data(*a, **k):
+    return []
+
+arp_stub.AdaptiveROIPredictor = AdaptiveROIPredictor
+arp_stub.load_training_data = load_training_data
+sys.modules["adaptive_roi_predictor"] = arp_stub
+sys.modules["menace.adaptive_roi_predictor"] = arp_stub
+
+roi_tracker_stub = types.ModuleType("roi_tracker")
+
+class ROITracker:
+    def __init__(self, *a, **k):
+        pass
+
+    def diminishing(self) -> float:
+        return 0.05
+
+    def calculate_raroi(self, roi, **k):
+        return roi, roi, []
+
+    def score_workflow(self, wf_id, raroi, tau=None):
+        pass
+
+roi_tracker_stub.ROITracker = ROITracker
+sys.modules["roi_tracker"] = roi_tracker_stub
+sys.modules["menace.roi_tracker"] = roi_tracker_stub
+
+# Stub heavy modules to minimal placeholders
+for name in [
+    "chatgpt_idea_bot",
+    "chatgpt_enhancement_bot",
+    "shared_gpt_memory",
+    "shared_knowledge_module",
+    "local_knowledge_module",
+    "implementation_optimiser_bot",
+    "self_coding_engine",
+    "error_bot",
+]:
+    mod = types.ModuleType(name)
+    if name == "local_knowledge_module":
+        class LocalKnowledgeModule:
+            pass
+
+        mod.LocalKnowledgeModule = LocalKnowledgeModule
+        mod.init_local_knowledge = lambda *a, **k: None
+    if name == "self_coding_engine":
+        class SelfCodingEngine:
+            pass
+
+        mod.SelfCodingEngine = SelfCodingEngine
+    if name == "error_bot":
+        class ErrorDB:
+            def __init__(self, *a, **k):
+                pass
+
+        class ErrorBot:
+            def __init__(self, *a, **k):
+                pass
+
+        mod.ErrorDB = ErrorDB
+        mod.ErrorBot = ErrorBot
+    sys.modules[name] = mod
+    sys.modules[f"menace.{name}"] = mod
+
+mp_stub = types.ModuleType("model_automation_pipeline")
+
+class AutomationResult:
+    def __init__(self, package=None, roi=None):
+        self.package = package
+        self.roi = roi
+        self.workflow_evolution = None
+        self.warnings = None
+
+mp_stub.AutomationResult = AutomationResult
+
+class ModelAutomationPipeline:
+    def __init__(self, *a, **k):
+        pass
+
+    def run(self, model: str, energy: int = 1):
+        return AutomationResult(package=None, roi=prb_stub.ROIResult(1.0))
+
+mp_stub.ModelAutomationPipeline = ModelAutomationPipeline
+sys.modules["model_automation_pipeline"] = mp_stub
+sys.modules["menace.model_automation_pipeline"] = mp_stub
+
+prb_stub = types.ModuleType("pre_execution_roi_bot")
+
+class ROIResult:
+    def __init__(self, roi, *a):
+        self.roi = roi
+
+prb_stub.ROIResult = ROIResult
+class PreExecutionROIBot:
+    pass
+
+prb_stub.PreExecutionROIBot = PreExecutionROIBot
+class BuildTask:
+    pass
+
+prb_stub.BuildTask = BuildTask
+sys.modules["pre_execution_roi_bot"] = prb_stub
+sys.modules["menace.pre_execution_roi_bot"] = prb_stub
+
 neuro_mod = types.ModuleType("neurosales")
 neuro_mod.add_message = lambda *a, **k: None
 neuro_mod.get_recent_messages = lambda *a, **k: []
@@ -177,6 +341,9 @@ sys.modules["neurosales"] = neuro_mod
 vs_mod = types.ModuleType("vector_service")
 vs_mod.CognitionLayer = object
 vs_mod.EmbeddableDBMixin = object
+vs_mod.Retriever = object
+vs_mod.FallbackResult = object
+vs_mod.SharedVectorService = object
 sys.modules["vector_service"] = vs_mod
 sub = types.ModuleType("vector_service.cognition_layer")
 sub.CognitionLayer = object
@@ -249,6 +416,70 @@ def test_run_cycle_triggers_workflow_evolution(tmp_path, monkeypatch):
     res = engine.run_cycle()
     assert called.get("ran") is True
     assert res.workflow_evolution[0]["workflow_id"] == 1
+
+
+def test_run_all_cycles_respects_workflow_stability():
+    class DummyEvolver:
+        def __init__(self):
+            self.calls = 0
+            self.variant_calls = 0
+            self.stable = False
+
+        def build_callable(self, seq: str):
+            return lambda: True
+
+        def evolve(self, baseline, wf_id, variants=1):
+            self.calls += 1
+            if not self.stable:
+                self.variant_calls += 1
+                self.stable = True
+            return baseline
+
+        def is_stable(self, wf_id):
+            return self.stable
+
+    dummy = DummyEvolver()
+
+    class DummyEngine:
+        def __init__(self):
+            self.workflow_evolver = dummy
+
+        def _should_trigger(self):
+            return True
+
+        def _evaluate_workflow_variants(self, seq: str, wf_id: int) -> str:
+            base = self.workflow_evolver.build_callable(seq)
+            self.workflow_evolver.evolve(base, wf_id)
+            return (
+                "stable" if self.workflow_evolver.is_stable(wf_id) else "baseline"
+            )
+
+        def _evolve_workflows(self, limit: int = 10):
+            status = self._evaluate_workflow_variants("a-b", 1)
+            return {1: {"status": status}}
+
+        def run_cycle(self, energy: int = 1):
+            res = types.SimpleNamespace(workflow_evolution=None)
+            evo = [
+                {"workflow_id": wf, **summary}
+                for wf, summary in self._evolve_workflows().items()
+            ]
+            res.workflow_evolution = evo
+            return res
+
+    engine = DummyEngine()
+    reg = sie.ImprovementEngineRegistry()
+    reg.register_engine("bot", engine)
+
+    res1 = reg.run_all_cycles()
+    assert dummy.calls == 1
+    assert dummy.variant_calls == 1
+    assert res1["bot"].workflow_evolution[0]["status"] == "stable"
+
+    res2 = reg.run_all_cycles()
+    assert dummy.calls == 2
+    assert dummy.variant_calls == 1
+    assert res2["bot"].workflow_evolution[0]["status"] == "stable"
 
 
 def test_schedule_energy_threshold(tmp_path, monkeypatch):

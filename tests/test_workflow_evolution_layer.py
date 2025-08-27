@@ -124,7 +124,7 @@ def evolution_setup():
 
         def is_stable(self, wf, current_roi=None, threshold=None):
             entry = self.data.get(wf)
-            if not entry:
+            if not entry or "roi" not in entry:
                 return False
             if current_roi is not None and threshold is not None:
                 prev = entry.get("roi", 0.0)
@@ -139,7 +139,10 @@ def evolution_setup():
             self.data[wf] = entry
 
         def clear(self, wf):
-            self.data.pop(wf, None)
+            entry = self.data.get(wf)
+            if entry:
+                entry.pop("roi", None)
+                self.data[wf] = entry
 
         def clear_all(self):
             self.data.clear()
@@ -257,6 +260,36 @@ def test_gating_prevents_further_evolution(monkeypatch, tmp_path, evolution_setu
     scorer.roi_values = [1.0]
     scorer.run_ids.clear()
     result = wem.evolve(baseline_workflow, workflow_id=3, variants=1)
+    assert result is baseline_workflow
+    assert scorer.run_ids == ["baseline"]
+
+
+def test_multiple_low_roi_cycles_trigger_stability(
+    monkeypatch, evolution_setup, baseline_workflow
+):
+    wem = evolution_setup.module
+    scorer = evolution_setup.scorer
+
+    monkeypatch.setenv("ROI_GATING_THRESHOLD", "0.05")
+    monkeypatch.setenv("ROI_GATING_CONSECUTIVE", "2")
+
+    # first cycle with small positive delta
+    scorer.roi_values = [1.0, 1.01]
+    scorer.run_ids.clear()
+    wem.evolve(baseline_workflow, workflow_id=4, variants=1)
+    assert not wem.is_stable(4)
+    assert len(scorer.run_ids) == 2
+
+    # second cycle triggers stability via EMA gating
+    scorer.roi_values = [1.0, 1.01]
+    scorer.run_ids.clear()
+    wem.evolve(baseline_workflow, workflow_id=4, variants=1)
+    assert wem.is_stable(4)
+
+    # subsequent evolution should skip variant benchmarking
+    scorer.roi_values = [1.0]
+    scorer.run_ids.clear()
+    result = wem.evolve(baseline_workflow, workflow_id=4, variants=1)
     assert result is baseline_workflow
     assert scorer.run_ids == ["baseline"]
 
