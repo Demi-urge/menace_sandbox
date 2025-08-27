@@ -816,16 +816,18 @@ def _sandbox_cycle_runner(
             ctx.orchestrator.run_cycle(ctx.models)
         except Exception as exc:
             record_error(exc)
-        # Include any newly discovered modules after orchestrator modifications
-        include_orphan_modules(ctx)
+        finally:
+            # Include any newly discovered modules after orchestrator modifications
+            include_orphan_modules(ctx)
         logger.info("patch engine start", extra=log_record(cycle=idx))
         try:
             result = ctx.improver.run_cycle()
         except Exception as exc:
             record_error(exc)
             result = SimpleNamespace(roi=None)
-        # Include modules introduced during the improvement cycle
-        include_orphan_modules(ctx)
+        finally:
+            # Include modules introduced during the improvement cycle
+            include_orphan_modules(ctx)
         warnings = getattr(result, "warnings", None)
         if warnings:
             logger.warning("improvement warnings", extra=log_record(warnings=warnings))
