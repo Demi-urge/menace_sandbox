@@ -68,3 +68,32 @@ def test_prepopulated_data_and_telemetry():
     assert mod.duration >= 0
     assert mod.memory_after >= mod.memory_before
     assert runner.telemetry == metrics
+
+
+def test_custom_network_and_fs_mocks():
+    calls: list[str] = []
+
+    def workflow():
+        import urllib.request
+        urllib.request.urlopen("http://example.com")
+        import os
+        os.remove("foo.txt")
+        return "ok"
+
+    def fake_urlopen(url):
+        return "stubbed"
+
+    def fake_remove(path):
+        calls.append(str(path))
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run(
+        workflow,
+        safe_mode=True,
+        network_mocks={"urllib": fake_urlopen},
+        fs_mocks={"os.remove": fake_remove},
+    )
+
+    mod = metrics.modules[0]
+    assert mod.result == "ok"
+    assert calls  # fake_remove was invoked

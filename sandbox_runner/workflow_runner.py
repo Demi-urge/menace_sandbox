@@ -5,7 +5,9 @@ workflow callables inside an isolated temporary directory.  File system
 interactions such as :func:`open` or :class:`pathlib.Path.write_text` are
 monkeypatched so that reads and writes are confined to the sandbox.  When the
 ``safe_mode`` flag is enabled, common networking libraries are also patched to
-raise :class:`RuntimeError` on outbound requests.
+raise :class:`RuntimeError` on outbound requests.  Tests can provide custom
+mock functions so network calls may instead return stubbed responses and file
+operations can be intercepted.
 
 The runner exposes a simple API::
 
@@ -84,8 +86,18 @@ class WorkflowSandboxRunner:
         return root / p
 
     # ------------------------------------------------------------------
-    def _patch_filesystem(self, root: pathlib.Path, stack: contextlib.ExitStack) -> None:
-        """Redirect basic filesystem calls into ``root``."""
+    def _patch_filesystem(
+        self,
+        root: pathlib.Path,
+        stack: contextlib.ExitStack,
+        overrides: Mapping[str, Callable[..., Any]] | None = None,
+    ) -> None:
+        """Redirect basic filesystem calls into ``root``.
+
+        ``overrides`` allows specific file-system helpers to be replaced with
+        custom callables.  Keys are of the form ``"os.remove"`` or
+        ``"shutil.copy"`` and receive the resolved sandbox paths.
+        """
 
         original_open = builtins.open
 
@@ -138,7 +150,9 @@ class WorkflowSandboxRunner:
         stack.enter_context(mock.patch.object(pathlib.Path, "read_bytes", path_read_bytes))
 
         # Patch os and shutil helpers that mutate the filesystem
-        def wrap_os(name):
+        overrides = overrides or {}
+
+        def wrap_os(name: str) -> None:
             if hasattr(os, name):
                 original = getattr(os, name)
 
@@ -146,14 +160,15 @@ class WorkflowSandboxRunner:
                     real = self._resolve(root, path)
                     if name in {"rename", "replace"}:
                         real.parent.mkdir(parents=True, exist_ok=True)
-                    return _orig(real, *a, **kw)
+                    fn = overrides.get(f"os.{name}", _orig)
+                    return fn(real, *a, **kw)
 
                 stack.enter_context(mock.patch.object(os, name, _wrapped))
 
         for n in ["remove", "unlink", "rename", "replace"]:
             wrap_os(n)
 
-        def wrap_shutil(name):
+        def wrap_shutil(name: str) -> None:
             if hasattr(shutil, name):
                 original = getattr(shutil, name)
 
@@ -161,7 +176,8 @@ class WorkflowSandboxRunner:
                     src_path = self._resolve(root, src)
                     dst_path = self._resolve(root, dst)
                     dst_path.parent.mkdir(parents=True, exist_ok=True)
-                    return _orig(src_path, dst_path, *a, **kw)
+                    fn = overrides.get(f"shutil.{name}", _orig)
+                    return fn(src_path, dst_path, *a, **kw)
 
                 stack.enter_context(mock.patch.object(shutil, name, _wrapped))
 
@@ -169,57 +185,61 @@ class WorkflowSandboxRunner:
             wrap_shutil(n)
 
     # ------------------------------------------------------------------
-    def _patch_network(self, stack: contextlib.ExitStack) -> None:
-        """Disable network requests when ``safe_mode`` is enabled."""
+    def _patch_network(
+        self,
+        stack: contextlib.ExitStack,
+        overrides: Mapping[str, Callable[..., Any]] | None = None,
+    ) -> None:
+        """Disable network requests when ``safe_mode`` is enabled.
+
+        ``overrides`` may supply custom callables for specific libraries.  Keys
+        are ``"requests"``, ``"httpx"``, ``"urllib"`` and ``"socket"``.  When
+        omitted, network calls raise ``RuntimeError``.
+        """
+
+        overrides = overrides or {}
+
+        def blocked(*a, **kw):
+            raise RuntimeError("network access disabled in safe_mode")
 
         try:  # pragma: no cover - optional dependency
             import requests  # type: ignore
 
-            def _blocked(self, *a, **kw):
-                raise RuntimeError("network access disabled in safe_mode")
-
-            stack.enter_context(
-                mock.patch.object(requests.Session, "request", _blocked)
-            )
+            fn = overrides.get("requests", blocked)
+            stack.enter_context(mock.patch.object(requests.Session, "request", fn))
         except Exception:  # pragma: no cover
             pass
 
         try:  # pragma: no cover - optional dependency
             import httpx  # type: ignore
 
-            def _blocked(self, *a, **kw):
-                raise RuntimeError("network access disabled in safe_mode")
-
-            stack.enter_context(mock.patch.object(httpx.Client, "request", _blocked))
+            fn = overrides.get("httpx", blocked)
+            stack.enter_context(mock.patch.object(httpx.Client, "request", fn))
         except Exception:  # pragma: no cover
             pass
 
         try:  # pragma: no cover - optional dependency
             import urllib.request as urllib_request  # type: ignore
 
-            def _blocked(*a, **kw):
-                raise RuntimeError("network access disabled in safe_mode")
-
-            stack.enter_context(
-                mock.patch.object(urllib_request, "urlopen", _blocked)
-            )
+            fn = overrides.get("urllib", blocked)
+            stack.enter_context(mock.patch.object(urllib_request, "urlopen", fn))
         except Exception:  # pragma: no cover
             pass
 
         try:  # pragma: no cover - optional dependency
             import socket  # type: ignore
 
+            connect_fn = overrides.get("socket", blocked)
+
             class _PatchedSocket(socket.socket):
                 def connect(self, address):  # type: ignore[override]
-                    raise RuntimeError("network access disabled in safe_mode")
+                    return connect_fn(self, address)
 
             stack.enter_context(mock.patch.object(socket, "socket", _PatchedSocket))
 
-            def _blocked_create(*a, **kw):
-                raise RuntimeError("network access disabled in safe_mode")
-
+            create_fn = overrides.get("socket_create", blocked)
             stack.enter_context(
-                mock.patch.object(socket, "create_connection", _blocked_create)
+                mock.patch.object(socket, "create_connection", create_fn)
             )
         except Exception:  # pragma: no cover
             pass
@@ -231,6 +251,8 @@ class WorkflowSandboxRunner:
         *,
         safe_mode: bool = False,
         test_data: Mapping[str, str | bytes] | None = None,
+        network_mocks: Mapping[str, Callable[..., Any]] | None = None,
+        fs_mocks: Mapping[str, Callable[..., Any]] | None = None,
     ) -> RunMetrics:
         """Execute ``workflow`` inside a sandbox and return collected metrics.
 
@@ -238,6 +260,10 @@ class WorkflowSandboxRunner:
         Each module is executed in sequence and metrics are recorded for each
         invocation.  When ``safe_mode`` is ``False`` exceptions are re-raised
         after metrics for the failing module have been captured.
+
+        ``network_mocks`` and ``fs_mocks`` can supply custom callables for the
+        patched network and filesystem helpers respectively, allowing tests to
+        stub out behaviour rather than raising errors.
         """
 
         test_data = dict(test_data or {})
@@ -248,9 +274,9 @@ class WorkflowSandboxRunner:
             root = pathlib.Path(tmp)
 
             # Patch filesystem and optional network behaviour
-            self._patch_filesystem(root, stack)
+            self._patch_filesystem(root, stack, fs_mocks)
             if safe_mode:
-                self._patch_network(stack)
+                self._patch_network(stack, network_mocks)
 
             # Pre-populate any test data
             original_open = builtins.open
