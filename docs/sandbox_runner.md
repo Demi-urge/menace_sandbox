@@ -486,6 +486,41 @@ creates one‑step workflows for them. Enable recursive dependency scanning with
 `SANDBOX_DISCOVER_ISOLATED=0` or pass `--no-discover-isolated` to skip isolated
 module discovery.
 
+## WorkflowSandboxRunner
+
+`WorkflowSandboxRunner` executes a list of workflow steps inside a temporary
+directory. For each callable it generates argument dictionaries via
+`generate_input_stubs` and uses them when invoking the step. File mutations like
+`open`, `os.rename` or `shutil.copy` are patched so they operate inside the
+sandboxed root. When ``safe_mode=True`` the runner also monkeypatches
+`requests`, `httpx`, `urllib` and raw sockets so outbound network attempts raise
+``RuntimeError``. Telemetry such as duration, memory and exceptions is exposed
+through ``runner.telemetry``.
+
+Example:
+
+```python
+from sandbox_runner import WorkflowSandboxRunner
+
+def writer(path="out.txt"):
+    with open(path, "w") as fh:
+        fh.write("hello")
+
+def reader(path="out.txt"):
+    with open(path) as fh:
+        return fh.read()
+
+runner = WorkflowSandboxRunner([writer, reader], safe_mode=True)
+metrics = runner.run()
+print(metrics["modules"][1]["result"])
+print(runner.telemetry["modules"][0]["duration"])
+```
+
+Custom stub providers may be supplied via the ``stub_providers`` argument to
+inject domain‑specific payloads. The runner's automatic input generation and
+network/file mocking allow workflows to run without touching the host
+environment while ``runner.telemetry`` exposes the collected per‑module metrics.
+
 ## Workflow Simulations
 
 `run_workflow_simulations(workflows_db, env_presets=None)` replays stored
