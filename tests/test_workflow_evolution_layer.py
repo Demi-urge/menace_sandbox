@@ -140,6 +140,15 @@ def evolution_setup():
     stab_mod.WorkflowStabilityDB = WorkflowStabilityDB
     sys.modules["menace_sandbox.workflow_stability_db"] = stab_mod
 
+    summary_mod = ModuleType("menace_sandbox.workflow_summary_db")
+
+    class WorkflowSummaryDB:
+        def set_summary(self, workflow_id, status):
+            pass
+
+    summary_mod.WorkflowSummaryDB = WorkflowSummaryDB
+    sys.modules["menace_sandbox.workflow_summary_db"] = summary_mod
+
     # finally load workflow evolution manager --------------------------
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.workflow_evolution_manager",
@@ -212,9 +221,13 @@ def test_stable_when_no_variant_improves(evolution_setup, baseline_workflow):
     assert len(scorer.run_ids) == 3
 
 
-def test_gating_prevents_further_evolution(evolution_setup, baseline_workflow):
+def test_gating_prevents_further_evolution(monkeypatch, tmp_path, evolution_setup, baseline_workflow):
     wem = evolution_setup.module
     scorer = evolution_setup.scorer
+
+    monkeypatch.setenv("ROI_GATING_THRESHOLD", "0.05")
+    monkeypatch.setenv("ROI_GATING_CONSECUTIVE", "1")
+    monkeypatch.setattr(wem, "ROI_EMA_PATH", tmp_path / "ema.json")
 
     scorer.roi_values = [1.0, 1.02]
     scorer.run_ids.clear()
@@ -231,3 +244,56 @@ def test_gating_prevents_further_evolution(evolution_setup, baseline_workflow):
     result = wem.evolve(baseline_workflow, workflow_id=3, variants=1)
     assert result is baseline_workflow
     assert scorer.run_ids == ["baseline"]
+
+
+def test_roi_gating_counter(monkeypatch, tmp_path, evolution_setup, baseline_workflow):
+    wem = evolution_setup.module
+    scorer = evolution_setup.scorer
+
+    monkeypatch.setenv("ROI_GATING_THRESHOLD", "0.05")
+    monkeypatch.setenv("ROI_GATING_CONSECUTIVE", "2")
+    monkeypatch.setattr(wem, "ROI_EMA_PATH", tmp_path / "ema.json")
+
+    scorer.roi_values = [1.0, 1.01]
+    scorer.run_ids.clear()
+    wem.evolve(baseline_workflow, workflow_id=4, variants=1)
+    assert not wem.is_stable(4)
+
+    scorer.roi_values = [1.0, 1.01]
+    scorer.run_ids.clear()
+    wem.evolve(baseline_workflow, workflow_id=4, variants=1)
+    assert wem.is_stable(4)
+
+    scorer.roi_values = [1.0]
+    scorer.run_ids.clear()
+    wem.evolve(baseline_workflow, workflow_id=4, variants=1)
+    assert scorer.run_ids == ["baseline"]
+
+
+def test_roi_gating_counter_reset(monkeypatch, tmp_path, evolution_setup, baseline_workflow):
+    wem = evolution_setup.module
+    scorer = evolution_setup.scorer
+
+    monkeypatch.setenv("ROI_GATING_THRESHOLD", "0.05")
+    monkeypatch.setenv("ROI_GATING_CONSECUTIVE", "2")
+    monkeypatch.setattr(wem, "ROI_EMA_PATH", tmp_path / "ema.json")
+
+    scorer.roi_values = [1.0, 1.01]
+    scorer.run_ids.clear()
+    wem.evolve(baseline_workflow, workflow_id=5, variants=1)
+    assert not wem.is_stable(5)
+
+    scorer.roi_values = [1.0, 1.2]
+    scorer.run_ids.clear()
+    wem.evolve(baseline_workflow, workflow_id=5, variants=1)
+    assert not wem.is_stable(5)
+
+    scorer.roi_values = [1.0, 1.01]
+    scorer.run_ids.clear()
+    wem.evolve(baseline_workflow, workflow_id=5, variants=1)
+    assert not wem.is_stable(5)
+
+    scorer.roi_values = [1.0, 1.01]
+    scorer.run_ids.clear()
+    wem.evolve(baseline_workflow, workflow_id=5, variants=1)
+    assert wem.is_stable(5)
