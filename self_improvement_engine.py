@@ -4798,10 +4798,38 @@ class SelfImprovementEngine:
             added_modules.update(tested.get("added", []))
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("auto inclusion failed: %s", exc)
+        if added_modules:
+            dotted = [
+                Path(m).with_suffix("").as_posix().replace("/", ".")
+                for m in added_modules
+            ]
+            try:  # pragma: no cover - best effort
+                grapher = getattr(self, "module_synergy_grapher", None)
+                if grapher is None:
+                    from module_synergy_grapher import ModuleSynergyGrapher
 
-        record_new = getattr(self, "_record_new_modules", None)
-        if record_new:
-            record_new(added_modules)
+                    grapher = ModuleSynergyGrapher(root=repo)
+                    graph_path = repo / "sandbox_data" / "module_synergy_graph.json"
+                    try:
+                        grapher.load(graph_path)
+                    except Exception:  # pragma: no cover - best effort
+                        pass
+                    self.module_synergy_grapher = grapher
+                grapher.update_graph(dotted)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("module synergy update failed: %s", exc)
+
+            try:  # pragma: no cover - best effort
+                clusterer = getattr(self, "intent_clusterer", None)
+                if clusterer is None:
+                    from intent_clusterer import IntentClusterer
+
+                    clusterer = IntentClusterer()
+                    self.intent_clusterer = clusterer
+                paths = [repo / m for m in added_modules]
+                clusterer.index_modules(paths)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("intent clustering failed: %s", exc)
 
         try:
             self._refresh_module_map(added_modules)
