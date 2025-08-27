@@ -56,6 +56,22 @@ def save_all_summaries(directory: str | Path = ".", *, graph: WorkflowGraph | No
         except Exception:
             parents, children = [], []
 
+        # Load metadata from corresponding workflow spec when available
+        spec_path = out_dir / f"{wid}.workflow.json"
+        if not spec_path.exists():
+            spec_path = out_dir / "workflows" / f"{wid}.workflow.json"
+        metadata: dict = {}
+        spec_data = None
+        if spec_path.exists():
+            try:
+                spec_data = json.loads(spec_path.read_text())
+            except Exception:
+                spec_data = None
+            if isinstance(spec_data, dict):
+                md = spec_data.get("metadata")
+                if isinstance(md, dict):
+                    metadata = md
+
         data = {
             "workflow_id": wid,
             "cumulative_roi": cumulative,
@@ -63,24 +79,22 @@ def save_all_summaries(directory: str | Path = ".", *, graph: WorkflowGraph | No
             "average_roi": avg,
             "parents": list(parents),
             "children": list(children),
+            "mutation_description": metadata.get("mutation_description", ""),
+            "parent_id": metadata.get("parent_id"),
+            "created_at": metadata.get("created_at"),
         }
         path = out_dir / f"{wid}.summary.json"
         path.write_text(json.dumps(data, indent=2))
 
         # Update the workflow specification with the summary path when possible
-        spec_path = out_dir / f"{wid}.workflow.json"
-        if not spec_path.exists():
-            spec_path = out_dir / "workflows" / f"{wid}.workflow.json"
-        if spec_path.exists():
+        if spec_data is not None:
             try:
-                spec_data = json.loads(spec_path.read_text())
-            except Exception:
-                spec_data = None
-            if isinstance(spec_data, dict):
-                metadata = dict(spec_data.get("metadata") or {})
+                metadata = dict(metadata)
                 metadata["summary_path"] = str(path)
                 spec_data["metadata"] = metadata
                 workflow_spec.save_spec(spec_data, spec_path)
+            except Exception:
+                pass
 
 
 def reset_history() -> None:
