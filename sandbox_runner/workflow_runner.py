@@ -1,262 +1,267 @@
+"""Sandboxed workflow runner.
+
+This module provides :class:`WorkflowSandboxRunner` which executes a single
+workflow callable inside an isolated temporary directory.  File system
+interactions such as :func:`open` or :class:`pathlib.Path.write_text` are
+monkeypatched so that reads and writes are confined to the sandbox.  When the
+``safe_mode`` flag is enabled, common networking libraries are also patched to
+raise :class:`RuntimeError` on outbound requests.
+
+The runner exposes a simple API::
+
+    runner = WorkflowSandboxRunner()
+    result, telemetry = runner.run(workflow)
+
+``telemetry`` contains information about the execution such as duration,
+success and captured errors.  The most recent telemetry is also available via
+``runner.telemetry``.
+"""
+
 from __future__ import annotations
 
-"""Run a series of workflow modules in a sandboxed directory."""
-
 import builtins
-import importlib
-import inspect
+import contextlib
 import logging
 import os
+import pathlib
+import shutil
 import tempfile
-from collections import Counter
 from time import perf_counter
-from types import ModuleType
-from typing import Iterable, Callable, Any, Dict, List
+from typing import Any, Callable, Mapping
+from unittest import mock
 
 try:  # pragma: no cover - optional dependency
     import psutil  # type: ignore
 except Exception:  # pragma: no cover - psutil not installed
     psutil = None  # type: ignore
 
-from .environment import generate_input_stubs
-from .stub_providers import StubProvider
-
 
 logger = logging.getLogger(__name__)
 
 
 class WorkflowSandboxRunner:
-    """Execute workflow modules sequentially inside an isolated sandbox.
+    """Run a workflow callable within an isolated sandbox.
 
-    Parameters
-    ----------
-    modules:
-        Iterable of callables or module names.  Each item represents a step in
-        the workflow.  When a module is provided its ``run`` attribute will be
-        invoked if present.
-    safe_mode:
-        When ``True`` network operations are disabled and exceptions from
-        modules are captured instead of bubbling up.
-    stub_providers:
-        Optional list of stub provider callbacks forwarded to
-        :func:`generate_input_stubs` for domain specific payloads.
+    Each invocation of :meth:`run` creates a fresh temporary directory and
+    redirects basic file and network operations into that directory.  The
+    callable is executed with all files confined to the sandbox so the host
+    system remains untouched.
     """
 
-    def __init__(
-        self,
-        modules: Iterable[str | ModuleType | Callable[..., Any]],
-        *,
-        safe_mode: bool = False,
-        stub_providers: List[StubProvider] | None = None,
-        metrics_db: Any | None = None,
-    ) -> None:
-        self.modules = list(modules)
-        self.safe_mode = safe_mode
-        self.stub_providers = stub_providers
-        self.metrics_db = metrics_db
-        self.crash_counts: Counter[str] = Counter()
-        self.telemetry: Dict[str, Any] = {}
+    def __init__(self) -> None:
+        self.telemetry: dict[str, Any] = {}
 
     # ------------------------------------------------------------------
-    def _resolve_path(self, root: str, path: str) -> str:
-        if os.path.isabs(path):
-            path = path.lstrip(os.sep)
-        return os.path.join(root, path)
+    def _resolve(self, root: pathlib.Path, path: str | os.PathLike[str]) -> pathlib.Path:
+        p = pathlib.Path(path)
+        if p.is_absolute():
+            p = pathlib.Path(*p.parts[1:])
+        return root / p
 
-    def _patch_filesystem(self, root: str) -> List[Callable[[], None]]:
-        """Redirect basic filesystem mutations into ``root``."""
-        teardowns: List[Callable[[], None]] = []
+    # ------------------------------------------------------------------
+    def _patch_filesystem(self, root: pathlib.Path, stack: contextlib.ExitStack) -> None:
+        """Redirect basic filesystem calls into ``root``."""
 
         original_open = builtins.open
 
-        def sandbox_open(
-            file: str | bytes | os.PathLike[str], mode: str = "r", *a, **kw
-        ):
-            path_str = os.fspath(file)
-            if str(path_str).startswith("/proc"):
-                return original_open(path_str, mode, *a, **kw)
-            real_path = self._resolve_path(root, path_str)
+        def sandbox_open(file, mode="r", *a, **kw):
+            path = self._resolve(root, file)
             if any(m in mode for m in ("w", "a", "x", "+")):
-                os.makedirs(os.path.dirname(real_path), exist_ok=True)
-            return original_open(real_path, mode, *a, **kw)
+                path.parent.mkdir(parents=True, exist_ok=True)
+            return original_open(path, mode, *a, **kw)
 
-        builtins.open = sandbox_open  # type: ignore[assignment]
-        teardowns.append(lambda: setattr(builtins, "open", original_open))
+        stack.enter_context(mock.patch("builtins.open", sandbox_open))
 
-        for name in ["remove", "unlink"]:
+        original_path_open = pathlib.Path.open
+        original_write_text = pathlib.Path.write_text
+        original_read_text = pathlib.Path.read_text
+        original_write_bytes = pathlib.Path.write_bytes
+        original_read_bytes = pathlib.Path.read_bytes
+
+        def path_open(path_obj, *a, **kw):
+            mode = a[0] if a else kw.get("mode", "r")
+            path = self._resolve(root, path_obj)
+            if any(m in mode for m in ("w", "a", "x", "+")):
+                path.parent.mkdir(parents=True, exist_ok=True)
+            return original_path_open(path, *a, **kw)
+
+        def path_write_text(path_obj, data, *a, **kw):
+            path = self._resolve(root, path_obj)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return original_write_text(path, data, *a, **kw)
+
+        def path_read_text(path_obj, *a, **kw):
+            path = self._resolve(root, path_obj)
+            return original_read_text(path, *a, **kw)
+
+        def path_write_bytes(path_obj, data, *a, **kw):
+            path = self._resolve(root, path_obj)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return original_write_bytes(path, data, *a, **kw)
+
+        def path_read_bytes(path_obj, *a, **kw):
+            path = self._resolve(root, path_obj)
+            return original_read_bytes(path, *a, **kw)
+
+        stack.enter_context(mock.patch.object(pathlib.Path, "open", path_open))
+        stack.enter_context(mock.patch.object(pathlib.Path, "write_text", path_write_text))
+        stack.enter_context(mock.patch.object(pathlib.Path, "read_text", path_read_text))
+        stack.enter_context(mock.patch.object(pathlib.Path, "write_bytes", path_write_bytes))
+        stack.enter_context(mock.patch.object(pathlib.Path, "read_bytes", path_read_bytes))
+
+        # Patch os and shutil helpers that mutate the filesystem
+        def wrap_os(name):
             if hasattr(os, name):
                 original = getattr(os, name)
 
-                def _wrapped(path, _orig=original):
-                    real_path = self._resolve_path(root, path)
-                    return _orig(real_path)
+                def _wrapped(path, *a, _orig=original, **kw):
+                    real = self._resolve(root, path)
+                    if name in {"rename", "replace"}:
+                        real.parent.mkdir(parents=True, exist_ok=True)
+                    return _orig(real, *a, **kw)
 
-                setattr(os, name, _wrapped)
-                teardowns.append(lambda n=name, o=original: setattr(os, n, o))
+                stack.enter_context(mock.patch.object(os, name, _wrapped))
 
-        for name in ["rename", "replace"]:
-            if hasattr(os, name):
-                original = getattr(os, name)
+        for n in ["remove", "unlink", "rename", "replace"]:
+            wrap_os(n)
 
-                def _wrapped(src, dst, _orig=original):
-                    src_path = self._resolve_path(root, src)
-                    dst_path = self._resolve_path(root, dst)
-                    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-                    return _orig(src_path, dst_path)
+        def wrap_shutil(name):
+            if hasattr(shutil, name):
+                original = getattr(shutil, name)
 
-                setattr(os, name, _wrapped)
-                teardowns.append(lambda n=name, o=original: setattr(os, n, o))
+                def _wrapped(src, dst, *a, _orig=original, **kw):
+                    src_path = self._resolve(root, src)
+                    dst_path = self._resolve(root, dst)
+                    dst_path.parent.mkdir(parents=True, exist_ok=True)
+                    return _orig(src_path, dst_path, *a, **kw)
 
-        return teardowns
+                stack.enter_context(mock.patch.object(shutil, name, _wrapped))
 
-    def _patch_network(self) -> List[Callable[[], None]]:
+        for n in ["copy", "copy2", "copyfile", "move"]:
+            wrap_shutil(n)
+
+    # ------------------------------------------------------------------
+    def _patch_network(self, stack: contextlib.ExitStack) -> None:
         """Disable network requests when ``safe_mode`` is enabled."""
-        teardowns: List[Callable[[], None]] = []
-        try:
+
+        try:  # pragma: no cover - optional dependency
             import requests  # type: ignore
 
-            original_req = requests.Session.request
-
-            def _blocked(self, *a, **kw):  # pragma: no cover - trivial
+            def _blocked(self, *a, **kw):
                 raise RuntimeError("network access disabled in safe_mode")
 
-            requests.Session.request = _blocked  # type: ignore[assignment]
-            teardowns.append(lambda: setattr(requests.Session, "request", original_req))
-        except Exception:  # pragma: no cover - optional dependency
+            stack.enter_context(
+                mock.patch.object(requests.Session, "request", _blocked)
+            )
+        except Exception:  # pragma: no cover
             pass
 
-        try:
+        try:  # pragma: no cover - optional dependency
             import httpx  # type: ignore
 
-            original_req = httpx.Client.request
-
-            def _blocked(self, *a, **kw):  # pragma: no cover - trivial
+            def _blocked(self, *a, **kw):
                 raise RuntimeError("network access disabled in safe_mode")
 
-            httpx.Client.request = _blocked  # type: ignore[assignment]
-            teardowns.append(lambda: setattr(httpx.Client, "request", original_req))
-        except Exception:  # pragma: no cover - optional dependency
+            stack.enter_context(mock.patch.object(httpx.Client, "request", _blocked))
+        except Exception:  # pragma: no cover
             pass
 
-        try:
+        try:  # pragma: no cover - optional dependency
             import urllib.request as urllib_request  # type: ignore
 
-            original_open = urllib_request.urlopen
-
-            def _blocked(*a, **kw):  # pragma: no cover - trivial
+            def _blocked(*a, **kw):
                 raise RuntimeError("network access disabled in safe_mode")
 
-            urllib_request.urlopen = _blocked  # type: ignore[assignment]
-            teardowns.append(lambda: setattr(urllib_request, "urlopen", original_open))
-        except Exception:  # pragma: no cover - optional dependency
+            stack.enter_context(
+                mock.patch.object(urllib_request, "urlopen", _blocked)
+            )
+        except Exception:  # pragma: no cover
             pass
 
-        return teardowns
+        try:  # pragma: no cover - optional dependency
+            import socket  # type: ignore
+
+            class _PatchedSocket(socket.socket):
+                def connect(self, address):  # type: ignore[override]
+                    raise RuntimeError("network access disabled in safe_mode")
+
+            stack.enter_context(mock.patch.object(socket, "socket", _PatchedSocket))
+
+            def _blocked_create(*a, **kw):
+                raise RuntimeError("network access disabled in safe_mode")
+
+            stack.enter_context(
+                mock.patch.object(socket, "create_connection", _blocked_create)
+            )
+        except Exception:  # pragma: no cover
+            pass
 
     # ------------------------------------------------------------------
-    def _load_callable(self, spec: str | ModuleType | Callable[..., Any]) -> tuple[str, Callable[[], Any]]:
-        if isinstance(spec, str):
-            module = importlib.import_module(spec)
-            func = getattr(module, "run", None)
-            if callable(func):
-                return module.__name__, func
-            raise AttributeError(f"module '{spec}' lacks a 'run' callable")
-        if callable(spec):
-            return getattr(spec, "__name__", repr(spec)), spec  # type: ignore[return-value]
-        if isinstance(spec, ModuleType):
-            func = getattr(spec, "run", None)
-            if callable(func):
-                return spec.__name__, func
-            raise AttributeError(f"module '{spec.__name__}' lacks a 'run' callable")
-        raise TypeError(f"Unsupported workflow step: {spec!r}")
+    def run(
+        self,
+        workflow: Callable[[], Any],
+        *,
+        safe_mode: bool = False,
+        test_data: Mapping[str, str | bytes] | None = None,
+    ) -> tuple[Any, dict[str, Any]]:
+        """Execute ``workflow`` inside a sandbox and return result and telemetry."""
 
-    # ------------------------------------------------------------------
-    def run(self) -> Dict[str, Any]:
-        """Execute the configured workflow and return success metrics."""
-        metrics: Dict[str, Any] = {"modules": [], "success": True}
+        test_data = dict(test_data or {})
 
+        start = perf_counter()
         proc = psutil.Process() if psutil else None
+        mem_start = proc.memory_info().rss if proc else 0
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            os.makedirs(os.path.join(tmpdir, "repos"), exist_ok=True)
-            os.makedirs(os.path.join(tmpdir, "data"), exist_ok=True)
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            root = pathlib.Path(tmp)
 
-            teardowns = self._patch_filesystem(tmpdir)
-            if self.safe_mode:
-                teardowns.extend(self._patch_network())
+            # Patch filesystem and optional network behaviour
+            self._patch_filesystem(root, stack)
+            if safe_mode:
+                self._patch_network(stack)
+
+            # Pre-populate any test data
+            original_open = builtins.open
+            for name, content in test_data.items():
+                real = self._resolve(root, name)
+                real.parent.mkdir(parents=True, exist_ok=True)
+                mode = "wb" if isinstance(content, (bytes, bytearray)) else "w"
+                with original_open(real, mode) as fh:
+                    fh.write(content)
+
+            success = True
+            error: str | None = None
+            result: Any | None = None
 
             try:
-                for step in self.modules:
-                    name, func = self._load_callable(step)
-                    stub: Dict[str, Any] = {}
-                    if inspect.signature(func).parameters:
-                        try:
-                            stubs = generate_input_stubs(
-                                1, target=func, providers=self.stub_providers
-                            )
-                            if stubs:
-                                stub = dict(stubs[0])
-                        except Exception:
-                            logger.exception("stub generation failed for %s", name)
-                    logger.info("running %s with stub %s", name, stub)
-                    start = perf_counter()
-                    mem_start = proc.memory_info().rss if proc else 0
-                    success = True
-                    result = None
-                    error: str | None = None
-                    try:
-                        result = func(**stub)
-                    except Exception as exc:  # pragma: no cover - exercise safe paths
-                        success = False
-                        error = str(exc)
-                        self.crash_counts[name] += 1
-                        metrics["success"] = False
-                        if not self.safe_mode:
-                            raise
-                    end = perf_counter()
-                    mem_end = proc.memory_info().rss if proc else mem_start
-                    mem_peak_raw = mem_end
-                    if proc:
-                        try:
-                            info = proc.memory_info()
-                            mem_end = info.rss
-                            mem_peak_raw = getattr(
-                                info,
-                                "peak_wset",
-                                getattr(info, "peak_rss", mem_end),
-                            )
-                        except Exception:  # pragma: no cover - platform specific
-                            pass
-                    duration = end - start
-                    mem_delta = max(mem_end - mem_start, 0) / (1024 * 1024)
-                    mem_peak = max(mem_peak_raw - mem_start, 0) / (1024 * 1024)
-                    mod_metrics = {
-                        "module": name,
-                        "success": success,
-                        "result": result,
-                        "error": error,
-                        "stub": stub,
-                        "duration": duration,
-                        "memory_delta": mem_delta,
-                        "memory_peak": mem_peak,
-                        "exception": not success,
-                    }
-                    metrics["modules"].append(mod_metrics)
-                    if self.metrics_db:
-                        try:  # pragma: no cover - external dependency
-                            self.metrics_db.log_eval(name, "duration", duration)
-                            self.metrics_db.log_eval(name, "memory_delta", mem_delta)
-                            self.metrics_db.log_eval(name, "memory_peak", mem_peak)
-                            self.metrics_db.log_eval(name, "crash", 0.0 if success else 1.0)
-                        except Exception:
-                            logger.exception("metrics logging failed for %s", name)
-                metrics["crash_counts"] = dict(self.crash_counts)
-                self.telemetry = metrics
-                return metrics
-            finally:
-                for td in reversed(teardowns):
-                    try:
-                        td()
-                    except Exception:  # pragma: no cover - best effort cleanup
-                        pass
+                result = workflow()
+            except Exception as exc:  # pragma: no cover - exercise failure paths
+                success = False
+                error = str(exc)
+                if not safe_mode:
+                    raise
+
+        end = perf_counter()
+        mem_end = proc.memory_info().rss if proc else mem_start
+        mem_peak_raw = mem_end
+        if proc:
+            try:  # pragma: no cover - platform specific
+                info = proc.memory_info()
+                mem_end = info.rss
+                mem_peak_raw = getattr(info, "peak_wset", getattr(info, "peak_rss", mem_end))
+            except Exception:
+                pass
+
+        telemetry = {
+            "success": success,
+            "error": error,
+            "duration": end - start,
+            "memory_delta": max(mem_end - mem_start, 0) / (1024 * 1024),
+            "memory_peak": max(mem_peak_raw - mem_start, 0) / (1024 * 1024),
+        }
+        self.telemetry = telemetry
+        return result, telemetry
+
+
+__all__ = ["WorkflowSandboxRunner"]
 
