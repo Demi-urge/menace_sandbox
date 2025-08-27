@@ -7713,16 +7713,16 @@ def auto_include_modules(
 
 
 # ----------------------------------------------------------------------
-def integrate_new_orphans(
-    repo_path: str | Path,
+def discover_and_integrate_orphans(
+    repo: Path,
     *,
     router: DBRouter | None = None,
 ) -> list[str]:
-    """Discover and integrate new orphan modules.
+    """Discover orphan modules and integrate them into the workflow system.
 
     Parameters
     ----------
-    repo_path:
+    repo:
         Root directory of the repository to scan.
     router:
         Optional :class:`db_router.DBRouter` forwarded to
@@ -7731,7 +7731,7 @@ def integrate_new_orphans(
     Returns
     -------
     list[str]
-        Repository‑relative paths of modules successfully added.
+        Repository-relative paths of modules successfully added.
     """
 
     try:
@@ -7740,7 +7740,6 @@ def integrate_new_orphans(
         logger.exception("discover_recursive_orphans import failed")
         return []
 
-    repo = Path(repo_path).resolve()
     try:
         mapping = discover_recursive_orphans(str(repo))
     except Exception:
@@ -7766,7 +7765,6 @@ def integrate_new_orphans(
     if not added:
         return []
 
-    graph_updated = False
     try:
         from module_synergy_grapher import ModuleSynergyGrapher, load_graph
 
@@ -7783,30 +7781,46 @@ def integrate_new_orphans(
         if getattr(grapher, "graph", None) is not None:
             names = [Path(m).with_suffix("").as_posix() for m in added]
             grapher.update_graph(names)
-            graph_updated = True
     except Exception:
         logger.warning("module synergy update failed", exc_info=True)
 
-    clusters_updated = False
     try:
         from intent_clusterer import IntentClusterer
 
         clusterer = IntentClusterer()
         clusterer.index_modules([repo / m for m in added])
-        clusters_updated = True
     except Exception:
         logger.warning("intent clustering update failed", exc_info=True)
 
-    logger.info(
-        "orphan_integration",
-        extra={
-            "added_modules": added,
-            "synergy_graph_updated": graph_updated,
-            "intent_clusters_updated": clusters_updated,
-        },
-    )
-
     return added
+
+
+# ----------------------------------------------------------------------
+def integrate_new_orphans(
+    repo_path: str | Path,
+    *,
+    router: DBRouter | None = None,
+) -> list[str]:
+    """Discover and integrate new orphan modules.
+
+    This wrapper exists for backward compatibility and forwards to
+    :func:`discover_and_integrate_orphans`.
+
+    Parameters
+    ----------
+    repo_path:
+        Root directory of the repository to scan.
+    router:
+        Optional :class:`db_router.DBRouter` forwarded to
+        :func:`auto_include_modules`.
+
+    Returns
+    -------
+    list[str]
+        Repository-relative paths of modules successfully added.
+    """
+
+    return discover_and_integrate_orphans(Path(repo_path).resolve(), router=router)
 
 
 # ----------------------------------------------------------------------
