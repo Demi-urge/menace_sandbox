@@ -74,19 +74,21 @@ def test_orphan_inclusion_after_synthesis(monkeypatch, tmp_path):
     ic_mod.IntentClusterer = DummyClusterer
     monkeypatch.setitem(sys.modules, "intent_clusterer", ic_mod)
 
+    def integrate_new_orphans(repo, router=None):
+        from sandbox_runner.environment import auto_include_modules
+
+        _, res = auto_include_modules(["extra/mod.py"], recursive=True, router=router)
+        return res.get("added", [])
+
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
+    pkg.integrate_new_orphans = integrate_new_orphans
+    pkg.try_integrate_into_workflows = fake_try
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
-    def integrate_orphans(repo, router=None):
-        from sandbox_runner.environment import auto_include_modules, try_integrate_into_workflows
-        _, res = auto_include_modules(["extra/mod.py"], recursive=True, router=router)
-        added = res.get("added", [])
-        try_integrate_into_workflows(added, router=router)
-        return added
-    oi_mod = types.ModuleType("sandbox_runner.orphan_integration")
-    oi_mod.integrate_orphans = integrate_orphans
-    monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_integration", oi_mod)
-    monkeypatch.setitem(sys.modules, "db_router", types.SimpleNamespace(GLOBAL_ROUTER=None))
+
+    monkeypatch.setitem(
+        sys.modules, "db_router", types.SimpleNamespace(GLOBAL_ROUTER=None)
+    )
 
     synth = ws.WorkflowSynthesizer()
     synth.generate_workflows(start_module="mod_a", limit=1, max_depth=1)
