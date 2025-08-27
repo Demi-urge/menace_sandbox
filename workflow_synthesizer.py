@@ -1528,6 +1528,7 @@ def save_workflow(
     """
 
     from workflow_spec import save_spec as _save_spec
+    from workflow_run_summary import save_summary as _save_summary
 
     spec = to_workflow_spec(workflow)
     spec["metadata"] = {
@@ -1538,12 +1539,21 @@ def save_workflow(
     out_path = _save_spec(spec, out)
 
     metadata = spec.get("metadata", {})
-    if "workflow_id" not in metadata or "created_at" not in metadata:
+    try:
+        saved = json.loads(out_path.read_text())
+        metadata = saved.get("metadata", metadata)
+    except Exception:  # pragma: no cover - best effort
+        saved = spec
+        metadata = dict(metadata)
+
+    workflow_id = metadata.get("workflow_id")
+    if workflow_id:
         try:
-            saved = json.loads(out_path.read_text())
-            metadata = saved.get("metadata", metadata)
-        except Exception:  # pragma: no cover - best effort
-            metadata = dict(metadata)
+            summary_path = _save_summary(str(workflow_id), out_path.parent)
+            metadata["summary_path"] = str(summary_path)
+            _save_spec(saved, out_path, summary_path=summary_path)
+        except Exception:
+            pass
 
     return out_path, metadata
 
