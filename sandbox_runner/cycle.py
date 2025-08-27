@@ -101,6 +101,8 @@ from .environment import (
     record_error,
     run_scenarios,
     ERROR_CATEGORY_COUNTS,
+    discover_and_integrate_orphans,
+    try_integrate_into_workflows,
 )
 from .resource_tuner import ResourceTuner
 from .orphan_discovery import (
@@ -111,7 +113,6 @@ from .orphan_discovery import (
     load_orphan_traces,
     append_orphan_traces,
 )
-from .orphan_integration import integrate_orphans
 
 _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
 
@@ -260,9 +261,12 @@ def run_workflow_scenarios(
 def include_orphan_modules(ctx: "SandboxContext") -> None:
     """Discover orphan modules and feed viable ones into the workflow.
 
-    This helper loads existing orphan traces, discovers new orphan modules,
-    integrates viable candidates via :func:`orphan_integration.integrate_orphans`
-    and updates caches, metrics and auxiliary indexes.
+    This helper loads existing orphan traces, discovers and integrates new
+    orphan modules via :func:`environment.discover_and_integrate_orphans` and
+    updates caches, metrics and auxiliary indexes.  Modules returned by the
+    helper are added to ``ctx.module_map`` before invoking
+    :func:`try_integrate_into_workflows` so that newly discovered modules are
+    immediately visible to workflow integration.
     """
 
     settings = getattr(ctx, "settings", SandboxSettings())
@@ -291,29 +295,27 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
     except Exception:
         pass
     ctx.orphan_traces = traces
+
     try:
-        _, tested, _, synergy_ok, cluster_ok = integrate_orphans(
-            ctx.repo, logger=logger, router=GLOBAL_ROUTER
-        )
+        added = discover_and_integrate_orphans(ctx.repo, router=GLOBAL_ROUTER)
     except Exception:
         logger.exception("orphan integration failed")
         return
 
-    added = tested.get("added", [])
-    failed = tested.get("failed", [])
-    redundant = tested.get("redundant", [])
-    legacy = tested.get("legacy", [])
+    failed: list[str] = []
+    redundant: list[str] = []
+    legacy: list[str] = []
 
     if not added:
         logger.info(
             "isolated module tests",
             extra=log_record(
                 added=[],
-                failed=sorted(failed),
-                redundant=sorted(redundant),
-                legacy=sorted(legacy),
-                synergy_graph=synergy_ok,
-                intent_clusters=cluster_ok,
+                failed=failed,
+                redundant=redundant,
+                legacy=legacy,
+                synergy_graph=False,
+                intent_clusters=False,
             ),
         )
         return
@@ -321,6 +323,11 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
     module_map = set(getattr(ctx, "module_map", set()))
     module_map.update(added)
     ctx.module_map = module_map
+
+    try:
+        try_integrate_into_workflows(sorted(added), router=GLOBAL_ROUTER)
+    except Exception:
+        logger.exception("workflow integration failed")
 
     try:
         prune_orphan_cache(ctx.repo, added, traces)
@@ -379,8 +386,8 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             failed=sorted(failed),
             redundant=sorted(redundant),
             legacy=sorted(legacy),
-            synergy_graph=synergy_ok,
-            intent_clusters=cluster_ok,
+            synergy_graph=False,
+            intent_clusters=False,
         ),
     )
 
