@@ -55,8 +55,6 @@ from .neuroplasticity import PathwayDB
 from .data_bot import MetricsDB
 from .roi_results_db import ROIResultsDB
 from .workflow_scorer_core import EvaluationResult
-from .workflow_evolution_bot import WorkflowEvolutionBot
-from .workflow_evolution_manager import _update_ema
 from .workflow_stability_db import WorkflowStabilityDB
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB, WorkflowRecord
@@ -5119,115 +5117,34 @@ class SelfImprovementEngine:
                 self.logger.exception("relevancy scan event publish failed")
 
     def _evaluate_workflow_variants(self, seq: str, wf_id: int) -> str:
-        """Benchmark workflow *seq* variants and adopt when ROI improves."""
+        """Evolve workflow *seq* using :class:`WorkflowEvolutionManager`."""
 
-        baseline = self.workflow_evolver.build_callable(seq)
-        bot = WorkflowEvolutionBot(self.pathway_db)
-        variants: dict[str, Callable[[], bool]] = {"baseline": baseline}
         try:
-            for v_seq in bot.generate_variants(workflow_id=wf_id):
-                variants[v_seq] = self.workflow_evolver.build_callable(v_seq)
+            baseline = self.workflow_evolver.build_callable(seq)
         except Exception:
             self.logger.exception(
-                "variant generation failed", extra=log_record(workflow_id=wf_id)
+                "baseline build failed", extra=log_record(workflow_id=wf_id)
             )
-        results = benchmark_workflow_variants(wf_id, variants)
-        baseline_roi = results["baseline"][0].roi_gain
-        threshold = baseline_roi
-        if self.roi_tracker:
-            try:
-                threshold += self.roi_tracker.diminishing()
-            except Exception:
-                self.logger.exception("roi threshold computation failed")
+            return "error"
 
-        best_name = "baseline"
-        best_result = results["baseline"][0]
-        for name, (res, _delta) in results.items():
-            if name != "baseline" and res.roi_gain > best_result.roi_gain:
-                best_name = name
-                best_result = res
-        delta = best_result.roi_gain - baseline_roi
-        stable = False
-        try:
-            stable = _update_ema(str(wf_id), delta)
-        except Exception:
-            pass
-        if stable:
-            try:
-                STABLE_WORKFLOWS.mark_stable(str(wf_id), baseline_roi)
-            except Exception:
-                self.logger.exception(
-                    "workflow stability mark failed",
-                    extra=log_record(workflow_id=wf_id),
-                )
-            if self.meta_logger and hasattr(self.meta_logger, "audit"):
-                try:
-                    self.meta_logger.audit.record(
-                        {"workflow_id": wf_id, "roi_delta": delta, "status": "stable"}
-                    )
-                except Exception:
-                    self.logger.exception("workflow variant meta logging failed")
-            return "stable"
+        evolved = self.workflow_evolver.evolve(baseline, wf_id)
+        status = "promoted"
+        if evolved is baseline:
+            status = (
+                "stable" if self.workflow_evolver.is_stable(wf_id) else "baseline"
+            )
 
-        status = "stable"
-        if best_name != "baseline" and best_result.roi_gain > threshold:
-            status = "promoted"
-            try:
-                ids = [abs(hash(m)) % 0xFFFFFFFF for m in best_name.split("-")]
-                self.pathway_db.record_sequence(ids)
-            except Exception:
-                self.logger.exception(
-                    "pathway db update failed", extra=log_record(workflow_id=wf_id)
-                )
-            if WorkflowDB and WorkflowRecord:
-                try:
-                    wf_db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
-                    wf_db.replace(wf_id, WorkflowRecord(workflow=best_name.split("-")))
-                except Exception:
-                    self.logger.exception(
-                        "workflow db update failed",
-                        extra=log_record(workflow_id=wf_id),
-                    )
-            if self.event_bus:
-                try:
-                    self.event_bus.publish(
-                        "workflow:promoted",
-                        {"workflow_id": wf_id, "variant": best_name},
-                    )
-                except Exception:
-                    self.logger.exception("workflow promotion event publish failed")
         if self.meta_logger and hasattr(self.meta_logger, "audit"):
             try:
                 self.meta_logger.audit.record(
-                    {"workflow_id": wf_id, "roi_delta": delta, "status": status}
+                    {"workflow_id": wf_id, "status": status}
                 )
             except Exception:
                 self.logger.exception("workflow variant meta logging failed")
         return status
 
-    def _evolve_workflows(self, limit: int = 10) -> dict[int, dict[str, float]]:
-        """Benchmark stored workflows against generated variants.
-
-        The method retrieves the latest workflow definitions either from
-        :class:`task_handoff_bot.WorkflowDB` or, if unavailable, from
-        :class:`workflow_graph.WorkflowGraph`.  Each workflow is executed as a
-        baseline using :class:`CompositeWorkflowScorer`.  Variants suggested by
-        :class:`WorkflowEvolutionBot` are evaluated in the same manner so their
-        ROI can be compared against the baseline.
-
-        Parameters
-        ----------
-        limit:
-            Maximum number of workflows to benchmark.  Only a subset is needed
-            during tests so the default keeps the operation lightweight.
-
-        Returns
-        -------
-        dict
-            Mapping of workflow identifiers to a summary containing the
-            baseline ROI, the best ROI achieved and the sequence that produced
-            that ROI.
-        """
+    def _evolve_workflows(self, limit: int = 10) -> dict[int, dict[str, str]]:
+        """Evolve stored workflows using :class:`WorkflowEvolutionManager`."""
 
         workflows: list[tuple[int, str]] = []
 
@@ -5263,28 +5180,19 @@ class SelfImprovementEngine:
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("workflow graph retrieval failed")
 
-        results: dict[int, dict[str, float]] = {}
-        bot = WorkflowEvolutionBot(self.pathway_db)
-
-        roi_thr = 0.0
         wf_flags: set[str] = set()
-        if self.roi_tracker:
-            try:
-                roi_thr = float(self.roi_tracker.diminishing())
-            except Exception:
-                self.logger.exception("workflow roi threshold computation failed")
         if getattr(self, "meta_logger", None):
             try:
-                flagged = self.meta_logger.diminishing(roi_thr)
+                flagged = self.meta_logger.diminishing(0.0)
                 wf_flags = {f for f in flagged if f.startswith("workflow:")}
-                # avoid persisting workflow flags alongside module flags
                 self.meta_logger.flagged_sections.difference_update(wf_flags)
             except Exception:
                 pass
 
+        results: dict[int, dict[str, str]] = {}
         for wf_id, seq in workflows:
             wf_key = f"workflow:{wf_id}"
-            if wf_key in wf_flags:
+            if wf_key in wf_flags or self.workflow_evolver.is_stable(wf_id):
                 continue
             try:
                 baseline_callable = self.workflow_evolver.build_callable(seq)
@@ -5294,80 +5202,15 @@ class SelfImprovementEngine:
                 )
                 continue
 
-            scorer = CompositeWorkflowScorer(results_db=ROIResultsDB(), tracker=self.roi_tracker)
-            try:
-                baseline_result = scorer.run(baseline_callable, str(wf_id), run_id="baseline")
-            except Exception:
-                self.logger.exception(
-                    "baseline execution failed", extra=log_record(workflow_id=wf_id)
+            evolved = self.workflow_evolver.evolve(baseline_callable, wf_id)
+            status = "promoted"
+            if evolved is baseline_callable:
+                status = (
+                    "stable"
+                    if self.workflow_evolver.is_stable(wf_id)
+                    else "baseline"
                 )
-                continue
-
-            best_roi = baseline_result.roi_gain
-            best_seq = seq
-
-            for v_seq in bot.generate_variants(workflow_id=wf_id):
-                try:
-                    variant_callable = self.workflow_evolver.build_callable(v_seq)
-                except Exception:
-                    continue
-
-                run_id = f"variant-{hash(v_seq) & 0xFFFFFFFF:x}"
-                try:
-                    variant_res = scorer.run(variant_callable, str(wf_id), run_id=run_id)
-                except Exception:
-                    continue
-
-                delta = variant_res.roi_gain - baseline_result.roi_gain
-                try:
-                    if self.roi_tracker is not None:
-                        self.roi_tracker.record_scenario_delta(run_id, delta)
-                    scorer.results_db.log_module_delta(
-                        str(wf_id),
-                        run_id,
-                        "workflow",
-                        float(getattr(variant_res, "runtime", 0.0)),
-                        float(getattr(variant_res, "success_rate", 0.0)),
-                        delta,
-                    )
-                except Exception:
-                    self.logger.exception(
-                        "variant delta logging failed",
-                        extra=log_record(workflow_id=wf_id, run_id=run_id),
-                    )
-                try:
-                    conn = shd.connect()
-                    try:
-                        shd.insert_entry(conn, {run_id: delta})
-                    finally:
-                        conn.close()
-                except Exception:
-                    self.logger.exception(
-                        "variant delta history logging failed",
-                        extra=log_record(workflow_id=wf_id, run_id=run_id),
-                    )
-
-                if variant_res.roi_gain > best_roi:
-                    best_roi = variant_res.roi_gain
-                    best_seq = v_seq
-
-            overall_delta = best_roi - baseline_result.roi_gain
-            if getattr(self, "meta_logger", None):
-                try:
-                    self.meta_logger.module_deltas.setdefault(wf_key, []).append(overall_delta)
-                    self.meta_logger.entropy_delta(wf_key)
-                except Exception:
-                    self.logger.exception(
-                        "workflow delta meta logging failed",
-                        extra=log_record(workflow_id=wf_id),
-                    )
-            if overall_delta <= roi_thr:
-                continue
-            results[int(wf_id)] = {
-                "baseline": baseline_result.roi_gain,
-                "best": best_roi,
-                "sequence": best_seq,
-            }
+            results[int(wf_id)] = {"status": status}
 
         return results
 
@@ -6431,6 +6274,8 @@ class SelfImprovementEngine:
                     candidates = []
                 for seq, _score in candidates:
                     wf_id = hash(seq) & 0xFFFFFFFF
+                    if self.workflow_evolver.is_stable(wf_id):
+                        continue
                     try:
                         status = self._evaluate_workflow_variants(seq, wf_id)
                         workflow_evolution_details.append(

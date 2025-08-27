@@ -1,10 +1,10 @@
-from types import SimpleNamespace
 import ast
 from pathlib import Path
 import os
+from types import SimpleNamespace
 
 
-def test_evolve_workflows_benchmarks_variants():
+def test_evolve_workflows_calls_evolver():
     class WorkflowDB:
         def __init__(self, *a, **k):
             pass
@@ -16,69 +16,24 @@ def test_evolve_workflows_benchmarks_variants():
         def __init__(self, *a, **k):
             self.graph = {"nodes": {}}
 
-    class WorkflowEvolutionBot:
-        def __init__(self, *a, **k):
-            pass
+    class Evolver:
+        def __init__(self):
+            self.called = []
 
-        def generate_variants(self, workflow_id):
-            yield "b-a"
+        def build_callable(self, seq):
+            return lambda: True
 
-    class CompositeWorkflowScorer:
-        def __init__(self, *a, **k):
-            self.results_db = k.get("results_db")
+        def evolve(self, fn, wf_id, variants=5):
+            self.called.append(wf_id)
+            return lambda: False  # new callable so promoted
 
-        def run(self, fn, wf_id, run_id):
-            roi = 1.0 if run_id == "baseline" else 2.0
-            return SimpleNamespace(roi_gain=roi, runtime=0.0, success_rate=1.0)
-
-    logged: dict[tuple[str, str, str], float] = {}
-
-    class ROIResultsDB:
-        def __init__(self, *a, **k):
-            pass
-
-        def log_result(self, *a, **k):
-            pass
-
-        def log_module_delta(
-            self, workflow_id, run_id, module, runtime, success_rate, roi_delta, **kw
-        ):
-            logged[(workflow_id, run_id, module)] = roi_delta
-
-    recorded: dict[str, float] = {}
-
-    class ROITracker:
-        def record_scenario_delta(self, name, delta, **kw):
-            recorded[name] = delta
-
-        def diminishing(self):
-            return 0.0
-
-    inserted: dict[str, float] = {}
-
-    class shd:
-        @staticmethod
-        def connect():
-            class Conn:
-                def close(self):
-                    pass
-
-            return Conn()
-
-        @staticmethod
-        def insert_entry(conn, entry):
-            inserted.update(entry)
+        def is_stable(self, wf_id):
+            return False
 
     ns = {
         "WorkflowDB": WorkflowDB,
         "WorkflowRecord": object,
         "WorkflowGraph": WorkflowGraph,
-        "WorkflowEvolutionBot": WorkflowEvolutionBot,
-        "CompositeWorkflowScorer": CompositeWorkflowScorer,
-        "ROIResultsDB": ROIResultsDB,
-        "ROITracker": ROITracker,
-        "shd": shd,
-        "EvaluationResult": SimpleNamespace,
         "log_record": lambda **k: k,
         "Path": Path,
         "os": os,
@@ -87,35 +42,25 @@ def test_evolve_workflows_benchmarks_variants():
     src = Path("self_improvement_engine.py").read_text()
     tree = ast.parse(src)
     class_node = next(
-        n
-        for n in tree.body
-        if isinstance(n, ast.ClassDef) and n.name == "SelfImprovementEngine"
+        n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SelfImprovementEngine"
     )
     method_node = next(
-        m
-        for m in class_node.body
-        if isinstance(m, ast.FunctionDef) and m.name == "_evolve_workflows"
+        m for m in class_node.body if isinstance(m, ast.FunctionDef) and m.name == "_evolve_workflows"
     )
     module = ast.Module([method_node], type_ignores=[])
     exec(compile(module, "<ast>", "exec"), ns)
     evolve = ns["_evolve_workflows"]
 
+    ev = Evolver()
     self_obj = SimpleNamespace(
-        workflow_evolver=SimpleNamespace(build_callable=lambda seq: lambda: True),
+        workflow_evolver=ev,
         pathway_db=None,
-        roi_tracker=ROITracker(),
         logger=SimpleNamespace(exception=lambda *a, **k: None),
         meta_logger=None,
     )
     results = evolve(self_obj)
-    assert results[1]["baseline"] == 1.0
-    assert results[1]["best"] == 2.0
-    assert results[1]["sequence"] == "b-a"
-
-    run_id = f"variant-{hash('b-a') & 0xFFFFFFFF:x}"
-    assert recorded[run_id] == 1.0
-    assert inserted[run_id] == 1.0
-    assert logged[("1", run_id, "workflow")] == 1.0
+    assert ev.called == [1]
+    assert results[1]["status"] == "promoted"
 
 
 def test_evolve_workflows_skips_flagged_workflow():
@@ -130,56 +75,28 @@ def test_evolve_workflows_skips_flagged_workflow():
         def __init__(self, *a, **k):
             self.graph = {"nodes": {}}
 
-    class WorkflowEvolutionBot:
-        def __init__(self, *a, **k):
-            pass
+    class Evolver:
+        def build_callable(self, seq):
+            return lambda: True
 
-        def generate_variants(self, workflow_id):
-            yield "b-a"
+        def evolve(self, fn, wf_id, variants=5):
+            return fn
 
-    class CompositeWorkflowScorer:
-        def __init__(self, *a, **k):
-            self.results_db = k.get("results_db")
-
-        def run(self, fn, wf_id, run_id):
-            roi = 1.0 if run_id == "baseline" else 2.0
-            return SimpleNamespace(roi_gain=roi, runtime=0.0, success_rate=1.0)
-
-    class ROIResultsDB:
-        def __init__(self, *a, **k):
-            pass
-
-        def log_result(self, *a, **k):
-            pass
-
-        def log_module_delta(self, *a, **k):
-            pass
-
-    class ROITracker:
-        def record_scenario_delta(self, name, delta, **kw):
-            pass
-
-        def diminishing(self):
-            return 0.0
+        def is_stable(self, wf_id):
+            return False
 
     class MetaLogger:
         def __init__(self):
             self.module_deltas = {"workflow:1": [0.0, 0.0, 0.0]}
             self.flagged_sections = set()
 
-        def diminishing(self, threshold, consecutive=3, entropy_threshold=None):
+        def diminishing(self, threshold):
             return ["workflow:1"]
 
     ns = {
         "WorkflowDB": WorkflowDB,
         "WorkflowRecord": object,
         "WorkflowGraph": WorkflowGraph,
-        "WorkflowEvolutionBot": WorkflowEvolutionBot,
-        "CompositeWorkflowScorer": CompositeWorkflowScorer,
-        "ROIResultsDB": ROIResultsDB,
-        "ROITracker": ROITracker,
-        "shd": SimpleNamespace(connect=lambda: SimpleNamespace(close=lambda: None), insert_entry=lambda *a, **k: None),
-        "EvaluationResult": SimpleNamespace,
         "log_record": lambda **k: k,
         "Path": Path,
         "os": os,
@@ -188,23 +105,18 @@ def test_evolve_workflows_skips_flagged_workflow():
     src = Path("self_improvement_engine.py").read_text()
     tree = ast.parse(src)
     class_node = next(
-        n
-        for n in tree.body
-        if isinstance(n, ast.ClassDef) and n.name == "SelfImprovementEngine"
+        n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SelfImprovementEngine"
     )
     method_node = next(
-        m
-        for m in class_node.body
-        if isinstance(m, ast.FunctionDef) and m.name == "_evolve_workflows"
+        m for m in class_node.body if isinstance(m, ast.FunctionDef) and m.name == "_evolve_workflows"
     )
     module = ast.Module([method_node], type_ignores=[])
     exec(compile(module, "<ast>", "exec"), ns)
     evolve = ns["_evolve_workflows"]
 
     self_obj = SimpleNamespace(
-        workflow_evolver=SimpleNamespace(build_callable=lambda seq: lambda: True),
+        workflow_evolver=Evolver(),
         pathway_db=None,
-        roi_tracker=ROITracker(),
         logger=SimpleNamespace(exception=lambda *a, **k: None),
         meta_logger=MetaLogger(),
     )
