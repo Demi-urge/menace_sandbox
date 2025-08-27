@@ -4761,6 +4761,82 @@ class SelfImprovementEngine:
             self.logger.exception("module map refresh failed: %s", exc)
 
     # ------------------------------------------------------------------
+    def _include_recursive_orphans(self) -> None:
+        """Discover and integrate orphaned modules with recursive expansion."""
+
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        try:
+            from sandbox_runner import discover_recursive_orphans as _discover
+
+            trace = _discover(str(repo), module_map=data_dir / "module_map.json")
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("recursive orphan discovery failed: %s", exc)
+            return
+
+        modules: list[str] = []
+        for mod, info in trace.items():
+            parents = [
+                str(Path(*p.split(".")).with_suffix(".py"))
+                for p in (info.get("parents") if isinstance(info, dict) else info)
+            ]
+            mod_path = str(Path(*mod.split(".")).with_suffix(".py"))
+            entry = {"parents": parents}
+            if isinstance(info, dict) and "redundant" in info:
+                entry["redundant"] = bool(info["redundant"])
+            self.orphan_traces.setdefault(mod_path, {}).update(entry)
+            modules.append(mod_path)
+
+        if not modules:
+            return
+
+        added_modules: set[str] = set()
+        try:
+            _tracker, tested = environment.auto_include_modules(
+                sorted(modules), recursive=True, validate=True
+            )
+            added_modules.update(tested.get("added", []))
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("auto inclusion failed: %s", exc)
+
+        record_new = getattr(self, "_record_new_modules", None)
+        if record_new:
+            record_new(added_modules)
+
+        try:
+            self._refresh_module_map(added_modules)
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("module map refresh failed: %s", exc)
+
+        traces = {m: self.orphan_traces.get(m, {}) for m in modules}
+        try:
+            if append_orphan_cache:
+                cache_entries = {
+                    m: {
+                        "parents": info.get("parents", []),
+                        "classification": info.get("classification", "candidate"),
+                        "redundant": info.get("redundant", False),
+                    }
+                    for m, info in traces.items()
+                }
+                append_orphan_cache(repo, cache_entries)
+            if append_orphan_classifications:
+                append_orphan_classifications(repo, cache_entries)
+            if append_orphan_traces:
+                trace_entries = {
+                    m: {
+                        "classification_history": info.get("classification_history", []),
+                        "roi_history": info.get("roi_history", []),
+                    }
+                    for m, info in traces.items()
+                    if info.get("classification_history") or info.get("roi_history")
+                }
+                if trace_entries:
+                    append_orphan_traces(repo, trace_entries)
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("orphan trace persistence failed")
+
+    # ------------------------------------------------------------------
     def enqueue_preventative_fixes(self, modules: Iterable[str]) -> None:
         """Queue modules for preventative patch generation."""
         for mod in modules:
@@ -5338,6 +5414,13 @@ class SelfImprovementEngine:
                             "successive orphan update failed: %s", exc
                         )
                         break
+
+                try:
+                    self._include_recursive_orphans()
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "recursive orphan inclusion failed: %s", exc
+                    )
 
             if self.meta_logger:
                 try:
