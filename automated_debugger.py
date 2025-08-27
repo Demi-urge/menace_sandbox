@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import logging
-import os
 import re
 import subprocess
 import tempfile
@@ -38,17 +37,17 @@ class AutomatedDebugger:
             try:
                 frames: list[traceback.FrameSummary] = []
                 for line in log.splitlines():
-                    l = line.lstrip()
-                    if not l.startswith("File"):
+                    line_stripped = line.lstrip()
+                    if not line_stripped.startswith("File"):
                         continue
-                    rest = l[4:].lstrip()
+                    rest = line_stripped[4:].lstrip()
                     if rest.startswith("\"") or rest.startswith("'"):
                         q = rest[0]
                         end = rest.find(q, 1)
                         if end == -1:
                             continue
                         file = rest[1:end]
-                        rest = rest[end + 1 :].lstrip(', ')
+                        rest = rest[end + 1:].lstrip(", ")
                     else:
                         parts = rest.split(",", 1)
                         file = parts[0].strip()
@@ -111,7 +110,9 @@ class AutomatedDebugger:
                 lines.append("    assert fn is not None")
                 lines.append("    sig = inspect.signature(fn)")
                 lines.append(
-                    "    req = [p for p in sig.parameters.values() if p.default is inspect._empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]"
+                    "    req = [p for p in sig.parameters.values() if "
+                    "p.default is inspect._empty and "
+                    "p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]"
                 )
                 lines.append("    if req:")
                 lines.append(f"        pytest.skip('function {func} requires args')")
@@ -153,9 +154,20 @@ class AutomatedDebugger:
 
             try:
                 _apply(path)
+                try:
+                    from sandbox_runner import integrate_new_orphans  # type: ignore
+
+                    integrate_new_orphans(Path.cwd())
+                except Exception:
+                    self.logger.exception(
+                        "integrate_new_orphans after apply_patch failed"
+                    )
                 res = subprocess.run(["pytest", "-q", str(path)], capture_output=True, text=True)
                 if res.returncode != 0:
-                    self.logger.error("test failed after patch: %s", (res.stdout + res.stderr).strip())
+                    self.logger.error(
+                        "test failed after patch: %s",
+                        (res.stdout + res.stderr).strip(),
+                    )
                     self.logger.warning("Patch failed. Reverting or retrying...")
                     continue
                 self.logger.info("patch succeeded for %s", path.name)
