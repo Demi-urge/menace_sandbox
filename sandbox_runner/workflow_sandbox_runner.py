@@ -16,6 +16,7 @@ import builtins
 import contextlib
 import io
 import inspect
+import json
 import pathlib
 import shutil
 import tempfile
@@ -29,6 +30,16 @@ try:  # pragma: no cover - psutil is optional
     import psutil  # type: ignore
 except Exception:  # pragma: no cover - psutil missing
     psutil = None  # type: ignore
+
+try:  # pragma: no cover - optional metrics exporter
+    from metrics_exporter import Gauge as _Gauge  # type: ignore
+except Exception:  # pragma: no cover - metrics exporter missing
+    _Gauge = None  # type: ignore
+
+try:  # pragma: no cover - optional meta logger
+    from .meta_logger import _SandboxMetaLogger  # type: ignore
+except Exception:  # pragma: no cover - meta logger missing
+    _SandboxMetaLogger = None  # type: ignore
 
 import tracemalloc
 
@@ -60,7 +71,11 @@ class WorkflowSandboxRunner:
     """Execute workflows inside an isolated sandbox."""
 
     def __init__(self) -> None:
-        self.telemetry: RunMetrics | None = None
+        # ``metrics`` retains the raw :class:`RunMetrics` instance while
+        # ``telemetry`` exposes a serialisable summary suitable for emission to
+        # loggers or exporters.
+        self.metrics: RunMetrics | None = None
+        self.telemetry: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------
     def _resolve(self, root: pathlib.Path, path: str | pathlib.Path) -> pathlib.Path:
@@ -78,6 +93,7 @@ class WorkflowSandboxRunner:
         test_data: Mapping[str, str | bytes] | None = None,
         network_mocks: Mapping[str, Callable[..., Any]] | None = None,
         fs_mocks: Mapping[str, Callable[..., Any]] | None = None,
+        roi_delta: float | None = None,
     ) -> RunMetrics:
         """Execute ``workflow`` inside a sandbox and return telemetry.
 
@@ -346,9 +362,73 @@ class WorkflowSandboxRunner:
                     )
                     metrics.modules.append(module_metric)
 
-            self.telemetry = metrics
+            # ------------------------------------------------------------------
+            # Aggregate metrics into a simple telemetry dictionary
+            times = {m.name: m.duration for m in metrics.modules}
+            peak_mem = max((m.memory_after for m in metrics.modules), default=0)
+            crash_freq = (
+                metrics.crash_count / len(metrics.modules)
+                if metrics.modules
+                else 0.0
+            )
+            telemetry: dict[str, Any] = {
+                "time_per_module": times,
+                "crash_frequency": crash_freq,
+                "peak_memory": peak_mem,
+            }
+            if roi_delta is not None:
+                telemetry["roi_delta"] = roi_delta
+
+            # Persist metrics inside the sandbox for debugging or analysis.
+            try:
+                (root / "telemetry.json").write_text(json.dumps(telemetry))
+            except Exception:
+                pass
+
+            # Optionally forward metrics to metrics_exporter gauges.
+            if _Gauge:
+                try:
+                    g_time = _Gauge(
+                        "workflow_sandbox_module_seconds",
+                        "Execution time per module",
+                        ["module"],
+                    )
+                    for mod, dur in times.items():
+                        g_time.labels(module=mod).set(dur)
+
+                    g_crash = _Gauge(
+                        "workflow_sandbox_crash_total",
+                        "Crash count",
+                    )
+                    g_crash.set(metrics.crash_count)
+
+                    g_mem = _Gauge(
+                        "workflow_sandbox_peak_memory_bytes",
+                        "Peak memory usage",
+                    )
+                    g_mem.set(peak_mem)
+
+                    if roi_delta is not None:
+                        g_roi = _Gauge(
+                            "workflow_sandbox_roi_delta",
+                            "ROI delta",
+                        )
+                        g_roi.set(roi_delta)
+                except Exception:
+                    pass
+
+            # Forward telemetry to _SandboxMetaLogger if available.
+            if _SandboxMetaLogger:
+                try:
+                    _SandboxMetaLogger(root / "sandbox_meta.log").audit.record(
+                        telemetry
+                    )
+                except Exception:
+                    pass
+
+            self.metrics = metrics
+            self.telemetry = telemetry
             return metrics
 
 
 __all__ = ["WorkflowSandboxRunner", "RunMetrics", "ModuleMetrics"]
-
