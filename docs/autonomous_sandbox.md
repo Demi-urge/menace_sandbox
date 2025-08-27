@@ -12,6 +12,26 @@ concurrency options, see the sections on [Predefined Profiles](sandbox_runner.md
 [Concurrency Settings](environment_generator.md#concurrency-settings) in
 `environment_generator.md`.
 
+## Sandboxed workflow execution
+
+Workflows can be exercised in isolation via
+`WorkflowSandboxRunner`. Each invocation runs the supplied callable inside a
+fresh temporary directory and redirects all file operations to that location so
+the host file system remains untouched. Test fixtures may pre-populate files by
+passing a ``test_data`` mapping and assert on results with
+``expected_outputs``.
+
+Setting ``safe_mode=True`` disables outbound network access by monkeypatching
+common HTTP clients such as ``urllib``, ``requests`` and ``httpx``. Any network
+attempt raises ``RuntimeError``, which is returned to the caller instead of
+propagating the exception.
+
+Additional instrumentation or telemetry can be attached through the
+``mock_injectors`` hook. Injectors receive the sandbox root path and can
+monkeypatch modules to record activity or provide further isolation. Each
+injector returns a teardown callable that is executed after the workflow
+completes to restore the original state.
+
 ## Upgrade forecasting
 
 See [UpgradeForecaster](upgrade_forecaster.md) for projecting ROI and risk across upcoming improvement cycles.
