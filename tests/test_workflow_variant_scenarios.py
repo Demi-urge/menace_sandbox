@@ -171,23 +171,30 @@ def _import_wem(side_effects, generate_calls=None):
     tracker_mod.ROITracker = ROITracker
     sys.modules["menace_sandbox.roi_tracker"] = tracker_mod
 
+    settings_mod = ModuleType("menace_sandbox.sandbox_settings")
+    settings_mod.SandboxSettings = lambda *a, **k: SimpleNamespace(roi_ema_alpha=0.1)
+    sys.modules["menace_sandbox.sandbox_settings"] = settings_mod
+
     stab_mod = ModuleType("menace_sandbox.workflow_stability_db")
     class WorkflowStabilityDB:
         def __init__(self, *a, **k):
             self.data = {}
 
         def is_stable(self, wf, current_roi=None, threshold=None):
-            if wf not in self.data:
+            entry = self.data.get(wf)
+            if not entry:
                 return False
             if current_roi is not None and threshold is not None:
-                prev = self.data[wf]
+                prev = entry.get("roi", 0.0)
                 if abs(current_roi - prev) > threshold:
                     del self.data[wf]
                     return False
             return True
 
         def mark_stable(self, wf, roi):
-            self.data[wf] = roi
+            entry = self.data.get(wf, {})
+            entry["roi"] = roi
+            self.data[wf] = entry
 
         def clear(self, wf):
             self.data.pop(wf, None)
@@ -195,9 +202,25 @@ def _import_wem(side_effects, generate_calls=None):
         def clear_all(self):
             self.data.clear()
 
+        def get_ema(self, wf):
+            entry = self.data.get(wf, {})
+            return entry.get("ema", 0.0), entry.get("count", 0)
+
+        def set_ema(self, wf, ema, count):
+            entry = self.data.get(wf, {})
+            entry.update({"ema": ema, "count": count})
+            self.data[wf] = entry
+
     stab_db = WorkflowStabilityDB()
     stab_mod.WorkflowStabilityDB = lambda *a, **k: stab_db
     sys.modules["menace_sandbox.workflow_stability_db"] = stab_mod
+
+    summary_mod = ModuleType("menace_sandbox.workflow_summary_db")
+    class WorkflowSummaryDB:
+        def set_summary(self, *a, **k):
+            pass
+    summary_mod.WorkflowSummaryDB = WorkflowSummaryDB
+    sys.modules["menace_sandbox.workflow_summary_db"] = summary_mod
 
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.workflow_evolution_manager", "workflow_evolution_manager.py"
@@ -222,7 +245,7 @@ def test_evolve_promotes_variant_on_roi_gain():
 
 
 def test_evolve_marks_stable_and_gates_repeats():
-    side_effects = [1.0, 1.05, 1.0]
+    side_effects = [1.0, 0.95, 1.0]
     generate_calls: list[int] = []
     wem, logged, _ = _import_wem(side_effects, generate_calls)
 

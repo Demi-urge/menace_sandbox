@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 import importlib
-import json
 import logging
 import os
-from pathlib import Path
 
 from .composite_workflow_scorer import CompositeWorkflowScorer
 from .workflow_evolution_bot import WorkflowEvolutionBot
@@ -15,6 +13,7 @@ from .roi_results_db import ROIResultsDB
 from .roi_tracker import ROITracker
 from .workflow_stability_db import WorkflowStabilityDB
 from .workflow_summary_db import WorkflowSummaryDB
+from .sandbox_settings import SandboxSettings
 try:  # pragma: no cover - optional at runtime
     from .workflow_graph import WorkflowGraph
 except Exception:  # pragma: no cover - best effort
@@ -31,45 +30,28 @@ logger = logging.getLogger(__name__)
 STABLE_WORKFLOWS = WorkflowStabilityDB()
 EVOLUTION_DB = EvolutionHistoryDB() if EvolutionHistoryDB is not None else None
 
-ROI_EMA_PATH = Path("sandbox_data/workflow_roi_ema.json")
-ROI_EMA_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-
-def _load_ema_data() -> dict[str, dict[str, float | int]]:
-    try:
-        with ROI_EMA_PATH.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-    except Exception:
-        data = {}
-    return {str(k): {"ema": float(v.get("ema", 0.0)), "count": int(v.get("count", 0))} for k, v in data.items()}
-
-
-def _save_ema_data(data: dict[str, dict[str, float | int]]) -> None:
-    try:
-        with ROI_EMA_PATH.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh)
-    except Exception:
-        pass  # pragma: no cover - best effort
-
-
 def _update_ema(workflow_id: str, delta: float) -> bool:
-    data = _load_ema_data()
-    entry = data.get(workflow_id, {"ema": 0.0, "count": 0})
-    ema = 0.3 * float(delta) + 0.7 * float(entry.get("ema", 0.0))
-    threshold = float(os.getenv("ROI_GATING_THRESHOLD", "0") or 0)
+    """Update ROI improvement EMA and return ``True`` when gating triggers."""
+
+    alpha = SandboxSettings().roi_ema_alpha
+    ema, count = STABLE_WORKFLOWS.get_ema(workflow_id)
+    ema = alpha * float(delta) + (1 - alpha) * ema
+
+    threshold = float(os.getenv("ROI_GATING_THRESHOLD", "0") or 0.0)
     if ema < threshold:
-        count = int(entry.get("count", 0)) + 1
+        count += 1
     else:
         count = 0
-    data[workflow_id] = {"ema": ema, "count": count}
-    _save_ema_data(data)
+
+    STABLE_WORKFLOWS.set_ema(workflow_id, ema, count)
+
     limit = int(os.getenv("ROI_GATING_CONSECUTIVE", "0") or 0)
     return limit > 0 and count >= limit
 
 
 def workflow_roi_ema(workflow_id: str | int) -> float:
-    data = _load_ema_data()
-    return float(data.get(str(workflow_id), {}).get("ema", 0.0))
+    ema, _ = STABLE_WORKFLOWS.get_ema(str(workflow_id))
+    return ema
 
 
 def _build_callable(sequence: str) -> Callable[[], bool]:
@@ -236,6 +218,24 @@ def evolve(
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed logging workflow evolution")
 
+        if _update_ema(wf_id_str, roi_delta):
+            STABLE_WORKFLOWS.mark_stable(wf_id_str, baseline_roi)
+            logger.info("workflow %s stable (ema gating)", wf_id_str)
+            try:
+                WorkflowSummaryDB().set_summary(int(workflow_id), "stable")
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to flag workflow %s as stable", workflow_id)
+            MutationLogger.log_mutation(
+                change="stable",
+                reason="stable",
+                trigger="workflow_evolution_manager",
+                performance=0.0,
+                workflow_id=int(workflow_id),
+                before_metric=baseline_roi,
+                after_metric=baseline_roi,
+            )
+            return workflow_callable
+
         if roi_delta > best_delta:
             best_delta = roi_delta
             best_roi = variant_result.roi_gain
@@ -248,24 +248,6 @@ def evolve(
     # Record final RAROI for history
     _, final_raroi, _ = tracker.calculate_raroi(best_roi)
     tracker.score_workflow(wf_id_str, final_raroi)
-
-    if _update_ema(wf_id_str, delta):
-        STABLE_WORKFLOWS.mark_stable(wf_id_str, baseline_roi)
-        logger.info("workflow %s stable (ema gating)", wf_id_str)
-        try:
-            WorkflowSummaryDB().set_summary(int(workflow_id), "stable")
-        except Exception:  # pragma: no cover - best effort
-            logger.exception("failed to flag workflow %s as stable", workflow_id)
-        MutationLogger.log_mutation(
-            change="stable",
-            reason="stable",
-            trigger="workflow_evolution_manager",
-            performance=0.0,
-            workflow_id=int(workflow_id),
-            before_metric=baseline_roi,
-            after_metric=baseline_roi,
-        )
-        return workflow_callable
 
     if delta <= 0:
         STABLE_WORKFLOWS.mark_stable(wf_id_str, baseline_roi)

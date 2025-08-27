@@ -3,7 +3,7 @@ from __future__ import annotations
 """Persist workflow stability status across runs."""
 
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
 import json
 
 
@@ -24,10 +24,19 @@ class WorkflowStabilityDB:
     def _load(self) -> None:
         try:
             with self.path.open("r", encoding="utf-8") as fh:
-                data = json.load(fh)
+                raw = json.load(fh)
         except Exception:
-            data = {}
-        self.data: Dict[str, float] = {str(k): float(v) for k, v in data.items()}
+            raw = {}
+        self.data: Dict[str, dict[str, float | int]] = {}
+        for k, v in raw.items():
+            if isinstance(v, dict):
+                self.data[str(k)] = {
+                    "roi": float(v.get("roi", 0.0)),
+                    "ema": float(v.get("ema", 0.0)),
+                    "count": int(v.get("count", 0)),
+                }
+            else:  # backward compatibility with float-only entries
+                self.data[str(k)] = {"roi": float(v), "ema": 0.0, "count": 0}
 
     def _save(self) -> None:
         try:
@@ -44,10 +53,11 @@ class WorkflowStabilityDB:
         threshold: float | None = None,
     ) -> bool:
         wf = str(workflow_id)
-        if wf not in self.data:
+        entry = self.data.get(wf)
+        if not entry or "roi" not in entry:
             return False
         if current_roi is not None and threshold is not None:
-            prev = float(self.data.get(wf, 0.0))
+            prev = float(entry.get("roi", 0.0))
             if abs(current_roi - prev) > float(threshold):
                 # metrics changed; remove from stable set
                 del self.data[wf]
@@ -57,7 +67,10 @@ class WorkflowStabilityDB:
 
     # ------------------------------------------------------------------
     def mark_stable(self, workflow_id: str, roi: float) -> None:
-        self.data[str(workflow_id)] = float(roi)
+        wf = str(workflow_id)
+        entry = self.data.get(wf, {})
+        entry.update({"roi": float(roi)})
+        self.data[wf] = entry
         self._save()
 
     def clear(self, workflow_id: str) -> None:
@@ -67,4 +80,16 @@ class WorkflowStabilityDB:
 
     def clear_all(self) -> None:
         self.data.clear()
+        self._save()
+
+    # ------------------------------------------------------------------
+    def get_ema(self, workflow_id: str) -> Tuple[float, int]:
+        entry = self.data.get(str(workflow_id), {})
+        return float(entry.get("ema", 0.0)), int(entry.get("count", 0))
+
+    def set_ema(self, workflow_id: str, ema: float, count: int) -> None:
+        wf = str(workflow_id)
+        entry = self.data.get(wf, {})
+        entry.update({"ema": float(ema), "count": int(count)})
+        self.data[wf] = entry
         self._save()

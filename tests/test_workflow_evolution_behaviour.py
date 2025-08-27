@@ -79,28 +79,44 @@ def _load_manager(variant_rois, generate_calls=None, diminishing=0.05):
     tracker_mod.ROITracker = ROITracker
     sys.modules["menace_sandbox.roi_tracker"] = tracker_mod
 
+    settings_mod = ModuleType("menace_sandbox.sandbox_settings")
+    settings_mod.SandboxSettings = lambda *a, **k: SimpleNamespace(roi_ema_alpha=0.1)
+    sys.modules["menace_sandbox.sandbox_settings"] = settings_mod
+
     class WorkflowStabilityDB:
         def __init__(self, *a, **k):
             self.data = {}
 
         def is_stable(self, wf, current_roi=None, threshold=None):
-            if wf not in self.data:
+            entry = self.data.get(wf)
+            if not entry:
                 return False
             if current_roi is not None and threshold is not None:
-                prev = self.data[wf]
+                prev = entry.get("roi", 0.0)
                 if abs(current_roi - prev) > threshold:
                     del self.data[wf]
                     return False
             return True
 
         def mark_stable(self, wf, roi):
-            self.data[wf] = roi
+            entry = self.data.get(wf, {})
+            entry["roi"] = roi
+            self.data[wf] = entry
 
         def clear(self, wf):
             self.data.pop(wf, None)
 
         def clear_all(self):
             self.data.clear()
+
+        def get_ema(self, wf):
+            entry = self.data.get(wf, {})
+            return entry.get("ema", 0.0), entry.get("count", 0)
+
+        def set_ema(self, wf, ema, count):
+            entry = self.data.get(wf, {})
+            entry.update({"ema": ema, "count": count})
+            self.data[wf] = entry
 
     stab_mod = ModuleType("menace_sandbox.workflow_stability_db")
     stab_mod.WorkflowStabilityDB = WorkflowStabilityDB
