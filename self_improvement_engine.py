@@ -4153,6 +4153,47 @@ class SelfImprovementEngine:
         return deps | set(initial.keys())
 
     # ------------------------------------------------------------------
+    def _include_recursive_orphans(self) -> None:
+        """Discover and include orphan modules recursively.
+
+        The helper re-runs :func:`discover_recursive_orphans` using the
+        existing ``sandbox_data/module_map.json`` mapping so that any newly
+        created modules are traced through their import chains and
+        automatically included into the sandbox environment.
+        """
+
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+
+        try:
+            from sandbox_runner import discover_recursive_orphans as _discover
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("discover_recursive_orphans import failed")
+            return
+
+        try:
+            trace = _discover(str(repo), module_map=data_dir / "module_map.json")
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("discover_recursive_orphans failed")
+            return
+
+        modules = [str(Path(*m.split(".")).with_suffix(".py")) for m in trace]
+        if not modules:
+            return
+
+        try:
+            _tracker, tested = environment.auto_include_modules(
+                sorted(modules), recursive=True, validate=True
+            )
+            record_new = getattr(self, "_record_new_modules", None)
+            if record_new:
+                record_new(set(tested.get("added", [])))
+            abs_paths = [str(repo / p) for p in modules]
+            self._integrate_orphans(abs_paths)
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("recursive orphan inclusion failed")
+
+    # ------------------------------------------------------------------
     def _update_orphan_modules(self, modules: Iterable[str] | None = None) -> None:
         """Discover orphan modules and update the tracking file or integrate ``modules``."""
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
@@ -5276,6 +5317,10 @@ class SelfImprovementEngine:
                 )
             except Exception:
                 self.logger.exception("workflow variant meta logging failed")
+        try:
+            self._include_recursive_orphans()
+        except Exception:
+            self.logger.exception("recursive orphan inclusion failed")
         return status
 
     def _evolve_workflows(self, limit: int = 10) -> dict[int, dict[str, str]]:
@@ -5346,6 +5391,10 @@ class SelfImprovementEngine:
                     else "baseline"
                 )
             results[int(wf_id)] = {"status": status}
+            try:
+                self._include_recursive_orphans()
+            except Exception:
+                self.logger.exception("recursive orphan inclusion failed")
 
         return results
 
