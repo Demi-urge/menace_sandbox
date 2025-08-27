@@ -240,7 +240,7 @@ def test_run_cycle_triggers_workflow_evolution(tmp_path, monkeypatch):
 
     def fake_evolve(limit: int = 10):
         called["ran"] = True
-        return {1: {"baseline": 0.1, "best": 0.2, "sequence": "a-b"}}
+        return {1: {"status": "promoted"}}
 
     monkeypatch.setattr(engine, "_evolve_workflows", fake_evolve)
 
