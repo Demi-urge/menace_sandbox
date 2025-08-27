@@ -1645,7 +1645,13 @@ class SelfImprovementEngine:
                                     self._alignment_review_last_commit(
                                         f"scenario_patch_{patch_id}"
                                     )
-                                    self._post_patch_orphan_integration()
+                                    try:
+                                        repo = Path(__file__).resolve().parent
+                                        integrate_orphans(repo, router=GLOBAL_ROUTER)
+                                    except Exception:
+                                        self.logger.exception(
+                                            "post_patch_orphan_integration_failed"
+                                        )
                                 except Exception:
                                     self.logger.exception(
                                         "alignment review failed for %s",
@@ -4770,120 +4776,6 @@ class SelfImprovementEngine:
             self.logger.exception("module map refresh failed: %s", exc)
 
     # ------------------------------------------------------------------
-    def _post_patch_orphan_integration(self) -> None:
-        """Integrate newly created orphan modules after patch application."""
-
-        try:
-            repo = Path(__file__).resolve().parent
-            integrate_orphans(repo, router=GLOBAL_ROUTER)
-        except Exception:
-            self.logger.exception("post_patch_orphan_integration_failed")
-
-    # ------------------------------------------------------------------
-    def _include_recursive_orphans(self) -> None:
-        """Discover and integrate orphaned modules with recursive expansion."""
-
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
-        try:
-            from sandbox_runner import discover_recursive_orphans as _discover
-
-            trace = _discover(str(repo), module_map=data_dir / "module_map.json")
-        except Exception as exc:  # pragma: no cover - best effort
-            self.logger.exception("recursive orphan discovery failed: %s", exc)
-            return
-
-        modules: list[str] = []
-        for mod, info in trace.items():
-            parents = [
-                str(Path(*p.split(".")).with_suffix(".py"))
-                for p in (info.get("parents") if isinstance(info, dict) else info)
-            ]
-            mod_path = str(Path(*mod.split(".")).with_suffix(".py"))
-            entry = {"parents": parents}
-            if isinstance(info, dict) and "redundant" in info:
-                entry["redundant"] = bool(info["redundant"])
-            self.orphan_traces.setdefault(mod_path, {}).update(entry)
-            modules.append(mod_path)
-
-        if not modules:
-            return
-
-        added_modules: set[str] = set()
-        try:
-            _tracker, tested = environment.auto_include_modules(
-                sorted(modules), recursive=True, validate=True
-            )
-            added_modules.update(tested.get("added", []))
-        except Exception as exc:  # pragma: no cover - best effort
-            self.logger.exception("auto inclusion failed: %s", exc)
-        if added_modules:
-            dotted = [
-                Path(m).with_suffix("").as_posix().replace("/", ".")
-                for m in added_modules
-            ]
-            try:  # pragma: no cover - best effort
-                grapher = getattr(self, "module_synergy_grapher", None)
-                if grapher is None:
-                    from module_synergy_grapher import ModuleSynergyGrapher
-
-                    grapher = ModuleSynergyGrapher(root=repo)
-                    graph_path = repo / "sandbox_data" / "module_synergy_graph.json"
-                    try:
-                        grapher.load(graph_path)
-                    except Exception:  # pragma: no cover - best effort
-                        pass
-                    self.module_synergy_grapher = grapher
-                grapher.update_graph(dotted)
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("module synergy update failed: %s", exc)
-
-            try:  # pragma: no cover - best effort
-                clusterer = getattr(self, "intent_clusterer", None)
-                if clusterer is None:
-                    from intent_clusterer import IntentClusterer
-
-                    clusterer = IntentClusterer()
-                    self.intent_clusterer = clusterer
-                paths = [repo / m for m in added_modules]
-                clusterer.index_modules(paths)
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("intent clustering failed: %s", exc)
-
-        try:
-            self._refresh_module_map(added_modules)
-        except Exception as exc:  # pragma: no cover - best effort
-            self.logger.exception("module map refresh failed: %s", exc)
-
-        traces = {m: self.orphan_traces.get(m, {}) for m in modules}
-        try:
-            if append_orphan_cache:
-                cache_entries = {
-                    m: {
-                        "parents": info.get("parents", []),
-                        "classification": info.get("classification", "candidate"),
-                        "redundant": info.get("redundant", False),
-                    }
-                    for m, info in traces.items()
-                }
-                append_orphan_cache(repo, cache_entries)
-            if append_orphan_classifications:
-                append_orphan_classifications(repo, cache_entries)
-            if append_orphan_traces:
-                trace_entries = {
-                    m: {
-                        "classification_history": info.get("classification_history", []),
-                        "roi_history": info.get("roi_history", []),
-                    }
-                    for m, info in traces.items()
-                    if info.get("classification_history") or info.get("roi_history")
-                }
-                if trace_entries:
-                    append_orphan_traces(repo, trace_entries)
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception("orphan trace persistence failed")
-
-    # ------------------------------------------------------------------
     def enqueue_preventative_fixes(self, modules: Iterable[str]) -> None:
         """Queue modules for preventative patch generation."""
         for mod in modules:
@@ -4976,7 +4868,13 @@ class SelfImprovementEngine:
                                 "patch_id": patch_id,
                             },
                         )
-                        self._post_patch_orphan_integration()
+                        try:
+                            repo = Path(__file__).resolve().parent
+                            integrate_orphans(repo, router=GLOBAL_ROUTER)
+                        except Exception:
+                            self.logger.exception(
+                                "post_patch_orphan_integration_failed"
+                            )
                 if self.error_bot and hasattr(self.error_bot, "db"):
                     try:
                         self.error_bot.db.add_telemetry(
@@ -5013,7 +4911,8 @@ class SelfImprovementEngine:
                     "post_patch_orphan_discovery",
                     extra=log_record(module=mod),
                 )
-                self._include_recursive_orphans()
+                repo = Path(__file__).resolve().parent
+                integrate_orphans(repo, router=GLOBAL_ROUTER)
             except Exception:
                 self.logger.exception(
                     "post_patch_orphan_discovery_failed",
@@ -5111,7 +5010,13 @@ class SelfImprovementEngine:
                                     "patch_id": patch_id,
                                 },
                             )
-                            self._post_patch_orphan_integration()
+                            try:
+                                repo = Path(__file__).resolve().parent
+                                integrate_orphans(repo, router=GLOBAL_ROUTER)
+                            except Exception:
+                                self.logger.exception(
+                                    "post_patch_orphan_integration_failed"
+                                )
                     if self.error_bot and hasattr(self.error_bot, "db"):
                         try:
                             self.error_bot.db.add_telemetry(
@@ -5148,7 +5053,8 @@ class SelfImprovementEngine:
                         "post_patch_orphan_discovery",
                         extra=log_record(module=mod),
                     )
-                    self._include_recursive_orphans()
+                    repo = Path(__file__).resolve().parent
+                    integrate_orphans(repo, router=GLOBAL_ROUTER)
                 except Exception:
                     self.logger.exception(
                         "post_patch_orphan_discovery_failed",
@@ -5487,7 +5393,8 @@ class SelfImprovementEngine:
                         break
 
                 try:
-                    self._include_recursive_orphans()
+                    repo = Path(__file__).resolve().parent
+                    integrate_orphans(repo, router=GLOBAL_ROUTER)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
                         "recursive orphan inclusion failed: %s", exc
