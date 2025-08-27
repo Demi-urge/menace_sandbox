@@ -70,3 +70,6 @@ def save_all_summaries(directory: str | Path = ".", *, graph: WorkflowGraph | No
 def reset_history() -> None:
     """Clear stored ROI history. Primarily intended for tests."""
     _WORKFLOW_ROI_HISTORY.clear()
+
+
+__all__ = ["record_run", "save_all_summaries", "reset_history"]
