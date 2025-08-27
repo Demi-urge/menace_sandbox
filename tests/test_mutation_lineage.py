@@ -1,4 +1,3 @@
-import types
 import pytest
 from menace.mutation_lineage import MutationLineage
 from menace.evolution_history_db import EvolutionHistoryDB, EvolutionEvent
@@ -44,7 +43,8 @@ def test_tree_backtrack_and_clone(tmp_path):
 
     clone_id = ml.clone_branch_for_ab_test(root_id, "variant")
     with p_db._connect() as conn:  # type: ignore[attr-defined]
-        parent = conn.execute("SELECT parent_patch_id FROM patch_history WHERE id=?", (clone_id,)).fetchone()[0]
+        query = "SELECT parent_patch_id FROM patch_history WHERE id=?"
+        parent = conn.execute(query, (clone_id,)).fetchone()[0]
     assert parent == root_id
 
 
@@ -110,9 +110,11 @@ def test_clone_branch_for_ab_test_copies_fields(tmp_path):
     clone_id = ml.clone_branch_for_ab_test(root_id, "variant")
     with p_db._connect() as conn:  # type: ignore[attr-defined]
         row = conn.execute(
-            "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, "
-            "complexity_before, complexity_after, trending_topic, code_id, code_hash, source_bot, version, parent_patch_id "
-            "FROM patch_history WHERE id=?",
+            (
+                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, "
+                "complexity_before, complexity_after, trending_topic, code_id, code_hash, "
+                "source_bot, version, parent_patch_id FROM patch_history WHERE id=?"
+            ),
             (clone_id,),
         ).fetchone()
 
@@ -148,3 +150,19 @@ def test_clone_branch_for_ab_test_copies_fields(tmp_path):
     assert source_bot == original.source_bot
     assert version == original.version
     assert parent_patch_id == root_id
+
+
+def test_render_tree_generates_dot(tmp_path):
+    e_db = EvolutionHistoryDB(tmp_path / "e.db")
+    p_db = PatchHistoryDB(tmp_path / "p.db")
+
+    patch = PatchRecord(filename="a.py", description="root", roi_before=0, roi_after=1)
+    pid = p_db.add(patch)
+    event = EvolutionEvent("root", 0, 1, 1.0, patch_id=pid, workflow_id=1)
+    e_db.add(event)
+
+    ml = MutationLineage(history_db=e_db, patch_db=p_db)
+    out = tmp_path / "tree.dot"
+    ml.render_tree(1, out)
+    assert out.exists()
+    assert "digraph" in out.read_text()

@@ -1,12 +1,29 @@
 from __future__ import annotations
 
-"""Utilities to reconstruct mutation lineage trees and manage branches."""
+"""Utilities to reconstruct mutation lineage trees and manage branches.
+
+The module can also visualise lineage trees.  :meth:`MutationLineage.render_tree`
+writes a workflow's mutation lineage to ``PNG`` or ``SVG`` images or a
+Graphviz ``DOT`` file depending on the extension of the output path.  When
+``networkx`` is installed it is used to construct the graph; otherwise a DOT
+string is generated directly.
+"""
 
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 import argparse
 import json
 from typing import List, Dict, Any, Optional
+
+try:  # pragma: no cover - optional dependency
+    import networkx as nx  # type: ignore
+    from networkx.drawing.nx_pydot import to_pydot  # type: ignore
+    _HAS_NX = True
+except Exception:  # pragma: no cover - executed when networkx missing
+    nx = None  # type: ignore
+    to_pydot = None  # type: ignore
+    _HAS_NX = False
 
 from .evolution_history_db import EvolutionHistoryDB
 from .code_database import PatchHistoryDB, PatchRecord
@@ -41,6 +58,89 @@ class MutationLineage:
             return node
 
         return [attach(n) for n in tree]
+
+    # ------------------------------------------------------------------
+    def render_tree(self, workflow_id: int, out_file: Path) -> None:
+        """Render mutation lineage for ``workflow_id`` to ``out_file``.
+
+        The output format is inferred from ``out_file``'s suffix and supports
+        ``.png``, ``.svg`` and ``.dot``.  When :mod:`networkx` is available the
+        tree is constructed using it; otherwise a Graphviz DOT string is built
+        directly.  PNG/SVG rendering falls back to :mod:`pydot` when available.
+        """
+
+        tree = self.build_tree(workflow_id)
+        ext = out_file.suffix.lower()
+
+        if _HAS_NX and to_pydot:
+            g = nx.DiGraph()
+
+            def walk(node: Dict[str, Any]) -> str:
+                nid = str(node.get("rowid"))
+                label = (
+                    node.get("patch", {}).get("description")
+                    or node.get("action")
+                    or nid
+                )
+                g.add_node(nid, label=label)
+                for child in node.get("children", []):
+                    cid = walk(child)
+                    g.add_edge(nid, cid)
+                return nid
+
+            for root in tree:
+                walk(root)
+
+            try:  # pragma: no cover - relies on optional deps
+                pdg = to_pydot(g)
+                if ext == ".png":
+                    pdg.write_png(str(out_file))
+                    return
+                if ext == ".svg":
+                    pdg.write_svg(str(out_file))
+                    return
+                if ext == ".dot":
+                    out_file.write_text(pdg.to_string())
+                    return
+            except Exception:
+                pass  # fall back to manual DOT generation
+
+        lines = ["digraph G {"]
+
+        def walk_dot(node: Dict[str, Any]) -> None:
+            nid = str(node.get("rowid"))
+            label = (
+                node.get("patch", {}).get("description")
+                or node.get("action")
+                or nid
+            )
+            lines.append(f'"{nid}" [label="{label}"];')
+            for child in node.get("children", []):
+                cid = str(child.get("rowid"))
+                lines.append(f'"{nid}" -> "{cid}";')
+                walk_dot(child)
+
+        for root in tree:
+            walk_dot(root)
+        lines.append("}")
+        dot = "\n".join(lines)
+
+        if ext == ".dot":
+            out_file.write_text(dot)
+            return
+
+        try:  # pragma: no cover - optional dependency
+            import pydot  # type: ignore
+
+            (graph,) = pydot.graph_from_dot_data(dot)
+            if ext == ".png":
+                graph.write_png(str(out_file))
+            elif ext == ".svg":
+                graph.write_svg(str(out_file))
+            else:
+                out_file.write_text(dot)
+        except Exception:  # pragma: no cover - pydot missing
+            out_file.write_text(dot)
 
     # ------------------------------------------------------------------
     def _fetch_patch(self, patch_id: int) -> Optional[Dict[str, Any]]:
@@ -160,6 +260,12 @@ def main() -> None:  # pragma: no cover - CLI glue
     c.add_argument("patch_id", type=int)
     c.add_argument("--description", default="clone")
 
+    v = sub.add_parser(
+        "visualize", help="render mutation lineage to an image or DOT file"
+    )
+    v.add_argument("workflow_id", type=int)
+    v.add_argument("out_file", type=Path)
+
     args = parser.parse_args()
     lineage = MutationLineage()
     if args.cmd == "tree":
@@ -168,6 +274,8 @@ def main() -> None:  # pragma: no cover - CLI glue
         print(json.dumps(lineage.backtrack_failed_path(args.patch_id)))
     elif args.cmd == "clone":
         print(lineage.clone_branch_for_ab_test(args.patch_id, args.description))
+    elif args.cmd == "visualize":
+        lineage.render_tree(args.workflow_id, args.out_file)
     else:
         parser.print_help()
 
