@@ -517,39 +517,53 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                 logger.exception("failed to index intent modules")
 
             associations: Dict[str, Dict[str, list[str]]] = {}
+            workflow_mods: set[str] = set()
             try:
                 grapher = getattr(ctx, "module_synergy_grapher", None)
                 clusterer = getattr(ctx, "intent_clusterer", None)
+                try:
+                    from module_synergy_grapher import get_synergy_cluster as _gsc
+                except Exception:  # pragma: no cover - fallback
+                    def _gsc(*_a: Any, **_kw: Any) -> set[str]:
+                        return set()
                 for mod in added:
                     mod_id = map_module_identifier(mod, ctx.repo)
                     assoc: Dict[str, list[str]] = {}
+                    synergy_ids: set[str] = set()
                     try:
                         if grapher and hasattr(grapher, "get_synergy_cluster"):
-                            cluster = grapher.get_synergy_cluster(mod_id)
-                        else:  # pragma: no cover - fallback
-                            from module_synergy_grapher import get_synergy_cluster as _gsc
-
-                            cluster = _gsc(mod_id)
-                        assoc["synergy"] = sorted(cluster)
+                            synergy_ids = set(grapher.get_synergy_cluster(mod_id))
+                        else:
+                            synergy_ids = set(_gsc(mod_id))
                     except Exception:
-                        assoc["synergy"] = []
+                        pass
+                    synergy_paths: list[str] = []
+                    for sid in synergy_ids:
+                        p = Path(sid).with_suffix(".py")
+                        if (ctx.repo / p).exists():
+                            synergy_paths.append(p.as_posix())
+                            workflow_mods.add(p.as_posix())
+                    assoc["synergy"] = sorted(synergy_paths)
+                    intent_paths: list[str] = []
                     try:
-                        related: list[str] = []
                         if clusterer and hasattr(clusterer, "find_modules_related_to"):
                             matches = clusterer.find_modules_related_to(mod_id)
                             for r in matches:
                                 p = getattr(r, "path", None)
                                 if not p:
                                     continue
+                                rp = Path(p)
                                 try:
-                                    rel = Path(p).resolve().relative_to(ctx.repo)
-                                    related.append(rel.as_posix())
+                                    rel = rp.resolve().relative_to(ctx.repo).as_posix()
                                 except Exception:
-                                    related.append(Path(p).as_posix())
-                        assoc["intent"] = sorted({r for r in related})
+                                    rel = rp.as_posix()
+                                intent_paths.append(rel)
+                                workflow_mods.add(rel)
                     except Exception:
-                        assoc["intent"] = []
+                        pass
+                    assoc["intent"] = sorted({r for r in intent_paths})
                     associations[mod] = assoc
+                    workflow_mods.add(mod)
             except Exception:
                 logger.exception("failed to compute module associations")
 
@@ -560,12 +574,15 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                     ctx.module_associations = existing
                 except Exception:
                     ctx.module_associations = associations
+            if workflow_mods:
                 try:
                     sig = inspect.signature(try_integrate_into_workflows)
                     kwargs = {}
                     if "associations" in sig.parameters:
                         kwargs["associations"] = associations
-                    try_integrate_into_workflows(added, **kwargs)
+                    if "intent_clusterer" in sig.parameters and clusterer:
+                        kwargs["intent_clusterer"] = clusterer
+                    try_integrate_into_workflows(sorted(workflow_mods), **kwargs)
                 except Exception:
                     logger.exception("workflow integration with associations failed")
 
