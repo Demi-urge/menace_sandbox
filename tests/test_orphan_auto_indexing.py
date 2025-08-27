@@ -21,16 +21,19 @@ def test_generate_workflows_indexes_discovered_modules(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
-    # Stub orphan integration to expose a new module and record indexing calls
+    # Stub orphan integration via centralized helper and record indexing calls
     calls: dict[str, list] = {}
-    def fake_integrate(repo):
+    def fake_integrate(repo, router=None):
         calls["synergy"] = ["extra.mod"]
         calls["intent"] = [Path(repo) / "extra/mod.py"]
         return ["extra/mod.py"]
-    env_mod = types.ModuleType("sandbox_runner.environment")
-    env_mod.integrate_new_orphans = fake_integrate
-    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
-    monkeypatch.setitem(sys.modules, "sandbox_runner", types.ModuleType("sandbox_runner"))
+    pkg = types.ModuleType("sandbox_runner")
+    pkg.__path__ = []
+    monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
+    post_mod = types.ModuleType("sandbox_runner.post_update")
+    post_mod.integrate_orphans = fake_integrate
+    monkeypatch.setitem(sys.modules, "sandbox_runner.post_update", post_mod)
+    monkeypatch.setitem(sys.modules, "db_router", SimpleNamespace(GLOBAL_ROUTER=None))
 
     synth = ws.WorkflowSynthesizer()
     synth.generate_workflows(start_module="mod_a", limit=1, max_depth=1)
