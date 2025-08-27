@@ -95,6 +95,7 @@ try:
 except Exception:  # pragma: no cover - fallback for flat layout
     import security_auditor  # type: ignore
 import sandbox_runner.environment as environment
+from sandbox_runner.post_update import integrate_orphans
 from .self_test_service import SelfTestService
 try:
     from . import self_test_service as sts
@@ -4774,7 +4775,7 @@ class SelfImprovementEngine:
 
         try:
             repo = Path(__file__).resolve().parent
-            environment.integrate_new_orphans(repo, router=GLOBAL_ROUTER)
+            integrate_orphans(repo, router=GLOBAL_ROUTER)
         except Exception:
             self.logger.exception("post_patch_orphan_integration_failed")
 

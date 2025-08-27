@@ -313,17 +313,10 @@ def evolve(
 
         # Post-promotion orphan discovery and integration
         from db_router import GLOBAL_ROUTER
-        import sandbox_runner
+        from sandbox_runner.post_update import integrate_orphans
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-        router = GLOBAL_ROUTER
-        integrate = getattr(
-            sandbox_runner, "integrate_new_orphans", lambda *_a, **_k: []
-        )
-        added_modules = integrate(repo, router=router)
-        try_integrate = getattr(sandbox_runner, "try_integrate_into_workflows", None)
-        if added_modules and callable(try_integrate):
-            try_integrate(added_modules)
+        integrate_orphans(repo, router=GLOBAL_ROUTER)
 
         return best_callable
 
