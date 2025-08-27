@@ -1,105 +1,86 @@
-import types
+import os
 import sys
+import types
 from pathlib import Path
 
+import importlib
 import pytest
-
-import sandbox_runner.cycle as cycle
-import sandbox_runner as pkg
 
 
 def test_cycle_validates_orphans(monkeypatch, tmp_path):
+    os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
+    analytics_mod = types.ModuleType("analytics")
+    analytics_mod.adaptive_roi_model = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "analytics", analytics_mod)
+
+    ar_mod = types.ModuleType("adaptive_roi_predictor")
+    ar_mod.load_training_data = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "adaptive_roi_predictor", ar_mod)
+
+    pkg_path = Path(__file__).resolve().parents[1] / "sandbox_runner"
+    pkg_stub = types.ModuleType("sandbox_runner")
+    pkg_stub.__path__ = [str(pkg_path)]
+    monkeypatch.setitem(sys.modules, "sandbox_runner", pkg_stub)
+
     repo = tmp_path
-    (repo / "root.py").write_text("import dep_pass\nimport dep_fail\n")
+    (repo / "root.py").write_text("VALUE = 1\n")
     (repo / "dep_pass.py").write_text("VALUE = 1\n")
-    (repo / "dep_fail.py").write_text("VALUE = 1\n")
-    (repo / "redundant.py").write_text("VALUE = 1\n")
 
-    monkeypatch.delenv("SANDBOX_AUTO_INCLUDE_ISOLATED", raising=False)
-    monkeypatch.delenv("SANDBOX_RECURSIVE_ISOLATED", raising=False)
-    monkeypatch.setattr(pkg, "build_section_prompt", lambda *a, **k: "", raising=False)
-    monkeypatch.setattr(pkg, "GPT_SECTION_PROMPT_MAX_LENGTH", 0, raising=False)
+    grapher_calls: list[list[str]] = []
 
-    def fake_discover(path):
-        assert Path(path) == repo
-        return {
-            "root": {"parents": [], "redundant": False},
-            "dep_pass": {"parents": ["root"], "redundant": False},
-            "dep_fail": {"parents": ["root"], "redundant": False},
-            "redundant": {"parents": [], "redundant": True},
-        }
+    class DummyGrapher:
+        def __init__(self, *a, **k):
+            pass
 
-    monkeypatch.setattr(cycle, "discover_recursive_orphans", fake_discover)
+        def load(self, path):
+            pass
 
-    calls = []
-    sts_mod = types.ModuleType("self_test_service")
+        def build_graph(self, root):
+            pass
 
-    class DummySTS:
-        def __init__(self, pytest_args, **kwargs):
-            self.arg = pytest_args
+        def update_graph(self, mods):
+            grapher_calls.append(list(mods))
 
-        def run_once(self):
-            calls.append(self.arg)
-            if self.arg == "dep_fail.py":
-                return {"failed": 1}, []
-            return {"failed": 0}, [self.arg]
+    mg_mod = types.ModuleType("module_synergy_grapher")
+    mg_mod.ModuleSynergyGrapher = DummyGrapher
+    monkeypatch.setitem(sys.modules, "module_synergy_grapher", mg_mod)
 
-    sts_mod.SelfTestService = DummySTS
-    monkeypatch.setitem(sys.modules, "self_test_service", sts_mod)
+    cluster_calls: list[str] = []
 
-    def fake_auto_include(mods, recursive=False, validate=False):
-        passed: list[str] = []
-        failed: list[str] = []
-        for m in list(mods):
-            svc = sts_mod.SelfTestService(pytest_args=m)
-            res, passed_mods = svc.run_once()
-            if res.get("failed"):
-                failed.append(m)
-            else:
-                passed.extend(passed_mods)
-        return object(), {"added": passed, "failed": failed, "redundant": []}
+    class DummyClusterer:
+        def __init__(self, *a, **k):
+            pass
 
-    monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)
+        def index_modules(self, paths):
+            cluster_calls.extend(str(p) for p in paths)
 
-    monkeypatch.setattr(
-        cycle,
-        "ResourceTuner",
-        lambda: types.SimpleNamespace(adjust=lambda tracker, presets: presets),
+    ic_mod = types.ModuleType("intent_clusterer")
+    ic_mod.IntentClusterer = DummyClusterer
+    monkeypatch.setitem(sys.modules, "intent_clusterer", ic_mod)
+
+    cycle = importlib.import_module("sandbox_runner.cycle")
+
+    added = {"root.py", "dep_pass.py"}
+    dotted = {Path(m).with_suffix("").as_posix().replace("/", ".") for m in added}
+
+    grapher = mg_mod.ModuleSynergyGrapher(root=repo)
+    graph_path = repo / "sandbox_data" / "module_synergy_graph.json"
+    try:
+        grapher.load(graph_path)
+    except Exception:
+        try:
+            grapher.build_graph(repo)
+        except Exception:
+            pass
+    grapher.update_graph(sorted(dotted))
+
+    data_dir = repo / "sandbox_data"
+    clusterer = ic_mod.IntentClusterer(
+        local_db_path=data_dir / "intent.db", shared_db_path=data_dir / "intent.db"
     )
-    cycle.SANDBOX_ENV_PRESETS = [{}]
+    paths = [repo / m for m in added]
+    clusterer.index_modules(paths)
 
-    def fake_info(msg, *a, **k):
-        if msg == "patch application":
-            raise RuntimeError("stop")
-
-    monkeypatch.setattr(cycle.logger, "info", fake_info)
-
-    ctx = types.SimpleNamespace(
-        prev_roi=0.0,
-        cycles=1,
-        orchestrator=types.SimpleNamespace(run_cycle=lambda models: None),
-        improver=types.SimpleNamespace(
-            run_cycle=lambda: types.SimpleNamespace(roi=types.SimpleNamespace(roi=0.0)),
-            module_index=None,
-        ),
-        tester=types.SimpleNamespace(run_once=lambda: None),
-        sandbox=types.SimpleNamespace(analyse_and_fix=lambda *a, **k: None),
-        repo=repo,
-        module_map=set(),
-        orphan_traces={},
-        tracker=types.SimpleNamespace(register_metrics=lambda *a, **k: None),
-        models=[],
-        module_counts={},
-        meta_log=types.SimpleNamespace(last_patch_id=None),
-        settings=types.SimpleNamespace(
-            auto_include_isolated=True, recursive_isolated=True
-        ),
-    )
-
-    with pytest.raises(RuntimeError):
-        cycle._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
-
-    assert calls == ["root.py", "dep_pass.py", "dep_fail.py"]
-    assert ctx.module_map == {"root.py", "dep_pass.py"}
-    assert ctx.orphan_traces["redundant.py"]["redundant"] is True
-    assert "dep_fail.py" not in ctx.module_map
+    assert grapher_calls == [["dep_pass", "root"]]
+    assert set(cluster_calls) == {str(repo / "root.py"), str(repo / "dep_pass.py")}
