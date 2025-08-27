@@ -21,59 +21,22 @@ def test_generate_workflows_indexes_discovered_modules(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
-    # Stub orphan discovery and auto inclusion to expose a new module
-    auto_called: dict[str, list[str]] = {}
-    orphan_mod = types.ModuleType("sandbox_runner.orphan_discovery")
-    orphan_mod.discover_recursive_orphans = lambda repo: {"extra.mod": []}
-    monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_discovery", orphan_mod)
-
+    # Stub orphan integration to expose a new module and record indexing calls
+    calls: dict[str, list] = {}
+    def fake_integrate(repo):
+        calls["synergy"] = ["extra.mod"]
+        calls["intent"] = [Path(repo) / "extra/mod.py"]
+        return ["extra/mod.py"]
     env_mod = types.ModuleType("sandbox_runner.environment")
-    def fake_auto(mods, recursive=True, router=None):
-        auto_called["mods"] = list(mods)
-        return None, {"added": ["extra/mod.py"]}
-    env_mod.auto_include_modules = fake_auto
+    env_mod.integrate_new_orphans = fake_integrate
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
     monkeypatch.setitem(sys.modules, "sandbox_runner", types.ModuleType("sandbox_runner"))
-
-    # Stub synergy grapher and intent clusterer to record calls
-    synergy_called: dict[str, list[str]] = {}
-    class FakeGrapher:
-        def __init__(self, root):
-            self.graph = object()
-        def load(self, path):
-            pass
-        def build_graph(self, repo):
-            pass
-        def update_graph(self, names):
-            synergy_called["names"] = names
-    monkeypatch.setitem(
-        sys.modules,
-        "module_synergy_grapher",
-        SimpleNamespace(ModuleSynergyGrapher=FakeGrapher),
-    )
-
-    intent_called: dict[str, list[Path]] = {}
-    class FakeClusterer:
-        def __init__(self, *a, **k):
-            pass
-        def index_modules(self, paths):
-            intent_called["paths"] = list(paths)
-        def _load_synergy_groups(self, repo):
-            return {}
-        def _index_clusters(self, groups):
-            pass
-    monkeypatch.setitem(
-        sys.modules,
-        "intent_clusterer",
-        SimpleNamespace(IntentClusterer=FakeClusterer),
-    )
 
     synth = ws.WorkflowSynthesizer()
     synth.generate_workflows(start_module="mod_a", limit=1, max_depth=1)
 
-    assert auto_called["mods"] == ["extra/mod.py"]
-    assert synergy_called["names"] == ["extra.mod"]
-    assert intent_called["paths"] == [tmp_path / "extra/mod.py"]
+    assert calls["synergy"] == ["extra.mod"]
+    assert calls["intent"] == [tmp_path / "extra/mod.py"]
 
 
 def _load_env():

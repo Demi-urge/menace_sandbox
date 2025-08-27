@@ -32,6 +32,24 @@ metrics_stub.MetricsDashboard = lambda *a, **k: object()
 menace_stub.metrics_dashboard = metrics_stub
 menace_stub.__path__ = [str(ROOT)]
 
+# Provide a lightweight stub to avoid pulling heavy ML dependencies
+if "sentence_transformers" not in sys.modules:
+    st_mod = types.ModuleType("sentence_transformers")
+
+    class _Vec(list):
+        def tolist(self) -> list[float]:
+            return list(self)
+
+    class _Sent:
+        def __init__(self, *a, **k):
+            pass
+
+        def encode(self, texts):
+            return [_Vec([0.0])]
+
+    st_mod.SentenceTransformer = _Sent
+    sys.modules["sentence_transformers"] = st_mod
+
 # Provide a lightweight sandbox_runner stub to avoid dependency checks
 sandbox_env = types.ModuleType("sandbox_runner.environment")
 sandbox_env.simulate_temporal_trajectory = lambda *a, **k: None
