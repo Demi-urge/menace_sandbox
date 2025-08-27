@@ -47,3 +47,21 @@ def test_runner_generates_stubs_and_logs(caplog):
     assert metrics['modules'][0]['stub'] == {'value': 7}
     assert metrics['modules'][0]['result'] == 8
     assert any('stub' in r.message and 'value' in r.message for r in caplog.records)
+
+
+def test_runner_records_telemetry_and_crashes():
+    def good():
+        return 1
+
+    def bad():
+        raise RuntimeError('boom')
+
+    runner = workflow_runner.WorkflowSandboxRunner([good, bad], safe_mode=True)
+    metrics = runner.run()
+
+    assert len(metrics['modules']) == 2
+    first = metrics['modules'][0]
+    assert 'duration' in first and 'memory_delta' in first and 'memory_peak' in first
+    assert metrics['modules'][1]['exception'] is True
+    assert runner.crash_counts['bad'] == 1
+    assert metrics['crash_counts']['bad'] == 1
