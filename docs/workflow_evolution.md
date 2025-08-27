@@ -23,16 +23,16 @@ Every variant is converted into a callable and scored by `CompositeWorkflowScore
 ## Diminishing-returns gating
 
 Workflow ROI improvements are tracked with an exponential moving average (EMA).
-Each workflow's EMA and consecutive failure count are persisted to
-`sandbox_data/workflow_roi_ema.json`, allowing the gate to survive process
-restarts. The EMA is updated with `0.3 * delta + 0.7 * previous_ema` on each
-cycle. When the EMA remains below `ROI_GATING_THRESHOLD` for
-`ROI_GATING_CONSECUTIVE` consecutive runs, `is_stable()` returns `True` and
-further evolution is skipped.
+Each workflow's EMA and consecutive failure count are stored alongside stability
+data in `WorkflowStabilityDB`, allowing the gate to survive process restarts.
+The EMA is updated with `alpha * delta + (1 - alpha) * previous_ema` where
+`alpha` defaults to ``SandboxSettings.roi_ema_alpha``. When the EMA remains
+below `ROI_GATING_THRESHOLD` for `ROI_GATING_CONSECUTIVE` consecutive runs,
+`is_stable()` returns `True` and further evolution is skipped.
 
 The counter resets automatically whenever the EMA rises above the threshold or a
-variant is promoted. Remove `sandbox_data/workflow_roi_ema.json` or clear the
-workflow from `WorkflowStabilityDB` to reset the gate manually.
+variant is promoted. Clear the workflow from `WorkflowStabilityDB` to reset the
+gate manually.
 
 Tune the gating behaviour with environment variables:
 

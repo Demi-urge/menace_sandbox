@@ -39,6 +39,7 @@ _stub(
     log_workflow_evolution=lambda **kw: None,
 )
 _stub("workflow_summary_db", WorkflowSummaryDB=object)
+_stub("sandbox_settings", SandboxSettings=lambda: SimpleNamespace(roi_ema_alpha=0.1))
 
 import menace_sandbox.workflow_evolution_manager as wem
 
@@ -94,6 +95,7 @@ def _setup(monkeypatch, baseline_roi=1.0, variant_roi=2.0, variant="b-a"):
     monkeypatch.setattr(wem.STABLE_WORKFLOWS, "mark_stable", lambda *a, **k: None)
     monkeypatch.setattr(wem.STABLE_WORKFLOWS, "clear", lambda *a, **k: None)
     monkeypatch.setattr(wem.STABLE_WORKFLOWS, "is_stable", lambda *a, **k: False)
+    monkeypatch.setattr(wem, "_update_ema", lambda *a, **k: False)
 
     graph_called = {}
     class FakeGraph:
