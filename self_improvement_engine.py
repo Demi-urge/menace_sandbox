@@ -4988,6 +4988,17 @@ class SelfImprovementEngine:
                 )
             if self.use_adaptive_roi:
                 self._log_action("preventative_patch", mod, roi_est, category)
+            try:
+                self.logger.info(
+                    "post_patch_orphan_discovery",
+                    extra=log_record(module=mod),
+                )
+                self._include_recursive_orphans()
+            except Exception:
+                self.logger.exception(
+                    "post_patch_orphan_discovery_failed",
+                    extra=log_record(module=mod),
+                )
 
     def _apply_high_risk_patches(self) -> None:
         """Predict high-risk modules and attempt preemptive fixes."""
@@ -5111,6 +5122,17 @@ class SelfImprovementEngine:
                     )
                 if self.use_adaptive_roi:
                     self._log_action("high_risk_patch", mod, roi_est, category)
+                try:
+                    self.logger.info(
+                        "post_patch_orphan_discovery",
+                        extra=log_record(module=mod),
+                    )
+                    self._include_recursive_orphans()
+                except Exception:
+                    self.logger.exception(
+                        "post_patch_orphan_discovery_failed",
+                        extra=log_record(module=mod),
+                    )
         except Exception as exc:
             self.logger.exception(
                 "high risk module prediction failed: %s", exc
