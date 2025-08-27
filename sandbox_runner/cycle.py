@@ -11,7 +11,6 @@ import shutil
 import time
 import asyncio
 import sys
-import inspect
 import threading
 import uuid
 from typing import Any, Dict, Mapping, TYPE_CHECKING
@@ -484,107 +483,52 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         ctx.module_map = module_map
 
         if added:
-            try:  # best effort – graph updates are non-critical
-                grapher = getattr(ctx, "module_synergy_grapher", None)
-                if grapher is None:
-                    from module_synergy_grapher import ModuleSynergyGrapher
+            try:
+                dotted = {
+                    Path(m).with_suffix("").as_posix().replace("/", ".")
+                    for m in added
+                }
+            except Exception:
+                dotted = {m.replace("/", ".").rsplit(".py", 1)[0] for m in added}
 
-                    grapher = ModuleSynergyGrapher(root=ctx.repo)
-                    graph_path = ctx.repo / "sandbox_data" / "module_synergy_graph.json"
+            try:  # best effort – graph updates are non-critical
+                from module_synergy_grapher import ModuleSynergyGrapher
+
+                grapher = ModuleSynergyGrapher(root=ctx.repo)
+                graph_path = ctx.repo / "sandbox_data" / "module_synergy_graph.json"
+                try:
+                    grapher.load(graph_path)
+                except Exception:
                     try:
-                        grapher.load(graph_path)
+                        grapher.build_graph(ctx.repo)
                     except Exception:
                         pass
-                    ctx.module_synergy_grapher = grapher
-                grapher.update_graph(sorted(added))
+                grapher.update_graph(sorted(dotted))
             except Exception:
                 logger.exception("failed to update synergy graph")
 
             try:
-                clusterer = getattr(ctx, "intent_clusterer", None)
-                if clusterer is None:
-                    from intent_clusterer import IntentClusterer
+                from intent_clusterer import IntentClusterer
 
-                    data_dir = ctx.repo / "sandbox_data"
-                    clusterer = IntentClusterer(
-                        local_db_path=data_dir / "intent.db",
-                        shared_db_path=data_dir / "intent.db",
-                    )
-                    ctx.intent_clusterer = clusterer
+                data_dir = ctx.repo / "sandbox_data"
+                clusterer = IntentClusterer(
+                    local_db_path=data_dir / "intent.db",
+                    shared_db_path=data_dir / "intent.db",
+                )
                 paths = [ctx.repo / m for m in added]
-                clusterer.update_modules(paths)
+                clusterer.index_modules(paths)
+                try:
+                    groups = clusterer._load_synergy_groups(ctx.repo)
+                    clusterer._index_clusters(groups)
+                except Exception:
+                    logger.exception("failed to cluster intent modules")
             except Exception:
                 logger.exception("failed to index intent modules")
 
-            associations: Dict[str, Dict[str, list[str]]] = {}
-            workflow_mods: set[str] = set()
             try:
-                grapher = getattr(ctx, "module_synergy_grapher", None)
-                clusterer = getattr(ctx, "intent_clusterer", None)
-                try:
-                    from module_synergy_grapher import get_synergy_cluster as _gsc
-                except Exception:  # pragma: no cover - fallback
-                    def _gsc(*_a: Any, **_kw: Any) -> set[str]:
-                        return set()
-                for mod in added:
-                    mod_id = map_module_identifier(mod, ctx.repo)
-                    assoc: Dict[str, list[str]] = {}
-                    synergy_ids: set[str] = set()
-                    try:
-                        if grapher and hasattr(grapher, "get_synergy_cluster"):
-                            synergy_ids = set(grapher.get_synergy_cluster(mod_id))
-                        else:
-                            synergy_ids = set(_gsc(mod_id))
-                    except Exception:
-                        pass
-                    synergy_paths: list[str] = []
-                    for sid in synergy_ids:
-                        p = Path(sid).with_suffix(".py")
-                        if (ctx.repo / p).exists():
-                            synergy_paths.append(p.as_posix())
-                            workflow_mods.add(p.as_posix())
-                    assoc["synergy"] = sorted(synergy_paths)
-                    intent_paths: list[str] = []
-                    try:
-                        if clusterer and hasattr(clusterer, "find_modules_related_to"):
-                            matches = clusterer.find_modules_related_to(mod_id)
-                            for r in matches:
-                                p = getattr(r, "path", None)
-                                if not p:
-                                    continue
-                                rp = Path(p)
-                                try:
-                                    rel = rp.resolve().relative_to(ctx.repo).as_posix()
-                                except Exception:
-                                    rel = rp.as_posix()
-                                intent_paths.append(rel)
-                                workflow_mods.add(rel)
-                    except Exception:
-                        pass
-                    assoc["intent"] = sorted({r for r in intent_paths})
-                    associations[mod] = assoc
-                    workflow_mods.add(mod)
+                try_integrate_into_workflows(sorted(added))
             except Exception:
-                logger.exception("failed to compute module associations")
-
-            if associations:
-                try:
-                    existing = getattr(ctx, "module_associations", {})
-                    existing.update(associations)
-                    ctx.module_associations = existing
-                except Exception:
-                    ctx.module_associations = associations
-            if workflow_mods:
-                try:
-                    sig = inspect.signature(try_integrate_into_workflows)
-                    kwargs = {}
-                    if "associations" in sig.parameters:
-                        kwargs["associations"] = associations
-                    if "intent_clusterer" in sig.parameters and clusterer:
-                        kwargs["intent_clusterer"] = clusterer
-                    try_integrate_into_workflows(sorted(workflow_mods), **kwargs)
-                except Exception:
-                    logger.exception("workflow integration with associations failed")
+                logger.exception("workflow integration failed")
 
         post_cache: Dict[str, Dict[str, Any]] = {}
         try:
