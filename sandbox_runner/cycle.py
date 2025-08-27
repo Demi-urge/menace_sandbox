@@ -824,6 +824,9 @@ def _sandbox_cycle_runner(
                 record_error(exc)
         except Exception as exc:
             record_error(exc)
+        # Re-run orphan discovery after patches have been applied so that any
+        # newly generated modules are considered in subsequent metrics.
+        include_orphan_modules(ctx)
         logger.info("patch application", extra=log_record(cycle=idx))
         roi = result.roi.roi if result.roi else 0.0
         logger.info(
