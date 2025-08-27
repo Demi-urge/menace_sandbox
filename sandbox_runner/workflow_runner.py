@@ -1,7 +1,7 @@
 """Sandboxed workflow runner.
 
-This module provides :class:`WorkflowSandboxRunner` which executes a single
-workflow callable inside an isolated temporary directory.  File system
+This module provides :class:`WorkflowSandboxRunner` which executes one or more
+workflow callables inside an isolated temporary directory.  File system
 interactions such as :func:`open` or :class:`pathlib.Path.write_text` are
 monkeypatched so that reads and writes are confined to the sandbox.  When the
 ``safe_mode`` flag is enabled, common networking libraries are also patched to
@@ -10,11 +10,11 @@ raise :class:`RuntimeError` on outbound requests.
 The runner exposes a simple API::
 
     runner = WorkflowSandboxRunner()
-    result, telemetry = runner.run(workflow)
+    metrics = runner.run(workflow)
 
-``telemetry`` contains information about the execution such as duration,
-success and captured errors.  The most recent telemetry is also available via
-``runner.telemetry``.
+``metrics`` contains information about the execution of each module such as
+duration, memory usage and captured errors.  The most recent metrics are also
+available via ``runner.telemetry``.
 """
 
 from __future__ import annotations
@@ -26,8 +26,9 @@ import os
 import pathlib
 import shutil
 import tempfile
+from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 from unittest import mock
 
 try:  # pragma: no cover - optional dependency
@@ -35,8 +36,32 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - psutil not installed
     psutil = None  # type: ignore
 
+import tracemalloc
+
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ModuleMetrics:
+    """Telemetry captured for a single module execution."""
+
+    name: str
+    duration: float
+    memory_before: int
+    memory_after: int
+    memory_delta: int
+    success: bool
+    exception: str | None
+    result: Any | None = None
+
+
+@dataclass
+class RunMetrics:
+    """Aggregated metrics across all executed modules."""
+
+    modules: list[ModuleMetrics] = field(default_factory=list)
+    crash_count: int = 0
 
 
 class WorkflowSandboxRunner:
@@ -65,7 +90,10 @@ class WorkflowSandboxRunner:
         original_open = builtins.open
 
         def sandbox_open(file, mode="r", *a, **kw):
-            path = self._resolve(root, file)
+            file_path = os.fspath(file)
+            if file_path.startswith("/proc/"):
+                return original_open(file, mode, *a, **kw)
+            path = self._resolve(root, file_path)
             if any(m in mode for m in ("w", "a", "x", "+")):
                 path.parent.mkdir(parents=True, exist_ok=True)
             return original_open(path, mode, *a, **kw)
@@ -199,18 +227,22 @@ class WorkflowSandboxRunner:
     # ------------------------------------------------------------------
     def run(
         self,
-        workflow: Callable[[], Any],
+        workflow: Callable[[], Any] | Iterable[Callable[[], Any]],
         *,
         safe_mode: bool = False,
         test_data: Mapping[str, str | bytes] | None = None,
-    ) -> tuple[Any, dict[str, Any]]:
-        """Execute ``workflow`` inside a sandbox and return result and telemetry."""
+    ) -> RunMetrics:
+        """Execute ``workflow`` inside a sandbox and return collected metrics.
+
+        ``workflow`` may be a single callable or an iterable of callables.
+        Each module is executed in sequence and metrics are recorded for each
+        invocation.  When ``safe_mode`` is ``False`` exceptions are re-raised
+        after metrics for the failing module have been captured.
+        """
 
         test_data = dict(test_data or {})
 
-        start = perf_counter()
         proc = psutil.Process() if psutil else None
-        mem_start = proc.memory_info().rss if proc else 0
 
         with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
             root = pathlib.Path(tmp)
@@ -229,39 +261,64 @@ class WorkflowSandboxRunner:
                 with original_open(real, mode) as fh:
                     fh.write(content)
 
-            success = True
-            error: str | None = None
-            result: Any | None = None
+            modules = [workflow] if callable(workflow) else list(workflow)
+            metrics = RunMetrics()
 
-            try:
-                result = workflow()
-            except Exception as exc:  # pragma: no cover - exercise failure paths
-                success = False
-                error = str(exc)
-                if not safe_mode:
-                    raise
+            for fn in modules:
+                start = perf_counter()
+                mem_before = 0
+                mem_after = 0
+                if proc:
+                    try:
+                        mem_before = proc.memory_info().rss
+                    except Exception:
+                        mem_before = 0
+                else:  # fallback to tracemalloc
+                    tracemalloc.start()
+                    mem_before, _ = tracemalloc.get_traced_memory()
 
-        end = perf_counter()
-        mem_end = proc.memory_info().rss if proc else mem_start
-        mem_peak_raw = mem_end
-        if proc:
-            try:  # pragma: no cover - platform specific
-                info = proc.memory_info()
-                mem_end = info.rss
-                mem_peak_raw = getattr(info, "peak_wset", getattr(info, "peak_rss", mem_end))
-            except Exception:
-                pass
+                success = True
+                error: str | None = None
+                result: Any | None = None
+                caught: Exception | None = None
 
-        telemetry = {
-            "success": success,
-            "error": error,
-            "duration": end - start,
-            "memory_delta": max(mem_end - mem_start, 0) / (1024 * 1024),
-            "memory_peak": max(mem_peak_raw - mem_start, 0) / (1024 * 1024),
-        }
-        self.telemetry = telemetry
-        return result, telemetry
+                try:
+                    result = fn()
+                except Exception as exc:  # pragma: no cover - exercise failure paths
+                    success = False
+                    error = str(exc)
+                    metrics.crash_count += 1
+                    caught = exc
+
+                duration = perf_counter() - start
+
+                if proc:
+                    try:
+                        mem_after = proc.memory_info().rss
+                    except Exception:
+                        mem_after = mem_before
+                else:
+                    mem_after, _ = tracemalloc.get_traced_memory()
+                    tracemalloc.stop()
+
+                module_metric = ModuleMetrics(
+                    name=getattr(fn, "__name__", repr(fn)),
+                    duration=duration,
+                    memory_before=mem_before,
+                    memory_after=mem_after,
+                    memory_delta=mem_after - mem_before,
+                    success=success,
+                    exception=error,
+                    result=result,
+                )
+                metrics.modules.append(module_metric)
+
+                if caught and not safe_mode:
+                    self.telemetry = metrics
+                    raise caught
+
+        self.telemetry = metrics
+        return metrics
 
 
 __all__ = ["WorkflowSandboxRunner"]
-
