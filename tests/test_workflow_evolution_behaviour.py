@@ -132,6 +132,12 @@ def _load_manager(variant_rois, generate_calls=None, diminishing=0.05):
 
     graph_mod = ModuleType("menace_sandbox.workflow_graph")
     class WorkflowGraph:
+        def add_workflow(self, *a, **k):
+            pass
+
+        def add_dependency(self, *a, **k):
+            pass
+
         def update_workflow(self, *a, **k):
             pass
     graph_mod.WorkflowGraph = WorkflowGraph
