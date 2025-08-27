@@ -30,9 +30,9 @@ def test_generate_workflows_indexes_discovered_modules(tmp_path, monkeypatch):
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
-    post_mod = types.ModuleType("sandbox_runner.post_update")
-    post_mod.integrate_orphans = fake_integrate
-    monkeypatch.setitem(sys.modules, "sandbox_runner.post_update", post_mod)
+    oi_mod = types.ModuleType("sandbox_runner.orphan_integration")
+    oi_mod.integrate_orphans = fake_integrate
+    monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_integration", oi_mod)
     monkeypatch.setitem(sys.modules, "db_router", SimpleNamespace(GLOBAL_ROUTER=None))
 
     synth = ws.WorkflowSynthesizer()
