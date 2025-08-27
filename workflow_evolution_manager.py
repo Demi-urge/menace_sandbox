@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 import importlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ from .roi_tracker import ROITracker
 from .workflow_stability_db import WorkflowStabilityDB
 from .workflow_summary_db import WorkflowSummaryDB
 from .sandbox_settings import SandboxSettings
+from . import workflow_synthesizer
 try:  # pragma: no cover - optional at runtime
     from .workflow_graph import WorkflowGraph
 except Exception:  # pragma: no cover - best effort
@@ -304,12 +306,36 @@ def evolve(
                 )
             except Exception:
                 logger.exception("record promotion failed")
-        try:  # Persist promotion in workflow graph when available
-            if WorkflowGraph is not None:
+        try:
+            steps = [
+                {"module": s, "inputs": [], "outputs": []}
+                for s in best_variant_seq.split("-")
+                if s
+            ]
+            path = workflow_synthesizer.save_workflow(
+                steps,
+                parent_id=str(workflow_id),
+                mutation_description=best_variant_seq,
+            )
+            metadata = {}
+            try:
+                metadata = json.loads(Path(path).read_text()).get("metadata", {})
+            except Exception:
+                logger.exception("failed reading workflow metadata")
+            new_id = metadata.get("workflow_id")
+            created_at = metadata.get("created_at")
+            if new_id is not None:
+                setattr(best_callable, "workflow_id", new_id)
+            if created_at is not None:
+                setattr(best_callable, "created_at", created_at)
+            if WorkflowGraph is not None and new_id is not None:
                 graph = WorkflowGraph()
-                graph.update_workflow(wf_id_str, roi=best_roi)
+                graph.add_workflow(new_id, roi=best_roi)
+                graph.add_dependency(
+                    str(workflow_id), new_id, dependency_type="evolution"
+                )
         except Exception:  # pragma: no cover - best effort
-            logger.exception("failed updating workflow graph for %s", workflow_id)
+            logger.exception("failed persisting promoted workflow")
 
         try:
             from .workflow_benchmark import benchmark_workflow
