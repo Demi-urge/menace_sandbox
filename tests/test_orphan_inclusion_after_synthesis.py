@@ -83,9 +83,9 @@ def test_orphan_inclusion_after_synthesis(monkeypatch, tmp_path):
         added = res.get("added", [])
         try_integrate_into_workflows(added, router=router)
         return added
-    post_mod = types.ModuleType("sandbox_runner.post_update")
-    post_mod.integrate_orphans = integrate_orphans
-    monkeypatch.setitem(sys.modules, "sandbox_runner.post_update", post_mod)
+    oi_mod = types.ModuleType("sandbox_runner.orphan_integration")
+    oi_mod.integrate_orphans = integrate_orphans
+    monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_integration", oi_mod)
     monkeypatch.setitem(sys.modules, "db_router", types.SimpleNamespace(GLOBAL_ROUTER=None))
 
     synth = ws.WorkflowSynthesizer()

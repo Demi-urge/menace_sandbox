@@ -95,7 +95,7 @@ try:
 except Exception:  # pragma: no cover - fallback for flat layout
     import security_auditor  # type: ignore
 import sandbox_runner.environment as environment
-from sandbox_runner.post_update import integrate_orphans
+from sandbox_runner.orphan_integration import integrate_orphans
 from .self_test_service import SelfTestService
 try:
     from . import self_test_service as sts
@@ -3965,22 +3965,12 @@ class SelfImprovementEngine:
             self.module_index.refresh(mods, force=True)
             self.module_index.save()
             self._last_map_refresh = time.time()
-            try:
-                _tracker, tested = environment.auto_include_modules(
-                    sorted(mods), recursive=True, validate=True
-                )
-                record_new = getattr(self, "_record_new_modules", None)
-                if record_new:
-                    record_new(set(tested.get("added", [])))
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("auto inclusion failed: %s", exc)
-            updated_wfs: list[int] = []
-            try:
-                updated_wfs = (
-                    environment.try_integrate_into_workflows(sorted(mods)) or []
-                )
-            except Exception:  # pragma: no cover - best effort
-                updated_wfs = []
+            _tracker, tested, updated_wfs, _, _ = integrate_orphans(
+                repo,
+                modules=sorted(mods),
+                logger=self.logger,
+                router=GLOBAL_ROUTER,
+            )
             if updated_wfs:
                 try:
                     self.logger.info(

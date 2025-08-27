@@ -10,7 +10,7 @@ class SelfCodingEngine:
 
     def apply_patch(self, path: Path, description: str) -> None:
         self.patch_file(path, description)
-        from sandbox_runner.post_update import integrate_orphans
+        from sandbox_runner.orphan_integration import integrate_orphans
         integrate_orphans(Path.cwd())
 
 
@@ -46,9 +46,9 @@ def test_orphan_inclusion_after_patch(monkeypatch, tmp_path):
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
-    post_mod = types.ModuleType("sandbox_runner.post_update")
-    post_mod.integrate_orphans = integrate_orphans
-    monkeypatch.setitem(sys.modules, "sandbox_runner.post_update", post_mod)
+    oi_mod = types.ModuleType("sandbox_runner.orphan_integration")
+    oi_mod.integrate_orphans = integrate_orphans
+    monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_integration", oi_mod)
 
     engine = SelfCodingEngine()
 
