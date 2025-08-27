@@ -43,9 +43,15 @@ def _load_summary(directory: Path, wid: str) -> Dict[str, Any] | None:
 def load_specs(directory: str | Path = "workflows") -> Iterator[Dict[str, Any]]:
     """Yield workflow specification metadata from ``directory``.
 
-    Malformed files or those missing a ``workflow_id`` are ignored.
+    Malformed files or those missing a ``workflow_id`` are ignored.  Each
+    workflow's summary is loaded when available and ``roi_delta`` is computed
+    relative to its ``parent_id`` when both contain ROI information.
     """
-    for path in Path(directory).glob("*.workflow.json"):
+
+    directory_path = Path(directory)
+    specs: Dict[str, Dict[str, Any]] = {}
+
+    for path in directory_path.glob("*.workflow.json"):
         try:
             data = json.loads(path.read_text())
         except Exception:
@@ -56,12 +62,40 @@ def load_specs(directory: str | Path = "workflows") -> Iterator[Dict[str, Any]]:
         wid = metadata.get("workflow_id")
         if not wid:
             continue
-        spec: Dict[str, Any] = {
-            "workflow_id": str(wid),
+        wid_str = str(wid)
+        specs[wid_str] = {
+            "workflow_id": wid_str,
             "parent_id": metadata.get("parent_id"),
             "mutation_description": metadata.get("mutation_description"),
-            "summary": _load_summary(path.parent, str(wid)),
+            "summary": _load_summary(path.parent, wid_str),
         }
+
+    for spec in specs.values():
+        parent = spec.get("parent_id")
+        roi = None
+        summary = spec.get("summary") or {}
+        try:
+            roi = float(summary.get("roi"))
+        except Exception:
+            roi = None
+
+        parent_roi = None
+        if parent:
+            parent_spec = specs.get(str(parent))
+            parent_summary = (
+                parent_spec.get("summary") if parent_spec else _load_summary(directory_path, str(parent))
+            )
+            try:
+                parent_roi = float(parent_summary.get("roi")) if parent_summary else None
+            except Exception:
+                parent_roi = None
+
+        if roi is not None and parent_roi is not None:
+            spec["roi_delta"] = roi - parent_roi
+        else:
+            spec["roi_delta"] = None
+
+    for spec in specs.values():
         yield spec
 
 
@@ -119,7 +153,10 @@ def to_graphviz(graph: Any) -> str:
     if _HAS_NX and hasattr(graph, "nodes"):
         for n, attrs in graph.nodes(data=True):
             label = attrs.get("mutation_description") or n
-            lines.append(f'"{n}" [label="{label}"];')
+            attr_parts = [f'label="{label}"']
+            if attrs.get("roi_delta") is not None:
+                attr_parts.append(f'roi_delta="{attrs["roi_delta"]}"')
+            lines.append(f'"{n}" [{", ".join(attr_parts)}];')
         for src, dst in graph.edges():
             lines.append(f'"{src}" -> "{dst}";')
     else:
@@ -127,7 +164,10 @@ def to_graphviz(graph: Any) -> str:
         edges = graph.get("edges", {})
         for n, attrs in nodes.items():
             label = attrs.get("mutation_description") or n
-            lines.append(f'"{n}" [label="{label}"];')
+            attr_parts = [f'label="{label}"']
+            if attrs.get("roi_delta") is not None:
+                attr_parts.append(f'roi_delta="{attrs["roi_delta"]}"')
+            lines.append(f'"{n}" [{", ".join(attr_parts)}];')
         for src, dsts in edges.items():
             for dst in dsts:
                 lines.append(f'"{src}" -> "{dst}";')
