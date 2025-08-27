@@ -385,6 +385,17 @@ class ServiceSupervisor:
                 approval_policy=self.approval_policy,
             )
             manager.run_patch(path, description)
+            added_modules = getattr(engine, "last_added_modules", None)
+            if not added_modules:
+                added_modules = getattr(engine, "added_modules", None)
+            if added_modules:
+                try:
+                    from sandbox_runner import try_integrate_into_workflows
+                    try_integrate_into_workflows(added_modules)
+                except Exception as wf_exc:
+                    self.logger.warning(
+                        "workflow integration failed after patch: %s", wf_exc
+                    )
         except Exception as exc:
             self.logger.error("patch deployment failed: %s", exc)
             if self.rollback_mgr:
