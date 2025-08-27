@@ -816,6 +816,8 @@ def _sandbox_cycle_runner(
             "patch engine complete",
             extra=log_record(cycle=idx, roi=result.roi.roi if result.roi else 0.0),
         )
+        # Ensure modules introduced by patches are discovered before testing
+        include_orphan_modules(ctx)
         logger.info("tester run", extra=log_record(cycle=idx))
         try:
             ctx.tester.run_once()
