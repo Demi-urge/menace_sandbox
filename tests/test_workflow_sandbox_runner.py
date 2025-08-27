@@ -6,6 +6,7 @@ import types
 from pathlib import Path
 
 import urllib.request
+import shutil
 
 import pytest
 
@@ -87,3 +88,30 @@ def test_safe_mode_blocks_network_and_reports_telemetry():
     assert telemetry is not None
     assert set(telemetry["time_per_module"]) == {"start", "network_step"}
     assert telemetry["crash_frequency"] == pytest.approx(1 / 2)
+
+
+def test_httpx_and_fs_wrappers():
+    src = Path("/tmp/httpx_src.txt")
+    dst = Path("/tmp/httpx_dst.txt")
+    src.write_text("outside")
+    if dst.exists():
+        dst.unlink()
+
+    def step():
+        import httpx
+
+        shutil.copy(str(src), str(dst))
+        os.remove(str(src))
+        with httpx.Client() as client:
+            client.get("http://example.com")
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run([step], safe_mode=True, test_data={str(src): "inside"})
+
+    assert metrics.crash_count == 1
+    assert src.exists()
+    assert not dst.exists()
+
+    src.unlink()
+    if dst.exists():
+        dst.unlink()

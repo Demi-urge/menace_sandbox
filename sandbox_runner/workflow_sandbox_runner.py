@@ -17,6 +17,7 @@ import contextlib
 import io
 import inspect
 import json
+import os
 import pathlib
 import shutil
 import tempfile
@@ -208,6 +209,92 @@ class WorkflowSandboxRunner:
                 mock.patch.object(pathlib.Path, "read_bytes", path_read_bytes)
             )
 
+            original_remove = os.remove
+            original_unlink = os.unlink
+            original_rename = os.rename
+            original_replace = os.replace
+            original_copy = shutil.copy
+            original_copy2 = shutil.copy2
+            original_copyfile = shutil.copyfile
+            original_move = shutil.move
+
+            def sandbox_remove(path, *a, **kw):
+                p = self._resolve(root, path)
+                fn = fs_mocks.get("os.remove")
+                if fn:
+                    return fn(p, *a, **kw)
+                return original_remove(p, *a, **kw)
+
+            def sandbox_unlink(path, *a, **kw):
+                p = self._resolve(root, path)
+                fn = fs_mocks.get("os.unlink")
+                if fn:
+                    return fn(p, *a, **kw)
+                return original_unlink(p, *a, **kw)
+
+            def sandbox_rename(src, dst, *a, **kw):
+                s = self._resolve(root, src)
+                d = self._resolve(root, dst)
+                fn = fs_mocks.get("os.rename")
+                if fn:
+                    return fn(s, d, *a, **kw)
+                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                return original_rename(s, d, *a, **kw)
+
+            def sandbox_replace(src, dst, *a, **kw):
+                s = self._resolve(root, src)
+                d = self._resolve(root, dst)
+                fn = fs_mocks.get("os.replace")
+                if fn:
+                    return fn(s, d, *a, **kw)
+                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                return original_replace(s, d, *a, **kw)
+
+            def sandbox_copy(src, dst, *a, **kw):
+                s = self._resolve(root, src)
+                d = self._resolve(root, dst)
+                fn = fs_mocks.get("shutil.copy")
+                if fn:
+                    return fn(s, d, *a, **kw)
+                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                return original_copy(s, d, *a, **kw)
+
+            def sandbox_copy2(src, dst, *a, **kw):
+                s = self._resolve(root, src)
+                d = self._resolve(root, dst)
+                fn = fs_mocks.get("shutil.copy2")
+                if fn:
+                    return fn(s, d, *a, **kw)
+                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                return original_copy2(s, d, *a, **kw)
+
+            def sandbox_copyfile(src, dst, *a, **kw):
+                s = self._resolve(root, src)
+                d = self._resolve(root, dst)
+                fn = fs_mocks.get("shutil.copyfile")
+                if fn:
+                    return fn(s, d, *a, **kw)
+                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                return original_copyfile(s, d, *a, **kw)
+
+            def sandbox_move(src, dst, *a, **kw):
+                s = self._resolve(root, src)
+                d = self._resolve(root, dst)
+                fn = fs_mocks.get("shutil.move")
+                if fn:
+                    return fn(s, d, *a, **kw)
+                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                return original_move(s, d, *a, **kw)
+
+            stack.enter_context(mock.patch("os.remove", sandbox_remove))
+            stack.enter_context(mock.patch("os.unlink", sandbox_unlink))
+            stack.enter_context(mock.patch("os.rename", sandbox_rename))
+            stack.enter_context(mock.patch("os.replace", sandbox_replace))
+            stack.enter_context(mock.patch("shutil.copy", sandbox_copy))
+            stack.enter_context(mock.patch("shutil.copy2", sandbox_copy2))
+            stack.enter_context(mock.patch("shutil.copyfile", sandbox_copyfile))
+            stack.enter_context(mock.patch("shutil.move", sandbox_move))
+
             # Pre-populate any provided file data into the sandbox.
             for name, content in file_data.items():
                 real = self._resolve(root, name)
@@ -250,6 +337,66 @@ class WorkflowSandboxRunner:
 
                 stack.enter_context(
                     mock.patch.object(requests.Session, "request", fake_request)
+                )
+            except Exception:  # pragma: no cover
+                pass
+
+            try:  # pragma: no cover - optional dependency
+                import httpx  # type: ignore
+
+                orig_httpx_request = httpx.Client.request
+
+                def fake_httpx_request(self, method, url, *a, **kw):
+                    if url in network_data:
+                        data = network_data[url]
+                        if isinstance(data, str):
+                            data = data.encode()
+                        return httpx.Response(200, content=data)
+                    fn = network_mocks.get("httpx")
+                    if fn:
+                        return fn(self, method, url, *a, **kw)
+                    if safe_mode:
+                        raise RuntimeError("network access disabled in safe_mode")
+                    return orig_httpx_request(self, method, url, *a, **kw)
+
+                stack.enter_context(
+                    mock.patch.object(httpx.Client, "request", fake_httpx_request)
+                )
+            except Exception:  # pragma: no cover
+                pass
+
+            try:  # pragma: no cover - optional dependency
+                import aiohttp  # type: ignore
+
+                orig_aio_request = aiohttp.ClientSession._request
+
+                async def fake_aio_request(self, method, url, *a, **kw):
+                    if url in network_data:
+                        data = network_data[url]
+                        if isinstance(data, str):
+                            data = data.encode()
+
+                        class _AioResp:
+                            def __init__(self, b: bytes):
+                                self.status = 200
+                                self._b = b
+
+                            async def read(self) -> bytes:
+                                return self._b
+
+                            async def text(self) -> str:
+                                return self._b.decode()
+
+                        return _AioResp(data)
+                    fn = network_mocks.get("aiohttp")
+                    if fn:
+                        return await fn(self, method, url, *a, **kw)
+                    if safe_mode:
+                        raise RuntimeError("network access disabled in safe_mode")
+                    return await orig_aio_request(self, method, url, *a, **kw)
+
+                stack.enter_context(
+                    mock.patch.object(aiohttp.ClientSession, "_request", fake_aio_request)
                 )
             except Exception:  # pragma: no cover
                 pass
