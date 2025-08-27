@@ -72,6 +72,7 @@ except Exception:  # pragma: no cover - optional dependency
 if TYPE_CHECKING:  # pragma: no cover
     from foresight_tracker import ForesightTracker
     from db_router import DBRouter
+    from intent_clusterer import IntentClusterer
 
 # Relevancy radar integration -------------------------------------------------
 _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
@@ -6467,6 +6468,9 @@ def try_integrate_into_workflows(
     side_effect_threshold: float = 10,
     *,
     router: DBRouter | None = None,
+    intent_clusterer: IntentClusterer | None = None,
+    intent_threshold: float = 0.5,
+    synergy_threshold: float = 0.7,
 ) -> list[int]:
     """Append orphan ``modules`` to related workflows if possible.
 
@@ -6475,6 +6479,11 @@ def try_integrate_into_workflows(
     module group will receive the orphan module as an additional step. The list
     of updated workflow IDs is returned. Modules with heavy side-effect metrics
     are skipped based on ``side_effect_threshold``.
+
+    When an :class:`IntentClusterer` is available, each module is expanded by
+    its synergy neighbourhood (via :func:`get_synergy_cluster`) and workflows
+    whose intent vectors intersect with this cluster above ``intent_threshold``
+    are preferred. Modules without suitable intent matches are ignored.
     """
 
     from menace.task_handoff_bot import WorkflowDB
@@ -6572,8 +6581,33 @@ def try_integrate_into_workflows(
             except Exception:
                 pass
 
+    clusterer = intent_clusterer
+
+    module_intents: dict[str, set[int]] = {}
+    if clusterer is not None:
+        for mod, dotted in names.items():
+            expanded = {dotted}
+            if _USE_MODULE_SYNERGY:
+                try:
+                    expanded |= get_synergy_cluster(dotted, synergy_threshold)
+                except Exception:
+                    pass
+            ids: set[int] = set()
+            for name in expanded:
+                path = (repo / (name.replace(".", "/") + ".py")).resolve()
+                ids.update(clusterer.clusters.get(str(path), []))
+            module_intents[mod] = ids
+
     wf_db = WorkflowDB(Path(workflows_db), router=router)
     workflows = wf_db.fetch(limit=1000)
+    workflow_intents: dict[int, set[int]] = {}
+    if clusterer is not None:
+        for wf in workflows:
+            ids: set[int] = set()
+            for step in wf.workflow:
+                path = (repo / (step.replace(".", "/") + ".py")).resolve()
+                ids.update(clusterer.clusters.get(str(path), []))
+            workflow_intents[wf.wid] = ids
     updated: list[int] = []
     candidates: dict[int, list[str]] = {}
 
@@ -6583,6 +6617,7 @@ def try_integrate_into_workflows(
         step_names: list[str] = []
         step_sigs: set[int] = set()
         step_tags: set[str] = set()
+        step_intent_ids = workflow_intents.get(wf.wid, set())
         for step in wf.workflow:
             mod = step.split(":")[0]
             step_names.append(mod)
@@ -6609,7 +6644,16 @@ def try_integrate_into_workflows(
             if dotted in existing:
                 continue
             sigs, tags = orphan_features.get(mod, (set(), set()))
-            if (
+            intent_ids = module_intents.get(mod, set())
+            if clusterer is not None and intent_ids:
+                score = (
+                    len(intent_ids & step_intent_ids) / len(intent_ids)
+                    if intent_ids
+                    else 0.0
+                )
+                if score >= intent_threshold:
+                    new_mods.append(mod)
+            elif (
                 gid in step_groups
                 or (tags & step_tags and sigs & step_sigs)
                 or dotted.split(".")[0] in step_imports

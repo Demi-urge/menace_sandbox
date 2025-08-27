@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import subprocess
 import sys
 import types
@@ -75,13 +76,25 @@ def test_try_integrate_into_workflows(tmp_path, monkeypatch):
             pass
 
         async def _test_orphan_modules(self, paths):
-            return set(paths), set()
+            return set(paths), set(), {}
 
     sts_stub = types.ModuleType("self_test_service")
     sts_stub.SelfTestService = DummySTS
     monkeypatch.setitem(sys.modules, "self_test_service", sts_stub)
 
-    updated = env.try_integrate_into_workflows(["b.py"], workflows_db=db_path)
+    class DummyClusterer:
+        def __init__(self):
+            root = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+            self.clusters = {
+                str(root / "a.py"): [1],
+                str(root / "b.py"): [1],
+            }
+
+    clusterer = DummyClusterer()
+
+    updated = env.try_integrate_into_workflows(
+        ["b.py"], workflows_db=db_path, intent_clusterer=clusterer
+    )
     recs = {r.wid: r for r in wf_db.fetch(limit=10)}
     assert wid1 in updated
     assert "b" in recs[wid1].workflow
@@ -104,7 +117,7 @@ def test_try_integrate_no_match(tmp_path, monkeypatch):
             pass
 
         async def _test_orphan_modules(self, paths):
-            return set(paths), set()
+            return set(paths), set(), {}
 
     sts_stub = types.ModuleType("self_test_service")
     sts_stub.SelfTestService = DummySTS
@@ -151,7 +164,7 @@ def test_try_integrate_duplicate_filenames(tmp_path, monkeypatch):
             pass
 
         async def _test_orphan_modules(self, paths):
-            return set(paths), set()
+            return set(paths), set(), {}
 
     sts_stub = types.ModuleType("self_test_service")
     sts_stub.SelfTestService = DummySTS
@@ -162,4 +175,57 @@ def test_try_integrate_duplicate_filenames(tmp_path, monkeypatch):
     rec = {r.wid: r for r in wf_db.fetch(limit=10)}[wid]
     assert wid in updated
     assert set(rec.workflow) == {"existing", "pkg1.orphan", "pkg2.orphan"}
+
+
+def test_try_integrate_intent_synergy(tmp_path, monkeypatch):
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    env = _load_env(monkeypatch)
+    thb = _load_thb()
+    db_path = tmp_path / "wf.db"
+    wf_db = thb.WorkflowDB(db_path)
+    wf = thb.WorkflowRecord(workflow=["a"], title="w")
+    wid = wf_db.add(wf)
+
+    (tmp_path / "a.py").write_text("def a():\n    pass\n")
+    (tmp_path / "b.py").write_text("def b():\n    pass\n")
+
+    stub = types.ModuleType("module_index_db")
+    stub.ModuleIndexDB = StubIndex
+    monkeypatch.setitem(sys.modules, "module_index_db", stub)
+
+    class DummySTS:
+        def __init__(self, *a, **k):
+            pass
+
+        async def _test_orphan_modules(self, paths):
+            return set(paths), set(), {}
+
+    sts_stub = types.ModuleType("self_test_service")
+    sts_stub.SelfTestService = DummySTS
+    monkeypatch.setitem(sys.modules, "self_test_service", sts_stub)
+
+    class DummyClusterer:
+        def __init__(self):
+            self.clusters = {
+                str((tmp_path / "a.py").resolve()): [1],
+                str((tmp_path / "b.py").resolve()): [2],
+            }
+
+    clusterer = DummyClusterer()
+    monkeypatch.setattr(env, "_USE_MODULE_SYNERGY", True)
+    monkeypatch.setattr(
+        env,
+        "get_synergy_cluster",
+        lambda name, threshold=0.7, bfs=False: {name, "a"} if name == "b" else {name},
+    )
+
+    updated = env.try_integrate_into_workflows(
+        ["b.py"],
+        workflows_db=db_path,
+        intent_clusterer=clusterer,
+        intent_threshold=0.5,
+    )
+    recs = {r.wid: r for r in wf_db.fetch(limit=10)}
+    assert wid in updated
+    assert "b" in recs[wid].workflow
 
