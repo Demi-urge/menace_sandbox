@@ -28,10 +28,26 @@ except Exception:  # pragma: no cover - optional dependency
     EvolutionEvent = None  # type: ignore
 from . import mutation_logger as MutationLogger
 
+try:  # pragma: no cover - optional dependency
+    from .workflow_branch_manager import merge_sibling_branches as _merge_sibling_branches
+except Exception:  # pragma: no cover - best effort
+    _merge_sibling_branches = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 STABLE_WORKFLOWS = WorkflowStabilityDB()
 EVOLUTION_DB = EvolutionHistoryDB() if EvolutionHistoryDB is not None else None
+
+
+def _merge_branches_for_parent(parent_id: str) -> None:
+    """Attempt automatic merging of sibling branches for ``parent_id``."""
+
+    if _merge_sibling_branches is None:
+        return
+    try:  # pragma: no cover - best effort
+        _merge_sibling_branches(parent_id=parent_id)
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed merging sibling branches for %s", parent_id)
 
 
 def _update_ema(workflow_id: str, delta: float) -> bool:
@@ -154,6 +170,7 @@ def evolve(
         _, raroi, _ = tracker.calculate_raroi(baseline_roi)
         tracker.score_workflow(wf_id_str, raroi)
         workflow_run_summary.save_all_summaries("workflows")
+        _merge_branches_for_parent(wf_id_str)
         return workflow_callable
 
     bot = WorkflowEvolutionBot()
@@ -249,6 +266,7 @@ def evolve(
                 after_metric=baseline_roi,
             )
             workflow_run_summary.save_all_summaries("workflows")
+            _merge_branches_for_parent(wf_id_str)
             return workflow_callable
 
         if roi_delta > best_delta:
@@ -282,6 +300,7 @@ def evolve(
         )
         # lineage already attached to workflow_callable
         workflow_run_summary.save_all_summaries("workflows")
+        _merge_branches_for_parent(wf_id_str)
         return workflow_callable
 
     if best_variant_seq is not None and delta > 0:
@@ -378,9 +397,11 @@ def evolve(
         setattr(best_callable, "mutation_description", best_variant_seq)
 
         workflow_run_summary.save_all_summaries("workflows")
+        _merge_branches_for_parent(wf_id_str)
         return best_callable
 
     workflow_run_summary.save_all_summaries("workflows")
+    _merge_branches_for_parent(wf_id_str)
     return workflow_callable
 
 
