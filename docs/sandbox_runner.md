@@ -516,6 +516,21 @@ print(metrics["modules"][1]["result"])
 print(runner.telemetry["modules"][0]["duration"])
 ```
 
+Per-module fixtures can be supplied via the ``module_fixtures`` argument. The
+mapping uses each module's ``__name__`` as the key and may define ``files`` and
+``env`` sub-mappings. ``files`` pre-populate paths inside the sandbox before the
+module executes while ``env`` temporarily sets environment variables just for
+that step. Because fixtures are ordinary dictionaries they can be reused across
+multiple runs.
+
+```python
+fixtures = {
+    "writer": {"env": {"TOKEN": "abc"}},
+    "reader": {"files": {"out.txt": "seed"}, "env": {"TOKEN": "def"}},
+}
+runner.run([writer, reader], module_fixtures=fixtures)
+```
+
 Custom stub providers may be supplied via the ``stub_providers`` argument to
 inject domain‑specific payloads. The runner's automatic input generation and
 network/file mocking allow workflows to run without touching the host

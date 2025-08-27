@@ -97,3 +97,24 @@ def test_custom_network_and_fs_mocks():
     mod = metrics.modules[0]
     assert mod.result == "ok"
     assert calls  # fake_remove was invoked
+
+
+def test_module_specific_fixtures_restore_env():
+    outputs: list[tuple[str, str | None]] = []
+
+    def first():
+        outputs.append((Path("data.txt").read_text(), os.getenv("TEST_FIXVAR")))
+
+    def second():
+        outputs.append((Path("data.txt").read_text(), os.getenv("TEST_FIXVAR")))
+
+    fixtures = {
+        "first": {"files": {"data.txt": "one"}, "env": {"TEST_FIXVAR": "A"}},
+        "second": {"files": {"data.txt": "two"}, "env": {"TEST_FIXVAR": "B"}},
+    }
+
+    runner = WorkflowSandboxRunner()
+    runner.run([first, second], module_fixtures=fixtures)
+
+    assert outputs == [("one", "A"), ("two", "B")]
+    assert "TEST_FIXVAR" not in os.environ

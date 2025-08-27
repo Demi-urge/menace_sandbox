@@ -253,6 +253,7 @@ class WorkflowSandboxRunner:
         test_data: Mapping[str, str | bytes] | None = None,
         network_mocks: Mapping[str, Callable[..., Any]] | None = None,
         fs_mocks: Mapping[str, Callable[..., Any]] | None = None,
+        module_fixtures: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> RunMetrics:
         """Execute ``workflow`` inside a sandbox and return collected metrics.
 
@@ -264,9 +265,15 @@ class WorkflowSandboxRunner:
         ``network_mocks`` and ``fs_mocks`` can supply custom callables for the
         patched network and filesystem helpers respectively, allowing tests to
         stub out behaviour rather than raising errors.
+
+        ``module_fixtures`` maps module names to fixture dictionaries. Each
+        fixture may contain ``"files"`` and ``"env"`` mappings to pre-populate
+        sandbox files and temporary environment variables for the duration of
+        the module's execution.
         """
 
         test_data = dict(test_data or {})
+        module_fixtures = {k: dict(v) for k, v in (module_fixtures or {}).items()}
 
         proc = psutil.Process() if psutil else None
 
@@ -291,6 +298,25 @@ class WorkflowSandboxRunner:
             metrics = RunMetrics()
 
             for fn in modules:
+                name = getattr(fn, "__name__", repr(fn))
+                fixtures = module_fixtures.get(name, {})
+                files = dict(fixtures.get("files", {}))
+                env_vars = dict(fixtures.get("env", {}))
+
+                # Write per-module file fixtures
+                for fname, content in files.items():
+                    real = self._resolve(root, fname)
+                    real.parent.mkdir(parents=True, exist_ok=True)
+                    mode = "wb" if isinstance(content, (bytes, bytearray)) else "w"
+                    with original_open(real, mode) as fh:
+                        fh.write(content)
+
+                # Inject environment variables for module
+                old_env: dict[str, str | None] = {}
+                for key, value in env_vars.items():
+                    old_env[key] = os.environ.get(key)
+                    os.environ[key] = value
+
                 start = perf_counter()
                 mem_before = 0
                 mem_after = 0
@@ -315,6 +341,12 @@ class WorkflowSandboxRunner:
                     error = str(exc)
                     metrics.crash_count += 1
                     caught = exc
+                finally:
+                    for key, original in old_env.items():
+                        if original is None:
+                            os.environ.pop(key, None)
+                        else:
+                            os.environ[key] = original
 
                 duration = perf_counter() - start
 
@@ -328,7 +360,7 @@ class WorkflowSandboxRunner:
                     tracemalloc.stop()
 
                 module_metric = ModuleMetrics(
-                    name=getattr(fn, "__name__", repr(fn)),
+                    name=name,
                     duration=duration,
                     memory_before=mem_before,
                     memory_after=mem_after,
