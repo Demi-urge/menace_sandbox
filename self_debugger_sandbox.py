@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """Self-debugging workflow with sandboxed patch testing."""
 
-import logging
 from .logging_utils import log_record
 from .retry_utils import with_retry
 import os
@@ -18,6 +17,9 @@ import json
 import io
 import math
 from statistics import pstdev
+import sqlite3
+import threading
+from typing import Callable, Mapping
 from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
 from .knowledge_graph import KnowledgeGraph
@@ -25,6 +27,18 @@ from .quick_fix_engine import generate_patch
 from .human_alignment_agent import HumanAlignmentAgent
 from .human_alignment_flagger import _collect_diff_data
 from .violation_logger import log_violation
+from db_router import GLOBAL_ROUTER, init_db_router
+from .automated_debugger import AutomatedDebugger
+from .self_coding_engine import SelfCodingEngine
+from .audit_trail import AuditTrail
+from .code_database import PatchHistoryDB, _hash_code
+from .self_improvement_policy import SelfImprovementPolicy
+from .roi_tracker import ROITracker
+from .error_cluster_predictor import ErrorClusterPredictor
+try:
+    from .sandbox_runner import integrate_new_orphans
+except Exception:  # pragma: no cover - fallback for flat layout
+    from sandbox_runner import integrate_new_orphans  # type: ignore
 
 
 class CoverageSubprocessError(RuntimeError):
@@ -41,18 +55,7 @@ class RollbackError(RuntimeError):
 
 class CandidateEvaluationError(RuntimeError):
     """Raised when evaluating a candidate patch fails but is recoverable."""
-import sqlite3
-import threading
 
-from db_router import GLOBAL_ROUTER, init_db_router
-from .automated_debugger import AutomatedDebugger
-from .self_coding_engine import SelfCodingEngine
-from .audit_trail import AuditTrail
-from .code_database import PatchHistoryDB, _hash_code
-from .self_improvement_policy import SelfImprovementPolicy
-from .roi_tracker import ROITracker
-from typing import Callable, Mapping
-from .error_cluster_predictor import ErrorClusterPredictor
 
 router = GLOBAL_ROUTER or init_db_router("self_debugger_sandbox")
 
@@ -101,7 +104,6 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._history_conn: sqlite3.Connection | None = None
         self._history_records: list[tuple[float, float, float, float, float, float]] = []
         try:
-            path = Path(os.getenv("SANDBOX_SCORE_DB", "score_history.db"))
             self._history_conn = router.get_connection("flakiness_history")
             self._history_conn.execute(
                 """
@@ -203,7 +205,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             return
         for mod in modules:
             try:
-                with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
+                with (
+                    tempfile.TemporaryDirectory() as before_dir,
+                    tempfile.TemporaryDirectory() as after_dir,
+                ):
                     src = Path(mod)
                     if src.suffix == "":
                         src = src.with_suffix(".py")
@@ -213,6 +218,13 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     shutil.copy2(src, before_target)
                     patch_id = generate_patch(mod, self.engine)
                     if patch_id is not None:
+                        try:
+                            integrate_new_orphans(Path.cwd(), router=router)
+                        except Exception:
+                            self.logger.exception(
+                                "integrate_new_orphans after preemptive patch failed",
+                                extra=log_record(module=mod),
+                            )
                         after_target = Path(after_dir) / rel
                         after_target.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src, after_target)
@@ -494,7 +506,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             return
         try:
             cur = self._history_conn.execute(
-                "SELECT coverage_delta, error_delta, roi_delta, complexity, synergy_roi, synergy_efficiency FROM composite_history ORDER BY id DESC LIMIT ?",
+                (
+                    "SELECT coverage_delta, error_delta, roi_delta, complexity, "
+                    "synergy_roi, synergy_efficiency FROM composite_history "
+                    "ORDER BY id DESC LIMIT ?"
+                ),
                 (limit,),
             )
             rows = cur.fetchall()
@@ -1107,6 +1123,14 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         pid, reverted, roi_delta = await asyncio.to_thread(
                             self.engine.apply_patch, root_test, "auto_debug"
                         )
+                        try:
+                            await asyncio.to_thread(
+                                integrate_new_orphans, Path.cwd(), router=router
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "integrate_new_orphans after apply_patch failed"
+                            )
                         after_cov, after_runtime = await asyncio.to_thread(
                             self._run_tests, root_test
                         )
@@ -1280,6 +1304,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     reason="auto_debug",
                     trigger="self_debugger_sandbox",
                 )
+                try:
+                    integrate_new_orphans(Path.cwd(), router=router)
+                except Exception:
+                    self.logger.exception(
+                        "integrate_new_orphans after apply_patch failed"
+                    )
                 if self.policy:
                     try:
                         state = self.state_getter() if self.state_getter else ()
