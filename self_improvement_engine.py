@@ -5390,7 +5390,11 @@ class SelfImprovementEngine:
                     if self.workflow_evolver.is_stable(wf_id)
                     else "baseline"
                 )
-            results[int(wf_id)] = {"status": status}
+            results[int(wf_id)] = {
+                "status": status,
+                "parent_id": getattr(evolved, "parent_id", wf_id),
+                "mutation_description": getattr(evolved, "mutation_description", ""),
+            }
             try:
                 self._post_round_orphan_scan()
             except Exception:
