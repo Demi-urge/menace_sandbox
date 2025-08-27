@@ -6,6 +6,7 @@ from pathlib import Path
 def test_roi_history_persistence_and_delta(tmp_path, monkeypatch):
     history_file = tmp_path / "roi_history.json"
     monkeypatch.setenv("WORKFLOW_ROI_HISTORY_PATH", str(history_file))
+    monkeypatch.setenv("WORKFLOW_SUMMARY_STORE", str(tmp_path))
 
     import menace.workflow_run_summary as wrs
     wrs = importlib.reload(wrs)
@@ -32,4 +33,5 @@ def test_roi_history_persistence_and_delta(tmp_path, monkeypatch):
     assert data["avg_roi_delta"] == 1.0
 
     monkeypatch.delenv("WORKFLOW_ROI_HISTORY_PATH", raising=False)
+    monkeypatch.delenv("WORKFLOW_SUMMARY_STORE", raising=False)
     importlib.reload(wrs)
