@@ -7,6 +7,7 @@ import json
 from typing import Dict, List, Iterable
 
 from .workflow_graph import WorkflowGraph
+from . import workflow_spec
 
 # In-memory ROI history per workflow
 _WORKFLOW_ROI_HISTORY: Dict[str, List[float]] = {}
@@ -65,6 +66,21 @@ def save_all_summaries(directory: str | Path = ".", *, graph: WorkflowGraph | No
         }
         path = out_dir / f"{wid}.summary.json"
         path.write_text(json.dumps(data, indent=2))
+
+        # Update the workflow specification with the summary path when possible
+        spec_path = out_dir / f"{wid}.workflow.json"
+        if not spec_path.exists():
+            spec_path = out_dir / "workflows" / f"{wid}.workflow.json"
+        if spec_path.exists():
+            try:
+                spec_data = json.loads(spec_path.read_text())
+            except Exception:
+                spec_data = None
+            if isinstance(spec_data, dict):
+                metadata = dict(spec_data.get("metadata") or {})
+                metadata["summary_path"] = str(path)
+                spec_data["metadata"] = metadata
+                workflow_spec.save_spec(spec_data, spec_path)
 
 
 def reset_history() -> None:

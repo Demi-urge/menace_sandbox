@@ -47,7 +47,7 @@ def to_spec(steps: list[Any]) -> dict:
     Parameters
     ----------
     steps:
-        Sequence of :class:`WorkflowStep` instances or ``dict``\ s describing
+        Sequence of :class:`WorkflowStep` instances or ``dict``s describing
         workflow steps.  Each step is expected to expose the attributes
         ``module``, ``inputs`` and ``outputs``.  Optional ``files`` or
         ``files_read``/``files_written`` and ``globals`` attributes are also
@@ -95,6 +95,8 @@ def save_spec(spec: dict, path: Path) -> Path:
 
     # Ensure metadata block is present with required fields
     metadata = dict(spec.get("metadata") or {})
+    if "summary_path" in metadata and metadata["summary_path"] is not None:
+        metadata["summary_path"] = str(metadata["summary_path"])
     metadata.setdefault("workflow_id", str(uuid4()))
     metadata.setdefault("parent_id", None)
     metadata.setdefault("mutation_description", "")
@@ -162,4 +164,3 @@ def save_spec(spec: dict, path: Path) -> Path:
 save = save_spec
 
 __all__ = ["to_spec", "save_spec", "save"]
-
