@@ -1,8 +1,9 @@
 import json
+from pathlib import Path
+
+import pytest
 
 import workflow_spec as ws
-from workflow_synthesizer import save_workflow
-from pathlib import Path
 
 
 def test_to_spec_and_save(tmp_path, monkeypatch):
@@ -26,26 +27,54 @@ def test_to_spec_and_save(tmp_path, monkeypatch):
     assert md.get("mutation_description") == ""
 
 
-def test_save_workflow_with_parent(tmp_path):
+def test_save_spec_with_parent(tmp_path):
     parent_spec = {
         "steps": [{"module": "base", "inputs": [], "outputs": []}],
         "metadata": {"workflow_id": "orig"},
     }
-    # Persist parent workflow so a diff can be generated
     ws.save(parent_spec, tmp_path / "orig.workflow.json")
 
-    steps = [{"module": "step1", "inputs": [], "outputs": []}]
-    path = tmp_path / "wf.workflow.json"
-    out_path, metadata = save_workflow(
-        steps, path, parent_id="orig", mutation_description="tweak"
-    )
+    spec = {
+        "steps": [{"module": "step1", "inputs": [], "outputs": []}],
+        "metadata": {"parent_id": "orig", "mutation_description": "tweak"},
+    }
+    out_path = ws.save_spec(spec, tmp_path / "wf.workflow.json")
     data = json.loads(out_path.read_text())
     md = data["metadata"]
-    assert metadata["parent_id"] == "orig"
-    assert metadata["mutation_description"] == "tweak"
-    assert metadata["workflow_id"]
-    assert metadata["created_at"]
-    assert md == metadata
+    assert md["parent_id"] == "orig"
+    assert md["mutation_description"] == "tweak"
+    assert md["workflow_id"]
+    assert md["created_at"]
     diff_path = Path(md["diff_path"])
     assert diff_path.is_file()
     assert diff_path.name == f"{md['workflow_id']}.diff"
+
+
+def test_validate_metadata(tmp_path):
+    good = {"workflow_id": "a", "created_at": "now"}
+    ws.validate_metadata(good)
+
+    with pytest.raises(AssertionError):
+        ws.validate_metadata({})
+
+
+def test_workflow_id_regenerated_on_collision(tmp_path):
+    spec = {"steps": [], "metadata": {"workflow_id": "dup"}}
+    ws.save_spec(spec, tmp_path / "first.workflow.json")
+
+    spec2 = {"steps": [], "metadata": {"workflow_id": "dup"}}
+    path = ws.save_spec(spec2, tmp_path / "second.workflow.json")
+    data = json.loads(path.read_text())
+    assert data["metadata"]["workflow_id"] != "dup"
+
+
+def test_parent_validation(tmp_path):
+    parent_dir = tmp_path / "workflows"
+    parent_dir.mkdir()
+    # Missing workflow_id in metadata
+    (parent_dir / "bad.workflow.json").write_text(
+        json.dumps({"steps": [], "metadata": {"created_at": "now"}})
+    )
+    spec = {"steps": [], "metadata": {"parent_id": "bad"}}
+    with pytest.raises(AssertionError):
+        ws.save_spec(spec, tmp_path / "child.workflow.json")

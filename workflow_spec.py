@@ -81,6 +81,32 @@ def to_spec(steps: list[Any]) -> dict:
     return {"steps": spec_steps}
 
 
+def validate_metadata(metadata: dict) -> None:
+    """Validate the structure of a metadata mapping.
+
+    ``workflow_id`` and ``created_at`` must be present and strings. Optional
+    fields are type‑checked when provided.
+    """
+
+    assert isinstance(metadata, dict), "metadata must be a dictionary"
+
+    workflow_id = metadata.get("workflow_id")
+    assert isinstance(workflow_id, str) and workflow_id, "workflow_id is required"
+
+    created_at = metadata.get("created_at")
+    assert isinstance(created_at, str) and created_at, "created_at is required"
+
+    optional_fields = {
+        "parent_id": (str, type(None)),
+        "mutation_description": str,
+        "summary_path": str,
+        "diff_path": str,
+    }
+    for field, types in optional_fields.items():
+        if field in metadata and metadata[field] is not None:
+            assert isinstance(metadata[field], types), f"{field} must be {types}"
+
+
 def save_spec(spec: dict, path: Path, *, summary_path: Path | str | None = None) -> Path:
     """Persist ``spec`` to ``path`` within a ``workflows`` directory.
 
@@ -111,14 +137,29 @@ def save_spec(spec: dict, path: Path, *, summary_path: Path | str | None = None)
     metadata.setdefault("parent_id", None)
     metadata.setdefault("mutation_description", "")
     metadata.setdefault("created_at", datetime.now(timezone.utc).isoformat())
-    spec = dict(spec)
-    spec["metadata"] = metadata
 
     path = Path(path)
     parent = path.parent
     if parent.name != "workflows":
         parent = parent / "workflows"
     parent.mkdir(parents=True, exist_ok=True)
+
+    # Ensure workflow_id uniqueness within the target directory
+    existing_ids = set()
+    for candidate in parent.glob("*.workflow.json"):
+        try:
+            data = json.loads(candidate.read_text())
+            validate_metadata(data.get("metadata") or {})
+        except Exception:  # pragma: no cover - ignore bad files
+            continue
+        existing_ids.add(data["metadata"]["workflow_id"])
+    while metadata["workflow_id"] in existing_ids:
+        metadata["workflow_id"] = str(uuid4())
+
+    validate_metadata(metadata)
+
+    spec = dict(spec)
+    spec["metadata"] = metadata
 
     name = path.name
     out_path = parent / name
@@ -131,6 +172,7 @@ def save_spec(spec: dict, path: Path, *, summary_path: Path | str | None = None)
             for candidate in parent.glob("*.workflow.json"):
                 try:
                     data = json.loads(candidate.read_text())
+                    validate_metadata(data.get("metadata") or {})
                 except Exception:  # pragma: no cover - ignore corrupt files
                     continue
                 if data.get("metadata", {}).get("workflow_id") == parent_id:
@@ -138,10 +180,9 @@ def save_spec(spec: dict, path: Path, *, summary_path: Path | str | None = None)
                     break
         if parent_path.exists():
             new_lines = json.dumps(spec, indent=2, sort_keys=True).splitlines()
-            try:
-                parent_lines = parent_path.read_text().splitlines()
-            except Exception:  # pragma: no cover - best effort
-                parent_lines = []
+            parent_data = json.loads(parent_path.read_text())
+            validate_metadata(parent_data.get("metadata") or {})
+            parent_lines = json.dumps(parent_data, indent=2, sort_keys=True).splitlines()
             diff_lines = list(
                 difflib.unified_diff(
                     parent_lines,
@@ -173,4 +214,4 @@ def save_spec(spec: dict, path: Path, *, summary_path: Path | str | None = None)
 # Some modules still import ``save``; keep it as an alias.
 save = save_spec
 
-__all__ = ["to_spec", "save_spec", "save"]
+__all__ = ["to_spec", "save_spec", "save", "validate_metadata"]
