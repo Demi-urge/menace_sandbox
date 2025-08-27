@@ -1640,9 +1640,17 @@ class SelfImprovementEngine:
                                 shutil.copy2(src, after_target)
                                 diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
                                 self._pre_commit_alignment_check(diff_data)
-                                self._alignment_review_last_commit(
-                                    f"scenario_patch_{patch_id}"
-                                )
+                                try:
+                                    self._alignment_review_last_commit(
+                                        f"scenario_patch_{patch_id}"
+                                    )
+                                    self._post_patch_orphan_integration()
+                                except Exception:
+                                    self.logger.exception(
+                                        "alignment review failed for %s",
+                                        name,
+                                        extra=log_record(module=name),
+                                    )
                     except Exception:
                         self.logger.exception("patch generation failed for %s", name)
                 elif action == "rerun":
@@ -4761,6 +4769,16 @@ class SelfImprovementEngine:
             self.logger.exception("module map refresh failed: %s", exc)
 
     # ------------------------------------------------------------------
+    def _post_patch_orphan_integration(self) -> None:
+        """Integrate newly created orphan modules after patch application."""
+
+        try:
+            repo = Path(__file__).resolve().parent
+            environment.integrate_new_orphans(repo, router=GLOBAL_ROUTER)
+        except Exception:
+            self.logger.exception("post_patch_orphan_integration_failed")
+
+    # ------------------------------------------------------------------
     def _include_recursive_orphans(self) -> None:
         """Discover and integrate orphaned modules with recursive expansion."""
 
@@ -4957,6 +4975,7 @@ class SelfImprovementEngine:
                                 "patch_id": patch_id,
                             },
                         )
+                        self._post_patch_orphan_integration()
                 if self.error_bot and hasattr(self.error_bot, "db"):
                     try:
                         self.error_bot.db.add_telemetry(
@@ -5091,6 +5110,7 @@ class SelfImprovementEngine:
                                     "patch_id": patch_id,
                                 },
                             )
+                            self._post_patch_orphan_integration()
                     if self.error_bot and hasattr(self.error_bot, "db"):
                         try:
                             self.error_bot.db.add_telemetry(
