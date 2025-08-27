@@ -5310,6 +5310,35 @@ class SelfImprovementEngine:
         try:
             workflow_evolution_details: list[dict[str, object]] = []
             evo_allowed = self._should_trigger()
+
+            def _handle_new_modules() -> None:
+                repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                pending = self._update_orphan_modules() or []
+                while pending:
+                    added_modules: set[str] = set()
+                    try:
+                        _tracker, tested = environment.auto_include_modules(
+                            sorted(pending), recursive=True, validate=True
+                        )
+                        added_modules.update(tested.get("added", []))
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception("auto inclusion failed: %s", exc)
+                    record_new = getattr(self, "_record_new_modules", None)
+                    if record_new:
+                        record_new(added_modules)
+                    abs_paths = [str(repo / p) for p in pending]
+                    try:
+                        self._integrate_orphans(abs_paths)
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception("orphan integration failed: %s", exc)
+                    try:
+                        pending = self._update_orphan_modules() or []
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "successive orphan update failed: %s", exc
+                        )
+                        break
+
             if self.meta_logger:
                 try:
                     settings = SandboxSettings()
@@ -5445,6 +5474,7 @@ class SelfImprovementEngine:
                             ),
                         )
                         self.error_bot.auto_patch_recurrent_errors()
+                        _handle_new_modules()
                         if self.error_predictor:
                             try:
                                 self.error_predictor.graph.update_error_stats(
@@ -5479,6 +5509,7 @@ class SelfImprovementEngine:
                         "proactive prediction patching failed: %s", exc
                     )
             self._apply_high_risk_patches()
+            _handle_new_modules()
             state = self._policy_state() if self.policy else (0,) * POLICY_STATE_LEN
             predicted = self.policy.score(state) if self.policy else 0.0
             roi_pred: float | None = None
@@ -5727,6 +5758,7 @@ class SelfImprovementEngine:
                     self.logger.exception("helper patch failed: %s", exc)
                     patch_id = None
                     reverted = False
+            _handle_new_modules()
             if self.error_bot:
                 try:
                     self.error_bot.auto_patch_recurrent_errors()
@@ -5743,6 +5775,7 @@ class SelfImprovementEngine:
                     self.logger.info("error auto-patching complete")
                 except Exception as exc:
                     self.logger.exception("auto patch recurrent errors failed: %s", exc)
+            _handle_new_modules()
             after_roi = before_roi
             if self.capital_bot:
                 try:
