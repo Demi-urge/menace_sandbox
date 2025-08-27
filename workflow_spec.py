@@ -21,6 +21,8 @@ from dataclasses import asdict, is_dataclass
 import json
 from pathlib import Path
 from typing import Any, Iterable
+from datetime import datetime, timezone
+from uuid import uuid4
 
 try:  # Optional dependency for YAML output
     import yaml  # type: ignore
@@ -86,6 +88,15 @@ def save_spec(spec: dict, path: Path) -> Path:
     Regardless of the provided location the file is written beneath a
     ``workflows`` folder, which is created if necessary.
     """
+
+    # Ensure metadata block is present with required fields
+    metadata = dict(spec.get("metadata") or {})
+    metadata.setdefault("workflow_id", str(uuid4()))
+    metadata.setdefault("parent_id", None)
+    metadata.setdefault("mutation_description", "")
+    metadata.setdefault("created_at", datetime.now(timezone.utc).isoformat())
+    spec = dict(spec)
+    spec["metadata"] = metadata
 
     path = Path(path)
     parent = path.parent

@@ -1502,12 +1502,31 @@ def to_workflow_spec(workflow: List[WorkflowStep] | List[Dict[str, Any]]) -> Dic
 def save_workflow(
     workflow: List[WorkflowStep] | List[Dict[str, Any]],
     path: Path | str | None = None,
+    *,
+    parent_id: str | None = None,
+    mutation_description: str = "",
 ) -> Path:
-    """Persist ``workflow`` using :func:`workflow_spec.save_spec`."""
+    """Persist ``workflow`` using :func:`workflow_spec.save_spec`.
+
+    Parameters
+    ----------
+    workflow:
+        Sequence of workflow steps.
+    path:
+        Optional destination for the workflow specification.
+    parent_id:
+        Identifier of the workflow this was derived from, if any.
+    mutation_description:
+        Human readable description of how the workflow was changed.
+    """
 
     from workflow_spec import save_spec as _save_spec
 
     spec = to_workflow_spec(workflow)
+    spec["metadata"] = {
+        "parent_id": parent_id,
+        "mutation_description": mutation_description,
+    }
     out = Path(path) if path is not None else Path("workflow.workflow.json")
     return _save_spec(spec, out)
 
