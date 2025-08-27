@@ -28,7 +28,7 @@ def test_generate_workflows_indexes_discovered_modules(tmp_path, monkeypatch):
         calls["synergy"] = ["extra.mod"]
         calls["intent"] = [Path(repo) / "extra/mod.py"]
         calls["workflow"] = ["extra/mod.py"]
-        return ["extra/mod.py"]
+        return ["extra/mod.py"], True, True
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []

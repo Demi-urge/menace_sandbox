@@ -89,7 +89,7 @@ def test_generate_workflows_calls_post_round_scan(tmp_path, monkeypatch):
 
     def fake_scan(repo, modules=None, *, logger=None, router=None):
         called["integrate"] = True
-        return []
+        return [], True, True
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
@@ -200,7 +200,7 @@ def test_quick_fix_patch_cycle_indexes_orphans(tmp_path, monkeypatch):
         from intent_clusterer import IntentClusterer
         IntentClusterer(None, None).index_modules([Path(repo) / "extra/mod.py"])
         try_integrate_into_workflows(["extra/mod.py"], router=router)
-        return ["extra/mod.py"]
+        return ["extra/mod.py"], True, True
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []

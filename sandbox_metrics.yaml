@@ -4,3 +4,6 @@ extra_metrics:
   stale_containers_removed: 0.0
   stale_vms_removed: 0.0
   runtime_vms_removed: 0.0
+  orphan_modules_added: 0.0
+  synergy_update_success: 0.0
+  intent_update_success: 0.0

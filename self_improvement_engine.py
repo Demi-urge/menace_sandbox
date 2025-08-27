@@ -4155,12 +4155,19 @@ class SelfImprovementEngine:
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
         try:
-            added = post_round_orphan_scan(
+            added, syn_ok, intent_ok = post_round_orphan_scan(
                 repo, logger=self.logger, router=GLOBAL_ROUTER
             )
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("recursive orphan integration failed")
             return
+
+        self.logger.info(
+            "post_round_orphan_scan added=%d synergy_ok=%s intent_ok=%s",
+            len(added),
+            syn_ok,
+            intent_ok,
+        )
 
         record_new = getattr(self, "_record_new_modules", None)
         if record_new:
