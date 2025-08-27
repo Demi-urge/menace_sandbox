@@ -11,9 +11,21 @@ A small CLI is provided for ad-hoc queries.
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional
 import argparse
+import json
+import os
+from pathlib import Path
 
-from evolution_history_db import EvolutionHistoryDB
-from patch_provenance import get_patch_provenance
+from .evolution_history_db import EvolutionHistoryDB
+try:  # optional dependency for provenance details
+    from .patch_provenance import get_patch_provenance
+except Exception:  # pragma: no cover - gracefully degrade
+    def get_patch_provenance(patch_id: int) -> List[dict]:
+        return []
+
+
+_SUMMARY_STORE = Path(
+    os.environ.get("WORKFLOW_SUMMARY_STORE", Path("sandbox_data") / "workflows")
+)
 
 
 @dataclass
@@ -40,14 +52,39 @@ class LineageTracker:
         """
 
         if workflow_id is not None:
-            return self.db.lineage_tree(workflow_id)
+            trees = self.db.lineage_tree(workflow_id)
+        else:
+            cur = self.db.conn.execute(
+                "SELECT DISTINCT workflow_id FROM evolution_history WHERE workflow_id IS NOT NULL"
+            )
+            trees = []
+            for row in cur.fetchall():
+                trees.extend(self.db.lineage_tree(int(row[0])))
 
-        cur = self.db.conn.execute(
-            "SELECT DISTINCT workflow_id FROM evolution_history WHERE workflow_id IS NOT NULL"
-        )
-        trees: List[dict] = []
-        for row in cur.fetchall():
-            trees.extend(self.db.lineage_tree(int(row[0])))
+        # Enrich each node with information from persisted workflow summaries
+        summary_cache: Dict[str, dict] = {}
+
+        def enrich(node: dict) -> None:
+            wid = node.get("workflow_id")
+            if wid is not None:
+                wid_str = str(wid)
+                data = summary_cache.get(wid_str)
+                if data is None:
+                    path = _SUMMARY_STORE / f"{wid_str}.summary.json"
+                    try:
+                        data = json.loads(path.read_text())
+                    except Exception:
+                        data = {}
+                    summary_cache[wid_str] = data
+                node["average_roi"] = data.get("average_roi")
+                node["roi_delta"] = data.get("roi_delta")
+                node["mutation_description"] = data.get("mutation_description")
+            for child in node.get("children", []):
+                enrich(child)
+
+        for root in trees:
+            enrich(root)
+
         return trees
 
     # ------------------------------------------------------------------

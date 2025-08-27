@@ -23,6 +23,12 @@ _HISTORY_PATH = Path(
     )
 )
 
+# Default location for saved workflow summaries.  Individual tests can override
+# via the ``WORKFLOW_SUMMARY_STORE`` environment variable.
+_SUMMARY_STORE = Path(
+    os.environ.get("WORKFLOW_SUMMARY_STORE", Path("sandbox_data") / "workflows")
+)
+
 
 def _load_history() -> None:
     """Load persisted ROI history into memory."""
@@ -130,6 +136,18 @@ def save_summary(
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{wid}.summary.json"
     path.write_text(json.dumps(data, indent=2))
+
+    # Also persist a copy to the shared summary store so other components can
+    # easily discover summary information without needing the original
+    # directory.
+    try:
+        _SUMMARY_STORE.mkdir(parents=True, exist_ok=True)
+        (_SUMMARY_STORE / f"{wid}.summary.json").write_text(
+            json.dumps(data, indent=2)
+        )
+    except Exception:
+        pass
+
     return path
 
 

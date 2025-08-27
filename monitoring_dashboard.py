@@ -42,7 +42,13 @@ function render(nodes){
   const ul=document.createElement('ul');
   nodes.forEach(n=>{
     const li=document.createElement('li');
-    li.textContent=`${n.action} (id=${n.rowid})`;
+    const avg =
+      (n.average_roi === undefined || n.average_roi === null) ? 'n/a' : n.average_roi;
+    const delta =
+      (n.roi_delta === undefined || n.roi_delta === null) ? 'n/a' : n.roi_delta;
+    const desc = n.mutation_description ? ` - ${n.mutation_description}` : '';
+    li.textContent =
+      `${n.action} (id=${n.rowid}, avgROI=${avg}, ΔROI=${delta})${desc}`;
     if(n.children && n.children.length){
       li.appendChild(render(n.children));
     }
@@ -66,9 +72,39 @@ async function load() {
   const e = await fetch('/evolution_data').then(r=>r.json());
   const err = await fetch('/error_data').then(r=>r.json());
   trees = await fetch('/lineage_data').then(r=>r.json());
-  new Chart(document.getElementById('metrics'), {type:'line',data:{labels:m.labels,datasets:[{label:'CPU',data:m.cpu},{label:'Errors',data:m.errors}]}});
-  new Chart(document.getElementById('evolution'), {type:'line',data:{labels:e.labels,datasets:[{label:'ROI',data:e.roi}]}});
-  new Chart(document.getElementById('errors'), {type:'bar',data:{labels:err.labels,datasets:[{label:'Count',data:err.count}]}});
+  new Chart(
+    document.getElementById('metrics'),
+    {
+      type: 'line',
+      data: {
+        labels: m.labels,
+        datasets: [
+          {label: 'CPU', data: m.cpu},
+          {label: 'Errors', data: m.errors}
+        ]
+      }
+    }
+  );
+  new Chart(
+    document.getElementById('evolution'),
+    {
+      type: 'line',
+      data: {
+        labels: e.labels,
+        datasets: [{label: 'ROI', data: e.roi}]
+      }
+    }
+  );
+  new Chart(
+    document.getElementById('errors'),
+    {
+      type: 'bar',
+      data: {
+        labels: err.labels,
+        datasets: [{label: 'Count', data: err.count}]
+      }
+    }
+  );
   renderAll(trees);
   const source = new EventSource('/lineage_stream');
   source.onmessage = e => {
@@ -158,7 +194,8 @@ def MonitoringDashboard(
         with dash._lineage_lock:
             if not dash._lineage_trees:
                 cur = dash.evolution_db.conn.execute(
-                    "SELECT DISTINCT workflow_id FROM evolution_history WHERE workflow_id IS NOT NULL"
+                    "SELECT DISTINCT workflow_id FROM evolution_history "
+                    "WHERE workflow_id IS NOT NULL"
                 )
                 for row in cur.fetchall():
                     wid = int(row[0])
