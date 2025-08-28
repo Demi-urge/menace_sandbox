@@ -542,8 +542,11 @@ def merge_duplicate(
     dup = directory / f"{dup_id}.workflow.json"
     out = directory / f"{base_id}.merged.json"
 
+    if not base.exists() or not dup.exists():
+        return None
+
     try:
-        # Ensure both workflow files exist and contain valid JSON
+        # Ensure both workflow files contain valid JSON
         json.loads(base.read_text())
         json.loads(dup.read_text())
     except Exception:
