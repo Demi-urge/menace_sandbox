@@ -86,7 +86,16 @@ def sample_embeddings(tmp_path):
 def test_embedding_generation(sample_embeddings):
     planner, vecs, records = sample_embeddings
     vec = vecs["wf1"]
-    assert len(vec) == 2 + 3 + planner.max_functions + planner.max_modules + planner.max_tags
+    assert (
+        len(vec)
+        == 2
+        + planner.roi_window
+        + 2
+        + planner.roi_window
+        + planner.max_functions
+        + planner.max_modules
+        + planner.max_tags
+    )
     roi_segment = vec[2:5]
     assert roi_segment[:2] == [1.0, 1.0]
     assert records[0]["id"] == "wf1"
