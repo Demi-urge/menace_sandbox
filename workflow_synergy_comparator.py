@@ -30,6 +30,13 @@ except Exception:  # pragma: no cover - gracefully degrade
     _HAS_NX = False
 
 try:  # pragma: no cover - optional dependency
+    from node2vec import Node2Vec  # type: ignore
+    _HAS_NODE2VEC = True
+except Exception:  # pragma: no cover - gracefully degrade
+    Node2Vec = None  # type: ignore
+    _HAS_NODE2VEC = False
+
+try:  # pragma: no cover - optional dependency
     from workflow_vectorizer import WorkflowVectorizer  # type: ignore
 except Exception:  # pragma: no cover - gracefully degrade
     WorkflowVectorizer = None  # type: ignore
@@ -139,22 +146,42 @@ class WorkflowSynergyComparator:
 
     @classmethod
     def _embed_spec(cls, spec: Dict[str, Any]) -> List[float]:
+        graph = cls._build_graph(cls._extract_modules(spec))
+        return cls._embed_graph(graph, spec)
+
+    @classmethod
+    def _embed_graph(cls, graph: Any, spec: Dict[str, Any]) -> List[float]:
+        """Return an embedding for ``graph``/``spec`` with caching."""
+
         key = ",".join(cls._extract_modules(spec))
         if key in cls._embed_cache:
             return cls._embed_cache[key]
-        graph = cls._build_graph(cls._extract_modules(spec))
-        vec = cls._embed_graph(graph, spec)
-        cls._embed_cache[key] = vec
-        return vec
 
-    @staticmethod
-    def _embed_graph(graph: Any, spec: Dict[str, Any]) -> List[float]:
-        """Return an embedding for ``graph``/``spec``."""
+        if _HAS_NX and _HAS_NODE2VEC and isinstance(graph, nx.Graph):
+            try:  # pragma: no cover - optional dependency
+                n2v = Node2Vec(graph, dimensions=16, walk_length=5, num_walks=20, workers=1)
+                model = n2v.fit(window=5, min_count=1)
+                vectors = model.wv
+                if hasattr(vectors, "index_to_key"):
+                    nodes = list(vectors.index_to_key)
+                elif hasattr(vectors, "key_to_index"):
+                    nodes = list(vectors.key_to_index.keys())
+                else:
+                    nodes = list(vectors.keys())  # type: ignore[attr-defined]
+                vec: List[float] = []
+                for n in sorted(nodes):
+                    vec.extend([float(v) for v in vectors[n]])
+                cls._embed_cache[key] = vec
+                return vec
+            except Exception:
+                pass
 
         if _HAS_NX and isinstance(graph, nx.Graph):
             try:  # pragma: no cover - optional dependency
                 centrality = nx.degree_centrality(graph)
-                return [centrality[n] for n in sorted(centrality)]
+                vec = [centrality[n] for n in sorted(centrality)]
+                cls._embed_cache[key] = vec
+                return vec
             except Exception:
                 pass
 
@@ -162,6 +189,7 @@ class WorkflowSynergyComparator:
             try:  # pragma: no cover - optional dependency
                 wf_record = {"workflow": [s.get("module") for s in spec.get("steps", [])]}
                 vec = WorkflowVectorizer().fit([wf_record]).transform(wf_record)
+                cls._embed_cache[key] = list(vec)
                 return list(vec)
             except Exception:
                 pass
@@ -172,7 +200,9 @@ class WorkflowSynergyComparator:
                 mod = step.get("module")
                 if mod:
                     counts[str(mod)] = counts.get(str(mod), 0) + 1
-        return [counts[k] for k in sorted(counts)]
+        vec = [counts[k] for k in sorted(counts)]
+        cls._embed_cache[key] = vec
+        return vec
 
     @staticmethod
     def _cosine(v1: Iterable[float], v2: Iterable[float]) -> float:
