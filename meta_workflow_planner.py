@@ -12,6 +12,11 @@ from workflow_graph import WorkflowGraph
 from vector_utils import persist_embedding, cosine_similarity
 
 try:  # pragma: no cover - optional heavy dependency
+    from vector_service.retriever import Retriever  # type: ignore
+except Exception:  # pragma: no cover - allow running without retriever
+    Retriever = None  # type: ignore
+
+try:  # pragma: no cover - optional heavy dependency
     from roi_tracker import ROITracker  # type: ignore
 except Exception:  # pragma: no cover - allow running without ROI tracker
     ROITracker = None  # type: ignore
@@ -441,6 +446,111 @@ def _roi_scores(tracker: ROITracker) -> Dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
+def _roi_weight_from_db(
+    db: ROIResultsDB, workflow_id: str, window: int = 5
+) -> float:
+    """Return average ROI gain for ``workflow_id`` from ``db``.
+
+    The function consults :meth:`ROIResultsDB.fetch_trends` and computes the
+    mean ``roi_gain`` over the most recent ``window`` entries.  Any database
+    errors simply result in a weight of ``0.0`` so callers can use this in
+    best-effort contexts without additional error handling.
+    """
+
+    try:
+        trends = db.fetch_trends(workflow_id)
+    except Exception:
+        return 0.0
+    if not trends:
+        return 0.0
+    recent = trends[-window:]
+    return sum(float(t.get("roi_gain", 0.0)) for t in recent) / len(recent)
+
+
+# ---------------------------------------------------------------------------
+def find_synergy_candidates(
+    query: Sequence[float] | str,
+    *,
+    top_k: int = 5,
+    retriever: Retriever | None = None,
+    roi_db: ROIResultsDB | None = None,
+    roi_window: int = 5,
+) -> List[Dict[str, Any]]:
+    """Return top ``top_k`` workflows similar to ``query`` weighted by ROI.
+
+    ``query`` may be either a numeric embedding vector or an identifier of a
+    stored workflow embedding.  Results are ranked by cosine similarity scaled
+    by the average ROI gain retrieved from ``roi_db``.  When ``retriever`` is
+    provided the underlying :class:`vector_service.retriever.Retriever` is used
+    to gather candidate workflow identifiers.  If ``retriever`` is ``None`` or
+    the lookup fails the function falls back to scanning all stored
+    embeddings.
+    """
+
+    roi_db = roi_db or ROIResultsDB()
+    embeddings = _load_embeddings()
+
+    if isinstance(query, str):
+        query_vec = embeddings.get(query)
+        if query_vec is None:
+            return []
+        exclude = {query}
+    else:
+        query_vec = [float(x) for x in query]
+        exclude: set[str] = set()
+
+    candidates: List[tuple[str, float]] = []
+
+    if retriever is None and Retriever is not None:
+        try:  # pragma: no cover - best effort
+            retriever = Retriever()
+        except Exception:
+            retriever = None
+
+    if retriever is not None and Retriever is not None:
+        try:  # pragma: no cover - optional path
+            ur = retriever._get_retriever()
+            hits, _, _ = ur.retrieve(query_vec, top_k=top_k * 3, dbs=["workflow_meta"])  # type: ignore[attr-defined]
+            for hit in hits:
+                wf_id = str(
+                    getattr(hit, "record_id", None)
+                    or getattr(getattr(hit, "metadata", {}), "get", lambda *_: None)("id")
+                    or ""
+                )
+                if not wf_id or wf_id in exclude:
+                    continue
+                vec = embeddings.get(wf_id)
+                if vec is None:
+                    continue
+                sim = cosine_similarity(query_vec, vec)
+                candidates.append((wf_id, sim))
+        except Exception:
+            candidates = []
+
+    if not candidates:
+        for wf_id, vec in embeddings.items():
+            if wf_id in exclude:
+                continue
+            sim = cosine_similarity(query_vec, vec)
+            candidates.append((wf_id, sim))
+
+    scored: List[Dict[str, Any]] = []
+    for wf_id, sim in candidates:
+        roi = _roi_weight_from_db(roi_db, wf_id, window=roi_window)
+        scored.append(
+            {
+                "workflow_id": wf_id,
+                "similarity": sim,
+                "roi": roi,
+                "score": sim * (1.0 + roi),
+            }
+        )
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return scored[:top_k]
+
+
+# ---------------------------------------------------------------------------
 def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
     """Return high-synergy workflow sequence starting from ``start_workflow_id``."""
 
@@ -479,4 +589,4 @@ def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
     return chain
 
 
-__all__ = ["MetaWorkflowPlanner", "find_synergy_chain"]
+__all__ = ["MetaWorkflowPlanner", "find_synergy_chain", "find_synergy_candidates"]
