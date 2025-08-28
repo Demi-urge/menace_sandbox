@@ -137,6 +137,61 @@ def test_httpx_network_mock():
     assert metrics.modules[0].result == "mocked"
 
 
+def test_aiohttp_blocked_in_safe_mode():
+    aiohttp = pytest.importorskip("aiohttp")
+
+    def step():
+        import asyncio, aiohttp  # noqa: F401
+
+        async def inner():
+            async with aiohttp.ClientSession() as session:
+                await session.get("http://example.com")
+
+        asyncio.run(inner())
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run([step], safe_mode=True)
+
+    assert metrics.crash_count == 1
+    assert "network access disabled" in (metrics.modules[0].exception or "")
+
+
+def test_aiohttp_network_mock():
+    aiohttp = pytest.importorskip("aiohttp")
+
+    async def mock_request(self, method, url, *a, **kw):  # pragma: no cover - invoked by patch
+        class Resp:
+            status = 200
+
+            async def read(self) -> bytes:
+                return b"mocked"
+
+            async def text(self) -> str:
+                return "mocked"
+
+        return Resp()
+
+    def step():
+        import asyncio, aiohttp  # noqa: F401
+
+        async def inner():
+            async with aiohttp.ClientSession() as session:
+                resp = await session.get("http://example.com")
+                return await resp.text()
+
+        return asyncio.run(inner())
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run(
+        [step],
+        safe_mode=True,
+        network_mocks={"aiohttp": mock_request},
+    )
+
+    assert metrics.crash_count == 0
+    assert metrics.modules[0].result == "mocked"
+
+
 def test_os_shutil_wrappers_redirected():
     src_file = Path("/tmp/wrapper_src.txt")
     src_dir = Path("/tmp/wrapper_dir")

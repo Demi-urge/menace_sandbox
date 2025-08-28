@@ -443,6 +443,26 @@ class WorkflowSandboxRunner:
                 stack.enter_context(
                     mock.patch.object(httpx.Client, "request", fake_httpx_request)
                 )
+
+                if hasattr(httpx, "AsyncClient"):
+                    orig_async_httpx_request = httpx.AsyncClient.request
+
+                    async def fake_async_httpx_request(self, method, url, *a, **kw):
+                        if url in network_data:
+                            return _httpx_response(network_data[url])
+                        fn = network_mocks.get("httpx")
+                        if fn:
+                            res = fn(self, method, url, *a, **kw)
+                            if inspect.isawaitable(res):
+                                return await res
+                            return res
+                        if safe_mode:
+                            raise RuntimeError("network access disabled in safe_mode")
+                        return await orig_async_httpx_request(self, method, url, *a, **kw)
+
+                    stack.enter_context(
+                        mock.patch.object(httpx.AsyncClient, "request", fake_async_httpx_request)
+                    )
             except Exception:  # pragma: no cover
                 pass
 
