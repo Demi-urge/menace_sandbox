@@ -41,7 +41,7 @@ except Exception:  # pragma: no cover - gracefully degrade
 
 try:  # pragma: no cover - optional dependency
     from .roi_tracker import ROITracker  # type: ignore
-except Exception:  # pragma: no cover - gracefully degrade
+except BaseException:  # pragma: no cover - gracefully degrade
     ROITracker = None  # type: ignore
 
 # ---------------------------------------------------------------------------
@@ -273,5 +273,69 @@ class WorkflowSynergyComparator:
         ent_gap = abs(result.entropy_a - result.entropy_b)
         return result.similarity >= sim_thr and ent_gap <= ent_thr
 
+    # ------------------------------------------------------------------
+    @classmethod
+    def merge_duplicate(
+        cls,
+        base_id: str,
+        dup_id: str,
+        out_dir: Path | str | None = None,
+    ) -> Path | None:
+        """Merge a duplicate workflow into a canonical base specification.
 
-__all__ = ["WorkflowSynergyComparator", "SynergyScores"]
+        The function loads both workflow specifications, writes them to
+        temporary files and delegates the actual merge to
+        :mod:`workflow_merger`.  Temporary files are cleaned up regardless of
+        merge success.
+        """
+
+        work_dir = Path(out_dir) if out_dir is not None else cls.workflow_dir
+
+        base_spec = cls._load_spec(work_dir / f"{base_id}.workflow.json")
+        dup_spec = cls._load_spec(work_dir / f"{dup_id}.workflow.json")
+        if not base_spec or not dup_spec:
+            return None
+
+        work_dir.mkdir(parents=True, exist_ok=True)
+        base_path = work_dir / f"{base_id}.base.json"
+        dup_path = work_dir / f"{dup_id}.dup.json"
+        out_path = work_dir / f"{base_id}.merged.json"
+
+        try:
+            from . import workflow_merger
+        except Exception:
+            workflow_merger = None  # type: ignore
+
+        try:
+            base_path.write_text(json.dumps(base_spec))
+            dup_path.write_text(json.dumps(dup_spec))
+            if workflow_merger is None:
+                return None
+            result = workflow_merger.merge_workflows(
+                base_path, base_path, dup_path, out_path
+            )
+        except Exception:
+            result = None
+        finally:
+            for p in (base_path, dup_path):
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+
+        return result
+
+
+def merge_duplicate(
+    base_id: str, dup_id: str, out_dir: Path | str | None = None
+) -> Path | None:
+    """Convenience wrapper around :class:`WorkflowSynergyComparator`.
+
+    This allows callers to import :func:`merge_duplicate` directly from the
+    module without instantiating :class:`WorkflowSynergyComparator`.
+    """
+
+    return WorkflowSynergyComparator.merge_duplicate(base_id, dup_id, out_dir)
+
+
+__all__ = ["WorkflowSynergyComparator", "SynergyScores", "merge_duplicate"]
