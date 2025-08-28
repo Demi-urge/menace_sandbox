@@ -1,17 +1,22 @@
-"""Workflow comparison utilities.
+"""Workflow similarity and synergy comparison utilities.
 
-This module provides :class:`WorkflowSynergyComparator` used to compare two
-workflow specifications.  The comparison is intentionally lightweight so it can
-operate even in constrained environments.  It attempts to build a small graph
-representation of each workflow, generate vector embeddings for the graphs and
-then derive a number of heuristics such as cosine similarity, module overlap and
-Shannon entropy of the module distribution.
+The :class:`WorkflowSynergyComparator` class defined in this module provides a
+light‑weight way of comparing two workflow specifications.  Workflows are
+loaded from the ``workflows/{id}.workflow.json`` directory when an identifier
+is supplied and reduced to a sequence of module names.  A small dependency
+graph is constructed for each workflow and embedded into a vector space using
+``node2vec`` when available.  If :mod:`networkx` or ``node2vec`` are missing we
+fall back to the optional :mod:`workflow_vectorizer` package or finally to a
+simple frequency based representation.
 
-The main entry point is :meth:`WorkflowSynergyComparator.compare` which returns a
-:class:`WorkflowComparisonResult`.  Convenience helper
-``WorkflowSynergyComparator.is_duplicate`` exposes a simple policy for deciding
-whether two workflows are effectively duplicates based on configurable
-thresholds.
+Cosine similarity between the embeddings together with structural heuristics
+such as module overlap and entropy differences provide a cheap signal for
+deciding whether two workflows are related.  The helper also attempts to look
+up historical ROI and modularity (synergy) scores from
+``roi_results_db.ROIResultsDB`` to provide additional context when available.
+
+The main entry point is :meth:`WorkflowSynergyComparator.compare` which returns
+an instance of :class:`ComparisonResult`.
 """
 
 from __future__ import annotations
@@ -20,69 +25,94 @@ from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from .workflow_metrics import compute_workflow_entropy
-
-try:  # Optional dependency used for richer graph handling
+# Optional third party dependencies -------------------------------------------------
+try:  # pragma: no cover - optional dependency
     import networkx as nx  # type: ignore
     _HAS_NX = True
-except Exception:  # pragma: no cover - optional dependency
+except Exception:  # pragma: no cover - gracefully degrade
     nx = None  # type: ignore
     _HAS_NX = False
 
-try:  # Optional embedding technique
+try:  # pragma: no cover - optional dependency
     from node2vec import Node2Vec  # type: ignore
     _HAS_NODE2VEC = True
-except Exception:  # pragma: no cover - optional dependency
+except Exception:  # pragma: no cover - gracefully degrade
     Node2Vec = None  # type: ignore
     _HAS_NODE2VEC = False
 
-try:  # Optional workflow vectoriser
+try:  # pragma: no cover - optional dependency
     from workflow_vectorizer import WorkflowVectorizer  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
+except Exception:  # pragma: no cover - gracefully degrade
     WorkflowVectorizer = None  # type: ignore
 
-try:  # Best effort loader for workflow specs
-    from .workflow_lineage import load_specs as _load_specs  # type: ignore
-except Exception:  # pragma: no cover - optional
-    _load_specs = None  # type: ignore
+# Optional internal helpers ---------------------------------------------------------
+try:  # pragma: no cover - optional
+    from .workflow_graph import WorkflowGraph  # type: ignore
+except Exception:  # pragma: no cover - gracefully degrade
+    WorkflowGraph = None  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+# Result container
+# ---------------------------------------------------------------------------
 
 
 @dataclass
-class WorkflowComparisonResult:
-    """Container holding metrics derived from comparing two workflows."""
+class ComparisonResult:
+    """Metrics describing how similar two workflows are."""
 
     similarity: float
-    shared_modules: int
-    modules_a: int
-    modules_b: int
+    """Cosine similarity between workflow embeddings."""
+
+    shared_modules: float
+    """Ratio of modules shared between both workflows in ``[0, 1]``."""
+
+    entropy_gap: float
+    """Absolute difference in Shannon entropy of module distributions."""
+
+    roi_a: float
+    roi_b: float
+    modularity_a: float
+    modularity_b: float
+
+    # Additional context retained for consumers that previously relied on
+    # these values.  They are not required by the user instructions but keep
+    # backwards compatibility with parts of the codebase and tests.
     entropy_a: float
     entropy_b: float
-    recommended_winner: Optional[str]
+    modules_a: int
+    modules_b: int
+
+
+# ---------------------------------------------------------------------------
+# Comparator implementation
+# ---------------------------------------------------------------------------
 
 
 class WorkflowSynergyComparator:
     """Compare two workflow specifications using structural heuristics."""
+
+    workflow_dir = Path("workflows")
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
     @staticmethod
     def _load_spec(src: Dict[str, Any] | str | Path) -> Dict[str, Any]:
-        """Load a workflow specification from ``src``.
+        """Return a workflow specification for ``src``.
 
-        ``src`` may either be a mapping already representing the specification or
-        a path to a ``.json`` file on disk.  When a directory is supplied the
-        function attempts to use :func:`workflow_lineage.load_specs` if available
-        and returns the first spec found.  Failing all else an empty mapping is
-        returned.
+        ``src`` may be a mapping representing the specification directly, a
+        path to a JSON file or a workflow identifier.  Workflow identifiers are
+        resolved against ``workflow_dir`` following the ``{id}.workflow.json``
+        naming scheme.  Errors are swallowed and result in an empty mapping.
         """
 
         if isinstance(src, dict):
             return src
 
-        path = Path(src)
+        path = Path(str(src))
         if path.is_file():
             try:
                 data = json.loads(path.read_text())
@@ -91,74 +121,70 @@ class WorkflowSynergyComparator:
             except Exception:  # pragma: no cover - best effort
                 return {}
 
-        if path.is_dir() and _load_specs is not None:  # pragma: no cover - IO heavy
+        wf_file = WorkflowSynergyComparator.workflow_dir / f"{path.name}.workflow.json"
+        if wf_file.is_file():
             try:
-                for spec in _load_specs(path):
-                    if isinstance(spec, dict):
-                        return spec
-            except Exception:
-                pass
+                data = json.loads(wf_file.read_text())
+                if isinstance(data, dict):
+                    return data
+            except Exception:  # pragma: no cover - best effort
+                return {}
         return {}
 
     @staticmethod
-    def _build_graph(spec: Dict[str, Any]):
-        """Construct a simple dependency graph from ``spec``.
-
-        Nodes correspond to module names.  An edge from ``A`` to ``B`` is created
-        when ``A`` produces an output consumed by ``B``.  The returned ``modules``
-        list contains the module of each step in the order encountered.
-        """
-
+    def _extract_modules(spec: Dict[str, Any]) -> List[str]:
         steps = spec.get("steps", []) if isinstance(spec, dict) else []
-        if _HAS_NX:
-            graph = nx.DiGraph()
-        else:
-            graph = {}  # type: Dict[str, set]
-
         modules: List[str] = []
         for step in steps:
-            mod = step.get("module") if isinstance(step, dict) else None
-            if not mod:
-                continue
-            modules.append(mod)
-            if _HAS_NX:
-                graph.add_node(mod)
-            else:
-                graph.setdefault(mod, set())
+            if isinstance(step, dict):
+                mod = step.get("module")
+                if mod:
+                    modules.append(mod)
+        return modules
 
-        for i, a in enumerate(steps):
-            mod_a = a.get("module") if isinstance(a, dict) else None
-            if not mod_a:
-                continue
-            outputs = set(a.get("outputs") or []) if isinstance(a, dict) else set()
-            if not outputs:
-                continue
-            for j, b in enumerate(steps):
-                if i == j:
-                    continue
-                mod_b = b.get("module") if isinstance(b, dict) else None
-                if not mod_b:
-                    continue
-                inputs = set(b.get("inputs") or []) if isinstance(b, dict) else set()
-                if outputs & inputs:
-                    if _HAS_NX:
-                        graph.add_edge(mod_a, mod_b)
-                    else:
-                        graph.setdefault(mod_a, set()).add(mod_b)
-        return graph, modules
+    @staticmethod
+    def _build_graph(modules: List[str]):
+        """Construct a dependency graph for ``modules``.
+
+        When :mod:`workflow_graph` is available an instance is used as a source
+        for potential edges between modules.  Failing that, a simple chain graph
+        linking successive modules is produced.
+        """
+
+        if _HAS_NX:
+            graph = nx.DiGraph()
+            graph.add_nodes_from(modules)
+            if WorkflowGraph is not None:
+                try:  # pragma: no cover - optional behaviour
+                    wg = WorkflowGraph()
+                    for a in modules:
+                        for b in modules:
+                            try:
+                                if wg.graph.has_edge(a, b):  # type: ignore[attr-defined]
+                                    graph.add_edge(a, b)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+            if graph.number_of_edges() == 0:
+                graph.add_edges_from(zip(modules, modules[1:]))
+        else:
+            graph: Dict[str, set] = {m: set() for m in modules}
+            for a, b in zip(modules, modules[1:]):
+                graph.setdefault(a, set()).add(b)
+        return graph
 
     @staticmethod
     def _embed_graph(graph: Any, spec: Dict[str, Any]) -> List[float]:
         """Return an embedding for ``graph``/``spec``.
 
-        Attempts to use Node2Vec when available, otherwise falls back to
-        :class:`workflow_vectorizer.WorkflowVectorizer` or simple frequency
-        counts as a last resort.
+        The preferred strategy is ``node2vec`` operating on the constructed
+        graph.  If that fails the optional :class:`WorkflowVectorizer` is used.
+        As a last resort a simple sorted module frequency vector is returned.
         """
 
-        # Node2Vec embedding when networkx and Node2Vec are present
         if _HAS_NX and _HAS_NODE2VEC and isinstance(graph, nx.Graph):
-            try:
+            try:  # pragma: no cover - optional heavy dependency
                 node2vec = Node2Vec(graph, dimensions=32, quiet=True, workers=1)
                 model = node2vec.fit(window=4, min_count=1, batch_words=4)
                 embeddings = [model.wv.get_vector(str(n)) for n in graph.nodes()]
@@ -168,24 +194,23 @@ class WorkflowSynergyComparator:
                         sum(vec[i] for vec in embeddings) / len(embeddings)
                         for i in range(dim)
                     ]
-            except Exception:  # pragma: no cover - fall back below
+            except Exception:
                 pass
 
-        # ``WorkflowVectorizer`` embedding
         if WorkflowVectorizer is not None:
-            wf_record = {"workflow": [s.get("module") for s in spec.get("steps", [])]}
-            try:
+            try:  # pragma: no cover - optional dependency
+                wf_record = {"workflow": [s.get("module") for s in spec.get("steps", [])]}
                 vec = WorkflowVectorizer().fit([wf_record]).transform(wf_record)
                 return list(vec)
-            except Exception:  # pragma: no cover - graceful degradation
+            except Exception:
                 pass
 
-        # Count-based fallback
         counts: Dict[str, int] = {}
         for step in spec.get("steps", []):
-            mod = step.get("module") if isinstance(step, dict) else None
-            if mod:
-                counts[mod] = counts.get(mod, 0) + 1
+            if isinstance(step, dict):
+                mod = step.get("module")
+                if mod:
+                    counts[mod] = counts.get(mod, 0) + 1
         return [counts[k] for k in sorted(counts)]
 
     @staticmethod
@@ -199,6 +224,48 @@ class WorkflowSynergyComparator:
         nb = math.sqrt(sum(y * y for y in b))
         return dot / (na * nb) if na and nb else 0.0
 
+    @staticmethod
+    def _shared_ratio(mod_a: Iterable[str], mod_b: Iterable[str]) -> float:
+        set_a = set(mod_a)
+        set_b = set(mod_b)
+        union = set_a | set_b
+        return len(set_a & set_b) / len(union) if union else 0.0
+
+    @staticmethod
+    def _roi_and_modularity(workflow_id: str) -> Tuple[float, float]:
+        """Best effort retrieval of ROI and modularity for ``workflow_id``."""
+
+        try:  # pragma: no cover - optional IO
+            from .roi_results_db import ROIResultsDB  # type: ignore
+
+            db = ROIResultsDB()
+            cur = db.conn.cursor()
+            cur.execute(
+                """
+                SELECT roi_gain, workflow_synergy_score
+                FROM workflow_results
+                WHERE workflow_id=?
+                ORDER BY timestamp DESC LIMIT 1
+                """,
+                (workflow_id,),
+            )
+            row = cur.fetchone()
+            if row:
+                return float(row[0] or 0.0), float(row[1] or 0.0)
+        except Exception:
+            pass
+
+        try:  # pragma: no cover - optional heavy dependency
+            from .workflow_metrics import compute_workflow_synergy  # type: ignore
+            from .roi_tracker import ROITracker  # type: ignore
+
+            tracker = ROITracker()
+            return 0.0, float(compute_workflow_synergy(tracker))
+        except Exception:
+            pass
+
+        return 0.0, 0.0
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -207,46 +274,45 @@ class WorkflowSynergyComparator:
         cls,
         a_spec: Dict[str, Any] | str | Path,
         b_spec: Dict[str, Any] | str | Path,
-    ) -> WorkflowComparisonResult:
-        """Compare two workflow specifications.
-
-        ``a_spec`` and ``b_spec`` may be mappings containing a ``steps`` sequence
-        or paths to JSON files storing such mappings.
-        """
+    ) -> ComparisonResult:
+        """Compare two workflow specifications or identifiers."""
 
         spec_a = cls._load_spec(a_spec)
         spec_b = cls._load_spec(b_spec)
 
-        graph_a, modules_a = cls._build_graph(spec_a)
-        graph_b, modules_b = cls._build_graph(spec_b)
+        modules_a = cls._extract_modules(spec_a)
+        modules_b = cls._extract_modules(spec_b)
+
+        graph_a = cls._build_graph(modules_a)
+        graph_b = cls._build_graph(modules_b)
+
         vec_a = cls._embed_graph(graph_a, spec_a)
         vec_b = cls._embed_graph(graph_b, spec_b)
 
         similarity = cls._cosine(vec_a, vec_b)
+        shared = cls._shared_ratio(modules_a, modules_b)
 
-        set_a = set(modules_a)
-        set_b = set(modules_b)
-        shared = len(set_a & set_b)
+        from .workflow_metrics import compute_workflow_entropy  # type: ignore
 
         entropy_a = compute_workflow_entropy(spec_a)
         entropy_b = compute_workflow_entropy(spec_b)
+        entropy_gap = abs(entropy_a - entropy_b)
 
-        recommended: Optional[str]
-        if entropy_a > entropy_b:
-            recommended = "a"
-        elif entropy_b > entropy_a:
-            recommended = "b"
-        else:
-            recommended = None
+        roi_a, mod_a = cls._roi_and_modularity(str(a_spec))
+        roi_b, mod_b = cls._roi_and_modularity(str(b_spec))
 
-        return WorkflowComparisonResult(
+        return ComparisonResult(
             similarity=similarity,
             shared_modules=shared,
-            modules_a=len(set_a),
-            modules_b=len(set_b),
+            entropy_gap=entropy_gap,
+            roi_a=roi_a,
+            roi_b=roi_b,
+            modularity_a=mod_a,
+            modularity_b=mod_b,
             entropy_a=entropy_a,
             entropy_b=entropy_b,
-            recommended_winner=recommended,
+            modules_a=len(set(modules_a)),
+            modules_b=len(set(modules_b)),
         )
 
     @classmethod
@@ -256,15 +322,7 @@ class WorkflowSynergyComparator:
         b_spec: Dict[str, Any] | str | Path,
         thresholds: Optional[Dict[str, float]] = None,
     ) -> bool:
-        """Heuristic check whether two workflows are near-identical.
-
-        Parameters
-        ----------
-        thresholds:
-            Optional mapping configuring the decision boundaries.  Recognised
-            keys are ``similarity`` for cosine similarity, ``overlap`` for module
-            overlap ratio and ``entropy`` for maximum absolute entropy delta.
-        """
+        """Heuristic duplicate detector based on comparison metrics."""
 
         thresholds = thresholds or {}
         res = cls.compare(a_spec, b_spec)
@@ -273,14 +331,12 @@ class WorkflowSynergyComparator:
         overlap_thresh = thresholds.get("overlap", 0.9)
         entropy_thresh = thresholds.get("entropy", 0.05)
 
-        similarity_ok = res.similarity >= sim_thresh
-        overlap_a = res.shared_modules / res.modules_a if res.modules_a else 0.0
-        overlap_b = res.shared_modules / res.modules_b if res.modules_b else 0.0
-        overlap_ok = min(overlap_a, overlap_b) >= overlap_thresh
-        entropy_ok = abs(res.entropy_a - res.entropy_b) <= entropy_thresh
-
-        return similarity_ok and overlap_ok and entropy_ok
+        return (
+            res.similarity >= sim_thresh
+            and res.shared_modules >= overlap_thresh
+            and res.entropy_gap <= entropy_thresh
+        )
 
 
-__all__ = ["WorkflowSynergyComparator", "WorkflowComparisonResult"]
+__all__ = ["WorkflowSynergyComparator", "ComparisonResult"]
 

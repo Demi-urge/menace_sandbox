@@ -15,6 +15,7 @@ from .truth_adapter import TruthAdapter
 from .foresight_tracker import ForesightTracker
 from .upgrade_forecaster import UpgradeForecaster
 from .workflow_synthesizer import WorkflowSynthesizer
+from .workflow_synergy_comparator import WorkflowSynergyComparator
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from .composite_workflow_scorer import CompositeWorkflowScorer
 try:  # pragma: no cover - optional heavy dependency
@@ -136,6 +137,7 @@ __all__ = [
     "upgrade_forecaster",
     "WorkflowSynthesizer",
     "workflow_synthesizer",
+    "WorkflowSynergyComparator",
     "IntentClusterer",
     "intent_clusterer",
     "newsreader_bot",
