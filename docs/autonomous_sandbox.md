@@ -117,28 +117,33 @@ candidate workflow should merge into an existing branch or remain a separate
 variant. The helper exposes:
 
 - `WorkflowSynergyComparator.compare(a, b)` – return a
-- :class:`ComparisonResult` with cosine `similarity`, shared module count and
-  entropy gap.
-- `WorkflowSynergyComparator.is_duplicate(result, thresholds=None)` – flag
+- :class:`SynergyScores` exposing `similarity`, `shared_module_ratio`,
+  per‑workflow entropy, efficiency, modularity and an aggregate score.
+- Overfitting reports (`overfit_a` / `overfit_b`) indicating low entropy or
+  repeated modules. Use :meth:`WorkflowSynergyComparator.analyze_overfitting`
+  to inspect a single workflow.
+- `WorkflowSynergyComparator.is_duplicate(scores, thresholds=None)` – flag
   near‑identical workflows using the scores returned by
   `WorkflowSynergyComparator.compare()`.
 - `WorkflowSynergyComparator.merge_duplicate(base_id, dup_id)` – merge the
   duplicate into the canonical workflow.
 
 Entropy and similarity thresholds control merging behaviour. When
-`result.similarity` meets or exceeds `WORKFLOW_MERGE_SIMILARITY` and
-`result.entropy_gap` stays below `WORKFLOW_MERGE_ENTROPY_DELTA`, the manager
-merges the variant. Relaxed thresholds encourage more merging while stricter
-values favour branching and independent evolution.
+``scores.similarity`` meets or exceeds ``WORKFLOW_MERGE_SIMILARITY`` and the
+entropy delta stays below ``WORKFLOW_MERGE_ENTROPY_DELTA`` the manager merges
+the variant. Relaxed thresholds encourage more merging while stricter values
+favour branching and independent evolution. Duplicate detection thresholds for
+`is_duplicate` default to ``WORKFLOW_DUPLICATE_SIMILARITY`` and
+``WORKFLOW_DUPLICATE_ENTROPY``.
 
 Example API usage inside the self‑improvement loop:
 
 ```python
 from menace_sandbox.workflow_synergy_comparator import WorkflowSynergyComparator
 
-result = WorkflowSynergyComparator.compare("main_flow", "candidate_flow")
+scores = WorkflowSynergyComparator.compare("main_flow", "candidate_flow")
 if WorkflowSynergyComparator.is_duplicate(
-    result, {"similarity": 0.96, "entropy": 0.04}
+    scores, {"similarity": 0.96, "entropy": 0.04}
 ):
     WorkflowSynergyComparator.merge_duplicate("main_flow", "candidate_flow")
 ```
@@ -147,6 +152,7 @@ Run the autonomous loop with custom thresholds via environment variables:
 
 ```bash
 WORKFLOW_MERGE_SIMILARITY=0.96 WORKFLOW_MERGE_ENTROPY_DELTA=0.04 \
+WORKFLOW_DUPLICATE_SIMILARITY=0.95 WORKFLOW_DUPLICATE_ENTROPY=0.05 \
   python run_autonomous.py
 ```
 

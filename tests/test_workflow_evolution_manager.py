@@ -246,6 +246,48 @@ def test_near_identical_low_entropy_workflows_are_merged(monkeypatch, tmp_path):
     assert any(r.startswith("merge-") for r in run_ids)
 
 
+def test_overfit_variant_skips_merge(monkeypatch, tmp_path):
+    """Variants flagged as overfitting are not merged in the evolution loop."""
+    baseline_spec = _load_steps("simple_ab.json")
+    variant_spec = _load_steps("simple_ab.json")
+
+    _setup(
+        monkeypatch,
+        baseline_roi=1.0,
+        variant_roi=2.0,
+        baseline_spec=baseline_spec,
+        variant_spec=variant_spec,
+    )
+
+    merge_called: dict[str, bool] = {}
+
+    class DummyComparator:
+        @classmethod
+        def compare(cls, a_spec, b_spec):
+            report = SimpleNamespace(is_overfitting=lambda: True)
+            return SimpleNamespace(
+                aggregate=1.0,
+                entropy_a=0.0,
+                entropy_b=0.0,
+                overfit_a=report,
+                overfit_b=report,
+            )
+
+        @staticmethod
+        def is_duplicate(result, thresholds=None):
+            return True
+
+        @classmethod
+        def merge_duplicate(cls, *a, **k):
+            merge_called["called"] = True
+
+    monkeypatch.setattr(wem, "WorkflowSynergyComparator", DummyComparator)
+
+    wem.evolve(lambda: True, 1, variants=1)
+
+    assert "called" not in merge_called
+
+
 def test_promoted_duplicate_triggers_merge(monkeypatch, tmp_path):
     run_ids: list[str] = []
     baseline_spec = _load_steps("simple_ab.json")
