@@ -188,9 +188,36 @@ class WorkflowSynergyComparator:
         return graph
 
     @classmethod
-    def _embed_spec(cls, spec: Dict[str, Any]) -> List[float]:
-        graph = cls._build_graph(cls._extract_modules(spec))
-        return cls._embed_graph(graph, spec)
+    def _embed_spec(
+        cls, spec: Dict[str, Any], all_modules: Optional[Iterable[str]] = None
+    ) -> List[float]:
+        """Return an embedding aligned to ``all_modules``.
+
+        When ``all_modules`` is provided the resulting vector contains one
+        contiguous block per module in the sorted union allowing vectors from
+        different workflow specifications to be compared directly.  Missing
+        modules are represented by zero vectors matching the dimensionality of
+        present modules.
+        """
+
+        modules = sorted(set(cls._extract_modules(spec)))
+        graph = cls._build_graph(modules)
+        base_vec = cls._embed_graph(graph, spec)
+        dim = len(base_vec) // len(modules) if modules else len(base_vec)
+
+        if not all_modules:
+            return base_vec
+
+        union = sorted(set(all_modules))
+        aligned: List[float] = []
+        index = {m: i for i, m in enumerate(modules)}
+        for m in union:
+            if m in index:
+                start = index[m] * dim
+                aligned.extend(base_vec[start : start + dim])
+            else:
+                aligned.extend([0.0] * dim)
+        return aligned
 
     @classmethod
     def _embed_graph(cls, graph: Any, spec: Dict[str, Any]) -> List[float]:
@@ -427,9 +454,10 @@ class WorkflowSynergyComparator:
 
         mods_a = cls._extract_modules(spec_a)
         mods_b = cls._extract_modules(spec_b)
+        all_mods = sorted(set(mods_a) | set(mods_b))
 
-        vec_a = cls._embed_spec(spec_a)
-        vec_b = cls._embed_spec(spec_b)
+        vec_a = cls._embed_spec(spec_a, all_mods)
+        vec_b = cls._embed_spec(spec_b, all_mods)
 
         similarity = cls._cosine(vec_a, vec_b)
         shared_ratio = cls._shared_ratio(mods_a, mods_b)
