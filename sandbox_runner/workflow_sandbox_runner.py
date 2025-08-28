@@ -24,7 +24,7 @@ import shutil
 import tempfile
 import urllib.parse
 from dataclasses import dataclass, field
-from time import perf_counter
+from time import perf_counter, process_time
 from typing import Any, Callable, Iterable, Mapping
 from unittest import mock
 
@@ -53,6 +53,7 @@ class ModuleMetrics:
 
     name: str
     duration: float
+    cpu_time: float
     memory_before: int
     memory_after: int
     memory_delta: int
@@ -373,16 +374,23 @@ class WorkflowSandboxRunner:
             if safe_mode:
                 import socket
 
+                original_socket = socket.socket
+
                 def _blocked_socket(*a, **kw):
+                    family = kw.get("family")
+                    if family is None and a:
+                        family = a[0]
+                    if family == socket.AF_UNIX:
+                        return original_socket(*a, **kw)
                     fn = network_mocks.get("socket")
                     if fn:
                         return fn(*a, **kw)
                     raise RuntimeError("network access disabled in safe_mode")
 
+                stack.enter_context(mock.patch("socket.socket", _blocked_socket))
+
                 for _name in [
-                    "socket",
                     "create_connection",
-                    "socketpair",
                     "create_server",
                     "fromfd",
                 ]:
@@ -563,8 +571,19 @@ class WorkflowSandboxRunner:
                     os.environ[key] = str(value)
 
                 start = perf_counter()
+                cpu_before = 0.0
                 mem_before = mem_after = 0
                 use_psutil = bool(proc)
+                use_psutil_cpu = use_psutil
+                if use_psutil_cpu:
+                    try:
+                        ct = proc.cpu_times()  # type: ignore[union-attr]
+                        cpu_before = ct.user + getattr(ct, "system", 0.0)
+                    except Exception:
+                        use_psutil_cpu = False
+                if not use_psutil_cpu:
+                    cpu_before = process_time()
+
                 if use_psutil:
                     try:
                         mem_before = proc.memory_info().rss  # type: ignore[union-attr]
@@ -600,6 +619,15 @@ class WorkflowSandboxRunner:
 
                     duration = perf_counter() - start
 
+                    if use_psutil_cpu:
+                        try:
+                            ct = proc.cpu_times()  # type: ignore[union-attr]
+                            cpu_after = ct.user + getattr(ct, "system", 0.0)
+                        except Exception:
+                            cpu_after = cpu_before
+                    else:
+                        cpu_after = process_time()
+
                     if use_psutil:
                         try:
                             mem_after = proc.memory_info().rss  # type: ignore[union-attr]
@@ -612,6 +640,7 @@ class WorkflowSandboxRunner:
                     module_metric = ModuleMetrics(
                         name=name,
                         duration=duration,
+                        cpu_time=cpu_after - cpu_before,
                         memory_before=mem_before,
                         memory_after=mem_after,
                         memory_delta=mem_after - mem_before,
@@ -625,6 +654,7 @@ class WorkflowSandboxRunner:
             # ------------------------------------------------------------------
             # Aggregate metrics into a simple telemetry dictionary
             times = {m.name: m.duration for m in metrics.modules}
+            cpu_times = {m.name: m.cpu_time for m in metrics.modules}
             results = {m.name: m.result for m in metrics.modules}
             fixtures_info: dict[str, Any] = {}
             for m in metrics.modules:
@@ -645,6 +675,7 @@ class WorkflowSandboxRunner:
             )
             telemetry: dict[str, Any] = {
                 "time_per_module": times,
+                "cpu_time_per_module": cpu_times,
                 "results": results,
                 "crash_frequency": crash_freq,
                 "peak_memory": peak_mem,
