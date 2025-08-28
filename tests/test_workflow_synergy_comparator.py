@@ -6,6 +6,8 @@ import types
 from pathlib import Path
 from typing import List
 
+import networkx as nx
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
 pkg = types.ModuleType("menace_sandbox")
@@ -29,15 +31,16 @@ def _entropy(spec):
         entropy -= p * math.log2(p)
     return entropy
 
+
 _stub = types.ModuleType("menace_sandbox.workflow_metrics")
 _stub.compute_workflow_entropy = _entropy
 _prev = sys.modules.get("menace_sandbox.workflow_metrics")
 sys.modules["menace_sandbox.workflow_metrics"] = _stub
 
 sys.modules.pop("menace_sandbox.workflow_synergy_comparator", None)
-import menace_sandbox.workflow_synergy_comparator as wsc
-from menace_sandbox.workflow_metrics import compute_workflow_entropy
-import pytest
+import menace_sandbox.workflow_synergy_comparator as wsc  # noqa: E402
+from menace_sandbox.workflow_metrics import compute_workflow_entropy  # noqa: E402
+import pytest  # noqa: E402
 
 if _prev is not None:
     sys.modules["menace_sandbox.workflow_metrics"] = _prev
@@ -200,6 +203,28 @@ def test_node2vec_branch(monkeypatch):
     assert result1 == [1.0, 2.0]
     assert result2 == result1
     assert calls["count"] == 1
+
+
+def test_spectral_fallback_cache(monkeypatch):
+    wsc.WorkflowSynergyComparator._embed_cache.clear()
+    spec = {"steps": [{"module": "a"}, {"module": "b"}]}
+    g = nx.DiGraph()
+    g.add_edge("a", "b")
+
+    monkeypatch.setattr(wsc, "_HAS_NODE2VEC", False, raising=False)
+    called = {"count": 0}
+    orig = nx.to_numpy_array
+
+    def counting_to_numpy_array(*args, **kwargs):
+        called["count"] += 1
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(wsc.nx, "to_numpy_array", counting_to_numpy_array)
+
+    result1 = wsc.WorkflowSynergyComparator._embed_graph(g, spec)
+    result2 = wsc.WorkflowSynergyComparator._embed_graph(g, spec)
+    assert result1 == result2
+    assert called["count"] == 1
 
 
 def test_efficiency_and_modularity(monkeypatch):
