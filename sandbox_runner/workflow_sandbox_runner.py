@@ -187,6 +187,55 @@ class WorkflowSandboxRunner:
                     pass
 
             # ------------------------------------------------------------------
+            # Redirect tempfile helpers to operate inside the sandbox
+            original_tempdir = tempfile.tempdir
+            tempfile.tempdir = str(root)
+            stack.callback(lambda: setattr(tempfile, "tempdir", original_tempdir))
+
+            original_named_temporary_file = tempfile.NamedTemporaryFile
+            original_temporary_file = tempfile.TemporaryFile
+            original_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+            def sandbox_named_temporary_file(*a, dir=None, **kw):
+                target_dir = self._resolve(root, dir or root)
+                fn = fs_mocks.get("tempfile.NamedTemporaryFile")
+                if fn:
+                    return fn(*a, dir=str(target_dir), **kw)
+                if safe_mode:
+                    raise RuntimeError("file write disabled in safe_mode")
+                return original_named_temporary_file(*a, dir=str(target_dir), **kw)
+
+            def sandbox_temporary_file(*a, dir=None, **kw):
+                target_dir = self._resolve(root, dir or root)
+                fn = fs_mocks.get("tempfile.TemporaryFile")
+                if fn:
+                    return fn(*a, dir=str(target_dir), **kw)
+                if safe_mode:
+                    raise RuntimeError("file write disabled in safe_mode")
+                return original_temporary_file(*a, dir=str(target_dir), **kw)
+
+            def sandbox_spooled_temporary_file(*a, dir=None, **kw):
+                target_dir = self._resolve(root, dir or root)
+                fn = fs_mocks.get("tempfile.SpooledTemporaryFile")
+                if fn:
+                    return fn(*a, dir=str(target_dir), **kw)
+                if safe_mode:
+                    raise RuntimeError("file write disabled in safe_mode")
+                return original_spooled_temporary_file(*a, dir=str(target_dir), **kw)
+
+            stack.enter_context(
+                mock.patch.object(tempfile, "NamedTemporaryFile", sandbox_named_temporary_file)
+            )
+            stack.enter_context(
+                mock.patch.object(tempfile, "TemporaryFile", sandbox_temporary_file)
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    tempfile, "SpooledTemporaryFile", sandbox_spooled_temporary_file
+                )
+            )
+
+            # ------------------------------------------------------------------
             # Monkeypatch filesystem helpers so all paths resolve inside ``root``
             original_open = builtins.open
 
