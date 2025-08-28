@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import sys
 import types
 from pathlib import Path
@@ -80,3 +81,28 @@ def test_telemetry_includes_timing_and_memory(runner):
     assert isinstance(mod.memory_after, int)
     assert mod.memory_after >= mod.memory_before
     assert mod.memory_delta == mod.memory_after - mod.memory_before
+
+
+def test_module_specific_fixtures_restore_env(runner):
+    values: list[str | None] = []
+
+    def mod_one():
+        values.append(os.getenv("TEST_ENV"))
+        assert Path("data.txt").read_text() == "hello"
+
+    def mod_two():
+        values.append(os.getenv("TEST_ENV"))
+
+    fixtures = {
+        "mod_one": {"files": {"data.txt": "hello"}, "env": {"TEST_ENV": "one"}},
+        "mod_two": {"env": {"TEST_ENV": "two"}},
+    }
+
+    runner.run([mod_one, mod_two], module_fixtures=fixtures)
+
+    assert values == ["one", "two"]
+    assert "TEST_ENV" not in os.environ
+    assert runner.telemetry
+    mods = runner.telemetry.get("module_fixtures", {})
+    assert mods["mod_one"]["env"] == {"TEST_ENV": "one"}
+    assert mods["mod_one"]["files"] == ["data.txt"]
