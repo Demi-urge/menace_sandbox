@@ -3,11 +3,14 @@ from __future__ import annotations
 """Meta workflow planning utilities with semantic and structural embedding."""
 
 from dataclasses import dataclass, field
+import json
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
 
 from roi_results_db import ROIResultsDB
 from workflow_graph import WorkflowGraph
-from vector_utils import persist_embedding
+from roi_tracker import ROITracker
+from vector_utils import persist_embedding, cosine_similarity
 
 try:  # pragma: no cover - optional heavy dependency
     import networkx as nx  # type: ignore
@@ -156,4 +159,74 @@ class MetaWorkflowPlanner:
         return vec
 
 
-__all__ = ["MetaWorkflowPlanner"]
+# ---------------------------------------------------------------------------
+def _load_embeddings(path: Path = Path("embeddings.jsonl")) -> Dict[str, List[float]]:
+    """Return mapping of workflow ids to stored embeddings."""
+
+    embeddings: Dict[str, List[float]] = {}
+    if not path.exists():
+        return embeddings
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if rec.get("type") != "workflow_meta":
+                continue
+            vec = rec.get("vector") or []
+            embeddings[str(rec.get("id"))] = [float(x) for x in vec]
+    return embeddings
+
+
+# ---------------------------------------------------------------------------
+def _roi_scores(tracker: ROITracker) -> Dict[str, float]:
+    """Return average ROI gain per workflow from ``tracker``."""
+
+    scores: Dict[str, float] = {}
+    for wf_id, hist in getattr(tracker, "final_roi_history", {}).items():
+        if hist:
+            scores[wf_id] = sum(float(x) for x in hist) / len(hist)
+    return scores
+
+
+# ---------------------------------------------------------------------------
+def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
+    """Return high-synergy workflow sequence starting from ``start_workflow_id``."""
+
+    embeddings = _load_embeddings()
+    start_vec = embeddings.get(start_workflow_id)
+    if start_vec is None:
+        return []
+
+    tracker = ROITracker()
+    history_file = Path("roi_history.json")
+    if history_file.exists():
+        try:
+            tracker.load_history(str(history_file))
+        except Exception:
+            pass
+    roi_scores = _roi_scores(tracker)
+
+    chain = [start_workflow_id]
+    current = start_workflow_id
+    for _ in range(max(0, length - 1)):
+        current_vec = embeddings[current]
+        best_id: str | None = None
+        best_score = 0.0
+        for wf_id, vec in embeddings.items():
+            if wf_id in chain:
+                continue
+            sim = cosine_similarity(current_vec, vec)
+            score = sim * roi_scores.get(wf_id, 0.0)
+            if score > best_score:
+                best_id = wf_id
+                best_score = score
+        if best_id is None:
+            break
+        chain.append(best_id)
+        current = best_id
+    return chain
+
+
+__all__ = ["MetaWorkflowPlanner", "find_synergy_chain"]
