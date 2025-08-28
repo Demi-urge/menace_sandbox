@@ -498,8 +498,12 @@ directory. File mutations such as `open` or `shutil.copy` are redirected into
 this sandbox so the host filesystem remains untouched. When `safe_mode=True`
 the runner monkeypatches `requests`, `httpx`, `urllib` and raw sockets so that
 any outbound network attempt raises `RuntimeError` unless a matching stub is
-provided. Per‑module telemetry reporting execution time, peak memory, crash
-frequency and return values is available through `runner.telemetry`.
+provided. Socket creation helpers such as ``socket.socket``, ``create_connection``,
+``create_server`` and ``fromfd`` are blocked while Unix domain sockets remain
+available. Supplying ``network_mocks["socket"]`` returns a custom socket object
+instead of raising. Per‑module telemetry reporting execution time, CPU time,
+peak memory, crash frequency and return values is available through
+``runner.telemetry``.
 
 ### Example with injected test data
 
@@ -515,6 +519,8 @@ metrics = runner.run(read_file, safe_mode=True,
                      test_data={"payload.txt": "fake"})
 print(metrics.modules[0].success)
 print(runner.telemetry["time_per_module"]["read_file"])
+print(runner.telemetry["cpu_time_per_module"]["read_file"])
+print(runner.telemetry["peak_memory_per_module"]["read_file"])
 ```
 
 Example network mock:
@@ -531,6 +537,46 @@ metrics = runner.run(
     fetch,
     safe_mode=True,
     network_mocks={"httpx": lambda self, method, url, *a, **kw: httpx.Response(200, text="stubbed")},
+)
+print(metrics.modules[0].result)
+```
+
+Example socket mock:
+
+```python
+from sandbox_runner import WorkflowSandboxRunner
+
+class DummySocket:
+    def __init__(self, *a, **kw):
+        pass
+    def connect(self, *a, **kw):
+        return b"ok"
+    def close(self):
+        pass
+
+def ping():
+    import socket
+    s = socket.socket()
+    s.connect(("example.com", 80))
+    s.close()
+
+runner = WorkflowSandboxRunner()
+runner.run(ping, safe_mode=True, network_mocks={"socket": DummySocket})
+```
+
+Example filesystem mock:
+
+```python
+from sandbox_runner import WorkflowSandboxRunner
+from pathlib import Path
+
+def read_conf():
+    return Path("config.json").read_text()
+
+runner = WorkflowSandboxRunner()
+metrics = runner.run(
+    read_conf,
+    fs_mocks={"pathlib.Path.read_text": lambda self, *a, **kw: "{}"},
 )
 print(metrics.modules[0].result)
 ```
@@ -554,6 +600,19 @@ Custom stub providers may be supplied via the ``stub_providers`` argument to
 inject domain‑specific payloads. The runner's automatic input generation and
 network/file mocking allow workflows to run without touching the host
 environment while ``runner.telemetry`` exposes the collected per‑module metrics.
+
+### Resource limits and telemetry
+
+Each module may be constrained with a ``timeout`` (seconds) and ``memory_limit``
+(bytes) when calling :meth:`WorkflowSandboxRunner.run`. Exceeding either limit
+aborts the module and records a crash. CPU time and peak RSS memory for every
+module are available in ``runner.telemetry`` under ``cpu_time_per_module``,
+``peak_memory`` and ``peak_memory_per_module`` so downstream tools such as the
+self-improvement engine can consume them.
+
+```python
+runner.run(task, timeout=2.0, memory_limit=50_000_000)
+```
 
 ## Workflow Simulations
 
