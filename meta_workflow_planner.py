@@ -412,22 +412,60 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
     ) -> List[Dict[str, Any]]:
-        """Mutate chains (swap/remove/add) and re-validate."""
+        """Mutate chains and re-validate.
+
+        The original implementation only swapped the first two steps, trimmed
+        the last element or appended an unused workflow.  For richer evolution
+        we now support insertion, removal and substitution at arbitrary
+        positions.  This keeps the search space intentionally small by only
+        inserting or substituting with the first workflow identifier not
+        already present in the chain.
+        """
 
         wf_ids = list(workflows.keys())
+        seen: set[tuple[str, ...]] = set()
         candidates: List[List[str]] = []
+
         for chain in chains:
             chain = list(chain)
+
+            # Swap the first two steps when possible
             if len(chain) >= 2:
                 swapped = chain[:]
                 swapped[0], swapped[1] = swapped[1], swapped[0]
                 candidates.append(swapped)
-            if len(chain) > 1:
-                candidates.append(chain[:-1])
-            for wid in wf_ids:
-                if wid not in chain:
-                    candidates.append(chain + [wid])
-                    break
+
+            # Remove each individual step
+            for idx in range(len(chain)):
+                removed = chain[:idx] + chain[idx + 1 :]
+                if removed:
+                    tup = tuple(removed)
+                    if tup not in seen:
+                        seen.add(tup)
+                        candidates.append(removed)
+
+            # Insert a new workflow at every position
+            for idx in range(len(chain) + 1):
+                for wid in wf_ids:
+                    if wid not in chain:
+                        inserted = chain[:idx] + [wid] + chain[idx:]
+                        tup = tuple(inserted)
+                        if tup not in seen:
+                            seen.add(tup)
+                            candidates.append(inserted)
+                        break
+
+            # Substitute each step with an unused workflow
+            for idx, current in enumerate(chain):
+                for wid in wf_ids:
+                    if wid != current and wid not in chain:
+                        substituted = chain[:]
+                        substituted[idx] = wid
+                        tup = tuple(substituted)
+                        if tup not in seen:
+                            seen.add(tup)
+                            candidates.append(substituted)
+                        break
 
         results: List[Dict[str, Any]] = []
         for c in candidates:
@@ -554,6 +592,65 @@ class MetaWorkflowPlanner:
         return results
 
     # ------------------------------------------------------------------
+    def manage_pipeline(
+        self,
+        pipeline: Sequence[str],
+        workflows: Mapping[str, Callable[[], Any]],
+        *,
+        roi_improvement_threshold: float = 0.0,
+        entropy_stability_threshold: float = 1.0,
+        runner: WorkflowSandboxRunner | None = None,
+        failure_threshold: int = 0,
+        entropy_threshold: float = 2.0,
+    ) -> List[Dict[str, Any]]:
+        """Monitor ``pipeline`` and split or terminate on stagnating ROI.
+
+        The method validates ``pipeline`` and inspects the recorded ROI delta
+        for the chain.  When the improvement drops below
+        ``roi_improvement_threshold`` or the entropy exceeds
+        ``entropy_stability_threshold`` the pipeline is split into two segments
+        using :meth:`split_pipeline`.  If the pipeline consists of a single
+        step it is simply terminated (an empty list is returned).  Otherwise the
+        original metrics are returned unchanged.
+        """
+
+        record = self._validate_chain(
+            pipeline,
+            workflows,
+            runner=runner,
+            failure_threshold=failure_threshold,
+            entropy_threshold=entropy_threshold,
+        )
+        if not record:
+            return []
+
+        info = self.cluster_map.get(tuple(pipeline))
+        roi_delta = 0.0
+        if info is not None:
+            roi_delta = float(info.get("delta_roi", 0.0))
+        else:
+            roi_delta = record.get("roi_gain", 0.0)
+        entropy_val = record.get("entropy", 0.0)
+
+        if (
+            roi_delta >= roi_improvement_threshold
+            and abs(entropy_val) <= entropy_stability_threshold
+        ):
+            return [record]
+
+        if len(pipeline) > 1:
+            return self.split_pipeline(
+                pipeline,
+                workflows,
+                roi_improvement_threshold=roi_improvement_threshold,
+                entropy_stability_threshold=entropy_stability_threshold,
+                runner=runner,
+                failure_threshold=failure_threshold,
+                entropy_threshold=entropy_threshold,
+            )
+        return []
+
+    # ------------------------------------------------------------------
     def split_pipeline(
         self,
         pipeline: Sequence[str],
@@ -667,6 +764,60 @@ class MetaWorkflowPlanner:
                         )
                     except Exception:
                         pass
+        return results
+
+    # ------------------------------------------------------------------
+    def merge_high_performing_variants(
+        self,
+        records: Sequence[Dict[str, Any]],
+        workflows: Mapping[str, Callable[[], Any]],
+        *,
+        roi_threshold: float = 0.0,
+        cluster_threshold: float = 0.75,
+        runner: WorkflowSandboxRunner | None = None,
+        failure_threshold: int = 0,
+        entropy_threshold: float = 2.0,
+    ) -> List[Dict[str, Any]]:
+        """Merge high-ROI variants using clustering results.
+
+        ``records`` should contain ``chain`` and ``roi_gain`` entries.  Chains
+        exceeding ``roi_threshold`` are clustered via :meth:`cluster_workflows`
+        and each cluster is merged into a single pipeline containing the union
+        of steps.  The merged pipelines are validated and successful results are
+        returned.
+        """
+
+        high = [r for r in records if r.get("roi_gain", 0.0) > roi_threshold]
+        if not high:
+            return []
+
+        specs: Dict[str, Dict[str, Any]] = {}
+        chain_lookup: Dict[str, Sequence[str]] = {}
+        for idx, rec in enumerate(high):
+            cid = f"c{idx}"
+            chain_lookup[cid] = rec["chain"]
+            specs[cid] = {"steps": [{"module": w} for w in rec["chain"]]}
+
+        clusters = self.cluster_workflows(specs, threshold=cluster_threshold)
+
+        results: List[Dict[str, Any]] = []
+        for cluster in clusters:
+            if len(cluster) <= 1:
+                continue
+            merged: List[str] = []
+            for cid in cluster:
+                for wid in chain_lookup[cid]:
+                    if wid not in merged:
+                        merged.append(wid)
+            rec = self._validate_chain(
+                merged,
+                workflows,
+                runner=runner,
+                failure_threshold=failure_threshold,
+                entropy_threshold=entropy_threshold,
+            )
+            if rec:
+                results.append(rec)
         return results
 
     # ------------------------------------------------------------------

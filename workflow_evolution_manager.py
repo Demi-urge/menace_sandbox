@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Manage workflow evolution by benchmarking generated variants."""
 
-from typing import Callable, Optional, Iterable, Sequence
+from typing import Callable, Optional, Iterable, Sequence, Mapping, Dict, Any
 import importlib
 import json
 import logging
@@ -20,6 +20,7 @@ from .workflow_synthesizer import save_workflow
 from . import workflow_run_summary
 from . import sandbox_runner
 from .workflow_synergy_comparator import WorkflowSynergyComparator
+from .meta_workflow_planner import MetaWorkflowPlanner
 try:  # pragma: no cover - optional at runtime
     from .workflow_graph import WorkflowGraph
 except Exception:  # pragma: no cover - best effort
@@ -54,6 +55,34 @@ def consume_planner_suggestions(chains: Iterable[Sequence[str]]) -> None:
 
 STABLE_WORKFLOWS = WorkflowStabilityDB()
 EVOLUTION_DB = EvolutionHistoryDB() if EvolutionHistoryDB is not None else None
+
+
+def merge_variant_records(
+    records: Sequence[Dict[str, Any]],
+    workflows: Mapping[str, Callable[[], Any]],
+    *,
+    roi_threshold: float = 0.0,
+    planner: MetaWorkflowPlanner | None = None,
+    runner: sandbox_runner.workflow_sandbox_runner.WorkflowSandboxRunner | None = None,
+    failure_threshold: int = 0,
+    entropy_threshold: float = 2.0,
+) -> list[Dict[str, Any]]:
+    """Merge high-performing variants using :class:`MetaWorkflowPlanner`.
+
+    This helper delegates to
+    :meth:`meta_workflow_planner.MetaWorkflowPlanner.merge_high_performing_variants`
+    to combine variant pipelines that individually exceed ``roi_threshold``.
+    """
+
+    planner = planner or MetaWorkflowPlanner()
+    return planner.merge_high_performing_variants(
+        records,
+        workflows,
+        roi_threshold=roi_threshold,
+        runner=runner,
+        failure_threshold=failure_threshold,
+        entropy_threshold=entropy_threshold,
+    )
 
 
 def _merge_branches_for_parent(parent_id: str) -> None:
