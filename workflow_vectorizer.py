@@ -11,22 +11,37 @@ try:  # pragma: no cover - optional database
 except Exception:  # pragma: no cover - graceful fallback
     CodeDB = None  # type: ignore
 
+try:  # pragma: no cover - optional graph dependency
+    from workflow_graph import _HAS_NX  # type: ignore
+except Exception:  # pragma: no cover - gracefully handle missing graph
+    _HAS_NX = False  # type: ignore
+try:  # pragma: no cover - networkx may be heavy
+    if _HAS_NX:
+        import networkx as nx  # type: ignore
+    else:  # pragma: no cover - executed when networkx missing
+        nx = None  # type: ignore
+except Exception:  # pragma: no cover - networkx not available
+    nx = None  # type: ignore
+    _HAS_NX = False  # type: ignore
+
 from vector_service.vectorizer import SharedVectorService
 
 _DEFAULT_BOUNDS = {
     "num_steps": 20.0,
     "duration": 10_000.0,
     "estimated_profit": 1_000_000.0,
-    "depth": 10.0,
-    "branching": 10.0,
+    "depth": 100.0,
+    "branching": 50.0,
     "roi": 10_000.0,
 }
+
 
 def _one_hot(idx: int, length: int) -> List[float]:
     vec = [0.0] * length
     if 0 <= idx < length:
         vec[idx] = 1.0
     return vec
+
 
 def _get_index(value: Any, mapping: Dict[str, int], max_size: int) -> int:
     val = str(value).lower().strip() or "other"
@@ -37,6 +52,7 @@ def _get_index(value: Any, mapping: Dict[str, int], max_size: int) -> int:
         return mapping[val]
     return mapping["other"]
 
+
 def _scale(value: Any, bound: float) -> float:
     try:
         f = float(value)
@@ -44,6 +60,7 @@ def _scale(value: Any, bound: float) -> float:
         return 0.0
     f = max(-bound, min(bound, f))
     return f / bound if bound else 0.0
+
 
 @dataclass
 class WorkflowVectorizer:
@@ -76,6 +93,11 @@ class WorkflowVectorizer:
             _get_index(wf.get("category"), self.category_index, self.max_categories)
             _get_index(wf.get("status"), self.status_index, self.max_status)
             funcs, mods, tags, _, _, _ = self._semantic_tokens(wf)
+            wid = wf.get("workflow_id") or wf.get("id") or wf.get("record_id")
+            if wid is not None:
+                gmods, gtags = self._graph_semantics(str(wid))
+                mods.extend(gmods)
+                tags.extend(gtags)
             for tok in funcs:
                 _get_index(tok, self.function_index, self.max_functions)
             for tok in mods:
@@ -87,10 +109,10 @@ class WorkflowVectorizer:
     @property
     def dim(self) -> int:
         return (
-            self.max_categories
-            + self.max_status
-            + 6
+            6
             + self.roi_window
+            + self.max_categories
+            + self.max_status
             + self.max_functions
             + self.max_modules
             + self.max_tags
@@ -193,6 +215,49 @@ class WorkflowVectorizer:
                 tags.extend(str(t) for t in stags)
         return funcs, mods, tags, depths, branchings, curves
 
+    def _graph_semantics(self, workflow_id: str) -> tuple[List[str], List[str]]:
+        mods: List[str] = []
+        tags: List[str] = []
+        g = getattr(self.graph, "graph", None) if self.graph is not None else None
+        if g is None:
+            return mods, tags
+        try:
+            if _HAS_NX and nx is not None:
+                data = g.nodes[workflow_id] if g.has_node(workflow_id) else {}
+            else:
+                data = g.get("nodes", {}).get(workflow_id, {})
+        except Exception:
+            data = {}
+        mod = data.get("module") or data.get("category")
+        if mod:
+            mods.append(str(mod))
+        gt = data.get("context_tags") or data.get("tags") or []
+        if isinstance(gt, str):
+            tags.append(gt)
+        else:
+            tags.extend(str(t) for t in gt)
+        return mods, tags
+
+    def _graph_features(self, workflow_id: str) -> tuple[float, float]:
+        depth = 0.0
+        branching = 0.0
+        g = getattr(self.graph, "graph", None) if self.graph is not None else None
+        if g is None:
+            return depth, branching
+        try:
+            if _HAS_NX and nx is not None and hasattr(g, "out_degree"):
+                branching = float(g.out_degree(workflow_id)) if g.has_node(workflow_id) else 0.0
+                if g.has_node(workflow_id):
+                    ancestors = nx.ancestors(g, workflow_id)
+                    if ancestors:
+                        depth = max(
+                            nx.shortest_path_length(g, anc, workflow_id) for anc in ancestors
+                        )
+        except Exception:
+            depth = 0.0
+            branching = 0.0
+        return depth, branching
+
     def _code_db_modules(self, func: str) -> List[str]:
         if not self.code_db:
             return []
@@ -232,13 +297,20 @@ class WorkflowVectorizer:
         return vec
 
     def transform(self, wf: Dict[str, Any], workflow_id: str | None = None) -> List[float]:
-        _ = workflow_id or wf.get("workflow_id") or wf.get("id") or wf.get("record_id")
+        wid = workflow_id or wf.get("workflow_id") or wf.get("id") or wf.get("record_id")
         c_idx = _get_index(wf.get("category"), self.category_index, self.max_categories)
         s_idx = _get_index(wf.get("status"), self.status_index, self.max_status)
         steps = wf.get("workflow") or wf.get("task_sequence") or []
         funcs, mods, tags, depths, branchings, curves = self._semantic_tokens(wf)
-        depth = max(depths) if depths else 0.0
-        branching = max(branchings) if branchings else 0.0
+        if wid is not None:
+            gmods, gtags = self._graph_semantics(str(wid))
+            mods.extend(gmods)
+            tags.extend(gtags)
+        depth, branching = self._graph_features(str(wid)) if wid is not None else (0.0, 0.0)
+        if depth == 0.0 and depths:
+            depth = max(depths)
+        if branching == 0.0 and branchings:
+            branching = max(branchings)
         agg_curve = [0.0] * self.roi_window
         if curves:
             for curve in curves:
@@ -251,26 +323,29 @@ class WorkflowVectorizer:
             "branching_factor": branching,
             "roi_curve": agg_curve,
         }
-        vec: List[float] = []
-        vec.extend(_one_hot(c_idx, self.max_categories))
-        vec.extend(_one_hot(s_idx, self.max_status))
-        vec.append(_scale(len(steps), _DEFAULT_BOUNDS["num_steps"]))
-        vec.append(_scale(wf.get("workflow_duration", 0.0), _DEFAULT_BOUNDS["duration"]))
-        vec.append(
+        struct_vec: List[float] = []
+        struct_vec.append(_scale(len(steps), _DEFAULT_BOUNDS["num_steps"]))
+        struct_vec.append(
+            _scale(wf.get("workflow_duration", 0.0), _DEFAULT_BOUNDS["duration"]))
+        struct_vec.append(
             _scale(
                 wf.get("estimated_profit_per_bot", 0.0),
                 _DEFAULT_BOUNDS["estimated_profit"],
             )
         )
-        vec.append(_scale(depth, _DEFAULT_BOUNDS["depth"]))
-        vec.append(_scale(branching, _DEFAULT_BOUNDS["branching"]))
-        vec.append(_scale(roi, _DEFAULT_BOUNDS["roi"]))
+        struct_vec.append(_scale(depth, _DEFAULT_BOUNDS["depth"]))
+        struct_vec.append(_scale(branching, _DEFAULT_BOUNDS["branching"]))
+        struct_vec.append(_scale(roi, _DEFAULT_BOUNDS["roi"]))
         for val in agg_curve:
-            vec.append(_scale(val, _DEFAULT_BOUNDS["roi"]))
-        vec.extend(self._encode_tokens(funcs, self.function_index, self.max_functions))
-        vec.extend(self._encode_tokens(mods, self.module_index, self.max_modules))
-        vec.extend(self._encode_tokens(tags, self.tag_index, self.max_tags))
-        return vec
+            struct_vec.append(_scale(val, _DEFAULT_BOUNDS["roi"]))
+
+        sem_vec: List[float] = []
+        sem_vec.extend(_one_hot(c_idx, self.max_categories))
+        sem_vec.extend(_one_hot(s_idx, self.max_status))
+        sem_vec.extend(self._encode_tokens(funcs, self.function_index, self.max_functions))
+        sem_vec.extend(self._encode_tokens(mods, self.module_index, self.max_modules))
+        sem_vec.extend(self._encode_tokens(tags, self.tag_index, self.max_tags))
+        return struct_vec + sem_vec
 
 
 _DEFAULT_VECTORIZER = WorkflowVectorizer()
@@ -300,5 +375,6 @@ def vectorize_and_store(
         metadata=meta,
     )
     return vec
+
 
 __all__ = ["WorkflowVectorizer", "vectorize_and_store"]
