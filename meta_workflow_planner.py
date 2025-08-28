@@ -483,6 +483,177 @@ class MetaWorkflowPlanner:
         return results
 
     # ------------------------------------------------------------------
+    def mutate_pipeline(
+        self,
+        pipeline: Sequence[str],
+        workflows: Mapping[str, Callable[[], Any]],
+        *,
+        roi_improvement_threshold: float = 0.0,
+        entropy_stability_threshold: float = 1.0,
+        runner: WorkflowSandboxRunner | None = None,
+        failure_threshold: int = 0,
+        entropy_threshold: float = 2.0,
+    ) -> List[Dict[str, Any]]:
+        """Mutate ``pipeline`` when ROI stagnates or entropy drifts.
+
+        The existing pipeline is validated and its recorded ROI delta and
+        entropy are inspected.  When the improvement falls below
+        ``roi_improvement_threshold`` or the entropy exceeds
+        ``entropy_stability_threshold`` a set of mutated variants is generated
+        using :meth:`mutate_chains`.  Otherwise the original pipeline metrics
+        are returned.
+        """
+
+        record = self._validate_chain(
+            pipeline,
+            workflows,
+            runner=runner,
+            failure_threshold=failure_threshold,
+            entropy_threshold=entropy_threshold,
+        )
+        if not record:
+            return []
+
+        chain_id = "->".join(pipeline)
+        roi_delta = 0.0
+        entropy_val = record.get("entropy", 0.0)
+        if self.stability_db is not None:
+            entry = self.stability_db.data.get(chain_id, {})
+            roi_delta = float(entry.get("roi_delta", 0.0))
+            entropy_val = float(entry.get("entropy", entropy_val))
+        else:
+            roi_delta = record.get("roi_gain", 0.0)
+
+        if roi_delta >= roi_improvement_threshold and abs(entropy_val) <= entropy_stability_threshold:
+            return [record]
+
+        results = self.mutate_chains(
+            [pipeline],
+            workflows,
+            runner=runner,
+            failure_threshold=failure_threshold,
+            entropy_threshold=entropy_threshold,
+        )
+
+        try:  # pragma: no cover - best effort logging
+            from workflow_lineage import log_lineage
+
+            for r in results:
+                log_lineage(chain_id, "->".join(r.get("chain", [])), "mutate_pipeline", roi=r.get("roi_gain"))
+        except Exception:
+            pass
+
+        return results
+
+    # ------------------------------------------------------------------
+    def split_pipeline(
+        self,
+        pipeline: Sequence[str],
+        workflows: Mapping[str, Callable[[], Any]],
+        *,
+        roi_improvement_threshold: float = 0.0,
+        entropy_stability_threshold: float = 1.0,
+        runner: WorkflowSandboxRunner | None = None,
+        failure_threshold: int = 0,
+        entropy_threshold: float = 2.0,
+    ) -> List[Dict[str, Any]]:
+        """Split ``pipeline`` into sub-pipelines when improvement stalls."""
+
+        if len(pipeline) <= 1:
+            return []
+
+        record = self._validate_chain(
+            pipeline,
+            workflows,
+            runner=runner,
+            failure_threshold=failure_threshold,
+            entropy_threshold=entropy_threshold,
+        )
+        if not record:
+            return []
+
+        chain_id = "->".join(pipeline)
+        roi_delta = 0.0
+        entropy_val = record.get("entropy", 0.0)
+        if self.stability_db is not None:
+            entry = self.stability_db.data.get(chain_id, {})
+            roi_delta = float(entry.get("roi_delta", 0.0))
+            entropy_val = float(entry.get("entropy", entropy_val))
+        else:
+            roi_delta = record.get("roi_gain", 0.0)
+
+        if roi_delta >= roi_improvement_threshold or abs(entropy_val) > entropy_stability_threshold:
+            return [record]
+
+        mid = len(pipeline) // 2
+        segments = [list(pipeline[:mid]), list(pipeline[mid:])]
+        results: List[Dict[str, Any]] = []
+        for seg in segments:
+            rec = self._validate_chain(
+                seg,
+                workflows,
+                runner=runner,
+                failure_threshold=failure_threshold,
+                entropy_threshold=entropy_threshold,
+            )
+            if rec:
+                results.append(rec)
+                try:  # pragma: no cover - best effort logging
+                    from workflow_lineage import log_lineage
+
+                    log_lineage(chain_id, "->".join(seg), "split_pipeline", roi=rec.get("roi_gain"))
+                except Exception:
+                    pass
+        return results
+
+    # ------------------------------------------------------------------
+    def remerge_pipelines(
+        self,
+        pipelines: Sequence[Sequence[str]],
+        workflows: Mapping[str, Callable[[], Any]],
+        *,
+        roi_improvement_threshold: float = 0.0,
+        entropy_stability_threshold: float = 1.0,
+        runner: WorkflowSandboxRunner | None = None,
+        failure_threshold: int = 0,
+        entropy_threshold: float = 2.0,
+    ) -> List[Dict[str, Any]]:
+        """Merge pipelines that show stable entropy and ROI improvements."""
+
+        results: List[Dict[str, Any]] = []
+        for i in range(len(pipelines)):
+            for j in range(i + 1, len(pipelines)):
+                merged = list(pipelines[i]) + [w for w in pipelines[j] if w not in pipelines[i]]
+                rec = self._validate_chain(
+                    merged,
+                    workflows,
+                    runner=runner,
+                    failure_threshold=failure_threshold,
+                    entropy_threshold=entropy_threshold,
+                )
+                if not rec:
+                    continue
+                chain_id = "->".join(merged)
+                roi_delta = 0.0
+                entropy_val = rec.get("entropy", 0.0)
+                if self.stability_db is not None:
+                    entry = self.stability_db.data.get(chain_id, {})
+                    roi_delta = float(entry.get("roi_delta", 0.0))
+                    entropy_val = float(entry.get("entropy", entropy_val))
+                else:
+                    roi_delta = rec.get("roi_gain", 0.0)
+
+                if roi_delta >= roi_improvement_threshold and abs(entropy_val) <= entropy_stability_threshold:
+                    results.append(rec)
+                    try:  # pragma: no cover - best effort logging
+                        from workflow_lineage import log_lineage
+
+                        log_lineage(None, chain_id, "remerge_pipelines", roi=rec.get("roi_gain"))
+                    except Exception:
+                        pass
+        return results
+
+    # ------------------------------------------------------------------
     def _update_cluster_map(
         self, chain: Sequence[str], roi_gain: float, *, tol: float = 0.01
     ) -> Dict[str, Any]:
