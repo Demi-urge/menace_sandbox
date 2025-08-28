@@ -253,6 +253,7 @@ from sandbox_runner.environment import (
 )
 from sandbox_runner.cycle import _sandbox_cycle_runner, map_module_identifier
 from sandbox_runner.cli import _run_sandbox, rank_scenarios, main
+from meta_workflow_planner import simulate_meta_workflow as _simulate_meta_workflow
 
 
 # ----------------------------------------------------------------------
@@ -286,6 +287,13 @@ def simulate_temporal_trajectory(workflow_id, workflow, tracker=None, foresight_
         tracker=tracker,
         foresight_tracker=foresight_tracker,
     )
+
+
+# ----------------------------------------------------------------------
+def simulate_meta_workflow(meta_spec, workflows=None, runner=None):
+    """Proxy to :func:`meta_workflow_planner.simulate_meta_workflow`."""
+
+    return _simulate_meta_workflow(meta_spec, workflows=workflows, runner=runner)
 
 
 # ----------------------------------------------------------------------
@@ -1708,6 +1716,7 @@ __all__ = [
     "run_repo_section_simulations",
     "run_scenarios",
     "run_workflow_simulations",
+    "simulate_meta_workflow",
     "simulate_temporal_trajectory",
     "_section_worker",
     "_sandbox_cycle_runner",

@@ -1053,8 +1053,116 @@ def compose_meta_workflow(
     }
 
 
+# ---------------------------------------------------------------------------
+def simulate_meta_workflow(
+    meta_spec: Mapping[str, Any],
+    workflows: Mapping[str, Callable[[], Any]] | None = None,
+    runner: "WorkflowSandboxRunner" | None = None,
+) -> Dict[str, Any]:
+    """Recursively execute a meta-workflow specification.
+
+    Each step may reference a ``workflow_id`` present in ``workflows`` or embed
+    a nested ``steps`` sequence forming a sub meta-workflow.  Every referenced
+    workflow is executed using :class:`sandbox_runner.WorkflowSandboxRunner` and
+    the resulting ROI gain, failure counts and entropy stability are aggregated
+    across all runs.
+
+    Parameters
+    ----------
+    meta_spec:
+        Meta-workflow specification containing ``steps`` entries.
+    workflows:
+        Optional mapping of workflow identifiers to callables.  When omitted the
+        callable must be provided directly in each step under ``workflow`` or
+        ``call``.
+    runner:
+        Optional :class:`sandbox_runner.WorkflowSandboxRunner` instance to
+        reuse.  A new instance is created when ``None``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Mapping with aggregated ``roi_gain``, ``failures`` and average
+        ``entropy`` values.
+    """
+
+    if runner is None:
+        try:
+            from sandbox_runner.workflow_sandbox_runner import (
+                WorkflowSandboxRunner as _Runner,
+            )
+
+            runner = _Runner()
+        except Exception:
+            return {"roi_gain": 0.0, "failures": 0, "entropy": 0.0}
+
+    try:  # pragma: no cover - optional dependency
+        from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
+    except Exception:  # pragma: no cover - when comparator unavailable
+        WorkflowSynergyComparator = None  # type: ignore
+
+    total_roi = 0.0
+    total_failures = 0
+    entropies: List[float] = []
+
+    def _run_spec(spec: Mapping[str, Any]) -> None:
+        nonlocal total_roi, total_failures, entropies
+        for step in spec.get("steps", []):
+            if isinstance(step, Mapping) and step.get("steps"):
+                _run_spec(step)
+                continue
+
+            wid = None
+            func: Callable[[], Any] | None = None
+            if isinstance(step, Mapping):
+                wid = step.get("workflow_id") or step.get("id")
+                wf_obj = step.get("workflow") or step.get("call")
+                if callable(wf_obj):
+                    func = wf_obj  # type: ignore[assignment]
+
+            if func is None and workflows and wid in workflows:
+                func = workflows[wid]
+
+            if not callable(func):
+                continue
+
+            metrics = runner.run([func])
+            roi_gain = sum(
+                float(m.result)
+                for m in metrics.modules
+                if isinstance(m.result, (int, float))
+            )
+            failures = max(
+                metrics.crash_count,
+                sum(1 for m in metrics.modules if not m.success),
+            )
+            total_roi += roi_gain
+            total_failures += failures
+
+            entropy = 0.0
+            if wid and WorkflowSynergyComparator is not None:
+                try:
+                    entropy = WorkflowSynergyComparator._entropy(
+                        {"steps": [{"module": wid}]}
+                    )
+                except Exception:
+                    entropy = 0.0
+            entropies.append(entropy)
+
+    if isinstance(meta_spec, Mapping):
+        _run_spec(meta_spec)
+
+    avg_entropy = sum(entropies) / len(entropies) if entropies else 0.0
+    return {
+        "roi_gain": total_roi,
+        "failures": total_failures,
+        "entropy": avg_entropy,
+    }
+
+
 __all__ = [
     "MetaWorkflowPlanner",
+    "simulate_meta_workflow",
     "compose_meta_workflow",
     "find_synergy_chain",
     "find_synergy_candidates",
