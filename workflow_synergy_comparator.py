@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
 import math
 
+from .workflow_metrics import compute_workflow_entropy
+
 try:  # Optional dependency used for richer graph handling
     import networkx as nx  # type: ignore
     _HAS_NX = True
@@ -66,7 +68,7 @@ class WorkflowSynergyComparator:
         if _HAS_NX:
             graph = nx.DiGraph()
         else:
-            graph = { }  # type: Dict[str, set]
+            graph = {}  # type: Dict[str, set]
         modules = []
         for step in steps:
             mod = step.get("module")
@@ -153,20 +155,6 @@ class WorkflowSynergyComparator:
         union = len(sa | sb)
         return inter / union if union else 0.0
 
-    @staticmethod
-    def _entropy(modules: Iterable[Any]) -> float:
-        counts: Dict[Any, int] = {}
-        for m in modules:
-            counts[m] = counts.get(m, 0) + 1
-        total = sum(counts.values())
-        if not total:
-            return 0.0
-        ent = 0.0
-        for c in counts.values():
-            p = c / total
-            ent -= p * math.log2(p)
-        return ent
-
     @classmethod
     def compare(cls, a_spec: Dict[str, Any], b_spec: Dict[str, Any]) -> WorkflowComparisonResult:
         """Compare two workflow specifications.
@@ -184,7 +172,9 @@ class WorkflowSynergyComparator:
         vec_b = cls._embed_graph(graph_b, b_spec)
         efficiency = cls._cosine(vec_a, vec_b)
         modularity = cls._jaccard(modules_a, modules_b)
-        expandability = (cls._entropy(modules_a) + cls._entropy(modules_b)) / 2.0
+        expandability = (
+            compute_workflow_entropy(a_spec) + compute_workflow_entropy(b_spec)
+        ) / 2.0
         return WorkflowComparisonResult(efficiency, modularity, expandability)
 
 
