@@ -374,18 +374,19 @@ class WorkflowSynergyComparator:
         return report
 
     @staticmethod
-    def _roi_and_modularity(graph: Any) -> Tuple[float, float]:
+    def _roi_and_modularity(graph: Any, modules: Iterable[str]) -> Tuple[float, float]:
         """Return efficiency and modularity for ``graph``.
 
         Efficiency attempts to combine runtime and ROI information when
         available.  If ``ROITracker`` exposes both runtime and ROI histories the
         most recent ROI per runtime is used.  As a fallback the dedicated
-        ``synergy_efficiency`` metric is consulted.  Modularity relies on
-        ``networkx`` community detection (preferring the Louvain method) and
-        falls back to greedy modularity when optional dependencies are missing
-        or raise errors.
+        ``synergy_efficiency`` metric is consulted.  Modularity prefers
+        community detection via :mod:`networkx` but falls back to the ratio of
+        unique modules to total steps when the optional dependency is missing or
+        raises an error.
         """
 
+        modules = list(modules)
         efficiency = 0.0
         if ROITracker is not None:
             try:  # pragma: no cover - optional dependency
@@ -420,6 +421,9 @@ class WorkflowSynergyComparator:
                         modularity = float(nx_comm.modularity(undirected, communities))
             except Exception:
                 pass
+
+        if not modularity and modules:
+            modularity = len(set(modules)) / float(len(modules))
 
         return efficiency, modularity
 
@@ -469,8 +473,9 @@ class WorkflowSynergyComparator:
         overfit_b = cls.analyze_overfitting(spec_b)
 
         # Additional metrics derived from ROITracker and structural communities
-        union_graph = cls._build_graph(mods_a + mods_b)
-        efficiency, modularity = cls._roi_and_modularity(union_graph)
+        combined_modules = mods_a + mods_b
+        union_graph = cls._build_graph(combined_modules)
+        efficiency, modularity = cls._roi_and_modularity(union_graph, combined_modules)
 
         metrics = {
             "similarity": similarity,
