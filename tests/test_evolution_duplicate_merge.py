@@ -132,11 +132,14 @@ def test_duplicate_merge_lineage(monkeypatch, tmp_path):
 
     monkeypatch.setattr(wem, "WorkflowEvolutionBot", lambda: FakeBot())
 
+    run_calls: list[str] = []
+
     class FakeScorer:
         def __init__(self, results_db, tracker):
             pass
 
         def run(self, fn, wf_id, run_id):
+            run_calls.append(run_id)
             if run_id == "baseline":
                 roi, spec = 1.0, baseline_spec
             elif run_id.startswith("merge-"):
@@ -181,10 +184,9 @@ def test_duplicate_merge_lineage(monkeypatch, tmp_path):
     class FakeComparator:
         @staticmethod
         def compare(a, b):
-            return SimpleNamespace(similarity=1.0, entropy_a=0.0, entropy_b=0.0)
-
-        def is_duplicate(self, result, b=None, thresholds=None):
-            return True
+            return SimpleNamespace(
+                aggregate=1.0, expandability=0.0, entropy_a=0.0, entropy_b=0.0
+            )
 
         def merge_duplicate(self, base_id, dup_id, out_dir="workflows"):
             merge_info["called_with"] = (base_id, dup_id)
@@ -199,5 +201,6 @@ def test_duplicate_merge_lineage(monkeypatch, tmp_path):
     result_callable = wem.evolve(lambda: True, 1, variants=1)
 
     assert merge_info["called_with"] == (cand_id, "99")
+    assert any(r.startswith("merge-") for r in run_calls)
     assert getattr(result_callable, "workflow_id") == "merged"
     assert getattr(result_callable, "parent_id") == 1

@@ -629,13 +629,20 @@ def evolve(
         for cand_id, cand_path in candidates:
             try:
                 cand_spec = json.loads(cand_path.read_text())
-                result = comparator.compare(promoted_spec, cand_spec)
-                if comparator.is_duplicate(
-                    result,
-                    thresholds={
-                        "similarity": settings.duplicate_similarity,
-                        "entropy": settings.duplicate_entropy,
-                    },
+                scores = comparator.compare(promoted_spec, cand_spec)
+                ent_gap = abs(scores.entropy_a - scores.entropy_b)
+                logger.debug(
+                    "duplicate check %s -> %s: aggregate=%.3f expandability=%.3f ent_gap=%.3f",
+                    new_id,
+                    cand_id,
+                    scores.aggregate,
+                    scores.expandability,
+                    ent_gap,
+                )
+                if (
+                    scores.aggregate >= settings.duplicate_similarity
+                    and scores.expandability <= settings.duplicate_entropy
+                    and ent_gap <= settings.duplicate_entropy
                 ):
                     merged_file = comparator.merge_duplicate(cand_id, str(new_id))
                     if merged_file is None:
