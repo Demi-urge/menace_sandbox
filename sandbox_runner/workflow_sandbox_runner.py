@@ -90,10 +90,27 @@ class WorkflowSandboxRunner:
 
     # ------------------------------------------------------------------
     def _resolve(self, root: pathlib.Path, path: str | pathlib.Path) -> pathlib.Path:
+        """Return a normalised path within ``root``.
+
+        ``path`` may be relative or absolute.  Absolute paths already located
+        inside ``root`` are preserved while all other paths are treated as being
+        relative to ``root``.  The final resolved path is verified to reside
+        inside ``root`` to guard against ``..`` segments or symlink escapes.  A
+        :class:`RuntimeError` is raised if the normalised path would point
+        outside the sandbox.
+        """
+
+        root = root.resolve()
         p = pathlib.Path(path)
         if p.is_absolute():
-            p = pathlib.Path(*p.parts[1:])
-        return root / p
+            try:
+                p = p.relative_to(root)
+            except ValueError:
+                p = pathlib.Path(*p.parts[1:])
+        candidate = (root / p).resolve()
+        if not candidate.is_relative_to(root):
+            raise RuntimeError("path escapes sandbox")
+        return candidate
 
     # ------------------------------------------------------------------
     def run(
@@ -156,7 +173,7 @@ class WorkflowSandboxRunner:
         proc = psutil.Process() if psutil else None
 
         with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
-            root = pathlib.Path(tmp)
+            root = pathlib.Path(tmp).resolve()
 
             funcs = [workflow] if callable(workflow) else list(workflow)
 
@@ -178,17 +195,14 @@ class WorkflowSandboxRunner:
                 if file_path.startswith("/proc/"):
                     return original_open(file, mode, *a, **kw)
                 p = pathlib.Path(file_path)
-                if p.is_absolute() and p.is_relative_to(root):
-                    path = p
-                else:
-                    path = self._resolve(root, file_path)
+                path = self._resolve(root, file_path)
                 if any(m in mode for m in ("w", "a", "x", "+")):
                     fn = fs_mocks.get("open")
                     if fn:
                         return fn(path, mode, *a, **kw)
-                    if safe_mode:
+                    if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                         raise RuntimeError("file write disabled in safe_mode")
-                    pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
+                    path.parent.mkdir(parents=True, exist_ok=True)
                 return original_open(path, mode, *a, **kw)
 
             stack.enter_context(mock.patch("builtins.open", sandbox_open))
@@ -205,15 +219,12 @@ class WorkflowSandboxRunner:
                 if raw.startswith("/proc/"):
                     return original_path_open(path_obj, *a, **kw)
                 p = pathlib.Path(raw)
-                if p.is_absolute() and p.is_relative_to(root):
-                    path = p
-                else:
-                    path = self._resolve(root, raw)
+                path = self._resolve(root, raw)
                 if any(m in mode for m in ("w", "a", "x", "+")):
                     fn = fs_mocks.get("pathlib.Path.open")
                     if fn:
                         return fn(path, *a, **kw)
-                    if safe_mode:
+                    if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                         raise RuntimeError("file write disabled in safe_mode")
                     path.parent.mkdir(parents=True, exist_ok=True)
                 return original_path_open(path, *a, **kw)
@@ -223,14 +234,11 @@ class WorkflowSandboxRunner:
                 if raw.startswith("/proc/"):
                     return original_write_text(path_obj, data, *a, **kw)
                 p = pathlib.Path(raw)
-                if p.is_absolute() and p.is_relative_to(root):
-                    path = p
-                else:
-                    path = self._resolve(root, raw)
+                path = self._resolve(root, raw)
                 fn = fs_mocks.get("pathlib.Path.write_text")
                 if fn:
                     return fn(path, data, *a, **kw)
-                if safe_mode:
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 return original_write_text(path, data, *a, **kw)
@@ -239,11 +247,7 @@ class WorkflowSandboxRunner:
                 raw = os.fspath(path_obj)
                 if raw.startswith("/proc/"):
                     return original_read_text(path_obj, *a, **kw)
-                p = pathlib.Path(raw)
-                if p.is_absolute() and p.is_relative_to(root):
-                    path = p
-                else:
-                    path = self._resolve(root, raw)
+                path = self._resolve(root, raw)
                 return original_read_text(path, *a, **kw)
 
             def path_write_bytes(path_obj, data, *a, **kw):
@@ -251,14 +255,11 @@ class WorkflowSandboxRunner:
                 if raw.startswith("/proc/"):
                     return original_write_bytes(path_obj, data, *a, **kw)
                 p = pathlib.Path(raw)
-                if p.is_absolute() and p.is_relative_to(root):
-                    path = p
-                else:
-                    path = self._resolve(root, raw)
+                path = self._resolve(root, raw)
                 fn = fs_mocks.get("pathlib.Path.write_bytes")
                 if fn:
                     return fn(path, data, *a, **kw)
-                if safe_mode:
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 return original_write_bytes(path, data, *a, **kw)
@@ -267,11 +268,7 @@ class WorkflowSandboxRunner:
                 raw = os.fspath(path_obj)
                 if raw.startswith("/proc/"):
                     return original_read_bytes(path_obj, *a, **kw)
-                p = pathlib.Path(raw)
-                if p.is_absolute() and p.is_relative_to(root):
-                    path = p
-                else:
-                    path = self._resolve(root, raw)
+                path = self._resolve(root, raw)
                 return original_read_bytes(path, *a, **kw)
 
             stack.enter_context(mock.patch.object(pathlib.Path, "open", path_open))
@@ -690,7 +687,6 @@ class WorkflowSandboxRunner:
                         if asyncio.iscoroutine(result):
                             if timeout:
                                 result = asyncio.run(asyncio.wait_for(result, timeout))
-                                
                             else:
                                 result = asyncio.run(result)
                 except Exception as exc:  # pragma: no cover - exercise failure path
@@ -699,7 +695,7 @@ class WorkflowSandboxRunner:
                     metrics.crash_count += 1
                     if not safe_mode:
                         raise
-                except BaseException as exc:  # pragma: no cover - timeout/memory
+                except BaseException:  # pragma: no cover - timeout/memory
                     if mem_event.is_set():
                         success = False
                         error = "module exceeded memory limit"
