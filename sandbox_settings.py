@@ -40,7 +40,10 @@ class SandboxSettings(BaseSettings):
     auto_include_isolated: bool = Field(
         True,
         env="SANDBOX_AUTO_INCLUDE_ISOLATED",
-        description="Automatically include isolated modules during orphan scans (enabled by default).",
+        description=(
+            "Automatically include isolated modules during orphan scans "
+            "(enabled by default)."
+        ),
     )
     recursive_orphan_scan: bool = Field(
         True,
@@ -135,6 +138,16 @@ class SandboxSettings(BaseSettings):
         env="WORKFLOW_MERGE_ENTROPY_DELTA",
         description="Maximum entropy difference allowed when merging workflows.",
     )
+    duplicate_similarity: float = Field(
+        0.95,
+        env="WORKFLOW_DUPLICATE_SIMILARITY",
+        description="Minimum cosine similarity to treat workflows as duplicates.",
+    )
+    duplicate_entropy: float = Field(
+        0.05,
+        env="WORKFLOW_DUPLICATE_ENTROPY",
+        description="Maximum entropy delta allowed when deduplicating workflows.",
+    )
     borderline_raroi_threshold: float = Field(
         0.0,
         env="BORDERLINE_RAROI_THRESHOLD",
@@ -172,7 +185,10 @@ class SandboxSettings(BaseSettings):
     entropy_ceiling_consecutive: int | None = Field(
         None,
         env="ENTROPY_CEILING_CONSECUTIVE",
-        description="Number of consecutive cycles below the ceiling threshold before flagging a module.",
+        description=(
+            "Number of consecutive cycles below the ceiling threshold before "
+            "flagging a module."
+        ),
     )
     min_integration_roi: float = Field(
         0.0,
@@ -182,9 +198,15 @@ class SandboxSettings(BaseSettings):
     synergy_threshold_window: int | None = Field(None, env="SYNERGY_THRESHOLD_WINDOW")
     synergy_threshold_weight: float | None = Field(None, env="SYNERGY_THRESHOLD_WEIGHT")
     synergy_ma_window: int | None = Field(None, env="SYNERGY_MA_WINDOW")
-    synergy_stationarity_confidence: float | None = Field(None, env="SYNERGY_STATIONARITY_CONFIDENCE")
-    synergy_std_threshold: float | None = Field(None, env="SYNERGY_STD_THRESHOLD")
-    synergy_variance_confidence: float | None = Field(None, env="SYNERGY_VARIANCE_CONFIDENCE")
+    synergy_stationarity_confidence: float | None = Field(
+        None, env="SYNERGY_STATIONARITY_CONFIDENCE"
+    )
+    synergy_std_threshold: float | None = Field(
+        None, env="SYNERGY_STD_THRESHOLD"
+    )
+    synergy_variance_confidence: float | None = Field(
+        None, env="SYNERGY_VARIANCE_CONFIDENCE"
+    )
 
     relevancy_threshold: int = Field(
         20,
@@ -260,7 +282,10 @@ class SandboxSettings(BaseSettings):
             "upstream_failure_rate": 0.1,
         },
         env="SCENARIO_METRIC_THRESHOLDS",
-        description="Thresholds for scenario-specific metrics returned by _scenario_specific_metrics.",
+        description=(
+            "Thresholds for scenario-specific metrics returned by "
+            "_scenario_specific_metrics."
+        ),
     )
     fail_on_missing_scenarios: bool = Field(
         False,

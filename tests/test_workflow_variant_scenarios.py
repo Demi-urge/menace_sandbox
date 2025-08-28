@@ -72,7 +72,9 @@ def test_benchmark_workflow_variants_calculates_roi_delta():
     src = Path("self_improvement_engine.py").read_text()
     tree = ast.parse(src)
     func_node = next(
-        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "benchmark_workflow_variants"
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "benchmark_workflow_variants"
     )
     module = ast.Module([func_node], type_ignores=[])
     ns: dict[str, object] = {
@@ -101,6 +103,7 @@ def _import_wem(side_effects, generate_calls=None):
     sys.modules["menace_sandbox"] = pkg
 
     cws_mod = ModuleType("menace_sandbox.composite_workflow_scorer")
+
     class CompositeWorkflowScorer:
         def __init__(self, *a, **k):
             pass
@@ -113,6 +116,7 @@ def _import_wem(side_effects, generate_calls=None):
     sys.modules["menace_sandbox.composite_workflow_scorer"] = cws_mod
 
     bot_mod = ModuleType("menace_sandbox.workflow_evolution_bot")
+
     class WorkflowEvolutionBot:
         _rearranged_events = {}
 
@@ -125,6 +129,7 @@ def _import_wem(side_effects, generate_calls=None):
     sys.modules["menace_sandbox.workflow_evolution_bot"] = bot_mod
 
     db_mod = ModuleType("menace_sandbox.roi_results_db")
+
     class ROIResultsDB:
         def __init__(self, *a, **k):
             pass
@@ -155,6 +160,7 @@ def _import_wem(side_effects, generate_calls=None):
     sys.modules["menace_sandbox.mutation_logger"] = mut_mod
 
     tracker_mod = ModuleType("menace_sandbox.roi_tracker")
+
     class ROITracker:
         def __init__(self, *a, **k):
             self.roi_history = []
@@ -172,10 +178,17 @@ def _import_wem(side_effects, generate_calls=None):
     sys.modules["menace_sandbox.roi_tracker"] = tracker_mod
 
     settings_mod = ModuleType("menace_sandbox.sandbox_settings")
-    settings_mod.SandboxSettings = lambda *a, **k: SimpleNamespace(roi_ema_alpha=0.1)
+    settings_mod.SandboxSettings = lambda *a, **k: SimpleNamespace(
+        roi_ema_alpha=0.1,
+        workflow_merge_similarity=0.9,
+        workflow_merge_entropy_delta=0.1,
+        duplicate_similarity=0.95,
+        duplicate_entropy=0.05,
+    )
     sys.modules["menace_sandbox.sandbox_settings"] = settings_mod
 
     stab_mod = ModuleType("menace_sandbox.workflow_stability_db")
+
     class WorkflowStabilityDB:
         def __init__(self, *a, **k):
             self.data = {}
@@ -216,6 +229,7 @@ def _import_wem(side_effects, generate_calls=None):
     sys.modules["menace_sandbox.workflow_stability_db"] = stab_mod
 
     summary_mod = ModuleType("menace_sandbox.workflow_summary_db")
+
     class WorkflowSummaryDB:
         def set_summary(self, *a, **k):
             pass

@@ -17,6 +17,7 @@ FIX_DIR = Path(__file__).resolve().parent / "fixtures" / "workflows"
 def _load_steps(name: str) -> list[dict]:
     return json.loads((FIX_DIR / name).read_text()).get("steps", [])
 
+
 def _stub(name, **attrs):
     mod = types.ModuleType(f"menace_sandbox.{name}")
     for k, v in attrs.items():
@@ -52,13 +53,15 @@ _stub(
         roi_ema_alpha=0.1,
         workflow_merge_similarity=0.9,
         workflow_merge_entropy_delta=0.1,
+        duplicate_similarity=0.95,
+        duplicate_entropy=0.05,
     ),
 )
 _stub("workflow_synergy_comparator", WorkflowSynergyComparator=object)
 _stub("workflow_metrics", compute_workflow_entropy=lambda spec: 0.0)
 _stub("workflow_merger", merge_workflows=lambda *a, **k: Path("merged.json"))
 
-import menace_sandbox.workflow_evolution_manager as wem
+import menace_sandbox.workflow_evolution_manager as wem  # noqa: E402
 
 # Restore real modules for other tests
 for mod in [
@@ -70,9 +73,10 @@ for mod in [
     "menace_sandbox.evolution_history_db",
     "menace_sandbox.mutation_logger",
     "menace_sandbox.workflow_summary_db",
-    "menace_sandbox.workflow_graph",
+"menace_sandbox.workflow_graph",
 ]:
     sys.modules.pop(mod, None)
+
 
 def _setup(
     monkeypatch,
@@ -119,15 +123,19 @@ def _setup(
     monkeypatch.setattr(wem, "CompositeWorkflowScorer", FakeScorer)
 
     class FakeResultsDB:
+
         def log_module_delta(self, *a, **k):
             pass
     monkeypatch.setattr(wem, "ROIResultsDB", lambda: FakeResultsDB())
 
     class FakeTracker:
+
         def calculate_raroi(self, roi):
             return 0, roi, 0
+
         def score_workflow(self, wf, raroi):
             pass
+
         def diminishing(self):
             return 0
     monkeypatch.setattr(wem, "ROITracker", lambda: FakeTracker())
@@ -144,13 +152,17 @@ def _setup(
     monkeypatch.setattr(wem, "_update_ema", lambda *a, **k: False)
 
     graph_called = {}
+
     class FakeGraph:
+
         def update_workflow(self, wid, roi=None, synergy_scores=None):
             graph_called["args"] = (wid, roi)
     monkeypatch.setattr(wem, "WorkflowGraph", lambda *a, **k: FakeGraph())
 
     summary_called = {}
+
     class FakeSummaryDB:
+
         def set_summary(self, wid, summary):
             summary_called["args"] = (wid, summary)
     monkeypatch.setattr(wem, "WorkflowSummaryDB", lambda *a, **k: FakeSummaryDB())
@@ -273,6 +285,8 @@ def test_promoted_duplicate_triggers_merge(monkeypatch, tmp_path):
 
     monkeypatch.setattr(wem, "_load_specs", fake_load_specs)
 
+    merge_called: dict[str, bool] = {}
+
     class DummyComparator:
         @classmethod
         def compare(cls, a_spec, b_spec):
@@ -282,18 +296,16 @@ def test_promoted_duplicate_triggers_merge(monkeypatch, tmp_path):
         def is_duplicate(result, similarity_threshold=0.95, entropy_threshold=0.05):
             return True
 
+        @classmethod
+        def merge_duplicate(cls, base_id, dup_id, out_dir="workflows"):
+            merge_called["called"] = True
+            out_path = Path(out_dir) / f"{base_id}.merged.json"
+            out_path.write_text(
+                json.dumps({"steps": variant_spec, "metadata": {"workflow_id": 123}})
+            )
+            return out_path
+
     monkeypatch.setattr(wem, "WorkflowSynergyComparator", DummyComparator)
-
-    merge_called: dict[str, bool] = {}
-
-    def fake_merge(base_path, a_path, b_path, out_path):
-        merge_called["called"] = True
-        out_path.write_text(
-            json.dumps({"steps": variant_spec, "metadata": {"workflow_id": 123}})
-        )
-        return out_path
-
-    monkeypatch.setattr(wem.workflow_merger, "merge_workflows", fake_merge)
 
     wem.evolve(lambda: True, 1, variants=1)
 

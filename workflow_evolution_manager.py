@@ -20,7 +20,6 @@ from .workflow_synthesizer import save_workflow
 from . import workflow_run_summary
 from . import sandbox_runner
 from .workflow_synergy_comparator import WorkflowSynergyComparator
-from .workflow_metrics import compute_workflow_entropy
 from . import workflow_merger
 try:  # pragma: no cover - optional at runtime
     from .workflow_graph import WorkflowGraph
@@ -358,8 +357,6 @@ def evolve(
             best_variant_seq = seq
             best_variant_result = variant_result
 
-    # Instantiate comparator for post-promotion duplicate checks
-    comparator = WorkflowSynergyComparator()
     delta = best_delta
 
     # Record final RAROI for history
@@ -493,6 +490,7 @@ def evolve(
             integrate_orphans(repo, router=GLOBAL_ROUTER)
 
         # Deduplicate against existing stable workflows
+        comparator = WorkflowSynergyComparator()
         merged_callable = best_callable
         try:
             promoted_spec = json.loads(saved_path.read_text())
@@ -526,16 +524,12 @@ def evolve(
                 result = comparator.compare(promoted_spec, cand_spec)
                 if comparator.is_duplicate(
                     result,
-                    settings.workflow_merge_similarity,
-                    settings.workflow_merge_entropy_delta,
+                    settings.duplicate_similarity,
+                    settings.duplicate_entropy,
                 ):
-                    base_path = cand_path
-                    a_path = cand_path
-                    b_path = saved_path
-                    out_path = cand_path.with_name(f"{cand_id}.merged.json")
-                    merged_file = workflow_merger.merge_workflows(
-                        base_path, a_path, b_path, out_path
-                    )
+                    merged_file = comparator.merge_duplicate(cand_id, str(new_id))
+                    if merged_file is None:
+                        continue
                     try:
                         merged_data = json.loads(merged_file.read_text())
                         merged_steps = merged_data.get("steps", [])
@@ -575,8 +569,7 @@ def evolve(
                                         ),
                                         reason="merge",
                                         trigger="workflow_evolution_manager",
-                                        performance=
-                                            merged_result.roi_gain - best_roi,
+                                        performance=merged_result.roi_gain - best_roi,
                                     )
                                 )
                             except Exception:
@@ -590,7 +583,7 @@ def evolve(
                         break
                     finally:
                         try:
-                            out_path.unlink()
+                            merged_file.unlink()
                         except Exception:
                             pass
             except Exception:  # pragma: no cover - best effort
