@@ -493,3 +493,44 @@ def test_compare_returns_overfitting_report(monkeypatch):
     scores = wsc.WorkflowSynergyComparator.compare(spec_a, spec_b)
     assert scores.overfit_a and scores.overfit_a.is_overfitting()
     assert scores.overfit_b and not scores.overfit_b.is_overfitting()
+
+
+def test_best_practice_match_scores(monkeypatch, tmp_path):
+    """Stored sequences return predictable best-practice similarity scores."""
+
+    def fake_embed_spec(cls, spec, all_modules=None):
+        modules = [s.get("module") for s in spec.get("steps", [])]
+        if all_modules is None:
+            all_modules = sorted(set(modules))
+        vec = []
+        for m in sorted(all_modules):
+            vec.append(modules.count(m))
+        return vec
+
+    monkeypatch.setattr(
+        wsc.WorkflowSynergyComparator,
+        "_embed_spec",
+        classmethod(fake_embed_spec),
+    )
+    monkeypatch.setattr(
+        wsc.WorkflowSynergyComparator,
+        "best_practices_file",
+        tmp_path / "best.json",
+        raising=False,
+    )
+    (tmp_path / "best.json").write_text(
+        json.dumps({"sequences": [["a", "b"], ["a"]]})
+    )
+
+    spec = {"steps": [{"module": "a"}, {"module": "b"}]}
+    score, seq = wsc.WorkflowSynergyComparator.best_practice_match(spec)
+    assert score == pytest.approx(1.0)
+    assert seq == ["a", "b"]
+
+    spec_rep = {
+        "steps": [{"module": "a"}, {"module": "a"}, {"module": "b"}]
+    }
+    score_rep, seq_rep = wsc.WorkflowSynergyComparator.best_practice_match(spec_rep)
+    expected = 3 / (math.sqrt(5) * math.sqrt(2))
+    assert score_rep == pytest.approx(expected)
+    assert seq_rep == ["a", "b"]
