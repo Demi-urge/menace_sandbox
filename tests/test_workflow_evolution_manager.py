@@ -276,17 +276,10 @@ def test_promoted_duplicate_triggers_merge(monkeypatch, tmp_path):
     class DummyComparator:
         @classmethod
         def compare(cls, a_spec, b_spec):
-            return SimpleNamespace(
-                similarity=1.0,
-                shared_modules=1,
-                modules_a=1,
-                modules_b=1,
-                entropy_a=0.0,
-                entropy_b=0.0,
-                recommended_winner=None,
-            )
+            return SimpleNamespace(similarity=1.0, entropy_gap=0.0)
 
-        def is_duplicate(self, a_spec, b_spec, thresholds=None):
+        @staticmethod
+        def is_duplicate(result, similarity_threshold=0.95, entropy_threshold=0.05):
             return True
 
     monkeypatch.setattr(wem, "WorkflowSynergyComparator", DummyComparator)
