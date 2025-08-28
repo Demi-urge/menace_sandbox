@@ -267,9 +267,25 @@ def evolve(
                 scores = WorkflowSynergyComparator.compare(
                     {"steps": baseline_spec}, {"steps": variant_spec}
                 )
+                bp_thresh = getattr(settings, "best_practice_match_threshold", 1.0)
+                bp_match = getattr(scores, "best_practice_match_b", (0.0, []))
+                bp_score = bp_match[0]
+                if bp_score >= bp_thresh:
+                    try:
+                        mods = WorkflowSynergyComparator._extract_modules(
+                            {"steps": variant_spec}
+                        )
+                        WorkflowSynergyComparator._update_best_practices(mods)
+                    except Exception:  # pragma: no cover - best effort
+                        logger.exception("failed updating best practices")
+                    if getattr(scores, "entropy_b", 1.0) <= settings.duplicate_entropy:
+                        merged_parent = "best_practice"
+                setattr(variant_result, "best_practice_match", bp_score)
+
                 ent_delta = abs(scores.entropy_a - scores.entropy_b)
                 if (
-                    scores.aggregate >= settings.workflow_merge_similarity
+                    merged_parent is None
+                    and scores.aggregate >= settings.workflow_merge_similarity
                     and ent_delta <= settings.workflow_merge_entropy_delta
                     and not _scores_overfit(scores)
                 ):
@@ -343,9 +359,21 @@ def evolve(
                 try:
                     cand_spec = json.loads(cand_path.read_text())
                     scores = comparator.compare({"steps": variant_spec}, cand_spec)
+                    bp_thresh = getattr(settings, "best_practice_match_threshold", 1.0)
+                    bp_match = getattr(scores, "best_practice_match_a", (0.0, []))
+                    if bp_match[0] >= bp_thresh:
+                        try:
+                            mods = type(comparator)._extract_modules({"steps": variant_spec})
+                            type(comparator)._update_best_practices(mods)
+                        except Exception:  # pragma: no cover - best effort
+                            logger.exception("failed updating best practices")
+                        if getattr(scores, "entropy_a", 1.0) <= settings.duplicate_entropy:
+                            merged_parent = "best_practice"
+                            break
                     overfit = _scores_overfit(scores)
                     if (
-                        comparator.is_duplicate(
+                        merged_parent is None
+                        and comparator.is_duplicate(
                             scores,
                             similarity_threshold=settings.duplicate_similarity,
                             entropy_threshold=settings.duplicate_entropy,
@@ -397,6 +425,10 @@ def evolve(
             setattr(variant_callable, "parent_id", merged_parent)
 
         roi_delta = variant_result.roi_gain - baseline_roi
+        bp_thresh = getattr(settings, "best_practice_match_threshold", 1.0)
+        bp_score = getattr(variant_result, "best_practice_match", 0.0)
+        if bp_score >= bp_thresh:
+            roi_delta += bp_score * 0.001
 
         # Persist ROI delta with variant identifier
         results_db.log_module_delta(
@@ -575,6 +607,13 @@ def evolve(
             if created_at is not None:
                 setattr(best_callable, "created_at", created_at)
             logger.info("saved promoted workflow to %s", saved_path)
+            if getattr(best_variant_result, "best_practice_match", 0.0) >= getattr(settings, "best_practice_match_threshold", 1.0):
+                try:
+                    WorkflowSynergyComparator._update_best_practices(
+                        [s.get("module") for s in steps if s.get("module")]
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("failed updating best practices")
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed persisting promoted workflow")
         if WorkflowGraph is not None:
@@ -647,6 +686,17 @@ def evolve(
             try:
                 cand_spec = json.loads(cand_path.read_text())
                 scores = comparator.compare(promoted_spec, cand_spec)
+                bp_thresh = getattr(settings, "best_practice_match_threshold", 1.0)
+                bp_match = getattr(scores, "best_practice_match_a", (0.0, []))
+                if bp_match[0] >= bp_thresh:
+                    try:
+                        mods = type(comparator)._extract_modules(promoted_spec)
+                        type(comparator)._update_best_practices(mods)
+                    except Exception:  # pragma: no cover - best effort
+                        logger.exception("failed updating best practices")
+                    if getattr(scores, "entropy_a", 1.0) <= settings.duplicate_entropy:
+                        setattr(best_callable, "parent_id", "best_practice")
+                        break
                 ent_gap = abs(scores.entropy_a - scores.entropy_b)
                 logger.debug(
                     "duplicate check %s -> %s: aggregate=%.3f expandability=%.3f ent_gap=%.3f",
@@ -686,7 +736,8 @@ def evolve(
                 logger.exception("failed comparing workflow %s", cand_id)
 
         # ensure promoted callable exposes lineage metadata
-        setattr(best_callable, "parent_id", workflow_id)
+        if not getattr(best_callable, "parent_id", None):
+            setattr(best_callable, "parent_id", workflow_id)
         setattr(best_callable, "mutation_description", best_variant_seq)
 
         workflow_run_summary.save_all_summaries("workflows")
