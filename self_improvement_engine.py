@@ -1287,6 +1287,65 @@ class SelfImprovementEngine:
         except Exception:
             return []
 
+    def _execute_meta_planner(self) -> None:
+        """Instantiate planner and score validated meta-pipelines."""
+        if MetaWorkflowPlanner is None or self.workflow_evolver is None:
+            return
+        try:
+            planner = MetaWorkflowPlanner()
+            target = planner.encode("self_improvement", {"workflow": []})
+            workflows: dict[str, Callable[[], bool]] = {}
+            if WorkflowDB is not None and WorkflowRecord is not None:
+                try:
+                    db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
+                    for rec in db.fetch_workflows(limit=50):
+                        seq = rec.get("workflow") or []
+                        seq_str = "-".join(seq) if isinstance(seq, list) else str(seq)
+                        wid = str(rec.get("id") or rec.get("wid") or "")
+                        workflows[wid] = self.workflow_evolver.build_callable(seq_str)
+                except Exception:
+                    self.logger.exception("failed loading workflows for meta planner")
+            records = planner.plan_and_validate(target, workflows)
+            for idx, record in enumerate(records, start=1):
+                chain = record.get("chain") or []
+                if not chain:
+                    continue
+                meta_id = "->".join(chain)
+
+                def _chain_callable() -> bool:
+                    ok = True
+                    for wid in chain:
+                        fn = workflows.get(str(wid))
+                        if fn is None:
+                            return False
+                        try:
+                            ok = bool(fn()) and ok
+                        except Exception:
+                            ok = False
+                    return ok
+
+                scorer = CompositeWorkflowScorer(results_db=ROIResultsDB())
+                evaluation = scorer.run(_chain_callable, meta_id, run_id=f"meta-{idx}")
+                roi_gain = float(evaluation.roi_gain)
+                try:
+                    MutationLogger.log_mutation(
+                        change="meta_pipeline",
+                        reason="meta_planner",
+                        trigger="self_improvement_cycle",
+                        performance=roi_gain,
+                        workflow_id=abs(hash(meta_id)) % (10**9),
+                        before_metric=0.0,
+                        after_metric=roi_gain,
+                    )
+                    STABLE_WORKFLOWS.mark_stable(meta_id, roi_gain)
+                except Exception:
+                    self.logger.exception(
+                        "reinforcement logging failed",
+                        extra=log_record(workflow_id=meta_id),
+                    )
+        except Exception:
+            self.logger.exception("meta planner execution failed")
+
     def _memory_summaries(self, key: str) -> str:
         """Return a summary of similar past actions from memory."""
         summaries: list[str] = []
@@ -5459,6 +5518,7 @@ class SelfImprovementEngine:
             evo_allowed = self._should_trigger()
             planner_chains: list[list[str]] = []
             if self._cycle_count % PLANNER_INTERVAL == 0:
+                self._execute_meta_planner()
                 planner_chains = self._plan_cross_domain_chains()
                 if consume_planner_suggestions and planner_chains:
                     try:
