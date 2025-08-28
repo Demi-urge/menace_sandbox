@@ -155,10 +155,20 @@ def test_merge_duplicate(monkeypatch, tmp_path):
         return out
 
     monkeypatch.setattr(wsc.workflow_merger, "merge_workflows", fake_merge)
-    monkeypatch.setattr(wsc, "workflow_run_summary", None, raising=False)
+
+    calls = {"count": 0}
+
+    class StubSummary:
+        def save_all_summaries(self, directory):
+            calls["count"] += 1
+            calls["dir"] = Path(directory)
+
+    monkeypatch.setattr(wsc, "workflow_run_summary", StubSummary(), raising=False)
 
     out_path = wsc.merge_duplicate(base_id, dup_id, tmp_path)
     assert out_path is not None and out_path.exists()
+    assert calls["count"] == 1
+    assert calls["dir"] == tmp_path
     merged = json.loads(out_path.read_text())
     mods = [s["module"] for s in merged["steps"]]
     assert mods == [
@@ -173,6 +183,34 @@ def test_merge_duplicate(monkeypatch, tmp_path):
             f"{base_id}.merged.json",
         ]
     )
+
+
+def test_merge_duplicate_missing_files(monkeypatch, tmp_path):
+    _force_simple(monkeypatch)
+
+    base_id = "base"
+    dup_id = "dup"
+
+    def fail_merge(*args, **kwargs):
+        raise AssertionError("merge_workflows should not be called")
+
+    monkeypatch.setattr(wsc.workflow_merger, "merge_workflows", fail_merge)
+    calls = {"count": 0}
+
+    class StubSummary:
+        def save_all_summaries(self, *a, **k):
+            calls["count"] += 1
+
+    monkeypatch.setattr(wsc, "workflow_run_summary", StubSummary(), raising=False)
+
+    # Neither file exists
+    assert wsc.merge_duplicate(base_id, dup_id, tmp_path) is None
+    assert calls["count"] == 0
+
+    # Only base exists
+    (tmp_path / f"{base_id}.workflow.json").write_text("{}")
+    assert wsc.merge_duplicate(base_id, dup_id, tmp_path) is None
+    assert calls["count"] == 0
 
 
 def test_node2vec_branch(monkeypatch):
