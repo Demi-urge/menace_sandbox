@@ -179,6 +179,7 @@ def evolve(
         return workflow_callable
 
     bot = WorkflowEvolutionBot()
+    settings = SandboxSettings()
 
     best_callable = workflow_callable
     best_roi = baseline_roi
@@ -207,12 +208,8 @@ def evolve(
                 ent_a = compute_workflow_entropy({"steps": baseline_spec})
                 ent_b = compute_workflow_entropy({"steps": variant_spec})
                 ent_delta = abs(ent_a - ent_b)
-                sim_thresh = float(
-                    os.getenv("WORKFLOW_MERGE_SIMILARITY", "0.9") or 0.9
-                )
-                ent_thresh = float(
-                    os.getenv("WORKFLOW_MERGE_ENTROPY_DELTA", "0.1") or 0.1
-                )
+                sim_thresh = settings.workflow_merge_similarity
+                ent_thresh = settings.workflow_merge_entropy_delta
                 if similarity >= sim_thresh and ent_delta <= ent_thresh:
                     base_path = Path(f"{wf_id_str}.base.json")
                     a_path = Path(f"{wf_id_str}.a.json")

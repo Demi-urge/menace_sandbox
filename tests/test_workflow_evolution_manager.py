@@ -40,7 +40,14 @@ _stub(
     log_workflow_evolution=lambda **kw: None,
 )
 _stub("workflow_summary_db", WorkflowSummaryDB=object)
-_stub("sandbox_settings", SandboxSettings=lambda: SimpleNamespace(roi_ema_alpha=0.1))
+_stub(
+    "sandbox_settings",
+    SandboxSettings=lambda: SimpleNamespace(
+        roi_ema_alpha=0.1,
+        workflow_merge_similarity=0.9,
+        workflow_merge_entropy_delta=0.1,
+    ),
+)
 _stub("workflow_synergy_comparator", WorkflowSynergyComparator=object)
 _stub("workflow_metrics", compute_workflow_entropy=lambda spec: 0.0)
 _stub("workflow_merger", merge_workflows=lambda *a, **k: Path("merged.json"))

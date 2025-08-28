@@ -20,6 +20,24 @@ Each candidate sequence is validated for structural soundness before evaluation.
 
 Every variant is converted into a callable and scored by `CompositeWorkflowScorer`. The variant with the highest ROI gain is promoted when its ROI exceeds the baseline. Outcomes are logged via `ROIResultsDB` and `mutation_logger` for later analysis.
 
+## Synergy comparison and merging
+
+`WorkflowSynergyComparator` analyses the baseline and each variant for
+structural similarity. It reports **efficiency** (embedding cosine
+similarity), **modularity** (Jaccard overlap) and **expandability** (average
+step entropy). When the mean of efficiency and modularity meets
+`SandboxSettings.workflow_merge_similarity` and the entropy difference stays
+below `SandboxSettings.workflow_merge_entropy_delta`, the manager attempts to
+merge both specifications via `workflow_merger.merge_workflows`. The merged
+workflow is re-scored and promoted if it outperforms the baseline.
+
+Tune the merge thresholds with environment variables:
+
+```bash
+export WORKFLOW_MERGE_SIMILARITY=0.95
+export WORKFLOW_MERGE_ENTROPY_DELTA=0.05
+```
+
 ## Diminishing-returns gating
 
 Workflow ROI improvements are tracked with an exponential moving average (EMA).

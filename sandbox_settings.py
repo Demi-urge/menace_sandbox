@@ -125,6 +125,16 @@ class SandboxSettings(BaseSettings):
     synergy_threshold: float | None = Field(None, env="SYNERGY_THRESHOLD")
     roi_confidence: float | None = Field(None, env="ROI_CONFIDENCE")
     synergy_confidence: float | None = Field(None, env="SYNERGY_CONFIDENCE")
+    workflow_merge_similarity: float = Field(
+        0.9,
+        env="WORKFLOW_MERGE_SIMILARITY",
+        description="Minimum average efficiency/modularity required to merge workflows.",
+    )
+    workflow_merge_entropy_delta: float = Field(
+        0.1,
+        env="WORKFLOW_MERGE_ENTROPY_DELTA",
+        description="Maximum entropy difference allowed when merging workflows.",
+    )
     borderline_raroi_threshold: float = Field(
         0.0,
         env="BORDERLINE_RAROI_THRESHOLD",
