@@ -38,6 +38,35 @@ export WORKFLOW_MERGE_SIMILARITY=0.95
 export WORKFLOW_MERGE_ENTROPY_DELTA=0.05
 ```
 
+## Duplicate collapsing
+
+After checking merge candidates, the evolution loop scans stable workflows for
+near duplicates.  `WorkflowSynergyComparator.is_duplicate()` compares the
+variant against each stable workflow and collapses it into the closest match
+when:
+
+- cosine similarity >= `SandboxSettings.duplicate_similarity`
+- entropy gap <= `SandboxSettings.duplicate_entropy`
+
+Enable or adjust the behaviour via environment variables:
+
+```bash
+export WORKFLOW_DUPLICATE_SIMILARITY=0.95
+export WORKFLOW_DUPLICATE_ENTROPY=0.05
+```
+
+Example invocation pulling thresholds from the environment:
+
+```python
+import os
+from menace.workflow_evolution_manager import evolve
+
+os.environ["WORKFLOW_DUPLICATE_SIMILARITY"] = "0.95"
+os.environ["WORKFLOW_DUPLICATE_ENTROPY"] = "0.05"
+
+promoted = evolve(workflow_callable, workflow_id)
+```
+
 ## Diminishing-returns gating
 
 Workflow ROI improvements are tracked with an exponential moving average (EMA).
