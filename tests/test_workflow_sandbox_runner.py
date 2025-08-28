@@ -192,6 +192,38 @@ def test_aiohttp_network_mock():
     assert metrics.modules[0].result == "mocked"
 
 
+def test_socket_blocked_in_safe_mode():
+    def step():
+        import socket  # noqa: F401
+
+        socket.socket()
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run([step], safe_mode=True)
+
+    assert metrics.crash_count == 1
+    assert "network access disabled" in (metrics.modules[0].exception or "")
+
+
+def test_socket_network_mock():
+    sentinel = object()
+
+    def step():
+        import socket
+
+        return socket.socket()
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run(
+        [step],
+        safe_mode=True,
+        network_mocks={"socket": lambda *a, **kw: sentinel},
+    )
+
+    assert metrics.crash_count == 0
+    assert metrics.modules[0].result is sentinel
+
+
 def test_os_shutil_wrappers_redirected():
     src_file = Path("/tmp/wrapper_src.txt")
     src_dir = Path("/tmp/wrapper_dir")
