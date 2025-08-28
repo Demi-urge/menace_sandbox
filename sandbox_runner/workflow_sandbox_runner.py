@@ -245,6 +245,8 @@ class WorkflowSandboxRunner:
                     return original_open(file, mode, *a, **kw)
                 p = pathlib.Path(file_path)
                 path = self._resolve(root, file_path)
+                if not path.is_relative_to(root):
+                    raise RuntimeError("path escapes sandbox")
                 if any(m in mode for m in ("w", "a", "x", "+")):
                     fn = fs_mocks.get("open")
                     if fn:
@@ -287,6 +289,8 @@ class WorkflowSandboxRunner:
                     return original_write_text(path_obj, data, *a, **kw)
                 p = pathlib.Path(raw)
                 path = self._resolve(root, raw)
+                if not path.is_relative_to(root):
+                    raise RuntimeError("path escapes sandbox")
                 fn = fs_mocks.get("pathlib.Path.write_text")
                 if fn:
                     return fn(path, data, *a, **kw)
@@ -308,6 +312,8 @@ class WorkflowSandboxRunner:
                     return original_write_bytes(path_obj, data, *a, **kw)
                 p = pathlib.Path(raw)
                 path = self._resolve(root, raw)
+                if not path.is_relative_to(root):
+                    raise RuntimeError("path escapes sandbox")
                 fn = fs_mocks.get("pathlib.Path.write_bytes")
                 if fn:
                     return fn(path, data, *a, **kw)
@@ -592,7 +598,15 @@ class WorkflowSandboxRunner:
             # Pre-populate any provided file data into the sandbox.
             for name, content in file_data.items():
                 real = self._resolve(root, name)
-                real.parent.mkdir(parents=True, exist_ok=True)
+                # ``real.parent`` may require creation even when ``safe_mode`` is
+                # enabled. Temporarily restore the original ``os.mkdir`` so that
+                # directory creation bypasses sandbox write restrictions.
+                current_mkdir = os.mkdir
+                try:
+                    os.mkdir = original_mkdir
+                    original_makedirs(real.parent, exist_ok=True)
+                finally:
+                    os.mkdir = current_mkdir
                 mode = "wb" if isinstance(content, (bytes, bytearray)) else "w"
                 with original_open(real, mode) as fh:
                     fh.write(content)
