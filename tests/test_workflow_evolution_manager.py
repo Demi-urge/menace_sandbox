@@ -230,3 +230,61 @@ def test_near_identical_low_entropy_workflows_are_merged(monkeypatch, tmp_path):
 
     assert merge_called.get("called")
     assert any(r.startswith("merge-") for r in run_ids)
+
+
+def test_promoted_duplicate_triggers_merge(monkeypatch, tmp_path):
+    run_ids: list[str] = []
+    baseline_spec = [{"module": "a"}]
+    variant_spec = [{"module": "b"}]
+
+    _setup(
+        monkeypatch,
+        baseline_roi=1.0,
+        variant_roi=2.0,
+        baseline_spec=baseline_spec,
+        variant_spec=variant_spec,
+        merge_roi=2.5,
+        run_log=run_ids,
+    )
+
+    # Mark candidate workflow 99 as stable
+    monkeypatch.setattr(
+        wem.STABLE_WORKFLOWS,
+        "is_stable",
+        lambda wid, *a, **k: wid == "99",
+    )
+
+    # Create candidate spec file
+    workdir = tmp_path / "workflows"
+    workdir.mkdir()
+    (workdir / "99.workflow.json").write_text(
+        json.dumps({"steps": variant_spec, "metadata": {"workflow_id": 99}})
+    )
+    monkeypatch.chdir(tmp_path)
+
+    def fake_load_specs(directory="workflows"):
+        yield {"workflow_id": "99"}
+
+    monkeypatch.setattr(wem, "_load_specs", fake_load_specs)
+
+    class DummyComparator:
+        def is_duplicate(self, a_spec, b_spec, thresholds=None):
+            return True
+
+    monkeypatch.setattr(wem, "WorkflowSynergyComparator", DummyComparator)
+
+    merge_called: dict[str, bool] = {}
+
+    def fake_merge(base_path, a_path, b_path, out_path):
+        merge_called["called"] = True
+        out_path.write_text(
+            json.dumps({"steps": variant_spec, "metadata": {"workflow_id": 123}})
+        )
+        return out_path
+
+    monkeypatch.setattr(wem.workflow_merger, "merge_workflows", fake_merge)
+
+    wem.evolve(lambda: True, 1, variants=1)
+
+    assert merge_called.get("called")
+    assert any(r.startswith("merge-") for r in run_ids)
