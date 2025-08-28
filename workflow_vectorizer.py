@@ -25,6 +25,7 @@ except Exception:  # pragma: no cover - networkx not available
     _HAS_NX = False  # type: ignore
 
 from vector_service.vectorizer import SharedVectorService
+from vector_utils import persist_embedding
 
 _DEFAULT_BOUNDS = {
     "num_steps": 20.0,
@@ -377,4 +378,22 @@ def vectorize_and_store(
     return vec
 
 
-__all__ = ["WorkflowVectorizer", "vectorize_and_store"]
+def persist_workflow_embedding(record_id: str, workflow: Dict[str, Any]) -> List[float]:
+    """Vectorise ``workflow`` and persist the embedding with metadata."""
+
+    vec = _DEFAULT_VECTORIZER.transform(workflow, workflow_id=record_id)
+    meta: Dict[str, Any] = {**_DEFAULT_VECTORIZER.graph_metrics()}
+    for key in ("roi", "roi_curve", "failures", "failure_rate", "failure_reason"):
+        if key in workflow:
+            meta[key] = workflow[key]
+    persist_embedding(
+        "workflow",
+        record_id,
+        vec,
+        origin_db="workflow",
+        metadata=meta,
+    )
+    return vec
+
+
+__all__ = ["WorkflowVectorizer", "vectorize_and_store", "persist_workflow_embedding"]
