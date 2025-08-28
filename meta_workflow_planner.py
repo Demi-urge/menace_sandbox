@@ -881,6 +881,124 @@ class MetaWorkflowPlanner:
         return results
 
     # ------------------------------------------------------------------
+    def iterate_pipelines(
+        self,
+        workflows: Mapping[str, Callable[[], Any]],
+        *,
+        runner: "WorkflowSandboxRunner" | None = None,
+        failure_threshold: int = 0,
+        entropy_threshold: float = 2.0,
+        roi_improvement_threshold: float = 0.0,
+        entropy_stability_threshold: float = 1.0,
+    ) -> List[Dict[str, Any]]:
+        """Evolve converged pipelines based on ROI and entropy trends.
+
+        ``cluster_map`` entries marked as converged are inspected.  Chains with
+        non‑positive ROI deltas trigger :meth:`mutate_chains`.  Chains whose
+        entropy exceeds ``entropy_stability_threshold`` are refined via
+        :meth:`split_pipeline`.  Remaining converged chains are considered for
+        re‑merging.  Winning variants are persisted for reinforcement and
+        returned.
+        """
+
+        results: List[Dict[str, Any]] = []
+        remerge: List[Sequence[str]] = []
+
+        for chain, info in list(self.cluster_map.items()):
+            if not info.get("converged"):
+                continue
+            chain_id = "->".join(chain)
+            roi_delta = float(info.get("delta_roi", 0.0))
+            entropy_val = 0.0
+            if self.stability_db is not None:
+                entry = self.stability_db.data.get(chain_id, {})
+                entropy_val = float(entry.get("entropy", 0.0))
+
+            if roi_delta <= roi_improvement_threshold:
+                recs = self.mutate_chains(
+                    [list(chain)],
+                    workflows,
+                    runner=runner,
+                    failure_threshold=failure_threshold,
+                    entropy_threshold=entropy_threshold,
+                )
+                if recs:
+                    best = max(recs, key=lambda r: r.get("roi_gain", 0.0))
+                    results.append(best)
+                    self._reinforce(best)
+            elif abs(entropy_val) > entropy_stability_threshold:
+                recs = self.split_pipeline(
+                    list(chain),
+                    workflows,
+                    roi_improvement_threshold=roi_improvement_threshold,
+                    entropy_stability_threshold=entropy_stability_threshold,
+                    runner=runner,
+                    failure_threshold=failure_threshold,
+                    entropy_threshold=entropy_threshold,
+                )
+                if recs:
+                    best = max(recs, key=lambda r: r.get("roi_gain", 0.0))
+                    results.append(best)
+                    self._reinforce(best)
+            else:
+                remerge.append(list(chain))
+
+        if len(remerge) > 1:
+            recs = self.remerge_pipelines(
+                remerge,
+                workflows,
+                roi_improvement_threshold=roi_improvement_threshold,
+                entropy_stability_threshold=entropy_stability_threshold,
+                runner=runner,
+                failure_threshold=failure_threshold,
+                entropy_threshold=entropy_threshold,
+            )
+            for rec in recs:
+                results.append(rec)
+                self._reinforce(rec)
+
+        return results
+
+    # ------------------------------------------------------------------
+    def _reinforce(self, record: Mapping[str, Any]) -> None:
+        """Persist ``record`` metrics for reinforcement."""
+
+        chain = record.get("chain", [])
+        roi_gain = float(record.get("roi_gain", 0.0))
+        failures = int(record.get("failures", 0))
+        entropy = float(record.get("entropy", 0.0))
+        chain_id = "->".join(chain)
+
+        if self.roi_db is not None:
+            try:
+                success_rate = (
+                    (len(chain) - failures) / len(chain) if chain else 0.0
+                )
+                self.roi_db.log_result(
+                    workflow_id=chain_id,
+                    run_id="reinforce",
+                    runtime=0.0,
+                    success_rate=success_rate,
+                    roi_gain=roi_gain,
+                    workflow_synergy_score=max(0.0, 1.0 - entropy),
+                    bottleneck_index=0.0,
+                    patchability_score=0.0,
+                    module_deltas={},
+                )
+            except Exception:
+                pass
+
+        if self.stability_db is not None:
+            try:
+                self.stability_db.record_metrics(
+                    chain_id, roi_gain, failures, entropy, roi_delta=roi_gain
+                )
+            except Exception:
+                pass
+
+        self._update_cluster_map(chain, roi_gain)
+
+    # ------------------------------------------------------------------
     def merge_high_performing_variants(
         self,
         records: Sequence[Dict[str, Any]],

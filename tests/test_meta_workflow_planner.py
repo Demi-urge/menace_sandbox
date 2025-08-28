@@ -3,6 +3,7 @@ import os
 import sys
 import types
 from pathlib import Path
+from typing import Any
 
 import networkx as nx
 import pytest
@@ -289,3 +290,66 @@ def test_plan_and_validate_sandbox(monkeypatch):
     records = planner.plan_and_validate([0.0], workflows, runner=DummyRunner(), top_k=1)
     assert records and records[0]["chain"] == ["wf1", "wf2"]
     assert records[0]["roi_gain"] == pytest.approx(3.0)
+
+
+def test_iterate_pipelines(monkeypatch):
+    monkeypatch.setattr(mwp, "ROITracker", None)
+
+    class DummyROI:
+        def __init__(self):
+            self.logged: list[dict[str, Any]] = []
+
+        def log_result(self, **kwargs):
+            self.logged.append(kwargs)
+
+    class DummyStability:
+        def __init__(self):
+            self.data: dict[str, dict[str, float]] = {}
+            self.records: list[tuple[str, float, int, float]] = []
+
+        def record_metrics(self, workflow_id, roi, failures, entropy, *, roi_delta=None):
+            self.records.append((workflow_id, roi, failures, entropy))
+            self.data[workflow_id] = {"entropy": entropy}
+
+    planner = MetaWorkflowPlanner(roi_db=DummyROI(), stability_db=DummyStability())
+    planner.cluster_map = {
+        ("a", "b"): {"delta_roi": -0.1, "converged": True},
+        ("c", "d"): {"delta_roi": 0.5, "converged": True},
+        ("e",): {"delta_roi": 0.4, "converged": True},
+        ("f",): {"delta_roi": 0.3, "converged": True},
+    }
+    planner.stability_db.data.update(
+        {
+            "a->b": {"entropy": 0.2},
+            "c->d": {"entropy": 2.5},
+            "e": {"entropy": 0.3},
+            "f": {"entropy": 0.2},
+        }
+    )
+
+    def fake_mutate(chains, workflows, **_):
+        assert chains == [["a", "b"]]
+        return [{"chain": ["a", "b", "x"], "roi_gain": 1.0, "failures": 0, "entropy": 0.1}]
+
+    def fake_split(pipeline, workflows, **_):
+        assert list(pipeline) == ["c", "d"]
+        return [
+            {"chain": ["c"], "roi_gain": 0.2, "failures": 0, "entropy": 0.5},
+            {"chain": ["d"], "roi_gain": 0.4, "failures": 0, "entropy": 0.5},
+        ]
+
+    def fake_remerge(pipelines, workflows, **_):
+        assert pipelines == [["e"], ["f"]]
+        return [{"chain": ["e", "f"], "roi_gain": 0.8, "failures": 0, "entropy": 0.2}]
+
+    monkeypatch.setattr(planner, "mutate_chains", fake_mutate)
+    monkeypatch.setattr(planner, "split_pipeline", fake_split)
+    monkeypatch.setattr(planner, "remerge_pipelines", fake_remerge)
+
+    records = planner.iterate_pipelines({})
+    chains = [r["chain"] for r in records]
+    assert ["a", "b", "x"] in chains
+    assert ["d"] in chains
+    assert ["e", "f"] in chains
+    assert len(planner.roi_db.logged) == 3
+    assert len(planner.stability_db.records) == 3
