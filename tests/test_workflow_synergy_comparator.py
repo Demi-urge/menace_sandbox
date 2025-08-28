@@ -4,6 +4,7 @@ import math
 import sys
 import types
 from pathlib import Path
+from typing import List
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
@@ -158,3 +159,39 @@ def test_merge_duplicate(monkeypatch, tmp_path):
             f"{base_id}.merged.json",
         ]
     )
+
+
+def test_node2vec_branch(monkeypatch):
+    calls = {"count": 0}
+
+    class DummyGraph:
+        def __init__(self, nodes: List[str]):
+            self._nodes = nodes
+
+        def nodes(self):
+            return self._nodes
+
+    class DummyNode2Vec:
+        def __init__(self, graph, **kwargs):
+            calls["count"] += 1
+            self.graph = graph
+
+        def fit(self, **kwargs):
+            nodes = list(self.graph.nodes())
+            wv = {str(n): [float(i + 1)] for i, n in enumerate(nodes)}
+            return types.SimpleNamespace(wv=wv)
+
+    spec = {"steps": [{"module": "x"}, {"module": "y"}]}
+    graph = DummyGraph(["x", "y"])
+
+    wsc.WorkflowSynergyComparator._embed_cache.clear()
+    monkeypatch.setattr(wsc, "_HAS_NX", True, raising=False)
+    monkeypatch.setattr(wsc, "_HAS_NODE2VEC", True, raising=False)
+    monkeypatch.setattr(wsc, "Node2Vec", DummyNode2Vec, raising=False)
+    monkeypatch.setattr(wsc, "nx", types.SimpleNamespace(Graph=DummyGraph), raising=False)
+
+    result1 = wsc.WorkflowSynergyComparator._embed_graph(graph, spec)
+    result2 = wsc.WorkflowSynergyComparator._embed_graph(graph, spec)
+    assert result1 == [1.0, 2.0]
+    assert result2 == result1
+    assert calls["count"] == 1
