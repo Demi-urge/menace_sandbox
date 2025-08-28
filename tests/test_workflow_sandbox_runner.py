@@ -5,6 +5,7 @@ import sys
 import tempfile
 import types
 from pathlib import Path
+import builtins
 
 import urllib.request
 import shutil
@@ -143,6 +144,57 @@ def test_httpx_network_mock():
 
     assert metrics.crash_count == 0
     assert metrics.modules[0].result == "mocked"
+
+
+def test_open_write_requires_mock_in_safe_mode():
+    def step():
+        with open("foo.txt", "w") as f:
+            f.write("data")
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run([step], safe_mode=True)
+    assert metrics.crash_count == 1
+    assert "file write disabled in safe_mode" in (metrics.modules[0].exception or "")
+
+
+def test_path_write_text_requires_mock_in_safe_mode():
+    def step():
+        Path("foo.txt").write_text("data")
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run([step], safe_mode=True)
+    assert metrics.crash_count == 1
+    assert "file write disabled in safe_mode" in (metrics.modules[0].exception or "")
+
+
+def test_path_write_bytes_requires_mock_in_safe_mode():
+    def step():
+        Path("foo.bin").write_bytes(b"data")
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run([step], safe_mode=True)
+    assert metrics.crash_count == 1
+    assert "file write disabled in safe_mode" in (metrics.modules[0].exception or "")
+
+
+def test_mocked_writes_succeed_in_safe_mode():
+    original_open = builtins.open
+    captured: list[Path] = []
+
+    def mock_open(path, mode, *a, **kw):
+        captured.append(Path(path))
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        return original_open(path, mode, *a, **kw)
+
+    def step():
+        with open("foo.txt", "w") as f:
+            f.write("ok")
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run([step], safe_mode=True, fs_mocks={"open": mock_open})
+
+    assert metrics.crash_count == 0
+    assert captured
 
 
 def test_aiohttp_blocked_in_safe_mode():
