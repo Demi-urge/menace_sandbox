@@ -512,6 +512,24 @@ print(metrics.modules[0].success)
 print(runner.telemetry["time_per_module"]["read_file"])
 ```
 
+Example network mock:
+
+```python
+from sandbox_runner import WorkflowSandboxRunner
+import httpx
+
+def fetch():
+    return httpx.get("https://example.com").text
+
+runner = WorkflowSandboxRunner()
+metrics = runner.run(
+    fetch,
+    safe_mode=True,
+    network_mocks={"httpx": lambda self, method, url, *a, **kw: httpx.Response(200, text="stubbed")},
+)
+print(metrics.modules[0].result)
+```
+
 Per-module fixtures can be supplied via the ``module_fixtures`` argument. The
 mapping uses each module's ``__name__`` as the key and may define ``files`` and
 ``env`` sub-mappings. ``files`` pre-populate paths inside the sandbox before the

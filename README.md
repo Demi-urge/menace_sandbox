@@ -1072,17 +1072,16 @@ Example network mock:
 
 ```python
 from sandbox_runner import WorkflowSandboxRunner
-from types import SimpleNamespace
+import httpx
 
 def fetch():
-    import requests
-    return requests.get("https://example.com").text
+    return httpx.get("https://example.com").text
 
 runner = WorkflowSandboxRunner()
 metrics = runner.run(
     fetch,
     safe_mode=True,
-    network_mocks={"requests": lambda self, method, url, *a, **kw: SimpleNamespace(text="stubbed")},
+    network_mocks={"httpx": lambda self, method, url, *a, **kw: httpx.Response(200, text="stubbed")},
 )
 print(metrics.modules[0].result)
 ```
