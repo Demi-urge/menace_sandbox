@@ -51,6 +51,11 @@ try:  # pragma: no cover - optional dependency
 except BaseException:  # pragma: no cover - gracefully degrade
     ROITracker = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from . import workflow_merger  # type: ignore
+except Exception:  # pragma: no cover - gracefully degrade
+    workflow_merger = None  # type: ignore
+
 # ---------------------------------------------------------------------------
 # Result container
 # ---------------------------------------------------------------------------
@@ -75,8 +80,14 @@ class SynergyScores:
     expandability: float
     """Average entropy representing expandability of both workflows."""
 
+    efficiency: float
+    """Latest ROI based efficiency score."""
+
+    modularity: float
+    """Structural modularity of the combined workflow graph."""
+
     aggregate: float
-    """Mean of efficiency (similarity), modularity and expandability."""
+    """Mean of efficiency, modularity and expandability."""
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +252,40 @@ class WorkflowSynergyComparator:
             return 0.0
         return -sum((c / total) * math.log(c / total, 2) for c in counts.values())
 
+    @staticmethod
+    def _roi_and_modularity(graph: Any) -> Tuple[float, float]:
+        """Return efficiency and modularity for ``graph``.
+
+        Efficiency is derived from :class:`ROITracker`'s ``synergy_efficiency``
+        history when available.  Modularity relies on ``networkx`` community
+        detection, falling back to ``0.0`` when optional dependencies are
+        missing or raise errors.
+        """
+
+        efficiency = 0.0
+        if ROITracker is not None:
+            try:  # pragma: no cover - optional dependency
+                tracker = ROITracker()
+                eff_hist = tracker.metrics_history.get("synergy_efficiency", [])
+                if eff_hist:
+                    efficiency = float(eff_hist[-1])
+            except Exception:
+                pass
+
+        modularity = 0.0
+        if _HAS_NX and isinstance(graph, nx.Graph):
+            try:  # pragma: no cover - optional dependency
+                nx_comm = getattr(getattr(nx, "algorithms", None), "community", None)
+                if nx_comm is not None:
+                    undirected = graph.to_undirected()
+                    communities = list(nx_comm.greedy_modularity_communities(undirected))
+                    if communities:
+                        modularity = float(nx_comm.modularity(undirected, communities))
+            except Exception:
+                pass
+
+        return efficiency, modularity
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -266,7 +311,12 @@ class WorkflowSynergyComparator:
         entropy_a = cls._entropy(spec_a)
         entropy_b = cls._entropy(spec_b)
         expandability = (entropy_a + entropy_b) / 2 if (entropy_a or entropy_b) else 0.0
-        aggregate = (similarity + shared_ratio + expandability) / 3
+
+        # Additional metrics derived from ROITracker and structural communities
+        union_graph = cls._build_graph(mods_a + mods_b)
+        efficiency, modularity = cls._roi_and_modularity(union_graph)
+
+        aggregate = (efficiency + modularity + expandability) / 3
 
         return SynergyScores(
             similarity=similarity,
@@ -274,6 +324,8 @@ class WorkflowSynergyComparator:
             entropy_a=entropy_a,
             entropy_b=entropy_b,
             expandability=expandability,
+            efficiency=efficiency,
+            modularity=modularity,
             aggregate=aggregate,
         )
 
