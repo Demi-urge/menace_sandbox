@@ -15,7 +15,9 @@ lightweight graph.  It computes several metrics:
   distribution with the mean of both entropies serving as an expandability
   score.
 - **Efficiency** – ROI based efficiency for the combined workflow graph.
-- **Modularity** – community modularity of the combined workflow graph.
+ - **Modularity** – community modularity of the combined workflow graph, or the
+   ratio of unique modules to total steps when community detection is
+   unavailable.
 
 The weighted mean of these metrics becomes an aggregate score.  Workflows
 qualify for merging when their similarity meets

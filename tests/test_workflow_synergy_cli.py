@@ -52,6 +52,8 @@ def test_cli_outputs_json(tmp_path, monkeypatch, capsys):
     data = json.loads(out)
     assert data["duplicate"] is True
     assert data["similarity"] == pytest.approx(1.0)
+    assert "efficiency" in data
+    assert "modularity" in data
 
 
 def test_cli_writes_file(tmp_path, monkeypatch):
@@ -61,3 +63,5 @@ def test_cli_writes_file(tmp_path, monkeypatch):
     cli.cli([str(a), str(b), "--out", str(out_file)])
     data = json.loads(out_file.read_text())
     assert data["aggregate"] == pytest.approx(1.0)
+    assert "efficiency" in data
+    assert "modularity" in data
