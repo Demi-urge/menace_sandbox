@@ -81,6 +81,8 @@ def test_telemetry_includes_timing_and_memory(runner):
     assert isinstance(mod.memory_after, int)
     assert mod.memory_after >= mod.memory_before
     assert mod.memory_delta == mod.memory_after - mod.memory_before
+    assert isinstance(mod.memory_peak, int)
+    assert mod.memory_peak >= mod.memory_after
 
 
 def test_module_specific_fixtures_restore_env(runner):

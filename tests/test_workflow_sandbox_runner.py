@@ -133,7 +133,11 @@ def test_httpx_network_mock():
     metrics = runner.run(
         [step],
         safe_mode=True,
-        network_mocks={"httpx": lambda self, method, url, *a, **kw: httpx.Response(200, text="mocked")},
+        network_mocks={
+            "httpx": (
+                lambda self, method, url, *a, **kw: httpx.Response(200, text="mocked")
+            )
+        },
     )
 
     assert metrics.crash_count == 0
@@ -141,10 +145,11 @@ def test_httpx_network_mock():
 
 
 def test_aiohttp_blocked_in_safe_mode():
-    aiohttp = pytest.importorskip("aiohttp")
+    pytest.importorskip("aiohttp")
 
     def step():
-        import asyncio, aiohttp  # noqa: F401
+        import asyncio
+        import aiohttp  # noqa: F401
 
         async def inner():
             async with aiohttp.ClientSession() as session:
@@ -160,7 +165,7 @@ def test_aiohttp_blocked_in_safe_mode():
 
 
 def test_aiohttp_network_mock():
-    aiohttp = pytest.importorskip("aiohttp")
+    pytest.importorskip("aiohttp")
 
     async def mock_request(self, method, url, *a, **kw):  # pragma: no cover - invoked by patch
         class Resp:
@@ -175,7 +180,8 @@ def test_aiohttp_network_mock():
         return Resp()
 
     def step():
-        import asyncio, aiohttp  # noqa: F401
+        import asyncio
+        import aiohttp  # noqa: F401
 
         async def inner():
             async with aiohttp.ClientSession() as session:
@@ -367,10 +373,19 @@ def test_async_workflow_metrics():
         assert isinstance(mod.memory_before, int)
         assert isinstance(mod.memory_after, int)
         assert isinstance(mod.memory_delta, int)
+        assert isinstance(mod.memory_peak, int)
+        assert mod.memory_peak >= mod.memory_after
 
     telemetry = runner.telemetry
     assert telemetry is not None
     assert set(telemetry["time_per_module"]) == {"ok", "returns_coroutine", "crash"}
+    assert set(telemetry["peak_memory_per_module"]) == {
+        "ok",
+        "returns_coroutine",
+        "crash",
+    }
+    for mod in metrics.modules:
+        assert telemetry["peak_memory_per_module"][mod.name] == mod.memory_peak
     assert telemetry["crash_frequency"] == pytest.approx(1 / 3)
 
 
