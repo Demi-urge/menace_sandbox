@@ -2,6 +2,8 @@ from __future__ import annotations
 
 """Periodic self-improvement engine for the Menace system."""
 
+# flake8: noqa
+
 import logging
 
 try:
@@ -1299,6 +1301,81 @@ class SelfImprovementEngine:
             return suggester.suggest_chains(target, top_k)
         except Exception:
             return []
+
+    def _discover_meta_workflows(self) -> list[dict[str, Any]]:
+        """Run meta planner, evaluate chains and persist winners."""
+        if MetaWorkflowPlanner is None or self.workflow_evolver is None:
+            return []
+        try:
+            planner = MetaWorkflowPlanner()
+        except Exception:
+            return []
+        workflows: dict[str, Callable[[], Any]] = {}
+        db: WorkflowDB | None = None
+        if WorkflowDB is not None and WorkflowRecord is not None:
+            try:
+                db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
+                for rec in db.fetch_workflows(limit=50):
+                    seq = rec.get("workflow") or []
+                    seq_str = "-".join(seq) if isinstance(seq, list) else str(seq)
+                    wid = str(rec.get("id") or rec.get("wid") or "")
+                    workflows[wid] = self.workflow_evolver.build_callable(seq_str)
+            except Exception:
+                self.logger.exception("failed loading workflows for meta discovery")
+        records = planner.discover_and_persist(workflows, metrics_db=self.metrics_db)
+        if not records:
+            return []
+        if db is None and WorkflowDB is not None and WorkflowRecord is not None:
+            try:
+                db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
+            except Exception:
+                db = None
+        for rec in records:
+            chain = rec.get("chain") or []
+            roi = float(rec.get("roi_gain", 0.0))
+            chain_id = "->".join(chain)
+            if db is not None and chain:
+                try:
+                    db.add(WorkflowRecord(workflow=chain, status="meta"))
+                except Exception:
+                    self.logger.exception(
+                        "meta workflow persistence failed",
+                        extra=log_record(workflow_id=chain_id),
+                    )
+            if self.evolution_history:
+                try:
+                    from .evolution_history_db import EvolutionEvent
+
+                    self.evolution_history.add(
+                        EvolutionEvent(
+                            action="meta_workflow",
+                            before_metric=0.0,
+                            after_metric=roi,
+                            roi=roi,
+                            reason="meta workflow discovery",
+                            trigger="run_cycle",
+                            workflow_id=abs(hash(chain_id)) % (10**9),
+                        )
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "meta workflow history logging failed",
+                        extra=log_record(workflow_id=chain_id),
+                    )
+            if self.data_bot:
+                try:
+                    self.data_bot.log_workflow_evolution(
+                        workflow_id=abs(hash(chain_id)) % (10**9),
+                        variant="meta",
+                        baseline_roi=0.0,
+                        variant_roi=roi,
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "meta workflow metrics logging failed",
+                        extra=log_record(workflow_id=chain_id),
+                    )
+        return records
 
     def _execute_meta_planner(self) -> None:
         """Instantiate planner and score validated meta-pipelines."""
@@ -3361,6 +3438,8 @@ class SelfImprovementEngine:
         all_modules = [str(p) for p in paths]
         if not all_modules:
             return set()
+
+        import time
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
         data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
@@ -5583,8 +5662,10 @@ class SelfImprovementEngine:
             workflow_evolution_details: list[dict[str, object]] = []
             evo_allowed = self._should_trigger()
             planner_chains: list[list[str]] = []
+            meta_records: list[dict[str, Any]] = []
             if self._cycle_count % PLANNER_INTERVAL == 0:
                 planner_chains = self._plan_cross_domain_chains()
+                meta_records = self._discover_meta_workflows()
                 if consume_planner_suggestions and planner_chains:
                     try:
                         consume_planner_suggestions(planner_chains)
@@ -6792,6 +6873,8 @@ class SelfImprovementEngine:
                 result.warnings["workflow_high_risk"] = [{"value": high_risk}]
             if planner_chains:
                 workflow_evolution_details.append({"planner_chains": planner_chains})
+            if meta_records:
+                workflow_evolution_details.append({"meta_workflows": meta_records})
             if workflow_evolution_details:
                 result.workflow_evolution = workflow_evolution_details
             if getattr(self, "workflow_scorer", None):

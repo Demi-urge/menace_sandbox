@@ -282,6 +282,38 @@ class MetaWorkflowPlanner:
         return results
 
     # ------------------------------------------------------------------
+    def discover_and_persist(
+        self,
+        workflows: Mapping[str, Callable[[], Any]],
+        *,
+        metrics_db: Any | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Discover meta-workflows and persist successful chains."""
+
+        target = self.encode("self_improvement", {"workflow": []})
+        records = self.plan_and_validate(target, workflows)
+
+        successes: List[Dict[str, Any]] = []
+        for record in records:
+            chain = record.get("chain") or []
+            roi_gain = float(record.get("roi_gain", 0.0))
+            if not chain or roi_gain <= 0:
+                continue
+            chain_id = "->".join(chain)
+            if self.stability_db is not None:
+                try:
+                    self.stability_db.mark_stable(chain_id, roi_gain)
+                except Exception:
+                    pass
+            if metrics_db is not None:
+                try:
+                    metrics_db.log_eval(f"meta:{chain_id}", "roi_gain", float(roi_gain))
+                except Exception:
+                    pass
+            successes.append(record)
+        return successes
+
+    # ------------------------------------------------------------------
     def _validate_chain(
         self,
         chain: Sequence[str],
@@ -437,7 +469,7 @@ class MetaWorkflowPlanner:
 
             # Remove each individual step
             for idx in range(len(chain)):
-                removed = chain[:idx] + chain[idx + 1 :]
+                removed = chain[:idx] + chain[idx + 1:]
                 if removed:
                     tup = tuple(removed)
                     if tup not in seen:
