@@ -23,6 +23,9 @@ import pathlib
 import shutil
 import tempfile
 import urllib.parse
+import signal
+import threading
+import _thread
 from dataclasses import dataclass, field
 from time import perf_counter, process_time
 from typing import Any, Callable, Iterable, Mapping
@@ -101,6 +104,8 @@ class WorkflowSandboxRunner:
         fs_mocks: Mapping[str, Callable[..., Any]] | None = None,
         module_fixtures: Mapping[str, Mapping[str, Any]] | None = None,
         roi_delta: float | None = None,
+        timeout: float | None = None,
+        memory_limit: int | None = None,
     ) -> RunMetrics:
         """Execute ``workflow`` inside a sandbox and return telemetry.
 
@@ -121,6 +126,15 @@ class WorkflowSandboxRunner:
         before the module executes.  File fixtures are written into the sandbox
         and environment variables are temporarily set for the duration of the
         module's execution and restored afterwards.
+
+        ``timeout`` specifies the maximum number of seconds each module is
+        allowed to run.  Exceeding the limit aborts the module and records a
+        crash.
+
+        ``memory_limit`` sets an upper bound on RSS memory usage for the
+        running process in bytes.  When exceeded the module is interrupted and
+        the event recorded as a crash.  This requires ``psutil`` to be
+        available; otherwise the limit is ignored.
         """
 
         test_data = dict(test_data or {})
@@ -606,21 +620,103 @@ class WorkflowSandboxRunner:
                 success = True
                 error: str | None = None
                 result: Any | None = None
+                timeout_event = threading.Event()
+                mem_event = threading.Event()
+                mem_stop = threading.Event()
+                timer: threading.Timer | None = None
+                mem_thread: threading.Thread | None = None
+                old_alarm: Any = None
+                old_mem_handler: Any = None
+
+                if timeout:
+                    if hasattr(signal, "SIGALRM"):
+                        def _timeout_handler(signum, frame):  # pragma: no cover - handler
+                            timeout_event.set()
+                            raise TimeoutError("module exceeded timeout")
+
+                        old_alarm = signal.signal(signal.SIGALRM, _timeout_handler)
+                        signal.setitimer(signal.ITIMER_REAL, timeout)
+                    else:  # pragma: no cover - non POSIX
+                        timer = threading.Timer(
+                            timeout,
+                            lambda: (timeout_event.set(), _thread.interrupt_main()),
+                        )
+                        timer.daemon = True
+                        timer.start()
+
+                if memory_limit and proc:
+                    def _monitor_mem() -> None:  # pragma: no cover - thread
+                        while not mem_stop.wait(0.05):
+                            try:
+                                if proc.memory_info().rss > memory_limit:
+                                    mem_event.set()
+                                    if hasattr(signal, "SIGUSR1"):
+                                        os.kill(os.getpid(), signal.SIGUSR1)
+                                    else:  # pragma: no cover - no signals
+                                        _thread.interrupt_main()
+                                    break
+                            except Exception:
+                                break
+
+                    if hasattr(signal, "SIGUSR1"):
+                        def _mem_handler(signum, frame):  # pragma: no cover - handler
+                            mem_event.set()
+                            raise MemoryError("module exceeded memory limit")
+
+                        old_mem_handler = signal.signal(signal.SIGUSR1, _mem_handler)
+
+                    mem_thread = threading.Thread(target=_monitor_mem, daemon=True)
+                    mem_thread.start()
 
                 try:
                     if inspect.iscoroutinefunction(fn):
-                        result = asyncio.run(fn())
+                        coro = fn()
+                        if timeout:
+                            result = asyncio.run(asyncio.wait_for(coro, timeout))
+                        else:
+                            result = asyncio.run(coro)
                     else:
                         result = fn()
                         if asyncio.iscoroutine(result):
-                            result = asyncio.run(result)
+                            if timeout:
+                                result = asyncio.run(asyncio.wait_for(result, timeout))
+                                
+                            else:
+                                result = asyncio.run(result)
                 except Exception as exc:  # pragma: no cover - exercise failure path
                     success = False
                     error = str(exc)
                     metrics.crash_count += 1
                     if not safe_mode:
                         raise
+                except BaseException as exc:  # pragma: no cover - timeout/memory
+                    if mem_event.is_set():
+                        success = False
+                        error = "module exceeded memory limit"
+                        metrics.crash_count += 1
+                        if not safe_mode:
+                            raise MemoryError(error)
+                    elif timeout_event.is_set():
+                        success = False
+                        error = "module exceeded timeout"
+                        metrics.crash_count += 1
+                        if not safe_mode:
+                            raise TimeoutError(error)
+                    else:
+                        raise
                 finally:
+                    if timeout:
+                        if old_alarm is not None:
+                            signal.setitimer(signal.ITIMER_REAL, 0)
+                            signal.signal(signal.SIGALRM, old_alarm)
+                        elif timer is not None:
+                            timer.cancel()
+                    if mem_thread is not None:
+                        mem_stop.set()
+                        mem_thread.join()
+                        if old_mem_handler is not None:
+                            signal.signal(signal.SIGUSR1, old_mem_handler)
+
                     for key, original in old_env.items():
                         if original is None:
                             os.environ.pop(key, None)
