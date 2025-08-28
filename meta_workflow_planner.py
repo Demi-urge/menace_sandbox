@@ -112,6 +112,9 @@ class MetaWorkflowPlanner:
         depth, branching = self._graph_features(workflow_id)
         roi_curve = self._roi_curve(workflow_id)
         funcs, mods, tags, depths, branchings, curves = self._semantic_tokens(workflow)
+        domain = workflow.get("domain")
+        if isinstance(domain, str) and domain:
+            tags.append(domain)
 
         code_depth = max(depths) if depths else 0.0
         code_branching = max(branchings) if branchings else 0.0
@@ -144,6 +147,7 @@ class MetaWorkflowPlanner:
                     "code_tags": code_tags,
                     "dependency_depth": depth,
                     "branching_factor": branching,
+                    "domain": domain,
                 },
             )
         except TypeError:  # pragma: no cover - compatibility shim

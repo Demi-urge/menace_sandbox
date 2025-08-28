@@ -1296,9 +1296,98 @@ class SelfImprovementEngine:
             return []
         try:
             planner = MetaWorkflowPlanner()
-            target = planner.encode("self_improvement", {"workflow": []})
+            schedule_specs: dict[str, dict[str, Any]] = {}
+            candidate_ids: list[str] = []
+            for sched in Path.cwd().glob("*_schedule.json"):
+                domain = sched.stem.replace("_schedule", "")
+                try:
+                    data = json.loads(sched.read_text())
+                except Exception:
+                    continue
+                if not isinstance(data, list):
+                    continue
+                for spec in data:
+                    if not isinstance(spec, dict):
+                        continue
+                    wid = str(
+                        spec.get("id")
+                        or spec.get("wid")
+                        or spec.get("workflow_id")
+                        or spec.get("name")
+                        or ""
+                    ).strip()
+                    if not wid:
+                        continue
+                    seq = spec.get("workflow") or spec.get("task_sequence") or []
+                    spec["workflow"] = seq
+                    tags = list(spec.get("tags", []))
+                    if domain not in tags:
+                        tags.append(domain)
+                    spec["tags"] = tags
+                    spec["domain"] = domain
+                    try:
+                        planner.encode(wid, spec)
+                    except Exception:
+                        continue
+                    schedule_specs[wid] = spec
+                    candidate_ids.append(wid)
+            target = planner.encode(
+                "self_improvement", {"workflow": [], "domain": "self_improvement"}
+            )
             suggester = WorkflowChainSuggester()
-            return suggester.suggest_chains(target, top_k)
+            chains = suggester.suggest_chains(target, top_k)
+            if candidate_ids:
+                chains.append(candidate_ids)
+            try:
+                from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
+
+                runner = WorkflowSandboxRunner()
+                roi_db = ROIResultsDB()
+                for chain in chains:
+                    for wid in chain:
+                        spec = schedule_specs.get(wid)
+                        if not spec:
+                            continue
+                        seq = spec.get("workflow") or []
+                        fn: Callable[[], Any] | None = None
+                        if self.workflow_evolver:
+                            try:
+                                seq_str = "-".join(seq) if isinstance(seq, list) else str(seq)
+                                fn = self.workflow_evolver.build_callable(seq_str)
+                            except Exception:
+                                fn = None
+                        if fn is None:
+                            fn = lambda: None
+                        run_id = f"plan-{wid}"
+                        try:
+                            metrics = runner.run(fn, safe_mode=True)
+                            runtime = float(getattr(metrics, "runtime", 0.0))
+                            success = float(getattr(metrics, "success_rate", 1.0))
+                            roi_db.log_result(
+                                workflow_id=str(wid),
+                                run_id=run_id,
+                                runtime=runtime,
+                                success_rate=success,
+                                roi_gain=0.0,
+                                workflow_synergy_score=0.0,
+                                bottleneck_index=0.0,
+                                patchability_score=0.0,
+                            )
+                        except Exception as exc:
+                            roi_db.log_result(
+                                workflow_id=str(wid),
+                                run_id=run_id,
+                                runtime=0.0,
+                                success_rate=0.0,
+                                roi_gain=0.0,
+                                workflow_synergy_score=0.0,
+                                bottleneck_index=0.0,
+                                patchability_score=0.0,
+                                failure_reason=str(exc),
+                            )
+            except Exception:
+                pass
+            return chains
         except Exception:
             return []
 
