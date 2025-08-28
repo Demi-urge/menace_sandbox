@@ -43,7 +43,10 @@ pipeline = planner.compose_pipeline("A", workflows, length=3)
 
 `cluster_workflows` encodes each specification and groups workflows using
 ROI‑weighted cosine similarity, while `compose_pipeline` iteratively selects the
-best next step based on `WorkflowSynergyComparator`.
+best next step based on `WorkflowSynergyComparator` scores scaled by recent ROI
+trends.  The scoring formula is ``synergy_score * (1 + ROI)`` and the
+``synergy_weight`` and ``roi_weight`` parameters expose knobs to tune the
+influence of each component.
 
 ## Sandbox simulation
 
@@ -78,7 +81,8 @@ method accepts a custom runner or will instantiate a default
   history. When omitted, lightweight defaults are created.
 - `cluster_workflows(threshold)` controls the similarity cutoff for the
   ROI‑weighted similarity matrix when grouping workflow identifiers.
-- `compose_pipeline(length)` limits the number of steps in generated chains.
+- `compose_pipeline(length, synergy_weight, roi_weight)` limits the number of
+  steps in generated chains and exposes weights to balance synergy against ROI.
 - `plan_and_validate(top_k, failure_threshold, entropy_threshold)` governs the
   number of candidate chains considered and the acceptance criteria during
   sandbox execution.
