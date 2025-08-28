@@ -117,6 +117,68 @@ def test_httpx_and_fs_wrappers():
         dst.unlink()
 
 
+def test_os_shutil_wrappers_redirected():
+    src_file = Path("/tmp/wrapper_src.txt")
+    src_dir = Path("/tmp/wrapper_dir")
+    src_dir_file = src_dir / "data.txt"
+
+    src_file.write_text("outside")
+    src_dir_file.parent.mkdir(parents=True, exist_ok=True)
+    src_dir_file.write_text("outside_dir")
+
+    copy2_dst = Path("/tmp/wrapper_copy2.txt")
+    copyfile_dst = Path("/tmp/wrapper_copyfile.txt")
+    move_dst = Path("/tmp/wrapper_move.txt")
+    rename_dst = Path("/tmp/wrapper_rename.txt")
+    replace_dst = Path("/tmp/wrapper_replace.txt")
+    copytree_dst = Path("/tmp/wrapper_copytree")
+
+    for p in [
+        copy2_dst,
+        copyfile_dst,
+        move_dst,
+        rename_dst,
+        replace_dst,
+        copytree_dst,
+    ]:
+        if p.is_dir():
+            shutil.rmtree(p)
+        elif p.exists():
+            p.unlink()
+
+    def step():
+        shutil.copy2(src_file, copy2_dst)
+        shutil.copyfile(src_file, copyfile_dst)
+        shutil.copytree(src_dir, copytree_dst)
+        shutil.move(copyfile_dst, move_dst)
+        os.rename(move_dst, rename_dst)
+        os.replace(rename_dst, replace_dst)
+        os.unlink(src_file)
+
+    runner = WorkflowSandboxRunner()
+    runner.run(
+        [step],
+        safe_mode=True,
+        test_data={str(src_file): "inside", str(src_dir_file): "inside_dir"},
+    )
+
+    assert src_file.exists()
+    assert src_dir.exists() and src_dir_file.exists()
+    for p in [
+        copy2_dst,
+        copyfile_dst,
+        move_dst,
+        rename_dst,
+        replace_dst,
+        copytree_dst,
+    ]:
+        assert not p.exists()
+
+    src_file.unlink()
+    src_dir_file.unlink()
+    src_dir.rmdir()
+
+
 def test_callable_results_captured():
     def step1():
         return "alpha"
