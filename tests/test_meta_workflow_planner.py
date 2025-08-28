@@ -5,7 +5,7 @@ from pathlib import Path
 import networkx as nx
 import pytest
 
-from meta_workflow_planner import MetaWorkflowPlanner
+from meta_workflow_planner import MetaWorkflowPlanner, find_synergy_candidates
 from vector_utils import cosine_similarity
 
 
@@ -102,4 +102,14 @@ def test_embedding_retrieval(sample_embeddings):
     query_vec = vecs["wf1"]
     best = _retrieve(records, query_vec)
     assert best == "wf1"
+
+
+def test_find_synergy_candidates(sample_embeddings):
+    planner, _vecs, _records = sample_embeddings
+    cands = find_synergy_candidates("wf1", top_k=2, retriever=None, roi_db=planner.roi_db)
+    assert cands
+    # wf3 has the highest ROI weight and should therefore rank first
+    assert cands[0]["workflow_id"] == "wf3"
+    assert cands[0]["roi"] == pytest.approx(5.0)
+    assert any(c["workflow_id"] == "wf2" for c in cands)
 
