@@ -209,40 +209,34 @@ class MetaWorkflowPlanner:
     ) -> List[List[str]]:
         """Group ``workflows`` into similarity clusters.
 
-        Each workflow is encoded via :meth:`encode_workflow` and assigned a
-        weight derived from its most recent ROI gain recorded in
-        :class:`roi_results_db.ROIResultsDB`.  Cosine similarity between
-        embeddings is multiplied by the normalized ROI weights of both
-        workflows to form a similarity matrix.  Workflows with an ROI‑weighted
-        similarity score of at least ``threshold`` are placed in the same
-        cluster.  When no ROI data are available, each workflow forms its own
-        cluster.
+        Stored workflow embeddings are retrieved via :func:`_load_embeddings`.
+        When an embedding is missing the workflow is encoded on the fly.  The
+        cosine similarity of two workflows is multiplied by ``(1 + ROI_a)`` and
+        ``(1 + ROI_b)`` with ROI values obtained through
+        :func:`_roi_weight_from_db`.  Workflows whose weighted similarity meets
+        or exceeds ``threshold`` are placed in the same cluster.  Missing
+        embeddings or ROI information simply result in unweighted similarity
+        scores so that the function remains best effort.
         """
 
         ids = list(workflows.keys())
         if not ids:
             return []
 
-        # Encode workflows and collect ROI scores
+        # Retrieve stored embeddings with fallback to on-the-fly encoding
+        stored = _load_embeddings()
         embeddings: Dict[str, List[float]] = {}
-        roi_scores: Dict[str, float] = {}
         for wid, spec in workflows.items():
-            embeddings[wid] = self.encode_workflow(wid, spec)
-            score = 0.0
-            if self.roi_db is not None:
-                try:
-                    trends = self.roi_db.fetch_trends(wid)
-                    if trends:
-                        score = float(trends[-1].get("roi_gain", 0.0))
-                except Exception:
-                    score = 0.0
-            roi_scores[wid] = max(0.0, score)
+            vec = stored.get(wid)
+            if vec is None:
+                vec = self.encode_workflow(wid, spec)
+            embeddings[wid] = vec
 
-        max_score = max(roi_scores.values()) if roi_scores else 0.0
-        weights = {
-            wid: (score / max_score if max_score > 0 else 0.0)
-            for wid, score in roi_scores.items()
-        }
+        # Collect ROI weights
+        roi_weights: Dict[str, float] = {}
+        for wid in ids:
+            roi = _roi_weight_from_db(self.roi_db, wid) if self.roi_db else 0.0
+            roi_weights[wid] = 1.0 + roi
 
         # Build ROI‑weighted similarity matrix
         sims: Dict[str, Dict[str, float]] = {wid: {} for wid in ids}
@@ -250,7 +244,7 @@ class MetaWorkflowPlanner:
             for j in range(i + 1, len(ids)):
                 other = ids[j]
                 sim = cosine_similarity(embeddings[wid], embeddings[other])
-                sim *= weights[wid] * weights[other]
+                sim *= roi_weights[wid] * roi_weights[other]
                 sims[wid][other] = sim
                 sims[other][wid] = sim
 
@@ -277,55 +271,61 @@ class MetaWorkflowPlanner:
         synergy_weight: float = 1.0,
         roi_weight: float = 1.0,
     ) -> List[str]:
-        """Compose a high-synergy workflow pipeline.
+        """Compose a workflow pipeline using embedding similarity.
 
-        Starting from ``start`` the method iteratively selects the workflow with
-        the highest synergy score to the current tail using
-        :class:`WorkflowSynergyComparator`.  Candidate scores are multiplied by
-        ``(1 + ROI)`` where ROI values are retrieved from
-        :class:`roi_results_db.ROIResultsDB`.  ``synergy_weight`` and
-        ``roi_weight`` tune the influence of the respective factors.  The
-        process stops once ``length`` steps have been selected or no suitable
-        candidates remain.
+        Stored embeddings are looked up via :func:`_load_embeddings` and cosine
+        similarity is used to score candidate workflows against the current tail
+        of the pipeline.  Scores are multiplied by ``(1 + ROI)`` with ROI values
+        obtained through :func:`_roi_weight_from_db`.  ``synergy_weight`` simply
+        scales the similarity term while ``roi_weight`` adjusts the influence of
+        the ROI multiplier.  The method stops once ``length`` steps have been
+        selected or no compatible candidates remain.
         """
 
         if start not in workflows:
             return []
+
+        embeddings = _load_embeddings()
 
         pipeline = [start]
         available = {k for k in workflows.keys() if k != start}
         current = start
         graph = self.graph or WorkflowGraph()
 
+        current_vec = embeddings.get(start)
+        if current_vec is None:
+            current_vec = self.encode_workflow(start, workflows[start])
+            embeddings[start] = current_vec
+
         while available and len(pipeline) < length:
             best_id: str | None = None
             best_score = -1.0
+            best_vec: List[float] | None = None
             for wid in available:
                 if not _io_compatible(graph, current, wid):
                     continue
-                if WorkflowSynergyComparator is None:
-                    synergy = 0.0
-                else:
-                    try:
-                        synergy = WorkflowSynergyComparator.compare(
-                            workflows[current], workflows[wid]
-                        ).aggregate
-                    except Exception:
-                        synergy = 0.0
+                cand_vec = embeddings.get(wid)
+                if cand_vec is None:
+                    cand_vec = self.encode_workflow(wid, workflows[wid])
+                    embeddings[wid] = cand_vec
+                sim = cosine_similarity(current_vec, cand_vec)
                 roi = (
                     _roi_weight_from_db(self.roi_db, wid)
                     if self.roi_db is not None
                     else 0.0
                 )
-                score = synergy_weight * synergy * (1.0 + roi_weight * roi)
+                score = synergy_weight * sim * (1.0 + roi_weight * roi)
                 if score > best_score:
                     best_id = wid
                     best_score = score
+                    best_vec = cand_vec
             if best_id is None:
                 break
             pipeline.append(best_id)
             available.remove(best_id)
             current = best_id
+            if best_vec is not None:
+                current_vec = best_vec
 
         return pipeline
 
