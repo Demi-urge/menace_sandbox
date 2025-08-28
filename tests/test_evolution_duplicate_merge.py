@@ -40,7 +40,11 @@ _stub(
     ),
 )
 _stub("evolution_history_db", EvolutionHistoryDB=object, EvolutionEvent=object)
-_stub("mutation_logger", log_mutation=lambda **kw: 1, log_workflow_evolution=lambda **kw: None)
+_stub(
+    "mutation_logger",
+    log_mutation=lambda **kw: 1,
+    log_workflow_evolution=lambda **kw: None,
+)
 _stub("workflow_summary_db", WorkflowSummaryDB=object)
 _stub(
     "sandbox_settings",
@@ -55,12 +59,26 @@ _stub(
 _stub("workflow_synergy_comparator", WorkflowSynergyComparator=object)
 _stub("workflow_metrics", compute_workflow_entropy=lambda spec: 0.0)
 _stub("workflow_merger", merge_workflows=lambda *a, **k: Path("merged.json"))
-_stub("workflow_run_summary", record_run=lambda *a, **k: None, save_all_summaries=lambda *a, **k: None)
+_stub(
+    "workflow_run_summary",
+    record_run=lambda *a, **k: None,
+    save_all_summaries=lambda *a, **k: None,
+)
 _stub(
     "sandbox_runner",
-    WorkflowSandboxRunner=type("Runner", (), {"run": lambda self, fn, safe_mode=True: SimpleNamespace(modules=[])}),
+    WorkflowSandboxRunner=type(
+        "Runner",
+        (),
+        {"run": lambda self, fn, safe_mode=True: SimpleNamespace(modules=[])},
+    ),
 )
-_stub("workflow_synthesizer", save_workflow=lambda *a, **k: (Path("dummy.json"), {"workflow_id": "0", "created_at": ""}))
+_stub(
+    "workflow_synthesizer",
+    save_workflow=lambda *a, **k: (
+        Path("dummy.json"),
+        {"workflow_id": "0", "created_at": ""},
+    ),
+)
 _stub("run_autonomous", _verify_required_dependencies=lambda: None, LOCAL_KNOWLEDGE_MODULE=None)
 _stub(
     "workflow_graph",
@@ -168,7 +186,14 @@ def test_duplicate_merge_lineage(monkeypatch, tmp_path):
 
     monkeypatch.setattr(wem, "ROITracker", lambda: FakeTracker())
 
-    monkeypatch.setattr(wem, "MutationLogger", SimpleNamespace(log_mutation=lambda **kw: 1, log_workflow_evolution=lambda **kw: None))
+    monkeypatch.setattr(
+        wem,
+        "MutationLogger",
+        SimpleNamespace(
+            log_mutation=lambda **kw: 1,
+            log_workflow_evolution=lambda **kw: None,
+        ),
+    )
     monkeypatch.setattr(wem, "EVOLUTION_DB", SimpleNamespace(add=lambda *a, **k: None))
     monkeypatch.setattr(wem, "EvolutionEvent", lambda *a, **k: None)
 
@@ -179,17 +204,23 @@ def test_duplicate_merge_lineage(monkeypatch, tmp_path):
 
     monkeypatch.setattr(wem, "save_workflow", fake_save_workflow)
 
-    merge_info = {}
+    merge_info = {"calls": []}
 
     class FakeComparator:
+        workflow_dir = work_dir
+
         @staticmethod
         def compare(a, b):
             return SimpleNamespace(
                 aggregate=1.0, expandability=0.0, entropy_a=0.0, entropy_b=0.0
             )
 
-        def merge_duplicate(self, base_id, dup_id, out_dir="workflows"):
-            merge_info["called_with"] = (base_id, dup_id)
+        def is_duplicate(self, *a, **k):  # noqa: D401 - simple stub
+            return True
+
+        @classmethod
+        def merge_duplicate(cls, base_id, dup_id, out_dir="workflows"):
+            merge_info["calls"].append((base_id, dup_id))
             out = Path(out_dir) / f"{base_id}.merged.json"
             out.write_text(
                 json.dumps({"steps": variant_spec, "metadata": {"workflow_id": "merged"}})
@@ -200,7 +231,7 @@ def test_duplicate_merge_lineage(monkeypatch, tmp_path):
 
     result_callable = wem.evolve(lambda: True, 1, variants=1)
 
-    assert merge_info["called_with"] == (cand_id, "99")
-    assert any(r.startswith("merge-") for r in run_calls)
+    assert merge_info["calls"][-1] == (cand_id, "99")
+    assert len(merge_info["calls"]) == sum(r.startswith("merge-") for r in run_calls)
     assert getattr(result_callable, "workflow_id") == "merged"
     assert getattr(result_callable, "parent_id") == 1

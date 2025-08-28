@@ -3,6 +3,7 @@ import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 # Setup package context and stub heavy dependencies before import
 ROOT = Path(__file__).resolve().parents[2]
@@ -10,6 +11,7 @@ sys.path.append(str(ROOT))
 pkg = types.ModuleType("menace_sandbox")
 pkg.__path__ = [str(ROOT / "menace_sandbox")]
 sys.modules.setdefault("menace_sandbox", pkg)
+sys.modules.pop("menace_sandbox.workflow_evolution_manager", None)
 
 
 def _stub(name: str, **attrs):
@@ -123,11 +125,14 @@ def test_merge_similar_workflows(monkeypatch, tmp_path):
 
     monkeypatch.setattr(wem, "WorkflowEvolutionBot", lambda: FakeBot())
 
+    run_calls: list[str] = []
+
     class FakeScorer:
         def __init__(self, results_db, tracker):
             pass
 
         def run(self, fn, wf_id, run_id):
+            run_calls.append(run_id)
             if run_id == "baseline":
                 roi, spec = 1.0, baseline_spec
             elif run_id.startswith("merge-"):
@@ -168,7 +173,7 @@ def test_merge_similar_workflows(monkeypatch, tmp_path):
     monkeypatch.setattr(wem.STABLE_WORKFLOWS, "clear", lambda *a, **k: None)
     monkeypatch.setattr(wem.STABLE_WORKFLOWS, "is_stable", lambda wid, *a, **k: False)
 
-    merge_called: dict[str, tuple] = {}
+    merge_called: dict[str, Any] = {"count": 0}
 
     class FakeComparator:
         @staticmethod
@@ -178,6 +183,7 @@ def test_merge_similar_workflows(monkeypatch, tmp_path):
         @classmethod
         def merge_duplicate(cls, base_id, dup_id, out_dir="workflows"):
             merge_called["args"] = (base_id, dup_id, out_dir)
+            merge_called["count"] += 1
             out = Path(out_dir) / f"{base_id}.merged.json"
             out.write_text(
                 json.dumps({"steps": variant_spec, "metadata": {"workflow_id": "merged"}})
@@ -188,5 +194,7 @@ def test_merge_similar_workflows(monkeypatch, tmp_path):
 
     result_callable = wem.evolve(lambda: True, 1, variants=1)
     assert "args" in merge_called
+    assert merge_called["count"] == 1
+    assert sum(r.startswith("merge-") for r in run_calls) == 1
     assert getattr(result_callable, "workflow_id") == "merged"
     assert getattr(result_callable, "parent_id") == 1
