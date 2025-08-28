@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -214,3 +215,28 @@ def test_callable_results_captured():
     assert telemetry is not None
     assert telemetry["results"]["step1"] == "alpha"
     assert telemetry["results"]["step2"] == 123
+
+
+def test_json_responses_from_requests_and_urllib():
+    pytest.importorskip("requests")
+
+    def step_requests():
+        import requests
+
+        return requests.get("http://example.com/data").json()
+
+    def step_urllib():
+        import urllib.request
+
+        return urllib.request.urlopen("http://example.com/data").json()
+
+    runner = WorkflowSandboxRunner()
+    payload = {"msg": "ok"}
+    metrics = runner.run(
+        [step_requests, step_urllib],
+        safe_mode=True,
+        test_data={"http://example.com/data": json.dumps(payload)},
+    )
+
+    assert metrics.modules[0].result == payload
+    assert metrics.modules[1].result == payload

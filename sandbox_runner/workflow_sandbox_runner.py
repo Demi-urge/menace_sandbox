@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import builtins
 import contextlib
-import io
 import inspect
 import json
 import os
@@ -370,19 +369,36 @@ class WorkflowSandboxRunner:
             # ------------------------------------------------------------------
             # Monkeypatch common networking libraries
 
-            def _response_for(content: str | bytes):
+            def _response_for(
+                content: str | bytes,
+                *,
+                status: int = 200,
+                headers: Mapping[str, str] | None = None,
+            ):
                 data = content if isinstance(content, (bytes, bytearray)) else str(content).encode()
 
                 class _Resp:
-                    def __init__(self, b: bytes):
+                    def __init__(
+                        self,
+                        b: bytes,
+                        status_code: int,
+                        headers: Mapping[str, str] | None = None,
+                    ):
                         self.content = b
-                        self.status_code = 200
+                        self.status_code = status_code
+                        self.headers = dict(headers or {})
+
+                    def read(self) -> bytes:
+                        return self.content
 
                     @property
                     def text(self) -> str:
                         return self.content.decode()
 
-                return _Resp(data)
+                    def json(self) -> Any:
+                        return json.loads(self.text)
+
+                return _Resp(data, status, headers)
 
             try:  # pragma: no cover - optional dependency
                 import requests  # type: ignore
@@ -474,10 +490,7 @@ class WorkflowSandboxRunner:
                 def fake_urlopen(url, *a, **kw):
                     u = url if isinstance(url, str) else url.get_full_url()
                     if u in network_data:
-                        data = network_data[u]
-                        if isinstance(data, str):
-                            data = data.encode()
-                        return io.BytesIO(data)
+                        return _response_for(network_data[u])
                     fn = network_mocks.get("urllib")
                     if fn:
                         return fn(url, *a, **kw)
