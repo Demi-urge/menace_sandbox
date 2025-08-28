@@ -1049,8 +1049,8 @@ metrics = runner.run(writer, safe_mode=True)  # network disabled
 ``memory_before``, ``memory_after``, ``memory_delta``, ``memory_peak``,
 ``success``, ``exception`` and ``result`` fields. ``crash_count`` records how
 many modules failed. Callers can interpret these values to evaluate resource
-usage and error rates. Telemetry also exposes ``peak_memory_per_module`` and the
-overall ``peak_memory`` across all modules.
+usage and error rates. Telemetry also exposes ``memory_per_module``,
+``peak_memory_per_module`` and the overall ``peak_memory`` across all modules.
 
 Key arguments include:
 

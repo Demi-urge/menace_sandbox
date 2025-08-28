@@ -520,6 +520,7 @@ metrics = runner.run(read_file, safe_mode=True,
 print(metrics.modules[0].success)
 print(runner.telemetry["time_per_module"]["read_file"])
 print(runner.telemetry["cpu_per_module"]["read_file"])
+print(runner.telemetry["memory_per_module"]["read_file"])
 print(runner.telemetry["peak_memory_per_module"]["read_file"])
 ```
 
@@ -605,8 +606,9 @@ environment while ``runner.telemetry`` exposes the collected per‑module metric
 
 Each module may be constrained with a ``timeout`` (seconds) and ``memory_limit``
 (bytes) when calling :meth:`WorkflowSandboxRunner.run`. Exceeding either limit
-aborts the module and records a crash. CPU time and peak RSS memory for every
-module are available in ``runner.telemetry`` under ``cpu_per_module``,
+aborts the module and records a crash. CPU time and RSS deltas for every
+module are available in ``runner.telemetry`` under ``cpu_per_module`` and
+``memory_per_module`` while overall peak RSS metrics appear under
 ``peak_memory`` and ``peak_memory_per_module`` so downstream tools such as the
 self-improvement engine can consume them.
 
