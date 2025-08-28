@@ -223,42 +223,36 @@ class MetaWorkflowPlanner:
     ) -> List[List[str]]:
         """Group ``workflows`` into similarity clusters.
 
-        Stored workflow embeddings are retrieved via :func:`_load_embeddings`.
-        When an embedding is missing the workflow is encoded on the fly.  The
-        cosine similarity of two workflows is multiplied by ``(1 + ROI_a)`` and
-        ``(1 + ROI_b)`` with ROI values obtained through
-        :func:`_roi_weight_from_db`.  Workflows whose weighted similarity meets
-        or exceeds ``threshold`` are placed in the same cluster.  Missing
-        embeddings or ROI information simply result in unweighted similarity
-        scores so that the function remains best effort.
+        For every candidate pair a fresh embedding is generated via
+        :meth:`encode_workflow`.  The cosine similarity of the two vectors is
+        multiplied by ``(1 + ROI_a)`` and ``(1 + ROI_b)`` with ROI values
+        obtained through :func:`_roi_weight_from_db`.  Workflows whose weighted
+        similarity meets or exceeds ``threshold`` are placed in the same
+        cluster.  Missing ROI information simply results in unweighted
+        similarity scores so that the function remains best effort.
         """
 
         ids = list(workflows.keys())
         if not ids:
             return []
 
-        # Retrieve stored embeddings with fallback to on-the-fly encoding
-        stored = _load_embeddings()
-        embeddings: Dict[str, List[float]] = {}
-        for wid, spec in workflows.items():
-            vec = stored.get(wid)
-            if vec is None:
-                vec = self.encode_workflow(wid, spec)
-            embeddings[wid] = vec
-
-        # Collect ROI weights
-        roi_weights: Dict[str, float] = {}
-        for wid in ids:
-            roi = _roi_weight_from_db(self.roi_db, wid) if self.roi_db else 0.0
-            roi_weights[wid] = 1.0 + roi
-
-        # Build ROI‑weighted similarity matrix
+        # Build ROI‑weighted similarity matrix using fresh embeddings for each pair
         sims: Dict[str, Dict[str, float]] = {wid: {} for wid in ids}
         for i, wid in enumerate(ids):
+            vec_a = self.encode_workflow(wid, workflows[wid])
+            roi_a = (
+                _roi_weight_from_db(self.roi_db, wid) if self.roi_db is not None else 0.0
+            )
             for j in range(i + 1, len(ids)):
                 other = ids[j]
-                sim = cosine_similarity(embeddings[wid], embeddings[other])
-                sim *= roi_weights[wid] * roi_weights[other]
+                vec_b = self.encode_workflow(other, workflows[other])
+                roi_b = (
+                    _roi_weight_from_db(self.roi_db, other)
+                    if self.roi_db is not None
+                    else 0.0
+                )
+                sim = cosine_similarity(vec_a, vec_b)
+                sim *= (1.0 + roi_a) * (1.0 + roi_b)
                 sims[wid][other] = sim
                 sims[other][wid] = sim
 
@@ -287,41 +281,33 @@ class MetaWorkflowPlanner:
     ) -> List[str]:
         """Compose a workflow pipeline using embedding similarity.
 
-        Stored embeddings are looked up via :func:`_load_embeddings` and cosine
-        similarity is used to score candidate workflows against the current tail
-        of the pipeline.  Scores are multiplied by ``(1 + ROI)`` with ROI values
-        obtained through :func:`_roi_weight_from_db`.  ``synergy_weight`` simply
-        scales the similarity term while ``roi_weight`` adjusts the influence of
-        the ROI multiplier.  The method stops once ``length`` steps have been
-        selected or no compatible candidates remain.
+        At each step the current workflow and every candidate are encoded via
+        :meth:`encode_workflow`.  The cosine similarity is multiplied by
+        ``(1 + ROI)`` for the candidate workflow with ROI obtained through
+        :func:`_roi_weight_from_db`.  ``synergy_weight`` simply scales the
+        similarity term while ``roi_weight`` adjusts the influence of the ROI
+        multiplier.  The method stops once ``length`` steps have been selected
+        or no compatible candidates remain.
         """
 
         if start not in workflows:
             return []
-
-        embeddings = _load_embeddings()
 
         pipeline = [start]
         available = {k for k in workflows.keys() if k != start}
         current = start
         graph = self.graph or WorkflowGraph()
 
-        current_vec = embeddings.get(start)
-        if current_vec is None:
-            current_vec = self.encode_workflow(start, workflows[start])
-            embeddings[start] = current_vec
+        current_vec = self.encode_workflow(start, workflows[start])
 
         while available and len(pipeline) < length:
             best_id: str | None = None
             best_score = -1.0
             best_vec: List[float] | None = None
-            for wid in available:
+            for wid in list(available):
                 if not _io_compatible(graph, current, wid):
                     continue
-                cand_vec = embeddings.get(wid)
-                if cand_vec is None:
-                    cand_vec = self.encode_workflow(wid, workflows[wid])
-                    embeddings[wid] = cand_vec
+                cand_vec = self.encode_workflow(wid, workflows[wid])
                 sim = cosine_similarity(current_vec, cand_vec)
                 roi = (
                     _roi_weight_from_db(self.roi_db, wid)

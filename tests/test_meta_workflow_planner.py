@@ -136,7 +136,11 @@ def test_compose_pipeline_chaining(monkeypatch):
         "wf2": [0.9, 0.1],
         "wf3": [0.8, 0.2],
     }
-    monkeypatch.setattr(mwp, "_load_embeddings", lambda: embeddings)
+
+    def fake_encode(self, wid, _spec):
+        return embeddings[wid]
+
+    monkeypatch.setattr(mwp.MetaWorkflowPlanner, "encode_workflow", fake_encode)
 
     planner = MetaWorkflowPlanner(
         graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({})
@@ -155,7 +159,11 @@ def test_compose_pipeline_roi_weighting(monkeypatch):
         "wf2": [0.6, 0.8],
         "wf3": [0.55, 0.835],
     }
-    monkeypatch.setattr(mwp, "_load_embeddings", lambda: embeddings)
+
+    def fake_encode(self, wid, _spec):
+        return embeddings[wid]
+
+    monkeypatch.setattr(mwp.MetaWorkflowPlanner, "encode_workflow", fake_encode)
 
     roi_trends = {"wf2": [{"roi_gain": 0.0}], "wf3": [{"roi_gain": 5.0}]}
     planner = MetaWorkflowPlanner(
@@ -177,7 +185,11 @@ def test_cluster_workflows_roi_weighting(monkeypatch):
         "wf2": [0.5, 0.5],
         "wf3": [-1.0, 0.0],
     }
-    monkeypatch.setattr(mwp, "_load_embeddings", lambda: embeddings)
+
+    def fake_encode(self, wid, _spec):
+        return embeddings[wid]
+
+    monkeypatch.setattr(mwp.MetaWorkflowPlanner, "encode_workflow", fake_encode)
 
     roi_trends = {"wf2": [{"roi_gain": 0.5}]}
     planner = MetaWorkflowPlanner(roi_db=DummyROI(roi_trends))
@@ -197,7 +209,11 @@ def test_compose_pipeline_io_compatibility(monkeypatch):
         "wf2": [0.9, 0.1],
         "wf3": [0.8, 0.2],
     }
-    monkeypatch.setattr(mwp, "_load_embeddings", lambda: embeddings)
+
+    def fake_encode(self, wid, _spec):
+        return embeddings[wid]
+
+    monkeypatch.setattr(mwp.MetaWorkflowPlanner, "encode_workflow", fake_encode)
 
     class SigGraph:
         def __init__(self, sigs):
