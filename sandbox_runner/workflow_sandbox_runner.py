@@ -368,7 +368,28 @@ class WorkflowSandboxRunner:
                     fh.write(content)
 
             # ------------------------------------------------------------------
-            # Monkeypatch common networking libraries
+            # Monkeypatch networking primitives
+
+            if safe_mode:
+                import socket
+
+                def _blocked_socket(*a, **kw):
+                    fn = network_mocks.get("socket")
+                    if fn:
+                        return fn(*a, **kw)
+                    raise RuntimeError("network access disabled in safe_mode")
+
+                for _name in [
+                    "socket",
+                    "create_connection",
+                    "socketpair",
+                    "create_server",
+                    "fromfd",
+                ]:
+                    if hasattr(socket, _name):
+                        stack.enter_context(
+                            mock.patch(f"socket.{_name}", _blocked_socket)
+                        )
 
             def _response_for(
                 content: str | bytes,
@@ -412,8 +433,6 @@ class WorkflowSandboxRunner:
                     fn = network_mocks.get("requests")
                     if fn:
                         return fn(self, method, url, *a, **kw)
-                    if safe_mode:
-                        raise RuntimeError("network access disabled in safe_mode")
                     return orig_request(self, method, url, *a, **kw)
 
                 stack.enter_context(
@@ -437,8 +456,6 @@ class WorkflowSandboxRunner:
                     fn = network_mocks.get("httpx")
                     if fn:
                         return fn(self, method, url, *a, **kw)
-                    if safe_mode:
-                        raise RuntimeError("network access disabled in safe_mode")
                     return orig_httpx_request(self, method, url, *a, **kw)
 
                 stack.enter_context(
@@ -457,8 +474,6 @@ class WorkflowSandboxRunner:
                             if inspect.isawaitable(res):
                                 return await res
                             return res
-                        if safe_mode:
-                            raise RuntimeError("network access disabled in safe_mode")
                         return await orig_async_httpx_request(self, method, url, *a, **kw)
 
                     stack.enter_context(
@@ -493,8 +508,6 @@ class WorkflowSandboxRunner:
                     fn = network_mocks.get("aiohttp")
                     if fn:
                         return await fn(self, method, url, *a, **kw)
-                    if safe_mode:
-                        raise RuntimeError("network access disabled in safe_mode")
                     return await orig_aio_request(self, method, url, *a, **kw)
 
                 stack.enter_context(
@@ -515,8 +528,6 @@ class WorkflowSandboxRunner:
                     fn = network_mocks.get("urllib")
                     if fn:
                         return fn(url, *a, **kw)
-                    if safe_mode:
-                        raise RuntimeError("network access disabled in safe_mode")
                     return orig_urlopen(url, *a, **kw)
 
                 stack.enter_context(
@@ -525,37 +536,6 @@ class WorkflowSandboxRunner:
             except Exception:  # pragma: no cover
                 pass
 
-            try:  # pragma: no cover - optional dependency
-                import socket  # type: ignore
-
-                orig_socket = socket.socket
-                orig_create = socket.create_connection
-
-                def blocked(*a, **kw):
-                    raise RuntimeError("network access disabled in safe_mode")
-
-                class _PatchedSocket(orig_socket):
-                    def connect(self, address):  # type: ignore[override]
-                        if "socket" in network_mocks:
-                            return network_mocks["socket"](self, address)
-                        if safe_mode:
-                            return blocked(self, address)
-                        return super().connect(address)
-
-                stack.enter_context(mock.patch.object(socket, "socket", _PatchedSocket))
-
-                def fake_create_connection(address, *a, **kw):
-                    if "socket_create" in network_mocks:
-                        return network_mocks["socket_create"](address, *a, **kw)
-                    if safe_mode:
-                        return blocked(address, *a, **kw)
-                    return orig_create(address, *a, **kw)
-
-                stack.enter_context(
-                    mock.patch.object(socket, "create_connection", fake_create_connection)
-                )
-            except Exception:  # pragma: no cover
-                pass
 
             metrics = RunMetrics()
 
