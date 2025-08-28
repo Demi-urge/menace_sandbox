@@ -212,6 +212,9 @@ class WorkflowSandboxRunner:
             original_read_text = pathlib.Path.read_text
             original_write_bytes = pathlib.Path.write_bytes
             original_read_bytes = pathlib.Path.read_bytes
+            original_path_mkdir = pathlib.Path.mkdir
+            original_path_unlink = pathlib.Path.unlink
+            original_path_rmdir = pathlib.Path.rmdir
 
             def path_open(path_obj, *a, **kw):
                 mode = a[0] if a else kw.get("mode", "r")
@@ -271,6 +274,45 @@ class WorkflowSandboxRunner:
                 path = self._resolve(root, raw)
                 return original_read_bytes(path, *a, **kw)
 
+            def path_mkdir(path_obj, *a, **kw):
+                raw = os.fspath(path_obj)
+                if raw.startswith("/proc/"):
+                    return original_path_mkdir(path_obj, *a, **kw)
+                p = pathlib.Path(raw)
+                path = self._resolve(root, raw)
+                fn = fs_mocks.get("pathlib.Path.mkdir")
+                if fn:
+                    return fn(path, *a, **kw)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                return original_path_mkdir(path, *a, **kw)
+
+            def path_unlink(path_obj, *a, **kw):
+                raw = os.fspath(path_obj)
+                if raw.startswith("/proc/"):
+                    return original_path_unlink(path_obj, *a, **kw)
+                p = pathlib.Path(raw)
+                path = self._resolve(root, raw)
+                fn = fs_mocks.get("pathlib.Path.unlink")
+                if fn:
+                    return fn(path, *a, **kw)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                return original_path_unlink(path, *a, **kw)
+
+            def path_rmdir(path_obj, *a, **kw):
+                raw = os.fspath(path_obj)
+                if raw.startswith("/proc/"):
+                    return original_path_rmdir(path_obj, *a, **kw)
+                p = pathlib.Path(raw)
+                path = self._resolve(root, raw)
+                fn = fs_mocks.get("pathlib.Path.rmdir")
+                if fn:
+                    return fn(path, *a, **kw)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                return original_path_rmdir(path, *a, **kw)
+
             stack.enter_context(mock.patch.object(pathlib.Path, "open", path_open))
             stack.enter_context(
                 mock.patch.object(pathlib.Path, "write_text", path_write_text)
@@ -284,7 +326,23 @@ class WorkflowSandboxRunner:
             stack.enter_context(
                 mock.patch.object(pathlib.Path, "read_bytes", path_read_bytes)
             )
+            stack.enter_context(
+                mock.patch.object(pathlib.Path, "mkdir", path_mkdir)
+            )
+            stack.enter_context(
+                mock.patch.object(pathlib.Path, "unlink", path_unlink)
+            )
+            stack.enter_context(
+                mock.patch.object(pathlib.Path, "rmdir", path_rmdir)
+            )
 
+            original_mkdir = os.mkdir
+            original_makedirs = os.makedirs
+            original_rmdir = os.rmdir
+            original_removedirs = os.removedirs
+            original_os_open = os.open
+            original_stat = os.stat
+            original_rmtree = shutil.rmtree
             original_remove = os.remove
             original_unlink = os.unlink
             original_rename = os.rename
@@ -295,15 +353,108 @@ class WorkflowSandboxRunner:
             original_copytree = shutil.copytree
             original_move = shutil.move
 
+            def sandbox_mkdir(path, mode=0o777, *a, **kw):
+                p = pathlib.Path(path)
+                s = self._resolve(root, path)
+                fn = fs_mocks.get("os.mkdir")
+                if fn:
+                    return fn(s, mode, *a, **kw)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                return original_mkdir(s, mode, *a, **kw)
+
+            def sandbox_makedirs(path, mode=0o777, exist_ok=False):
+                p = pathlib.Path(path)
+                s = self._resolve(root, path)
+                fn = fs_mocks.get("os.makedirs")
+                if fn:
+                    return fn(s, mode, exist_ok=exist_ok)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                return original_makedirs(s, mode, exist_ok=exist_ok)
+
+            def sandbox_rmdir(path, *a, **kw):
+                raw = os.fspath(path)
+                if kw.get("dir_fd") is not None and not os.path.isabs(raw):
+                    return original_rmdir(raw, *a, **kw)
+                p = pathlib.Path(raw)
+                s = self._resolve(root, raw)
+                fn = fs_mocks.get("os.rmdir")
+                if fn:
+                    return fn(s, *a, **kw)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                return original_rmdir(s, *a, **kw)
+
+            def sandbox_removedirs(path, *a, **kw):
+                p = pathlib.Path(path)
+                s = self._resolve(root, path)
+                fn = fs_mocks.get("os.removedirs")
+                if fn:
+                    return fn(s, *a, **kw)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                return original_removedirs(s, *a, **kw)
+
+            def sandbox_os_open(path, flags, *a, **kw):
+                raw = os.fspath(path)
+                if raw.startswith("/proc/"):
+                    return original_os_open(path, flags, *a, **kw)
+                if kw.get("dir_fd") is not None and not os.path.isabs(raw):
+                    return original_os_open(path, flags, *a, **kw)
+                p = pathlib.Path(raw)
+                s = self._resolve(root, raw)
+                if flags & (
+                    os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
+                ):
+                    fn = fs_mocks.get("os.open")
+                    if fn:
+                        return fn(s, flags, *a, **kw)
+                    if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                        raise RuntimeError("file write disabled in safe_mode")
+                    pathlib.Path(s).parent.mkdir(parents=True, exist_ok=True)
+                return original_os_open(s, flags, *a, **kw)
+
+            def sandbox_stat(path, *a, **kw):
+                raw = os.fspath(path)
+                if raw.startswith("/proc/"):
+                    return original_stat(path, *a, **kw)
+                current = os.stat
+                try:
+                    os.stat = original_stat
+                    s = self._resolve(root, raw)
+                finally:
+                    os.stat = current
+                fn = fs_mocks.get("os.stat")
+                if fn:
+                    return fn(s, *a, **kw)
+                return original_stat(s, *a, **kw)
+
+            def sandbox_rmtree(path, *a, **kw):
+                p = pathlib.Path(path)
+                s = self._resolve(root, path)
+                fn = fs_mocks.get("shutil.rmtree")
+                if fn:
+                    return fn(s, *a, **kw)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                return original_rmtree(s, *a, **kw)
+
             def sandbox_remove(path, *a, **kw):
-                p = self._resolve(root, path)
+                raw = os.fspath(path)
+                if kw.get("dir_fd") is not None and not os.path.isabs(raw):
+                    return original_remove(raw, *a, **kw)
+                p = self._resolve(root, raw)
                 fn = fs_mocks.get("os.remove")
                 if fn:
                     return fn(p, *a, **kw)
                 return original_remove(p, *a, **kw)
 
             def sandbox_unlink(path, *a, **kw):
-                p = self._resolve(root, path)
+                raw = os.fspath(path)
+                if kw.get("dir_fd") is not None and not os.path.isabs(raw):
+                    return original_unlink(raw, *a, **kw)
+                p = self._resolve(root, raw)
                 fn = fs_mocks.get("os.unlink")
                 if fn:
                     return fn(p, *a, **kw)
@@ -372,6 +523,13 @@ class WorkflowSandboxRunner:
                 pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
                 return original_move(s, d, *a, **kw)
 
+            stack.enter_context(mock.patch("os.mkdir", sandbox_mkdir))
+            stack.enter_context(mock.patch("os.makedirs", sandbox_makedirs))
+            stack.enter_context(mock.patch("os.rmdir", sandbox_rmdir))
+            stack.enter_context(mock.patch("os.removedirs", sandbox_removedirs))
+            stack.enter_context(mock.patch("os.open", sandbox_os_open))
+            stack.enter_context(mock.patch("os.stat", sandbox_stat))
+            stack.enter_context(mock.patch("shutil.rmtree", sandbox_rmtree))
             stack.enter_context(mock.patch("os.remove", sandbox_remove))
             stack.enter_context(mock.patch("os.unlink", sandbox_unlink))
             stack.enter_context(mock.patch("os.rename", sandbox_rename))
