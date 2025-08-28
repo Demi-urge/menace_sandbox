@@ -124,4 +124,26 @@ class SharedVectorService:
         return vec
 
 
-__all__ = ["SharedVectorService"]
+def update_workflow_embeddings(db_path: str = "workflows.db") -> None:
+    """Embed all workflows in ``db_path`` using :class:`SharedVectorService`."""
+
+    try:  # pragma: no cover - optional dependency
+        from dataclasses import asdict
+        from task_handoff_bot import WorkflowDB  # type: ignore
+    except Exception:  # pragma: no cover - best effort
+        return
+
+    svc = SharedVectorService()
+    db = WorkflowDB(Path(db_path))
+    for wid, rec, _ in db.iter_records():
+        try:
+            svc.vectorise_and_store(
+                "workflow",
+                str(wid),
+                asdict(rec),
+                origin_db="workflow",
+            )
+        except Exception:  # pragma: no cover - best effort
+            continue
+
+__all__ = ["SharedVectorService", "update_workflow_embeddings"]
