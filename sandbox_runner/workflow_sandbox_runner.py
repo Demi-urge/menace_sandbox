@@ -186,6 +186,8 @@ class WorkflowSandboxRunner:
                     fn = fs_mocks.get("open")
                     if fn:
                         return fn(path, mode, *a, **kw)
+                    if safe_mode:
+                        raise RuntimeError("file write disabled in safe_mode")
                     pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
                 return original_open(path, mode, *a, **kw)
 
@@ -211,6 +213,8 @@ class WorkflowSandboxRunner:
                     fn = fs_mocks.get("pathlib.Path.open")
                     if fn:
                         return fn(path, *a, **kw)
+                    if safe_mode:
+                        raise RuntimeError("file write disabled in safe_mode")
                     path.parent.mkdir(parents=True, exist_ok=True)
                 return original_path_open(path, *a, **kw)
 
@@ -226,6 +230,8 @@ class WorkflowSandboxRunner:
                 fn = fs_mocks.get("pathlib.Path.write_text")
                 if fn:
                     return fn(path, data, *a, **kw)
+                if safe_mode:
+                    raise RuntimeError("file write disabled in safe_mode")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 return original_write_text(path, data, *a, **kw)
 
@@ -252,6 +258,8 @@ class WorkflowSandboxRunner:
                 fn = fs_mocks.get("pathlib.Path.write_bytes")
                 if fn:
                     return fn(path, data, *a, **kw)
+                if safe_mode:
+                    raise RuntimeError("file write disabled in safe_mode")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 return original_write_bytes(path, data, *a, **kw)
 
