@@ -10,10 +10,14 @@
 
 ## Configuration
 
-`WorkflowSynergyComparator.is_duplicate(a, b, thresholds)` accepts optional thresholds:
+`WorkflowSynergyComparator.is_duplicate(result, similarity_threshold, entropy_threshold)` evaluates a
+pre-computed :class:`ComparisonResult`:
 
-- `similarity` – minimum cosine similarity to treat workflows as near duplicates (default `0.95`).
-- `entropy` – maximum allowed absolute entropy delta (default `0.05`).
+- `similarity_threshold` – minimum cosine similarity to treat workflows as near duplicates (default `0.95`).
+- `entropy_threshold` – maximum allowed absolute entropy delta (default `0.05`).
+
+`WorkflowSynergyComparator.merge_duplicate(base_id, dup_id, out_dir)` merges a duplicate workflow into a
+canonical base and refreshes lineage summaries.
 
 ## Integration
 

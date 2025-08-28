@@ -53,6 +53,12 @@ try:  # pragma: no cover - optional
 except Exception:  # pragma: no cover - gracefully degrade
     WorkflowGraph = None  # type: ignore
 
+try:  # pragma: no cover - optional
+    from .workflow_metrics import compute_workflow_entropy  # type: ignore
+except Exception:  # pragma: no cover - graceful fallback
+    def compute_workflow_entropy(_spec: Dict[str, Any]) -> float:  # type: ignore
+        return 0.0
+
 
 # ---------------------------------------------------------------------------
 # Result container
@@ -67,7 +73,7 @@ class ComparisonResult:
     """Cosine similarity between workflow embeddings."""
 
     shared_modules: float
-    """Ratio of modules shared between both workflows in ``[0, 1]``."""
+    """Number of modules shared between both workflows."""
 
     entropy_gap: float
     """Absolute difference in Shannon entropy of module distributions."""
@@ -290,9 +296,7 @@ class WorkflowSynergyComparator:
         vec_b = cls._embed_graph(graph_b, spec_b)
 
         similarity = cls._cosine(vec_a, vec_b)
-        shared = cls._shared_ratio(modules_a, modules_b)
-
-        from .workflow_metrics import compute_workflow_entropy  # type: ignore
+        shared = len(set(modules_a) & set(modules_b))
 
         entropy_a = compute_workflow_entropy(spec_a)
         entropy_b = compute_workflow_entropy(spec_b)
@@ -315,27 +319,92 @@ class WorkflowSynergyComparator:
             modules_b=len(set(modules_b)),
         )
 
-    @classmethod
+    # ------------------------------------------------------------------
+    @staticmethod
     def is_duplicate(
-        cls,
-        a_spec: Dict[str, Any] | str | Path,
-        b_spec: Dict[str, Any] | str | Path,
-        thresholds: Optional[Dict[str, float]] = None,
+        result: ComparisonResult,
+        similarity_threshold: float = 0.95,
+        entropy_threshold: float = 0.05,
     ) -> bool:
-        """Heuristic duplicate detector based on comparison metrics."""
+        """Return ``True`` when ``result`` represents near-identical workflows.
 
-        thresholds = thresholds or {}
-        res = cls.compare(a_spec, b_spec)
-
-        sim_thresh = thresholds.get("similarity", 0.95)
-        overlap_thresh = thresholds.get("overlap", 0.9)
-        entropy_thresh = thresholds.get("entropy", 0.05)
+        Parameters
+        ----------
+        result:
+            :class:`ComparisonResult` produced by :meth:`compare`.
+        similarity_threshold:
+            Minimum cosine similarity to consider workflows duplicates.
+        entropy_threshold:
+            Maximum allowed entropy delta between workflows.
+        """
 
         return (
-            res.similarity >= sim_thresh
-            and res.shared_modules >= overlap_thresh
-            and res.entropy_gap <= entropy_thresh
+            result.similarity >= similarity_threshold
+            and result.entropy_gap <= entropy_threshold
         )
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def merge_duplicate(
+        cls, base_id: str, dup_id: str, out_dir: str | Path = "workflows"
+    ) -> Path | None:
+        """Merge ``dup_id`` into ``base_id`` and refresh lineage information.
+
+        The ``base_id`` workflow acts as the common ancestor and primary branch
+        while ``dup_id`` is merged as the secondary branch.  The merged
+        specification is written to ``<base_id>.merged.json`` within
+        ``out_dir``.  Best-effort hooks update lineage caches and summary
+        stores.
+        """
+
+        base_path = Path(out_dir) / f"{base_id}.workflow.json"
+        dup_path = Path(out_dir) / f"{dup_id}.workflow.json"
+        if not base_path.exists() or not dup_path.exists():
+            return None
+
+        out_path = Path(out_dir) / f"{base_id}.merged.json"
+        try:
+            from . import workflow_merger, workflow_lineage
+
+            merged_path = workflow_merger.merge_workflows(
+                base_path, base_path, dup_path, out_path
+            )
+        except Exception:
+            return None
+
+        wid = ""
+        try:
+            data = json.loads(merged_path.read_text())
+            wid = str(data.get("metadata", {}).get("workflow_id") or "")
+        except Exception:
+            pass
+
+        # Refresh lineage structures
+        try:
+            specs = list(workflow_lineage.load_specs(out_dir))
+            workflow_lineage.build_graph(specs)
+        except Exception:
+            pass
+
+        if wid:
+            try:
+                from .workflow_run_summary import save_summary
+
+                save_summary(wid, Path(out_dir))
+            except Exception:
+                pass
+
+            try:
+                from .workflow_summary_db import WorkflowSummaryDB
+
+                wid_int = int(wid)
+                WorkflowSummaryDB().set_summary(
+                    wid_int, f"merged {dup_id} into {base_id}"
+                )
+            except Exception:
+                pass
+
+        return merged_path
 
 
 __all__ = ["WorkflowSynergyComparator", "ComparisonResult"]

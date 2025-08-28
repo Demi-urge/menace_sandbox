@@ -95,9 +95,10 @@ def test_duplicate_detection_thresholds(monkeypatch):
     _force_simple(monkeypatch)
     spec_a = _load("simple_ab.json")
     spec_b = _load("simple_bc.json")
+    res_same = wsc.WorkflowSynergyComparator.compare(spec_a, spec_a)
+    assert wsc.WorkflowSynergyComparator.is_duplicate(res_same, 0.95, 0.05)
 
-    assert wsc.WorkflowSynergyComparator.is_duplicate(spec_a, spec_a)
-    assert not wsc.WorkflowSynergyComparator.is_duplicate(spec_a, spec_b)
+    res_diff = wsc.WorkflowSynergyComparator.compare(spec_a, spec_b)
+    assert not wsc.WorkflowSynergyComparator.is_duplicate(res_diff, 0.95, 0.05)
 
-    relaxed = {"similarity": 0.49, "overlap": 0.5, "entropy": 0.2}
-    assert wsc.WorkflowSynergyComparator.is_duplicate(spec_a, spec_b, relaxed)
+    assert wsc.WorkflowSynergyComparator.is_duplicate(res_diff, 0.49, 0.2)
