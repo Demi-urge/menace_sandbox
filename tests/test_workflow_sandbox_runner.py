@@ -10,6 +10,7 @@ import urllib.request
 import shutil
 
 import pytest
+import time
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -417,3 +418,36 @@ def test_module_specific_fixtures_apply_files_and_env():
     mods = telemetry.get("module_fixtures", {})
     assert mods["one"]["files"] == ["fixture.txt"]
     assert mods["one"]["env"] == {"WF_VAR": "A"}
+
+
+def test_timeout_aborts_module():
+    runner = WorkflowSandboxRunner()
+
+    def slow():
+        time.sleep(5)
+
+    metrics = runner.run([slow], safe_mode=True, timeout=0.2)
+
+    assert metrics.crash_count == 1
+    mod = metrics.modules[0]
+    assert mod.success is False
+    assert "timeout" in (mod.exception or "").lower()
+
+
+def test_memory_limit_aborts_module(monkeypatch):
+    psutil = pytest.importorskip("psutil")
+    monkeypatch.setattr(wsr, "psutil", psutil, raising=False)
+
+    runner = WorkflowSandboxRunner()
+
+    def eater():
+        data = []
+        while True:
+            data.append(bytearray(1024 * 1024))
+
+    metrics = runner.run([eater], safe_mode=True, memory_limit=5 * 1024 * 1024)
+
+    assert metrics.crash_count == 1
+    mod = metrics.modules[0]
+    assert mod.success is False
+    assert "memory" in (mod.exception or "").lower()
