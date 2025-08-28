@@ -2,6 +2,7 @@ import math
 
 from menace.workflow_metrics import compute_workflow_entropy
 from menace.workflow_synergy_comparator import WorkflowSynergyComparator
+from pathlib import Path
 
 
 def test_compute_workflow_entropy_simple_spec():
@@ -24,6 +25,7 @@ def test_workflow_synergy_comparator_uses_entropy():
             {"module": "y"},
         ]
     }
+    WorkflowSynergyComparator.best_practices_file = Path("/tmp/wsc_best.json")
     result = WorkflowSynergyComparator.compare(spec, spec)
     expected_entropy = compute_workflow_entropy(spec)
     assert result.entropy_a == expected_entropy

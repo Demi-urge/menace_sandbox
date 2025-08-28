@@ -72,6 +72,21 @@ except Exception:  # pragma: no cover - gracefully degrade
 
 
 @dataclass
+class OverfittingReport:
+    """Report capturing potential overfitting signals."""
+
+    low_entropy: bool
+    """Whether the workflow entropy falls below the threshold."""
+
+    repeated_modules: Dict[str, int]
+    """Modules repeated more than allowed with their counts."""
+
+    def is_overfitting(self) -> bool:
+        """Return ``True`` if any overfitting signal is present."""
+        return self.low_entropy or bool(self.repeated_modules)
+
+
+@dataclass
 class SynergyScores:
     """Structured workflow comparison scores."""
 
@@ -99,6 +114,12 @@ class SynergyScores:
     aggregate: float
     """Weighted mean of all synergy metrics."""
 
+    overfit_a: Optional["OverfittingReport"] = None
+    """Overfitting analysis for workflow ``A``."""
+
+    overfit_b: Optional["OverfittingReport"] = None
+    """Overfitting analysis for workflow ``B``."""
+
 
 # ---------------------------------------------------------------------------
 # Comparator implementation
@@ -110,6 +131,7 @@ class WorkflowSynergyComparator:
 
     workflow_dir = Path("workflows")
     _embed_cache: Dict[str, List[float]] = {}
+    best_practices_file: Path = Path("workflow_best_practices.json")
 
     # ------------------------------------------------------------------
     # Helpers
@@ -278,6 +300,52 @@ class WorkflowSynergyComparator:
             return 0.0
         return -sum((c / total) * math.log(c / total, 2) for c in counts.values())
 
+    # ------------------------------------------------------------------
+    @classmethod
+    def _update_best_practices(cls, modules: List[str]) -> None:
+        """Store ``modules`` in the best practices repository if unique."""
+
+        path = cls.best_practices_file
+        data: Dict[str, List[List[str]]] = {"sequences": []}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text())
+                if isinstance(loaded, dict):
+                    data.update(loaded)
+            except Exception:
+                pass
+        seqs = data.setdefault("sequences", [])
+        if modules not in seqs:
+            seqs.append(modules)
+            try:
+                path.write_text(json.dumps(data, indent=2))
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def analyze_overfitting(
+        cls,
+        spec: Dict[str, Any] | str | Path,
+        *,
+        entropy_threshold: float = 1.0,
+        repeat_threshold: int = 3,
+    ) -> OverfittingReport:
+        """Flag low entropy or frequent module repetition in ``spec``."""
+
+        data = cls._load_spec(spec)
+        modules = cls._extract_modules(data)
+        entropy = cls._entropy(data)
+        low_entropy = entropy < entropy_threshold
+        counts: Dict[str, int] = {}
+        for m in modules:
+            counts[m] = counts.get(m, 0) + 1
+        repeated = {m: c for m, c in counts.items() if c > repeat_threshold}
+        report = OverfittingReport(low_entropy=low_entropy, repeated_modules=repeated)
+        if not report.is_overfitting():
+            cls._update_best_practices(modules)
+        return report
+
     @staticmethod
     def _roi_and_modularity(graph: Any) -> Tuple[float, float]:
         """Return efficiency and modularity for ``graph``.
@@ -369,6 +437,9 @@ class WorkflowSynergyComparator:
         entropy_b = cls._entropy(spec_b)
         expandability = (entropy_a + entropy_b) / 2 if (entropy_a or entropy_b) else 0.0
 
+        overfit_a = cls.analyze_overfitting(spec_a)
+        overfit_b = cls.analyze_overfitting(spec_b)
+
         # Additional metrics derived from ROITracker and structural communities
         union_graph = cls._build_graph(mods_a + mods_b)
         efficiency, modularity = cls._roi_and_modularity(union_graph)
@@ -398,6 +469,8 @@ class WorkflowSynergyComparator:
             efficiency=efficiency,
             modularity=modularity,
             aggregate=aggregate,
+            overfit_a=overfit_a,
+            overfit_b=overfit_b,
         )
 
     # ------------------------------------------------------------------
@@ -493,4 +566,9 @@ def merge_duplicate(
     return merged
 
 
-__all__ = ["WorkflowSynergyComparator", "SynergyScores", "merge_duplicate"]
+__all__ = [
+    "WorkflowSynergyComparator",
+    "SynergyScores",
+    "OverfittingReport",
+    "merge_duplicate",
+]
