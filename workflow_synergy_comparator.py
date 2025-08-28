@@ -56,6 +56,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - gracefully degrade
     workflow_merger = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from . import workflow_run_summary  # type: ignore
+except Exception:  # pragma: no cover - gracefully degrade
+    workflow_run_summary = None  # type: ignore
+
 # ---------------------------------------------------------------------------
 # Result container
 # ---------------------------------------------------------------------------
@@ -374,61 +379,70 @@ class WorkflowSynergyComparator:
         dup_id: str,
         out_dir: Path | str | None = None,
     ) -> Path | None:
-        """Merge a duplicate workflow into a canonical base specification.
+        """Merge ``dup_id`` into ``base_id`` within ``out_dir``.
 
-        The function loads both workflow specifications, writes them to
-        temporary files and delegates the actual merge to
-        :mod:`workflow_merger`.  Temporary files are cleaned up regardless of
-        merge success.
+        This is a thin wrapper around the module level :func:`merge_duplicate`
+        so callers can use the class directly.  When ``out_dir`` is ``None`` the
+        comparator's :attr:`workflow_dir` is used.
         """
 
-        work_dir = Path(out_dir) if out_dir is not None else cls.workflow_dir
-
-        base_spec = cls._load_spec(work_dir / f"{base_id}.workflow.json")
-        dup_spec = cls._load_spec(work_dir / f"{dup_id}.workflow.json")
-        if not base_spec or not dup_spec:
-            return None
-
-        work_dir.mkdir(parents=True, exist_ok=True)
-        base_path = work_dir / f"{base_id}.base.json"
-        dup_path = work_dir / f"{dup_id}.dup.json"
-        out_path = work_dir / f"{base_id}.merged.json"
-
-        try:
-            from . import workflow_merger
-        except Exception:
-            workflow_merger = None  # type: ignore
-
-        try:
-            base_path.write_text(json.dumps(base_spec))
-            dup_path.write_text(json.dumps(dup_spec))
-            if workflow_merger is None:
-                return None
-            result = workflow_merger.merge_workflows(
-                base_path, base_path, dup_path, out_path
-            )
-        except Exception:
-            result = None
-        finally:
-            for p in (base_path, dup_path):
-                try:
-                    p.unlink()
-                except Exception:
-                    pass
-
-        return result
+        directory = Path(out_dir) if out_dir is not None else cls.workflow_dir
+        return merge_duplicate(base_id, dup_id, directory)
 
 
 def merge_duplicate(
-    base_id: str, dup_id: str, out_dir: Path | str | None = None
+    base_id: str, dup_id: str, out_dir: str | Path = "workflows"
 ) -> Path | None:
-    """Convenience wrapper around :class:`WorkflowSynergyComparator`.
+    """Merge workflow ``dup_id`` into ``base_id`` and return output path.
 
-    This allows callers to import :func:`merge_duplicate` directly from the
-    module without instantiating :class:`WorkflowSynergyComparator`.
+    The function reads ``{id}.workflow.json`` files from ``out_dir`` for both
+    ``base_id`` and ``dup_id``.  The base specification acts as both the merge
+    ancestor and branch ``A`` ensuring that only changes from the duplicate are
+    applied.  On successful merge the workflow lineage summaries are refreshed
+    using :func:`workflow_run_summary.save_all_summaries`.
+
+    Parameters
+    ----------
+    base_id:
+        Identifier of the canonical workflow.
+    dup_id:
+        Identifier of the duplicate workflow to merge.
+    out_dir:
+        Directory containing workflow specifications. Defaults to ``"workflows"``.
+
+    Returns
+    -------
+    Path | None
+        Path to the merged workflow specification or ``None`` on failure.
     """
 
-    return WorkflowSynergyComparator.merge_duplicate(base_id, dup_id, out_dir)
+    directory = Path(out_dir)
+    base = directory / f"{base_id}.workflow.json"
+    dup = directory / f"{dup_id}.workflow.json"
+    out = directory / f"{base_id}.merged.json"
+
+    try:
+        # Ensure both workflow files exist and contain valid JSON
+        json.loads(base.read_text())
+        json.loads(dup.read_text())
+    except Exception:
+        return None
+
+    if workflow_merger is None:
+        return None
+
+    try:
+        merged = workflow_merger.merge_workflows(base, base, dup, out)
+    except Exception:
+        return None
+
+    if merged and workflow_run_summary is not None:
+        try:
+            workflow_run_summary.save_all_summaries(directory)
+        except Exception:
+            pass
+
+    return merged
 
 
 __all__ = ["WorkflowSynergyComparator", "SynergyScores", "merge_duplicate"]
