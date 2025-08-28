@@ -53,7 +53,7 @@ from contextlib import asynccontextmanager, suppress
 from filelock import FileLock
 from dataclasses import dataclass, asdict
 
-from .workflow_runner import WorkflowSandboxRunner
+from .workflow_sandbox_runner import WorkflowSandboxRunner
 
 try:
     from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord

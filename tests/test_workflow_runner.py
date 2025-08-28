@@ -12,13 +12,14 @@ package.__path__ = [str(package_path)]
 sys.modules["sandbox_runner"] = package
 
 spec = importlib.util.spec_from_file_location(
-    "sandbox_runner.workflow_runner", package_path / "workflow_runner.py"
+    "sandbox_runner.workflow_sandbox_runner",
+    package_path / "workflow_sandbox_runner.py",
 )
-workflow_runner = importlib.util.module_from_spec(spec)
+workflow_sandbox_runner = importlib.util.module_from_spec(spec)
 assert spec.loader
-sys.modules[spec.name] = workflow_runner
-spec.loader.exec_module(workflow_runner)
-WorkflowSandboxRunner = workflow_runner.WorkflowSandboxRunner
+sys.modules[spec.name] = workflow_sandbox_runner
+spec.loader.exec_module(workflow_sandbox_runner)
+WorkflowSandboxRunner = workflow_sandbox_runner.WorkflowSandboxRunner
 
 
 def test_writes_confined_to_temp_dir(tmp_path):
@@ -67,7 +68,8 @@ def test_prepopulated_data_and_telemetry():
     assert mod.success is True
     assert mod.duration >= 0
     assert mod.memory_after >= mod.memory_before
-    assert runner.telemetry == metrics
+    assert runner.metrics == metrics
+    assert runner.telemetry["results"]["reader"] == "hello"
 
 
 def test_custom_network_and_fs_mocks():

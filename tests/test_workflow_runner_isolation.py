@@ -14,7 +14,8 @@ def WorkflowSandboxRunner():
     sys.modules["sandbox_runner"] = package
 
     spec = importlib.util.spec_from_file_location(
-        "sandbox_runner.workflow_runner", package_path / "workflow_runner.py"
+        "sandbox_runner.workflow_sandbox_runner",
+        package_path / "workflow_sandbox_runner.py",
     )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
