@@ -23,6 +23,47 @@ vector = planner.encode("A", workflow)
 The embedding is written to `embeddings.jsonl` in the current working directory
 along with metadata such as the ROI curve and dependency depth.
 
+## Clustering and chaining
+
+Embeddings can be used to group workflows or to assemble simple pipelines:
+
+```python
+workflows = {
+    "A": {"workflow": ["fetch"]},
+    "B": {"workflow": ["process"]},
+    "C": {"workflow": ["store"]},
+}
+
+# Cluster similar workflow specs
+clusters = planner.cluster_workflows(workflows, threshold=0.8)
+
+# Build a high‑synergy chain starting from A
+pipeline = planner.compose_pipeline("A", workflows, length=3)
+```
+
+`cluster_workflows` uses `WorkflowSynergyComparator` to score similarities
+between specifications while `compose_pipeline` iteratively selects the best
+next step based on the same comparator.
+
+## Sandbox simulation
+
+`plan_and_validate` executes suggested chains inside a sandbox to measure ROI
+gains and robustness:
+
+```python
+def step_a():
+    return 1.0
+
+def step_b():
+    return 2.0
+
+records = planner.plan_and_validate([0.0], {"a": step_a, "b": step_b}, top_k=1)
+```
+
+Each record contains the chain, total ROI gain, failure count and entropy. The
+method accepts a custom runner or will instantiate a default
+`WorkflowSandboxRunner` when available.
+
 ## Configuration
 
 `MetaWorkflowPlanner` accepts several knobs to tailor the generated vectors:
@@ -35,6 +76,12 @@ along with metadata such as the ROI curve and dependency depth.
   maintain stable token indices across planner instances.
 - `graph` and `roi_db` – optional helpers providing structural context and ROI
   history. When omitted, lightweight defaults are created.
+- `cluster_workflows(threshold)` controls the similarity cutoff when grouping
+  workflow identifiers.
+- `compose_pipeline(length)` limits the number of steps in generated chains.
+- `plan_and_validate(top_k, failure_threshold, entropy_threshold)` governs the
+  number of candidate chains considered and the acceptance criteria during
+  sandbox execution.
 
 The resulting embedding structure is:
 
