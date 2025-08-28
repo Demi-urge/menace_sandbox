@@ -116,7 +116,6 @@ class MetaWorkflowPlanner:
             mods,
             tags,
             mod_cats,
-            ctx_tags,
             depths,
             branchings,
             curves,
@@ -125,9 +124,8 @@ class MetaWorkflowPlanner:
         if isinstance(domain, str) and domain:
             tags.append(domain)
 
-        # Merge in categories and context tags from the code database
+        # Merge in module categories from the code database
         mods.extend(mod_cats)
-        tags.extend(ctx_tags)
 
         # Normalize tokens prior to encoding
         funcs = sorted({f.lower().strip() for f in funcs if f})
@@ -190,14 +188,12 @@ class MetaWorkflowPlanner:
             mods,
             tags,
             mod_cats,
-            ctx_tags,
             depths,
             branchings,
             curves,
         ) = self._semantic_tokens(workflow)
 
         mods.extend(mod_cats)
-        tags.extend(ctx_tags)
 
         funcs = sorted({f.lower().strip() for f in funcs if f})
         mods = sorted({m.lower().strip() for m in mods if m})
@@ -1326,7 +1322,6 @@ class MetaWorkflowPlanner:
         modules: List[str] = []
         tags: List[str] = []
         module_cats: List[str] = []
-        ctx_tags: List[str] = []
         depths: List[float] = []
         branchings: List[float] = []
         curves: List[List[float]] = []
@@ -1335,7 +1330,7 @@ class MetaWorkflowPlanner:
             modules.append(cat)
             mc, mt = self._module_db_tags(cat)
             module_cats.extend(mc)
-            ctx_tags.extend(mt)
+            tags.extend(mt)
         for step in steps:
             fn = None
             mod = None
@@ -1351,7 +1346,7 @@ class MetaWorkflowPlanner:
                 funcs.append(fname)
                 cmods, ctags, d, b, curve = self._code_db_context(fname)
                 module_cats.extend(cmods)
-                ctx_tags.extend(ctags)
+                tags.extend(ctags)
                 depths.append(d)
                 branchings.append(b)
                 curves.append(curve)
@@ -1360,7 +1355,7 @@ class MetaWorkflowPlanner:
                 modules.append(mname)
                 mc, mt = self._module_db_tags(mname)
                 module_cats.extend(mc)
-                ctx_tags.extend(mt)
+                tags.extend(mt)
             if isinstance(stags, str):
                 tags.append(stags)
             else:
@@ -1370,7 +1365,6 @@ class MetaWorkflowPlanner:
             modules,
             tags,
             module_cats,
-            ctx_tags,
             depths,
             branchings,
             curves,
