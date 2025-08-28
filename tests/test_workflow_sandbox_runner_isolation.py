@@ -66,7 +66,7 @@ def test_safe_mode_blocks_network_and_files(monkeypatch, tmp_path, runner):
     assert called == []  # our monkeypatch was bypassed by safe_mode patching
     mod = metrics.modules[0]
     assert mod.success is False
-    assert mod.exception and "network access disabled" in mod.exception
+    assert mod.exception and "file write disabled" in mod.exception
 
 
 def test_telemetry_includes_timing_and_memory(runner):
@@ -214,3 +214,36 @@ def test_safe_mode_blocks_directory_creation(runner):
     mod = metrics.modules[0]
     assert mod.success is False
     assert mod.exception and "file write disabled" in mod.exception
+
+
+def test_tempfile_creation_confined_and_cleaned(runner):
+    captured: dict[str, str | None] = {}
+
+    def workflow():
+        import tempfile
+
+        tmpdir = Path(tempfile.gettempdir())
+
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(b"x")
+            captured["named"] = f.name
+            assert Path(f.name).parent == tmpdir
+
+        with tempfile.TemporaryFile() as f:
+            name = getattr(f, "name", None)
+            captured["temp"] = name if isinstance(name, str) else None
+            if isinstance(name, str):
+                assert Path(name).parent == tmpdir
+
+        with tempfile.SpooledTemporaryFile(max_size=1) as f:
+            f.write(b"xx")
+            name = getattr(f, "name", None)
+            captured["spooled"] = name if isinstance(name, str) else None
+            if isinstance(name, str):
+                assert Path(name).parent == tmpdir
+
+    runner.run(workflow)
+
+    for path in captured.values():
+        if path:
+            assert not Path(path).exists()
