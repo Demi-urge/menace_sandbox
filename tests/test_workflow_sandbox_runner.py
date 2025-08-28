@@ -89,8 +89,8 @@ def test_safe_mode_blocks_network_and_reports_telemetry():
     telemetry = runner.telemetry
     assert telemetry is not None
     assert set(telemetry["time_per_module"]) == {"start", "network_step"}
-    assert set(telemetry["cpu_time_per_module"]) == {"start", "network_step"}
-    for ct in telemetry["cpu_time_per_module"].values():
+    assert set(telemetry["cpu_per_module"]) == {"start", "network_step"}
+    for ct in telemetry["cpu_per_module"].values():
         assert ct >= 0
     assert telemetry["crash_frequency"] == pytest.approx(1 / 2)
 
@@ -369,8 +369,10 @@ def test_async_workflow_metrics():
 
     for mod in metrics.modules:
         assert isinstance(mod.duration, float)
-        assert isinstance(mod.cpu_time, float)
-        assert mod.cpu_time >= 0
+        assert isinstance(mod.cpu_before, float)
+        assert isinstance(mod.cpu_after, float)
+        assert isinstance(mod.cpu_delta, float)
+        assert mod.cpu_delta >= 0
         assert isinstance(mod.memory_before, int)
         assert isinstance(mod.memory_after, int)
         assert isinstance(mod.memory_delta, int)

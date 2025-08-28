@@ -56,7 +56,9 @@ class ModuleMetrics:
 
     name: str
     duration: float
-    cpu_time: float
+    cpu_before: float
+    cpu_after: float
+    cpu_delta: float
     memory_before: int
     memory_after: int
     memory_delta: int
@@ -595,7 +597,7 @@ class WorkflowSandboxRunner:
                     os.environ[key] = str(value)
 
                 start = perf_counter()
-                cpu_before = 0.0
+                cpu_before = cpu_after = 0.0
                 mem_before = mem_after = 0
                 use_psutil = bool(proc)
                 use_psutil_cpu = use_psutil
@@ -748,7 +750,9 @@ class WorkflowSandboxRunner:
                     module_metric = ModuleMetrics(
                         name=name,
                         duration=duration,
-                        cpu_time=cpu_after - cpu_before,
+                        cpu_before=cpu_before,
+                        cpu_after=cpu_after,
+                        cpu_delta=cpu_after - cpu_before,
                         memory_before=mem_before,
                         memory_after=mem_after,
                         memory_delta=mem_after - mem_before,
@@ -763,7 +767,7 @@ class WorkflowSandboxRunner:
             # ------------------------------------------------------------------
             # Aggregate metrics into a simple telemetry dictionary
             times = {m.name: m.duration for m in metrics.modules}
-            cpu_times = {m.name: m.cpu_time for m in metrics.modules}
+            cpu_times = {m.name: m.cpu_delta for m in metrics.modules}
             results = {m.name: m.result for m in metrics.modules}
             fixtures_info: dict[str, Any] = {}
             for m in metrics.modules:
@@ -785,7 +789,7 @@ class WorkflowSandboxRunner:
             )
             telemetry: dict[str, Any] = {
                 "time_per_module": times,
-                "cpu_time_per_module": cpu_times,
+                "cpu_per_module": cpu_times,
                 "results": results,
                 "crash_frequency": crash_freq,
                 "peak_memory": peak_mem,
