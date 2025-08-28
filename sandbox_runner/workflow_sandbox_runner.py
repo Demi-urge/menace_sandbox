@@ -16,6 +16,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import inspect
+import asyncio
 import json
 import os
 import pathlib
@@ -595,7 +596,12 @@ class WorkflowSandboxRunner:
                 result: Any | None = None
 
                 try:
-                    result = fn()
+                    if inspect.iscoroutinefunction(fn):
+                        result = asyncio.run(fn())
+                    else:
+                        result = fn()
+                        if asyncio.iscoroutine(result):
+                            result = asyncio.run(result)
                 except Exception as exc:  # pragma: no cover - exercise failure path
                     success = False
                     error = str(exc)

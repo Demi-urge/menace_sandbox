@@ -295,3 +295,43 @@ def test_json_responses_from_requests_and_urllib():
 
     assert metrics.modules[0].result == payload
     assert metrics.modules[1].result == payload
+
+
+def test_async_workflow_metrics():
+    import asyncio
+
+    async def ok():
+        await asyncio.sleep(0)
+        return "ok"
+
+    def returns_coroutine():
+        async def inner():
+            await asyncio.sleep(0)
+            return "inner"
+
+        return inner()
+
+    async def crash():
+        await asyncio.sleep(0)
+        raise RuntimeError("boom")
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run([ok, returns_coroutine, crash], safe_mode=True)
+
+    assert len(metrics.modules) == 3
+    assert metrics.modules[0].result == "ok"
+    assert metrics.modules[1].result == "inner"
+    assert metrics.modules[2].success is False
+    assert "boom" in (metrics.modules[2].exception or "")
+    assert metrics.crash_count == 1
+
+    for mod in metrics.modules:
+        assert isinstance(mod.duration, float)
+        assert isinstance(mod.memory_before, int)
+        assert isinstance(mod.memory_after, int)
+        assert isinstance(mod.memory_delta, int)
+
+    telemetry = runner.telemetry
+    assert telemetry is not None
+    assert set(telemetry["time_per_module"]) == {"ok", "returns_coroutine", "crash"}
+    assert telemetry["crash_frequency"] == pytest.approx(1 / 3)
