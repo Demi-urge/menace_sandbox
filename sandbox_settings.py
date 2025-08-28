@@ -148,6 +148,14 @@ class SandboxSettings(BaseSettings):
         env="WORKFLOW_DUPLICATE_ENTROPY",
         description="Maximum entropy delta allowed when deduplicating workflows.",
     )
+    best_practice_match_threshold: float = Field(
+        0.9,
+        env="WORKFLOW_BEST_PRACTICE_THRESHOLD",
+        description=(
+            "Similarity threshold against best-practice sequences required to "
+            "treat a workflow as conforming to best practices."
+        ),
+    )
     borderline_raroi_threshold: float = Field(
         0.0,
         env="BORDERLINE_RAROI_THRESHOLD",

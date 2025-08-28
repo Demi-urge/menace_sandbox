@@ -353,3 +353,65 @@ def test_promoted_duplicate_triggers_merge(monkeypatch, tmp_path):
 
     assert merge_called.get("called")
     assert any(r.startswith("merge-") for r in run_ids)
+
+
+def test_best_practice_variant_collapses(monkeypatch, tmp_path):
+    baseline_spec = _load_steps("simple_ab.json")
+    variant_spec = _load_steps("simple_ab.json")
+
+    monkeypatch.setattr(
+        wem,
+        "SandboxSettings",
+        lambda: SimpleNamespace(
+            roi_ema_alpha=0.1,
+            workflow_merge_similarity=0.9,
+            workflow_merge_entropy_delta=0.1,
+            duplicate_similarity=0.95,
+            duplicate_entropy=0.05,
+            best_practice_match_threshold=0.9,
+        ),
+    )
+
+    _setup(
+        monkeypatch,
+        baseline_roi=1.0,
+        variant_roi=2.0,
+        baseline_spec=baseline_spec,
+        variant_spec=variant_spec,
+    )
+
+    bp_file = tmp_path / "best.json"
+
+    class DummyComparator:
+        workflow_dir = tmp_path
+        best_practices_file = bp_file
+
+        @classmethod
+        def _extract_modules(cls, spec):
+            return [s.get("module") for s in spec.get("steps", [])]
+
+        @classmethod
+        def _update_best_practices(cls, modules):
+            bp_file.write_text(json.dumps({"sequences": [modules]}))
+
+        @classmethod
+        def compare(cls, a_spec, b_spec):
+            return SimpleNamespace(
+                aggregate=0.0,
+                entropy_a=0.0,
+                entropy_b=0.0,
+                best_practice_match_a=(0.0, []),
+                best_practice_match_b=(0.95, ["a", "b"]),
+            )
+
+        @classmethod
+        def merge_duplicate(cls, *a, **k):
+            raise AssertionError("merge should not be called")
+
+    monkeypatch.setattr(wem, "WorkflowSynergyComparator", DummyComparator)
+
+    promoted = wem.evolve(lambda: True, 1, variants=1)
+
+    assert getattr(promoted, "parent_id") == "best_practice"
+    data = json.loads(bp_file.read_text())
+    assert ["a", "b"] in data["sequences"]
