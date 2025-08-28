@@ -42,5 +42,13 @@ def test_duplicate_detection_thresholds(monkeypatch):
     scores = wsc.WorkflowSynergyComparator.compare(spec_a, spec_b)
     assert not wsc.WorkflowSynergyComparator.is_duplicate(scores)
     assert wsc.WorkflowSynergyComparator.is_duplicate(
-        scores, thresholds={"similarity": 0.7, "entropy": 1.0}
+        scores, similarity_threshold=0.7, entropy_threshold=1.0
+    )
+    # direct specification invocation
+    assert not wsc.WorkflowSynergyComparator.is_duplicate(spec_a, spec_b)
+    assert wsc.WorkflowSynergyComparator.is_duplicate(
+        spec_a,
+        spec_b,
+        similarity_threshold=0.7,
+        entropy_threshold=1.0,
     )

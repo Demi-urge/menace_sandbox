@@ -476,21 +476,34 @@ class WorkflowSynergyComparator:
     # ------------------------------------------------------------------
     @classmethod
     def is_duplicate(
-        cls, scores: SynergyScores, thresholds: Optional[Dict[str, float]] = None
+        cls,
+        a: SynergyScores | Dict[str, Any] | str | Path,
+        b: Optional[Dict[str, Any] | str | Path] = None,
+        *,
+        similarity_threshold: float = 0.95,
+        entropy_threshold: float = 0.05,
     ) -> bool:
         """Return ``True`` when two workflows are near-identical.
 
-        ``scores`` must be the result of :meth:`compare`.  ``thresholds`` may
-        override the default similarity (``0.95``) and entropy gap (``0.05``)
-        limits used to qualify a pair of workflows as duplicates.
+        This method accepts either the :class:`SynergyScores` produced by
+        :meth:`compare` or two workflow specifications / identifiers.  When
+        ``a`` is a :class:`SynergyScores` instance ``b`` must be ``None`` and
+        the pre-computed scores are used directly.  Otherwise ``a`` and ``b``
+        are forwarded to :meth:`compare` and the result evaluated against the
+        provided thresholds.
         """
 
-        thresholds = thresholds or {}
-        sim_thr = thresholds.get("similarity", 0.95)
-        ent_thr = thresholds.get("entropy", 0.05)
+        if isinstance(a, SynergyScores):
+            if b is not None:
+                raise ValueError("second argument not allowed when passing SynergyScores")
+            scores = a
+        else:
+            if b is None:
+                raise ValueError("two workflow specs or identifiers required")
+            scores = cls.compare(a, b)
 
         ent_gap = abs(scores.entropy_a - scores.entropy_b)
-        return scores.similarity >= sim_thr and ent_gap <= ent_thr
+        return scores.similarity >= similarity_threshold and ent_gap <= entropy_threshold
 
     # ------------------------------------------------------------------
     @classmethod
