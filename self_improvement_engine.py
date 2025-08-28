@@ -827,6 +827,102 @@ def benchmark_workflow_variants(
     return results
 
 
+async def self_improvement_cycle(
+    workflows: Mapping[str, Callable[[], Any]],
+    *,
+    interval: float = PLANNER_INTERVAL,
+) -> None:
+    """Background loop evolving ``workflows`` using the meta planner.
+
+    The coroutine periodically invokes :meth:`MetaWorkflowPlanner.discover_and_persist`
+    and feeds any discovered chains through ``mutate_pipeline``,
+    ``split_pipeline`` and ``remerge_pipelines`` until all tracked chains in
+    ``planner.cluster_map`` are flagged as converged.  For every evaluated
+    record the ROI delta and entropy are logged via :class:`ROIResultsDB` and
+    :class:`WorkflowStabilityDB`.
+
+    Parameters
+    ----------
+    workflows:
+        Mapping of workflow identifiers to callables.
+    interval:
+        Sleep period between discovery rounds.
+    """
+
+    logger = get_logger("SelfImprovementCycle")
+    if MetaWorkflowPlanner is None:
+        logger.warning("MetaWorkflowPlanner unavailable; skipping cycle")
+        return
+
+    planner = MetaWorkflowPlanner()
+
+    async def _log(record: Mapping[str, Any]) -> None:
+        chain = record.get("chain", [])
+        cid = "->".join(chain)
+        roi = float(record.get("roi_gain", 0.0))
+        failures = int(record.get("failures", 0))
+        entropy = float(record.get("entropy", 0.0))
+        if planner.roi_db is not None:
+            try:
+                planner.roi_db.log_result(
+                    workflow_id=cid,
+                    run_id="bg",
+                    runtime=0.0,
+                    success_rate=1.0,
+                    roi_gain=roi,
+                    workflow_synergy_score=max(0.0, 1.0 - entropy),
+                    bottleneck_index=0.0,
+                    patchability_score=0.0,
+                    module_deltas={},
+                )
+            except Exception:  # pragma: no cover - logging best effort
+                logger.exception("ROI logging failed", extra=log_record(workflow_id=cid))
+        if planner.stability_db is not None:
+            try:
+                planner.stability_db.record_metrics(
+                    cid, roi, failures, entropy, roi_delta=roi
+                )
+            except Exception:  # pragma: no cover - logging best effort
+                logger.exception(
+                    "stability logging failed", extra=log_record(workflow_id=cid)
+                )
+
+    while True:
+        try:
+            records = planner.discover_and_persist(workflows)
+            active = [r.get("chain", []) for r in records if r.get("chain")]
+            # iterate until all chains converge
+            while any(
+                not planner.cluster_map.get(tuple(c), {}).get("converged")
+                for c in active
+            ):
+                next_active: list[list[str]] = []
+                for chain in active:
+                    info = planner.cluster_map.get(tuple(chain), {})
+                    if info.get("converged"):
+                        continue
+                    recs = planner.mutate_pipeline(chain, workflows)
+                    if not recs:
+                        recs = planner.split_pipeline(chain, workflows)
+                    if recs:
+                        for rec in recs:
+                            await _log(rec)
+                            next_active.append(rec.get("chain", []))
+                    else:
+                        next_active.append(chain)
+                if len(next_active) > 1:
+                    remerged = planner.remerge_pipelines(next_active, workflows)
+                    for rec in remerged:
+                        await _log(rec)
+                        next_active.append(rec.get("chain", []))
+                active = next_active
+        except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
+            break
+        except Exception:  # pragma: no cover - keep background loop alive
+            logger.exception("self improvement cycle iteration failed")
+        await asyncio.sleep(interval)
+
+
 class SelfImprovementEngine:
     """Run the automation pipeline on a configurable bot."""
 

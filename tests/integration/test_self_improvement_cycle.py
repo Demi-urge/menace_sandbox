@@ -1,6 +1,8 @@
 import json
 
 from menace_sandbox.foresight_tracker import ForesightTracker
+import asyncio
+import pytest
 
 
 class DummyROITracker:
@@ -137,3 +139,129 @@ def test_risky_workflow_not_promoted():
 
     eng.attempt_promotion()
     assert not eng.workflow_ready
+
+
+def test_background_self_improvement_loop(monkeypatch):
+    events: list[str] = []
+
+    class DummyROI:
+        def __init__(self):
+            self.logged = []
+
+        def log_result(self, **kw):
+            self.logged.append(kw)
+            events.append("roi")
+
+    class DummyStability:
+        def __init__(self):
+            self.recorded = []
+
+        def record_metrics(self, wf, roi, failures, entropy, roi_delta=None):
+            self.recorded.append((wf, roi, entropy))
+            events.append("stability")
+
+    class DummyPlanner:
+        def __init__(self):
+            self.roi_db = DummyROI()
+            self.stability_db = DummyStability()
+            self.cluster_map: dict[tuple[str, ...], dict[str, object]] = {}
+
+        def discover_and_persist(self, workflows, metrics_db=None):
+            self.cluster_map[("a", "b")] = {"converged": False}
+            return [{"chain": ["a", "b"], "roi_gain": 0.1, "failures": 0, "entropy": 0.0}]
+
+        def mutate_pipeline(self, chain, workflows, **kwargs):
+            events.append("mutate")
+            return []
+
+        def split_pipeline(self, chain, workflows, **kwargs):
+            events.append("split")
+            self.cluster_map[("a",)] = {"converged": True}
+            self.cluster_map[("b",)] = {"converged": True}
+            return [
+                {"chain": ["a"], "roi_gain": 0.2, "failures": 0, "entropy": 0.0},
+                {"chain": ["b"], "roi_gain": 0.2, "failures": 0, "entropy": 0.0},
+            ]
+
+        def remerge_pipelines(self, pipelines, workflows, **kwargs):
+            events.append("remerge")
+            self.cluster_map[("a", "b")] = {"converged": True}
+            return [
+                {"chain": ["a", "b"], "roi_gain": 0.5, "failures": 0, "entropy": 0.0}
+            ]
+
+    import sys, types
+
+    dummy_mod = types.ModuleType("run_autonomous")
+    dummy_mod.LOCAL_KNOWLEDGE_MODULE = None
+    monkeypatch.setitem(sys.modules, "run_autonomous", dummy_mod)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.run_autonomous", dummy_mod)
+
+    sandbox_pkg = types.ModuleType("sandbox_runner")
+    env_mod = types.ModuleType("environment")
+    orphan_mod = types.ModuleType("orphan_integration")
+    orphan_mod.integrate_orphans = lambda *a, **k: None
+    orphan_mod.post_round_orphan_scan = lambda *a, **k: None
+    sandbox_pkg.environment = env_mod
+    sandbox_pkg.orphan_integration = orphan_mod
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sandbox_pkg)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_integration", orphan_mod)
+
+    orphan_disc = types.ModuleType("orphan_discovery")
+    orphan_disc.append_orphan_cache = lambda *a, **k: None
+    orphan_disc.append_orphan_classifications = lambda *a, **k: None
+    orphan_disc.prune_orphan_cache = lambda *a, **k: None
+    orphan_disc.load_orphan_cache = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "orphan_discovery", orphan_disc)
+
+    neuro = types.ModuleType("neurosales")
+    neuro.add_message = lambda *a, **k: None
+    neuro.get_recent_messages = lambda *a, **k: []
+    neuro.push_chain = lambda *a, **k: None
+    neuro.peek_chain = lambda *a, **k: []
+    class _Dummy: ...
+    neuro.MessageEntry = _Dummy
+    neuro.CTAChain = _Dummy
+    monkeypatch.setitem(sys.modules, "neurosales", neuro)
+
+    light = types.ModuleType("light_bootstrap")
+    monkeypatch.setitem(sys.modules, "light_bootstrap", light)
+    env_boot = types.ModuleType("environment_bootstrap")
+    monkeypatch.setitem(sys.modules, "environment_bootstrap", env_boot)
+    embed_sched = types.ModuleType("vector_service.embedding_scheduler")
+    monkeypatch.setitem(sys.modules, "vector_service.embedding_scheduler", embed_sched)
+    unified = types.ModuleType("unified_event_bus")
+    unified.AutomatedReviewer = object
+    unified.UnifiedEventBus = object
+    monkeypatch.setitem(sys.modules, "unified_event_bus", unified)
+    auto_rev = types.ModuleType("automated_reviewer")
+    auto_rev.AutomatedReviewer = object
+    monkeypatch.setitem(sys.modules, "automated_reviewer", auto_rev)
+
+    js = types.ModuleType("jsonschema")
+    class _VE(Exception):
+        pass
+    js.ValidationError = _VE
+    js.validate = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "jsonschema", js)
+
+    from menace_sandbox import self_improvement_engine as sie  # delayed import
+
+    planner = DummyPlanner()
+    monkeypatch.setattr(sie, "MetaWorkflowPlanner", lambda: planner)
+
+    async def run():
+        task = asyncio.create_task(
+            sie.self_improvement_cycle({"a": lambda: None, "b": lambda: None}, interval=0.01)
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+
+    assert {"mutate", "split", "remerge"}.issubset(events)
+    assert planner.roi_db.logged
+    assert planner.stability_db.recorded
