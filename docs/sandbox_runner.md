@@ -8,6 +8,11 @@ The sandbox uses the existing repository defined by `SANDBOX_REPO_PATH`. This is
 expected to be a checkout of `https://github.com/Demi-urge/menace_sandbox` and
 is modified and evaluated directly.
 
+> **Note:** The former `sandbox_runner.workflow_runner` module has been
+> replaced by `sandbox_runner.workflow_sandbox_runner`. Import
+> `WorkflowSandboxRunner` from the new module; the old path remains as a
+> deprecated alias.
+
 ## Usage Notes
 
 Run the runner against the current repository by setting `SANDBOX_REPO_PATH`
