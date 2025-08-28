@@ -97,7 +97,7 @@ class SynergyScores:
     """Structural modularity of the combined workflow graph."""
 
     aggregate: float
-    """Mean of efficiency, modularity and expandability."""
+    """Weighted mean of all synergy metrics."""
 
 
 # ---------------------------------------------------------------------------
@@ -282,19 +282,28 @@ class WorkflowSynergyComparator:
     def _roi_and_modularity(graph: Any) -> Tuple[float, float]:
         """Return efficiency and modularity for ``graph``.
 
-        Efficiency is derived from :class:`ROITracker`'s ``synergy_efficiency``
-        history when available.  Modularity relies on ``networkx`` community
-        detection, falling back to ``0.0`` when optional dependencies are
-        missing or raise errors.
+        Efficiency attempts to combine runtime and ROI information when
+        available.  If ``ROITracker`` exposes both runtime and ROI histories the
+        most recent ROI per runtime is used.  As a fallback the dedicated
+        ``synergy_efficiency`` metric is consulted.  Modularity relies on
+        ``networkx`` community detection (preferring the Louvain method) and
+        falls back to greedy modularity when optional dependencies are missing
+        or raise errors.
         """
 
         efficiency = 0.0
         if ROITracker is not None:
             try:  # pragma: no cover - optional dependency
                 tracker = ROITracker()
-                eff_hist = tracker.metrics_history.get("synergy_efficiency", [])
-                if eff_hist:
-                    efficiency = float(eff_hist[-1])
+                hist = tracker.metrics_history
+                runtime_hist = hist.get("workflow_runtime") or hist.get("runtime")
+                roi_hist = hist.get("synergy_roi") or hist.get("roi")
+                if runtime_hist and roi_hist and runtime_hist[-1]:
+                    efficiency = float(roi_hist[-1]) / float(runtime_hist[-1])
+                else:
+                    eff_hist = hist.get("synergy_efficiency", [])
+                    if eff_hist:
+                        efficiency = float(eff_hist[-1])
             except Exception:
                 pass
 
@@ -304,7 +313,14 @@ class WorkflowSynergyComparator:
                 nx_comm = getattr(getattr(nx, "algorithms", None), "community", None)
                 if nx_comm is not None:
                     undirected = graph.to_undirected()
-                    communities = list(nx_comm.greedy_modularity_communities(undirected))
+                    communities = None
+                    louvain = getattr(nx_comm, "louvain_communities", None)
+                    if callable(louvain):
+                        communities = list(louvain(undirected, seed=0))
+                    if not communities:
+                        greedy = getattr(nx_comm, "greedy_modularity_communities", None)
+                        if callable(greedy):
+                            communities = list(greedy(undirected))
                     if communities:
                         modularity = float(nx_comm.modularity(undirected, communities))
             except Exception:
@@ -320,8 +336,23 @@ class WorkflowSynergyComparator:
         cls,
         a_spec: Dict[str, Any] | str | Path,
         b_spec: Dict[str, Any] | str | Path,
+        *,
+        weights: Optional[Dict[str, float]] = None,
     ) -> SynergyScores:
-        """Compare two workflow specifications or identifiers."""
+        """Compare two workflow specifications or identifiers.
+
+        Parameters
+        ----------
+        a_spec, b_spec:
+            Workflow specifications or identifiers pointing to
+            ``{id}.workflow.json`` files.
+        weights:
+            Optional mapping assigning relative weights to ``similarity``,
+            ``shared_modules``, ``entropy`` (expandability), ``efficiency`` and
+            ``modularity``.  When omitted each metric is weighted equally.  A
+            weight of ``0`` removes the corresponding metric from the aggregate
+            score.
+        """
 
         spec_a = cls._load_spec(a_spec)
         spec_b = cls._load_spec(b_spec)
@@ -342,7 +373,21 @@ class WorkflowSynergyComparator:
         union_graph = cls._build_graph(mods_a + mods_b)
         efficiency, modularity = cls._roi_and_modularity(union_graph)
 
-        aggregate = (efficiency + modularity + expandability) / 3
+        metrics = {
+            "similarity": similarity,
+            "shared_modules": shared_ratio,
+            "entropy": expandability,
+            "efficiency": efficiency,
+            "modularity": modularity,
+        }
+        w = {name: 1.0 for name in metrics}
+        if weights:
+            for k, v in weights.items():
+                if k in w:
+                    w[k] = float(v)
+        total = sum(val for key, val in w.items() if val > 0)
+        weighted_sum = sum(metrics[m] * w[m] for m in metrics if w[m] > 0)
+        aggregate = weighted_sum / total if total else 0.0
 
         return SynergyScores(
             similarity=similarity,

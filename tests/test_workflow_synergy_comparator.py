@@ -286,7 +286,70 @@ def test_efficiency_and_modularity(monkeypatch):
     ent_b = compute_workflow_entropy(spec_b)
     expandability = (ent_a + ent_b) / 2
 
+    similarity = result.similarity
+    shared = result.shared_module_ratio
+
     assert result.efficiency == pytest.approx(0.8)
     assert result.modularity == pytest.approx(0.5)
-    expected_agg = (0.8 + 0.5 + expandability) / 3
+    expected_agg = (similarity + shared + expandability + 0.8 + 0.5) / 5
     assert result.aggregate == pytest.approx(expected_agg)
+
+
+def test_weighted_aggregate(monkeypatch):
+    """Weights exclude similarity/entropy from aggregate."""
+
+    def fake_embed(graph, spec):
+        counts = {"a": 0, "b": 0, "c": 0}
+        for step in spec.get("steps", []):
+            mod = step.get("module")
+            if mod in counts:
+                counts[mod] += 1
+        return [counts["a"], counts["b"], counts["c"]]
+
+    monkeypatch.setattr(wsc.WorkflowSynergyComparator, "_embed_graph", staticmethod(fake_embed))
+    monkeypatch.setattr(wsc, "_HAS_NODE2VEC", False, raising=False)
+    monkeypatch.setattr(wsc, "WorkflowVectorizer", None, raising=False)
+
+    class DummyTracker:
+        def __init__(self):
+            self.metrics_history = {"synergy_efficiency": [0.8]}
+
+    monkeypatch.setattr(wsc, "ROITracker", DummyTracker, raising=False)
+
+    class DummyGraph:
+        def add_nodes_from(self, nodes):
+            pass
+
+        def add_edges_from(self, edges):
+            pass
+
+        def to_undirected(self):
+            return self
+
+    def greedy_modularity_communities(g):
+        return [{1}, {2}]
+
+    def modularity_func(g, communities):
+        return 0.5
+
+    dummy_nx = types.SimpleNamespace(
+        DiGraph=DummyGraph,
+        Graph=DummyGraph,
+        algorithms=types.SimpleNamespace(
+            community=types.SimpleNamespace(
+                greedy_modularity_communities=greedy_modularity_communities,
+                modularity=modularity_func,
+            )
+        ),
+    )
+
+    monkeypatch.setattr(wsc, "_HAS_NX", True, raising=False)
+    monkeypatch.setattr(wsc, "nx", dummy_nx, raising=False)
+
+    spec_a = _load("simple_ab.json")
+    spec_b = _load("simple_bc.json")
+
+    weights = {"similarity": 0.0, "shared_modules": 0.0, "entropy": 0.0}
+    result = wsc.WorkflowSynergyComparator.compare(spec_a, spec_b, weights=weights)
+
+    assert result.aggregate == pytest.approx((0.8 + 0.5) / 2)
