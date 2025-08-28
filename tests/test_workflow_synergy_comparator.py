@@ -112,17 +112,21 @@ def test_duplicate_detection_thresholds(monkeypatch):
     spec_b = _load("simple_bc.json")
 
     scores_same = wsc.WorkflowSynergyComparator.compare(spec_a, spec_a)
-    assert wsc.WorkflowSynergyComparator.is_duplicate(
-        scores_same, {"similarity": 0.95, "entropy": 0.05}
-    )
+    assert wsc.WorkflowSynergyComparator.is_duplicate(scores_same)
 
     scores_diff = wsc.WorkflowSynergyComparator.compare(spec_a, spec_b)
-    assert not wsc.WorkflowSynergyComparator.is_duplicate(
-        scores_diff, {"similarity": 0.95, "entropy": 0.05}
-    )
+    assert not wsc.WorkflowSynergyComparator.is_duplicate(scores_diff)
 
     assert wsc.WorkflowSynergyComparator.is_duplicate(
-        scores_diff, {"similarity": 0.49, "entropy": 0.2}
+        scores_diff, similarity_threshold=0.49, entropy_threshold=0.2
+    )
+
+    # direct specification invocation
+    assert wsc.WorkflowSynergyComparator.is_duplicate(
+        spec_a, spec_a, similarity_threshold=0.95, entropy_threshold=0.05
+    )
+    assert not wsc.WorkflowSynergyComparator.is_duplicate(
+        spec_a, spec_b, similarity_threshold=0.95, entropy_threshold=0.05
     )
 
 

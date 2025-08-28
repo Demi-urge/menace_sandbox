@@ -274,7 +274,9 @@ def test_overfit_variant_skips_merge(monkeypatch, tmp_path):
             )
 
         @staticmethod
-        def is_duplicate(result, thresholds=None):
+        def is_duplicate(
+            a, b=None, *, similarity_threshold=0.95, entropy_threshold=0.05
+        ):
             return True
 
         @classmethod
@@ -331,7 +333,9 @@ def test_promoted_duplicate_triggers_merge(monkeypatch, tmp_path):
             return SimpleNamespace(aggregate=1.0, entropy_a=0.0, entropy_b=0.0)
 
         @staticmethod
-        def is_duplicate(result, thresholds=None):
+        def is_duplicate(
+            a, b=None, *, similarity_threshold=0.95, entropy_threshold=0.05
+        ):
             return True
 
         @classmethod

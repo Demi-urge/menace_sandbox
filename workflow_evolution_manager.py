@@ -335,10 +335,8 @@ def evolve(
                     if (
                         comparator.is_duplicate(
                             scores,
-                            {
-                                "similarity": settings.duplicate_similarity,
-                                "entropy": settings.duplicate_entropy,
-                            },
+                            similarity_threshold=settings.duplicate_similarity,
+                            entropy_threshold=settings.duplicate_entropy,
                         )
                         and scores.aggregate >= settings.duplicate_similarity
                         and not overfit

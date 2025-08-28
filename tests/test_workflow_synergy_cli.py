@@ -36,7 +36,9 @@ def _stub_comparator(monkeypatch):
             )
 
         @staticmethod
-        def is_duplicate(scores, thresholds=None):
+        def is_duplicate(
+            a, b=None, *, similarity_threshold=0.95, entropy_threshold=0.05
+        ):
             return True
 
     monkeypatch.setattr(cli, "WorkflowSynergyComparator", DummyComparator)
