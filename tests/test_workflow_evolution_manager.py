@@ -2,6 +2,7 @@ from types import SimpleNamespace
 import sys
 from pathlib import Path
 import types
+import json
 
 # Ensure package context and stub heavy dependencies before import
 ROOT = Path(__file__).resolve().parents[2]
@@ -60,19 +61,48 @@ for mod in [
 ]:
     sys.modules.pop(mod, None)
 
-def _setup(monkeypatch, baseline_roi=1.0, variant_roi=2.0, variant="b-a"):
+def _setup(
+    monkeypatch,
+    baseline_roi: float = 1.0,
+    variant_roi: float = 2.0,
+    variant: str = "b-a",
+    *,
+    baseline_spec=None,
+    variant_spec=None,
+    merge_roi: float | None = None,
+    run_log: list[str] | None = None,
+):
     class FakeBot:
         _rearranged_events: dict[str, int] = {}
+
         def generate_variants(self, limit, workflow_id):
             yield variant
+
     monkeypatch.setattr(wem, "WorkflowEvolutionBot", lambda: FakeBot())
 
     class FakeScorer:
         def __init__(self, results_db, tracker):
             pass
+
         def run(self, fn, wf_id, run_id):
-            roi = baseline_roi if run_id == "baseline" else variant_roi
-            return SimpleNamespace(roi_gain=roi, runtime=0.0, success_rate=1.0)
+            if run_log is not None:
+                run_log.append(run_id)
+            if run_id == "baseline":
+                roi = baseline_roi
+                spec = baseline_spec
+            elif run_id.startswith("merge-"):
+                roi = merge_roi if merge_roi is not None else variant_roi
+                spec = variant_spec
+            else:
+                roi = variant_roi
+                spec = variant_spec
+            return SimpleNamespace(
+                roi_gain=roi,
+                runtime=0.0,
+                success_rate=1.0,
+                workflow_spec=spec,
+            )
+
     monkeypatch.setattr(wem, "CompositeWorkflowScorer", FakeScorer)
 
     class FakeResultsDB:
@@ -145,3 +175,43 @@ def test_no_improvement_marks_stable(monkeypatch):
     assert summary_called["args"][0] == 1
     assert "stable" in summary_called["args"][1]
     assert "args" not in graph_called
+
+
+def test_near_identical_low_entropy_workflows_are_merged(monkeypatch, tmp_path):
+    run_ids: list[str] = []
+
+    baseline_spec = [{"module": "a", "outputs": ["x"]}]
+    variant_spec = [{"module": "a", "outputs": ["x"]}]
+
+    _setup(
+        monkeypatch,
+        baseline_roi=1.0,
+        variant_roi=0.8,
+        baseline_spec=baseline_spec,
+        variant_spec=variant_spec,
+        merge_roi=1.2,
+        run_log=run_ids,
+    )
+
+    class DummyComparator:
+        @classmethod
+        def compare(cls, a_spec, b_spec):
+            return SimpleNamespace(efficiency=1.0, modularity=1.0, expandability=0.0)
+
+    monkeypatch.setattr(wem, "WorkflowSynergyComparator", DummyComparator)
+
+    merge_called = {}
+
+    def fake_merge(base_path, a_path, b_path, out_path):
+        merge_called["called"] = True
+        out_path.write_text(
+            json.dumps({"steps": variant_spec, "metadata": {"workflow_id": 2}})
+        )
+        return out_path
+
+    monkeypatch.setattr(wem.workflow_merger, "merge_workflows", fake_merge)
+
+    wem.evolve(lambda: True, 1, variants=1)
+
+    assert merge_called.get("called")
+    assert any(r.startswith("merge-") for r in run_ids)
