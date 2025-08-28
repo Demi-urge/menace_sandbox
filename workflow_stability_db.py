@@ -73,6 +73,48 @@ class WorkflowStabilityDB:
         self.data[wf] = entry
         self._save()
 
+    def record_metrics(
+        self,
+        workflow_id: str,
+        roi: float,
+        failures: int,
+        entropy: float,
+        *,
+        roi_delta: float | None = None,
+    ) -> None:
+        """Persist metrics for ``workflow_id``.
+
+        Parameters
+        ----------
+        workflow_id:
+            Identifier of the evaluated workflow chain.
+        roi:
+            Observed ROI for the latest run.
+        failures:
+            Number of failed modules during execution.
+        entropy:
+            Synergy entropy of the workflow chain.
+        roi_delta:
+            Optional ROI delta.  When omitted it is derived from the previous
+            stored ROI.
+        """
+
+        wf = str(workflow_id)
+        entry = self.data.get(wf, {})
+        if roi_delta is None:
+            prev = float(entry.get("roi", 0.0))
+            roi_delta = float(roi) - prev
+        entry.update(
+            {
+                "roi": float(roi),
+                "roi_delta": float(roi_delta),
+                "failures": int(failures),
+                "entropy": float(entropy),
+            }
+        )
+        self.data[wf] = entry
+        self._save()
+
     def clear(self, workflow_id: str) -> None:
         if str(workflow_id) in self.data:
             del self.data[str(workflow_id)]
