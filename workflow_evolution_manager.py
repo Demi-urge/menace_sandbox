@@ -128,6 +128,55 @@ def _scores_overfit(scores) -> bool:
     )
 
 
+def _evaluate_merge(
+    base_id: str,
+    dup_id: str,
+    out_dir: Path,
+    scorer: CompositeWorkflowScorer,
+    wf_id: str,
+    run_id: str,
+    baseline_roi: float,
+):
+    """Merge ``dup_id`` into ``base_id`` and re-evaluate the result."""
+
+    merged_file = WorkflowSynergyComparator.merge_duplicate(base_id, dup_id, out_dir)
+    if not merged_file:
+        return None
+    try:
+        merged_data = json.loads(merged_file.read_text())
+    except Exception:
+        return None
+
+    merged_steps = merged_data.get("steps", [])
+    seq = "-".join(s.get("module") for s in merged_steps if s.get("module"))
+    merged_callable = _build_callable(seq)
+    merge_run_id = f"merge-{run_id}"
+    merged_result = scorer.run(merged_callable, wf_id, run_id=merge_run_id)
+
+    merged_id = merged_data.get("metadata", {}).get("workflow_id")
+    if merged_id:
+        workflow_run_summary.record_run(str(merged_id), merged_result.roi_gain)
+        setattr(merged_callable, "workflow_id", merged_id)
+        if EVOLUTION_DB is not None and EvolutionEvent is not None:
+            try:  # pragma: no cover - best effort
+                EVOLUTION_DB.add(
+                    EvolutionEvent(
+                        action="merge",
+                        before_metric=baseline_roi,
+                        after_metric=merged_result.roi_gain,
+                        roi=merged_result.roi_gain - baseline_roi,
+                        workflow_id=int(merged_id),
+                        reason="merge",
+                        trigger="workflow_evolution_manager",
+                        performance=merged_result.roi_gain - baseline_roi,
+                    )
+                )
+            except Exception:
+                logger.exception("failed logging merged lineage event")
+
+    return merged_callable, merged_result, merged_id, merged_file
+
+
 def is_stable(workflow_id: int | str) -> bool:
     """Return ``True`` when *workflow_id* is marked stable."""
     return STABLE_WORKFLOWS.is_stable(str(workflow_id))
@@ -236,61 +285,24 @@ def evolve(
                         (tmp_dir / f"{dup_id}.workflow.json").write_text(
                             json.dumps({"steps": variant_spec})
                         )
-                        merged_file = WorkflowSynergyComparator.merge_duplicate(
-                            base_id, dup_id, tmp_dir
+                        merged = _evaluate_merge(
+                            base_id,
+                            dup_id,
+                            tmp_dir,
+                            scorer,
+                            wf_id_str,
+                            run_id,
+                            baseline_roi,
                         )
-                        if merged_file:
-                            try:
-                                merged_data = json.loads(merged_file.read_text())
-                                merged_steps = merged_data.get("steps", [])
-                                seq = "-".join(
-                                    s.get("module") for s in merged_steps if s.get("module")
-                                )
-                                variant_callable = _build_callable(seq)
-                                run_id = f"merge-{run_id}"
-                                variant_result = scorer.run(
-                                    variant_callable, wf_id_str, run_id=run_id
-                                )
-                                merged_id = merged_data.get("metadata", {}).get(
-                                    "workflow_id"
-                                )
-                                if merged_id:
-                                    workflow_run_summary.record_run(
-                                        str(merged_id), variant_result.roi_gain
-                                    )
-                                    if (
-                                        EVOLUTION_DB is not None
-                                        and EvolutionEvent is not None
-                                    ):
-                                        try:
-                                            EVOLUTION_DB.add(
-                                                EvolutionEvent(
-                                                    action="merge",
-                                                    before_metric=baseline_roi,
-                                                    after_metric=variant_result.roi_gain,
-                                                    roi=variant_result.roi_gain
-                                                    - baseline_roi,
-                                                    workflow_id=int(merged_id),
-                                                    reason="merge",
-                                                    trigger="workflow_evolution_manager",
-                                                    performance=variant_result.roi_gain
-                                                    - baseline_roi,
-                                                )
-                                            )
-                                        except Exception:
-                                            logger.exception(
-                                                "failed logging merged lineage event"
-                                            )
-                            except Exception:
-                                logger.exception(
-                                    "failed re-evaluating merged workflow"
-                                )
+                        if merged:
+                            variant_callable, variant_result, merged_id, merged_file = merged
+                            setattr(variant_callable, "parent_id", workflow_id)
                     finally:
-                        for p in (
+                        for p in [
                             tmp_dir / f"{base_id}.workflow.json",
                             tmp_dir / f"{dup_id}.workflow.json",
-                            merged_file if merged_file else None,
-                        ):
+                            merged_file,
+                        ]:
                             try:
                                 if p:
                                     p.unlink()
@@ -343,73 +355,41 @@ def evolve(
                     ):
                         dup_id = f"{cand_id}_dup"
                         dup_path = comparator.workflow_dir / f"{dup_id}.workflow.json"
-                        merged_file: Path | None = None
+                        merged = None
                         try:
                             dup_path.write_text(json.dumps({"steps": variant_spec}))
-                            merged_file = comparator.merge_duplicate(cand_id, dup_id)
-                            if merged_file is None:
-                                continue
-                            try:
-                                merged_data = json.loads(merged_file.read_text())
-                                merged_steps = merged_data.get("steps", [])
-                                seq = "-".join(
-                                    s.get("module") for s in merged_steps if s.get("module")
-                                )
-                                variant_callable = _build_callable(seq)
-                                run_id = f"merge-{cand_id}-{run_id}"
-                                scorer = CompositeWorkflowScorer(
+                            merged = _evaluate_merge(
+                                cand_id,
+                                dup_id,
+                                comparator.workflow_dir,
+                                CompositeWorkflowScorer(
                                     results_db=results_db, tracker=tracker
-                                )
-                                variant_result = scorer.run(
-                                    variant_callable, str(cand_id), run_id=run_id
-                                )
-                                merged_id = merged_data.get("metadata", {}).get(
-                                    "workflow_id"
-                                )
-                                if merged_id:
-                                    workflow_run_summary.record_run(
-                                        str(merged_id), variant_result.roi_gain
-                                    )
-                                    setattr(variant_callable, "workflow_id", merged_id)
-                                    merged_parent = str(cand_id)
-                                    if (
-                                        EVOLUTION_DB is not None
-                                        and EvolutionEvent is not None
-                                    ):
-                                        try:
-                                            EVOLUTION_DB.add(
-                                                EvolutionEvent(
-                                                    action="merge",
-                                                    before_metric=baseline_roi,
-                                                    after_metric=variant_result.roi_gain,
-                                                    roi=variant_result.roi_gain
-                                                    - baseline_roi,
-                                                    workflow_id=int(merged_id),
-                                                    reason="merge",
-                                                    trigger="workflow_evolution_manager",
-                                                    performance=variant_result.roi_gain
-                                                    - baseline_roi,
-                                                )
-                                            )
-                                        except Exception:
-                                            logger.exception(
-                                                "failed logging merged lineage event"
-                                            )
-                            except Exception:
-                                logger.exception(
-                                    "failed re-testing merged duplicate"
-                                )
+                                ),
+                                str(cand_id),
+                                f"{cand_id}-{run_id}",
+                                baseline_roi,
+                            )
+                            if merged:
+                                (
+                                    variant_callable,
+                                    variant_result,
+                                    merged_id,
+                                    merged_file,
+                                ) = merged
+                                setattr(variant_callable, "parent_id", cand_id)
+                                merged_parent = str(cand_id)
                         finally:
                             try:
                                 dup_path.unlink()
                             except Exception:
                                 pass
                             try:
-                                if merged_file:
+                                if merged and merged_file:
                                     merged_file.unlink()
                             except Exception:
                                 pass
-                        break
+                        if merged:
+                            break
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("failed comparing workflow %s", cand_id)
 
@@ -682,65 +662,26 @@ def evolve(
                     and ent_gap <= settings.duplicate_entropy
                     and not _scores_overfit(scores)
                 ):
-                    merged_file = comparator.merge_duplicate(cand_id, str(new_id))
-                    if merged_file is None:
-                        continue
-                    try:
-                        merged_data = json.loads(merged_file.read_text())
-                        merged_steps = merged_data.get("steps", [])
-                        seq = "-".join(
-                            s.get("module") for s in merged_steps if s.get("module")
-                        )
-                        merged_callable = _build_callable(seq)
-                        run_id = f"merge-{cand_id}-{new_id}"
-                        scorer = CompositeWorkflowScorer(
+                    merged = _evaluate_merge(
+                        cand_id,
+                        str(new_id),
+                        comparator.workflow_dir,
+                        CompositeWorkflowScorer(
                             results_db=results_db, tracker=tracker
-                        )
-                        merged_result = scorer.run(
-                            merged_callable, str(cand_id), run_id=run_id
-                        )
-                        merged_id = (
-                            merged_data.get("metadata", {}).get("workflow_id")
-                        )
+                        ),
+                        str(cand_id),
+                        f"{cand_id}-{new_id}",
+                        best_roi,
+                    )
+                    if merged:
+                        merged_callable, merged_result, merged_id, merged_file = merged
                         if merged_id:
-                            workflow_run_summary.record_run(
-                                str(merged_id), merged_result.roi_gain
-                            )
                             tracker.score_workflow(str(merged_id), final_raroi)
-                            setattr(merged_callable, "workflow_id", merged_id)
-                        if (
-                            EVOLUTION_DB is not None
-                            and EvolutionEvent is not None
-                        ):
-                            try:
-                                EVOLUTION_DB.add(
-                                    EvolutionEvent(
-                                        action="merge",
-                                        before_metric=best_roi,
-                                        after_metric=merged_result.roi_gain,
-                                        roi=merged_result.roi_gain - best_roi,
-                                        workflow_id=int(
-                                            merged_id if merged_id else cand_id
-                                        ),
-                                        reason="merge",
-                                        trigger="workflow_evolution_manager",
-                                        performance=merged_result.roi_gain - best_roi,
-                                    )
-                                )
-                            except Exception:
-                                logger.exception(
-                                    "failed logging merged lineage event"
-                                )
                         best_callable = merged_callable
                         saved_path = merged_file
                         new_id = merged_id or new_id
                         best_roi = merged_result.roi_gain
                         break
-                    finally:
-                        try:
-                            merged_file.unlink()
-                        except Exception:
-                            pass
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed comparing workflow %s", cand_id)
 
