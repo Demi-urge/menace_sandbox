@@ -40,6 +40,9 @@ _stub(
 )
 _stub("workflow_summary_db", WorkflowSummaryDB=object)
 _stub("sandbox_settings", SandboxSettings=lambda: SimpleNamespace(roi_ema_alpha=0.1))
+_stub("workflow_synergy_comparator", WorkflowSynergyComparator=object)
+_stub("workflow_metrics", compute_workflow_entropy=lambda spec: 0.0)
+_stub("workflow_merger", merge_workflows=lambda *a, **k: Path("merged.json"))
 
 import menace_sandbox.workflow_evolution_manager as wem
 
