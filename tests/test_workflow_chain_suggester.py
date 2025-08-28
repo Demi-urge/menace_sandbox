@@ -40,3 +40,11 @@ def test_suggest_chains_ranks_by_roi_and_stability():
     chains = suggester.suggest_chains([1.0, 0.0, 0.0], top_k=2)
     assert chains[0] == ["1"]
     assert chains[1] == ["3"]
+
+
+def test_chain_mutation_helpers():
+    chain = ["a", "b", "c"]
+    assert WorkflowChainSuggester.swap_steps(chain, 0, 2) == ["c", "b", "a"]
+    assert WorkflowChainSuggester.split_sequence(chain, 1) == [["a"], ["b", "c"]]
+    merged = WorkflowChainSuggester.merge_partial_chains([["a", "b"], ["b", "c"]])
+    assert merged == ["a", "b", "c"]

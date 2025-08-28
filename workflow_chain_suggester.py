@@ -3,12 +3,13 @@ from __future__ import annotations
 """Suggest workflow chains based on embedding similarity and ROI metrics."""
 
 from dataclasses import dataclass
-from typing import List, Sequence, Dict, Any, Tuple
+from typing import List, Sequence, Dict, Any, Tuple, Iterable
 import random
 
 from vector_utils import cosine_similarity
 from roi_results_db import ROIResultsDB
 from workflow_stability_db import WorkflowStabilityDB
+from workflow_synergy_comparator import WorkflowSynergyComparator
 
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB  # type: ignore
@@ -51,9 +52,76 @@ class WorkflowChainSuggester:
             if self.stability_db.is_stable(str(workflow_id)):
                 return 1.0
             ema, _ = self.stability_db.get_ema(str(workflow_id))
-            return 1.0 / (1.0 + max(0.0, ema))
+            # Penalise unstable workflows by reducing the weight to at most 0.5
+            return 0.5 / (1.0 + max(0.0, ema))
         except Exception:
             return 1.0
+
+    # ------------------------------------------------------------------
+    # Chain mutation helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def swap_steps(chain: Sequence[str], i: int, j: int) -> List[str]:
+        """Return ``chain`` with steps ``i`` and ``j`` swapped."""
+
+        seq = list(chain)
+        if 0 <= i < len(seq) and 0 <= j < len(seq):
+            seq[i], seq[j] = seq[j], seq[i]
+        return seq
+
+    @staticmethod
+    def split_sequence(chain: Sequence[str], index: int) -> List[List[str]]:
+        """Split ``chain`` at ``index`` into two sequences."""
+
+        seq = list(chain)
+        index = max(0, min(index, len(seq)))
+        return [seq[:index], seq[index:]]
+
+    @staticmethod
+    def merge_partial_chains(chains: Iterable[Sequence[str]]) -> List[str]:
+        """Merge ``chains`` into a single sequence removing duplicates."""
+
+        merged: List[str] = []
+        for ch in chains:
+            for step in ch:
+                if step not in merged:
+                    merged.append(str(step))
+        return merged
+
+    # ------------------------------------------------------------------
+    def _roi_delta(self, workflow_id: str) -> float:
+        """Return the ROI improvement delta for ``workflow_id``."""
+
+        if self.roi_db is None:
+            return 0.0
+        try:
+            trends = self.roi_db.fetch_trends(str(workflow_id))
+            if len(trends) >= 2:
+                return float(trends[-1].get("roi_gain", 0.0)) - float(
+                    trends[-2].get("roi_gain", 0.0)
+                )
+        except Exception:
+            pass
+        return 0.0
+
+    def _entropy(self, chain: Sequence[str]) -> float:
+        spec = {"steps": [{"module": m} for m in chain]}
+        try:
+            return WorkflowSynergyComparator._entropy(spec)
+        except Exception:
+            return 0.0
+
+    def _should_split(self, chain: Sequence[str]) -> bool:
+        deltas = [self._roi_delta(w) for w in chain]
+        avg_delta = sum(deltas) / len(deltas) if deltas else 0.0
+        entropy = self._entropy(chain)
+        return avg_delta < 0.0 and entropy > 1.0
+
+    def _should_merge(self, chains: List[List[str]]) -> bool:
+        deltas = [self._roi_delta(w) for ch in chains for w in ch]
+        avg_delta = sum(deltas) / len(deltas) if deltas else 0.0
+        entropy = self._entropy(self.merge_partial_chains(chains))
+        return avg_delta > 0.0 and entropy < 1.0
 
     # ------------------------------------------------------------------
     def _kmeans(
@@ -99,7 +167,8 @@ class WorkflowChainSuggester:
             sim = 1.0 / (1.0 + float(dist))
             roi = max(0.0, self._roi_score(wid))
             stability = self._stability_weight(wid)
-            score = sim * (1.0 + roi) * stability
+            delta = max(0.0, self._roi_delta(wid))
+            score = sim * (1.0 + roi) * stability * (1.0 + delta)
             scores[str(wid)] = score
             vecs.append((str(wid), vec))
         if not vecs:
@@ -112,7 +181,20 @@ class WorkflowChainSuggester:
             avg = sum(scores.get(w, 0.0) for w in cl) / len(cl)
             seqs.append((avg, ordered))
         seqs.sort(key=lambda x: x[0], reverse=True)
-        return [s for _, s in seqs[:top_k]]
+        chosen = [s for _, s in seqs[:top_k]]
+
+        final: List[List[str]] = []
+        for seq in chosen:
+            if self._should_split(seq):
+                parts = [p for p in self.split_sequence(seq, len(seq) // 2) if p]
+                final.extend(parts)
+            else:
+                final.append(seq)
+
+        if len(final) > 1 and self._should_merge(final):
+            final = [self.merge_partial_chains(final)]
+
+        return final[:top_k]
 
 
 _default_suggester: WorkflowChainSuggester | None = None
