@@ -293,19 +293,20 @@ def test_promoted_duplicate_triggers_merge(monkeypatch, tmp_path):
             return SimpleNamespace(similarity=1.0, entropy_a=0.0, entropy_b=0.0)
 
         @staticmethod
-        def is_duplicate(result, b_spec=None, thresholds=None):
+        def is_duplicate(result, thresholds=None):
             return True
 
-        @classmethod
-        def merge_duplicate(cls, base_id, dup_id, out_dir="workflows"):
-            merge_called["called"] = True
-            out_path = Path(out_dir) / f"{base_id}.merged.json"
-            out_path.write_text(
-                json.dumps({"steps": variant_spec, "metadata": {"workflow_id": 123}})
-            )
-            return out_path
-
     monkeypatch.setattr(wem, "WorkflowSynergyComparator", DummyComparator)
+
+    def fake_merge(base, a, b, out):
+        merge_called["called"] = True
+        out_path = Path(out)
+        out_path.write_text(
+            json.dumps({"steps": variant_spec, "metadata": {"workflow_id": 123}})
+        )
+        return out_path
+
+    monkeypatch.setattr(wem.workflow_merger, "merge_workflows", fake_merge)
 
     wem.evolve(lambda: True, 1, variants=1)
 

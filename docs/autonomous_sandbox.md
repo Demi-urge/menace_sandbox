@@ -121,7 +121,7 @@ variant. The helper exposes:
   entropy gap.
 - `WorkflowSynergyComparator.is_duplicate(result, thresholds=None)` – flag
   near‑identical workflows using the scores returned by
-  `WorkflowSynergyComparator.compare()` or two workflow specifications.
+  `WorkflowSynergyComparator.compare()`.
 - `WorkflowSynergyComparator.merge_duplicate(base_id, dup_id)` – merge the
   duplicate into the canonical workflow.
 

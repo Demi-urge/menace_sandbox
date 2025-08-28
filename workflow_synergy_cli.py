@@ -20,7 +20,8 @@ def cli(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     scores = WorkflowSynergyComparator.compare(args.workflow_a, args.workflow_b)
-    data = json.dumps(asdict(scores), indent=2)
+    duplicate = WorkflowSynergyComparator.is_duplicate(scores)
+    data = json.dumps({"duplicate": duplicate, **asdict(scores)}, indent=2)
 
     if args.out == "-":
         sys.stdout.write(data)

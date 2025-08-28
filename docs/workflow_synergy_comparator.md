@@ -30,9 +30,7 @@ print(scores.similarity, scores.expandability)
 is_dup = WorkflowSynergyComparator.is_duplicate(
     scores, {"similarity": 0.95, "entropy": 0.05}
 )
-
-`is_duplicate` also accepts two workflow specifications or identifiers instead of
-precomputed scores.
+``is_duplicate`` expects the ``SynergyScores`` returned by ``compare``.
 ```
 
 ## Configuration

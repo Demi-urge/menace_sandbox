@@ -101,16 +101,19 @@ def test_duplicate_detection_thresholds(monkeypatch):
     _force_simple(monkeypatch)
     spec_a = _load("simple_ab.json")
     spec_b = _load("simple_bc.json")
+
+    scores_same = wsc.WorkflowSynergyComparator.compare(spec_a, spec_a)
     assert wsc.WorkflowSynergyComparator.is_duplicate(
-        spec_a, spec_a, {"similarity": 0.95, "entropy": 0.05}
+        scores_same, {"similarity": 0.95, "entropy": 0.05}
     )
 
+    scores_diff = wsc.WorkflowSynergyComparator.compare(spec_a, spec_b)
     assert not wsc.WorkflowSynergyComparator.is_duplicate(
-        spec_a, spec_b, {"similarity": 0.95, "entropy": 0.05}
+        scores_diff, {"similarity": 0.95, "entropy": 0.05}
     )
 
     assert wsc.WorkflowSynergyComparator.is_duplicate(
-        spec_a, spec_b, {"similarity": 0.49, "entropy": 0.2}
+        scores_diff, {"similarity": 0.49, "entropy": 0.2}
     )
 
 
@@ -121,7 +124,8 @@ def test_merge_duplicate(monkeypatch, tmp_path):
     spec_b = _load("simple_bc.json")
 
     # ensure duplicate detection would trigger for identical specs
-    assert wsc.WorkflowSynergyComparator.is_duplicate(spec_a, spec_a)
+    scores_same = wsc.WorkflowSynergyComparator.compare(spec_a, spec_a)
+    assert wsc.WorkflowSynergyComparator.is_duplicate(scores_same)
 
     base_id = "base"
     dup_id = "dup"
@@ -142,6 +146,7 @@ def test_merge_duplicate(monkeypatch, tmp_path):
         return out
 
     monkeypatch.setattr(wsc.workflow_merger, "merge_workflows", fake_merge)
+    monkeypatch.setattr(wsc, "workflow_run_summary", None, raising=False)
 
     out_path = wsc.merge_duplicate(base_id, dup_id, tmp_path)
     assert out_path is not None and out_path.exists()
