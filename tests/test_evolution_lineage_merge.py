@@ -170,25 +170,23 @@ def test_merge_similar_workflows(monkeypatch, tmp_path):
 
     merge_called: dict[str, tuple] = {}
 
-    def fake_merge(base, a, b, out):
-        merge_called["paths"] = (base, a, b, out)
-        out.write_text(
-            json.dumps({"steps": variant_spec, "metadata": {"workflow_id": "merged"}})
-        )
-        return out
-
-    monkeypatch.setattr(
-        wem, "workflow_merger", SimpleNamespace(merge_workflows=fake_merge)
-    )
-
     class FakeComparator:
         @staticmethod
         def compare(a, b):
-            return SimpleNamespace(similarity=1.0, entropy_a=0.0, entropy_b=0.0)
+            return SimpleNamespace(aggregate=1.0, entropy_a=0.0, entropy_b=0.0)
+
+        @classmethod
+        def merge_duplicate(cls, base_id, dup_id, out_dir="workflows"):
+            merge_called["args"] = (base_id, dup_id, out_dir)
+            out = Path(out_dir) / f"{base_id}.merged.json"
+            out.write_text(
+                json.dumps({"steps": variant_spec, "metadata": {"workflow_id": "merged"}})
+            )
+            return out
 
     monkeypatch.setattr(wem, "WorkflowSynergyComparator", FakeComparator)
 
     result_callable = wem.evolve(lambda: True, 1, variants=1)
-    assert "paths" in merge_called
+    assert "args" in merge_called
     assert getattr(result_callable, "workflow_id") == "merged"
     assert getattr(result_callable, "parent_id") == 1
