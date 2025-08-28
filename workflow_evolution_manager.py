@@ -204,10 +204,8 @@ def evolve(
                 cmp = WorkflowSynergyComparator.compare(
                     {"steps": baseline_spec}, {"steps": variant_spec}
                 )
-                similarity = (cmp.efficiency + cmp.modularity) / 2.0
-                ent_a = compute_workflow_entropy({"steps": baseline_spec})
-                ent_b = compute_workflow_entropy({"steps": variant_spec})
-                ent_delta = abs(ent_a - ent_b)
+                similarity = cmp.similarity
+                ent_delta = abs(cmp.entropy_a - cmp.entropy_b)
                 sim_thresh = settings.workflow_merge_similarity
                 ent_thresh = settings.workflow_merge_entropy_delta
                 if similarity >= sim_thresh and ent_delta <= ent_thresh:

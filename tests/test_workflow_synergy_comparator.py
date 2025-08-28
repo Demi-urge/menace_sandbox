@@ -57,14 +57,15 @@ def _force_simple(monkeypatch):
     monkeypatch.setattr(wsc, "WorkflowVectorizer", None, raising=False)
 
 
-def test_similarity_and_expandability(monkeypatch):
+def test_similarity_and_entropy(monkeypatch):
     _force_simple(monkeypatch)
     spec = {"steps": [{"module": "a"}, {"module": "b"}]}
     result = wsc.WorkflowSynergyComparator.compare(spec, spec)
-    assert result.efficiency == pytest.approx(1.0)
-    assert result.modularity == 1.0
+    assert result.similarity == pytest.approx(1.0)
+    assert result.shared_modules == 2
     expected_entropy = compute_workflow_entropy(spec)
-    assert result.expandability == expected_entropy
+    assert result.entropy_a == expected_entropy
+    assert result.entropy_b == expected_entropy
 
 
 def test_shared_modules_detection(monkeypatch):
@@ -72,8 +73,10 @@ def test_shared_modules_detection(monkeypatch):
     spec_a = {"steps": [{"module": "a"}, {"module": "b"}]}
     spec_b = {"steps": [{"module": "b"}, {"module": "c"}]}
     result = wsc.WorkflowSynergyComparator.compare(spec_a, spec_b)
-    assert result.efficiency < 1.0
-    assert result.modularity == 1 / 3
+    assert result.similarity < 1.0
+    union = {"a", "b", "c"}
+    assert result.shared_modules / len(union) == pytest.approx(1 / 3)
     ent_a = compute_workflow_entropy(spec_a)
     ent_b = compute_workflow_entropy(spec_b)
-    assert result.expandability == (ent_a + ent_b) / 2
+    assert result.entropy_a == ent_a
+    assert result.entropy_b == ent_b

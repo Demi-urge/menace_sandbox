@@ -203,7 +203,15 @@ def test_near_identical_low_entropy_workflows_are_merged(monkeypatch, tmp_path):
     class DummyComparator:
         @classmethod
         def compare(cls, a_spec, b_spec):
-            return SimpleNamespace(efficiency=1.0, modularity=1.0, expandability=0.0)
+            return SimpleNamespace(
+                similarity=1.0,
+                shared_modules=1,
+                modules_a=1,
+                modules_b=1,
+                entropy_a=0.0,
+                entropy_b=0.0,
+                recommended_winner=None,
+            )
 
     monkeypatch.setattr(wem, "WorkflowSynergyComparator", DummyComparator)
 
