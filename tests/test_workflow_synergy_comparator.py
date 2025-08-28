@@ -57,6 +57,21 @@ def _force_simple(monkeypatch):
     monkeypatch.setattr(wsc, "_HAS_NX", False, raising=False)
     monkeypatch.setattr(wsc, "_HAS_NODE2VEC", False, raising=False)
     monkeypatch.setattr(wsc, "WorkflowVectorizer", None, raising=False)
+    monkeypatch.setattr(
+        wsc.WorkflowSynergyComparator,
+        "_roi_and_modularity",
+        classmethod(lambda cls, *_: (0.0, 0.0)),
+    )
+    monkeypatch.setattr(
+        wsc.WorkflowSynergyComparator,
+        "_roi_and_modularity",
+        classmethod(lambda cls, *_: (0.0, 0.0)),
+    )
+    monkeypatch.setattr(
+        wsc.WorkflowSynergyComparator,
+        "_roi_and_modularity",
+        classmethod(lambda cls, *_: (0.0, 0.0)),
+    )
 
 
 FIX_DIR = Path(__file__).resolve().parent / "fixtures" / "workflows"
@@ -102,3 +117,45 @@ def test_duplicate_detection_thresholds(monkeypatch):
     assert not wsc.WorkflowSynergyComparator.is_duplicate(res_diff, 0.95, 0.05)
 
     assert wsc.WorkflowSynergyComparator.is_duplicate(res_diff, 0.49, 0.2)
+
+
+def test_merge_duplicate(monkeypatch, tmp_path):
+    _force_simple(monkeypatch)
+
+    spec_a = _load("simple_ab.json")
+    spec_b = _load("simple_bc.json")
+
+    # ensure duplicate detection would trigger for identical specs
+    res_same = wsc.WorkflowSynergyComparator.compare(spec_a, spec_a)
+    assert wsc.WorkflowSynergyComparator.is_duplicate(res_same)
+
+    base_id = "base"
+    dup_id = "dup"
+    base_file = tmp_path / f"{base_id}.workflow.json"
+    dup_file = tmp_path / f"{dup_id}.workflow.json"
+    base_file.write_text(json.dumps(spec_a))
+    dup_file.write_text(json.dumps(spec_b))
+
+    def fake_merge(base, a, b, out):
+        data_a = json.loads(Path(a).read_text())
+        data_b = json.loads(Path(b).read_text())
+        merged = {
+            "steps": data_a.get("steps", []) + data_b.get("steps", []),
+            "metadata": {"workflow_id": "merged"},
+        }
+        out = Path(out)
+        out.write_text(json.dumps(merged))
+        return out
+
+    monkeypatch.setattr(
+        "menace_sandbox.workflow_merger.merge_workflows", fake_merge
+    )
+
+    out_path = wsc.WorkflowSynergyComparator.merge_duplicate(base_id, dup_id, tmp_path)
+    assert out_path is not None and out_path.exists()
+    merged = json.loads(out_path.read_text())
+    mods = [s["module"] for s in merged["steps"]]
+    assert mods == [
+        s["module"] for s in spec_a["steps"]
+    ] + [s["module"] for s in spec_b["steps"]]
+    assert merged.get("metadata", {}).get("workflow_id") == "merged"
