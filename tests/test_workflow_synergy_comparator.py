@@ -1,4 +1,5 @@
 from collections import Counter
+import json
 import math
 import sys
 import types
@@ -32,6 +33,7 @@ _stub.compute_workflow_entropy = _entropy
 _prev = sys.modules.get("menace_sandbox.workflow_metrics")
 sys.modules["menace_sandbox.workflow_metrics"] = _stub
 
+sys.modules.pop("menace_sandbox.workflow_synergy_comparator", None)
 import menace_sandbox.workflow_synergy_comparator as wsc
 from menace_sandbox.workflow_metrics import compute_workflow_entropy
 import pytest
@@ -57,9 +59,16 @@ def _force_simple(monkeypatch):
     monkeypatch.setattr(wsc, "WorkflowVectorizer", None, raising=False)
 
 
+FIX_DIR = Path(__file__).resolve().parent / "fixtures" / "workflows"
+
+
+def _load(name: str) -> dict:
+    return json.loads((FIX_DIR / name).read_text())
+
+
 def test_similarity_and_entropy(monkeypatch):
     _force_simple(monkeypatch)
-    spec = {"steps": [{"module": "a"}, {"module": "b"}]}
+    spec = _load("simple_ab.json")
     result = wsc.WorkflowSynergyComparator.compare(spec, spec)
     assert result.similarity == pytest.approx(1.0)
     assert result.shared_modules == 2
@@ -70,8 +79,8 @@ def test_similarity_and_entropy(monkeypatch):
 
 def test_shared_modules_detection(monkeypatch):
     _force_simple(monkeypatch)
-    spec_a = {"steps": [{"module": "a"}, {"module": "b"}]}
-    spec_b = {"steps": [{"module": "b"}, {"module": "c"}]}
+    spec_a = _load("simple_ab.json")
+    spec_b = _load("simple_bc.json")
     result = wsc.WorkflowSynergyComparator.compare(spec_a, spec_b)
     assert result.similarity < 1.0
     union = {"a", "b", "c"}
@@ -80,3 +89,15 @@ def test_shared_modules_detection(monkeypatch):
     ent_b = compute_workflow_entropy(spec_b)
     assert result.entropy_a == ent_a
     assert result.entropy_b == ent_b
+
+
+def test_duplicate_detection_thresholds(monkeypatch):
+    _force_simple(monkeypatch)
+    spec_a = _load("simple_ab.json")
+    spec_b = _load("simple_bc.json")
+
+    assert wsc.WorkflowSynergyComparator.is_duplicate(spec_a, spec_a)
+    assert not wsc.WorkflowSynergyComparator.is_duplicate(spec_a, spec_b)
+
+    relaxed = {"similarity": 0.49, "overlap": 0.5, "entropy": 0.2}
+    assert wsc.WorkflowSynergyComparator.is_duplicate(spec_a, spec_b, relaxed)

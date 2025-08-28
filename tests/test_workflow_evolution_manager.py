@@ -11,6 +11,12 @@ pkg = types.ModuleType("menace_sandbox")
 pkg.__path__ = [str(ROOT / "menace_sandbox")]
 sys.modules.setdefault("menace_sandbox", pkg)
 
+FIX_DIR = Path(__file__).resolve().parent / "fixtures" / "workflows"
+
+
+def _load_steps(name: str) -> list[dict]:
+    return json.loads((FIX_DIR / name).read_text()).get("steps", [])
+
 def _stub(name, **attrs):
     mod = types.ModuleType(f"menace_sandbox.{name}")
     for k, v in attrs.items():
@@ -187,8 +193,8 @@ def test_no_improvement_marks_stable(monkeypatch):
 def test_near_identical_low_entropy_workflows_are_merged(monkeypatch, tmp_path):
     run_ids: list[str] = []
 
-    baseline_spec = [{"module": "a", "outputs": ["x"]}]
-    variant_spec = [{"module": "a", "outputs": ["x"]}]
+    baseline_spec = _load_steps("simple_ab.json")
+    variant_spec = _load_steps("simple_ab.json")
 
     _setup(
         monkeypatch,
@@ -234,8 +240,8 @@ def test_near_identical_low_entropy_workflows_are_merged(monkeypatch, tmp_path):
 
 def test_promoted_duplicate_triggers_merge(monkeypatch, tmp_path):
     run_ids: list[str] = []
-    baseline_spec = [{"module": "a"}]
-    variant_spec = [{"module": "b"}]
+    baseline_spec = _load_steps("simple_ab.json")
+    variant_spec = _load_steps("simple_bc.json")
 
     _setup(
         monkeypatch,
@@ -268,6 +274,18 @@ def test_promoted_duplicate_triggers_merge(monkeypatch, tmp_path):
     monkeypatch.setattr(wem, "_load_specs", fake_load_specs)
 
     class DummyComparator:
+        @classmethod
+        def compare(cls, a_spec, b_spec):
+            return SimpleNamespace(
+                similarity=1.0,
+                shared_modules=1,
+                modules_a=1,
+                modules_b=1,
+                entropy_a=0.0,
+                entropy_b=0.0,
+                recommended_winner=None,
+            )
+
         def is_duplicate(self, a_spec, b_spec, thresholds=None):
             return True
 
