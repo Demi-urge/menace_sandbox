@@ -335,3 +335,33 @@ def test_async_workflow_metrics():
     assert telemetry is not None
     assert set(telemetry["time_per_module"]) == {"ok", "returns_coroutine", "crash"}
     assert telemetry["crash_frequency"] == pytest.approx(1 / 3)
+
+
+def test_module_specific_fixtures_apply_files_and_env():
+    """Per-module fixtures should inject files and environment variables."""
+
+    os.environ.pop("WF_VAR", None)
+    recorded: list[str | None] = []
+
+    def one() -> None:
+        recorded.append(Path("fixture.txt").read_text())
+        recorded.append(os.getenv("WF_VAR"))
+
+    def two() -> None:
+        recorded.append(os.getenv("WF_VAR"))
+
+    fixtures = {
+        "one": {"files": {"fixture.txt": "hello"}, "env": {"WF_VAR": "A"}},
+        "two": {"env": {"WF_VAR": "B"}},
+    }
+
+    runner = WorkflowSandboxRunner()
+    runner.run([one, two], module_fixtures=fixtures)
+
+    assert recorded == ["hello", "A", "B"]
+    assert "WF_VAR" not in os.environ
+
+    telemetry = runner.telemetry or {}
+    mods = telemetry.get("module_fixtures", {})
+    assert mods["one"]["files"] == ["fixture.txt"]
+    assert mods["one"]["env"] == {"WF_VAR": "A"}

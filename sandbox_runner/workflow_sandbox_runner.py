@@ -577,7 +577,10 @@ class WorkflowSandboxRunner:
                 old_env: dict[str, str | None] = {}
                 for key, value in env_vars.items():
                     old_env[key] = os.environ.get(key)
-                    os.environ[key] = value
+                    # ``os.environ`` expects string values.  Coerce anything
+                    # provided via fixtures to ``str`` to avoid ``TypeError``
+                    # when callers supply non-string objects such as numbers.
+                    os.environ[key] = str(value)
 
                 start = perf_counter()
                 mem_before = mem_after = 0
