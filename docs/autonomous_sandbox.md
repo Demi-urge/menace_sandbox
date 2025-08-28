@@ -110,6 +110,43 @@ print(results["alpha"].workflow_evolution)
 The `workflow_evolution` field summarises whether a variant was promoted or the
 workflow was deemed stable.
 
+### WorkflowSynergyComparator
+
+The self‑improvement loop uses `WorkflowSynergyComparator` to decide whether a
+candidate workflow should merge into an existing branch or remain a separate
+variant. The helper exposes:
+
+- `WorkflowSynergyComparator.compare(a, b)` – return a
+  :class:`ComparisonResult` with cosine `similarity`, shared module count and
+  entropy gap.
+- `WorkflowSynergyComparator.is_duplicate(result, similarity_threshold,
+  entropy_threshold)` – flag near‑identical workflows.
+- `WorkflowSynergyComparator.merge_duplicate(base_id, dup_id)` – merge the
+  duplicate into the canonical workflow.
+
+Entropy and similarity thresholds control merging behaviour. When
+`result.similarity` meets or exceeds `WORKFLOW_MERGE_SIMILARITY` and
+`result.entropy_gap` stays below `WORKFLOW_MERGE_ENTROPY_DELTA`, the manager
+merges the variant. Relaxed thresholds encourage more merging while stricter
+values favour branching and independent evolution.
+
+Example API usage inside the self‑improvement loop:
+
+```python
+from menace_sandbox.workflow_synergy_comparator import WorkflowSynergyComparator
+
+result = WorkflowSynergyComparator.compare("main_flow", "candidate_flow")
+if WorkflowSynergyComparator.is_duplicate(result, 0.96, 0.04):
+    WorkflowSynergyComparator.merge_duplicate("main_flow", "candidate_flow")
+```
+
+Run the autonomous loop with custom thresholds via environment variables:
+
+```bash
+WORKFLOW_MERGE_SIMILARITY=0.96 WORKFLOW_MERGE_ENTROPY_DELTA=0.04 \
+  python run_autonomous.py
+```
+
 ## Foresight promotion gate
 
 Before final promotion the sandbox invokes
