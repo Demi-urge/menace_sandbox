@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Manage workflow evolution by benchmarking generated variants."""
 
-from typing import Callable, Optional
+from typing import Callable, Optional, Iterable, Sequence
 import importlib
 import json
 import logging
@@ -41,6 +41,16 @@ except Exception:  # pragma: no cover - best effort
     _merge_sibling_branches = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+
+def consume_planner_suggestions(chains: Iterable[Sequence[str]]) -> None:
+    """Persist planner-suggested chains for later evaluation."""
+    for idx, chain in enumerate(chains, start=1):
+        try:
+            path = Path("sandbox_data") / f"planner_chain_{idx}.workflow.json"
+            save_workflow([{"module": m} for m in chain], path)
+        except Exception:
+            logger.exception("failed to save planner suggestion", extra={"chain": chain})
 
 STABLE_WORKFLOWS = WorkflowStabilityDB()
 EVOLUTION_DB = EvolutionHistoryDB() if EvolutionHistoryDB is not None else None

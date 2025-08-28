@@ -46,6 +46,7 @@ from typing import (
     Tuple,
     Union,
     Sequence,
+    Iterable,
     get_args,
     get_origin,
     get_type_hints,
@@ -1613,6 +1614,22 @@ def evaluate_workflow(
     return success
 
 
+def consume_planner_suggestions(chains: Iterable[Sequence[str]]) -> List[Path]:
+    """Persist planner suggested chains as workflow specs."""
+    paths: List[Path] = []
+    for idx, chain in enumerate(chains, start=1):
+        steps = [WorkflowStep(module=str(m)) for m in chain]
+        path = Path("sandbox_data") / f"planner_chain_{idx}.workflow.json"
+        try:
+            save_workflow(steps, path)
+            paths.append(path)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "failed to save planner suggestion", extra={"chain": chain}
+            )
+    return paths
+
+
 def synthesise_workflow(**kwargs: Any) -> Dict[str, Any]:
     """Generate a workflow using :class:`WorkflowSynthesizer`.
 
@@ -1994,6 +2011,7 @@ __all__ = [
     "to_yaml",
     "to_workflow_spec",
     "evaluate_workflow",
+    "consume_planner_suggestions",
     "save_workflow",
     "synthesise_workflow",
     "generate_workflow_variants",

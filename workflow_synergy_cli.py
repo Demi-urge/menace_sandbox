@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""CLI for comparing two workflow specifications using synergy heuristics."""
+"""CLI for comparing workflow specifications or triggering meta-planning."""
 
 import argparse
 import json
@@ -9,19 +9,43 @@ from dataclasses import asdict
 from pathlib import Path
 
 from workflow_synergy_comparator import WorkflowSynergyComparator
+from meta_workflow_planner import MetaWorkflowPlanner
+from workflow_chain_simulator import simulate_suggested_chains
 
 
 def cli(argv: list[str] | None = None) -> int:
     """Run the workflow synergy comparison command line interface."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("workflow_a", help="First workflow file or identifier")
-    parser.add_argument("workflow_b", help="Second workflow file or identifier")
+    parser.add_argument(
+        "workflow_b",
+        nargs="?",
+        help="Second workflow file or identifier when comparing",
+    )
     parser.add_argument("--out", default="-", help="Output file or '-' for stdout")
+    parser.add_argument(
+        "--meta-plan",
+        action="store_true",
+        help="Trigger meta-planning run using workflow_a as seed",
+    )
     args = parser.parse_args(argv)
 
-    scores = WorkflowSynergyComparator.compare(args.workflow_a, args.workflow_b)
-    duplicate = WorkflowSynergyComparator.is_duplicate(scores)
-    data = json.dumps({"duplicate": duplicate, **asdict(scores)}, indent=2)
+    if args.meta_plan:
+        spec = {}
+        path_a = Path(args.workflow_a)
+        if path_a.exists():
+            try:
+                spec = json.loads(path_a.read_text())
+            except Exception:
+                spec = {}
+        planner = MetaWorkflowPlanner()
+        target = planner.encode(args.workflow_a, spec)
+        outcomes = simulate_suggested_chains(target)
+        data = json.dumps(outcomes, indent=2)
+    else:
+        scores = WorkflowSynergyComparator.compare(args.workflow_a, args.workflow_b or "")
+        duplicate = WorkflowSynergyComparator.is_duplicate(scores)
+        data = json.dumps({"duplicate": duplicate, **asdict(scores)}, indent=2)
 
     if args.out == "-":
         sys.stdout.write(data)
