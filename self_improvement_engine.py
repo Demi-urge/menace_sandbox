@@ -63,6 +63,7 @@ except Exception:  # pragma: no cover - best effort fallback
 
 router = GLOBAL_ROUTER or init_db_router("self_improvement_engine")
 STABLE_WORKFLOWS = WorkflowStabilityDB()
+PLANNER_INTERVAL = int(os.getenv("META_PLANNING_INTERVAL", "10"))
 neuro_stub = sys.modules.get("neurosales")
 if neuro_stub:
     if not hasattr(neuro_stub, "get_recent_messages"):
@@ -178,6 +179,27 @@ try:  # pragma: no cover - allow flat imports
     from .universal_retriever import UniversalRetriever
 except Exception:  # pragma: no cover - fallback for flat layout
     from universal_retriever import UniversalRetriever  # type: ignore
+try:  # pragma: no cover - optional planner integration
+    from .workflow_chain_suggester import WorkflowChainSuggester
+except Exception:  # pragma: no cover - fallback for flat layout
+    try:
+        from workflow_chain_suggester import WorkflowChainSuggester  # type: ignore
+    except Exception:  # pragma: no cover - best effort
+        WorkflowChainSuggester = None  # type: ignore
+try:  # pragma: no cover - optional planner integration
+    from .meta_workflow_planner import MetaWorkflowPlanner
+except Exception:  # pragma: no cover - fallback for flat layout
+    try:
+        from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
+    except Exception:  # pragma: no cover - best effort
+        MetaWorkflowPlanner = None  # type: ignore
+try:  # pragma: no cover - optional consumer
+    from .workflow_synthesizer import consume_planner_suggestions
+except Exception:  # pragma: no cover - fallback for flat layout
+    try:
+        from workflow_synthesizer import consume_planner_suggestions  # type: ignore
+    except Exception:  # pragma: no cover - best effort
+        consume_planner_suggestions = None  # type: ignore
 try:  # pragma: no cover - optional dependency
     from sandbox_runner.orphan_discovery import (
         append_orphan_classifications,
@@ -1252,6 +1274,18 @@ class SelfImprovementEngine:
                 interval = 600.0
             hist_file = Path(settings.sandbox_data_dir) / "synergy_history.db"
             self._start_synergy_trainer(hist_file, interval)
+
+    def _plan_cross_domain_chains(self, top_k: int = 3) -> list[list[str]]:
+        """Use meta planner to suggest new cross-domain workflow chains."""
+        if MetaWorkflowPlanner is None or WorkflowChainSuggester is None:
+            return []
+        try:
+            planner = MetaWorkflowPlanner()
+            target = planner.encode("self_improvement", {"workflow": []})
+            suggester = WorkflowChainSuggester()
+            return suggester.suggest_chains(target, top_k)
+        except Exception:
+            return []
 
     def _memory_summaries(self, key: str) -> str:
         """Return a summary of similar past actions from memory."""
@@ -5423,6 +5457,14 @@ class SelfImprovementEngine:
         try:
             workflow_evolution_details: list[dict[str, object]] = []
             evo_allowed = self._should_trigger()
+            planner_chains: list[list[str]] = []
+            if self._cycle_count % PLANNER_INTERVAL == 0:
+                planner_chains = self._plan_cross_domain_chains()
+                if consume_planner_suggestions and planner_chains:
+                    try:
+                        consume_planner_suggestions(planner_chains)
+                    except Exception:
+                        self.logger.exception("planner suggestion handling failed")
 
             def _handle_new_modules() -> None:
                 repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
@@ -6623,6 +6665,8 @@ class SelfImprovementEngine:
                 if risk_info:
                     result.warnings["foresight_risk"].append(risk_info)
                 result.warnings["workflow_high_risk"] = [{"value": high_risk}]
+            if planner_chains:
+                workflow_evolution_details.append({"planner_chains": planner_chains})
             if workflow_evolution_details:
                 result.workflow_evolution = workflow_evolution_details
             if getattr(self, "workflow_scorer", None):
