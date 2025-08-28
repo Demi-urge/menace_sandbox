@@ -1,0 +1,6 @@
+{
+  "steps": [
+    {"module": "a", "outputs": ["x"]},
+    {"module": "b", "inputs": ["x"]}
+  ]
+}
