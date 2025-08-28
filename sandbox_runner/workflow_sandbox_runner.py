@@ -776,6 +776,7 @@ class WorkflowSandboxRunner:
             # Aggregate metrics into a simple telemetry dictionary
             times = {m.name: m.duration for m in metrics.modules}
             cpu_times = {m.name: m.cpu_delta for m in metrics.modules}
+            memory_deltas = {m.name: m.memory_delta for m in metrics.modules}
             results = {m.name: m.result for m in metrics.modules}
             fixtures_info: dict[str, Any] = {}
             for m in metrics.modules:
@@ -798,6 +799,7 @@ class WorkflowSandboxRunner:
             telemetry: dict[str, Any] = {
                 "time_per_module": times,
                 "cpu_per_module": cpu_times,
+                "memory_per_module": memory_deltas,
                 "results": results,
                 "crash_frequency": crash_freq,
                 "peak_memory": peak_mem,

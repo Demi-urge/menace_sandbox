@@ -434,12 +434,14 @@ def test_async_workflow_metrics():
     telemetry = runner.telemetry
     assert telemetry is not None
     assert set(telemetry["time_per_module"]) == {"ok", "returns_coroutine", "crash"}
+    assert set(telemetry["memory_per_module"]) == {"ok", "returns_coroutine", "crash"}
     assert set(telemetry["peak_memory_per_module"]) == {
         "ok",
         "returns_coroutine",
         "crash",
     }
     for mod in metrics.modules:
+        assert telemetry["memory_per_module"][mod.name] == mod.memory_delta
         assert telemetry["peak_memory_per_module"][mod.name] == mod.memory_peak
     assert telemetry["crash_frequency"] == pytest.approx(1 / 3)
 
