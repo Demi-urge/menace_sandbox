@@ -37,6 +37,11 @@ except Exception:  # pragma: no cover - gracefully degrade
     _HAS_NODE2VEC = False
 
 try:  # pragma: no cover - optional dependency
+    import numpy as np  # type: ignore
+except Exception:  # pragma: no cover - gracefully degrade
+    np = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
     from workflow_vectorizer import WorkflowVectorizer  # type: ignore
 except Exception:  # pragma: no cover - gracefully degrade
     WorkflowVectorizer = None  # type: ignore
@@ -173,33 +178,49 @@ class WorkflowSynergyComparator:
         if key in cls._embed_cache:
             return cls._embed_cache[key]
 
-        if _HAS_NX and _HAS_NODE2VEC and isinstance(graph, nx.Graph):
-            try:  # pragma: no cover - optional dependency
-                n2v = Node2Vec(graph, dimensions=16, walk_length=5, num_walks=20, workers=1)
-                model = n2v.fit(window=5, min_count=1)
-                vectors = model.wv
-                if hasattr(vectors, "index_to_key"):
-                    nodes = list(vectors.index_to_key)
-                elif hasattr(vectors, "key_to_index"):
-                    nodes = list(vectors.key_to_index.keys())
-                else:
-                    nodes = list(vectors.keys())  # type: ignore[attr-defined]
-                vec: List[float] = []
-                for n in sorted(nodes):
-                    vec.extend([float(v) for v in vectors[n]])
-                cls._embed_cache[key] = vec
-                return vec
-            except Exception:
-                pass
-
         if _HAS_NX and isinstance(graph, nx.Graph):
-            try:  # pragma: no cover - optional dependency
-                centrality = nx.degree_centrality(graph)
-                vec = [centrality[n] for n in sorted(centrality)]
-                cls._embed_cache[key] = vec
-                return vec
-            except Exception:
-                pass
+            if _HAS_NODE2VEC:
+                try:  # pragma: no cover - optional dependency
+                    n2v = Node2Vec(
+                        graph,
+                        dimensions=16,
+                        walk_length=5,
+                        num_walks=20,
+                        workers=1,
+                        seed=0,
+                    )
+                    model = n2v.fit(window=5, min_count=1, seed=0)
+                    vectors = model.wv
+                    if hasattr(vectors, "index_to_key"):
+                        nodes = list(vectors.index_to_key)
+                    elif hasattr(vectors, "key_to_index"):
+                        nodes = list(vectors.key_to_index.keys())
+                    else:
+                        nodes = list(vectors.keys())  # type: ignore[attr-defined]
+                    vec: List[float] = []
+                    for n in sorted(nodes):
+                        vec.extend([float(v) for v in vectors[n]])
+                    cls._embed_cache[key] = vec
+                    return vec
+                except Exception:
+                    pass
+
+            if np is not None:
+                try:  # pragma: no cover - optional dependency
+                    nodes = sorted(graph.nodes())
+                    mat = nx.to_numpy_array(graph, nodelist=nodes)
+                    if not np.allclose(mat, mat.T):
+                        mat = (mat + mat.T) / 2
+                    vals, vecs = np.linalg.eigh(mat)
+                    order = np.argsort(vals)[::-1]
+                    vecs = vecs[:, order]
+                    k = min(len(nodes), 4)
+                    emb = vecs[:, :k]
+                    vec = emb.flatten().tolist()
+                    cls._embed_cache[key] = vec
+                    return vec
+                except Exception:
+                    pass
 
         if WorkflowVectorizer is not None:
             try:  # pragma: no cover - optional dependency
