@@ -388,3 +388,66 @@ def test_analyze_overfitting(monkeypatch, tmp_path):
     assert good_report.repeated_modules == {}
     data = json.loads((tmp_path / "best.json").read_text())
     assert ["a", "b"] in data.get("sequences", [])
+
+
+def test_embedding_path_resolution_and_cache(monkeypatch, tmp_path):
+    """Workflow identifiers resolve to files and share cached embeddings."""
+    monkeypatch.setattr(wsc, "_HAS_NX", False, raising=False)
+    monkeypatch.setattr(wsc, "_HAS_NODE2VEC", False, raising=False)
+    monkeypatch.setattr(wsc, "WorkflowVectorizer", None, raising=False)
+    monkeypatch.setattr(
+        wsc.WorkflowSynergyComparator,
+        "_roi_and_modularity",
+        classmethod(lambda cls, *_: (0.0, 0.0)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        wsc.WorkflowSynergyComparator,
+        "workflow_dir",
+        tmp_path,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        wsc.WorkflowSynergyComparator,
+        "best_practices_file",
+        tmp_path / "best.json",
+        raising=False,
+    )
+
+    spec = {"steps": [{"module": "a"}, {"module": "b"}]}
+    for name in ("alpha", "beta"):
+        (tmp_path / f"{name}.workflow.json").write_text(json.dumps(spec))
+
+    wsc.WorkflowSynergyComparator._embed_cache.clear()
+    result = wsc.WorkflowSynergyComparator.compare("alpha", "beta")
+    assert result.similarity == pytest.approx(1.0)
+    assert len(wsc.WorkflowSynergyComparator._embed_cache) == 1
+
+
+def test_merge_duplicate_classmethod_delegates(monkeypatch, tmp_path):
+    """Class method forwards to module level ``merge_duplicate``."""
+
+    called = {}
+
+    def fake_merge(base, dup, directory):
+        called["args"] = (base, dup, directory)
+        out = Path(directory) / "merged.json"
+        out.write_text("{}")
+        return out
+
+    monkeypatch.setattr(wsc, "merge_duplicate", fake_merge)
+
+    out_path = wsc.WorkflowSynergyComparator.merge_duplicate("a", "b", tmp_path)
+    assert out_path == tmp_path / "merged.json"
+    assert called["args"] == ("a", "b", tmp_path)
+
+
+def test_compare_returns_overfitting_report(monkeypatch):
+    """``compare`` attaches overfitting reports to its result."""
+    _force_simple(monkeypatch)
+    spec_a = {"steps": [{"module": "a"}, {"module": "a"}, {"module": "a"}]}
+    spec_b = {"steps": [{"module": "a"}, {"module": "b"}]}
+
+    scores = wsc.WorkflowSynergyComparator.compare(spec_a, spec_b)
+    assert scores.overfit_a and scores.overfit_a.is_overfitting()
+    assert scores.overfit_b and not scores.overfit_b.is_overfitting()
