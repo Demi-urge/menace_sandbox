@@ -254,13 +254,19 @@ class MetaWorkflowPlanner:
         workflows: Mapping[str, Mapping[str, Any]],
         *,
         length: int = 3,
+        synergy_weight: float = 1.0,
+        roi_weight: float = 1.0,
     ) -> List[str]:
         """Compose a high-synergy workflow pipeline.
 
         Starting from ``start`` the method iteratively selects the workflow with
         the highest synergy score to the current tail using
-        :class:`WorkflowSynergyComparator`.  The process stops once ``length``
-        steps have been selected or no suitable candidates remain.
+        :class:`WorkflowSynergyComparator`.  Candidate scores are multiplied by
+        ``(1 + ROI)`` where ROI values are retrieved from
+        :class:`roi_results_db.ROIResultsDB`.  ``synergy_weight`` and
+        ``roi_weight`` tune the influence of the respective factors.  The
+        process stops once ``length`` steps have been selected or no suitable
+        candidates remain.
         """
 
         if start not in workflows:
@@ -269,20 +275,29 @@ class MetaWorkflowPlanner:
         pipeline = [start]
         available = {k for k in workflows.keys() if k != start}
         current = start
+        graph = self.graph or WorkflowGraph()
 
         while available and len(pipeline) < length:
             best_id: str | None = None
             best_score = -1.0
             for wid in available:
+                if not _io_compatible(graph, current, wid):
+                    continue
                 if WorkflowSynergyComparator is None:
-                    score = 0.0
+                    synergy = 0.0
                 else:
                     try:
-                        score = WorkflowSynergyComparator.compare(
+                        synergy = WorkflowSynergyComparator.compare(
                             workflows[current], workflows[wid]
                         ).aggregate
                     except Exception:
-                        score = 0.0
+                        synergy = 0.0
+                roi = (
+                    _roi_weight_from_db(self.roi_db, wid)
+                    if self.roi_db is not None
+                    else 0.0
+                )
+                score = synergy_weight * synergy * (1.0 + roi_weight * roi)
                 if score > best_score:
                     best_id = wid
                     best_score = score
