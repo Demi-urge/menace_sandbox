@@ -111,7 +111,16 @@ class MetaWorkflowPlanner:
 
         depth, branching = self._graph_features(workflow_id)
         roi_curve = self._roi_curve(workflow_id)
-        funcs, mods, tags, mod_cats, ctx_tags, depths, branchings, curves = self._semantic_tokens(workflow)
+        (
+            funcs,
+            mods,
+            tags,
+            mod_cats,
+            ctx_tags,
+            depths,
+            branchings,
+            curves,
+        ) = self._semantic_tokens(workflow)
         domain = workflow.get("domain")
         if isinstance(domain, str) and domain:
             tags.append(domain)
@@ -176,7 +185,16 @@ class MetaWorkflowPlanner:
 
         depth, branching = self._graph_features(workflow_id)
         roi_curve = self._roi_curve(workflow_id)
-        funcs, mods, tags, mod_cats, ctx_tags, depths, branchings, curves = self._semantic_tokens(workflow)
+        (
+            funcs,
+            mods,
+            tags,
+            mod_cats,
+            ctx_tags,
+            depths,
+            branchings,
+            curves,
+        ) = self._semantic_tokens(workflow)
 
         mods.extend(mod_cats)
         tags.extend(ctx_tags)
@@ -527,7 +545,7 @@ class MetaWorkflowPlanner:
             except Exception:
                 pass
 
-        self._update_cluster_map(chain, roi_gain)
+        self._update_cluster_map(chain, roi_gain, failures=failure_count, entropy=entropy)
 
         return {
             "chain": list(chain),
@@ -627,8 +645,24 @@ class MetaWorkflowPlanner:
     ) -> List[Dict[str, Any]]:
         """Split underperforming subchains and merge high-ROI chains."""
 
-        low = [r["chain"] for r in records if r.get("roi_gain", 0.0) <= roi_threshold]
-        high = [r["chain"] for r in records if r.get("roi_gain", 0.0) > roi_threshold]
+        low = [
+            r["chain"]
+            for r in records
+            if (
+                r.get("roi_gain", 0.0) <= roi_threshold
+                or r.get("failures", 0) > failure_threshold
+                or r.get("entropy", 0.0) > entropy_threshold
+            )
+        ]
+        high = [
+            r["chain"]
+            for r in records
+            if (
+                r.get("roi_gain", 0.0) > roi_threshold
+                and r.get("failures", 0) <= failure_threshold
+                and r.get("entropy", 0.0) <= entropy_threshold
+            )
+        ]
 
         candidates: List[List[str]] = []
         for chain in low:
@@ -687,18 +721,23 @@ class MetaWorkflowPlanner:
             return []
 
         chain_id = "->".join(pipeline)
-        roi_delta = 0.0
-        entropy_val = record.get("entropy", 0.0)
-        if self.stability_db is not None:
-            entry = self.stability_db.data.get(chain_id, {})
-            roi_delta = float(entry.get("roi_delta", 0.0))
-            entropy_val = float(entry.get("entropy", entropy_val))
-        else:
-            roi_delta = record.get("roi_gain", 0.0)
+        info = self.cluster_map.get(tuple(pipeline))
+        roi_delta = (
+            float(info.get("delta_roi", 0.0)) if info else record.get("roi_gain", 0.0)
+        )
+        failure_delta = (
+            float(info.get("delta_failures", 0.0)) if info else record.get("failures", 0)
+        )
+        entropy_delta = (
+            float(info.get("delta_entropy", record.get("entropy", 0.0)))
+            if info
+            else record.get("entropy", 0.0)
+        )
 
         if (
             roi_delta >= roi_improvement_threshold
-            and abs(entropy_val) <= entropy_stability_threshold
+            and failure_delta <= 0
+            and abs(entropy_delta) <= entropy_stability_threshold
         ):
             return [record]
 
@@ -759,16 +798,22 @@ class MetaWorkflowPlanner:
             return []
 
         info = self.cluster_map.get(tuple(pipeline))
-        roi_delta = 0.0
-        if info is not None:
-            roi_delta = float(info.get("delta_roi", 0.0))
-        else:
-            roi_delta = record.get("roi_gain", 0.0)
-        entropy_val = record.get("entropy", 0.0)
+        roi_delta = (
+            float(info.get("delta_roi", 0.0)) if info else record.get("roi_gain", 0.0)
+        )
+        failure_delta = (
+            float(info.get("delta_failures", 0.0)) if info else record.get("failures", 0)
+        )
+        entropy_delta = (
+            float(info.get("delta_entropy", record.get("entropy", 0.0)))
+            if info
+            else record.get("entropy", 0.0)
+        )
 
         if (
             roi_delta >= roi_improvement_threshold
-            and abs(entropy_val) <= entropy_stability_threshold
+            and failure_delta <= 0
+            and abs(entropy_delta) <= entropy_stability_threshold
         ):
             return [record]
 
@@ -801,6 +846,12 @@ class MetaWorkflowPlanner:
         if len(pipeline) <= 1:
             return []
 
+        chain_id = "->".join(pipeline)
+        info = self.cluster_map.get(tuple(pipeline))
+        roi_delta = float(info.get("delta_roi", 0.0)) if info else 0.0
+        failure_delta = float(info.get("delta_failures", 0.0)) if info else 0.0
+        entropy_delta = float(info.get("delta_entropy", 0.0)) if info else 0.0
+
         record = self._validate_chain(
             pipeline,
             workflows,
@@ -811,17 +862,29 @@ class MetaWorkflowPlanner:
         if not record:
             return []
 
-        chain_id = "->".join(pipeline)
-        roi_delta = 0.0
-        entropy_val = record.get("entropy", 0.0)
-        if self.stability_db is not None:
-            entry = self.stability_db.data.get(chain_id, {})
-            roi_delta = float(entry.get("roi_delta", 0.0))
-            entropy_val = float(entry.get("entropy", entropy_val))
-        else:
-            roi_delta = record.get("roi_gain", 0.0)
+        if info is None:
+            info = self.cluster_map.get(tuple(pipeline))
+            roi_delta = (
+                float(info.get("delta_roi", record.get("roi_gain", 0.0)))
+                if info
+                else record.get("roi_gain", 0.0)
+            )
+            failure_delta = (
+                float(info.get("delta_failures", record.get("failures", 0)))
+                if info
+                else record.get("failures", 0)
+            )
+            entropy_delta = (
+                float(info.get("delta_entropy", record.get("entropy", 0.0)))
+                if info
+                else record.get("entropy", 0.0)
+            )
 
-        if roi_delta >= roi_improvement_threshold or abs(entropy_val) > entropy_stability_threshold:
+        if (
+            roi_delta >= roi_improvement_threshold
+            and failure_delta <= 0
+            and abs(entropy_delta) <= entropy_stability_threshold
+        ):
             return [record]
 
         mid = len(pipeline) // 2
@@ -1016,7 +1079,7 @@ class MetaWorkflowPlanner:
             except Exception:
                 pass
 
-        self._update_cluster_map(chain, roi_gain)
+        self._update_cluster_map(chain, roi_gain, failures, entropy)
 
     # ------------------------------------------------------------------
     def merge_high_performing_variants(
@@ -1074,20 +1137,44 @@ class MetaWorkflowPlanner:
 
     # ------------------------------------------------------------------
     def _update_cluster_map(
-        self, chain: Sequence[str], roi_gain: float, *, tol: float = 0.01
+        self,
+        chain: Sequence[str],
+        roi_gain: float,
+        failures: int = 0,
+        entropy: float = 0.0,
+        *,
+        tol: float = 0.01,
     ) -> Dict[str, Any]:
-        """Update ROI delta history for ``chain`` and detect convergence."""
+        """Update metric histories for ``chain`` and detect convergence."""
 
         key = tuple(chain)
         info = self.cluster_map.setdefault(
-            key, {"roi_history": [], "delta_roi": 0.0, "converged": False}
+            key,
+            {
+                "roi_history": [],
+                "failure_history": [],
+                "entropy_history": [],
+                "delta_roi": 0.0,
+                "delta_failures": 0.0,
+                "delta_entropy": 0.0,
+                "converged": False,
+            },
         )
-        history = info["roi_history"]
-        if history:
-            info["delta_roi"] = roi_gain - history[-1]
+        roi_hist = info["roi_history"]
+        if roi_hist:
+            info["delta_roi"] = roi_gain - roi_hist[-1]
             if abs(info["delta_roi"]) < tol:
                 info["converged"] = True
-        history.append(roi_gain)
+        roi_hist.append(roi_gain)
+
+        fail_hist = info["failure_history"]
+        info["delta_failures"] = failures - (fail_hist[-1] if fail_hist else failures)
+        fail_hist.append(failures)
+
+        ent_hist = info["entropy_history"]
+        info["delta_entropy"] = entropy - (ent_hist[-1] if ent_hist else entropy)
+        ent_hist.append(entropy)
+
         return info
 
     # ------------------------------------------------------------------
