@@ -13,7 +13,7 @@ for quick duplicate detection.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import math
 from pathlib import Path
@@ -119,6 +119,16 @@ class SynergyScores:
 
     overfit_b: Optional["OverfittingReport"] = None
     """Overfitting analysis for workflow ``B``."""
+
+    best_practice_match_a: Tuple[float, List[str]] = field(
+        default_factory=lambda: (0.0, [])
+    )
+    """Best practice sequence match for workflow ``A``."""
+
+    best_practice_match_b: Tuple[float, List[str]] = field(
+        default_factory=lambda: (0.0, [])
+    )
+    """Best practice sequence match for workflow ``B``."""
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +359,44 @@ class WorkflowSynergyComparator:
             except Exception:
                 pass
 
+    @classmethod
+    def best_practice_match(cls, spec: Dict[str, Any]) -> Tuple[float, List[str]]:
+        """Return the best matching best-practice sequence for ``spec``.
+
+        The method loads stored sequences from :attr:`best_practices_file`,
+        embeds each sequence alongside the provided specification and returns
+        the highest cosine similarity along with the matching sequence.  When
+        no best practices are available ``(0.0, [])`` is returned.
+        """
+
+        path = cls.best_practices_file
+        if not path.exists():
+            return 0.0, []
+
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            return 0.0, []
+
+        sequences = data.get("sequences", []) if isinstance(data, dict) else []
+        modules = cls._extract_modules(spec)
+        best_score = 0.0
+        best_seq: List[str] = []
+
+        for seq in sequences:
+            if not isinstance(seq, list):
+                continue
+            seq_mods = [str(m) for m in seq]
+            all_mods = sorted(set(modules) | set(seq_mods))
+            vec_spec = cls._embed_spec({"steps": [{"module": m} for m in modules]}, all_mods)
+            vec_seq = cls._embed_spec({"steps": [{"module": m} for m in seq_mods]}, all_mods)
+            score = cls._cosine(vec_spec, vec_seq)
+            if score > best_score:
+                best_score = score
+                best_seq = seq_mods
+
+        return best_score, best_seq
+
     # ------------------------------------------------------------------
     @classmethod
     def analyze_overfitting(
@@ -472,6 +520,9 @@ class WorkflowSynergyComparator:
         overfit_a = cls.analyze_overfitting(spec_a)
         overfit_b = cls.analyze_overfitting(spec_b)
 
+        best_a = cls.best_practice_match(spec_a)
+        best_b = cls.best_practice_match(spec_b)
+
         # Additional metrics derived from ROITracker and structural communities
         combined_modules = mods_a + mods_b
         union_graph = cls._build_graph(combined_modules)
@@ -504,6 +555,8 @@ class WorkflowSynergyComparator:
             aggregate=aggregate,
             overfit_a=overfit_a,
             overfit_b=overfit_b,
+            best_practice_match_a=best_a,
+            best_practice_match_b=best_b,
         )
 
     # ------------------------------------------------------------------
