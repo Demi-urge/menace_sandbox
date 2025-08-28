@@ -29,6 +29,55 @@ except Exception:  # pragma: no cover - fallback when networkx missing
 
 
 # ---------------------------------------------------------------------------
+def log_lineage(
+    parent_id: str | None,
+    child_id: str,
+    mutation_description: str | None = None,
+    *,
+    roi: float | None = None,
+    directory: str | Path = "workflows",
+) -> None:
+    """Persist a lineage record for a workflow mutation.
+
+    The function writes a ``*.workflow.json`` file describing the relationship
+    between ``parent_id`` and ``child_id`` alongside an optional
+    ``*.summary.json`` containing the latest ROI.  This mirrors the format used
+    by :func:`load_specs` so newly logged mutations immediately become part of
+    the lineage graph when that loader is invoked.
+
+    Parameters
+    ----------
+    parent_id:
+        Identifier of the parent workflow.  ``None`` indicates that the child
+        is a root entry.
+    child_id:
+        Identifier for the new workflow variant.
+    mutation_description:
+        Optional human readable description of the mutation.
+    roi:
+        Optional ROI value recorded for ``child_id``.
+    directory:
+        Directory where the lineage specification files should be written.
+    """
+
+    directory_path = Path(directory)
+    directory_path.mkdir(parents=True, exist_ok=True)
+
+    metadata: Dict[str, Any] = {"workflow_id": str(child_id)}
+    if parent_id is not None:
+        metadata["parent_id"] = str(parent_id)
+    if mutation_description is not None:
+        metadata["mutation_description"] = mutation_description
+
+    spec_path = directory_path / f"{child_id}.workflow.json"
+    spec_path.write_text(json.dumps({"metadata": metadata}))
+
+    if roi is not None:
+        summary_path = directory_path / f"{child_id}.summary.json"
+        summary_path.write_text(json.dumps({"roi": float(roi)}))
+
+
+# ---------------------------------------------------------------------------
 def _load_summary(directory: Path, wid: str) -> Dict[str, Any] | None:
     """Return summary data for ``wid`` if available."""
     path = directory / f"{wid}.summary.json"
