@@ -59,6 +59,7 @@ class ModuleMetrics:
     success: bool
     exception: str | None = None
     result: Any | None = None
+    fixtures: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -594,6 +595,7 @@ class WorkflowSandboxRunner:
                         success=success,
                         exception=error,
                         result=result,
+                        fixtures=fixtures,
                     )
                     metrics.modules.append(module_metric)
 
@@ -601,6 +603,17 @@ class WorkflowSandboxRunner:
             # Aggregate metrics into a simple telemetry dictionary
             times = {m.name: m.duration for m in metrics.modules}
             results = {m.name: m.result for m in metrics.modules}
+            fixtures_info: dict[str, Any] = {}
+            for m in metrics.modules:
+                if m.fixtures:
+                    info: dict[str, Any] = {}
+                    files = m.fixtures.get("files", {})
+                    env = m.fixtures.get("env", {})
+                    if files:
+                        info["files"] = list(files.keys())
+                    if env:
+                        info["env"] = dict(env)
+                    fixtures_info[m.name] = info
             peak_mem = max((m.memory_after for m in metrics.modules), default=0)
             crash_freq = (
                 metrics.crash_count / len(metrics.modules)
@@ -613,6 +626,8 @@ class WorkflowSandboxRunner:
                 "crash_frequency": crash_freq,
                 "peak_memory": peak_mem,
             }
+            if fixtures_info:
+                telemetry["module_fixtures"] = fixtures_info
             if roi_delta is not None:
                 telemetry["roi_delta"] = roi_delta
 
