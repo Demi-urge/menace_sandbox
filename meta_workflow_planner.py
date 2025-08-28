@@ -21,6 +21,11 @@ try:  # pragma: no cover - optional heavy dependency
 except Exception:  # pragma: no cover - allow running without ROI tracker
     ROITracker = None  # type: ignore
 
+try:  # pragma: no cover - optional persistence helper
+    from workflow_stability_db import WorkflowStabilityDB  # type: ignore
+except Exception:  # pragma: no cover - allow running without stability db
+    WorkflowStabilityDB = None  # type: ignore
+
 try:  # pragma: no cover - optional heavy dependency
     import networkx as nx  # type: ignore
     _HAS_NX = True
@@ -62,6 +67,8 @@ class MetaWorkflowPlanner:
     tag_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
     graph: WorkflowGraph | None = None
     roi_db: ROIResultsDB | None = None
+    roi_tracker: ROITracker | None = None
+    stability_db: WorkflowStabilityDB | None = None
     # Map of workflow chains to ROI histories for convergence tracking
     cluster_map: Dict[tuple[str, ...], Dict[str, Any]] = field(default_factory=dict)
 
@@ -76,6 +83,16 @@ class MetaWorkflowPlanner:
                 self.roi_db = ROIResultsDB()
             except Exception:
                 self.roi_db = None
+        if self.roi_tracker is None and ROITracker is not None:
+            try:
+                self.roi_tracker = ROITracker(window=self.roi_window)
+            except Exception:
+                self.roi_tracker = None
+        if self.stability_db is None and WorkflowStabilityDB is not None:
+            try:
+                self.stability_db = WorkflowStabilityDB()
+            except Exception:
+                self.stability_db = None
 
     # ------------------------------------------------------------------
     def encode(self, workflow_id: str, workflow: Mapping[str, Any]) -> List[float]:
@@ -316,6 +333,34 @@ class MetaWorkflowPlanner:
             for m in metrics.modules
             if isinstance(m.result, (int, float))
         )
+
+        chain_id = "->".join(chain)
+        prev_roi = (
+            self.stability_db.data.get(chain_id, {}).get("roi")
+            if self.stability_db is not None
+            else 0.0
+        )
+        roi_delta = roi_gain - float(prev_roi or 0.0)
+        if self.roi_tracker is not None:
+            try:
+                self.roi_tracker.record_scenario_delta(
+                    chain_id,
+                    roi_delta,
+                    metrics_delta={"failures": float(failure_count), "entropy": float(entropy)},
+                )
+            except Exception:
+                pass
+        if self.stability_db is not None:
+            try:
+                self.stability_db.record_metrics(
+                    chain_id,
+                    roi_gain,
+                    failure_count,
+                    entropy,
+                    roi_delta=roi_delta,
+                )
+            except Exception:
+                pass
 
         if failure_count > failure_threshold or entropy > entropy_threshold:
             return None
