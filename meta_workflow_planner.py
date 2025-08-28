@@ -111,10 +111,19 @@ class MetaWorkflowPlanner:
 
         depth, branching = self._graph_features(workflow_id)
         roi_curve = self._roi_curve(workflow_id)
-        funcs, mods, tags, depths, branchings, curves = self._semantic_tokens(workflow)
+        funcs, mods, tags, mod_cats, ctx_tags, depths, branchings, curves = self._semantic_tokens(workflow)
         domain = workflow.get("domain")
         if isinstance(domain, str) and domain:
             tags.append(domain)
+
+        # Merge in categories and context tags from the code database
+        mods.extend(mod_cats)
+        tags.extend(ctx_tags)
+
+        # Normalize tokens prior to encoding
+        funcs = sorted({f.lower().strip() for f in funcs if f})
+        mods = sorted({m.lower().strip() for m in mods if m})
+        tags = sorted({t.lower().strip() for t in tags if t})
 
         code_depth = max(depths) if depths else 0.0
         code_branching = max(branchings) if branchings else 0.0
@@ -134,7 +143,7 @@ class MetaWorkflowPlanner:
         vec.extend(self._encode_tokens(mods, self.module_index, self.max_modules))
         vec.extend(self._encode_tokens(tags, self.tag_index, self.max_tags))
 
-        code_tags = sorted({t.lower().strip() for t in tags if t})
+        code_tags = tags
 
         try:
             persist_embedding(
@@ -167,7 +176,14 @@ class MetaWorkflowPlanner:
 
         depth, branching = self._graph_features(workflow_id)
         roi_curve = self._roi_curve(workflow_id)
-        funcs, mods, tags, depths, branchings, curves = self._semantic_tokens(workflow)
+        funcs, mods, tags, mod_cats, ctx_tags, depths, branchings, curves = self._semantic_tokens(workflow)
+
+        mods.extend(mod_cats)
+        tags.extend(ctx_tags)
+
+        funcs = sorted({f.lower().strip() for f in funcs if f})
+        mods = sorted({m.lower().strip() for m in mods if m})
+        tags = sorted({t.lower().strip() for t in tags if t})
 
         code_depth = max(depths) if depths else 0.0
         code_branching = max(branchings) if branchings else 0.0
@@ -1157,9 +1173,45 @@ class MetaWorkflowPlanner:
         return mods, tags, depth, branching, curve
 
     # ------------------------------------------------------------------
+    def _module_db_tags(self, module: str) -> tuple[List[str], List[str]]:
+        """Return module categories and context tags for ``module``.
+
+        The helper consults :class:`code_database.CodeDatabase` if available and
+        gracefully falls back to empty lists when the database or methods are
+        unavailable.  Implementations may expose ``get_module_categories`` and
+        ``get_context_tags`` methods; both are optional.
+        """
+
+        if not self.code_db:
+            return [], []
+
+        categories: List[str] = []
+        ctx_tags: List[str] = []
+
+        try:
+            if hasattr(self.code_db, "get_module_categories"):
+                categories = list(self.code_db.get_module_categories(module) or [])
+            elif hasattr(self.code_db, "module_categories"):
+                categories = list(self.code_db.module_categories(module) or [])
+        except Exception:
+            categories = []
+
+        try:
+            if hasattr(self.code_db, "get_context_tags"):
+                ctx_tags = list(self.code_db.get_context_tags(module) or [])
+            elif hasattr(self.code_db, "context_tags"):
+                ctx_tags = list(self.code_db.context_tags(module) or [])
+        except Exception:
+            ctx_tags = []
+
+        return [str(c) for c in categories], [str(t) for t in ctx_tags]
+
+    # ------------------------------------------------------------------
     def _semantic_tokens(
         self, workflow: Mapping[str, Any]
     ) -> tuple[
+        List[str],
+        List[str],
         List[str],
         List[str],
         List[str],
@@ -1171,11 +1223,17 @@ class MetaWorkflowPlanner:
         funcs: List[str] = []
         modules: List[str] = []
         tags: List[str] = []
+        module_cats: List[str] = []
+        ctx_tags: List[str] = []
         depths: List[float] = []
         branchings: List[float] = []
         curves: List[List[float]] = []
         if isinstance(workflow.get("category"), str):
-            modules.append(str(workflow["category"]))
+            cat = str(workflow["category"])
+            modules.append(cat)
+            mc, mt = self._module_db_tags(cat)
+            module_cats.extend(mc)
+            ctx_tags.extend(mt)
         for step in steps:
             fn = None
             mod = None
@@ -1190,18 +1248,31 @@ class MetaWorkflowPlanner:
                 fname = str(fn)
                 funcs.append(fname)
                 cmods, ctags, d, b, curve = self._code_db_context(fname)
-                modules.extend(cmods)
-                tags.extend(ctags)
+                module_cats.extend(cmods)
+                ctx_tags.extend(ctags)
                 depths.append(d)
                 branchings.append(b)
                 curves.append(curve)
             if mod:
-                modules.append(str(mod))
+                mname = str(mod)
+                modules.append(mname)
+                mc, mt = self._module_db_tags(mname)
+                module_cats.extend(mc)
+                ctx_tags.extend(mt)
             if isinstance(stags, str):
                 tags.append(stags)
             else:
                 tags.extend(str(t) for t in stags)
-        return funcs, modules, tags, depths, branchings, curves
+        return (
+            funcs,
+            modules,
+            tags,
+            module_cats,
+            ctx_tags,
+            depths,
+            branchings,
+            curves,
+        )
 
     # ------------------------------------------------------------------
     def _encode_tokens(
