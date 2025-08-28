@@ -38,6 +38,11 @@ try:  # pragma: no cover - optional heavy dependency
 except Exception:  # pragma: no cover - allow running without comparator
     WorkflowSynergyComparator = None  # type: ignore
 
+try:  # pragma: no cover - optional code database
+    from code_database import CodeDB  # type: ignore
+except Exception:  # pragma: no cover - database unavailable
+    CodeDB = None  # type: ignore
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
@@ -69,6 +74,7 @@ class MetaWorkflowPlanner:
     roi_db: ROIResultsDB | None = None
     roi_tracker: ROITracker | None = None
     stability_db: WorkflowStabilityDB | None = None
+    code_db: CodeDB | None = None
     # Map of workflow chains to ROI histories for convergence tracking
     cluster_map: Dict[tuple[str, ...], Dict[str, Any]] = field(default_factory=dict)
 
@@ -93,6 +99,11 @@ class MetaWorkflowPlanner:
                 self.stability_db = WorkflowStabilityDB()
             except Exception:
                 self.stability_db = None
+        if self.code_db is None and CodeDB is not None:
+            try:
+                self.code_db = CodeDB()
+            except Exception:
+                self.code_db = None
 
     # ------------------------------------------------------------------
     def encode(self, workflow_id: str, workflow: Mapping[str, Any]) -> List[float]:
@@ -100,14 +111,27 @@ class MetaWorkflowPlanner:
 
         depth, branching = self._graph_features(workflow_id)
         roi_curve = self._roi_curve(workflow_id)
-        funcs, mods, tags = self._semantic_tokens(workflow)
+        funcs, mods, tags, depths, branchings, curves = self._semantic_tokens(workflow)
+
+        code_depth = max(depths) if depths else 0.0
+        code_branching = max(branchings) if branchings else 0.0
+        code_curve = [0.0] * self.roi_window
+        if curves:
+            for curve in curves:
+                for i, val in enumerate(curve[: self.roi_window]):
+                    code_curve[i] += float(val)
+            code_curve = [v / len(curves) for v in code_curve]
 
         vec: List[float] = []
         vec.extend([depth, branching])
         vec.extend(roi_curve)
+        vec.extend([code_depth, code_branching])
+        vec.extend(code_curve)
         vec.extend(self._encode_tokens(funcs, self.function_index, self.max_functions))
         vec.extend(self._encode_tokens(mods, self.module_index, self.max_modules))
         vec.extend(self._encode_tokens(tags, self.tag_index, self.max_tags))
+
+        code_tags = sorted({t.lower().strip() for t in tags if t})
 
         try:
             persist_embedding(
@@ -117,6 +141,7 @@ class MetaWorkflowPlanner:
                 origin_db="workflow",
                 metadata={
                     "roi_curve": roi_curve,
+                    "code_tags": code_tags,
                     "dependency_depth": depth,
                     "branching_factor": branching,
                 },
@@ -137,9 +162,22 @@ class MetaWorkflowPlanner:
         """
 
         depth, branching = self._graph_features(workflow_id)
-        funcs, mods, tags = self._semantic_tokens(workflow)
+        roi_curve = self._roi_curve(workflow_id)
+        funcs, mods, tags, depths, branchings, curves = self._semantic_tokens(workflow)
+
+        code_depth = max(depths) if depths else 0.0
+        code_branching = max(branchings) if branchings else 0.0
+        code_curve = [0.0] * self.roi_window
+        if curves:
+            for curve in curves:
+                for i, val in enumerate(curve[: self.roi_window]):
+                    code_curve[i] += float(val)
+            code_curve = [v / len(curves) for v in code_curve]
 
         vec: List[float] = [depth, branching]
+        vec.extend(roi_curve)
+        vec.extend([code_depth, code_branching])
+        vec.extend(code_curve)
         vec.extend(self._encode_tokens(funcs, self.function_index, self.max_functions))
         vec.extend(self._encode_tokens(mods, self.module_index, self.max_modules))
         vec.extend(self._encode_tokens(tags, self.tag_index, self.max_tags))
@@ -905,31 +943,99 @@ class MetaWorkflowPlanner:
         return curve
 
     # ------------------------------------------------------------------
+    def _code_db_context(
+        self, func: str
+    ) -> tuple[List[str], List[str], float, float, List[float]]:
+        if not self.code_db:
+            return [], [], 0.0, 0.0, []
+        try:
+            rows = self.code_db.search(func)
+        except Exception:
+            return [], [], 0.0, 0.0, []
+        mods: List[str] = []
+        tags: List[str] = []
+        depth = 0.0
+        branching = 0.0
+        curve: List[float] = []
+        for r in rows[:1]:
+            m = r.get("template_type")
+            if m:
+                mods.append(str(m))
+            summary = r.get("summary") or ""
+            if isinstance(summary, str):
+                tags.extend(summary.split())
+            ctags = r.get("context_tags") or r.get("tags") or []
+            if isinstance(ctags, str):
+                tags.extend(ctags.split())
+            else:
+                tags.extend(str(t) for t in ctags)
+            try:
+                depth = float(r.get("dependency_depth", 0.0) or 0.0)
+            except Exception:
+                depth = 0.0
+            try:
+                branching = float(r.get("branching_factor", 0.0) or 0.0)
+            except Exception:
+                branching = 0.0
+            rc = r.get("roi_curve") or r.get("roi_curves") or []
+            if isinstance(rc, str):
+                try:
+                    curve = [float(x) for x in json.loads(rc)]
+                except Exception:
+                    try:
+                        curve = [float(x) for x in rc.split(",") if x]
+                    except Exception:
+                        curve = []
+            elif isinstance(rc, Iterable):
+                curve = [float(x) for x in rc]
+        return mods, tags, depth, branching, curve
+
+    # ------------------------------------------------------------------
     def _semantic_tokens(
         self, workflow: Mapping[str, Any]
-    ) -> tuple[List[str], List[str], List[str]]:
+    ) -> tuple[
+        List[str],
+        List[str],
+        List[str],
+        List[float],
+        List[float],
+        List[List[float]],
+    ]:
         steps = workflow.get("workflow") or workflow.get("task_sequence") or []
         funcs: List[str] = []
         modules: List[str] = []
         tags: List[str] = []
+        depths: List[float] = []
+        branchings: List[float] = []
+        curves: List[List[float]] = []
         if isinstance(workflow.get("category"), str):
             modules.append(str(workflow["category"]))
         for step in steps:
+            fn = None
+            mod = None
+            stags: Iterable[str] | str | None = []
             if isinstance(step, str):
-                funcs.append(step)
+                fn = step
             elif isinstance(step, Mapping):
                 fn = step.get("function") or step.get("call") or step.get("name")
-                if fn:
-                    funcs.append(str(fn))
                 mod = step.get("module") or step.get("category")
-                if mod:
-                    modules.append(str(mod))
                 stags = step.get("context_tags") or step.get("tags") or []
-                if isinstance(stags, str):
-                    tags.append(stags)
-                else:
-                    tags.extend(str(t) for t in stags)
-        return funcs, modules, tags
+            if fn:
+                fname = str(fn)
+                funcs.append(fname)
+                cmods, ctags, d, b, curve = self._code_db_context(fname)
+                modules.extend(cmods)
+                tags.extend(ctags)
+                depths.append(d)
+                branchings.append(b)
+                curves.append(curve)
+            if mod:
+                modules.append(str(mod))
+            if isinstance(stags, str):
+                tags.append(stags)
+            else:
+                tags.extend(str(t) for t in stags)
+        return funcs, modules, tags, depths, branchings, curves
 
     # ------------------------------------------------------------------
     def _encode_tokens(
