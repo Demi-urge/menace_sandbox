@@ -189,30 +189,59 @@ class MetaWorkflowPlanner:
     ) -> List[List[str]]:
         """Group ``workflows`` into similarity clusters.
 
-        The clustering uses :class:`WorkflowSynergyComparator` to score pairs of
-        workflows.  Workflows with an aggregate synergy score of at least
-        ``threshold`` are placed in the same cluster.  When the comparator is
-        unavailable each workflow forms its own cluster.
+        Each workflow is encoded via :meth:`encode_workflow` and assigned a
+        weight derived from its most recent ROI gain recorded in
+        :class:`roi_results_db.ROIResultsDB`.  Cosine similarity between
+        embeddings is multiplied by the normalized ROI weights of both
+        workflows to form a similarity matrix.  Workflows with an ROI‑weighted
+        similarity score of at least ``threshold`` are placed in the same
+        cluster.  When no ROI data are available, each workflow forms its own
+        cluster.
         """
 
-        remaining = set(workflows.keys())
-        clusters: List[List[str]] = []
+        ids = list(workflows.keys())
+        if not ids:
+            return []
 
+        # Encode workflows and collect ROI scores
+        embeddings: Dict[str, List[float]] = {}
+        roi_scores: Dict[str, float] = {}
+        for wid, spec in workflows.items():
+            embeddings[wid] = self.encode_workflow(wid, spec)
+            score = 0.0
+            if self.roi_db is not None:
+                try:
+                    trends = self.roi_db.fetch_trends(wid)
+                    if trends:
+                        score = float(trends[-1].get("roi_gain", 0.0))
+                except Exception:
+                    score = 0.0
+            roi_scores[wid] = max(0.0, score)
+
+        max_score = max(roi_scores.values()) if roi_scores else 0.0
+        weights = {
+            wid: (score / max_score if max_score > 0 else 0.0)
+            for wid, score in roi_scores.items()
+        }
+
+        # Build ROI‑weighted similarity matrix
+        sims: Dict[str, Dict[str, float]] = {wid: {} for wid in ids}
+        for i, wid in enumerate(ids):
+            for j in range(i + 1, len(ids)):
+                other = ids[j]
+                sim = cosine_similarity(embeddings[wid], embeddings[other])
+                sim *= weights[wid] * weights[other]
+                sims[wid][other] = sim
+                sims[other][wid] = sim
+
+        # Cluster based on thresholded similarities
+        remaining = set(ids)
+        clusters: List[List[str]] = []
         while remaining:
             wid = remaining.pop()
-            spec_a = workflows[wid]
             cluster = [wid]
             for other in list(remaining):
-                if WorkflowSynergyComparator is None:
-                    score = 0.0
-                else:
-                    try:
-                        score = WorkflowSynergyComparator.compare(
-                            spec_a, workflows[other]
-                        ).aggregate
-                    except Exception:
-                        score = 0.0
-                if score >= threshold:
+                if sims[wid].get(other, 0.0) >= threshold:
                     cluster.append(other)
                     remaining.remove(other)
             clusters.append(cluster)
