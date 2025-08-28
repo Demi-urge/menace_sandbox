@@ -64,6 +64,11 @@ except Exception:  # pragma: no cover - best effort fallback
 router = GLOBAL_ROUTER or init_db_router("self_improvement_engine")
 STABLE_WORKFLOWS = WorkflowStabilityDB()
 PLANNER_INTERVAL = int(os.getenv("META_PLANNING_INTERVAL", "10"))
+# Time based interval (in seconds) used to periodically trigger the meta
+# workflow planner in a background thread.  Keeping the configuration separate
+# from the cycle based ``PLANNER_INTERVAL`` allows the planner to run even when
+# no explicit self-improvement cycles are executed.
+META_PLANNING_PERIOD = int(os.getenv("META_PLANNING_PERIOD", "3600"))
 neuro_stub = sys.modules.get("neurosales")
 if neuro_stub:
     if not hasattr(neuro_stub, "get_recent_messages"):
@@ -1275,6 +1280,14 @@ class SelfImprovementEngine:
             hist_file = Path(settings.sandbox_data_dir) / "synergy_history.db"
             self._start_synergy_trainer(hist_file, interval)
 
+        # Schedule periodic meta-planning runs on a background thread.  This
+        # keeps the meta planner active even when the main self-improvement
+        # cycle is idle.
+        self._meta_planner_thread: threading.Thread | None = None
+        self._meta_planner_stop: threading.Event | None = None
+        if META_PLANNING_PERIOD > 0 and MetaWorkflowPlanner is not None:
+            self._start_meta_planner_thread(float(META_PLANNING_PERIOD))
+
     def _plan_cross_domain_chains(self, top_k: int = 3) -> list[list[str]]:
         """Use meta planner to suggest new cross-domain workflow chains."""
         if MetaWorkflowPlanner is None or WorkflowChainSuggester is None:
@@ -1325,7 +1338,12 @@ class SelfImprovementEngine:
                     return ok
 
                 scorer = CompositeWorkflowScorer(results_db=ROIResultsDB())
-                evaluation = scorer.run(_chain_callable, meta_id, run_id=f"meta-{idx}")
+                evaluation = scorer.run(
+                    _chain_callable,
+                    meta_id,
+                    run_id=f"meta-{idx}",
+                    sequence=chain,
+                )
                 roi_gain = float(evaluation.roi_gain)
                 try:
                     MutationLogger.log_mutation(
@@ -1338,6 +1356,26 @@ class SelfImprovementEngine:
                         after_metric=roi_gain,
                     )
                     STABLE_WORKFLOWS.mark_stable(meta_id, roi_gain)
+                    if roi_gain > 0:
+                        try:
+                            from .workflow_synthesizer import (
+                                record_winning_sequence as _record_winning,
+                            )
+                        except Exception:  # pragma: no cover - flat layout
+                            try:
+                                from workflow_synthesizer import (
+                                    record_winning_sequence as _record_winning,
+                                )  # type: ignore
+                            except Exception:
+                                _record_winning = None  # type: ignore
+                        if _record_winning is not None:
+                            try:
+                                _record_winning(chain)
+                            except Exception:
+                                self.logger.exception(
+                                    "planner reinforcement recording failed",
+                                    extra=log_record(workflow_id=meta_id),
+                                )
                 except Exception:
                     self.logger.exception(
                         "reinforcement logging failed",
@@ -1634,6 +1672,34 @@ class SelfImprovementEngine:
             self._trainer_thread.join(timeout=1.0)
             self._trainer_thread = None
             self._trainer_stop = None
+
+    def _meta_planner_loop(self, interval: float) -> None:
+        """Background loop that periodically executes the meta planner."""
+        assert self._meta_planner_stop is not None
+        while not self._meta_planner_stop.is_set():
+            try:
+                self._execute_meta_planner()
+            except Exception:  # pragma: no cover - keep running on failure
+                self.logger.exception("periodic meta planner run failed")
+            self._meta_planner_stop.wait(interval)
+
+    def _start_meta_planner_thread(self, interval: float) -> None:
+        if self._meta_planner_thread:
+            return
+        self._meta_planner_stop = threading.Event()
+        self._meta_planner_thread = threading.Thread(
+            target=self._meta_planner_loop,
+            args=(interval,),
+            daemon=True,
+        )
+        self._meta_planner_thread.start()
+
+    def stop_meta_planner_thread(self) -> None:
+        if self._meta_planner_thread and self._meta_planner_stop:
+            self._meta_planner_stop.set()
+            self._meta_planner_thread.join(timeout=1.0)
+            self._meta_planner_thread = None
+            self._meta_planner_stop = None
 
     # ------------------------------------------------------------------
     def _metric_delta(self, name: str, window: int = 3) -> float:
@@ -5518,7 +5584,6 @@ class SelfImprovementEngine:
             evo_allowed = self._should_trigger()
             planner_chains: list[list[str]] = []
             if self._cycle_count % PLANNER_INTERVAL == 0:
-                self._execute_meta_planner()
                 planner_chains = self._plan_cross_domain_chains()
                 if consume_planner_suggestions and planner_chains:
                     try:
