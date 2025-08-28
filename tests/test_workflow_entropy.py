@@ -25,4 +25,6 @@ def test_workflow_synergy_comparator_uses_entropy():
         ]
     }
     result = WorkflowSynergyComparator.compare(spec, spec)
-    assert result.expandability == compute_workflow_entropy(spec)
+    expected_entropy = compute_workflow_entropy(spec)
+    assert result.entropy_a == expected_entropy
+    assert result.entropy_b == expected_entropy
