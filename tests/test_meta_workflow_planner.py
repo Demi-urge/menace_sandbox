@@ -131,28 +131,17 @@ def test_compose_pipeline_chaining(monkeypatch):
     monkeypatch.setattr(mwp, "ROITracker", None)
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
 
-    synergy = {("wf1", "wf2"): 0.9, ("wf2", "wf3"): 0.8}
-
-    class DummyScore:
-        def __init__(self, agg):
-            self.aggregate = agg
-
-    class StubComparator:
-        @classmethod
-        def compare(cls, spec_a, spec_b):
-            pair = (spec_a["id"], spec_b["id"])
-            return DummyScore(synergy.get(pair, 0.0))
-
-    monkeypatch.setattr(mwp, "WorkflowSynergyComparator", StubComparator)
+    embeddings = {
+        "wf1": [1.0, 0.0],
+        "wf2": [0.9, 0.1],
+        "wf3": [0.8, 0.2],
+    }
+    monkeypatch.setattr(mwp, "_load_embeddings", lambda: embeddings)
 
     planner = MetaWorkflowPlanner(
         graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({})
     )
-    workflows = {
-        "wf1": {"id": "wf1"},
-        "wf2": {"id": "wf2"},
-        "wf3": {"id": "wf3"},
-    }
+    workflows = {wid: {} for wid in embeddings}
     pipeline = planner.compose_pipeline("wf1", workflows, length=3)
     assert pipeline == ["wf1", "wf2", "wf3"]
 
@@ -161,52 +150,54 @@ def test_compose_pipeline_roi_weighting(monkeypatch):
     monkeypatch.setattr(mwp, "ROITracker", None)
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
 
-    synergy = {("wf1", "wf2"): 0.9, ("wf1", "wf3"): 0.8}
-
-    class DummyScore:
-        def __init__(self, agg):
-            self.aggregate = agg
-
-    class StubComparator:
-        @classmethod
-        def compare(cls, spec_a, spec_b):
-            pair = (spec_a["id"], spec_b["id"])
-            return DummyScore(synergy.get(pair, 0.0))
-
-    monkeypatch.setattr(mwp, "WorkflowSynergyComparator", StubComparator)
+    embeddings = {
+        "wf1": [1.0, 0.0],
+        "wf2": [0.6, 0.8],
+        "wf3": [0.55, 0.835],
+    }
+    monkeypatch.setattr(mwp, "_load_embeddings", lambda: embeddings)
 
     roi_trends = {"wf2": [{"roi_gain": 0.0}], "wf3": [{"roi_gain": 5.0}]}
     planner = MetaWorkflowPlanner(
         graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI(roi_trends)
     )
-    workflows = {
-        "wf1": {"id": "wf1"},
-        "wf2": {"id": "wf2"},
-        "wf3": {"id": "wf3"},
-    }
+    workflows = {wid: {} for wid in embeddings}
     pipeline = planner.compose_pipeline("wf1", workflows, length=2)
     assert pipeline == ["wf1", "wf3"]
     pipeline = planner.compose_pipeline("wf1", workflows, length=2, roi_weight=0.0)
     assert pipeline == ["wf1", "wf2"]
 
 
+def test_cluster_workflows_roi_weighting(monkeypatch):
+    monkeypatch.setattr(mwp, "ROITracker", None)
+    monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
+
+    embeddings = {
+        "wf1": [1.0, 0.0],
+        "wf2": [0.5, 0.5],
+        "wf3": [-1.0, 0.0],
+    }
+    monkeypatch.setattr(mwp, "_load_embeddings", lambda: embeddings)
+
+    roi_trends = {"wf2": [{"roi_gain": 0.5}]}
+    planner = MetaWorkflowPlanner(roi_db=DummyROI(roi_trends))
+    workflows = {wid: {} for wid in embeddings}
+    clusters = planner.cluster_workflows(workflows, threshold=0.75)
+    cluster_ids = [sorted(c) for c in clusters]
+    assert ["wf1", "wf2"] in cluster_ids
+    assert ["wf3"] in cluster_ids
+
+
 def test_compose_pipeline_io_compatibility(monkeypatch):
     monkeypatch.setattr(mwp, "ROITracker", None)
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
 
-    synergy = {("wf1", "wf2"): 1.0, ("wf2", "wf3"): 1.0}
-
-    class DummyScore:
-        def __init__(self, agg):
-            self.aggregate = agg
-
-    class StubComparator:
-        @classmethod
-        def compare(cls, spec_a, spec_b):
-            pair = (spec_a["id"], spec_b["id"])
-            return DummyScore(synergy.get(pair, 0.0))
-
-    monkeypatch.setattr(mwp, "WorkflowSynergyComparator", StubComparator)
+    embeddings = {
+        "wf1": [1.0, 0.0],
+        "wf2": [0.9, 0.1],
+        "wf3": [0.8, 0.2],
+    }
+    monkeypatch.setattr(mwp, "_load_embeddings", lambda: embeddings)
 
     class SigGraph:
         def __init__(self, sigs):
@@ -221,11 +212,7 @@ def test_compose_pipeline_io_compatibility(monkeypatch):
         "wf3": {"inputs": ["c"], "outputs": ["d"]},
     }
     planner = MetaWorkflowPlanner(graph=SigGraph(sigs), roi_db=DummyROI({}))
-    workflows = {
-        "wf1": {"id": "wf1"},
-        "wf2": {"id": "wf2"},
-        "wf3": {"id": "wf3"},
-    }
+    workflows = {wid: {} for wid in embeddings}
     pipeline = planner.compose_pipeline("wf1", workflows, length=3)
     assert pipeline == ["wf1", "wf2"]
 
