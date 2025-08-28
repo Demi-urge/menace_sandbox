@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence, TYPE_CHECKING
 
 from roi_results_db import ROIResultsDB
 from workflow_graph import WorkflowGraph
@@ -27,6 +27,15 @@ try:  # pragma: no cover - optional heavy dependency
 except Exception:  # pragma: no cover - executed when networkx missing
     nx = None  # type: ignore
     _HAS_NX = False
+
+try:  # pragma: no cover - optional heavy dependency
+    from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
+except Exception:  # pragma: no cover - allow running without comparator
+    WorkflowSynergyComparator = None  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
+
 
 def _get_index(value: Any, mapping: Dict[str, int], max_size: int) -> int:
     """Return index for ``value`` expanding ``mapping`` on demand."""
@@ -98,6 +107,108 @@ class MetaWorkflowPlanner:
         except TypeError:  # pragma: no cover - compatibility shim
             persist_embedding("workflow_meta", workflow_id, vec)
         return vec
+
+    # ------------------------------------------------------------------
+    def encode_workflow(self, workflow_id: str, workflow: Mapping[str, Any]) -> List[float]:
+        """Return lightweight embedding for ``workflow``.
+
+        The method derives simple structural signals from :class:`WorkflowGraph`
+        such as dependency depth and branching factor and augments them with
+        basic semantic token presence.  Unlike :meth:`encode`, this variant does
+        not persist the resulting vector which makes it suitable for transient
+        clustering operations.
+        """
+
+        depth, branching = self._graph_features(workflow_id)
+        funcs, mods, tags = self._semantic_tokens(workflow)
+
+        vec: List[float] = [depth, branching]
+        vec.extend(self._encode_tokens(funcs, self.function_index, self.max_functions))
+        vec.extend(self._encode_tokens(mods, self.module_index, self.max_modules))
+        vec.extend(self._encode_tokens(tags, self.tag_index, self.max_tags))
+        return vec
+
+    # ------------------------------------------------------------------
+    def cluster_workflows(
+        self, workflows: Mapping[str, Mapping[str, Any]], *, threshold: float = 0.75
+    ) -> List[List[str]]:
+        """Group ``workflows`` into similarity clusters.
+
+        The clustering uses :class:`WorkflowSynergyComparator` to score pairs of
+        workflows.  Workflows with an aggregate synergy score of at least
+        ``threshold`` are placed in the same cluster.  When the comparator is
+        unavailable each workflow forms its own cluster.
+        """
+
+        remaining = set(workflows.keys())
+        clusters: List[List[str]] = []
+
+        while remaining:
+            wid = remaining.pop()
+            spec_a = workflows[wid]
+            cluster = [wid]
+            for other in list(remaining):
+                if WorkflowSynergyComparator is None:
+                    score = 0.0
+                else:
+                    try:
+                        score = WorkflowSynergyComparator.compare(
+                            spec_a, workflows[other]
+                        ).aggregate
+                    except Exception:
+                        score = 0.0
+                if score >= threshold:
+                    cluster.append(other)
+                    remaining.remove(other)
+            clusters.append(cluster)
+        return clusters
+
+    # ------------------------------------------------------------------
+    def compose_pipeline(
+        self,
+        start: str,
+        workflows: Mapping[str, Mapping[str, Any]],
+        *,
+        length: int = 3,
+    ) -> List[str]:
+        """Compose a high-synergy workflow pipeline.
+
+        Starting from ``start`` the method iteratively selects the workflow with
+        the highest synergy score to the current tail using
+        :class:`WorkflowSynergyComparator`.  The process stops once ``length``
+        steps have been selected or no suitable candidates remain.
+        """
+
+        if start not in workflows:
+            return []
+
+        pipeline = [start]
+        available = {k for k in workflows.keys() if k != start}
+        current = start
+
+        while available and len(pipeline) < length:
+            best_id: str | None = None
+            best_score = -1.0
+            for wid in available:
+                if WorkflowSynergyComparator is None:
+                    score = 0.0
+                else:
+                    try:
+                        score = WorkflowSynergyComparator.compare(
+                            workflows[current], workflows[wid]
+                        ).aggregate
+                    except Exception:
+                        score = 0.0
+                if score > best_score:
+                    best_id = wid
+                    best_score = score
+            if best_id is None:
+                break
+            pipeline.append(best_id)
+            available.remove(best_id)
+            current = best_id
+
+        return pipeline
 
     # ------------------------------------------------------------------
     def plan_and_validate(
@@ -215,10 +326,11 @@ class MetaWorkflowPlanner:
                     workflow_id="->".join(chain),
                     run_id="0",
                     runtime=sum(m.duration for m in metrics.modules),
-                    success_rate=
+                    success_rate=(
                         (len(metrics.modules) - failure_count) / len(metrics.modules)
                         if metrics.modules
-                        else 0.0,
+                        else 0.0
+                    ),
                     roi_gain=roi_gain,
                     workflow_synergy_score=max(0.0, 1.0 - entropy),
                     bottleneck_index=0.0,
@@ -372,13 +484,15 @@ class MetaWorkflowPlanner:
                 history = self.roi_db.fetch_trends(workflow_id)
             except Exception:
                 history = []
-        curve = [float(rec.get("roi_gain", 0.0)) for rec in history[-self.roi_window :]]
+        curve = [float(rec.get("roi_gain", 0.0)) for rec in history[-self.roi_window:]]
         while len(curve) < self.roi_window:
             curve.append(0.0)
         return curve
 
     # ------------------------------------------------------------------
-    def _semantic_tokens(self, workflow: Mapping[str, Any]) -> tuple[List[str], List[str], List[str]]:
+    def _semantic_tokens(
+        self, workflow: Mapping[str, Any]
+    ) -> tuple[List[str], List[str], List[str]]:
         steps = workflow.get("workflow") or workflow.get("task_sequence") or []
         funcs: List[str] = []
         modules: List[str] = []
@@ -510,7 +624,9 @@ def find_synergy_candidates(
     if retriever is not None and Retriever is not None:
         try:  # pragma: no cover - optional path
             ur = retriever._get_retriever()
-            hits, _, _ = ur.retrieve(query_vec, top_k=top_k * 3, dbs=["workflow_meta"])  # type: ignore[attr-defined]
+            hits, _, _ = ur.retrieve(
+                query_vec, top_k=top_k * 3, dbs=["workflow_meta"]
+            )  # type: ignore[attr-defined]
             for hit in hits:
                 wf_id = str(
                     getattr(hit, "record_id", None)
