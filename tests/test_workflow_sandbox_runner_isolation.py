@@ -4,6 +4,8 @@ import sys
 import types
 from pathlib import Path
 
+import shutil
+
 import pytest
 
 
@@ -112,3 +114,103 @@ def test_module_specific_fixtures_restore_env(runner):
     mods = runner.telemetry.get("module_fixtures", {})
     assert mods["mod_one"]["env"] == {"TEST_ENV": "one"}
     assert mods["mod_one"]["files"] == ["data.txt"]
+
+
+def test_additional_fs_ops_confined_to_temp_dir(tmp_path, runner):
+    dir1 = tmp_path / "dir1"
+    dir2 = tmp_path / "dir2"
+    dir3 = tmp_path / "dir3"
+    tree = tmp_path / "tree"
+    file1 = tmp_path / "file1"
+
+    def workflow():
+        os.makedirs(dir1.parent, exist_ok=True)
+        os.mkdir(dir1)
+        os.makedirs(dir2 / "sub")
+        fd = os.open(file1, os.O_CREAT | os.O_WRONLY)
+        os.write(fd, b"x")
+        os.close(fd)
+        os.stat(file1)
+        os.rmdir(dir1)
+        os.removedirs(dir2 / "sub")
+        p = Path(dir3)
+        p.mkdir()
+        inner = p / "inner.txt"
+        inner.write_text("hi")
+        inner.unlink()
+        p.rmdir()
+        os.makedirs(tree / "sub")
+        shutil.rmtree(tree)
+
+    runner.run(workflow)
+
+    for p in [dir1, dir2, dir3, tree, file1]:
+        assert not p.exists()
+
+
+def test_fs_mocks_for_new_wrappers(tmp_path, runner):
+    calls: dict[str, str] = {}
+
+    def rec(name: str):
+        def _rec(path, *a, **kw):
+            calls[name] = str(path)
+            if name == "os.open":
+                return 0
+        return _rec
+
+    fs_mocks = {
+        name: rec(name)
+        for name in [
+            "os.mkdir",
+            "os.makedirs",
+            "os.rmdir",
+            "os.removedirs",
+            "os.open",
+            "os.stat",
+            "shutil.rmtree",
+            "pathlib.Path.mkdir",
+            "pathlib.Path.unlink",
+            "pathlib.Path.rmdir",
+        ]
+    }
+
+    paths = {
+        "os.mkdir": tmp_path / "d1",
+        "os.makedirs": tmp_path / "d2",
+        "os.rmdir": tmp_path / "d3",
+        "os.removedirs": tmp_path / "d4/sub",
+        "os.open": tmp_path / "f5",
+        "os.stat": tmp_path / "f6",
+        "shutil.rmtree": tmp_path / "d7",
+        "pathlib.Path.mkdir": tmp_path / "d8",
+        "pathlib.Path.unlink": tmp_path / "f9",
+        "pathlib.Path.rmdir": tmp_path / "d10",
+    }
+
+    def workflow():
+        os.mkdir(paths["os.mkdir"])
+        os.makedirs(paths["os.makedirs"])
+        os.rmdir(paths["os.rmdir"])
+        os.removedirs(paths["os.removedirs"])
+        os.open(paths["os.open"], os.O_CREAT)
+        os.stat(paths["os.stat"])
+        shutil.rmtree(paths["shutil.rmtree"])
+        Path(paths["pathlib.Path.mkdir"]).mkdir()
+        Path(paths["pathlib.Path.unlink"]).unlink()
+        Path(paths["pathlib.Path.rmdir"]).rmdir()
+
+    runner.run(workflow, fs_mocks=fs_mocks)
+
+    assert set(calls) == set(fs_mocks)
+    for name, orig in paths.items():
+        assert calls[name] != str(orig)
+
+
+def test_safe_mode_blocks_directory_creation(runner):
+    def workflow():
+        os.mkdir("danger")
+
+    metrics = runner.run(workflow, safe_mode=True)
+    mod = metrics.modules[0]
+    assert mod.success is False
+    assert mod.exception and "file write disabled" in mod.exception
