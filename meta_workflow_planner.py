@@ -5,12 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence
 
 from roi_results_db import ROIResultsDB
 from workflow_graph import WorkflowGraph
-from roi_tracker import ROITracker
 from vector_utils import persist_embedding, cosine_similarity
+
+try:  # pragma: no cover - optional heavy dependency
+    from roi_tracker import ROITracker  # type: ignore
+except Exception:  # pragma: no cover - allow running without ROI tracker
+    ROITracker = None  # type: ignore
 
 try:  # pragma: no cover - optional heavy dependency
     import networkx as nx  # type: ignore
@@ -87,6 +91,122 @@ class MetaWorkflowPlanner:
         except TypeError:  # pragma: no cover - compatibility shim
             persist_embedding("workflow_meta", workflow_id, vec)
         return vec
+
+    # ------------------------------------------------------------------
+    def plan_and_validate(
+        self,
+        target_embedding: Sequence[float],
+        workflows: Mapping[str, Callable[[], Any]],
+        *,
+        top_k: int = 3,
+        failure_threshold: int = 0,
+        entropy_threshold: float = 2.0,
+        runner: WorkflowSandboxRunner | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Suggest and validate workflow chains.
+
+        ``target_embedding`` is clustered via :class:`WorkflowChainSuggester`
+        to obtain candidate sequences of workflow identifiers.  Each suggested
+        chain is executed inside a :class:`WorkflowSandboxRunner` and the
+        resulting ROI, failure count and entropy are recorded.  Chains that
+        exceed ``failure_threshold`` or ``entropy_threshold`` are discarded.
+
+        Returns a list of dictionaries containing metrics for accepted chains.
+        """
+
+        try:
+            from workflow_chain_suggester import WorkflowChainSuggester  # type: ignore
+
+            suggester = WorkflowChainSuggester()
+            chains = suggester.suggest_chains(target_embedding, top_k=top_k)
+        except Exception:
+            return []
+
+        if runner is None:
+            try:
+                from sandbox_runner.workflow_sandbox_runner import (
+                    WorkflowSandboxRunner as _Runner,
+                )  # type: ignore
+
+                runner = _Runner()
+            except Exception:
+                return []
+        try:
+            from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
+        except Exception:
+            WorkflowSynergyComparator = None  # type: ignore
+        results: List[Dict[str, Any]] = []
+
+        for chain in chains:
+            funcs: List[Callable[[], Any]] = []
+            for wid in chain:
+                fn = workflows.get(wid)
+                if not callable(fn):
+                    funcs = []
+                    break
+                funcs.append(fn)
+            if not funcs:
+                continue
+
+            metrics = runner.run(funcs)
+            failure_count = max(
+                metrics.crash_count,
+                sum(1 for m in metrics.modules if not m.success),
+            )
+            spec = {"steps": [{"module": m} for m in chain]}
+            if WorkflowSynergyComparator is not None:
+                try:
+                    entropy = WorkflowSynergyComparator._entropy(spec)
+                except Exception:
+                    entropy = 0.0
+            else:
+                entropy = 0.0
+            roi_gain = sum(
+                float(m.result)
+                for m in metrics.modules
+                if isinstance(m.result, (int, float))
+            )
+
+            record = {
+                "chain": list(chain),
+                "roi_gain": roi_gain,
+                "failures": failure_count,
+                "entropy": entropy,
+            }
+
+            if failure_count > failure_threshold or entropy > entropy_threshold:
+                continue
+
+            if self.roi_db is not None:
+                try:
+                    self.roi_db.log_result(
+                        workflow_id="->".join(chain),
+                        run_id="0",
+                        runtime=sum(m.duration for m in metrics.modules),
+                        success_rate=
+                            (len(metrics.modules) - failure_count) / len(metrics.modules)
+                            if metrics.modules
+                            else 0.0,
+                        roi_gain=roi_gain,
+                        workflow_synergy_score=max(0.0, 1.0 - entropy),
+                        bottleneck_index=0.0,
+                        patchability_score=0.0,
+                        module_deltas={
+                            m.name: {
+                                "roi_delta": float(m.result)
+                                if isinstance(m.result, (int, float))
+                                else 0.0,
+                                "success_rate": 1.0 if m.success else 0.0,
+                            }
+                            for m in metrics.modules
+                        },
+                    )
+                except Exception:
+                    pass
+
+            results.append(record)
+
+        return results
 
     # ------------------------------------------------------------------
     def _graph_features(self, workflow_id: str) -> List[float] | tuple[float, float]:
