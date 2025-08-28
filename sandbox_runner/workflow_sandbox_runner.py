@@ -5,9 +5,10 @@ callables inside a temporary directory.  File system access is redirected to
 that directory and, when ``safe_mode`` is enabled, common networking libraries
 are patched so requests either raise :class:`RuntimeError` or invoke supplied
 mock handlers.  File writes are confined to the sandbox and can also be
-redirected to custom handlers such as in-memory buffers.  Each executed
-callable has execution time, memory usage and errors recorded and aggregated
-into a :class:`RunMetrics` instance.
+redirected to custom handlers such as in-memory buffers.  Access to kernel
+introspection paths such as ``/proc`` is left untouched so runners may read
+process information.  Each executed callable has execution time, memory usage
+and errors recorded and aggregated into a :class:`RunMetrics` instance.
 """
 
 from __future__ import annotations
@@ -154,7 +155,14 @@ class WorkflowSandboxRunner:
             original_open = builtins.open
 
             def sandbox_open(file, mode="r", *a, **kw):
-                path = self._resolve(root, file)
+                file_path = os.fspath(file)
+                if file_path.startswith("/proc/"):
+                    return original_open(file, mode, *a, **kw)
+                p = pathlib.Path(file_path)
+                if p.is_absolute() and p.is_relative_to(root):
+                    path = p
+                else:
+                    path = self._resolve(root, file_path)
                 if any(m in mode for m in ("w", "a", "x", "+")):
                     fn = fs_mocks.get("open")
                     if fn:
@@ -172,7 +180,14 @@ class WorkflowSandboxRunner:
 
             def path_open(path_obj, *a, **kw):
                 mode = a[0] if a else kw.get("mode", "r")
-                path = self._resolve(root, path_obj)
+                raw = os.fspath(path_obj)
+                if raw.startswith("/proc/"):
+                    return original_path_open(path_obj, *a, **kw)
+                p = pathlib.Path(raw)
+                if p.is_absolute() and p.is_relative_to(root):
+                    path = p
+                else:
+                    path = self._resolve(root, raw)
                 if any(m in mode for m in ("w", "a", "x", "+")):
                     fn = fs_mocks.get("pathlib.Path.open")
                     if fn:
@@ -181,7 +196,14 @@ class WorkflowSandboxRunner:
                 return original_path_open(path, *a, **kw)
 
             def path_write_text(path_obj, data, *a, **kw):
-                path = self._resolve(root, path_obj)
+                raw = os.fspath(path_obj)
+                if raw.startswith("/proc/"):
+                    return original_write_text(path_obj, data, *a, **kw)
+                p = pathlib.Path(raw)
+                if p.is_absolute() and p.is_relative_to(root):
+                    path = p
+                else:
+                    path = self._resolve(root, raw)
                 fn = fs_mocks.get("pathlib.Path.write_text")
                 if fn:
                     return fn(path, data, *a, **kw)
@@ -189,11 +211,25 @@ class WorkflowSandboxRunner:
                 return original_write_text(path, data, *a, **kw)
 
             def path_read_text(path_obj, *a, **kw):
-                path = self._resolve(root, path_obj)
+                raw = os.fspath(path_obj)
+                if raw.startswith("/proc/"):
+                    return original_read_text(path_obj, *a, **kw)
+                p = pathlib.Path(raw)
+                if p.is_absolute() and p.is_relative_to(root):
+                    path = p
+                else:
+                    path = self._resolve(root, raw)
                 return original_read_text(path, *a, **kw)
 
             def path_write_bytes(path_obj, data, *a, **kw):
-                path = self._resolve(root, path_obj)
+                raw = os.fspath(path_obj)
+                if raw.startswith("/proc/"):
+                    return original_write_bytes(path_obj, data, *a, **kw)
+                p = pathlib.Path(raw)
+                if p.is_absolute() and p.is_relative_to(root):
+                    path = p
+                else:
+                    path = self._resolve(root, raw)
                 fn = fs_mocks.get("pathlib.Path.write_bytes")
                 if fn:
                     return fn(path, data, *a, **kw)
@@ -201,7 +237,14 @@ class WorkflowSandboxRunner:
                 return original_write_bytes(path, data, *a, **kw)
 
             def path_read_bytes(path_obj, *a, **kw):
-                path = self._resolve(root, path_obj)
+                raw = os.fspath(path_obj)
+                if raw.startswith("/proc/"):
+                    return original_read_bytes(path_obj, *a, **kw)
+                p = pathlib.Path(raw)
+                if p.is_absolute() and p.is_relative_to(root):
+                    path = p
+                else:
+                    path = self._resolve(root, raw)
                 return original_read_bytes(path, *a, **kw)
 
             stack.enter_context(mock.patch.object(pathlib.Path, "open", path_open))
