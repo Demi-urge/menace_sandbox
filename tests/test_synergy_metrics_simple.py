@@ -31,7 +31,8 @@ def test_duplicate_detection_thresholds(monkeypatch):
     _mock_optional(monkeypatch)
     spec_a = {"steps": [{"module": "x"}, {"module": "x"}]}
     spec_b = {"steps": [{"module": "x"}, {"module": "y"}]}
-    assert not wsc.WorkflowSynergyComparator.is_duplicate(spec_a, spec_b)
+    scores = wsc.WorkflowSynergyComparator.compare(spec_a, spec_b)
+    assert not wsc.WorkflowSynergyComparator.is_duplicate(scores)
     assert wsc.WorkflowSynergyComparator.is_duplicate(
-        spec_a, spec_b, {"similarity": 0.7, "entropy": 1.0}
+        scores, thresholds={"similarity": 0.7, "entropy": 1.0}
     )

@@ -290,10 +290,10 @@ def test_promoted_duplicate_triggers_merge(monkeypatch, tmp_path):
     class DummyComparator:
         @classmethod
         def compare(cls, a_spec, b_spec):
-            return SimpleNamespace(similarity=1.0, entropy_gap=0.0)
+            return SimpleNamespace(similarity=1.0, entropy_a=0.0, entropy_b=0.0)
 
         @staticmethod
-        def is_duplicate(result, similarity_threshold=0.95, entropy_threshold=0.05):
+        def is_duplicate(result, b_spec=None, thresholds=None):
             return True
 
         @classmethod
