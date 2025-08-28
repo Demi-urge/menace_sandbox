@@ -980,8 +980,82 @@ def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
     return chain
 
 
+# ---------------------------------------------------------------------------
+def _io_compatible(graph: WorkflowGraph, a: str, b: str) -> bool:
+    """Return ``True`` when the outputs of ``a`` feed the inputs of ``b``.
+
+    The check relies on :func:`workflow_graph.get_io_signature`.  When the
+    signatures are unavailable or the function is missing, compatibility is
+    assumed to avoid false negatives.
+    """
+
+    getter = getattr(graph, "get_io_signature", None)
+    if not callable(getter):
+        return True
+    try:
+        sig_a = getter(a)
+        sig_b = getter(b)
+    except Exception:
+        return True
+
+    if not sig_a or not sig_b:
+        return True
+
+    out_a = getattr(sig_a, "outputs", None)
+    in_b = getattr(sig_b, "inputs", None)
+    if out_a is None and isinstance(sig_a, Mapping):
+        out_a = sig_a.get("outputs")
+    if in_b is None and isinstance(sig_b, Mapping):
+        in_b = sig_b.get("inputs")
+
+    if not out_a or not in_b:
+        return True
+    try:
+        return bool(set(out_a) & set(in_b))
+    except Exception:
+        return True
+
+
+# ---------------------------------------------------------------------------
+def compose_meta_workflow(
+    start_workflow_id: str,
+    *,
+    length: int = 5,
+    graph: WorkflowGraph | None = None,
+) -> Dict[str, Any]:
+    """Return ordered meta-workflow specification starting from ``start_workflow_id``.
+
+    The function builds a high-synergy chain via :func:`find_synergy_chain` and
+    filters it so consecutive workflows have compatible I/O signatures according
+    to :func:`workflow_graph.get_io_signature`.  The resulting meta-workflow is
+    expressed as a dictionary containing the ordered ``steps`` and a human
+    readable ``chain`` string (e.g. ``scrape->analyze->generate``).
+    """
+
+    chain = find_synergy_chain(start_workflow_id, length=length)
+    if not chain:
+        return {}
+
+    graph = graph or WorkflowGraph()
+
+    ordered: List[str] = []
+    prev: str | None = None
+    for wid in chain:
+        if prev is None or _io_compatible(graph, prev, wid):
+            ordered.append(wid)
+            prev = wid
+        else:
+            break
+
+    return {
+        "chain": "->".join(ordered),
+        "steps": [{"workflow_id": wid} for wid in ordered],
+    }
+
+
 __all__ = [
     "MetaWorkflowPlanner",
+    "compose_meta_workflow",
     "find_synergy_chain",
     "find_synergy_candidates",
     "find_synergistic_workflows",
