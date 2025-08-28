@@ -19,6 +19,7 @@ import logging
 import traceback
 from pathlib import Path
 
+import json
 import yaml
 
 from .roi_tracker import ROITracker
@@ -44,6 +45,8 @@ try:  # pragma: no cover - runtime failures should not break scoring
     )
 except Exception:  # pragma: no cover - defensive fallback
     PATCH_SUCCESS_RATE = 1.0
+
+WINNING_SEQUENCES_PATH = Path("sandbox_data/winning_sequences.json")
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +123,18 @@ class CompositeWorkflowScorer(ROIScorer):
         self.history_window = 20
         self.module_attribution: Dict[str, Dict[str, float]] = {}
 
+    def record_winning_sequence(self, sequence: list[str]) -> None:
+        """Persist a successful workflow sequence for later reinforcement."""
+        try:
+            data: list[list[str]] = []
+            if WINNING_SEQUENCES_PATH.exists():
+                data = json.loads(WINNING_SEQUENCES_PATH.read_text())
+            data.append(sequence)
+            WINNING_SEQUENCES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            WINNING_SEQUENCES_PATH.write_text(json.dumps(data, indent=2))
+        except Exception:  # pragma: no cover - best effort logging
+            self.failure_logger.exception("failed to record winning sequence")
+
     # ------------------------------------------------------------------
     def run(
         self,
@@ -128,6 +143,7 @@ class CompositeWorkflowScorer(ROIScorer):
         run_id: str,
         *,
         patch_success: float | None = None,
+        sequence: list[str] | None = None,
     ) -> EvaluationResult:
         """Execute ``workflow_callable`` within a sandbox and persist metrics."""
 
@@ -222,6 +238,9 @@ class CompositeWorkflowScorer(ROIScorer):
             module_deltas=per_module,
             failure_reason=failure_reason,
         )
+
+        if success and sequence and roi_gain > 0:
+            self.record_winning_sequence(sequence)
 
         return EvaluationResult(
             runtime=runtime,

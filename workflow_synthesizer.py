@@ -88,6 +88,21 @@ except Exception:  # pragma: no cover - gracefully degrade
 
 logger = logging.getLogger(__name__)
 
+WINNING_SEQUENCES_PATH = Path("sandbox_data/winning_sequences.json")
+
+
+def record_winning_sequence(sequence: List[str]) -> None:
+    """Append ``sequence`` to the shared winning sequence registry."""
+    try:
+        data: List[List[str]] = []
+        if WINNING_SEQUENCES_PATH.exists():
+            data = json.loads(WINNING_SEQUENCES_PATH.read_text())
+        data.append(sequence)
+        WINNING_SEQUENCES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        WINNING_SEQUENCES_PATH.write_text(json.dumps(data, indent=2))
+    except Exception:  # pragma: no cover - best effort logging
+        logger.exception("failed to record winning sequence")
+
 
 def _extract_type_names(type_str: str | None) -> List[str]:
     """Return atomic type names from an annotation expression.
@@ -327,6 +342,8 @@ class WorkflowSynthesizer:
     generated_workflows: List[List[WorkflowStep]]
     workflow_scores: List[float]
     workflow_score_details: List[Dict[str, Any]]
+    winning_sequences: List[List[str]]
+    _winning_set: Set[Tuple[str, ...]]
 
     # ------------------------------------------------------------------
     def __init__(
@@ -375,6 +392,24 @@ class WorkflowSynthesizer:
         self.generated_workflows = []
         self.workflow_scores = []
         self.workflow_score_details = []
+        self._load_winning_sequences()
+
+    def _load_winning_sequences(self) -> None:
+        try:
+            seqs = (
+                json.loads(WINNING_SEQUENCES_PATH.read_text())
+                if WINNING_SEQUENCES_PATH.exists()
+                else []
+            )
+        except Exception:
+            seqs = []
+        self.winning_sequences = seqs
+        self._winning_set = {tuple(s) for s in seqs}
+
+    def reinforce_sequence(self, sequence: List[str]) -> None:
+        record_winning_sequence(sequence)
+        self.winning_sequences.append(sequence)
+        self._winning_set.add(tuple(sequence))
 
     # ------------------------------------------------------------------
     def load_intent_clusters(self) -> None:
@@ -1302,6 +1337,8 @@ class WorkflowSynthesizer:
 
             penalty = unresolved_penalty + duplicate_penalty
             score = synergy_weight * synergy_norm + intent_weight * intent_norm - penalty
+            if tuple(order) in self._winning_set:
+                score += 0.5 * len(order)
             entries.append((score, workflow, synergy_norm, intent_norm, penalty))
 
         entries.sort(key=lambda x: x[0], reverse=True)
