@@ -268,6 +268,7 @@ class WorkflowSandboxRunner:
             original_copy = shutil.copy
             original_copy2 = shutil.copy2
             original_copyfile = shutil.copyfile
+            original_copytree = shutil.copytree
             original_move = shutil.move
 
             def sandbox_remove(path, *a, **kw):
@@ -329,6 +330,15 @@ class WorkflowSandboxRunner:
                 pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
                 return original_copyfile(s, d, *a, **kw)
 
+            def sandbox_copytree(src, dst, *a, **kw):
+                s = self._resolve(root, src)
+                d = self._resolve(root, dst)
+                fn = fs_mocks.get("shutil.copytree")
+                if fn:
+                    return fn(s, d, *a, **kw)
+                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                return original_copytree(s, d, *a, **kw)
+
             def sandbox_move(src, dst, *a, **kw):
                 s = self._resolve(root, src)
                 d = self._resolve(root, dst)
@@ -345,6 +355,7 @@ class WorkflowSandboxRunner:
             stack.enter_context(mock.patch("shutil.copy", sandbox_copy))
             stack.enter_context(mock.patch("shutil.copy2", sandbox_copy2))
             stack.enter_context(mock.patch("shutil.copyfile", sandbox_copyfile))
+            stack.enter_context(mock.patch("shutil.copytree", sandbox_copytree))
             stack.enter_context(mock.patch("shutil.move", sandbox_move))
 
             # Pre-populate any provided file data into the sandbox.
