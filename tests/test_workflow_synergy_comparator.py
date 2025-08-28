@@ -67,6 +67,12 @@ def _force_simple(monkeypatch):
         classmethod(lambda cls, *_: (0.0, 0.0)),
         raising=False,
     )
+    monkeypatch.setattr(
+        wsc.WorkflowSynergyComparator,
+        "best_practices_file",
+        Path("/tmp/wsc_best.json"),
+        raising=False,
+    )
 
 
 FIX_DIR = Path(__file__).resolve().parent / "fixtures" / "workflows"
@@ -353,3 +359,32 @@ def test_weighted_aggregate(monkeypatch):
     result = wsc.WorkflowSynergyComparator.compare(spec_a, spec_b, weights=weights)
 
     assert result.aggregate == pytest.approx((0.8 + 0.5) / 2)
+
+
+def test_analyze_overfitting(monkeypatch, tmp_path):
+    _force_simple(monkeypatch)
+    # Directly patch repository path for isolation
+    monkeypatch.setattr(
+        wsc.WorkflowSynergyComparator,
+        "best_practices_file",
+        tmp_path / "best.json",
+        raising=False,
+    )
+
+    # Spec with obvious repetition and low entropy
+    over_spec = {"steps": [{"module": "a"}, {"module": "a"}, {"module": "a"}]}
+    report = wsc.WorkflowSynergyComparator.analyze_overfitting(
+        over_spec, entropy_threshold=1.5, repeat_threshold=2
+    )
+    assert report.low_entropy
+    assert "a" in report.repeated_modules
+
+    # Balanced spec should be added to best practices repository
+    good_spec = {"steps": [{"module": "a"}, {"module": "b"}]}
+    good_report = wsc.WorkflowSynergyComparator.analyze_overfitting(
+        good_spec, entropy_threshold=0.5, repeat_threshold=2
+    )
+    assert not good_report.low_entropy
+    assert good_report.repeated_modules == {}
+    data = json.loads((tmp_path / "best.json").read_text())
+    assert ["a", "b"] in data.get("sequences", [])

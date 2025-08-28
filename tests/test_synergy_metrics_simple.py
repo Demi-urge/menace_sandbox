@@ -1,5 +1,7 @@
 import math
 import pytest
+from pathlib import Path
+
 from menace_sandbox import workflow_synergy_comparator as wsc
 
 
@@ -7,6 +9,12 @@ def _mock_optional(monkeypatch):
     monkeypatch.setattr(wsc, "_HAS_NX", False, raising=False)
     monkeypatch.setattr(wsc, "WorkflowVectorizer", None, raising=False)
     monkeypatch.setattr(wsc, "ROITracker", None, raising=False)
+    monkeypatch.setattr(
+        wsc.WorkflowSynergyComparator,
+        "best_practices_file",
+        Path("/tmp/wsc_best.json"),
+        raising=False,
+    )
 
 
 def test_similarity_and_entropy(monkeypatch):
