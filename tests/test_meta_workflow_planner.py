@@ -1,10 +1,13 @@
 import json
 import os
+import sys
+import types
 from pathlib import Path
 
 import networkx as nx
 import pytest
 
+import meta_workflow_planner as mwp
 from meta_workflow_planner import MetaWorkflowPlanner, find_synergy_candidates
 from vector_utils import cosine_similarity
 
@@ -112,4 +115,96 @@ def test_find_synergy_candidates(sample_embeddings):
     assert cands[0]["workflow_id"] == "wf3"
     assert cands[0]["roi"] == pytest.approx(5.0)
     assert any(c["workflow_id"] == "wf2" for c in cands)
+
+
+def test_compose_pipeline_chaining(monkeypatch):
+    monkeypatch.setattr(mwp, "ROITracker", None)
+    monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
+
+    synergy = {("wf1", "wf2"): 0.9, ("wf2", "wf3"): 0.8}
+
+    class DummyScore:
+        def __init__(self, agg):
+            self.aggregate = agg
+
+    class StubComparator:
+        @classmethod
+        def compare(cls, spec_a, spec_b):
+            pair = (spec_a["id"], spec_b["id"])
+            return DummyScore(synergy.get(pair, 0.0))
+
+    monkeypatch.setattr(mwp, "WorkflowSynergyComparator", StubComparator)
+
+    planner = MetaWorkflowPlanner(
+        graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({})
+    )
+    workflows = {
+        "wf1": {"id": "wf1"},
+        "wf2": {"id": "wf2"},
+        "wf3": {"id": "wf3"},
+    }
+    pipeline = planner.compose_pipeline("wf1", workflows, length=3)
+    assert pipeline == ["wf1", "wf2", "wf3"]
+
+
+def test_plan_and_validate_sandbox(monkeypatch):
+    monkeypatch.setattr(mwp, "ROITracker", None)
+    monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
+
+    class DummyDB:
+        def log_result(self, **kwargs):
+            self.logged = kwargs
+
+    planner = MetaWorkflowPlanner(
+        graph=DummyGraph(nx.DiGraph()), roi_db=DummyDB()
+    )
+
+    class DummySuggester:
+        def suggest_chains(self, target_embedding, top_k=3):
+            return [["wf1", "wf2"]]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "workflow_chain_suggester",
+        types.SimpleNamespace(WorkflowChainSuggester=DummySuggester),
+    )
+
+    class StubComparator:
+        @staticmethod
+        def _entropy(spec):
+            return 0.0
+
+    monkeypatch.setitem(
+        sys.modules,
+        "workflow_synergy_comparator",
+        types.SimpleNamespace(WorkflowSynergyComparator=StubComparator),
+    )
+
+    class ModuleMetric:
+        def __init__(self, name, result):
+            self.name = name
+            self.result = result
+            self.success = True
+            self.duration = 0.0
+
+    class Metrics:
+        def __init__(self, modules):
+            self.modules = modules
+            self.crash_count = 0
+
+    class DummyRunner:
+        def run(self, funcs):
+            modules = [ModuleMetric(fn.__name__, fn()) for fn in funcs]
+            return Metrics(modules)
+
+    def wf1():
+        return 1.0
+
+    def wf2():
+        return 2.0
+
+    workflows = {"wf1": wf1, "wf2": wf2}
+    records = planner.plan_and_validate([0.0], workflows, runner=DummyRunner(), top_k=1)
+    assert records and records[0]["chain"] == ["wf1", "wf2"]
+    assert records[0]["roi_gain"] == pytest.approx(3.0)
 
