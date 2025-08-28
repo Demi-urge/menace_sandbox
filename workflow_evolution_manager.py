@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 import importlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -18,6 +19,9 @@ from .sandbox_settings import SandboxSettings
 from .workflow_synthesizer import save_workflow
 from . import workflow_run_summary
 from . import sandbox_runner
+from .workflow_synergy_comparator import WorkflowSynergyComparator
+from .workflow_metrics import compute_workflow_entropy
+from . import workflow_merger
 try:  # pragma: no cover - optional at runtime
     from .workflow_graph import WorkflowGraph
 except Exception:  # pragma: no cover - best effort
@@ -191,6 +195,84 @@ def evolve(
 
         scorer = CompositeWorkflowScorer(results_db=results_db, tracker=tracker)
         variant_result = scorer.run(variant_callable, wf_id_str, run_id=run_id)
+
+        baseline_spec = getattr(baseline_result, "workflow_spec", None)
+        variant_spec = getattr(variant_result, "workflow_spec", None)
+        if baseline_spec and variant_spec:
+            try:
+                cmp = WorkflowSynergyComparator.compare(
+                    {"steps": baseline_spec}, {"steps": variant_spec}
+                )
+                similarity = (cmp.efficiency + cmp.modularity) / 2.0
+                ent_a = compute_workflow_entropy({"steps": baseline_spec})
+                ent_b = compute_workflow_entropy({"steps": variant_spec})
+                ent_delta = abs(ent_a - ent_b)
+                sim_thresh = float(
+                    os.getenv("WORKFLOW_MERGE_SIMILARITY", "0.9") or 0.9
+                )
+                ent_thresh = float(
+                    os.getenv("WORKFLOW_MERGE_ENTROPY_DELTA", "0.1") or 0.1
+                )
+                if similarity >= sim_thresh and ent_delta <= ent_thresh:
+                    base_path = Path(f"{wf_id_str}.base.json")
+                    a_path = Path(f"{wf_id_str}.a.json")
+                    b_path = Path(f"{wf_id_str}.b.json")
+                    out_path = Path(f"{wf_id_str}.merged.json")
+                    for p, spec in (
+                        (base_path, {"steps": baseline_spec}),
+                        (a_path, {"steps": baseline_spec}),
+                        (b_path, {"steps": variant_spec}),
+                    ):
+                        p.write_text(json.dumps(spec))
+                    merged_file = workflow_merger.merge_workflows(
+                        base_path, a_path, b_path, out_path
+                    )
+                    try:
+                        merged_data = json.loads(merged_file.read_text())
+                        merged_steps = merged_data.get("steps", [])
+                        seq = "-".join(
+                            s.get("module") for s in merged_steps if s.get("module")
+                        )
+                        variant_callable = _build_callable(seq)
+                        run_id = f"merge-{run_id}"
+                        variant_result = scorer.run(
+                            variant_callable, wf_id_str, run_id=run_id
+                        )
+                        merged_id = merged_data.get("metadata", {}).get("workflow_id")
+                        if merged_id:
+                            workflow_run_summary.record_run(
+                                str(merged_id), variant_result.roi_gain
+                            )
+                            if EVOLUTION_DB is not None and EvolutionEvent is not None:
+                                try:
+                                    EVOLUTION_DB.add(
+                                        EvolutionEvent(
+                                            action="merge",
+                                            before_metric=baseline_roi,
+                                            after_metric=variant_result.roi_gain,
+                                            roi=variant_result.roi_gain - baseline_roi,
+                                            workflow_id=int(merged_id),
+                                            reason="merge",
+                                            trigger="workflow_evolution_manager",
+                                            performance=variant_result.roi_gain
+                                            - baseline_roi,
+                                        )
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "failed logging merged lineage event"
+                                    )
+                    except Exception:
+                        logger.exception("failed re-evaluating merged workflow")
+                    finally:
+                        for p in (base_path, a_path, b_path, out_path):
+                            try:
+                                p.unlink()
+                            except Exception:
+                                pass
+            except Exception:
+                logger.exception("workflow merge check failed")
+
         roi_delta = variant_result.roi_gain - baseline_roi
 
         # Persist ROI delta with variant identifier
