@@ -299,9 +299,9 @@ def evolve(
             for cand_id, cand_path in candidates:
                 try:
                     cand_spec = json.loads(cand_path.read_text())
+                    scores = comparator.compare({"steps": variant_spec}, cand_spec)
                     if comparator.is_duplicate(
-                        {"steps": variant_spec},
-                        cand_spec,
+                        scores,
                         {
                             "similarity": settings.duplicate_similarity,
                             "entropy": settings.duplicate_entropy,

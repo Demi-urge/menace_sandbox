@@ -337,39 +337,21 @@ class WorkflowSynergyComparator:
     # ------------------------------------------------------------------
     @classmethod
     def is_duplicate(
-        cls,
-        scores_or_a: SynergyScores | Dict[str, Any] | str | Path,
-        b_spec: Dict[str, Any] | str | Path | None = None,
-        thresholds: Optional[Dict[str, float]] = None,
+        cls, scores: SynergyScores, thresholds: Optional[Dict[str, float]] = None
     ) -> bool:
         """Return ``True`` when two workflows are near-identical.
 
-        Parameters
-        ----------
-        scores_or_a:
-            Either a :class:`SynergyScores` instance produced by :meth:`compare`
-            or the first workflow specification/identifier.
-        b_spec:
-            Optional second workflow specification/identifier.  Required when
-            ``scores_or_a`` is not a :class:`SynergyScores` instance.
-        thresholds:
-            Optional mapping providing ``similarity`` and ``entropy`` thresholds.
-            Defaults to ``{"similarity": 0.95, "entropy": 0.05}``.
+        ``scores`` must be the result of :meth:`compare`.  ``thresholds`` may
+        override the default similarity (``0.95``) and entropy gap (``0.05``)
+        limits used to qualify a pair of workflows as duplicates.
         """
 
         thresholds = thresholds or {}
         sim_thr = thresholds.get("similarity", 0.95)
         ent_thr = thresholds.get("entropy", 0.05)
 
-        if isinstance(scores_or_a, SynergyScores):
-            result = scores_or_a
-        else:
-            if b_spec is None:
-                raise TypeError("b_spec must be provided when passing workflow specifications")
-            result = cls.compare(scores_or_a, b_spec)
-
-        ent_gap = abs(result.entropy_a - result.entropy_b)
-        return result.similarity >= sim_thr and ent_gap <= ent_thr
+        ent_gap = abs(scores.entropy_a - scores.entropy_b)
+        return scores.similarity >= sim_thr and ent_gap <= ent_thr
 
     # ------------------------------------------------------------------
     @classmethod
