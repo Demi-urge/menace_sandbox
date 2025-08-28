@@ -161,7 +161,16 @@ def test_evolve_auto_indexes_promoted_orphans(tmp_path, monkeypatch):
         ),
     )
     _stub("workflow_summary_db", WorkflowSummaryDB=object)
-    _stub("sandbox_settings", SandboxSettings=lambda: SimpleNamespace(roi_ema_alpha=0.1))
+    _stub(
+        "sandbox_settings",
+        SandboxSettings=lambda: SimpleNamespace(
+            roi_ema_alpha=0.1,
+            workflow_merge_similarity=0.9,
+            workflow_merge_entropy_delta=0.1,
+            duplicate_similarity=0.95,
+            duplicate_entropy=0.05,
+        ),
+    )
     _stub("evolution_history_db", EvolutionHistoryDB=object, EvolutionEvent=object)
     _stub("workflow_graph", WorkflowGraph=object)
     _stub("mutation_logger", log_mutation=lambda **kw: 1, log_workflow_evolution=lambda **kw: None)

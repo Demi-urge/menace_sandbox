@@ -80,7 +80,13 @@ def _load_manager(variant_rois, generate_calls=None, diminishing=0.05):
     sys.modules["menace_sandbox.roi_tracker"] = tracker_mod
 
     settings_mod = ModuleType("menace_sandbox.sandbox_settings")
-    settings_mod.SandboxSettings = lambda *a, **k: SimpleNamespace(roi_ema_alpha=0.1)
+    settings_mod.SandboxSettings = lambda *a, **k: SimpleNamespace(
+        roi_ema_alpha=0.1,
+        workflow_merge_similarity=0.9,
+        workflow_merge_entropy_delta=0.1,
+        duplicate_similarity=0.95,
+        duplicate_entropy=0.05,
+    )
     sys.modules["menace_sandbox.sandbox_settings"] = settings_mod
 
     class WorkflowStabilityDB:
