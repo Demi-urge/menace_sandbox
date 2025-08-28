@@ -42,6 +42,28 @@ def test_suggest_chains_ranks_by_roi_and_stability():
     assert chains[1] == ["3"]
 
 
+def test_persisted_chain_is_prioritized(tmp_path, monkeypatch):
+    from vector_utils import persist_embedding
+    import workflow_chain_suggester as wcs
+
+    path = tmp_path / "embeddings.jsonl"
+    persist_embedding(
+        "workflow_chain",
+        "1->2",
+        [1.0, 0.0, 0.0],
+        path=path,
+        metadata={"roi": 1.0, "entropy": 0.0},
+    )
+    orig = wcs._load_chain_embeddings
+    monkeypatch.setattr(wcs, "_load_chain_embeddings", lambda path=path: orig(path))
+
+    suggester = WorkflowChainSuggester(
+        wf_db=DummyDB(), roi_db=DummyROIDB(), stability_db=DummyStabilityDB()
+    )
+    chains = suggester.suggest_chains([1.0, 0.0, 0.0], top_k=2)
+    assert chains[0] == ["1", "2"]
+
+
 def test_chain_mutation_helpers():
     chain = ["a", "b", "c"]
     assert WorkflowChainSuggester.swap_steps(chain, 0, 2) == ["c", "b", "a"]

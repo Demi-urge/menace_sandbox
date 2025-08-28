@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Sequence, Dict, Any, Tuple, Iterable
 import random
+import json
+from pathlib import Path
 
 from vector_utils import cosine_similarity
 from roi_results_db import ROIResultsDB
@@ -15,6 +17,33 @@ try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB  # type: ignore
 except Exception:  # pragma: no cover - allow using a dummy DB in tests
     WorkflowDB = None  # type: ignore
+
+
+def _load_chain_embeddings(path: Path = Path("embeddings.jsonl")) -> List[Dict[str, Any]]:
+    """Return stored workflow chain embeddings with metadata."""
+
+    records: List[Dict[str, Any]] = []
+    if not path.exists():
+        return records
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if rec.get("type") != "workflow_chain":
+                continue
+            vec = [float(x) for x in rec.get("vector", [])]
+            meta = rec.get("metadata", {}) or {}
+            records.append(
+                {
+                    "id": str(rec.get("id", "")),
+                    "vector": vec,
+                    "roi": float(meta.get("roi", 0.0)),
+                    "entropy": float(meta.get("entropy", 0.0)),
+                }
+            )
+    return records
 
 
 @dataclass
@@ -155,9 +184,21 @@ class WorkflowChainSuggester:
     def suggest_chains(
         self, target_embedding: Sequence[float], top_k: int = 3
     ) -> List[List[str]]:
-        if self.wf_db is None:
-            return []
-        raw = self.wf_db.search_by_vector(target_embedding, top_k * 5)
+        chain_recs = _load_chain_embeddings()
+        scored: List[Tuple[float, List[str]]] = []
+        for rec in chain_recs:
+            sim = cosine_similarity(target_embedding, rec.get("vector", []))
+            score = sim * (1.0 + rec.get("roi", 0.0)) * max(
+                0.0, 1.0 - rec.get("entropy", 0.0)
+            )
+            scored.append((score, rec.get("id", "").split("->")))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        suggestions = [chain for _, chain in scored[:top_k]]
+        remaining = top_k - len(suggestions)
+        if remaining <= 0 or self.wf_db is None:
+            return suggestions
+
+        raw = self.wf_db.search_by_vector(target_embedding, remaining * 5)
         scores: Dict[str, float] = {}
         vecs: List[Tuple[str, Sequence[float]]] = []
         for wid, dist in raw:
@@ -172,7 +213,7 @@ class WorkflowChainSuggester:
             scores[str(wid)] = score
             vecs.append((str(wid), vec))
         if not vecs:
-            return []
+            return suggestions
         k = min(3, len(vecs))
         clusters = self._kmeans(vecs, k)
         seqs: List[Tuple[float, List[str]]] = []
@@ -181,7 +222,7 @@ class WorkflowChainSuggester:
             avg = sum(scores.get(w, 0.0) for w in cl) / len(cl)
             seqs.append((avg, ordered))
         seqs.sort(key=lambda x: x[0], reverse=True)
-        chosen = [s for _, s in seqs[:top_k]]
+        chosen = [s for _, s in seqs[:remaining]]
 
         final: List[List[str]] = []
         for seq in chosen:
@@ -194,7 +235,7 @@ class WorkflowChainSuggester:
         if len(final) > 1 and self._should_merge(final):
             final = [self.merge_partial_chains(final)]
 
-        return final[:top_k]
+        return suggestions + final[:remaining]
 
 
 _default_suggester: WorkflowChainSuggester | None = None

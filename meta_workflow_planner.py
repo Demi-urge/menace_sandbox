@@ -547,6 +547,21 @@ class MetaWorkflowPlanner:
 
         self._update_cluster_map(chain, roi_gain, failures=failure_count, entropy=entropy)
 
+        embeddings = _load_embeddings()
+        vecs = [embeddings.get(wid) for wid in chain if embeddings.get(wid)]
+        if vecs:
+            dims = zip(*vecs)
+            chain_vec = [sum(d) / len(vecs) for d in dims]
+            try:
+                persist_embedding(
+                    "workflow_chain",
+                    chain_id,
+                    chain_vec,
+                    metadata={"roi": roi_gain, "entropy": entropy},
+                )
+            except TypeError:  # pragma: no cover - compatibility shim
+                persist_embedding("workflow_chain", chain_id, chain_vec)
+
         return {
             "chain": list(chain),
             "roi_gain": roi_gain,
@@ -1393,6 +1408,33 @@ def _load_embeddings(path: Path = Path("embeddings.jsonl")) -> Dict[str, List[fl
     return embeddings
 
 
+def _load_chain_embeddings(path: Path = Path("embeddings.jsonl")) -> List[Dict[str, Any]]:
+    """Return stored workflow chain embeddings with metadata."""
+
+    chains: List[Dict[str, Any]] = []
+    if not path.exists():
+        return chains
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if rec.get("type") != "workflow_chain":
+                continue
+            vec = [float(x) for x in rec.get("vector", [])]
+            meta = rec.get("metadata", {}) or {}
+            chains.append(
+                {
+                    "id": str(rec.get("id", "")),
+                    "vector": vec,
+                    "roi": float(meta.get("roi", 0.0)),
+                    "entropy": float(meta.get("entropy", 0.0)),
+                }
+            )
+    return chains
+
+
 # ---------------------------------------------------------------------------
 def _roi_scores(tracker: ROITracker) -> Dict[str, float]:
     """Return average ROI gain per workflow from ``tracker``."""
@@ -1562,6 +1604,23 @@ def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
     start_vec = embeddings.get(start_workflow_id)
     if start_vec is None:
         return []
+
+    chain_recs = _load_chain_embeddings()
+    best_chain: List[str] | None = None
+    best_score = 0.0
+    for rec in chain_recs:
+        steps = rec["id"].split("->") if rec.get("id") else []
+        if not steps or steps[0] != start_workflow_id:
+            continue
+        sim = cosine_similarity(start_vec, rec.get("vector", []))
+        score = sim * (1.0 + rec.get("roi", 0.0)) * max(
+            0.0, 1.0 - rec.get("entropy", 0.0)
+        )
+        if score > best_score:
+            best_chain = steps
+            best_score = score
+    if best_chain is not None:
+        return best_chain[:length]
 
     tracker = ROITracker()
     history_file = Path("roi_history.json")
