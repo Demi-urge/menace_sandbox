@@ -117,10 +117,11 @@ candidate workflow should merge into an existing branch or remain a separate
 variant. The helper exposes:
 
 - `WorkflowSynergyComparator.compare(a, b)` – return a
-  :class:`ComparisonResult` with cosine `similarity`, shared module count and
+- :class:`ComparisonResult` with cosine `similarity`, shared module count and
   entropy gap.
-- `WorkflowSynergyComparator.is_duplicate(result, similarity_threshold,
-  entropy_threshold)` – flag near‑identical workflows.
+- `WorkflowSynergyComparator.is_duplicate(result, thresholds=None)` – flag
+  near‑identical workflows using the scores returned by
+  `WorkflowSynergyComparator.compare()` or two workflow specifications.
 - `WorkflowSynergyComparator.merge_duplicate(base_id, dup_id)` – merge the
   duplicate into the canonical workflow.
 
@@ -136,7 +137,9 @@ Example API usage inside the self‑improvement loop:
 from menace_sandbox.workflow_synergy_comparator import WorkflowSynergyComparator
 
 result = WorkflowSynergyComparator.compare("main_flow", "candidate_flow")
-if WorkflowSynergyComparator.is_duplicate(result, 0.96, 0.04):
+if WorkflowSynergyComparator.is_duplicate(
+    result, {"similarity": 0.96, "entropy": 0.04}
+):
     WorkflowSynergyComparator.merge_duplicate("main_flow", "candidate_flow")
 ```
 

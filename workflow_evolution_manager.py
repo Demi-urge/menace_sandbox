@@ -632,8 +632,10 @@ def evolve(
                 result = comparator.compare(promoted_spec, cand_spec)
                 if comparator.is_duplicate(
                     result,
-                    settings.duplicate_similarity,
-                    settings.duplicate_entropy,
+                    thresholds={
+                        "similarity": settings.duplicate_similarity,
+                        "entropy": settings.duplicate_entropy,
+                    },
                 ):
                     merged_file = comparator.merge_duplicate(cand_id, str(new_id))
                     if merged_file is None:

@@ -251,16 +251,20 @@ class WorkflowSynergyComparator:
     @classmethod
     def is_duplicate(
         cls,
-        a_spec: Dict[str, Any] | str | Path,
-        b_spec: Dict[str, Any] | str | Path,
+        scores_or_a: SynergyScores | Dict[str, Any] | str | Path,
+        b_spec: Dict[str, Any] | str | Path | None = None,
         thresholds: Optional[Dict[str, float]] = None,
     ) -> bool:
-        """Return ``True`` when ``a_spec`` and ``b_spec`` are near-identical.
+        """Return ``True`` when two workflows are near-identical.
 
         Parameters
         ----------
-        a_spec, b_spec:
-            Workflow specifications or identifiers understood by :meth:`compare`.
+        scores_or_a:
+            Either a :class:`SynergyScores` instance produced by :meth:`compare`
+            or the first workflow specification/identifier.
+        b_spec:
+            Optional second workflow specification/identifier.  Required when
+            ``scores_or_a`` is not a :class:`SynergyScores` instance.
         thresholds:
             Optional mapping providing ``similarity`` and ``entropy`` thresholds.
             Defaults to ``{"similarity": 0.95, "entropy": 0.05}``.
@@ -269,7 +273,14 @@ class WorkflowSynergyComparator:
         thresholds = thresholds or {}
         sim_thr = thresholds.get("similarity", 0.95)
         ent_thr = thresholds.get("entropy", 0.05)
-        result = cls.compare(a_spec, b_spec)
+
+        if isinstance(scores_or_a, SynergyScores):
+            result = scores_or_a
+        else:
+            if b_spec is None:
+                raise TypeError("b_spec must be provided when passing workflow specifications")
+            result = cls.compare(scores_or_a, b_spec)
+
         ent_gap = abs(result.entropy_a - result.entropy_b)
         return result.similarity >= sim_thr and ent_gap <= ent_thr
 

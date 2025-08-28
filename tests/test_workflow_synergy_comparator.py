@@ -77,7 +77,7 @@ def test_similarity_and_entropy(monkeypatch):
     spec = _load("simple_ab.json")
     result = wsc.WorkflowSynergyComparator.compare(spec, spec)
     assert result.similarity == pytest.approx(1.0)
-    assert result.shared_modules == 2
+    assert result.shared_module_ratio == pytest.approx(1.0)
     expected_entropy = compute_workflow_entropy(spec)
     assert result.entropy_a == expected_entropy
     assert result.entropy_b == expected_entropy
@@ -89,8 +89,7 @@ def test_shared_modules_detection(monkeypatch):
     spec_b = _load("simple_bc.json")
     result = wsc.WorkflowSynergyComparator.compare(spec_a, spec_b)
     assert result.similarity < 1.0
-    union = {"a", "b", "c"}
-    assert result.shared_modules / len(union) == pytest.approx(1 / 3)
+    assert result.shared_module_ratio == pytest.approx(1 / 3)
     ent_a = compute_workflow_entropy(spec_a)
     ent_b = compute_workflow_entropy(spec_b)
     assert result.entropy_a == ent_a
@@ -141,9 +140,7 @@ def test_merge_duplicate(monkeypatch, tmp_path):
         out.write_text(json.dumps(merged))
         return out
 
-    monkeypatch.setattr(
-        "menace_sandbox.workflow_merger.merge_workflows", fake_merge
-    )
+    monkeypatch.setattr(wsc.workflow_merger, "merge_workflows", fake_merge)
 
     out_path = wsc.merge_duplicate(base_id, dup_id, tmp_path)
     assert out_path is not None and out_path.exists()

@@ -61,6 +61,7 @@ _stub(
     WorkflowSandboxRunner=type("Runner", (), {"run": lambda self, fn, safe_mode=True: SimpleNamespace(modules=[])}),
 )
 _stub("workflow_synthesizer", save_workflow=lambda *a, **k: (Path("dummy.json"), {"workflow_id": "0", "created_at": ""}))
+_stub("run_autonomous", _verify_required_dependencies=lambda: None, LOCAL_KNOWLEDGE_MODULE=None)
 _stub(
     "workflow_graph",
     WorkflowGraph=type(
@@ -182,7 +183,7 @@ def test_duplicate_merge_lineage(monkeypatch, tmp_path):
         def compare(a, b):
             return SimpleNamespace(similarity=1.0, entropy_a=0.0, entropy_b=0.0)
 
-        def is_duplicate(self, result, sim, ent):
+        def is_duplicate(self, result, b=None, thresholds=None):
             return True
 
         def merge_duplicate(self, base_id, dup_id, out_dir="workflows"):
