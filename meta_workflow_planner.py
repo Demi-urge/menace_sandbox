@@ -524,7 +524,10 @@ class MetaWorkflowPlanner:
         else:
             roi_delta = record.get("roi_gain", 0.0)
 
-        if roi_delta >= roi_improvement_threshold and abs(entropy_val) <= entropy_stability_threshold:
+        if (
+            roi_delta >= roi_improvement_threshold
+            and abs(entropy_val) <= entropy_stability_threshold
+        ):
             return [record]
 
         results = self.mutate_chains(
@@ -539,7 +542,12 @@ class MetaWorkflowPlanner:
             from workflow_lineage import log_lineage
 
             for r in results:
-                log_lineage(chain_id, "->".join(r.get("chain", [])), "mutate_pipeline", roi=r.get("roi_gain"))
+                log_lineage(
+                    chain_id,
+                    "->".join(r.get("chain", [])),
+                    "mutate_pipeline",
+                    roi=r.get("roi_gain"),
+                )
         except Exception:
             pass
 
@@ -643,12 +651,20 @@ class MetaWorkflowPlanner:
                 else:
                     roi_delta = rec.get("roi_gain", 0.0)
 
-                if roi_delta >= roi_improvement_threshold and abs(entropy_val) <= entropy_stability_threshold:
+                if (
+                    roi_delta >= roi_improvement_threshold
+                    and abs(entropy_val) <= entropy_stability_threshold
+                ):
                     results.append(rec)
                     try:  # pragma: no cover - best effort logging
                         from workflow_lineage import log_lineage
 
-                        log_lineage(None, chain_id, "remerge_pipelines", roi=rec.get("roi_gain"))
+                        log_lineage(
+                            None,
+                            chain_id,
+                            "remerge_pipelines",
+                            roi=rec.get("roi_gain"),
+                        )
                     except Exception:
                         pass
         return results
@@ -883,6 +899,49 @@ def find_synergy_candidates(
 
 
 # ---------------------------------------------------------------------------
+def find_synergistic_workflows(workflow_id: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    """Return workflows synergistic with ``workflow_id`` ranked by ROI."""
+
+    embeddings = _load_embeddings()
+    query_vec = embeddings.get(workflow_id)
+    if query_vec is None:
+        return []
+
+    roi_db = ROIResultsDB()
+    results: List[Dict[str, Any]] = []
+    try:  # pragma: no cover - optional dependency path
+        from annoy import AnnoyIndex  # type: ignore
+
+        index = AnnoyIndex(len(query_vec), "angular")
+        ids: List[str] = []
+        for idx, (wf_id, vec) in enumerate(embeddings.items()):
+            index.add_item(idx, vec)
+            ids.append(wf_id)
+        index.build(10)
+        neighbors = index.get_nns_by_vector(query_vec, top_k * 3)
+        for idx in neighbors:
+            cand_id = ids[idx]
+            if cand_id == workflow_id:
+                continue
+            vec = embeddings[cand_id]
+            sim = cosine_similarity(query_vec, vec)
+            roi = _roi_weight_from_db(roi_db, cand_id)
+            results.append(
+                {
+                    "workflow_id": cand_id,
+                    "similarity": sim,
+                    "roi": roi,
+                    "score": sim * (1.0 + roi),
+                }
+            )
+    except Exception:
+        return find_synergy_candidates(workflow_id, top_k=top_k, roi_db=roi_db)
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:top_k]
+
+
+# ---------------------------------------------------------------------------
 def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
     """Return high-synergy workflow sequence starting from ``start_workflow_id``."""
 
@@ -921,4 +980,9 @@ def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
     return chain
 
 
-__all__ = ["MetaWorkflowPlanner", "find_synergy_chain", "find_synergy_candidates"]
+__all__ = [
+    "MetaWorkflowPlanner",
+    "find_synergy_chain",
+    "find_synergy_candidates",
+    "find_synergistic_workflows",
+]
