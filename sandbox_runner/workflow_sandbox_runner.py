@@ -57,6 +57,7 @@ class ModuleMetrics:
     memory_before: int
     memory_after: int
     memory_delta: int
+    memory_peak: int
     success: bool
     exception: str | None = None
     result: Any | None = None
@@ -449,80 +450,88 @@ class WorkflowSandboxRunner:
             except Exception:  # pragma: no cover
                 pass
 
-            try:  # pragma: no cover - optional dependency
-                import httpx  # type: ignore
+                try:  # pragma: no cover - optional dependency
+                    import httpx  # type: ignore
 
-                def _httpx_response(content: str | bytes) -> httpx.Response:
-                    data = content if isinstance(content, (bytes, bytearray)) else str(content).encode()
-                    return httpx.Response(200, content=data)
+                    def _httpx_response(content: str | bytes) -> httpx.Response:
+                        data = (
+                            content
+                            if isinstance(content, (bytes, bytearray))
+                            else str(content).encode()
+                        )
+                        return httpx.Response(200, content=data)
 
-                orig_httpx_request = httpx.Client.request
+                    orig_httpx_request = httpx.Client.request
 
-                def fake_httpx_request(self, method, url, *a, **kw):
-                    if url in network_data:
-                        return _httpx_response(network_data[url])
-                    fn = network_mocks.get("httpx")
-                    if fn:
-                        return fn(self, method, url, *a, **kw)
-                    return orig_httpx_request(self, method, url, *a, **kw)
-
-                stack.enter_context(
-                    mock.patch.object(httpx.Client, "request", fake_httpx_request)
-                )
-
-                if hasattr(httpx, "AsyncClient"):
-                    orig_async_httpx_request = httpx.AsyncClient.request
-
-                    async def fake_async_httpx_request(self, method, url, *a, **kw):
+                    def fake_httpx_request(self, method, url, *a, **kw):
                         if url in network_data:
                             return _httpx_response(network_data[url])
                         fn = network_mocks.get("httpx")
                         if fn:
-                            res = fn(self, method, url, *a, **kw)
-                            if inspect.isawaitable(res):
-                                return await res
-                            return res
-                        return await orig_async_httpx_request(self, method, url, *a, **kw)
+                            return fn(self, method, url, *a, **kw)
+                        return orig_httpx_request(self, method, url, *a, **kw)
 
                     stack.enter_context(
-                        mock.patch.object(httpx.AsyncClient, "request", fake_async_httpx_request)
+                        mock.patch.object(httpx.Client, "request", fake_httpx_request)
                     )
-            except Exception:  # pragma: no cover
-                pass
 
-            try:  # pragma: no cover - optional dependency
-                import aiohttp  # type: ignore
+                    if hasattr(httpx, "AsyncClient"):
+                        orig_async_httpx_request = httpx.AsyncClient.request
 
-                orig_aio_request = aiohttp.ClientSession._request
+                        async def fake_async_httpx_request(self, method, url, *a, **kw):
+                            if url in network_data:
+                                return _httpx_response(network_data[url])
+                            fn = network_mocks.get("httpx")
+                            if fn:
+                                res = fn(self, method, url, *a, **kw)
+                                if inspect.isawaitable(res):
+                                    return await res
+                                return res
+                            return await orig_async_httpx_request(self, method, url, *a, **kw)
 
-                async def fake_aio_request(self, method, url, *a, **kw):
-                    if url in network_data:
-                        data = network_data[url]
-                        if isinstance(data, str):
-                            data = data.encode()
+                        stack.enter_context(
+                            mock.patch.object(
+                                httpx.AsyncClient, "request", fake_async_httpx_request
+                            )
+                        )
+                except Exception:  # pragma: no cover
+                    pass
 
-                        class _AioResp:
-                            def __init__(self, b: bytes):
-                                self.status = 200
-                                self._b = b
+                try:  # pragma: no cover - optional dependency
+                    import aiohttp  # type: ignore
 
-                            async def read(self) -> bytes:
-                                return self._b
+                    orig_aio_request = aiohttp.ClientSession._request
 
-                            async def text(self) -> str:
-                                return self._b.decode()
+                    async def fake_aio_request(self, method, url, *a, **kw):
+                        if url in network_data:
+                            data = network_data[url]
+                            if isinstance(data, str):
+                                data = data.encode()
 
-                        return _AioResp(data)
-                    fn = network_mocks.get("aiohttp")
-                    if fn:
-                        return await fn(self, method, url, *a, **kw)
-                    return await orig_aio_request(self, method, url, *a, **kw)
+                            class _AioResp:
+                                def __init__(self, b: bytes):
+                                    self.status = 200
+                                    self._b = b
 
-                stack.enter_context(
-                    mock.patch.object(aiohttp.ClientSession, "_request", fake_aio_request)
-                )
-            except Exception:  # pragma: no cover
-                pass
+                                async def read(self) -> bytes:
+                                    return self._b
+
+                                async def text(self) -> str:
+                                    return self._b.decode()
+
+                            return _AioResp(data)
+                        fn = network_mocks.get("aiohttp")
+                        if fn:
+                            return await fn(self, method, url, *a, **kw)
+                        return await orig_aio_request(self, method, url, *a, **kw)
+
+                    stack.enter_context(
+                        mock.patch.object(
+                            aiohttp.ClientSession, "_request", fake_aio_request
+                        )
+                    )
+                except Exception:  # pragma: no cover
+                    pass
 
             try:  # pragma: no cover - optional dependency
                 import urllib.request as urllib_request  # type: ignore
@@ -536,6 +545,8 @@ class WorkflowSandboxRunner:
                     fn = network_mocks.get("urllib")
                     if fn:
                         return fn(url, *a, **kw)
+                    if safe_mode:
+                        raise RuntimeError("network access disabled in safe_mode")
                     return orig_urlopen(url, *a, **kw)
 
                 stack.enter_context(
@@ -543,7 +554,6 @@ class WorkflowSandboxRunner:
                 )
             except Exception:  # pragma: no cover
                 pass
-
 
             metrics = RunMetrics()
 
@@ -631,10 +641,12 @@ class WorkflowSandboxRunner:
                     if use_psutil:
                         try:
                             mem_after = proc.memory_info().rss  # type: ignore[union-attr]
+                            mem_peak = mem_after
                         except Exception:
                             mem_after = mem_before
+                            mem_peak = mem_after
                     else:
-                        mem_after, _ = tracemalloc.get_traced_memory()
+                        mem_after, mem_peak = tracemalloc.get_traced_memory()
                         tracemalloc.stop()
 
                     module_metric = ModuleMetrics(
@@ -644,6 +656,7 @@ class WorkflowSandboxRunner:
                         memory_before=mem_before,
                         memory_after=mem_after,
                         memory_delta=mem_after - mem_before,
+                        memory_peak=mem_peak,
                         success=success,
                         exception=error,
                         result=result,
@@ -667,7 +680,8 @@ class WorkflowSandboxRunner:
                     if env:
                         info["env"] = dict(env)
                     fixtures_info[m.name] = info
-            peak_mem = max((m.memory_after for m in metrics.modules), default=0)
+            peak_mem = max((m.memory_peak for m in metrics.modules), default=0)
+            peak_per_module = {m.name: m.memory_peak for m in metrics.modules}
             crash_freq = (
                 metrics.crash_count / len(metrics.modules)
                 if metrics.modules
@@ -679,6 +693,7 @@ class WorkflowSandboxRunner:
                 "results": results,
                 "crash_frequency": crash_freq,
                 "peak_memory": peak_mem,
+                "peak_memory_per_module": peak_per_module,
             }
             if fixtures_info:
                 telemetry["module_fixtures"] = fixtures_info
