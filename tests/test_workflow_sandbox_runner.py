@@ -117,6 +117,25 @@ def test_httpx_and_fs_wrappers():
         dst.unlink()
 
 
+def test_httpx_network_mock():
+    httpx = pytest.importorskip("httpx")
+
+    def step():
+        import httpx
+        resp = httpx.get("http://example.com")
+        return resp.text
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run(
+        [step],
+        safe_mode=True,
+        network_mocks={"httpx": lambda self, method, url, *a, **kw: httpx.Response(200, text="mocked")},
+    )
+
+    assert metrics.crash_count == 0
+    assert metrics.modules[0].result == "mocked"
+
+
 def test_os_shutil_wrappers_redirected():
     src_file = Path("/tmp/wrapper_src.txt")
     src_dir = Path("/tmp/wrapper_dir")

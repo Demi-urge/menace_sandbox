@@ -408,14 +408,15 @@ class WorkflowSandboxRunner:
             try:  # pragma: no cover - optional dependency
                 import httpx  # type: ignore
 
+                def _httpx_response(content: str | bytes) -> httpx.Response:
+                    data = content if isinstance(content, (bytes, bytearray)) else str(content).encode()
+                    return httpx.Response(200, content=data)
+
                 orig_httpx_request = httpx.Client.request
 
                 def fake_httpx_request(self, method, url, *a, **kw):
                     if url in network_data:
-                        data = network_data[url]
-                        if isinstance(data, str):
-                            data = data.encode()
-                        return httpx.Response(200, content=data)
+                        return _httpx_response(network_data[url])
                     fn = network_mocks.get("httpx")
                     if fn:
                         return fn(self, method, url, *a, **kw)
