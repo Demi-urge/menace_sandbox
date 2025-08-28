@@ -48,6 +48,8 @@ class MetaWorkflowPlanner:
     tag_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
     graph: WorkflowGraph | None = None
     roi_db: ROIResultsDB | None = None
+    # Map of workflow chains to ROI histories for convergence tracking
+    cluster_map: Dict[tuple[str, ...], Dict[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.graph is None:
@@ -130,83 +132,211 @@ class MetaWorkflowPlanner:
 
                 runner = _Runner()
             except Exception:
-                return []
+                runner = None
+
+        results: List[Dict[str, Any]] = []
+        for chain in chains:
+            record = self._validate_chain(
+                chain,
+                workflows,
+                runner=runner,
+                failure_threshold=failure_threshold,
+                entropy_threshold=entropy_threshold,
+            )
+            if record:
+                results.append(record)
+
+        return results
+
+    # ------------------------------------------------------------------
+    def _validate_chain(
+        self,
+        chain: Sequence[str],
+        workflows: Mapping[str, Callable[[], Any]],
+        *,
+        runner: WorkflowSandboxRunner | None = None,
+        failure_threshold: int = 0,
+        entropy_threshold: float = 2.0,
+    ) -> Dict[str, Any] | None:
+        """Validate a single chain and update ROI logs and cluster map."""
+
+        funcs: List[Callable[[], Any]] = []
+        for wid in chain:
+            fn = workflows.get(wid)
+            if not callable(fn):
+                return None
+            funcs.append(fn)
+
+        if runner is None:
+            try:
+                from sandbox_runner.workflow_sandbox_runner import (
+                    WorkflowSandboxRunner as _Runner,
+                )  # type: ignore
+
+                runner = _Runner()
+            except Exception:
+                return None
+
         try:
             from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
         except Exception:
             WorkflowSynergyComparator = None  # type: ignore
-        results: List[Dict[str, Any]] = []
 
-        for chain in chains:
-            funcs: List[Callable[[], Any]] = []
-            for wid in chain:
-                fn = workflows.get(wid)
-                if not callable(fn):
-                    funcs = []
-                    break
-                funcs.append(fn)
-            if not funcs:
-                continue
-
-            metrics = runner.run(funcs)
-            failure_count = max(
-                metrics.crash_count,
-                sum(1 for m in metrics.modules if not m.success),
-            )
-            spec = {"steps": [{"module": m} for m in chain]}
-            if WorkflowSynergyComparator is not None:
-                try:
-                    entropy = WorkflowSynergyComparator._entropy(spec)
-                except Exception:
-                    entropy = 0.0
-            else:
+        metrics = runner.run(funcs)
+        failure_count = max(
+            metrics.crash_count,
+            sum(1 for m in metrics.modules if not m.success),
+        )
+        spec = {"steps": [{"module": m} for m in chain]}
+        if WorkflowSynergyComparator is not None:
+            try:
+                entropy = WorkflowSynergyComparator._entropy(spec)
+            except Exception:
                 entropy = 0.0
-            roi_gain = sum(
-                float(m.result)
-                for m in metrics.modules
-                if isinstance(m.result, (int, float))
-            )
+        else:
+            entropy = 0.0
+        roi_gain = sum(
+            float(m.result)
+            for m in metrics.modules
+            if isinstance(m.result, (int, float))
+        )
 
-            record = {
-                "chain": list(chain),
-                "roi_gain": roi_gain,
-                "failures": failure_count,
-                "entropy": entropy,
-            }
+        if failure_count > failure_threshold or entropy > entropy_threshold:
+            return None
 
-            if failure_count > failure_threshold or entropy > entropy_threshold:
-                continue
-
-            if self.roi_db is not None:
-                try:
-                    self.roi_db.log_result(
-                        workflow_id="->".join(chain),
-                        run_id="0",
-                        runtime=sum(m.duration for m in metrics.modules),
-                        success_rate=
-                            (len(metrics.modules) - failure_count) / len(metrics.modules)
-                            if metrics.modules
+        if self.roi_db is not None:
+            try:
+                self.roi_db.log_result(
+                    workflow_id="->".join(chain),
+                    run_id="0",
+                    runtime=sum(m.duration for m in metrics.modules),
+                    success_rate=
+                        (len(metrics.modules) - failure_count) / len(metrics.modules)
+                        if metrics.modules
+                        else 0.0,
+                    roi_gain=roi_gain,
+                    workflow_synergy_score=max(0.0, 1.0 - entropy),
+                    bottleneck_index=0.0,
+                    patchability_score=0.0,
+                    module_deltas={
+                        m.name: {
+                            "roi_delta": float(m.result)
+                            if isinstance(m.result, (int, float))
                             else 0.0,
-                        roi_gain=roi_gain,
-                        workflow_synergy_score=max(0.0, 1.0 - entropy),
-                        bottleneck_index=0.0,
-                        patchability_score=0.0,
-                        module_deltas={
-                            m.name: {
-                                "roi_delta": float(m.result)
-                                if isinstance(m.result, (int, float))
-                                else 0.0,
-                                "success_rate": 1.0 if m.success else 0.0,
-                            }
-                            for m in metrics.modules
-                        },
-                    )
-                except Exception:
-                    pass
+                            "success_rate": 1.0 if m.success else 0.0,
+                        }
+                        for m in metrics.modules
+                    },
+                )
+            except Exception:
+                pass
 
-            results.append(record)
+        self._update_cluster_map(chain, roi_gain)
 
+        return {
+            "chain": list(chain),
+            "roi_gain": roi_gain,
+            "failures": failure_count,
+            "entropy": entropy,
+        }
+
+    # ------------------------------------------------------------------
+    def mutate_chains(
+        self,
+        chains: Sequence[Sequence[str]],
+        workflows: Mapping[str, Callable[[], Any]],
+        *,
+        runner: WorkflowSandboxRunner | None = None,
+        failure_threshold: int = 0,
+        entropy_threshold: float = 2.0,
+    ) -> List[Dict[str, Any]]:
+        """Mutate chains (swap/remove/add) and re-validate."""
+
+        wf_ids = list(workflows.keys())
+        candidates: List[List[str]] = []
+        for chain in chains:
+            chain = list(chain)
+            if len(chain) >= 2:
+                swapped = chain[:]
+                swapped[0], swapped[1] = swapped[1], swapped[0]
+                candidates.append(swapped)
+            if len(chain) > 1:
+                candidates.append(chain[:-1])
+            for wid in wf_ids:
+                if wid not in chain:
+                    candidates.append(chain + [wid])
+                    break
+
+        results: List[Dict[str, Any]] = []
+        for c in candidates:
+            record = self._validate_chain(
+                c,
+                workflows,
+                runner=runner,
+                failure_threshold=failure_threshold,
+                entropy_threshold=entropy_threshold,
+            )
+            if record:
+                results.append(record)
         return results
+
+    # ------------------------------------------------------------------
+    def refine_chains(
+        self,
+        records: Sequence[Dict[str, Any]],
+        workflows: Mapping[str, Callable[[], Any]],
+        *,
+        roi_threshold: float = 0.0,
+        runner: WorkflowSandboxRunner | None = None,
+        failure_threshold: int = 0,
+        entropy_threshold: float = 2.0,
+    ) -> List[Dict[str, Any]]:
+        """Split underperforming subchains and merge high-ROI chains."""
+
+        low = [r["chain"] for r in records if r.get("roi_gain", 0.0) <= roi_threshold]
+        high = [r["chain"] for r in records if r.get("roi_gain", 0.0) > roi_threshold]
+
+        candidates: List[List[str]] = []
+        for chain in low:
+            if len(chain) > 1:
+                mid = len(chain) // 2
+                candidates.append(chain[:mid])
+                candidates.append(chain[mid:])
+        for i in range(len(high)):
+            for j in range(i + 1, len(high)):
+                merged = high[i] + [w for w in high[j] if w not in high[i]]
+                candidates.append(merged)
+
+        results: List[Dict[str, Any]] = []
+        for c in candidates:
+            record = self._validate_chain(
+                c,
+                workflows,
+                runner=runner,
+                failure_threshold=failure_threshold,
+                entropy_threshold=entropy_threshold,
+            )
+            if record:
+                results.append(record)
+        return results
+
+    # ------------------------------------------------------------------
+    def _update_cluster_map(
+        self, chain: Sequence[str], roi_gain: float, *, tol: float = 0.01
+    ) -> Dict[str, Any]:
+        """Update ROI delta history for ``chain`` and detect convergence."""
+
+        key = tuple(chain)
+        info = self.cluster_map.setdefault(
+            key, {"roi_history": [], "delta_roi": 0.0, "converged": False}
+        )
+        history = info["roi_history"]
+        if history:
+            info["delta_roi"] = roi_gain - history[-1]
+            if abs(info["delta_roi"]) < tol:
+                info["converged"] = True
+        history.append(roi_gain)
+        return info
 
     # ------------------------------------------------------------------
     def _graph_features(self, workflow_id: str) -> List[float] | tuple[float, float]:
