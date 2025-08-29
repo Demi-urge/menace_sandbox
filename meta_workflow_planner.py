@@ -15,6 +15,9 @@ from roi_results_db import ROIResultsDB
 from workflow_graph import WorkflowGraph
 from vector_utils import persist_embedding, cosine_similarity
 from cache_utils import get_cached_chain, set_cached_chain
+from logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 try:  # pragma: no cover - optional heavy dependency
     from vector_service.retriever import Retriever  # type: ignore
@@ -603,12 +606,14 @@ class MetaWorkflowPlanner:
                 try:
                     self.stability_db.mark_stable(chain_id, roi_gain)
                 except Exception:
-                    pass
+                    logger.exception("Failed to mark chain %s as stable", chain_id)
             if metrics_db is not None:
                 try:
                     metrics_db.log_eval(f"meta:{chain_id}", "roi_gain", float(roi_gain))
                 except Exception:
-                    pass
+                    logger.warning(
+                        "Failed to log ROI gain for chain %s", chain_id, exc_info=True
+                    )
             successes.append(record)
         return successes
 
@@ -758,7 +763,9 @@ class MetaWorkflowPlanner:
                     },
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "ROI tracker failed to record scenario delta for %s", chain_id
+                )
         if self.stability_db is not None:
             try:
                 self.stability_db.record_metrics(
@@ -772,7 +779,7 @@ class MetaWorkflowPlanner:
                     entropy_var=entropy_var,
                 )
             except Exception:
-                pass
+                logger.exception("Failed to record metrics for chain %s", chain_id)
 
         if failure_count > failure_threshold or entropy > entropy_threshold:
             return None
@@ -806,7 +813,7 @@ class MetaWorkflowPlanner:
                     },
                 )
             except Exception:
-                pass
+                logger.exception("Failed to log ROI result for chain %s", chain_id)
 
         self._update_cluster_map(
             chain,
@@ -1047,7 +1054,9 @@ class MetaWorkflowPlanner:
                     roi=r.get("roi_gain"),
                 )
         except Exception:
-            pass
+            logger.warning(
+                "Failed to log lineage for mutated chain %s", chain_id, exc_info=True
+            )
 
         return results
 
@@ -1198,7 +1207,12 @@ class MetaWorkflowPlanner:
 
                     log_lineage(chain_id, "->".join(seg), "split_pipeline", roi=rec.get("roi_gain"))
                 except Exception:
-                    pass
+                    logger.warning(
+                        "Failed to log lineage for split segment %s of %s",
+                        "->".join(seg),
+                        chain_id,
+                        exc_info=True,
+                    )
         return results
 
     # ------------------------------------------------------------------
@@ -1255,7 +1269,11 @@ class MetaWorkflowPlanner:
                             roi=rec.get("roi_gain"),
                         )
                     except Exception:
-                        pass
+                        logger.warning(
+                            "Failed to log lineage for remerged pipeline %s",
+                            chain_id,
+                            exc_info=True,
+                        )
         return results
 
     # ------------------------------------------------------------------
@@ -1296,7 +1314,11 @@ class MetaWorkflowPlanner:
                     None, chain_id, "discover_and_persist", roi=rec.get("roi_gain")
                 )
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to log lineage for discovered chain %s",
+                    chain_id,
+                    exc_info=True,
+                )
             self._reinforce(rec)
 
         active = [r.get("chain", []) for r in discovered if r.get("chain")]
@@ -1325,7 +1347,12 @@ class MetaWorkflowPlanner:
                             parent_id, child_id, "manage_pipeline", roi=rec.get("roi_gain")
                         )
                     except Exception:
-                        pass
+                        logger.warning(
+                            "Failed to log lineage for managed pipeline %s -> %s",
+                            parent_id,
+                            child_id,
+                            exc_info=True,
+                        )
                     self._reinforce(rec)
 
             if not managed:
@@ -1350,7 +1377,9 @@ class MetaWorkflowPlanner:
 
                     log_lineage(None, child_id, "mutate_chains", roi=rec.get("roi_gain"))
                 except Exception:
-                    pass
+                    logger.warning(
+                        "Failed to log lineage for mutated chain %s", child_id, exc_info=True
+                    )
                 self._reinforce(rec)
 
             if not active:
@@ -1481,7 +1510,7 @@ class MetaWorkflowPlanner:
                     module_deltas={},
                 )
             except Exception:
-                pass
+                logger.exception("Failed to log ROI result for chain %s", chain_id)
 
         if self.stability_db is not None:
             try:
@@ -1489,7 +1518,7 @@ class MetaWorkflowPlanner:
                     chain_id, roi_gain, failures, entropy, roi_delta=roi_gain
                 )
             except Exception:
-                pass
+                logger.exception("Failed to record metrics for chain %s", chain_id)
 
         self._update_cluster_map(
             chain,
@@ -1576,7 +1605,9 @@ class MetaWorkflowPlanner:
             with path.open("w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
         except Exception:
-            pass
+            logger.warning(
+                "Failed to save cluster map to %s", path, exc_info=True
+            )
 
     # ------------------------------------------------------------------
     def _load_cluster_map(self) -> None:
@@ -2154,7 +2185,9 @@ def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
         try:
             tracker.load_history(str(history_file))
         except Exception:
-            pass
+            logger.warning(
+                "Failed to load ROI history from %s", history_file, exc_info=True
+            )
     roi_scores = _roi_scores(tracker)
 
     chain = [start_workflow_id]
