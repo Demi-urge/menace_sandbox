@@ -523,7 +523,8 @@ def test_transition_probabilities_normalization():
     assert abs(sum(probs.values()) - 1.0) < 1e-8
 
 
-def test_cluster_workflows_roi_weighting(monkeypatch):
+@pytest.mark.parametrize("use_sklearn", [True, False])
+def test_cluster_workflows_roi_weighting(monkeypatch, use_sklearn):
     monkeypatch.setattr(mwp, "ROITracker", None)
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
     monkeypatch.setattr(mwp.MetaWorkflowPlanner, "_load_cluster_map", lambda self: None)
@@ -548,6 +549,14 @@ def test_cluster_workflows_roi_weighting(monkeypatch):
     planner = MetaWorkflowPlanner(roi_db=DummyROI(roi_trends))
     workflows = {wid: {} for wid in embeddings}
     retr = DummyRetriever(embeddings)
+
+    monkeypatch.setattr(mwp, "_HAS_SKLEARN", use_sklearn)
+    if use_sklearn:
+        sk = pytest.importorskip("sklearn.cluster")
+        monkeypatch.setattr(mwp, "DBSCAN", sk.DBSCAN)
+    else:
+        monkeypatch.setattr(mwp, "DBSCAN", None)
+
     clusters = planner.cluster_workflows(
         workflows, retriever=retr, epsilon=0.5, min_samples=2
     )

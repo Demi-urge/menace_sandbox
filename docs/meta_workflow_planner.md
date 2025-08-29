@@ -43,8 +43,12 @@ pipeline = planner.compose_pipeline("A", workflows, length=3)
 ```
 
 `cluster_workflows` encodes each specification, persists the embedding and
-groups workflows using ROI‑weighted cosine similarity and DBSCAN via the
-provided `Retriever`, while `compose_pipeline` iteratively blends embedding similarity,
+groups workflows using ROI‑weighted cosine similarity.  When
+[scikit‑learn](https://scikit-learn.org) is available the normalised distance
+matrix is clustered with DBSCAN via the provided `Retriever`.  Without
+scikit‑learn a simple similarity‑threshold fallback groups connected workflows
+so the planner remains functional in lightweight environments.  In both cases
+`compose_pipeline` iteratively blends embedding similarity,
 `WorkflowSynergyComparator` scores and recent ROI trends to choose the next
 step.  The default formula is
 ``(similarity * similarity_weight + synergy * synergy_weight) * (1 + ROI * roi_weight)``
