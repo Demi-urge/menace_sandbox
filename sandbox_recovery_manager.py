@@ -32,23 +32,64 @@ except Exception:  # pragma: no cover - module not a package
     )
 
 try:
-    from .metrics_exporter import (
-        CollectorRegistry,
-        sandbox_restart_total,
-        sandbox_last_failure_ts,
-    )
+    from .metrics_exporter import CollectorRegistry
 except Exception:  # pragma: no cover - module may not be a package
-    from metrics_exporter import (
-        CollectorRegistry,  # type: ignore
-        sandbox_restart_total,  # type: ignore
-        sandbox_last_failure_ts,  # type: ignore
-    )
+    from metrics_exporter import CollectorRegistry  # type: ignore
 
 logger = logging.getLogger(__name__)
 
 
 class SandboxRecoveryError(ResilienceError):
     """Raised when sandbox recovery cannot proceed."""
+
+
+class RecoveryMetricsRecorder:
+    """Record metrics via :mod:`metrics_exporter` or a local file."""
+
+    def __init__(self) -> None:
+        try:
+            try:
+                from . import metrics_exporter as _me
+            except Exception:  # pragma: no cover - package not available
+                import metrics_exporter as _me  # type: ignore
+
+            self._using_exporter = not getattr(_me, "_USING_STUB", False)
+            if self._using_exporter:
+                self._restart_gauge = _me.sandbox_restart_total
+                self._failure_gauge = _me.sandbox_last_failure_ts
+            else:
+                self._restart_gauge = None
+                self._failure_gauge = None
+        except Exception:  # pragma: no cover - optional dependency missing
+            self._using_exporter = False
+            self._restart_gauge = None
+            self._failure_gauge = None
+
+    def record(
+        self,
+        restart_count: int,
+        last_failure_ts: float | None,
+        data_dir: Path,
+    ) -> None:
+        ts = float(last_failure_ts) if last_failure_ts is not None else 0.0
+        if self._using_exporter and self._restart_gauge and self._failure_gauge:
+            try:
+                self._restart_gauge.set(float(restart_count))
+                self._failure_gauge.set(ts)
+            except Exception:  # pragma: no cover - runtime issues
+                logger.exception("failed to update metrics")
+            return
+
+        payload = {
+            "sandbox_restart_total": float(restart_count),
+            "sandbox_last_failure_ts": ts,
+        }
+        try:
+            data_dir.mkdir(parents=True, exist_ok=True)
+            with open(data_dir / "recovery.json", "w", encoding="utf-8") as fh:
+                json.dump(payload, fh)
+        except Exception:  # pragma: no cover - runtime issues
+            logger.exception("failed to write recovery metrics")
 
 
 class SandboxRecoveryManager:
@@ -76,27 +117,15 @@ class SandboxRecoveryManager:
             max_failures=circuit_max_failures, reset_timeout=circuit_reset_timeout
         )
 
-        self._restart_gauge = sandbox_restart_total
-        self._failure_gauge = sandbox_last_failure_ts
-        self._using_stub = False
-        try:
-            try:
-                from . import metrics_exporter as _me
-            except Exception:  # pragma: no cover - package not available
-                import metrics_exporter as _me  # type: ignore
-
-            self._using_stub = getattr(_me, "_USING_STUB", False)
-        except Exception:  # pragma: no cover - optional dependency missing
-            self._restart_gauge = None
-            self._failure_gauge = None
+        self._metrics_recorder = RecoveryMetricsRecorder()
 
     # ------------------------------------------------------------------
     @property
     def metrics(self) -> Dict[str, float | None]:
         """Return restart count and last failure time."""
         return {
-            "restart_count": float(self.restart_count),
-            "last_failure_time": self.last_failure_time,
+            "sandbox_restart_total": float(self.restart_count),
+            "sandbox_last_failure_ts": self.last_failure_time,
         }
 
     # ------------------------------------------------------------------
@@ -156,22 +185,9 @@ class SandboxRecoveryManager:
                         self.on_retry(exc, runtime)
                     except Exception:
                         self.logger.exception("on_retry callback failed")
-
-                if self._restart_gauge:
-                    try:
-                        self._restart_gauge.set(float(self.restart_count))
-                        if self.last_failure_time is not None:
-                            self._failure_gauge.set(self.last_failure_time)
-                    except Exception:  # pragma: no cover - runtime issues
-                        self.logger.exception("failed to update metrics")
-
-                if self._using_stub or self._restart_gauge is None:
-                    try:
-                        metrics_file = log_dir / "recovery.json"
-                        with open(metrics_file, "w", encoding="utf-8") as fh:
-                            json.dump(self.metrics, fh)
-                    except Exception:  # pragma: no cover - runtime issues
-                        self.logger.exception("failed to write recovery metrics")
+                self._metrics_recorder.record(
+                    self.restart_count, self.last_failure_time, log_dir
+                )
 
                 if self.max_retries is not None and attempts >= self.max_retries:
                     raise SandboxRecoveryError("maximum retries reached") from exc
@@ -200,11 +216,16 @@ def load_metrics(path: Path) -> Dict[str, float]:
         return {}
     out: Dict[str, float] = {}
     if isinstance(data, dict):
+        mapping = {
+            "restart_count": "sandbox_restart_total",
+            "last_failure_time": "sandbox_last_failure_ts",
+        }
         for k, v in data.items():
+            name = mapping.get(str(k), str(k))
             try:
-                out[str(k)] = float(v)
+                out[name] = float(v)
             except Exception:
-                out[str(k)] = 0.0
+                out[name] = 0.0
     return out
 
 
