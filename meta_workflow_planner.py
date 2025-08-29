@@ -10,6 +10,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence, TYPE_CHECKING
 from statistics import fmean, pvariance
+from concurrent.futures import ThreadPoolExecutor
 
 from roi_results_db import ROIResultsDB
 from workflow_graph import WorkflowGraph
@@ -537,6 +538,7 @@ class MetaWorkflowPlanner:
         entropy_threshold: float = 2.0,
         runner: WorkflowSandboxRunner | None = None,
         runs: int = 3,
+        max_workers: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Suggest and validate workflow chains.
 
@@ -576,6 +578,7 @@ class MetaWorkflowPlanner:
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
                 runs=runs,
+                max_workers=max_workers,
             )
             if record:
                 results.append(record)
@@ -588,12 +591,18 @@ class MetaWorkflowPlanner:
         workflows: Mapping[str, Callable[[], Any]],
         *,
         runs: int = 3,
+        max_workers: int | None = None,
         metrics_db: Any | None = None,
     ) -> List[Dict[str, Any]]:
         """Discover meta-workflows and persist successful chains."""
 
         target = self.encode("self_improvement", {"workflow": []})
-        records = self.plan_and_validate(target, workflows, runs=runs)
+        records = self.plan_and_validate(
+            target,
+            workflows,
+            runs=runs,
+            max_workers=max_workers,
+        )
 
         successes: List[Dict[str, Any]] = []
         for record in records:
@@ -627,11 +636,14 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runs: int = 3,
+        max_workers: int | None = None,
     ) -> Dict[str, Any] | None:
         """Validate a single chain and update ROI logs and cluster map.
 
         ``runs`` controls how many times the chain is executed.  Metrics are
-        aggregated across runs using their mean and population variance.
+        aggregated across runs using their mean and population variance.  When
+        ``max_workers`` is greater than 1 the runs are executed concurrently
+        using a thread pool for improved throughput.
         """
 
         funcs: List[Callable[[], Any]] = []
@@ -664,7 +676,9 @@ class MetaWorkflowPlanner:
         per_run_steps: List[List[Dict[str, Any]]] = []
 
         spec = {"steps": [{"module": m} for m in chain]}
-        for _ in range(max(1, runs)):
+        run_count = max(1, runs)
+
+        def _single_run() -> tuple[float, float, float, float, float, List[Dict[str, Any]]]:
             metrics = runner.run(funcs)
             failure_count = max(
                 metrics.crash_count,
@@ -677,7 +691,6 @@ class MetaWorkflowPlanner:
                     entropy = 0.0
             else:
                 entropy = 0.0
-            # Track per-step entropy to allow granular convergence checks
             step_entropies: List[float] = []
             if WorkflowSynergyComparator is not None:
                 for i in range(1, len(chain) + 1):
@@ -708,17 +721,47 @@ class MetaWorkflowPlanner:
                 }
                 for i, m in enumerate(metrics.modules)
             ]
-
-            roi_gains.append(roi_gain)
-            failure_counts.append(float(failure_count))
-            entropies.append(float(entropy))
-            runtimes.append(sum(m.duration for m in metrics.modules))
-            success_rates.append(
+            runtime = sum(m.duration for m in metrics.modules)
+            success_rate = (
                 (len(metrics.modules) - failure_count) / len(metrics.modules)
                 if metrics.modules
                 else 0.0
             )
-            per_run_steps.append(step_metrics)
+            return (
+                roi_gain,
+                float(failure_count),
+                float(entropy),
+                runtime,
+                success_rate,
+                step_metrics,
+            )
+
+        results: List[
+            tuple[float, float, float, float, float, List[Dict[str, Any]]]
+        ] = []
+        if max_workers and max_workers > 1 and run_count > 1:
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futures = [ex.submit(_single_run) for _ in range(run_count)]
+                for fut in futures:
+                    results.append(fut.result())
+        else:
+            for _ in range(run_count):
+                results.append(_single_run())
+
+        for (
+            roi_gain_val,
+            failure_val,
+            entropy_val,
+            runtime_val,
+            success_val,
+            steps_val,
+        ) in results:
+            roi_gains.append(roi_gain_val)
+            failure_counts.append(failure_val)
+            entropies.append(entropy_val)
+            runtimes.append(runtime_val)
+            success_rates.append(success_val)
+            per_run_steps.append(steps_val)
 
         roi_gain = fmean(roi_gains)
         failure_count = fmean(failure_counts)
@@ -859,6 +902,7 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runs: int = 3,
+        max_workers: int | None = None,
         offspring: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Mutate ``chains`` using genetic operators and re‑validate offspring.
@@ -916,6 +960,7 @@ class MetaWorkflowPlanner:
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
                 runs=runs,
+                max_workers=max_workers,
             )
             if record:
                 results.append(record)
@@ -932,6 +977,7 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runs: int = 3,
+        max_workers: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Split underperforming subchains and merge high-ROI chains."""
 
@@ -974,6 +1020,7 @@ class MetaWorkflowPlanner:
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
                 runs=runs,
+                max_workers=max_workers,
             )
             if record:
                 results.append(record)
@@ -991,6 +1038,7 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runs: int = 3,
+        max_workers: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Mutate ``pipeline`` when ROI stagnates or entropy drifts.
 
@@ -1009,6 +1057,7 @@ class MetaWorkflowPlanner:
             failure_threshold=failure_threshold,
             entropy_threshold=entropy_threshold,
             runs=runs,
+            max_workers=max_workers,
         )
         if not record:
             return []
@@ -1041,6 +1090,7 @@ class MetaWorkflowPlanner:
             failure_threshold=failure_threshold,
             entropy_threshold=entropy_threshold,
             runs=runs,
+            max_workers=max_workers,
         )
 
         try:  # pragma: no cover - best effort logging
@@ -1072,6 +1122,7 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runs: int = 3,
+        max_workers: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Monitor ``pipeline`` and split or terminate on stagnating ROI.
 
@@ -1091,6 +1142,7 @@ class MetaWorkflowPlanner:
             failure_threshold=failure_threshold,
             entropy_threshold=entropy_threshold,
             runs=runs,
+            max_workers=max_workers,
         )
         if not record:
             return []
@@ -1125,6 +1177,7 @@ class MetaWorkflowPlanner:
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
                 runs=runs,
+                max_workers=max_workers,
             )
         return []
 
@@ -1140,6 +1193,7 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runs: int = 3,
+        max_workers: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Split ``pipeline`` into sub-pipelines when improvement stalls."""
 
@@ -1159,6 +1213,7 @@ class MetaWorkflowPlanner:
             failure_threshold=failure_threshold,
             entropy_threshold=entropy_threshold,
             runs=runs,
+            max_workers=max_workers,
         )
         if not record:
             return []
@@ -1199,6 +1254,7 @@ class MetaWorkflowPlanner:
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
                 runs=runs,
+                max_workers=max_workers,
             )
             if rec:
                 results.append(rec)
@@ -1227,6 +1283,7 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runs: int = 3,
+        max_workers: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Merge pipelines that show stable entropy and ROI improvements."""
 
@@ -1241,6 +1298,7 @@ class MetaWorkflowPlanner:
                     failure_threshold=failure_threshold,
                     entropy_threshold=entropy_threshold,
                     runs=runs,
+                    max_workers=max_workers,
                 )
                 if not rec:
                     continue
@@ -1288,6 +1346,7 @@ class MetaWorkflowPlanner:
         entropy_delta_threshold: float = 0.01,
         runs: int = 3,
         max_iterations: int = 10,
+        max_workers: int | None = None,
         metrics_db: Any | None = None,
     ) -> List[Dict[str, Any]]:
         """Orchestrate discovery, management and mutation cycles.
@@ -1302,7 +1361,7 @@ class MetaWorkflowPlanner:
 
         all_records: List[Dict[str, Any]] = []
         discovered = self.discover_and_persist(
-            workflows, runs=runs, metrics_db=metrics_db
+            workflows, runs=runs, max_workers=max_workers, metrics_db=metrics_db
         )
         for rec in discovered:
             all_records.append(rec)
@@ -1334,6 +1393,7 @@ class MetaWorkflowPlanner:
                     failure_threshold=failure_threshold,
                     entropy_threshold=entropy_threshold,
                     runs=runs,
+                    max_workers=max_workers,
                 )
                 for rec in recs:
                     all_records.append(rec)
@@ -1365,6 +1425,7 @@ class MetaWorkflowPlanner:
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
                 runs=runs,
+                max_workers=max_workers,
             )
             active = []
             for rec in mutated:
@@ -1411,6 +1472,7 @@ class MetaWorkflowPlanner:
         roi_improvement_threshold: float = 0.0,
         entropy_stability_threshold: float = 1.0,
         runs: int = 3,
+        max_workers: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Evolve converged pipelines based on metric deltas.
 
@@ -1443,6 +1505,7 @@ class MetaWorkflowPlanner:
                     failure_threshold=failure_threshold,
                     entropy_threshold=entropy_threshold,
                     runs=runs,
+                    max_workers=max_workers,
                 )
                 if recs:
                     best = max(recs, key=lambda r: r.get("roi_gain", 0.0))
@@ -1458,6 +1521,7 @@ class MetaWorkflowPlanner:
                     failure_threshold=failure_threshold,
                     entropy_threshold=entropy_threshold,
                     runs=runs,
+                    max_workers=max_workers,
                 )
                 if recs:
                     best = max(recs, key=lambda r: r.get("roi_gain", 0.0))
@@ -1476,6 +1540,7 @@ class MetaWorkflowPlanner:
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
                 runs=runs,
+                max_workers=max_workers,
             )
             for rec in recs:
                 results.append(rec)
@@ -1542,6 +1607,7 @@ class MetaWorkflowPlanner:
         entropy_threshold: float = 2.0,
         runs: int = 3,
         retriever: Retriever | None = None,
+        max_workers: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Merge high-ROI variants using clustering results.
 
@@ -1589,6 +1655,7 @@ class MetaWorkflowPlanner:
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
                 runs=runs,
+                max_workers=max_workers,
             )
             if rec:
                 results.append(rec)
