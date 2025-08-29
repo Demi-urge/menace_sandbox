@@ -255,6 +255,14 @@ class DummyTrail:
         self.records.append(msg)
 
 
+def test_score_config_from_env(monkeypatch):
+    monkeypatch.setenv("SCORE_THRESHOLD", "0.8")
+    monkeypatch.setenv("SCORE_WEIGHTS", "[0.1,0.2,0.3,0.4,0.5,0.6]")
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    assert dbg.score_threshold == 0.8
+    assert dbg.score_weights == (0.1, 0.2, 0.3, 0.4, 0.5, 0.6)
+
+
 def test_sandbox_failing_patch(monkeypatch, tmp_path):
     engine = DummyEngine()
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)

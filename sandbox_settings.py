@@ -665,6 +665,46 @@ class SandboxSettings(BaseSettings):
         description="Penalty weight for each failure category detected.",
     )
 
+    # self debugger scoring configuration
+    score_threshold: float = Field(
+        0.5,
+        env="SCORE_THRESHOLD",
+        description="Minimum composite score required for patch acceptance.",
+    )
+    score_weights: tuple[float, float, float, float, float, float] = Field(
+        (1.0, 1.0, 1.0, 1.0, 1.0, 1.0),
+        env="SCORE_WEIGHTS",
+        description="Weights for coverage, errors, ROI, complexity, synergy ROI and efficiency.",
+    )
+
+    @field_validator("score_threshold")
+    def _check_score_threshold(cls, v: float) -> float:
+        if not 0 <= v <= 1:
+            raise ValueError("score_threshold must be between 0 and 1")
+        return v
+
+    @field_validator(
+        "score_weights",
+        **({"mode": "before"} if PYDANTIC_V2 else {"pre": True}),
+    )
+    def _parse_score_weights(cls, v: Any) -> tuple[float, float, float, float, float, float]:
+        if isinstance(v, str):
+            try:
+                v = json.loads(v) if v.strip().startswith("[") else [float(x) for x in v.split(",")]
+            except Exception as e:  # pragma: no cover - defensive
+                raise ValueError("score_weights must be a list of floats") from e
+        return tuple(v)
+
+    @field_validator("score_weights")
+    def _check_score_weights(
+        cls, v: tuple[float, float, float, float, float, float]
+    ) -> tuple[float, float, float, float, float, float]:
+        if len(v) != 6:
+            raise ValueError("score_weights must contain six values")
+        if any(w < 0 for w in v):
+            raise ValueError("score_weights values must be non-negative")
+        return v
+
     # Grouped settings
     roi: ROISettings = Field(default_factory=ROISettings, exclude=True)
     synergy: SynergySettings = Field(default_factory=SynergySettings, exclude=True)
