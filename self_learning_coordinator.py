@@ -2,8 +2,11 @@ from __future__ import annotations
 
 """Coordinate incremental training from event bus activity."""
 
-from typing import Optional
+from typing import Optional, List
 import logging
+import asyncio
+
+from pydantic import BaseModel, ValidationError
 
 from .unified_event_bus import EventBus
 from .data_bot import MetricsDB
@@ -53,6 +56,61 @@ class SelfLearningCoordinator:
         self.best_engine: Optional[object] = None
 
     # --------------------------------------------------------------
+    class MemoryEvent(BaseModel):
+        key: str | None = None
+        data: str | None = None
+
+    class CodeEvent(BaseModel):
+        summary: str | None = None
+        code: str | None = None
+        complexity_score: float | None = 0.0
+
+    class WorkflowEvent(BaseModel):
+        workflow: List[str] | None = None
+        title: str | None = None
+        status: str | None = ""
+        workflow_duration: float | None = 0.0
+        estimated_profit_per_bot: float | None = 0.0
+
+    class PathwayEvent(BaseModel):
+        actions: str | None = None
+        inputs: str | None = None
+        outputs: str | None = None
+        exec_time: float | None = 0.0
+        resources: str | None = None
+        outcome: str | None = "FAILURE"
+        roi: float | None = 0.0
+        ts: str | None = None
+
+    class ErrorEvent(BaseModel):
+        message: str | None = None
+        error_type: str | None = None
+
+    class TelemetryEvent(BaseModel):
+        error_type: str | None = None
+        stack_trace: str | None = None
+
+    class MetricsEvent(BaseModel):
+        bot: str
+        cpu: float = 0.0
+        memory: float = 0.0
+        response_time: float = 0.0
+        disk_io: float = 0.0
+        net_io: float = 0.0
+        errors: int = 0
+        revenue: float = 0.0
+        expense: float = 0.0
+        ts: str | None = None
+
+    class TransactionEvent(BaseModel):
+        model_id: str
+        amount: float = 0.0
+        result: str = ""
+
+    class CurriculumEvent(BaseModel):
+        error_type: str
+
+    # --------------------------------------------------------------
     def start(self) -> None:
         if self.running:
             return
@@ -82,7 +140,12 @@ class SelfLearningCoordinator:
     def _on_memory(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
-        actions = str(payload.get("key", payload.get("data", "")))
+        try:
+            ev = self.MemoryEvent.model_validate(payload)
+        except ValidationError as exc:
+            logger.warning("invalid memory payload: %s", exc)
+            return
+        actions = str(ev.key or ev.data or "")
         rec = PathwayRecord(
             actions=actions,
             inputs="",
@@ -97,7 +160,12 @@ class SelfLearningCoordinator:
     def _on_code(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
-        actions = str(payload.get("summary", payload.get("code", "")))
+        try:
+            ev = self.CodeEvent.model_validate(payload)
+        except ValidationError as exc:
+            logger.warning("invalid code payload: %s", exc)
+            return
+        actions = str(ev.summary or ev.code or "")
         rec = PathwayRecord(
             actions=actions,
             inputs="",
@@ -105,28 +173,32 @@ class SelfLearningCoordinator:
             exec_time=0.0,
             resources="",
             outcome=Outcome.SUCCESS,
-            roi=float(payload.get("complexity_score", 0.0)),
+            roi=float(ev.complexity_score or 0.0),
         )
         self._train_all(rec, source="code")
 
     def _on_workflow(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
-        steps = payload.get("workflow")
-        if isinstance(steps, list):
-            actions = "->".join(str(s) for s in steps)
+        try:
+            ev = self.WorkflowEvent.model_validate(payload)
+        except ValidationError as exc:
+            logger.warning("invalid workflow payload: %s", exc)
+            return
+        if isinstance(ev.workflow, list):
+            actions = "->".join(str(s) for s in ev.workflow)
         else:
-            actions = str(steps or payload.get("title", ""))
-        status = str(payload.get("status", "")).lower()
+            actions = str(ev.workflow or ev.title or "")
+        status = (ev.status or "").lower()
         oc = Outcome.FAILURE if "fail" in status or "reject" in status else Outcome.SUCCESS
         rec = PathwayRecord(
             actions=actions,
             inputs="",
             outputs="",
-            exec_time=float(payload.get("workflow_duration", 0.0)),
+            exec_time=float(ev.workflow_duration or 0.0),
             resources="",
             outcome=oc,
-            roi=float(payload.get("estimated_profit_per_bot", 0.0)),
+            roi=float(ev.estimated_profit_per_bot or 0.0),
         )
         self._train_all(rec, source="workflow")
 
@@ -134,24 +206,35 @@ class SelfLearningCoordinator:
         if not self.running or not isinstance(payload, dict):
             return
         try:
+            ev = self.PathwayEvent.model_validate(payload)
+        except ValidationError as exc:
+            logger.warning("invalid pathway payload: %s", exc)
+            return
+        try:
             rec = PathwayRecord(
-                actions=payload.get("actions", ""),
-                inputs=payload.get("inputs", ""),
-                outputs=payload.get("outputs", ""),
-                exec_time=float(payload.get("exec_time", 0.0)),
-                resources=payload.get("resources", ""),
-                outcome=Outcome(payload.get("outcome", "FAILURE")),
-                roi=float(payload.get("roi", 0.0)),
-                ts=payload.get("ts", ""),
+                actions=ev.actions or "",
+                inputs=ev.inputs or "",
+                outputs=ev.outputs or "",
+                exec_time=float(ev.exec_time or 0.0),
+                resources=ev.resources or "",
+                outcome=Outcome(ev.outcome or "FAILURE"),
+                roi=float(ev.roi or 0.0),
+                ts=ev.ts or "",
             )
         except Exception:
+            logger.warning("failed to build pathway record from payload")
             return
         self._train_all(rec, source="pathway")
 
     def _on_error(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
-        msg = str(payload.get("message", payload.get("error_type", "")))
+        try:
+            ev = self.ErrorEvent.model_validate(payload)
+        except ValidationError as exc:
+            logger.warning("invalid error payload: %s", exc)
+            return
+        msg = str(ev.message or ev.error_type or "")
         rec = PathwayRecord(
             actions=msg,
             inputs="",
@@ -166,7 +249,12 @@ class SelfLearningCoordinator:
     def _on_telemetry(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
-        msg = str(payload.get("error_type", payload.get("stack_trace", "")))
+        try:
+            ev = self.TelemetryEvent.model_validate(payload)
+        except ValidationError as exc:
+            logger.warning("invalid telemetry payload: %s", exc)
+            return
+        msg = str(ev.error_type or ev.stack_trace or "")
         rec = PathwayRecord(
             actions=msg,
             inputs="",
@@ -182,25 +270,28 @@ class SelfLearningCoordinator:
         if not self.running or not isinstance(payload, dict):
             return
         try:
-            expense = float(payload.get("expense", 0.0))
-            revenue = float(payload.get("revenue", 0.0))
-            roi = (revenue - expense) / (expense or 1.0)
+            ev = self.MetricsEvent.model_validate(payload)
+        except ValidationError as exc:
+            logger.warning("invalid metrics payload: %s", exc)
+            return
+        try:
+            roi = (ev.revenue - ev.expense) / (ev.expense or 1.0)
         except Exception:
             roi = 0.0
         resources = (
-            f"cpu={payload.get('cpu', 0.0)},mem={payload.get('memory', 0.0)},"
-            f"disk={payload.get('disk_io', 0.0)},net={payload.get('net_io', 0.0)}"
+            f"cpu={ev.cpu},mem={ev.memory}",
+            f"disk={ev.disk_io},net={ev.net_io}",
         )
-        oc = Outcome.FAILURE if int(payload.get("errors", 0)) > 0 else Outcome.SUCCESS
+        oc = Outcome.FAILURE if int(ev.errors) > 0 else Outcome.SUCCESS
         rec = PathwayRecord(
-            actions=str(payload.get("bot", "")),
+            actions=str(ev.bot),
             inputs="",
             outputs="",
-            exec_time=float(payload.get("response_time", 0.0)),
+            exec_time=float(ev.response_time),
             resources=resources,
             outcome=oc,
             roi=roi,
-            ts=str(payload.get("ts", "")),
+            ts=str(ev.ts or ""),
         )
         self._train_all(rec, source="metrics")
 
@@ -208,13 +299,14 @@ class SelfLearningCoordinator:
         if not self.running or not isinstance(payload, dict):
             return
         try:
-            amount = float(payload.get("amount", 0.0))
-        except Exception:
-            amount = 0.0
-        result = str(payload.get("result", ""))
-        oc = Outcome.SUCCESS if "success" in result.lower() else Outcome.FAILURE
+            ev = self.TransactionEvent.model_validate(payload)
+        except ValidationError as exc:
+            logger.warning("invalid transaction payload: %s", exc)
+            return
+        amount = float(ev.amount)
+        oc = Outcome.SUCCESS if "success" in ev.result.lower() else Outcome.FAILURE
         rec = PathwayRecord(
-            actions=str(payload.get("model_id", "")),
+            actions=str(ev.model_id),
             inputs="",
             outputs="",
             exec_time=0.0,
@@ -227,7 +319,12 @@ class SelfLearningCoordinator:
     def _on_curriculum(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
-        err = str(payload.get("error_type", ""))
+        try:
+            ev = self.CurriculumEvent.model_validate(payload)
+        except ValidationError as exc:
+            logger.warning("invalid curriculum payload: %s", exc)
+            return
+        err = str(ev.error_type)
         if not err:
             return
         rec = PathwayRecord(
@@ -243,7 +340,7 @@ class SelfLearningCoordinator:
 
     # --------------------------------------------------------------
     def _train_all(self, rec: PathwayRecord, *, source: str = "unknown") -> None:
-        self._train_record(rec)
+        asyncio.run(self._train_record(rec))
         self._train_count += 1
         logger.info(
             "processed training record %s from %s (count=%d)",
@@ -251,6 +348,11 @@ class SelfLearningCoordinator:
             source,
             self._train_count,
         )
+        if self.metrics_db:
+            try:
+                self.metrics_db.log_training_stat(source, True)
+            except Exception as exc:
+                logger.exception("metrics_db failed during log_training_stat: %s", exc)
         if self.eval_interval and self._train_count >= self.eval_interval:
             self._evaluate_all()
             self._train_count = 0
@@ -260,28 +362,20 @@ class SelfLearningCoordinator:
                 self._train_from_summary()
                 self._summary_count = 0
 
-    def _train_record(self, rec: PathwayRecord) -> None:
-        if self.learning_engine:
-            try:
-                self.learning_engine.partial_train(rec)
-            except Exception as exc:
-                logger.exception(
-                    "learning_engine failed during partial_train: %s", exc
-                )
-        if self.unified_engine:
-            try:
-                self.unified_engine.partial_train(rec)
-            except Exception as exc:
-                logger.exception(
-                    "unified_engine failed during partial_train: %s", exc
-                )
-        if self.action_engine:
-            try:
-                self.action_engine.partial_train(rec)
-            except Exception as exc:
-                logger.exception(
-                    "action_engine failed during partial_train: %s", exc
-                )
+    async def _train_record(self, rec: PathwayRecord) -> None:
+        async with asyncio.TaskGroup() as tg:
+            if self.learning_engine:
+                tg.create_task(self._partial_train(self.learning_engine, rec, "learning_engine"))
+            if self.unified_engine:
+                tg.create_task(self._partial_train(self.unified_engine, rec, "unified_engine"))
+            if self.action_engine:
+                tg.create_task(self._partial_train(self.action_engine, rec, "action_engine"))
+
+    async def _partial_train(self, engine: object, rec: PathwayRecord, name: str) -> None:
+        try:
+            await asyncio.to_thread(engine.partial_train, rec)
+        except Exception as exc:
+            logger.exception("%s failed during partial_train: %s", name, exc)
 
     def _train_from_summary(self) -> None:
         if self.curriculum_builder:
@@ -311,7 +405,7 @@ class SelfLearningCoordinator:
                 else Outcome.SUCCESS,
                 roi=0.0,
             )
-            self._train_record(rec)
+            asyncio.run(self._train_record(rec))
             logger.info(
                 "processed summary training record %s (%d/%d)",
                 getattr(rec, "ts", ""),
