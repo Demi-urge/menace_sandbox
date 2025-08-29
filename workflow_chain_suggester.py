@@ -3,7 +3,7 @@ from __future__ import annotations
 """Suggest workflow chains based on embedding similarity and ROI metrics."""
 
 from dataclasses import dataclass
-from typing import List, Sequence, Dict, Any, Tuple, Iterable
+from typing import List, Sequence, Dict, Any, Tuple, Iterable, Set
 import random
 import json
 from pathlib import Path
@@ -17,6 +17,11 @@ try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB  # type: ignore
 except Exception:  # pragma: no cover - allow using a dummy DB in tests
     WorkflowDB = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    from code_database import CodeDB  # type: ignore
+except Exception:  # pragma: no cover - used in tests without the real DB
+    CodeDB = None  # type: ignore
 
 
 def _load_chain_embeddings(path: Path = Path("embeddings.jsonl")) -> List[Dict[str, Any]]:
@@ -53,6 +58,7 @@ class WorkflowChainSuggester:
     wf_db: Any | None = None
     roi_db: ROIResultsDB | None = None
     stability_db: WorkflowStabilityDB | None = None
+    code_db: CodeDB | None = None
 
     def __post_init__(self) -> None:  # pragma: no cover - simple wiring
         if self.wf_db is None and WorkflowDB is not None:
@@ -61,6 +67,11 @@ class WorkflowChainSuggester:
             self.roi_db = ROIResultsDB()
         if self.stability_db is None:
             self.stability_db = WorkflowStabilityDB()
+        if self.code_db is None and CodeDB is not None:
+            try:
+                self.code_db = CodeDB()
+            except Exception:
+                self.code_db = None
 
     # ------------------------------------------------------------------
     def _roi_score(self, workflow_id: str) -> float:
@@ -85,6 +96,22 @@ class WorkflowChainSuggester:
             return 0.5 / (1.0 + max(0.0, ema))
         except Exception:
             return 1.0
+
+    def _context_tags(self, workflow_id: str) -> List[str]:
+        """Return CodeDB context tags for ``workflow_id``."""
+
+        if not self.code_db:
+            return []
+        try:
+            if hasattr(self.code_db, "get_context_tags"):
+                tags = self.code_db.get_context_tags(workflow_id) or []
+            elif hasattr(self.code_db, "context_tags"):
+                tags = self.code_db.context_tags(workflow_id) or []
+            else:
+                tags = []
+            return [str(t) for t in tags]
+        except Exception:
+            return []
 
     # ------------------------------------------------------------------
     # Chain mutation helpers
@@ -154,13 +181,17 @@ class WorkflowChainSuggester:
 
     # ------------------------------------------------------------------
     def _kmeans(
-        self, vectors: List[Tuple[str, Sequence[float]]], k: int, iterations: int = 10
+        self,
+        vectors: List[Tuple[str, Sequence[float], float]],
+        k: int,
+        iterations: int = 10,
     ) -> List[List[str]]:
-        centroids = [list(vec) for _, vec in random.sample(vectors, k)]
-        assign = [0] * len(vectors)
+        weighted = [([w * x for x in vec], wid, w) for wid, vec, w in vectors]
+        centroids = [list(vec) for vec, _, _ in random.sample(weighted, k)]
+        assign = [0] * len(weighted)
         for _ in range(iterations):
             changed = False
-            for i, (_, vec) in enumerate(vectors):
+            for i, (vec, _wid, _w) in enumerate(weighted):
                 best = min(
                     range(k),
                     key=lambda j: 1 - cosine_similarity(vec, centroids[j]),
@@ -169,14 +200,15 @@ class WorkflowChainSuggester:
                     assign[i] = best
                     changed = True
             for j in range(k):
-                members = [vectors[i][1] for i in range(len(vectors)) if assign[i] == j]
+                members = [weighted[i] for i in range(len(weighted)) if assign[i] == j]
                 if members:
-                    dims = zip(*members)
-                    centroids[j] = [sum(d) / len(members) for d in dims]
+                    total_w = sum(m[2] for m in members)
+                    dims = zip(*[m[0] for m in members])
+                    centroids[j] = [sum(d) / total_w for d in dims]
             if not changed:
                 break
         clusters: Dict[int, List[str]] = {i: [] for i in range(k)}
-        for idx, (wid, _vec) in enumerate(vectors):
+        for idx, (_vec, wid, _w) in enumerate(weighted):
             clusters[assign[idx]].append(wid)
         return list(clusters.values())
 
@@ -200,7 +232,8 @@ class WorkflowChainSuggester:
 
         raw = self.wf_db.search_by_vector(target_embedding, remaining * 5)
         scores: Dict[str, float] = {}
-        vecs: List[Tuple[str, Sequence[float]]] = []
+        vecs: List[Tuple[str, Sequence[float], float]] = []
+        tags: Dict[str, Set[str]] = {}
         for wid, dist in raw:
             vec = self.wf_db.get_vector(wid)
             if not vec:
@@ -211,7 +244,9 @@ class WorkflowChainSuggester:
             delta = max(0.0, self._roi_delta(wid))
             score = sim * (1.0 + roi) * stability * (1.0 + delta)
             scores[str(wid)] = score
-            vecs.append((str(wid), vec))
+            weight = (1.0 + roi) * stability
+            vecs.append((str(wid), vec, weight))
+            tags[str(wid)] = set(self._context_tags(wid))
         if not vecs:
             return suggestions
         k = min(3, len(vecs))
@@ -220,6 +255,13 @@ class WorkflowChainSuggester:
         for cl in clusters:
             ordered = sorted(cl, key=lambda w: scores.get(w, 0.0), reverse=True)
             avg = sum(scores.get(w, 0.0) for w in cl) / len(cl)
+            tag_union: Set[str] = set()
+            for w in cl:
+                tag_union.update(tags.get(w, set()))
+            if len(tag_union) > 1:
+                avg *= 1.1
+            elif len(tag_union) == 1:
+                avg *= 0.9
             seqs.append((avg, ordered))
         seqs.sort(key=lambda x: x[0], reverse=True)
         chosen = [s for _, s in seqs[:remaining]]
@@ -235,7 +277,10 @@ class WorkflowChainSuggester:
         if len(final) > 1 and self._should_merge(final):
             final = [self.merge_partial_chains(final)]
 
-        return suggestions + final[:remaining]
+        combined = suggestions + final[:remaining]
+        valid = [c for c in combined if self._entropy(c) <= 1.5]
+
+        return valid[:top_k]
 
 
 _default_suggester: WorkflowChainSuggester | None = None

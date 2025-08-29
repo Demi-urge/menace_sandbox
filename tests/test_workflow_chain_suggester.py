@@ -70,3 +70,31 @@ def test_chain_mutation_helpers():
     assert WorkflowChainSuggester.split_sequence(chain, 1) == [["a"], ["b", "c"]]
     merged = WorkflowChainSuggester.merge_partial_chains([["a", "b"], ["b", "c"]])
     assert merged == ["a", "b", "c"]
+
+
+def test_high_entropy_chain_is_filtered(monkeypatch):
+    import workflow_chain_suggester as wcs
+
+    monkeypatch.setattr(
+        wcs,
+        "_load_chain_embeddings",
+        lambda path=None: [
+            {"id": "1->2", "vector": [1.0, 0.0, 0.0], "roi": 0.0, "entropy": 0.0}
+        ],
+    )
+
+    def fake_entropy(cls, spec):
+        mods = [s.get("module") for s in spec.get("steps", [])]
+        return 2.0 if mods == ["1", "2"] else 0.0
+
+    monkeypatch.setattr(
+        wcs.WorkflowSynergyComparator,
+        "_entropy",
+        classmethod(fake_entropy),
+    )
+
+    suggester = WorkflowChainSuggester(
+        wf_db=DummyDB(), roi_db=DummyROIDB(), stability_db=DummyStabilityDB()
+    )
+    chains = suggester.suggest_chains([1.0, 0.0, 0.0], top_k=2)
+    assert ["1", "2"] not in chains
