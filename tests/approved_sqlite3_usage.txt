@@ -57,3 +57,4 @@ tests/test_db_router_sqlparse.py
 tests/test_roi_tracker_scope.py
 tests/test_db_dedup_concurrent.py
 tests/test_db_router_logging.py
+tests/integration/test_workflow_policy_integration.py
