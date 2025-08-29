@@ -544,10 +544,25 @@ def _update_alignment_baseline(settings: SandboxSettings | None = None) -> None:
     except Exception:
         logger.exception("alignment baseline update failed")
 
-try:  # pragma: no cover - optional dependency
+try:  # optional dependency
     from .self_model_bootstrap import bootstrap
-except Exception:  # pragma: no cover - fallback for tests
-    bootstrap = lambda: 0  # type: ignore
+except Exception as exc:
+    def bootstrap(*_a: object, **_k: object) -> int:  # type: ignore
+        """Bootstrap the system model.
+
+        This helper requires :mod:`self_model_bootstrap`.  When that module
+        cannot be imported a descriptive :class:`RuntimeError` is raised to
+        alert the caller that bootstrapping is unavailable.
+
+        Returns
+        -------
+        int
+            Identifier of the bootstrapped model.
+        """
+
+        raise RuntimeError(
+            "self_model_bootstrap module is required for bootstrapping"
+        ) from exc
 from .research_aggregator_bot import (
     ResearchAggregatorBot,
     ResearchItem,
