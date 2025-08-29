@@ -1940,7 +1940,9 @@ class MetaWorkflowPlanner:
                     try:
                         conn.close()
                     except Exception:  # pragma: no cover - best effort
-                        pass
+                        logger.warning(
+                            "Failed to close synergy history connection", exc_info=True
+                        )
                 if self.cluster_map:
                     self._save_cluster_map()
         except Exception:  # pragma: no cover - persistence optional
