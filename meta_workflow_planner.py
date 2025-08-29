@@ -737,9 +737,10 @@ class MetaWorkflowPlanner:
 
         ``target_embedding`` is clustered via :class:`WorkflowChainSuggester`
         to obtain candidate sequences of workflow identifiers.  Each suggested
-        chain is executed inside a :class:`WorkflowSandboxRunner` and the
-        resulting ROI, failure count and entropy are recorded.  Chains that
-        exceed ``failure_threshold`` or ``entropy_threshold`` are discarded.
+        chain undergoes a full sandbox execution via
+        :class:`WorkflowSandboxRunner` where ROI gain, failure *rate* and
+        entropy are aggregated across multiple runs.  Chains that exceed
+        ``failure_threshold`` or ``entropy_threshold`` are discarded.
 
         Returns a list of dictionaries containing metrics for accepted chains.
         """
@@ -862,7 +863,7 @@ class MetaWorkflowPlanner:
             WorkflowSynergyComparator = None  # type: ignore
 
         roi_gains: List[float] = []
-        failure_counts: List[float] = []
+        failure_rates: List[float] = []
         entropies: List[float] = []
         runtimes: List[float] = []
         success_rates: List[float] = []
@@ -877,6 +878,8 @@ class MetaWorkflowPlanner:
                 metrics.crash_count,
                 sum(1 for m in metrics.modules if not m.success),
             )
+            module_count = len(metrics.modules)
+            failure_rate = failure_count / module_count if module_count else 0.0
             if WorkflowSynergyComparator is not None:
                 try:
                     entropy = WorkflowSynergyComparator._entropy(spec)
@@ -915,14 +918,10 @@ class MetaWorkflowPlanner:
                 for i, m in enumerate(metrics.modules)
             ]
             runtime = sum(m.duration for m in metrics.modules)
-            success_rate = (
-                (len(metrics.modules) - failure_count) / len(metrics.modules)
-                if metrics.modules
-                else 0.0
-            )
+            success_rate = 1.0 - failure_rate
             return (
                 roi_gain,
-                float(failure_count),
+                float(failure_rate),
                 float(entropy),
                 runtime,
                 success_rate,
@@ -950,17 +949,17 @@ class MetaWorkflowPlanner:
             steps_val,
         ) in results:
             roi_gains.append(roi_gain_val)
-            failure_counts.append(failure_val)
+            failure_rates.append(failure_val)
             entropies.append(entropy_val)
             runtimes.append(runtime_val)
             success_rates.append(success_val)
             per_run_steps.append(steps_val)
 
         roi_gain = fmean(roi_gains)
-        failure_count = fmean(failure_counts)
+        failure_rate = fmean(failure_rates)
         entropy = fmean(entropies)
         roi_var = pvariance(roi_gains) if len(roi_gains) > 1 else 0.0
-        failure_var = pvariance(failure_counts) if len(failure_counts) > 1 else 0.0
+        failure_var = pvariance(failure_rates) if len(failure_rates) > 1 else 0.0
         entropy_var = pvariance(entropies) if len(entropies) > 1 else 0.0
         runtime = fmean(runtimes)
         success_rate = fmean(success_rates)
@@ -994,7 +993,7 @@ class MetaWorkflowPlanner:
                     chain_id,
                     roi_delta,
                     metrics_delta={
-                        "failures": float(failure_count),
+                        "failures": float(failure_rate),
                         "entropy": float(entropy),
                     },
                 )
@@ -1007,7 +1006,7 @@ class MetaWorkflowPlanner:
                 self.stability_db.record_metrics(
                     chain_id,
                     roi_gain,
-                    failure_count,
+                    failure_rate,
                     entropy,
                     roi_delta=roi_delta,
                     roi_var=roi_var,
@@ -1017,7 +1016,7 @@ class MetaWorkflowPlanner:
             except Exception:
                 logger.exception("Failed to record metrics for chain %s", chain_id)
 
-        if failure_count > failure_threshold or entropy > entropy_threshold:
+        if failure_rate > failure_threshold or entropy > entropy_threshold:
             return None
 
         if self.roi_db is not None:
@@ -1041,7 +1040,7 @@ class MetaWorkflowPlanner:
                         },
                         "__aggregate__": {
                             "roi_gain_var": roi_var,
-                            "failures_mean": failure_count,
+                            "failures_mean": failure_rate,
                             "failures_var": failure_var,
                             "entropy_mean": entropy,
                             "entropy_var": entropy_var,
@@ -1054,7 +1053,7 @@ class MetaWorkflowPlanner:
         self._update_cluster_map(
             chain,
             roi_gain,
-            failures=failure_count,
+            failures=failure_rate,
             entropy=entropy,
             step_metrics=step_metrics,
         )
@@ -1078,7 +1077,7 @@ class MetaWorkflowPlanner:
             "chain": list(chain),
             "roi_gain": roi_gain,
             "roi_var": roi_var,
-            "failures": failure_count,
+            "failures": failure_rate,
             "failures_var": failure_var,
             "entropy": entropy,
             "entropy_var": entropy_var,
@@ -1938,7 +1937,7 @@ class MetaWorkflowPlanner:
                         self._update_cluster_map(
                             chain.split("|"),
                             float(entry.get("roi", 0.0)),
-                            int(entry.get("failures", 0)),
+                            float(entry.get("failures", 0.0)),
                             float(entry.get("entropy", 0.0)),
                             record_history=False,
                             save=False,
@@ -1960,7 +1959,7 @@ class MetaWorkflowPlanner:
         self,
         chain: Sequence[str],
         roi_gain: float,
-        failures: int = 0,
+        failures: float = 0.0,
         entropy: float = 0.0,
         *,
         step_metrics: Sequence[Mapping[str, Any]] | None = None,
@@ -1968,7 +1967,12 @@ class MetaWorkflowPlanner:
         record_history: bool = True,
         save: bool = True,
     ) -> Dict[str, Any]:
-        """Update metric histories for ``chain`` and detect convergence."""
+        """Update metric histories for ``chain`` and detect convergence.
+
+        ``failures`` represents the average failure *rate* for the chain in the
+        most recent run, allowing reinforcement logic to reason about stability
+        irrespective of chain length.
+        """
 
         key = tuple(chain)
         info = self.cluster_map.setdefault(
