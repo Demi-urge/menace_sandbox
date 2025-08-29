@@ -1649,86 +1649,70 @@ class SelfImprovementEngine:
         return records
 
     def _execute_meta_planner(self) -> None:
-        """Instantiate planner and score validated meta-pipelines."""
+        """Instantiate planner and run scheduled meta-pipelines."""
         if MetaWorkflowPlanner is None or self.workflow_evolver is None:
             return
         try:
             planner = MetaWorkflowPlanner()
-            target = planner.encode("self_improvement", {"workflow": []})
-            workflows: dict[str, Callable[[], bool]] = {}
+            workflows: dict[str, Callable[[], Any]] = {}
             if WorkflowDB is not None and WorkflowRecord is not None:
                 try:
                     db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
-                    for rec in db.fetch_workflows(limit=50):
+                    for rec in db.fetch_workflows(limit=200):
                         seq = rec.get("workflow") or []
                         seq_str = "-".join(seq) if isinstance(seq, list) else str(seq)
                         wid = str(rec.get("id") or rec.get("wid") or "")
                         workflows[wid] = self.workflow_evolver.build_callable(seq_str)
                 except Exception:
                     self.logger.exception("failed loading workflows for meta planner")
-            records = planner.plan_and_validate(target, workflows)
-            for idx, record in enumerate(records, start=1):
-                chain = record.get("chain") or []
+            records = planner.schedule(workflows, metrics_db=self.metrics_db)
+            for rec in records:
+                chain = rec.get("chain") or []
                 if not chain:
                     continue
-                meta_id = "->".join(chain)
-
-                def _chain_callable() -> bool:
-                    ok = True
-                    for wid in chain:
-                        fn = workflows.get(str(wid))
-                        if fn is None:
-                            return False
-                        try:
-                            ok = bool(fn()) and ok
-                        except Exception:
-                            ok = False
-                    return ok
-
-                scorer = CompositeWorkflowScorer(results_db=ROIResultsDB())
-                evaluation = scorer.run(
-                    _chain_callable,
-                    meta_id,
-                    run_id=f"meta-{idx}",
-                    sequence=chain,
-                )
-                roi_gain = float(evaluation.roi_gain)
-                try:
-                    MutationLogger.log_mutation(
-                        change="meta_pipeline",
-                        reason="meta_planner",
-                        trigger="self_improvement_cycle",
-                        performance=roi_gain,
-                        workflow_id=abs(hash(meta_id)) % (10**9),
-                        before_metric=0.0,
-                        after_metric=roi_gain,
-                    )
-                    STABLE_WORKFLOWS.mark_stable(meta_id, roi_gain)
-                    if roi_gain > 0:
-                        try:
-                            from .workflow_synthesizer import (
-                                record_winning_sequence as _record_winning,
+                chain_id = "->".join(chain)
+                roi = float(rec.get("roi_gain", 0.0))
+                failures = int(rec.get("failures", 0))
+                entropy = float(rec.get("entropy", 0.0))
+                if roi > 0:
+                    try:
+                        with shd.connect_locked() as conn:
+                            shd.insert_entry(
+                                conn,
+                                {"chain": chain_id, "roi_gain": roi, "failures": failures},
                             )
-                        except Exception:  # pragma: no cover - flat layout
-                            try:
-                                from workflow_synthesizer import (
-                                    record_winning_sequence as _record_winning,
-                                )  # type: ignore
-                            except Exception:
-                                _record_winning = None  # type: ignore
-                        if _record_winning is not None:
-                            try:
-                                _record_winning(chain)
-                            except Exception:
-                                self.logger.exception(
-                                    "planner reinforcement recording failed",
-                                    extra=log_record(workflow_id=meta_id),
-                                )
-                except Exception:
-                    self.logger.exception(
-                        "reinforcement logging failed",
-                        extra=log_record(workflow_id=meta_id),
-                    )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to save synergy history",
+                            extra=log_record(workflow_id=chain_id),
+                        )
+                if planner.roi_db is not None:
+                    try:
+                        planner.roi_db.log_result(
+                            workflow_id=chain_id,
+                            run_id="bg",
+                            runtime=0.0,
+                            success_rate=1.0,
+                            roi_gain=roi,
+                            workflow_synergy_score=max(0.0, 1.0 - entropy),
+                            bottleneck_index=0.0,
+                            patchability_score=0.0,
+                            module_deltas={},
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "ROI logging failed", extra=log_record(workflow_id=chain_id)
+                        )
+                if planner.stability_db is not None:
+                    try:
+                        planner.stability_db.record_metrics(
+                            chain_id, roi, failures, entropy, roi_delta=roi
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "stability logging failed",
+                            extra=log_record(workflow_id=chain_id),
+                        )
         except Exception:
             self.logger.exception("meta planner execution failed")
 
