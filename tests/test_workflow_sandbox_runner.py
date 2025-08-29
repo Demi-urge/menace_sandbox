@@ -6,6 +6,7 @@ import tempfile
 import types
 from pathlib import Path
 import builtins
+import logging
 
 import urllib.request
 import shutil
@@ -507,3 +508,39 @@ def test_memory_limit_aborts_module(monkeypatch):
     mod = metrics.modules[0]
     assert mod.success is False
     assert "memory" in (mod.exception or "").lower()
+
+
+def test_module_copy_failure_logged(monkeypatch, caplog):
+    def step():
+        return "ok"
+
+    def boom(*a, **kw):
+        raise OSError("copy boom")
+
+    monkeypatch.setattr(shutil, "copy2", boom)
+    runner = WorkflowSandboxRunner()
+
+    with caplog.at_level(logging.WARNING):
+        runner.run([step])
+
+    assert any("failed to copy source" in r.message for r in caplog.records)
+
+
+def test_telemetry_write_error_logged(monkeypatch, caplog):
+    def step():
+        return "ok"
+
+    original = Path.write_text
+
+    def bad_write(self, *a, **kw):
+        if self.name == "telemetry.json":
+            raise OSError("telemetry boom")
+        return original(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "write_text", bad_write)
+    runner = WorkflowSandboxRunner()
+
+    with caplog.at_level(logging.ERROR):
+        runner.run([step])
+
+    assert any("failed to persist telemetry" in r.message for r in caplog.records)

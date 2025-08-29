@@ -26,6 +26,7 @@ import urllib.parse
 import signal
 import threading
 import _thread
+import logging
 from dataclasses import dataclass, field
 from time import perf_counter, process_time
 from typing import Any, Callable, Iterable, Mapping
@@ -47,6 +48,8 @@ except Exception:  # pragma: no cover - meta logger missing
     _SandboxMetaLogger = None  # type: ignore
 
 import tracemalloc
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -183,8 +186,8 @@ class WorkflowSandboxRunner:
                     src = inspect.getsourcefile(fn) or inspect.getfile(fn)
                     if src:
                         shutil.copy2(src, root / pathlib.Path(src).name)
-                except Exception:  # pragma: no cover - best effort
-                    pass
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.warning("failed to copy source for %s: %s", fn, exc, exc_info=True)
 
             # ------------------------------------------------------------------
             # Redirect tempfile helpers to operate inside the sandbox
@@ -689,8 +692,8 @@ class WorkflowSandboxRunner:
                 stack.enter_context(
                     mock.patch.object(requests.Session, "request", fake_request)
                 )
-            except Exception:  # pragma: no cover
-                pass
+            except Exception as exc:  # pragma: no cover
+                logger.warning("requests sandboxing skipped: %s", exc, exc_info=True)
 
                 try:  # pragma: no cover - optional dependency
                     import httpx  # type: ignore
@@ -736,8 +739,8 @@ class WorkflowSandboxRunner:
                                 httpx.AsyncClient, "request", fake_async_httpx_request
                             )
                         )
-                except Exception:  # pragma: no cover
-                    pass
+                except Exception as exc:  # pragma: no cover
+                    logger.warning("httpx sandboxing skipped: %s", exc, exc_info=True)
 
                 try:  # pragma: no cover - optional dependency
                     import aiohttp  # type: ignore
@@ -772,8 +775,8 @@ class WorkflowSandboxRunner:
                             aiohttp.ClientSession, "_request", fake_aio_request
                         )
                     )
-                except Exception:  # pragma: no cover
-                    pass
+                except Exception as exc:  # pragma: no cover
+                    logger.warning("aiohttp sandboxing skipped: %s", exc, exc_info=True)
 
             try:  # pragma: no cover - optional dependency
                 import urllib.request as urllib_request  # type: ignore
@@ -794,8 +797,8 @@ class WorkflowSandboxRunner:
                 stack.enter_context(
                     mock.patch.object(urllib_request, "urlopen", fake_urlopen)
                 )
-            except Exception:  # pragma: no cover
-                pass
+            except Exception as exc:  # pragma: no cover
+                logger.warning("urllib sandboxing skipped: %s", exc, exc_info=True)
 
             metrics = RunMetrics()
 
@@ -1063,8 +1066,8 @@ class WorkflowSandboxRunner:
                 (root / "telemetry.json").write_text(
                     json.dumps(telemetry, default=repr)
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("failed to persist telemetry: %s", exc)
 
             # Optionally forward metrics to metrics_exporter gauges.
             if _Gauge:
@@ -1095,8 +1098,8 @@ class WorkflowSandboxRunner:
                             "ROI delta",
                         )
                         g_roi.set(roi_delta)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("failed to export metrics: %s", exc, exc_info=True)
 
             # Forward telemetry to _SandboxMetaLogger if available.
             if _SandboxMetaLogger:
@@ -1104,8 +1107,8 @@ class WorkflowSandboxRunner:
                     _SandboxMetaLogger(root / "sandbox_meta.log").audit.record(
                         telemetry
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("failed to log sandbox metadata: %s", exc, exc_info=True)
 
             self.metrics = metrics
             self.telemetry = telemetry
