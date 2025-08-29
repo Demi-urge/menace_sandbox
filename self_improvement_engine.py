@@ -920,6 +920,10 @@ async def self_improvement_cycle(
                         await _log(rec)
                         next_active.append(rec.get("chain", []))
                 active = next_active
+
+            evolved = planner.iterate_pipelines(workflows)
+            for rec in evolved:
+                await _log(rec)
         except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
             break
         except Exception:  # pragma: no cover - keep background loop alive
