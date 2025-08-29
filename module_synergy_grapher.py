@@ -17,8 +17,14 @@ from itertools import combinations
 from pathlib import Path
 from typing import Dict, Iterable, Tuple
 
-import networkx as nx
-from networkx.readwrite import json_graph
+try:  # pragma: no cover - optional dependency
+    import networkx as nx
+    from networkx.readwrite import json_graph
+except Exception as exc:  # pragma: no cover - informative fallback
+    raise ImportError(
+        "module_synergy_grapher requires the 'networkx' package. "
+        "Install it with 'pip install networkx'."
+    ) from exc
 
 from governed_embeddings import governed_embed
 from module_graph_analyzer import build_import_graph

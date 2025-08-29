@@ -5,6 +5,15 @@ imports and shared dependencies, structural similarity and co-occurrence data fr
 workflows and historical synergy records.  The resulting graph is saved to
 `sandbox_data/module_synergy_graph.json` for later queries.
 
+## Installation
+
+The grapher relies on the optional [`networkx`](https://networkx.org/) package.
+Install it before using the CLI or API:
+
+```bash
+pip install networkx
+```
+
 ## Building
 
 ```bash

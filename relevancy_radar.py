@@ -26,7 +26,36 @@ from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
 import math
 
-import networkx as nx
+try:  # pragma: no cover - optional dependency
+    import networkx as nx
+except Exception:  # pragma: no cover - lightweight fallback
+    from typing import Dict as _Dict, Set as _Set
+
+    class _SimpleDiGraph:
+        def __init__(self) -> None:
+            self._adj: _Dict[str, _Set[str]] = defaultdict(set)
+
+        def add_edge(self, u: str, v: str) -> None:
+            self._adj[u].add(v)
+            self._adj.setdefault(v, set())
+
+        def __contains__(self, node: str) -> bool:  # pragma: no cover - trivial
+            return node in self._adj
+
+    def _descendants(graph: "_SimpleDiGraph", source: str) -> set[str]:
+        seen: set[str] = set()
+        stack = list(graph._adj.get(source, set()))
+        while stack:
+            node = stack.pop()
+            if node not in seen:
+                seen.add(node)
+                stack.extend(graph._adj.get(node, set()))
+        return seen
+
+    class nx:  # type: ignore
+        DiGraph = _SimpleDiGraph
+        descendants = staticmethod(_descendants)
+
 import inspect
 import functools
 import contextlib

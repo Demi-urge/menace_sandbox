@@ -1779,7 +1779,13 @@ Automated module maintenance is handled by the relevancy radar suite. See
 `RelevancyRadar`, `RelevancyRadarService` and `ModuleRetirementService`
 collaborate on retirement, compression and replacement actions. The
 [Recording Output Impact](docs/relevancy_radar.md#recording-output-impact)
-section covers attributing ROI deltas and final output contributions.
+section covers attributing ROI deltas and final output contributions. The suite
+relies on the [`networkx`](https://networkx.org/) package for dependency
+analysis:
+
+```bash
+pip install networkx
+```
 
 ### Relevancy radar overrides
 The relevancy radar tracks how often each module is exercised during runs.
@@ -1887,6 +1893,12 @@ Builds a weighted graph of module relationships and queries related modules.
 See [docs/module_synergy_grapher.md](docs/module_synergy_grapher.md) for graph
 components, scoring, CLI options and workflow examples using
 `get_synergy_cluster`.
+
+This tool requires the optional [`networkx`](https://networkx.org/) package:
+
+```bash
+pip install networkx
+```
 
 ```bash
 python module_synergy_grapher.py --build [--config cfg.toml]
