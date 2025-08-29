@@ -87,7 +87,7 @@ def test_coverage_summary_flags_missing(monkeypatch, tmp_path, caplog):
     _stub_module(monkeypatch, "menace.unified_event_bus", UnifiedEventBus=DummyBot)
     _stub_module(monkeypatch, "menace.menace_orchestrator", MenaceOrchestrator=DummyBot)
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
-    _stub_module(monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot)
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummySandbox)
     _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)

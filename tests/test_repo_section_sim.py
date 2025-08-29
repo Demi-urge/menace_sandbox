@@ -77,7 +77,7 @@ def test_repo_section_sim(monkeypatch, tmp_path):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -145,7 +145,7 @@ def test_repo_section_sim_multi_env_predictions(monkeypatch, tmp_path):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -221,7 +221,7 @@ def test_section_worker_concurrency(monkeypatch, tmp_path):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(

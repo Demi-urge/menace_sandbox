@@ -1671,7 +1671,7 @@ def main(argv: List[str] | None = None) -> None:
             logger.info("using port %d for SynergyDashboard", synergy_dash_port)
         from threading import Thread
         try:
-            from menace.self_improvement_engine import SynergyDashboard
+            from menace.self_improvement import SynergyDashboard
         except RuntimeError as exc:
             logger.warning("SynergyDashboard unavailable: %s", exc)
         else:

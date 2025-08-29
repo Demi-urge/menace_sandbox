@@ -27,7 +27,7 @@ LOG_PATH = Path("sandbox_data/synergy_weights.log")
 
 def _load_engine(path: str | None):
     """Initialise SelfImprovementEngine with the given weights path."""
-    from menace.self_improvement_engine import (
+    from menace.self_improvement import (
         SelfImprovementEngine,
         SynergyWeightLearner,
         DQNSynergyLearner,
@@ -57,7 +57,7 @@ def train_from_history(
 ) -> dict[str, float]:
     """Train synergy weights using ``history`` and save them to ``path``."""
 
-    from menace.self_improvement_engine import (
+    from menace.self_improvement import (
         SynergyWeightLearner,
         DQNSynergyLearner,
         DoubleDQNSynergyLearner,

@@ -75,7 +75,7 @@ class DummyPipeline:
 
 def test_self_improvement_logs_capital(monkeypatch, tmp_path):
     stub = _setup_stubs(monkeypatch)
-    import menace.self_improvement_engine as sie
+    import menace.self_improvement as sie
     import menace.capital_management_bot as cmb
     import menace.research_aggregator_bot as rab
     import menace.data_bot as db

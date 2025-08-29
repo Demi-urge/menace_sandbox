@@ -236,7 +236,7 @@ if "requests" not in sys.modules:
     req_mod.get = lambda *a, **k: None
     sys.modules["requests"] = req_mod
 
-from menace.self_improvement_engine import (
+from menace.self_improvement import (
     synergy_stats,
     SynergyDashboard,
     synergy_ma,

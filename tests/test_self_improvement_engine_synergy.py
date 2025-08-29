@@ -160,7 +160,7 @@ sys.modules.setdefault("pydantic_settings", ps_mod)
 pytest.importorskip("pandas")
 import pandas
 
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 from menace import synergy_history_db as shd
 
 # use lightweight stubs to avoid heavy initialisation

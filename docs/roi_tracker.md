@@ -288,7 +288,7 @@ cycle it queries the predictor for the expected ROI and growth class of
 candidate actions:
 
 ```python
-from menace_sandbox.self_improvement_engine import SelfImprovementEngine
+from menace_sandbox.self_improvement import SelfImprovementEngine
 
 engine = SelfImprovementEngine(bot_name="alpha")
 roi_seq, growth, *_ = engine.roi_predictor.predict([[0.1, 0.2, 0.0]])

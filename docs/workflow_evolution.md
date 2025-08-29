@@ -96,7 +96,7 @@ export ROI_EMA_ALPHA=0.1
 `SelfImprovementEngine` embeds a `WorkflowEvolutionManager` by default. Populate `PathwayDB` with recent workflow sequences, register the engine and run all cycles:
 
 ```python
-from menace.self_improvement_engine import SelfImprovementEngine, ImprovementEngineRegistry
+from menace.self_improvement import SelfImprovementEngine, ImprovementEngineRegistry
 
 engine = SelfImprovementEngine(bot_name="alpha")
 registry = ImprovementEngineRegistry()

@@ -44,7 +44,7 @@ are blocked when the forecast reports a high risk or brittleness:
 
 ```python
 from menace_sandbox.foresight_tracker import ForesightTracker
-from menace_sandbox.self_improvement_engine import SelfImprovementEngine
+from menace_sandbox.self_improvement import SelfImprovementEngine
 
 engine = SelfImprovementEngine(foresight_tracker=ForesightTracker())
 wf = "workflow-1"
@@ -95,7 +95,7 @@ INFO workflow 42 stable (ema gating)
 Example usage:
 
 ```python
-from menace_sandbox.self_improvement_engine import (
+from menace_sandbox.self_improvement import (
     SelfImprovementEngine,
     ImprovementEngineRegistry,
 )
@@ -1105,7 +1105,7 @@ Use `--interval` to change how often the history file is scanned for updates.
 The history can also be viewed in a small dashboard. Start it with
 
 ```bash
-python -m menace.self_improvement_engine synergy-dashboard --file sandbox_data/synergy_history.db
+python -m menace.self_improvement synergy-dashboard --file sandbox_data/synergy_history.db
 ```
 
 Use `--wsgi gunicorn` or `--wsgi uvicorn` to serve the dashboard via Gunicorn or Uvicorn instead of the Flask development server.
@@ -1245,7 +1245,7 @@ reinforcement learning you can instantiate `SelfImprovementEngine` with
 `DQNSynergyLearner`:
 
 ```python
-from menace.self_improvement_engine import SelfImprovementEngine, DQNSynergyLearner
+from menace.self_improvement import SelfImprovementEngine, DQNSynergyLearner
 
 engine = SelfImprovementEngine(
     synergy_learner_cls=DQNSynergyLearner,

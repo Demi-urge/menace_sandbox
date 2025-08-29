@@ -25,7 +25,7 @@ that transient failures are retried while permanent issues propagate errors.
 import logging
 
 try:
-    from .logging_utils import log_record, get_logger, setup_logging, set_correlation_id
+    from ..logging_utils import log_record, get_logger, setup_logging, set_correlation_id
 except ImportError:  # pragma: no cover - simplified environments
     try:
         from logging_utils import log_record  # type: ignore
@@ -58,7 +58,7 @@ settings = load_sandbox_settings()
 
 if getattr(settings, "sandbox_central_logging", False):
     setup_logging()
-from .metrics_exporter import (
+from ..metrics_exporter import (
     synergy_weight_updates_total,
     synergy_weight_update_failures_total,
     synergy_weight_update_alerts_total,
@@ -74,24 +74,24 @@ from .metrics_exporter import (
     self_improvement_failure_total,
 )
 
-from .composite_workflow_scorer import CompositeWorkflowScorer
-from .neuroplasticity import PathwayDB
-from .data_bot import MetricsDB
-from .roi_results_db import ROIResultsDB
-from .workflow_scorer_core import EvaluationResult
-from .workflow_stability_db import WorkflowStabilityDB
+from ..composite_workflow_scorer import CompositeWorkflowScorer
+from ..neuroplasticity import PathwayDB
+from ..data_bot import MetricsDB
+from ..roi_results_db import ROIResultsDB
+from ..workflow_scorer_core import EvaluationResult
+from ..workflow_stability_db import WorkflowStabilityDB
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB, WorkflowRecord
 except ImportError:  # pragma: no cover - best effort fallback
     WorkflowDB = WorkflowRecord = None  # type: ignore
 try:  # pragma: no cover - optional dependency
-    from .workflow_summary_db import WorkflowSummaryDB
+    from ..workflow_summary_db import WorkflowSummaryDB
 except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_summary_db import WorkflowSummaryDB  # type: ignore
 
-router = GLOBAL_ROUTER or init_db_router("self_improvement_engine")
+router = GLOBAL_ROUTER or init_db_router("self_improvement")
 STABLE_WORKFLOWS = WorkflowStabilityDB()
-PLANNER_INTERVAL = getattr(settings, "meta_planning_interval", 0)
+from .meta_planning import PLANNER_INTERVAL
 # Time based interval (in seconds) used to periodically trigger the meta
 # workflow planner in a background thread.  Keeping the configuration separate
 # from the cycle based ``PLANNER_INTERVAL`` allows the planner to run even when
@@ -120,18 +120,18 @@ from typing import Mapping, Callable, Iterable, Dict, Any, Sequence
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
 try:  # pragma: no cover - allow flat imports
-    from .module_synergy_grapher import get_synergy_cluster
+    from ..module_synergy_grapher import get_synergy_cluster
 except ImportError:  # pragma: no cover - fallback for flat layout
     from module_synergy_grapher import get_synergy_cluster  # type: ignore
 try:
-    from . import security_auditor
+    from .. import security_auditor
 except ImportError:  # pragma: no cover - fallback for flat layout
     import security_auditor  # type: ignore
 try:  # pragma: no cover - optional dependency
     import sandbox_runner.environment as environment
 except ImportError as exc:  # pragma: no cover - explicit guidance for users
     raise RuntimeError(
-        "sandbox_runner is required for self_improvement_engine."
+        "sandbox_runner is required for self_improvement."
         " Install the sandbox runner package or add it to PYTHONPATH."
     ) from exc
 
@@ -147,114 +147,12 @@ def _data_dir() -> Path:
 
     return Path(SandboxSettings().sandbox_data_dir)
 
-
-def _load_callable(module: str, attr: str) -> Callable[..., Any]:
-    """Dynamically import ``attr`` from ``module`` with logging."""
-
-    try:
-        mod = importlib.import_module(module)
-        return getattr(mod, attr)
-    except (ImportError, AttributeError) as exc:  # pragma: no cover - best effort logging
-        logger = logging.getLogger(__name__)
-        logger.exception("missing dependency %s.%s", module, attr)
-        self_improvement_failure_total.labels(reason="missing_dependency").inc()
-        raise RuntimeError(f"{module} dependency is required for {attr}") from exc
+from .utils import _load_callable, _call_with_retries
+from .orphan_integration import integrate_orphans, post_round_orphan_scan
+from .meta_planning import self_improvement_cycle
+from .metrics import _update_alignment_baseline
 
 
-def _call_with_retries(
-    func: Callable[..., Any],
-    *args: Any,
-    retries: int = 3,
-    delay: float = 0.1,
-    **kwargs: Any,
-) -> Any:
-    """Execute ``func`` with retry semantics.
-
-    Parameters
-    ----------
-    func:
-        Callable to execute.
-    retries:
-        Number of attempts before re-raising the last exception.
-    delay:
-        Base delay between attempts in seconds.  The delay is multiplied by the
-        attempt number to provide a simple linear backoff.
-    """
-
-    last_exc: Exception | None = None
-    for attempt in range(1, retries + 1):
-        try:
-            return func(*args, **kwargs)
-        except Exception as exc:  # pragma: no cover - exercised in tests
-            last_exc = exc
-            logging.getLogger(__name__).warning(
-                "call to %s failed on attempt %s/%s", 
-                getattr(func, "__name__", repr(func)),
-                attempt,
-                retries,
-                exc_info=True,
-            )
-            if attempt < retries:
-                time.sleep(delay * attempt)
-    assert last_exc is not None
-    self_improvement_failure_total.labels(reason="call_retry_failure").inc()
-    raise last_exc
-
-
-def integrate_orphans(
-    *args: object, retries: int = 3, delay: float = 0.1, **kwargs: object
-) -> list[str]:
-    """Invoke :mod:`sandbox_runner` orphan integration with safeguards.
-
-    The sandbox runner is an optional component.  If it is not available the
-    function raises a :class:`RuntimeError` with instructions on how to enable
-    it so that callers receive a clear and actionable failure instead of silent
-    no-ops.
-    """
-
-    try:
-        from sandbox_runner import orphan_integration as _oi
-    except Exception as exc:  # pragma: no cover - exercised when optional
-        raise RuntimeError(
-            "sandbox_runner is required for orphan integration."
-            " Install the sandbox runner package or add it to PYTHONPATH."
-        ) from exc
-
-    if not hasattr(_oi, "integrate_orphans"):
-        raise RuntimeError(
-            "sandbox_runner.orphan_integration.integrate_orphans is missing;"
-            " ensure the sandbox runner is up to date."
-        )
-
-    func = _oi.integrate_orphans
-    return _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
-
-
-def post_round_orphan_scan(
-    *args: object, retries: int = 3, delay: float = 0.1, **kwargs: object
-) -> dict[str, object]:
-    """Trigger the sandbox post-round orphan scan.
-
-    When the sandbox runner is not installed an explicit error is raised to
-    guide the user towards installing the missing dependency.
-    """
-
-    try:
-        from sandbox_runner import orphan_integration as _oi
-    except Exception as exc:  # pragma: no cover - exercised when optional
-        raise RuntimeError(
-            "sandbox_runner is required for orphan scanning."
-            " Install the sandbox runner package or add it to PYTHONPATH."
-        ) from exc
-
-    if not hasattr(_oi, "post_round_orphan_scan"):
-        raise RuntimeError(
-            "sandbox_runner.orphan_integration.post_round_orphan_scan is missing;"
-            " ensure the sandbox runner is up to date."
-        )
-
-    func = _oi.post_round_orphan_scan
-    return _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
 
 
 def generate_patch(
@@ -282,9 +180,9 @@ def generate_patch(
     return int(patch_id)
 
 
-from .self_test_service import SelfTestService
+from ..self_test_service import SelfTestService
 try:
-    from . import self_test_service as sts
+    from .. import self_test_service as sts
 except ImportError:  # pragma: no cover - fallback for flat layout
     import self_test_service as sts  # type: ignore
 from orphan_analyzer import classify_module, analyze_redundancy
@@ -293,34 +191,34 @@ import numpy as np
 import socket
 import contextlib
 import subprocess
-from .error_cluster_predictor import ErrorClusterPredictor
-from .error_logger import TelemetryEvent
-from . import mutation_logger as MutationLogger
-from .gpt_memory import GPTMemoryManager
-from .local_knowledge_module import init_local_knowledge
+from ..error_cluster_predictor import ErrorClusterPredictor
+from ..error_logger import TelemetryEvent
+from .. import mutation_logger as MutationLogger
+from ..gpt_memory import GPTMemoryManager
+from ..local_knowledge_module import init_local_knowledge
 from gpt_memory_interface import GPTMemoryInterface
 try:
-    from .gpt_knowledge_service import GPTKnowledgeService
+    from ..gpt_knowledge_service import GPTKnowledgeService
 except ImportError:  # pragma: no cover - fallback for flat layout
     from gpt_knowledge_service import GPTKnowledgeService  # type: ignore
 try:  # canonical tag constants
-    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+    from ..log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except ImportError:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
 try:  # helper for standardised GPT memory logging
-    from .memory_logging import log_with_tags
+    from ..memory_logging import log_with_tags
 except ImportError:  # pragma: no cover - fallback for flat layout
     from memory_logging import log_with_tags  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .memory_aware_gpt_client import ask_with_memory
+    from ..memory_aware_gpt_client import ask_with_memory
 except ImportError:  # pragma: no cover - fallback for flat layout
     from memory_aware_gpt_client import ask_with_memory  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .local_knowledge_module import LocalKnowledgeModule
+    from ..local_knowledge_module import LocalKnowledgeModule
 except ImportError:  # pragma: no cover - fallback for flat layout
     from local_knowledge_module import LocalKnowledgeModule  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .knowledge_retriever import (
+    from ..knowledge_retriever import (
         get_feedback,
         get_error_fixes,
         recent_feedback,
@@ -336,44 +234,44 @@ except ImportError:  # pragma: no cover - fallback for flat layout
         recent_error_fix,
     )
 try:  # pragma: no cover - allow flat imports
-    from .relevancy_radar import RelevancyRadar, scan as radar_scan, radar
+    from ..relevancy_radar import RelevancyRadar, scan as radar_scan, radar
 except ImportError:  # pragma: no cover - fallback for flat layout
     from relevancy_radar import RelevancyRadar, scan as radar_scan, radar  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .module_retirement_service import ModuleRetirementService
+    from ..module_retirement_service import ModuleRetirementService
 except ImportError:  # pragma: no cover - fallback for flat layout
     try:
         from module_retirement_service import ModuleRetirementService  # type: ignore
     except ImportError:  # pragma: no cover - last resort
         ModuleRetirementService = object  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .relevancy_metrics_db import RelevancyMetricsDB
+    from ..relevancy_metrics_db import RelevancyMetricsDB
 except ImportError:  # pragma: no cover - fallback for flat layout
     from relevancy_metrics_db import RelevancyMetricsDB  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .intent_clusterer import IntentClusterer
+    from ..intent_clusterer import IntentClusterer
 except ImportError:  # pragma: no cover - fallback for flat layout
     from intent_clusterer import IntentClusterer  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .universal_retriever import UniversalRetriever
+    from ..universal_retriever import UniversalRetriever
 except ImportError:  # pragma: no cover - fallback for flat layout
     from universal_retriever import UniversalRetriever  # type: ignore
 try:  # pragma: no cover - optional planner integration
-    from .workflow_chain_suggester import WorkflowChainSuggester
+    from ..workflow_chain_suggester import WorkflowChainSuggester
 except ImportError:  # pragma: no cover - fallback for flat layout
     try:
         from workflow_chain_suggester import WorkflowChainSuggester  # type: ignore
     except ImportError:  # pragma: no cover - best effort
         WorkflowChainSuggester = None  # type: ignore
 try:  # pragma: no cover - optional planner integration
-    from .meta_workflow_planner import MetaWorkflowPlanner
+    from ..meta_workflow_planner import MetaWorkflowPlanner
 except ImportError:  # pragma: no cover - fallback for flat layout
     try:
         from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
     except ImportError:  # pragma: no cover - best effort
         MetaWorkflowPlanner = None  # type: ignore
 try:  # pragma: no cover - optional consumer
-    from .workflow_synthesizer import consume_planner_suggestions
+    from ..workflow_synthesizer import consume_planner_suggestions
 except ImportError:  # pragma: no cover - fallback for flat layout
     try:
         from workflow_synthesizer import consume_planner_suggestions  # type: ignore
@@ -387,26 +285,26 @@ try:  # pragma: no cover - optional dependency
     )
 except ImportError:  # pragma: no cover - best effort fallback
     append_orphan_classifications = append_orphan_cache = append_orphan_traces = None  # type: ignore
-from .human_alignment_flagger import (
+from ..human_alignment_flagger import (
     HumanAlignmentFlagger,
     flag_improvement,
     flag_alignment_issues,
     _collect_diff_data,
 )
-from .human_alignment_agent import HumanAlignmentAgent
-from .audit_logger import log_event as audit_log_event, get_recent_events
-from .violation_logger import log_violation
-from .alignment_review_agent import AlignmentReviewAgent
-from .governance import check_veto, load_rules
+from ..human_alignment_agent import HumanAlignmentAgent
+from ..audit_logger import log_event as audit_log_event, get_recent_events
+from ..violation_logger import log_violation
+from ..alignment_review_agent import AlignmentReviewAgent
+from ..governance import check_veto, load_rules
 try:  # pragma: no cover - allow flat imports
-    from .evaluation_dashboard import append_governance_result
+    from ..evaluation_dashboard import append_governance_result
 except ImportError:  # pragma: no cover - fallback for flat layout or missing deps
     try:
         from evaluation_dashboard import append_governance_result  # type: ignore
     except ImportError:  # pragma: no cover - best effort fallback
         append_governance_result = lambda *a, **k: None  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .deployment_governance import evaluate as deployment_evaluate
+    from ..deployment_governance import evaluate as deployment_evaluate
 except ImportError:  # pragma: no cover - fallback for flat layout or missing deps
     try:
         from deployment_governance import evaluate as deployment_evaluate  # type: ignore
@@ -415,27 +313,27 @@ except ImportError:  # pragma: no cover - fallback for flat layout or missing de
             """Fallback deployment evaluation used when governance tools are missing."""
             return None
 try:
-    from .borderline_bucket import BorderlineBucket
+    from ..borderline_bucket import BorderlineBucket
 except ImportError:  # pragma: no cover - fallback for flat layout
     from borderline_bucket import BorderlineBucket  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .foresight_gate import ForesightDecision, is_foresight_safe_to_promote
+    from ..foresight_gate import ForesightDecision, is_foresight_safe_to_promote
 except ImportError:  # pragma: no cover - fallback for flat layout
     from foresight_gate import ForesightDecision, is_foresight_safe_to_promote  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .upgrade_forecaster import UpgradeForecaster
+    from ..upgrade_forecaster import UpgradeForecaster
 except ImportError:  # pragma: no cover - fallback for flat layout
     from upgrade_forecaster import UpgradeForecaster  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .workflow_graph import WorkflowGraph
+    from ..workflow_graph import WorkflowGraph
 except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_graph import WorkflowGraph  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .forecast_logger import ForecastLogger, log_forecast_record
+    from ..forecast_logger import ForecastLogger, log_forecast_record
 except ImportError:  # pragma: no cover - fallback for flat layout
     from forecast_logger import ForecastLogger, log_forecast_record  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .workflow_evolution_manager import WorkflowEvolutionManager
+    from ..workflow_evolution_manager import WorkflowEvolutionManager
 except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_evolution_manager import WorkflowEvolutionManager  # type: ignore
 
@@ -487,68 +385,9 @@ def _atomic_write(path: Path, data: bytes | str, *, binary: bool = False) -> Non
     os.replace(tmp, path)
 
 
-def _update_alignment_baseline(settings: SandboxSettings | None = None) -> None:
-    """Write current test counts and complexity scores to baseline metrics file."""
-    try:
-        settings = settings or SandboxSettings()
-        path_str = getattr(settings, "alignment_baseline_metrics_path", "")
-        if not path_str:
-            return
-        repo = _repo_path()
-        test_count = 0
-        total_complexity = 0
-        for file in repo.rglob("*.py"):
-            rel = file.relative_to(repo)
-            name = rel.name
-            rel_posix = rel.as_posix()
-            if (
-                rel_posix.startswith("tests")
-                or name.startswith("test_")
-                or name.endswith("_test.py")
-            ):
-                test_count += 1
-            try:
-                code = file.read_text(encoding="utf-8")
-                tree = ast.parse(code)
-            except Exception:
-                continue
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    score = 1
-                    for sub in ast.walk(node):
-                        if isinstance(
-                            sub,
-                            (
-                                ast.If,
-                                ast.For,
-                                ast.AsyncFor,
-                                ast.While,
-                                ast.With,
-                                ast.AsyncWith,
-                                ast.IfExp,
-                                ast.ListComp,
-                                ast.DictComp,
-                                ast.SetComp,
-                                ast.GeneratorExp,
-                            ),
-                        ):
-                            score += 1
-                        elif isinstance(sub, ast.BoolOp):
-                            score += len(getattr(sub, "values", [])) - 1
-                        elif isinstance(sub, ast.Try):
-                            score += len(sub.handlers)
-                            if sub.orelse:
-                                score += 1
-                            if sub.finalbody:
-                                score += 1
-                    total_complexity += score
-        data = {"tests": int(test_count), "complexity": int(total_complexity)}
-        _atomic_write(Path(path_str), yaml.safe_dump(data))
-    except Exception:
-        logger.exception("alignment baseline update failed")
 
 try:  # optional dependency
-    from .self_model_bootstrap import bootstrap
+    from ..self_model_bootstrap import bootstrap
 except Exception as exc:
     def bootstrap(*_a: object, **_k: object) -> int:  # type: ignore
         """Bootstrap the system model.
@@ -566,41 +405,41 @@ except Exception as exc:
         raise RuntimeError(
             "self_model_bootstrap module is required for bootstrapping"
         ) from exc
-from .research_aggregator_bot import (
+from ..research_aggregator_bot import (
     ResearchAggregatorBot,
     ResearchItem,
     InfoDB,
 )
-from .model_automation_pipeline import (
+from ..model_automation_pipeline import (
     ModelAutomationPipeline,
     AutomationResult,
 )
-from .diagnostic_manager import DiagnosticManager
-from .error_bot import ErrorBot, ErrorDB
-from .data_bot import MetricsDB, DataBot
-from .code_database import PatchHistoryDB
-from .patch_score_backend import PatchScoreBackend, backend_from_url
-from .capital_management_bot import CapitalManagementBot
-from .learning_engine import LearningEngine
-from .unified_event_bus import UnifiedEventBus
-from .neuroplasticity import PathwayRecord, Outcome
-from .self_coding_engine import SelfCodingEngine
-from .action_planner import ActionPlanner
-from .evolution_history_db import EvolutionHistoryDB
-from . import synergy_weight_cli
-from . import synergy_history_db as shd
+from ..diagnostic_manager import DiagnosticManager
+from ..error_bot import ErrorBot, ErrorDB
+from ..data_bot import MetricsDB, DataBot
+from ..code_database import PatchHistoryDB
+from ..patch_score_backend import PatchScoreBackend, backend_from_url
+from ..capital_management_bot import CapitalManagementBot
+from ..learning_engine import LearningEngine
+from ..unified_event_bus import UnifiedEventBus
+from ..neuroplasticity import PathwayRecord, Outcome
+from ..self_coding_engine import SelfCodingEngine
+from ..action_planner import ActionPlanner
+from ..evolution_history_db import EvolutionHistoryDB
+from .. import synergy_weight_cli
+from .. import synergy_history_db as shd
 try:  # pragma: no cover - optional dependency
-    from .adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
+    from ..adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
 except Exception:  # pragma: no cover - fallback for tests
     AdaptiveROIPredictor = object  # type: ignore
     def load_training_data(*a, **k):  # type: ignore
         return []
-from .adaptive_roi_dataset import build_dataset
-from .roi_tracker import ROITracker
-from .foresight_tracker import ForesightTracker
-from .truth_adapter import TruthAdapter
-from .evaluation_history_db import EvaluationHistoryDB
-from .self_improvement_policy import (
+from ..adaptive_roi_dataset import build_dataset
+from ..roi_tracker import ROITracker
+from ..foresight_tracker import ForesightTracker
+from ..truth_adapter import TruthAdapter
+from ..evaluation_history_db import EvaluationHistoryDB
+from ..self_improvement_policy import (
     SelfImprovementPolicy,
     ConfigurableSelfImprovementPolicy,
     DQNStrategy,
@@ -608,8 +447,8 @@ from .self_improvement_policy import (
     ActorCriticStrategy,
     torch as sip_torch,
 )
-from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
-from .env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
+from ..pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
+from ..env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
 
 POLICY_STATE_LEN = 21
 
@@ -718,7 +557,7 @@ class SynergyWeightLearner:
         try:
             synergy_weight_updates_total.inc()
         except Exception:
-            logger.exception("Unhandled exception in self_improvement_engine")
+            logger.exception("Unhandled exception in self_improvement")
 
         logger.info("saved synergy weights", extra=log_record(weights=self.weights))
 
@@ -1077,186 +916,6 @@ def benchmark_workflow_variants(
     return results
 
 
-async def self_improvement_cycle(
-    workflows: Mapping[str, Callable[[], Any]],
-    *,
-    interval: float = PLANNER_INTERVAL,
-    event_bus: "UnifiedEventBus" | None = None,
-) -> None:
-    """Background loop evolving ``workflows`` using the meta planner.
-
-    The coroutine periodically invokes :meth:`MetaWorkflowPlanner.discover_and_persist`
-    and feeds any discovered chains through ``mutate_pipeline``,
-    ``split_pipeline`` and ``remerge_pipelines`` until all tracked chains in
-    ``planner.cluster_map`` are flagged as converged.  For every evaluated
-    record the ROI delta and entropy are logged via :class:`ROIResultsDB` and
-    :class:`WorkflowStabilityDB`.
-
-    Parameters
-    ----------
-    workflows:
-        Mapping of workflow identifiers to callables.
-    interval:
-        Sleep period between discovery rounds.
-    """
-
-    logger = get_logger("SelfImprovementCycle")
-    if MetaWorkflowPlanner is None:
-        logger.warning("MetaWorkflowPlanner unavailable; skipping cycle")
-        return
-
-    planner = MetaWorkflowPlanner()
-
-    cfg = SandboxSettings()
-    mutation_rate = cfg.meta_mutation_rate
-    roi_weight = cfg.meta_roi_weight
-    domain_penalty = cfg.meta_domain_penalty
-
-    for name, value in {
-        "mutation_rate": mutation_rate,
-        "roi_weight": roi_weight,
-        "domain_transition_penalty": domain_penalty,
-    }.items():
-        if hasattr(planner, name):
-            setattr(planner, name, value)
-
-    ENTROPY_THRESHOLD = 0.2
-
-    def _should_encode(record: Mapping[str, Any]) -> bool:
-        """Return True if ``record`` indicates improvement and stability."""
-
-        return (
-            float(record.get("roi_gain", 0.0)) > 0.0
-            and abs(float(record.get("entropy", 0.0))) <= ENTROPY_THRESHOLD
-        )
-
-    async def _log(record: Mapping[str, Any]) -> None:
-        chain = record.get("chain", [])
-        cid = "->".join(chain)
-        roi = float(record.get("roi_gain", 0.0))
-        failures = int(record.get("failures", 0))
-        entropy = float(record.get("entropy", 0.0))
-        if planner.roi_db is not None:
-            try:
-                planner.roi_db.log_result(
-                    workflow_id=cid,
-                    run_id="bg",
-                    runtime=0.0,
-                    success_rate=1.0,
-                    roi_gain=roi,
-                    workflow_synergy_score=max(0.0, 1.0 - entropy),
-                    bottleneck_index=0.0,
-                    patchability_score=0.0,
-                    module_deltas={},
-                )
-            except Exception:  # pragma: no cover - logging best effort
-                logger.exception("ROI logging failed", extra=log_record(workflow_id=cid))
-        if planner.stability_db is not None:
-            try:
-                planner.stability_db.record_metrics(
-                    cid, roi, failures, entropy, roi_delta=roi
-                )
-            except Exception:  # pragma: no cover - logging best effort
-                logger.exception(
-                    "stability logging failed", extra=log_record(workflow_id=cid)
-                )
-        if event_bus is not None:
-            try:
-                event_bus.publish(
-                    "metrics:new",
-                    {
-                        "bot": cid,
-                        "errors": failures,
-                        "entropy": entropy,
-                        "expense": 1.0,
-                        "revenue": 1.0 + roi,
-                    },
-                )
-            except Exception:  # pragma: no cover - best effort
-                logger.exception(
-                    "failed to publish metrics", extra=log_record(workflow_id=cid)
-                )
-
-    while True:
-        try:
-            records = planner.discover_and_persist(workflows)
-            active: list[list[str]] = []
-            for rec in records:
-                await _log(rec)
-                chain = rec.get("chain", [])
-                roi = float(rec.get("roi_gain", 0.0))
-                failures = int(rec.get("failures", 0))
-                entropy = float(rec.get("entropy", 0.0))
-                if chain and roi > 0:
-                    active.append(chain)
-                    chain_id = "->".join(chain)
-                    try:
-                        STABLE_WORKFLOWS.record_metrics(
-                            chain_id, roi, failures, entropy, roi_delta=roi
-                        )
-                    except Exception:  # pragma: no cover - best effort
-                        logger.exception(
-                            "global stability logging failed",
-                            extra=log_record(workflow_id=chain_id),
-                        )
-            # iterate until all chains converge
-            while any(
-                not planner.cluster_map.get(tuple(c), {}).get("converged")
-                for c in active
-            ):
-                next_active: list[list[str]] = []
-                for chain in active:
-                    info = planner.cluster_map.get(tuple(chain), {})
-                    if info.get("converged"):
-                        continue
-                    recs = planner.mutate_pipeline(chain, workflows)
-                    if not recs:
-                        recs = planner.split_pipeline(chain, workflows)
-                    if recs:
-                        for rec in recs:
-                            await _log(rec)
-                            c = rec.get("chain", [])
-                            if _should_encode(rec) and c:
-                                try:
-                                    planner.encode_chain(c)
-                                except Exception:  # pragma: no cover - optional
-                                    logger.exception(
-                                        "encode_chain failed",
-                                        extra=log_record(workflow_id="->".join(c)),
-                                    )
-                            next_active.append(c)
-                    else:
-                        next_active.append(chain)
-                if len(next_active) > 1:
-                    remerged = planner.remerge_pipelines(next_active, workflows)
-                    for rec in remerged:
-                        await _log(rec)
-                        c = rec.get("chain", [])
-                        if _should_encode(rec) and c:
-                            try:
-                                planner.encode_chain(c)
-                            except Exception:  # pragma: no cover - optional
-                                logger.exception(
-                                    "encode_chain failed",
-                                    extra=log_record(workflow_id="->".join(c)),
-                                )
-                        next_active.append(c)
-                active = next_active
-
-            evolved = planner.iterate_pipelines(workflows)
-            for rec in evolved:
-                await _log(rec)
-                c = rec.get("chain", [])
-                if _should_encode(rec) and c:
-                    planner.encode_chain(c)
-            planner.cleanup_chain_embeddings()
-        except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
-            break
-        except Exception:  # pragma: no cover - keep background loop alive
-            logger.exception("self improvement cycle iteration failed")
-        await asyncio.sleep(interval)
-
-
 class SelfImprovementEngine:
     """Run the automation pipeline on a configurable bot."""
 
@@ -1588,7 +1247,7 @@ class SelfImprovementEngine:
         self.logger = get_logger("SelfImprovementEngine")
         self._load_state()
         self._load_synergy_weights()
-        from .module_index_db import ModuleIndexDB
+        from ..module_index_db import ModuleIndexDB
 
         auto_map = SandboxSettings().sandbox_auto_map
         if not auto_map and SandboxSettings().sandbox_autodiscover_modules:
@@ -1668,7 +1327,7 @@ class SelfImprovementEngine:
                     self.module_index.merge_groups(grp_map)
                     grp_map = {m: self.module_index.get(m) for m in grp_map}
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
             self.module_clusters.update(grp_map)
         logging.basicConfig(level=logging.INFO)
         self._score_backend: PatchScoreBackend | None = None
@@ -1831,7 +1490,7 @@ class SelfImprovementEngine:
                                 failure_reason=str(exc),
                             )
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
             return chains
         except Exception:
             return []
@@ -1907,7 +1566,7 @@ class SelfImprovementEngine:
                     )
             if self.evolution_history:
                 try:
-                    from .evolution_history_db import EvolutionEvent
+                    from ..evolution_history_db import EvolutionEvent
 
                     self.evolution_history.add(
                         EvolutionEvent(
@@ -2034,19 +1693,19 @@ class SelfImprovementEngine:
                 if insight:
                     summaries.append(f"{FEEDBACK} insight: {insight}")
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
             try:
                 insight = recent_improvement_path(self.knowledge_service)  # type: ignore[attr-defined]
                 if insight:
                     summaries.append(f"{IMPROVEMENT_PATH} insight: {insight}")
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
             try:
                 insight = recent_error_fix(self.knowledge_service)  # type: ignore[attr-defined]
                 if insight:
                     summaries.append(f"{ERROR_FIX} insight: {insight}")
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
         return "\n".join(summaries)
 
     def _record_memory_outcome(
@@ -2059,7 +1718,7 @@ class SelfImprovementEngine:
     ) -> None:
         try:
             outcome_tags = [
-                f"self_improvement_engine.{action}",
+                f"self_improvement.{action}",
                 FEEDBACK,
                 IMPROVEMENT_PATH,
                 ERROR_FIX,
@@ -2099,7 +1758,7 @@ class SelfImprovementEngine:
                     ask_tags.extend(tags)
                 data = ask_with_memory(
                     client,
-                    f"self_improvement_engine.{action}",
+                    f"self_improvement.{action}",
                     f"{action}:{module}",
                     memory=self.local_knowledge,
                     tags=ask_tags,
@@ -2143,7 +1802,7 @@ class SelfImprovementEngine:
                 )
         try:
             log_tags = [
-                f"self_improvement_engine.{action}",
+                f"self_improvement.{action}",
                 FEEDBACK,
                 IMPROVEMENT_PATH,
                 ERROR_FIX,
@@ -2522,7 +2181,7 @@ class SelfImprovementEngine:
                                     self.gpt_memory,
                                     f"scenario_patch:{name}",
                                     "suggested",
-                                    tags=[f"self_improvement_engine.scenario_patch", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                                    tags=[f"self_improvement.scenario_patch", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                                 )
                             except Exception:
                                 self.logger.exception(
@@ -2936,7 +2595,7 @@ class SelfImprovementEngine:
             try:
                 synergy_weight_update_failures_total.inc()
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
             try:
                 dispatch_alert(
                     "synergy_weight_update_failure",
@@ -2946,7 +2605,7 @@ class SelfImprovementEngine:
                 )
                 synergy_weight_update_alerts_total.inc()
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
             self.logger.exception("synergy weight update failed: %s", exc)
         finally:
             MutationLogger.record_mutation_outcome(
@@ -3204,7 +2863,7 @@ class SelfImprovementEngine:
                         "skip_candidate", f"raroi_history_{idx}", roi_est, category
                     )
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
             else:
                 feats.append(feat)
             prev = val
@@ -3249,7 +2908,7 @@ class SelfImprovementEngine:
                 if rows:
                     gpt_score = float(rows[0][-1])
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
 
         # GPT feedback metrics from evaluation history
         gpt_fb_score = 0.0
@@ -3269,13 +2928,13 @@ class SelfImprovementEngine:
                 if token_row and token_row[0] is not None:
                     gpt_fb_tokens = float(token_row[0])
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
             try:
                 eval_db.conn.close()
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
         except Exception:
-            logger.exception("Unhandled exception in self_improvement_engine")
+            logger.exception("Unhandled exception in self_improvement")
 
         # Resource usage deltas from ROITracker
         res_cost = res_cpu = res_gpu = 0.0
@@ -3312,7 +2971,7 @@ class SelfImprovementEngine:
                 if reps:
                     rep_count = float(reps[-1])
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
 
         before = hist_roi
         after = hist_roi + perf_delta
@@ -3403,7 +3062,7 @@ class SelfImprovementEngine:
                         if c.recommendation and c.roi_delta < 0.0
                     }
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
                 self.logger.info(
                     "borderline workflow; deferring to review/shadow testing",
                     extra=log_record(
@@ -3421,7 +3080,7 @@ class SelfImprovementEngine:
                 try:
                     self._log_action("review", mod, weight, category, confidence)
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
                 try:
                     self.borderline_bucket.add_candidate(mod, raroi, confidence, reason)
                     settings = SandboxSettings()
@@ -3436,9 +3095,9 @@ class SelfImprovementEngine:
                                 ),
                             )
                         except Exception:
-                            logger.exception("Unhandled exception in self_improvement_engine")
+                            logger.exception("Unhandled exception in self_improvement")
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
                 continue
             scored.append((mod, base_roi, category, weight))
             self.logger.debug(
@@ -3620,7 +3279,7 @@ class SelfImprovementEngine:
             try:
                 self.roi_predictor.record_drift(acc, mae)
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
             self.logger.info(
                 "adaptive roi evaluation",
                 extra=log_record(accuracy=float(acc), mae=float(mae)),
@@ -3635,12 +3294,12 @@ class SelfImprovementEngine:
                         ),
                     )
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
             try:  # pragma: no cover - best effort telemetry
                 prediction_mae.labels(metric="adaptive_roi").set(float(mae))
                 prediction_reliability.labels(metric="adaptive_roi").set(float(acc))
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
             if mae > mae_threshold or acc < acc_threshold:
                 self.logger.info(
                     "adaptive roi model drift detected",
@@ -3857,7 +3516,7 @@ class SelfImprovementEngine:
                             if c.recommendation and c.roi_delta < 0.0
                         }
                     except Exception:
-                        logger.exception("Unhandled exception in self_improvement_engine")
+                        logger.exception("Unhandled exception in self_improvement")
                     self.logger.info(
                         "self optimisation deferred: borderline",
                         extra=log_record(
@@ -3874,7 +3533,7 @@ class SelfImprovementEngine:
                     try:
                         self._log_action("review", bot_name, final_score, growth, confidence)
                     except Exception:
-                        logger.exception("Unhandled exception in self_improvement_engine")
+                        logger.exception("Unhandled exception in self_improvement")
                     try:
                         self.borderline_bucket.add_candidate(bot_name, raroi, confidence, reason)
                         settings = SandboxSettings()
@@ -3889,9 +3548,9 @@ class SelfImprovementEngine:
                                     ),
                                 )
                             except Exception:
-                                logger.exception("Unhandled exception in self_improvement_engine")
+                                logger.exception("Unhandled exception in self_improvement")
                     except Exception:
-                        logger.exception("Unhandled exception in self_improvement_engine")
+                        logger.exception("Unhandled exception in self_improvement")
                     return None, False, 0.0
                 mult = (
                     self.growth_multipliers.get(growth, 1.0)
@@ -4065,7 +3724,7 @@ class SelfImprovementEngine:
                 try:
                     grapher.load(graph_path)
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
                 self.module_synergy_grapher = grapher
             grapher.update_graph(sorted(mods))
         except Exception:
@@ -4187,7 +3846,7 @@ class SelfImprovementEngine:
                     orphan_path.parent.mkdir(parents=True, exist_ok=True)
                     orphan_path.write_text(json.dumps(existing, indent=2))
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
                 continue
             if cls == "legacy":
                 legacy.append(rel)
@@ -4209,7 +3868,7 @@ class SelfImprovementEngine:
                 elif prev_cls != "legacy" and cls == "legacy":
                     orphan_modules_legacy_total.inc(1)
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
 
         try:
             existing_meta = (
@@ -4360,7 +4019,7 @@ class SelfImprovementEngine:
                 orphan_modules_redundant_total.inc(len(redundant))
                 orphan_modules_legacy_total.inc(len(legacy))
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
             return set()
 
         added_modules: set[str] = set()
@@ -4536,7 +4195,7 @@ class SelfImprovementEngine:
                 try:
                     roi_total = sum(tracker_res.module_deltas.get(m, []))
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
                 if roi_total < 0:
                     continue
                 if reuse_scores.get(m, 0.0) < reuse_threshold:
@@ -4588,7 +4247,7 @@ class SelfImprovementEngine:
                 orphan_modules_redundant_total.inc(len(redundant))
                 orphan_modules_legacy_total.inc(len(legacy))
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
             try:
                 existing_meta = (
                     json.loads(meta_path.read_text()) if meta_path.exists() else {}
@@ -4717,7 +4376,7 @@ class SelfImprovementEngine:
             orphan_modules_redundant_total.inc(len(redundant))
             orphan_modules_legacy_total.inc(len(legacy))
         except Exception:
-            logger.exception("Unhandled exception in self_improvement_engine")
+            logger.exception("Unhandled exception in self_improvement")
 
         if self.data_bot and getattr(self.data_bot, "metrics_db", None):
             try:
@@ -4864,7 +4523,7 @@ class SelfImprovementEngine:
             if redundant:
                 orphan_modules_redundant_total.inc(redundant)
         except Exception:
-            logger.exception("Unhandled exception in self_improvement_engine")
+            logger.exception("Unhandled exception in self_improvement")
 
         unknown = [m for m in mods if m not in self.module_clusters]
         if not unknown:
@@ -4887,7 +4546,7 @@ class SelfImprovementEngine:
                         extra=log_record(modules=sorted(mods), workflows=updated_wfs),
                     )
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
                 for m in mods:
                     info = traces.setdefault(m, {})
                     info.setdefault("workflows", [])
@@ -5168,7 +4827,7 @@ class SelfImprovementEngine:
                     if redundant_mods:
                         orphan_modules_redundant_total.set(len(redundant_mods))
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
                 existing_meta.update(
                     {m: {"classification": "legacy"} for m in legacy_mods}
                 )
@@ -5251,7 +4910,7 @@ class SelfImprovementEngine:
                                         m: metrics.get(m, 0) for m in safe
                                     }
                             except Exception:
-                                logger.exception("Unhandled exception in self_improvement_engine")
+                                logger.exception("Unhandled exception in self_improvement")
                             environment.try_integrate_into_workflows(
                                 sorted(safe), **kwargs
                             )
@@ -5391,7 +5050,7 @@ class SelfImprovementEngine:
                     else:
                         orphan_modules_redundant_total.inc(1)
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
                 continue
             if is_redundant:
                 info["classification"] = cls
@@ -5454,7 +5113,7 @@ class SelfImprovementEngine:
                                     m: metrics.get(m, 0) for m in safe
                                 }
                         except Exception:
-                            logger.exception("Unhandled exception in self_improvement_engine")
+                            logger.exception("Unhandled exception in self_improvement")
                         environment.try_integrate_into_workflows(sorted(safe), **kwargs)
                     except Exception:  # pragma: no cover - best effort
                         pass
@@ -5657,7 +5316,7 @@ class SelfImprovementEngine:
                         else:
                             orphan_modules_redundant_total.inc(1)
                     except Exception:
-                        logger.exception("Unhandled exception in self_improvement_engine")
+                        logger.exception("Unhandled exception in self_improvement")
                     continue
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("classification failed for %s: %s", path, exc)
@@ -5701,7 +5360,7 @@ class SelfImprovementEngine:
                         {"event": "module_map_refreshed", "modules": sorted(new_mods)}
                     )
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
             self.logger.info(
                 "module map refreshed",
                 extra=log_record(modules=sorted(new_mods)),
@@ -5784,7 +5443,7 @@ class SelfImprovementEngine:
                             self.gpt_memory,
                             f"preventative_patch:{mod}",
                             "suggested",
-                            tags=[f"self_improvement_engine.preventative_patch", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                            tags=[f"self_improvement.preventative_patch", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                         )
                     except Exception:
                         self.logger.exception(
@@ -5933,7 +5592,7 @@ class SelfImprovementEngine:
                                 self.gpt_memory,
                                 f"high_risk_patch:{mod}",
                                 "suggested",
-                                tags=[f"self_improvement_engine.high_risk_patch", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                                tags=[f"self_improvement.high_risk_patch", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                             )
                         except Exception:
                             self.logger.exception(
@@ -6306,7 +5965,7 @@ class SelfImprovementEngine:
                 wf_flags = {f for f in flagged if f.startswith("workflow:")}
                 self.meta_logger.flagged_sections.difference_update(wf_flags)
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
 
         results: dict[int, dict[str, str]] = {}
         for wf_id, seq in workflows:
@@ -6916,7 +6575,7 @@ class SelfImprovementEngine:
                         ctx_obj = wf_ctx() if callable(wf_ctx) else wf_ctx
                         workflow_id = getattr(ctx_obj, "workflow_id", workflow_id)
                     except Exception:
-                        logger.exception("Unhandled exception in self_improvement_engine")
+                        logger.exception("Unhandled exception in self_improvement")
                     metrics = {
                         "raroi": scorecard.get("raroi"),
                         "confidence": scorecard.get("confidence"),
@@ -7016,7 +6675,7 @@ class SelfImprovementEngine:
                                 if logger_obj is not None:
                                     logger_obj.close()
                             except Exception:
-                                logger.exception("Unhandled exception in self_improvement_engine")
+                                logger.exception("Unhandled exception in self_improvement")
                     scorecard["forecast"] = forecast_info
                     scorecard["reasons"] = list(reasons)
                     try:
@@ -7093,7 +6752,7 @@ class SelfImprovementEngine:
                                         ),
                                     )
                                 except Exception:
-                                    logger.exception("Unhandled exception in self_improvement_engine")
+                                    logger.exception("Unhandled exception in self_improvement")
                         except Exception:
                             self.logger.exception("borderline enqueue failed")
                         self.workflow_ready = False
@@ -7120,7 +6779,7 @@ class SelfImprovementEngine:
                         self.logger.exception("patch rollback failed")
             if self.evolution_history:
                 try:
-                    from .evolution_history_db import EvolutionEvent
+                    from ..evolution_history_db import EvolutionEvent
 
                     event_id = self.evolution_history.add(
                         EvolutionEvent(
@@ -7238,7 +6897,7 @@ class SelfImprovementEngine:
                                     try:
                                         db.log_eval("self_improvement", name, val)
                                     except Exception:
-                                        logger.exception("Unhandled exception in self_improvement_engine")
+                                        logger.exception("Unhandled exception in self_improvement")
                     if scenario_metrics:
                         self._evaluate_scenario_metrics(scenario_metrics)
                         self.logger.info(
@@ -7343,7 +7002,7 @@ class SelfImprovementEngine:
                 ctx_obj = wf_ctx() if callable(wf_ctx) else wf_ctx
                 workflow_id = getattr(ctx_obj, "workflow_id", workflow_id)
             except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+                logger.exception("Unhandled exception in self_improvement")
             try:
                 profile_map = getattr(self.foresight_tracker, "workflow_profiles", None)
                 if not isinstance(profile_map, Mapping):
@@ -7539,7 +7198,7 @@ class SelfImprovementEngine:
                     ctx_obj = wf_ctx() if callable(wf_ctx) else wf_ctx
                     workflow_id = getattr(ctx_obj, "workflow_id", workflow_id)
                 except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                    logger.exception("Unhandled exception in self_improvement")
                 risk_info: dict[str, object] | None = None
                 try:
                     risk_info = self.foresight_tracker.predict_roi_collapse(workflow_id)
@@ -8035,7 +7694,7 @@ class SynergyDashboard:
         ax.set_xlabel("iteration")
         ax.set_ylabel("value")
         fig.tight_layout()
-        from io import BytesIO
+        from ..import BytesIO
 
         buf = BytesIO()
         fig.savefig(buf, format="png")

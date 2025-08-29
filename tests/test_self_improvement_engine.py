@@ -350,7 +350,7 @@ sub.CognitionLayer = object
 sys.modules["vector_service.cognition_layer"] = sub
 pytest.importorskip("pandas")
 
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 import menace.diagnostic_manager as dm
 import menace.error_bot as eb
 import menace.data_bot as db

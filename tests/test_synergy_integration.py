@@ -112,7 +112,7 @@ def _load_engine():
     pyd_settings_mod.SettingsConfigDict = dict
     sys.modules.setdefault("pydantic_settings", pyd_settings_mod)
 
-    import menace.self_improvement_engine as sie
+    import menace.self_improvement as sie
     return sie
 
 

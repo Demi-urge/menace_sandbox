@@ -1,7 +1,7 @@
 import pickle
 import pytest
 
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 
 
 def test_dqn_weight_persistence_without_torch(tmp_path, monkeypatch):

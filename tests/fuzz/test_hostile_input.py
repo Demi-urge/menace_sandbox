@@ -16,7 +16,7 @@ def test_hostile_input_scenario(monkeypatch, tmp_path, payload):
     (tmp_path / "m.py").write_text("def f(x):\n    return x\n")
 
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
-    _stub_module(monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot)
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummyBot)
     _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)

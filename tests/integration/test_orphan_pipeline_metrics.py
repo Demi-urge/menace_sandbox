@@ -83,10 +83,10 @@ sys.modules["menace.self_test_service"] = sts
 spec_sts.loader.exec_module(sts)
 
 spec_sie = importlib.util.spec_from_file_location(
-    "menace.self_improvement_engine", ROOT / "self_improvement_engine.py"
+    "menace.self_improvement", ROOT / "self_improvement.py"
 )
 sie = importlib.util.module_from_spec(spec_sie)
-sys.modules["menace.self_improvement_engine"] = sie
+sys.modules["menace.self_improvement"] = sie
 spec_sie.loader.exec_module(sie)
 
 # ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ def _build_repo(tmp_path: Path):
 
 
 def test_orphan_pipelines_prune_and_record_metrics(tmp_path, monkeypatch):
-    """End-to-end test exercising self_test_service and self_improvement_engine."""
+    """End-to-end test exercising self_test_service and self_improvement."""
 
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
     data_dir, map_path = _build_repo(tmp_path)

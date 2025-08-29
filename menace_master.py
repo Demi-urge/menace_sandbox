@@ -102,7 +102,7 @@ from menace.self_learning_service import main as learning_service_main
 from menace.self_service_override import SelfServiceOverride
 from menace.resource_allocation_optimizer import ROIDB
 from menace.data_bot import MetricsDB
-from menace.self_improvement_engine import SelfImprovementEngine
+from menace.self_improvement import SelfImprovementEngine
 from menace.self_improvement_policy import SelfImprovementPolicy
 from menace.self_test_service import SelfTestService
 from menace.code_database import PatchHistoryDB

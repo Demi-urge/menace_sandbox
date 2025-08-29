@@ -178,7 +178,7 @@ def sie(monkeypatch):
     sb3_mod.DQN = sb3_mod.SAC = sb3_mod.TD3 = DummyAlgo
     monkeypatch.setitem(sys.modules, "stable_baselines3", sb3_mod)
 
-    sie = importlib.import_module("menace.self_improvement_engine")
+    sie = importlib.import_module("menace.self_improvement")
     return sie
 
 # ------------------------------------------------------------

@@ -13,7 +13,7 @@ import numpy as np
 
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
-from .self_improvement_engine import SelfImprovementEngine
+from .self_improvement import SelfImprovementEngine
 from .growth_utils import growth_score
 from .system_evolution_manager import SystemEvolutionManager, EvolutionCycleResult
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_methods():
-    path = ROOT / "self_improvement_engine.py"
+    path = ROOT / "self_improvement.py"
     src = path.read_text()
     tree = ast.parse(src)
     methods = []

@@ -43,8 +43,8 @@ ALLOWED = {
 def _reload_with_missing(monkeypatch, missing):
     for name in missing:
         monkeypatch.delitem(sys.modules, name, raising=False)
-    monkeypatch.delitem(sys.modules, "menace.self_improvement_engine", raising=False)
-    monkeypatch.delitem(sys.modules, "self_improvement_engine", raising=False)
+    monkeypatch.delitem(sys.modules, "menace.self_improvement", raising=False)
+    monkeypatch.delitem(sys.modules, "self_improvement", raising=False)
 
     orig_import = builtins.__import__
 
@@ -71,7 +71,7 @@ def _reload_with_missing(monkeypatch, missing):
         return mod
     monkeypatch.setattr(builtins, "__import__", _fake_import)
     try:
-        return importlib.import_module("menace.self_improvement_engine")
+        return importlib.import_module("menace.self_improvement")
     finally:
         monkeypatch.setattr(builtins, "__import__", orig_import)
 

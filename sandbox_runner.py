@@ -130,7 +130,7 @@ from typing import Any, Dict, List, TYPE_CHECKING, Iterable
 from menace.unified_event_bus import UnifiedEventBus
 from menace.menace_orchestrator import MenaceOrchestrator
 from menace.self_improvement_policy import SelfImprovementPolicy
-from menace.self_improvement_engine import SelfImprovementEngine
+from menace.self_improvement import SelfImprovementEngine
 from menace.patch_score_backend import backend_from_url
 from menace.self_test_service import SelfTestService
 from menace.code_database import PatchHistoryDB, CodeDB

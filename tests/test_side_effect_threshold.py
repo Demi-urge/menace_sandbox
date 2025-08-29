@@ -5,7 +5,7 @@ import logging
 
 
 def test_engine_skips_heavy_side_effects(monkeypatch, tmp_path):
-    import menace_sandbox.self_improvement_engine as sie
+    import menace_sandbox.self_improvement as sie
 
     mod = tmp_path / "a.py"
     mod.write_text("print('hi')")

@@ -6,7 +6,7 @@ import asyncio
 import pytest
 
 def _load_engine():
-    """Load self_improvement_engine with heavy deps stubbed."""
+    """Load self_improvement with heavy deps stubbed."""
     # Create minimal 'menace' package
     pkg = types.ModuleType("menace")
     sys.modules["menace"] = pkg
@@ -153,8 +153,8 @@ def _load_engine():
     sys.modules["sandbox_runner.environment"] = types.ModuleType("environment")
 
     spec = importlib.util.spec_from_file_location(
-        "menace.self_improvement_engine",
-        os.path.join(os.path.dirname(__file__), "..", "self_improvement_engine.py"),
+        "menace.self_improvement",
+        os.path.join(os.path.dirname(__file__), "..", "self_improvement.py"),
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod

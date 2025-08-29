@@ -435,7 +435,7 @@ the helper expands local imports and, when `SANDBOX_AUTO_INCLUDE_ISOLATED=1`,
 adds files returned by `scripts.discover_isolated_modules`. Redundant entries
 remain in `sandbox_data/orphan_modules.json` unless `SANDBOX_TEST_REDUNDANT=1`
 allows integration. See [docs/autonomous_sandbox.md](docs/autonomous_sandbox.md)
-and [docs/self_improvement_engine.md](docs/self_improvement_engine.md) for full
+and [docs/self_improvement.md](docs/self_improvement.md) for full
 examples and environment variables such as `SANDBOX_RECURSIVE_ORPHANS`,
 `SANDBOX_AUTO_INCLUDE_ISOLATED` and `SANDBOX_RECURSIVE_ISOLATED`.
 
@@ -680,7 +680,7 @@ scripts/start_sandbox.sh
 To visualise synergy metrics separately, run:
 
 ```bash
-python -m menace.self_improvement_engine synergy-dashboard --wsgi flask
+python -m menace.self_improvement synergy-dashboard --wsgi flask
 ```
 
 Replace `flask` with `gunicorn` or `uvicorn` to use a different server.
@@ -1882,7 +1882,7 @@ adapter's state persists to `sandbox_data/truth_adapter.pkl`; set
 fresh samples and call `fit` again or run:
 
 ```bash
-python self_improvement_engine.py fit-truth-adapter live.npz shadow.npz
+python self_improvement.py fit-truth-adapter live.npz shadow.npz
 ```
 
 See [docs/truth_adapter.md](docs/truth_adapter.md) for details and additional

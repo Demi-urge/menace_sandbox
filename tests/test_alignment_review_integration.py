@@ -8,7 +8,7 @@ from pathlib import Path
 # Ensure package root importable
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-import menace_sandbox.self_improvement_engine as sie
+import menace_sandbox.self_improvement as sie
 import menace_sandbox.human_alignment_agent as haa
 import menace_sandbox.violation_logger as violation_logger
 import menace_sandbox.alignment_review_agent as ara

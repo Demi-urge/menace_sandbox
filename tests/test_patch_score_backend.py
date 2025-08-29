@@ -148,7 +148,7 @@ def test_engine_uses_backend(monkeypatch, tmp_path):
         return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    from tests import test_self_improvement_engine as sie_tests
+    from tests import test_self_improvement as sie_tests
 
     calls = {}
 

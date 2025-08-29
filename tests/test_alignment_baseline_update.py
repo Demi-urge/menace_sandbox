@@ -7,8 +7,8 @@ import yaml
 
 def _load_engine():
     spec = importlib.util.spec_from_file_location(
-        "menace.self_improvement_engine",
-        os.path.join(os.path.dirname(__file__), "..", "self_improvement_engine.py"),
+        "menace.self_improvement",
+        os.path.join(os.path.dirname(__file__), "..", "self_improvement.py"),
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod

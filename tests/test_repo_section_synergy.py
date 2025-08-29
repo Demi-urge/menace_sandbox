@@ -65,7 +65,7 @@ def test_run_repo_section_synergy(monkeypatch, tmp_path):
     (tmp_path / "m.py").write_text("def f():\n    return 1\n")
 
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
-    _stub_module(monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot)
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummyBot)
     _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)

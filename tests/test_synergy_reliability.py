@@ -67,7 +67,7 @@ def _setup_mm_stubs(monkeypatch):
     _stub_module(monkeypatch, "menace.metrics_dashboard", MetricsDashboard=DummyBot)
     _stub_module(monkeypatch, "menace.discrepancy_detection_bot", DiscrepancyDetectionBot=DummyBot)
     _stub_module(monkeypatch, "jinja2", Template=lambda *a, **k: None)
-    _stub_module(monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot)
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummyBot)
 

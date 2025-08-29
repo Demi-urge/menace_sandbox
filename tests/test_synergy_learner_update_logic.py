@@ -6,7 +6,7 @@ import pytest
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
 import menace
-# stub heavy deps so self_improvement_engine can be imported
+# stub heavy deps so self_improvement can be imported
 modules = [
     "menace.self_model_bootstrap",
     "menace.research_aggregator_bot",
@@ -107,7 +107,7 @@ env_mod.PRE_ROI_SCALE = 1.0
 env_mod.PRE_ROI_BIAS = 0.0
 env_mod.PRE_ROI_CAP = 1.0
 
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 
 
 def test_weight_learner_rl_update(tmp_path):

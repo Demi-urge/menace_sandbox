@@ -114,7 +114,7 @@ def _setup_mm_stubs(monkeypatch):
         monkeypatch, "menace.unified_update_service", UnifiedUpdateService=DummyBot
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummyBot)

@@ -106,7 +106,7 @@ def test_workflow_sim(monkeypatch, tmp_path):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -223,7 +223,7 @@ def test_workflow_sim_multi_env(monkeypatch, tmp_path):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -294,7 +294,7 @@ def test_workflow_sim_combined(monkeypatch, tmp_path):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -373,7 +373,7 @@ def test_workflow_function_execution(monkeypatch, tmp_path):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -446,7 +446,7 @@ def test_workflow_sim_details(monkeypatch, tmp_path):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(

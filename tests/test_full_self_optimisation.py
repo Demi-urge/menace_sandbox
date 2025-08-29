@@ -64,7 +64,7 @@ sys.modules.setdefault("sklearn.ensemble", stub)
 stub.RandomForestClassifier = object
 
 import menace.evolution_orchestrator as eo
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 import menace.self_coding_engine as sce
 import menace.model_automation_pipeline as mapl
 import menace.pre_execution_roi_bot as prb
@@ -150,7 +150,7 @@ def test_full_self_optimisation(tmp_path, monkeypatch):
     patches = patch_db.top_patches(limit=10)
     assert patches and any(p.filename.endswith("auto_helpers.py") for p in patches)
 
-    self_patch = [p for p in patches if p.filename.endswith("self_improvement_engine.py")]
+    self_patch = [p for p in patches if p.filename.endswith("self_improvement.py")]
     assert self_patch
 
     events = hist.fetch()
