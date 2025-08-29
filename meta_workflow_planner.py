@@ -363,6 +363,48 @@ class MetaWorkflowPlanner:
             logger.warning("Failed to cleanup chain embeddings", exc_info=True)
 
     # ------------------------------------------------------------------
+    def _failure_entropy_metrics(self, workflow_id: str) -> tuple[float, float]:
+        """Return recent failure rate and entropy for ``workflow_id``.
+
+        The method first consults :class:`ROIResultsDB` to fetch the most
+        recent result for ``workflow_id`` and derives the failure rate from the
+        ``success_rate`` column.  When available, the ``__aggregate__`` entry of
+        ``module_deltas`` is inspected for an ``entropy_mean`` field.  Missing
+        database information falls back to the planner's ``cluster_map`` where
+        historic ``failure_history`` and ``entropy_history`` are maintained for
+        evaluated chains.  Both values are clamped to the ``[0.0, 1.0]`` range
+        before being returned.
+        """
+
+        failure = 0.0
+        entropy = 0.0
+        if self.roi_db is not None:
+            try:
+                results = self.roi_db.fetch_results(workflow_id)
+                if results:
+                    last = results[-1]
+                    failure = 1.0 - float(getattr(last, "success_rate", 1.0))
+                    agg = getattr(last, "module_deltas", {}).get("__aggregate__", {})
+                    entropy = float(agg.get("entropy_mean", agg.get("entropy", 0.0)))
+            except Exception:
+                failure = 0.0
+                entropy = 0.0
+
+        info = self.cluster_map.get((workflow_id,), {})
+        if not failure:
+            hist = info.get("failure_history") or []
+            if hist:
+                failure = float(hist[-1])
+        if not entropy:
+            hist = info.get("entropy_history") or []
+            if hist:
+                entropy = float(hist[-1])
+
+        failure = max(0.0, min(1.0, failure))
+        entropy = max(0.0, min(1.0, entropy))
+        return failure, entropy
+
+    # ------------------------------------------------------------------
     def cluster_workflows(
         self,
         workflows: Mapping[str, Mapping[str, Any]],
@@ -378,13 +420,15 @@ class MetaWorkflowPlanner:
         in the ``workflow_meta`` vector database and the embedding is used to
         query the retriever.  The cosine similarity of a query and candidate
         vector is multiplied by ``(1 + ROI)`` for both workflows using weights
-        from :func:`_roi_weight_from_db`.  The weighted similarities are
-        normalised and converted to a distance matrix which is clustered with
-        :class:`sklearn.cluster.DBSCAN`.  ``epsilon`` and ``min_samples`` control
-        the density threshold for clustering.  Retrieval results are cached via
-        :mod:`cache_utils` to avoid repeated brute-force scans across invocations.
-        Missing ROI information results in unweighted similarity scores so that
-        the function remains best effort.
+        from :func:`_roi_weight_from_db` and further scaled by ``(1 -
+        failure_rate) * (1 - entropy)`` for each workflow.  Weighted similarities
+        are cached to speed up repeated invocations and then normalised and
+        converted to a distance matrix clustered via
+        :class:`sklearn.cluster.DBSCAN`. ``epsilon`` and ``min_samples`` control
+        the density threshold for clustering. Retrieval results are cached via
+        :mod:`cache_utils` to avoid repeated brute-force scans across
+        invocations. Missing ROI information results in unweighted similarity
+        scores so that the function remains best effort.
         """
 
         if (
@@ -403,12 +447,17 @@ class MetaWorkflowPlanner:
 
         vecs: Dict[str, List[float]] = {}
         roi_map: Dict[str, float] = {}
+        failure_map: Dict[str, float] = {}
+        entropy_map: Dict[str, float] = {}
         for wid in ids:
             vec = self.encode_workflow(wid, workflows[wid])
             vecs[wid] = vec
             roi_map[wid] = (
                 _roi_weight_from_db(self.roi_db, wid) if self.roi_db is not None else 0.0
             )
+            fail, ent = self._failure_entropy_metrics(wid)
+            failure_map[wid] = fail
+            entropy_map[wid] = ent
             try:
                 persist_embedding("workflow_meta", wid, vec, origin_db="workflow")
             except TypeError:  # pragma: no cover - legacy signature
@@ -425,16 +474,23 @@ class MetaWorkflowPlanner:
                     hits, _, _ = ur.retrieve(
                         vec, top_k=len(ids) * 2, dbs=["workflow_meta"]
                     )  # type: ignore[attr-defined]
-                    cached_hits = [
-                        {
-                            "record_id": str(
-                                getattr(h, "record_id", None)
-                                or getattr(getattr(h, "metadata", {}), "get", lambda *_: None)("id")
-                                or "",
-                            )
-                        }
-                        for h in hits
-                    ]
+                    cached_hits = []
+                    for h in hits:
+                        other = str(
+                            getattr(h, "record_id", None)
+                            or getattr(getattr(h, "metadata", {}), "get", lambda *_: None)("id")
+                            or ""
+                        )
+                        if not other or other == wid or other not in vecs:
+                            continue
+                        sim = cosine_similarity(vec, vecs[other])
+                        sim *= (1.0 + roi_map[wid]) * (1.0 + roi_map[other])
+                        sim *= (1.0 - failure_map[wid]) * (1.0 - failure_map[other])
+                        sim *= (1.0 - entropy_map[wid]) * (1.0 - entropy_map[other])
+                        cached_hits.append({"record_id": other, "score": sim})
+                        if sim > sims[wid].get(other, 0.0):
+                            sims[wid][other] = sim
+                            sims[other][wid] = sim
                     set_cached_chain(cache_key, ["workflow_meta"], cached_hits)
                 except Exception:
                     cached_hits = []
@@ -443,8 +499,12 @@ class MetaWorkflowPlanner:
                 other = str(hit.get("record_id", ""))
                 if not other or other == wid or other not in vecs:
                     continue
-                sim = cosine_similarity(vec, vecs[other])
-                sim *= (1.0 + roi_map[wid]) * (1.0 + roi_map[other])
+                sim = float(hit.get("score", 0.0))
+                if sim == 0.0:
+                    sim = cosine_similarity(vec, vecs[other])
+                    sim *= (1.0 + roi_map[wid]) * (1.0 + roi_map[other])
+                    sim *= (1.0 - failure_map[wid]) * (1.0 - failure_map[other])
+                    sim *= (1.0 - entropy_map[wid]) * (1.0 - entropy_map[other])
                 if sim > sims[wid].get(other, 0.0):
                     sims[wid][other] = sim
                     sims[other][wid] = sim
@@ -518,7 +578,7 @@ class MetaWorkflowPlanner:
         synergy_weight: float = 1.0,
         roi_weight: float = 1.0,
     ) -> List[str]:
-        """Compose a workflow pipeline using similarity, synergy and ROI.
+        """Compose a workflow pipeline using similarity, synergy, ROI and stability.
 
         For each step the current workflow is compared against every available
         candidate.  The following metrics are combined:
@@ -528,11 +588,13 @@ class MetaWorkflowPlanner:
           capturing structural entropy and module overlap.
         * ``ROI`` – recent ROI trend obtained through
           :func:`_roi_weight_from_db`.
+        * ``failure rate`` and ``entropy`` – recent reliability metrics from
+          :func:`_failure_entropy_metrics`.
 
         The final ranking score is ``(similarity * similarity_weight +
-        synergy * synergy_weight) * (1 + roi_weight * ROI)``.  The method stops
-        once ``length`` steps have been selected or no compatible candidates
-        remain.
+        synergy * synergy_weight) * (1 + roi_weight * ROI)
+        * (1 - failure_rate) * (1 - entropy)``.  The method stops once
+        ``length`` steps have been selected or no compatible candidates remain.
         """
 
         if start not in workflows:
@@ -583,6 +645,8 @@ class MetaWorkflowPlanner:
                     else 0.0
                 )
 
+                failure_rate, entropy = self._failure_entropy_metrics(wid)
+
                 synergy = 0.0
                 if WorkflowSynergyComparator is not None:
                     try:
@@ -595,6 +659,7 @@ class MetaWorkflowPlanner:
 
                 base = similarity_weight * sim + synergy_weight * synergy
                 score = base * (1.0 + roi_weight * roi)
+                score *= (1.0 - failure_rate) * (1.0 - entropy)
 
                 cand_domain = self._workflow_domain(wid, workflows)
                 if prev_domain and cand_domain:
