@@ -48,7 +48,9 @@ provided `Retriever`, while `compose_pipeline` iteratively blends embedding simi
 `WorkflowSynergyComparator` scores and recent ROI trends to choose the next
 step.  The default formula is
 ``(similarity * similarity_weight + synergy * synergy_weight) * (1 + ROI * roi_weight)``
-giving callers independent control over similarity, synergy and ROI.
+giving callers independent control over similarity, synergy and ROI.  Setting
+`synergy_weight` to `0` ignores structural synergy and ranks steps purely by
+similarity and ROI.
 
 ## Sandbox simulation
 

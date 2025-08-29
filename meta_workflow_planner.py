@@ -691,15 +691,16 @@ class MetaWorkflowPlanner:
         ``retriever`` (when provided or available globally) is used via
         :func:`find_synergy_candidates` to obtain a shortlist of potential next
         steps for the current workflow.  Each candidate is then scored using the
-        retrieved cosine ``similarity`` weighted by recent ``ROI`` trends and
+        retrieved cosine ``similarity``, structural ``synergy`` from
+        :class:`WorkflowSynergyComparator` and recent ``ROI`` trends along with
         historic domain transition probabilities.  If retrieval fails a
         best-effort fallback to exhaustive iteration is performed.
 
-        The final ranking score is ``similarity * (1 + roi_weight * ROI)``
-        further scaled by ``1 + transition_prob`` where ``transition_prob``
-        reflects empirical ROI deltas between workflow domains.  The method
-        stops once ``length`` steps have been selected or no compatible
-        candidates remain.
+        The final ranking score is ``(similarity * similarity_weight +
+        synergy * synergy_weight) * (1 + ROI * roi_weight)`` further scaled by
+        ``1 + transition_prob`` where ``transition_prob`` reflects empirical ROI
+        deltas between workflow domains.  The method stops once ``length`` steps
+        have been selected or no compatible candidates remain.
         """
 
         if start not in workflows:
@@ -771,8 +772,19 @@ class MetaWorkflowPlanner:
             best_vec: List[float] | None = None
             best_roi = 0.0
             for wid, cand_vec, sim, cand_roi in candidates:
-                score = similarity_weight * sim
-                score *= (1.0 + roi_weight * current_roi) * (1.0 + roi_weight * cand_roi)
+                synergy = 0.0
+                if synergy_weight:
+                    try:
+                        scores = WorkflowSynergyComparator.compare(
+                            workflows[current], workflows[wid]
+                        )
+                        synergy = float(getattr(scores, "aggregate", 0.0))
+                    except Exception:
+                        synergy = 0.0
+
+                base = similarity_weight * sim + synergy_weight * synergy
+                roi_avg = (current_roi + cand_roi) / 2.0
+                score = base * (1.0 + roi_weight * roi_avg)
 
                 cand_domain = self._workflow_domain(wid, workflows)[0]
                 if prev_domain >= 0 and cand_domain >= 0:
