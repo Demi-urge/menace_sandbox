@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Sequence, Any
 import logging
 
-from db_router import GLOBAL_ROUTER as router
+from db_router import GLOBAL_ROUTER
 
 try:
     from sklearn.cluster import KMeans  # type: ignore
@@ -130,9 +130,9 @@ class MenaceMemoryManager(GPTMemoryInterface):
         summary_interval: int = 50,
     ) -> None:
         # allow connections to be shared across threads
-        if not router:
+        if GLOBAL_ROUTER is None:
             raise RuntimeError("Database router is not initialised")
-        with router.get_connection("memory") as conn:
+        with GLOBAL_ROUTER.get_connection("memory") as conn:
             self.conn = conn
         self.subscribers: List[Callable[[MemoryEntry], None]] = []
         self.event_bus = event_bus

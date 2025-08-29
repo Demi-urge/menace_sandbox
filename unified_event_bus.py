@@ -23,7 +23,7 @@ import json
 import time
 import logging
 
-from db_router import GLOBAL_ROUTER as router
+from db_router import GLOBAL_ROUTER
 
 from .automated_reviewer import AutomatedReviewer
 from .resilience import CircuitBreaker, CircuitOpenError, retry_with_backoff
@@ -97,9 +97,9 @@ class UnifiedEventBus:
                 self._network = None
         if persist_path:
             # allow event persistence from multiple threads
-            if not router:
+            if GLOBAL_ROUTER is None:
                 raise RuntimeError("Database router is not initialised")
-            self._persist = router.get_connection("events")
+            self._persist = GLOBAL_ROUTER.get_connection("events")
             self._persist.execute(
                 "CREATE TABLE IF NOT EXISTS events(ts REAL, topic TEXT, payload TEXT)"
             )

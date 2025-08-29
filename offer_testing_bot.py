@@ -7,9 +7,10 @@ from dataclasses import dataclass
 import dataclasses
 from datetime import datetime
 from typing import Any, List, Dict, Optional
+from pathlib import Path
 import logging
 
-from db_router import GLOBAL_ROUTER as router
+from db_router import GLOBAL_ROUTER
 
 from .unified_event_bus import UnifiedEventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
@@ -46,12 +47,17 @@ class OfferInteraction:
 class OfferDB:
     """SQLite-backed store for offers and interactions."""
 
-    def __init__(self, *, event_bus: Optional[UnifiedEventBus] = None) -> None:
+    def __init__(
+        self,
+        path: Path | str | None = None,
+        *,
+        event_bus: Optional[UnifiedEventBus] = None,
+    ) -> None:
         # allow the connection to be used across threads since OfferTestingBot
         # may be accessed from a thread pool in ``ModelAutomationPipeline``
-        if not router:
+        if GLOBAL_ROUTER is None:
             raise RuntimeError("Database router is not initialised")
-        with router.get_connection("variants") as conn:
+        with GLOBAL_ROUTER.get_connection("variants") as conn:
             self.conn = conn
         self.event_bus = event_bus
         self.conn.execute(

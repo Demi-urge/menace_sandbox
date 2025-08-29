@@ -23,7 +23,7 @@ except Exception:  # pragma: no cover - optional dependency
     MenaceDB = None  # type: ignore
     warnings.warn("MenaceDB unavailable, Menace integration disabled.")
 
-from db_router import GLOBAL_ROUTER as router, SHARED_TABLES, queue_insert
+from db_router import GLOBAL_ROUTER, SHARED_TABLES, queue_insert
 from .scope_utils import Scope, build_scope_clause, apply_scope
 from db_dedup import insert_if_unique, ensure_content_hash_column
 
@@ -139,9 +139,9 @@ class BotDB(EmbeddableDBMixin):
         vector_index_path: Path | str = "bot_embeddings.index",
         embedding_version: int = 1,
     ) -> None:
-        if not router:
+        if GLOBAL_ROUTER is None:
             raise RuntimeError("Database router is not initialised")
-        self.router = router
+        self.router = GLOBAL_ROUTER
         self.conn = self.router.get_connection("bots")
         self.event_bus = event_bus
         self.menace_db = menace_db

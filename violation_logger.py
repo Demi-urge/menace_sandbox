@@ -11,7 +11,7 @@ from threading import Thread
 from typing import Any, List, Dict, Optional
 
 from .retry_utils import publish_with_retry
-from db_router import GLOBAL_ROUTER as router
+from db_router import GLOBAL_ROUTER
 import sqlite3
 
 try:  # optional dependency
@@ -49,9 +49,9 @@ def _ensure_log_dir() -> None:
 
 def _alignment_conn() -> sqlite3.Connection:
     """Return a connection for alignment warnings."""
-    if not router:
+    if GLOBAL_ROUTER is None:
         raise RuntimeError("Database router is not initialised")
-    return router.get_connection("errors")
+    return GLOBAL_ROUTER.get_connection("errors")
 
 
 def persist_alignment_warning(record: Dict[str, Any]) -> None:
@@ -108,7 +108,7 @@ def load_persisted_alignment_warnings(
 
     if limit <= 0:
         return []
-    if not router and not os.path.exists(ALIGNMENT_DB_PATH):
+    if GLOBAL_ROUTER is None and not os.path.exists(ALIGNMENT_DB_PATH):
         return []
     conn = _alignment_conn()
     query = (
