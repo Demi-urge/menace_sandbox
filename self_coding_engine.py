@@ -161,7 +161,11 @@ class SelfCodingEngine:
             try:
                 patch_logger.roi_tracker = tracker  # type: ignore[attr-defined]
             except Exception:
-                pass
+                self.logger.warning(
+                    "failed to attach ROI tracker to patch_logger",
+                    exc_info=True,
+                    extra={"patch_logger": type(patch_logger).__name__},
+                )
         if cognition_layer is None:
             try:
                 cognition_layer = CognitionLayer(patch_logger=patch_logger, roi_tracker=tracker)
@@ -172,7 +176,11 @@ class SelfCodingEngine:
                 try:
                     cognition_layer.roi_tracker = tracker  # type: ignore[attr-defined]
                 except Exception:
-                    pass
+                    self.logger.warning(
+                        "failed to attach ROI tracker to cognition_layer",
+                        exc_info=True,
+                        extra={"cognition_layer": type(cognition_layer).__name__},
+                    )
         self.cognition_layer = cognition_layer
         self.patch_logger = patch_logger
         self.roi_tracker = tracker
@@ -457,19 +465,31 @@ class SelfCodingEngine:
                 if insight:
                     insight_lines.append(f"{FEEDBACK} insight: {insight}")
             except Exception:
-                pass
+                self.logger.warning(
+                    "knowledge_service recent_feedback failed",
+                    exc_info=True,
+                    extra={"description": description},
+                )
             try:
                 insight = recent_improvement_path(self.knowledge_service)
                 if insight:
                     insight_lines.append(f"{IMPROVEMENT_PATH} insight: {insight}")
             except Exception:
-                pass
+                self.logger.warning(
+                    "knowledge_service recent_improvement_path failed",
+                    exc_info=True,
+                    extra={"description": description},
+                )
             try:
                 insight = recent_error_fix(self.knowledge_service)
                 if insight:
                     insight_lines.append(f"{ERROR_FIX} insight: {insight}")
             except Exception:
-                pass
+                self.logger.warning(
+                    "knowledge_service recent_error_fix failed",
+                    exc_info=True,
+                    extra={"description": description},
+                )
         if insight_lines:
             insight_block = "\n".join(insight_lines)
             combined_history = "\n".join(
@@ -542,7 +562,10 @@ class SelfCodingEngine:
                 try:
                     tmp_path.unlink()
                 except Exception:
-                    pass
+                    self.logger.exception(
+                        "temporary file cleanup failed",
+                        extra={"path": str(tmp_path)},
+                    )
         else:
             try:
                 ast.parse(code)
