@@ -852,6 +852,7 @@ async def self_improvement_cycle(
     workflows: Mapping[str, Callable[[], Any]],
     *,
     interval: float = PLANNER_INTERVAL,
+    event_bus: "UnifiedEventBus" | None = None,
 ) -> None:
     """Background loop evolving ``workflows`` using the meta planner.
 
@@ -876,6 +877,22 @@ async def self_improvement_cycle(
         return
 
     planner = MetaWorkflowPlanner()
+
+    # Allow runtime tuning via environment variables
+    try:
+        mutation_rate = float(os.getenv("META_MUTATION_RATE", "1.0"))
+        roi_weight = float(os.getenv("META_ROI_WEIGHT", "1.0"))
+        domain_penalty = float(os.getenv("META_DOMAIN_PENALTY", "1.0"))
+    except Exception:
+        mutation_rate = roi_weight = domain_penalty = 1.0
+
+    for name, value in {
+        "mutation_rate": mutation_rate,
+        "roi_weight": roi_weight,
+        "domain_transition_penalty": domain_penalty,
+    }.items():
+        if hasattr(planner, name):
+            setattr(planner, name, value)
 
     ENTROPY_THRESHOLD = 0.2
 
@@ -917,11 +934,45 @@ async def self_improvement_cycle(
                 logger.exception(
                     "stability logging failed", extra=log_record(workflow_id=cid)
                 )
+        if event_bus is not None:
+            try:
+                event_bus.publish(
+                    "metrics:new",
+                    {
+                        "bot": cid,
+                        "errors": failures,
+                        "entropy": entropy,
+                        "expense": 1.0,
+                        "revenue": 1.0 + roi,
+                    },
+                )
+            except Exception:  # pragma: no cover - best effort
+                logger.exception(
+                    "failed to publish metrics", extra=log_record(workflow_id=cid)
+                )
 
     while True:
         try:
             records = planner.discover_and_persist(workflows)
-            active = [r.get("chain", []) for r in records if r.get("chain")]
+            active: list[list[str]] = []
+            for rec in records:
+                await _log(rec)
+                chain = rec.get("chain", [])
+                roi = float(rec.get("roi_gain", 0.0))
+                failures = int(rec.get("failures", 0))
+                entropy = float(rec.get("entropy", 0.0))
+                if chain and roi > 0:
+                    active.append(chain)
+                    chain_id = "->".join(chain)
+                    try:
+                        STABLE_WORKFLOWS.record_metrics(
+                            chain_id, roi, failures, entropy, roi_delta=roi
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        logger.exception(
+                            "global stability logging failed",
+                            extra=log_record(workflow_id=chain_id),
+                        )
             # iterate until all chains converge
             while any(
                 not planner.cluster_map.get(tuple(c), {}).get("converged")
@@ -940,7 +991,13 @@ async def self_improvement_cycle(
                             await _log(rec)
                             c = rec.get("chain", [])
                             if _should_encode(rec) and c:
-                                planner.encode_chain(c)
+                                try:
+                                    planner.encode_chain(c)
+                                except Exception:  # pragma: no cover - optional
+                                    logger.exception(
+                                        "encode_chain failed",
+                                        extra=log_record(workflow_id="->".join(c)),
+                                    )
                             next_active.append(c)
                     else:
                         next_active.append(chain)
@@ -950,7 +1007,13 @@ async def self_improvement_cycle(
                         await _log(rec)
                         c = rec.get("chain", [])
                         if _should_encode(rec) and c:
-                            planner.encode_chain(c)
+                            try:
+                                planner.encode_chain(c)
+                            except Exception:  # pragma: no cover - optional
+                                logger.exception(
+                                    "encode_chain failed",
+                                    extra=log_record(workflow_id="->".join(c)),
+                                )
                         next_active.append(c)
                 active = next_active
 
@@ -7771,6 +7834,24 @@ def cli(argv: list[str] | None = None) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Self-improvement utilities")
+    parser.add_argument(
+        "--mutation-rate",
+        type=float,
+        default=float(os.getenv("META_MUTATION_RATE", "1.0")),
+        help="Mutation rate multiplier for meta planning",
+    )
+    parser.add_argument(
+        "--roi-weight",
+        type=float,
+        default=float(os.getenv("META_ROI_WEIGHT", "1.0")),
+        help="Weight applied to ROI when composing pipelines",
+    )
+    parser.add_argument(
+        "--domain-penalty",
+        type=float,
+        default=float(os.getenv("META_DOMAIN_PENALTY", "1.0")),
+        help="Penalty for transitioning between workflow domains",
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_dash = sub.add_parser("synergy-dashboard", help="start synergy metrics dashboard")
@@ -7810,6 +7891,9 @@ def cli(argv: list[str] | None = None) -> None:
     p_update.add_argument("shadow", help="NPZ file with shadow data")
 
     args = parser.parse_args(argv)
+    os.environ["META_MUTATION_RATE"] = str(args.mutation_rate)
+    os.environ["META_ROI_WEIGHT"] = str(args.roi_weight)
+    os.environ["META_DOMAIN_PENALTY"] = str(args.domain_penalty)
 
     if args.cmd == "synergy-dashboard":
         dash = SynergyDashboard(
