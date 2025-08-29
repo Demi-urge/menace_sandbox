@@ -250,9 +250,15 @@ class MetaWorkflowPlanner:
             self._encode_tfidf_tokens(tag_counts, self.tag_index, self.tag_df, self.max_tags)
         )
         domain_vec = [0.0] * self.max_domains
+        trans_vec = [0.0] * self.max_domains
         if 0 <= d_idx < self.max_domains:
             domain_vec[d_idx] = 1.0
+            trans_probs = self.transition_probabilities()
+            for (src, dst), prob in trans_probs.items():
+                if src == d_idx and 0 <= dst < self.max_domains:
+                    trans_vec[dst] = float(prob)
         vec.extend(domain_vec)
+        vec.extend(trans_vec)
 
         code_tags = norm_tags
 
@@ -269,6 +275,7 @@ class MetaWorkflowPlanner:
                     "branching_factor": branching,
                     "domain": d_label,
                     "domain_index": d_idx,
+                    "domain_transitions": trans_vec,
                     "vector_schema": {
                         "graph": 2,
                         "roi_curve": self.roi_window,
@@ -280,6 +287,7 @@ class MetaWorkflowPlanner:
                         "module_tokens": self.max_modules,
                         "tag_tokens": self.max_tags,
                         "domain": self.max_domains,
+                        "domain_transition": self.max_domains,
                     },
                 },
             )
@@ -372,9 +380,15 @@ class MetaWorkflowPlanner:
             self._encode_tfidf_tokens(tag_counts, self.tag_index, self.tag_df, self.max_tags)
         )
         domain_vec = [0.0] * self.max_domains
+        trans_vec = [0.0] * self.max_domains
         if 0 <= d_idx < self.max_domains:
             domain_vec[d_idx] = 1.0
+            trans_probs = self.transition_probabilities()
+            for (src, dst), prob in trans_probs.items():
+                if src == d_idx and 0 <= dst < self.max_domains:
+                    trans_vec[dst] = float(prob)
         vec.extend(domain_vec)
+        vec.extend(trans_vec)
         return vec
 
     # ------------------------------------------------------------------
@@ -619,20 +633,30 @@ class MetaWorkflowPlanner:
         domain = ""
         if self.code_db is not None:
             try:
-                if hasattr(self.code_db, "get_context_tags"):
+                if hasattr(self.code_db, "get_domain"):
+                    domain = str(self.code_db.get_domain(workflow_id) or "").lower()
+                elif hasattr(self.code_db, "get_platform"):
+                    domain = str(self.code_db.get_platform(workflow_id) or "").lower()
+                elif hasattr(self.code_db, "get_context_tags"):
                     tags = self.code_db.get_context_tags(workflow_id) or []
+                    if tags:
+                        domain = str(tags[0]).lower()
                 elif hasattr(self.code_db, "context_tags"):
                     tags = self.code_db.context_tags(  # type: ignore[attr-defined]
                         workflow_id
                     ) or []
-                else:
-                    tags = []
-                if tags:
-                    domain = str(tags[0]).lower()
+                    if tags:
+                        domain = str(tags[0]).lower()
             except Exception:
                 domain = ""
         if not domain and workflows is not None:
-            domain = str(workflows.get(workflow_id, {}).get("domain", "")).lower()
+            wf = workflows.get(workflow_id, {})
+            domain = str(
+                wf.get("domain")
+                or wf.get("platform")
+                or wf.get("category")
+                or ""
+            ).lower()
         if not domain:
             return -1, ""
         idx = _get_index(domain, self.domain_index, self.max_domains)
@@ -2146,13 +2170,15 @@ class MetaWorkflowPlanner:
         """
 
         matrix = self.cluster_map.get(("__domain_transitions__",), {})
-        weights: Dict[tuple[str, str], float] = {}
+        weights: Dict[tuple[int, int], float] = {}
         for pair, stats in matrix.items():
             count = float(stats.get("count", 0.0))
             delta = float(stats.get("delta_roi", stats.get("roi", 0.0)))
             weight = max(0.0, count * delta)
-            if weight > 0.0 or smoothing:
+            if weight > 0.0 or smoothing > 0.0:
                 weights[pair] = weight + smoothing
+            else:
+                weights[pair] = 0.0
         total = sum(weights.values())
         if total <= 0:
             return {pair: 0.0 for pair in weights}
@@ -2354,15 +2380,27 @@ class MetaWorkflowPlanner:
             mc, mt = self._module_db_tags(cat)
             module_cats.extend(mc)
             tags.extend(mt)
+        if isinstance(workflow.get("platform"), str):
+            plat = str(workflow["platform"])
+            modules.append(plat)
+            mc, mt = self._module_db_tags(plat)
+            module_cats.extend(mc)
+            tags.extend(mt)
+        if isinstance(workflow.get("domain"), str):
+            tags.append(str(workflow["domain"]))
         for step in steps:
             fn = None
             mod = None
+            platform = None
+            domain = None
             stags: Iterable[str] | str | None = []
             if isinstance(step, str):
                 fn = step
             elif isinstance(step, Mapping):
                 fn = step.get("function") or step.get("call") or step.get("name")
                 mod = step.get("module") or step.get("category")
+                platform = step.get("platform")
+                domain = step.get("domain")
                 stags = step.get("context_tags") or step.get("tags") or []
             if fn:
                 fname = str(fn)
@@ -2382,6 +2420,14 @@ class MetaWorkflowPlanner:
                 mc, mt = self._module_db_tags(mname)
                 module_cats.extend(mc)
                 tags.extend(mt)
+            if platform:
+                pname = str(platform)
+                modules.append(pname)
+                mc, mt = self._module_db_tags(pname)
+                module_cats.extend(mc)
+                tags.extend(mt)
+            if domain:
+                tags.append(str(domain))
             if isinstance(stags, str):
                 tags.append(stags)
             else:

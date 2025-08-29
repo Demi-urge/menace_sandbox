@@ -117,3 +117,19 @@ def test_function_context_tags_in_embedding():
     idx = planner.tag_index["functag"]
     assert vec[tag_start + idx] > 0.0
 
+
+def test_platform_token_in_embedding():
+    planner = MetaWorkflowPlanner(
+        graph=DummyGraph(),
+        roi_db=DummyROI(),
+        code_db=StubCodeDatabase(MODULE_META),
+    )
+    workflow = {"platform": "YouTube", "workflow": []}
+    vec = planner.encode_workflow("wf_platform", workflow)
+
+    base = 2 + planner.roi_window + 2 + planner.roi_window
+    module_start = base + 3 * planner.max_functions
+
+    idx = planner.module_index["youtube"]
+    assert vec[module_start + idx] == 1.0
+
