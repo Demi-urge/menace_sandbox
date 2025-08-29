@@ -692,18 +692,12 @@ class MetaWorkflowPlanner:
                 score *= (1.0 - failure_rate) * (1.0 - entropy)
 
                 cand_domain = self._workflow_domain(wid, workflows)[0]
-                if prev_domain >= 0 and cand_domain >= 0:
+                if prev_domain >= 0 and cand_domain >= 0 and prev_domain != cand_domain:
                     prob = trans_probs.get((prev_domain, cand_domain))
                     if prob is not None:
-                        if prob > 0.0:
-                            weight = 1.0 + prob
-                            if prev_domain != cand_domain:
-                                weight += prob
-                            score *= weight
-                        else:
-                            score *= 0.8
-                    elif prev_domain == cand_domain:
-                        score *= 0.9
+                        score *= 1.0 + prob
+                    else:
+                        score *= 0.8
 
                 if score > best_score:
                     best_id = wid
@@ -2051,26 +2045,28 @@ class MetaWorkflowPlanner:
 
         matrix = self.cluster_map.setdefault(("__domain_transitions__",), {})
         domains = [self._workflow_domain(wid)[0] for wid in chain]
-        for a, b in zip(domains, domains[1:]):
+        step_rois = [m.get("roi", 0.0) for m in step_metrics] if step_metrics else []
+        for i, (a, b) in enumerate(zip(domains, domains[1:])):
             if a < 0 or b < 0:
                 continue
             entry = matrix.setdefault(
                 (a, b),
                 {
                     "count": 0,
-                    "roi": 0.0,
-                    "fail": 0.0,
                     "delta_roi": 0.0,
                     "last_roi": roi_gain,
                 },
             )
-            prev_roi = float(entry.get("last_roi", roi_gain))
-            entry["last_roi"] = roi_gain
             entry["count"] += 1
-            entry["roi"] += (roi_gain - entry["roi"]) / entry["count"]
-            entry["fail"] += (failures - entry["fail"]) / entry["count"]
-            delta = roi_gain - prev_roi
-            entry["delta_roi"] += (delta - entry["delta_roi"]) / entry["count"]
+            if step_rois:
+                roi_a = step_rois[i] if i < len(step_rois) else 0.0
+                roi_b = step_rois[i + 1] if i + 1 < len(step_rois) else roi_gain
+                delta = roi_b - roi_a
+            else:
+                prev_roi = float(entry.get("last_roi", roi_gain))
+                entry["last_roi"] = roi_gain
+                delta = roi_gain - prev_roi
+            entry["delta_roi"] += (delta - entry.get("delta_roi", 0.0)) / entry["count"]
 
         if save:
             self._save_cluster_map()
@@ -2110,9 +2106,8 @@ class MetaWorkflowPlanner:
         weights: Dict[tuple[str, str], float] = {}
         for pair, stats in matrix.items():
             count = float(stats.get("count", 0.0))
-            roi = float(stats.get("roi", 0.0))
             delta = float(stats.get("delta_roi", 0.0))
-            weight = max(0.0, count * (roi + delta))
+            weight = max(0.0, count * delta)
             weights[pair] = weight
         total = sum(weights.values())
         if total <= 0:
