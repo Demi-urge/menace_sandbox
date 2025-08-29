@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Coordinate incremental training from event bus activity."""
 
-from typing import Optional, List
+from typing import Callable, List, Optional, Tuple
 import logging
 import asyncio
 
@@ -54,6 +54,7 @@ class SelfLearningCoordinator:
             learning_engine, unified_engine, action_engine
         )
         self.best_engine: Optional[object] = None
+        self._subs: List[Tuple[str, Callable[[str, object], None]]] = []
 
     # --------------------------------------------------------------
     class MemoryEvent(BaseModel):
@@ -126,14 +127,27 @@ class SelfLearningCoordinator:
             ("transactions:new", self._on_transaction),
             ("curriculum:new", self._on_curriculum),
         ]
+        self._subs = []
         for topic, cb in topics:
             try:
                 self.event_bus.subscribe(topic, cb)
+                self._subs.append((topic, cb))
             except Exception as exc:
                 log = getattr(self.error_bot, "logger", logger)
                 log.warning("failed to subscribe %s: %s", topic, exc)
 
     def stop(self) -> None:
+        if not self.running:
+            return
+        unsub = getattr(self.event_bus, "unsubscribe", None)
+        for topic, cb in self._subs:
+            if unsub:
+                try:
+                    unsub(topic, cb)
+                except Exception as exc:
+                    log = getattr(self.error_bot, "logger", logger)
+                    log.warning("failed to unsubscribe %s: %s", topic, exc)
+        self._subs = []
         self.running = False
 
     # --------------------------------------------------------------
