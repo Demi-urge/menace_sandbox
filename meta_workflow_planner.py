@@ -1212,6 +1212,119 @@ class MetaWorkflowPlanner:
         return results
 
     # ------------------------------------------------------------------
+    def schedule(
+        self,
+        workflows: Mapping[str, Callable[[], Any]],
+        *,
+        runner: "WorkflowSandboxRunner" | None = None,
+        failure_threshold: int = 0,
+        entropy_threshold: float = 2.0,
+        roi_delta_threshold: float = 0.01,
+        entropy_delta_threshold: float = 0.01,
+        runs: int = 3,
+        max_iterations: int = 10,
+        metrics_db: Any | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Orchestrate discovery, management and mutation cycles.
+
+        The scheduler first invokes :meth:`discover_and_persist` to obtain
+        promising chains.  Each chain is then passed through
+        :meth:`manage_pipeline` and the resulting pipelines are fed back into
+        :meth:`mutate_chains`.  Iteration continues until both ROI and entropy
+        deltas fall below the provided thresholds.  Lineage and metrics for
+        every produced record are persisted best effort.
+        """
+
+        all_records: List[Dict[str, Any]] = []
+        discovered = self.discover_and_persist(
+            workflows, runs=runs, metrics_db=metrics_db
+        )
+        for rec in discovered:
+            all_records.append(rec)
+            chain_id = "->".join(rec.get("chain", []))
+            try:  # pragma: no cover - logging best effort
+                from workflow_lineage import log_lineage
+
+                log_lineage(
+                    None, chain_id, "discover_and_persist", roi=rec.get("roi_gain")
+                )
+            except Exception:
+                pass
+            self._reinforce(rec)
+
+        active = [r.get("chain", []) for r in discovered if r.get("chain")]
+        iteration = 0
+
+        while active and iteration < max_iterations:
+            managed: List[Sequence[str]] = []
+            for chain in active:
+                recs = self.manage_pipeline(
+                    chain,
+                    workflows,
+                    runner=runner,
+                    failure_threshold=failure_threshold,
+                    entropy_threshold=entropy_threshold,
+                    runs=runs,
+                )
+                for rec in recs:
+                    all_records.append(rec)
+                    managed.append(rec.get("chain", []))
+                    parent_id = "->".join(chain)
+                    child_id = "->".join(rec.get("chain", []))
+                    try:  # pragma: no cover - logging best effort
+                        from workflow_lineage import log_lineage
+
+                        log_lineage(
+                            parent_id, child_id, "manage_pipeline", roi=rec.get("roi_gain")
+                        )
+                    except Exception:
+                        pass
+                    self._reinforce(rec)
+
+            if not managed:
+                break
+
+            mutated = self.mutate_chains(
+                managed,
+                workflows,
+                runner=runner,
+                failure_threshold=failure_threshold,
+                entropy_threshold=entropy_threshold,
+                runs=runs,
+            )
+            active = []
+            for rec in mutated:
+                all_records.append(rec)
+                chain = rec.get("chain", [])
+                active.append(chain)
+                child_id = "->".join(chain)
+                try:  # pragma: no cover - logging best effort
+                    from workflow_lineage import log_lineage
+
+                    log_lineage(None, child_id, "mutate_chains", roi=rec.get("roi_gain"))
+                except Exception:
+                    pass
+                self._reinforce(rec)
+
+            if not active:
+                break
+
+            if all(
+                abs(float(self.cluster_map.get(tuple(c), {}).get("delta_roi", 0.0)))
+                < roi_delta_threshold
+                and abs(
+                    float(self.cluster_map.get(tuple(c), {}).get("delta_entropy", 0.0))
+                )
+                < entropy_delta_threshold
+                for c in active
+            ):
+                break
+
+            iteration += 1
+
+        return all_records
+
+    # ------------------------------------------------------------------
     def iterate_pipelines(
         self,
         workflows: Mapping[str, Callable[[], Any]],

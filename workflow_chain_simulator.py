@@ -9,7 +9,7 @@ entropy/stability metrics.  Results are appended to
 ``sandbox_data/chain_simulations.json`` for later retrieval and reinforcement.
 """
 
-from typing import Sequence, Iterable, List, Dict, Any
+from typing import Sequence, Iterable, List, Dict, Any, Mapping, Callable
 import json
 from pathlib import Path
 
@@ -19,6 +19,7 @@ try:  # pragma: no cover - allow import when used as package or module
     from .composite_workflow_scorer import CompositeWorkflowScorer
     from .workflow_synergy_comparator import WorkflowSynergyComparator
     from .workflow_stability_db import WorkflowStabilityDB
+    from .meta_workflow_planner import MetaWorkflowPlanner
     from . import workflow_run_summary
 except Exception:  # pragma: no cover - fallback to absolute imports
     from workflow_chain_suggester import WorkflowChainSuggester  # type: ignore
@@ -26,6 +27,7 @@ except Exception:  # pragma: no cover - fallback to absolute imports
     from composite_workflow_scorer import CompositeWorkflowScorer  # type: ignore
     from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
     from workflow_stability_db import WorkflowStabilityDB  # type: ignore
+    from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
     import workflow_run_summary  # type: ignore
 
 RESULTS_PATH = Path("sandbox_data/chain_simulations.json")
@@ -96,4 +98,24 @@ def simulate_suggested_chains(
     return simulate_chains(chains)
 
 
-__all__ = ["simulate_chains", "simulate_suggested_chains"]
+def run_scheduler(
+    workflows: Mapping[str, Callable[[], Any]],
+    *,
+    roi_delta_threshold: float = 0.01,
+    entropy_delta_threshold: float = 0.01,
+    runs: int = 3,
+) -> List[Dict[str, Any]]:
+    """Execute :class:`MetaWorkflowPlanner` scheduler and persist results."""
+
+    planner = MetaWorkflowPlanner()
+    records = planner.schedule(
+        workflows,
+        roi_delta_threshold=roi_delta_threshold,
+        entropy_delta_threshold=entropy_delta_threshold,
+        runs=runs,
+    )
+    _persist_outcomes(records)
+    return records
+
+
+__all__ = ["simulate_chains", "simulate_suggested_chains", "run_scheduler"]
