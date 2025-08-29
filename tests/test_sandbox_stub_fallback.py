@@ -95,6 +95,8 @@ class DummyBus:
 
 def test_sandbox_init_fallback(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    sc_mod = types.ModuleType("menace.startup_checks")
+    monkeypatch.setitem(sys.modules, "menace.startup_checks", sc_mod)
     _stub_module(monkeypatch, "menace.unified_event_bus", UnifiedEventBus=DummyBus)
     _stub_module(monkeypatch, "menace.menace_orchestrator", MenaceOrchestrator=DummyOrch)
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
@@ -148,3 +150,19 @@ def test_sandbox_init_fallback(monkeypatch, tmp_path, caplog):
     assert ctx.pre_roi_bot.__class__.__name__ == "PreExecutionROIBotStub"
     assert ctx.va_client.__class__.__name__ == "VisualAgentClientStub"
     assert "PreExecutionROIBotStub" in caplog.text
+
+
+def test_generate_input_stubs_seed(monkeypatch):
+    path = Path(__file__).resolve().parents[1] / "sandbox_runner" / "environment.py"
+    spec = importlib.util.spec_from_file_location("sandbox_runner.environment", str(path))
+    pkg = types.ModuleType("sandbox_runner")
+    pkg.__path__ = [str(path.parent)]
+    monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
+    env = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(env)
+
+    stubs1 = env.generate_input_stubs(1, strategy_order=["random"], seed=42)
+    stubs2 = env.generate_input_stubs(1, strategy_order=["random"], seed=42)
+
+    assert stubs1 == stubs2
