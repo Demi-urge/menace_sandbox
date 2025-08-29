@@ -1930,43 +1930,56 @@ class MetaWorkflowPlanner:
             rows = self.code_db.search(func)
         except Exception:
             return [], [], 0.0, 0.0, []
-        mods: List[str] = []
-        tags: List[str] = []
-        depth = 0.0
-        branching = 0.0
-        curve: List[float] = []
-        for r in rows[:1]:
+        mod_set: set[str] = set()
+        tag_set: set[str] = set()
+        depths: List[float] = []
+        branchings: List[float] = []
+        curves: List[List[float]] = []
+        for r in rows:
             m = r.get("template_type")
             if m:
-                mods.append(str(m))
+                mod_set.add(str(m))
             summary = r.get("summary") or ""
             if isinstance(summary, str):
-                tags.extend(summary.split())
+                tag_set.update(summary.split())
             ctags = r.get("context_tags") or r.get("tags") or []
             if isinstance(ctags, str):
-                tags.extend(ctags.split())
+                tag_set.update(ctags.split())
             else:
-                tags.extend(str(t) for t in ctags)
+                tag_set.update(str(t) for t in ctags)
             try:
-                depth = float(r.get("dependency_depth", 0.0) or 0.0)
+                depths.append(float(r.get("dependency_depth", 0.0) or 0.0))
             except Exception:
-                depth = 0.0
+                pass
             try:
-                branching = float(r.get("branching_factor", 0.0) or 0.0)
+                branchings.append(float(r.get("branching_factor", 0.0) or 0.0))
             except Exception:
-                branching = 0.0
+                pass
             rc = r.get("roi_curve") or r.get("roi_curves") or []
+            curve_vals: List[float] = []
             if isinstance(rc, str):
                 try:
-                    curve = [float(x) for x in json.loads(rc)]
+                    curve_vals = [float(x) for x in json.loads(rc)]
                 except Exception:
                     try:
-                        curve = [float(x) for x in rc.split(",") if x]
+                        curve_vals = [float(x) for x in rc.split(",") if x]
                     except Exception:
-                        curve = []
+                        curve_vals = []
             elif isinstance(rc, Iterable):
-                curve = [float(x) for x in rc]
-        return mods, tags, depth, branching, curve
+                try:
+                    curve_vals = [float(x) for x in rc]
+                except Exception:
+                    curve_vals = []
+            if curve_vals:
+                curves.append(curve_vals)
+        depth = fmean(depths) if depths else 0.0
+        branching = fmean(branchings) if branchings else 0.0
+        curve: List[float] = []
+        if curves:
+            max_len = max(len(c) for c in curves)
+            for i in range(max_len):
+                curve.append(fmean(c[i] for c in curves if len(c) > i))
+        return list(mod_set), list(tag_set), depth, branching, curve
 
     def _roi_db_context(self, workflow_id: str | None, func: str) -> tuple[float, float]:
         if not self.roi_db or not hasattr(self.roi_db, "fetch_module_trajectories"):
