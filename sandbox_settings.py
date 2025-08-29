@@ -2,7 +2,12 @@ from __future__ import annotations
 
 """Pydantic settings for sandbox utilities."""
 
+import json
 import os
+from typing import Any
+
+import yaml
+
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
     PYDANTIC_V2 = True
@@ -11,6 +16,10 @@ except Exception:  # pragma: no cover - fallback for pydantic<2
     PYDANTIC_V2 = False
     SettingsConfigDict = dict  # type: ignore[misc]
 from pydantic import BaseModel, Field
+try:  # pragma: no cover - compatibility shim
+    from pydantic import field_validator
+except Exception:  # pragma: no cover
+    from pydantic import validator as field_validator  # type: ignore
 
 
 class AlignmentRules(BaseModel):
@@ -22,6 +31,126 @@ class AlignmentRules(BaseModel):
     comment_density_severity: int = 2
     network_call_severity: int = 3
     rule_modules: list[str] = Field(default_factory=list)
+
+
+class ROISettings(BaseModel):
+    """Settings related to return-on-investment scoring."""
+
+    threshold: float | None = None
+    confidence: float | None = None
+    ema_alpha: float = 0.1
+    compounding_weight: float = 1.0
+    min_integration_roi: float = 0.0
+    entropy_threshold: float | None = None
+    entropy_plateau_threshold: float | None = None
+    entropy_plateau_consecutive: int | None = None
+    entropy_ceiling_threshold: float | None = None
+    entropy_ceiling_consecutive: int | None = None
+
+    @field_validator(
+        "threshold",
+        "confidence",
+        "ema_alpha",
+        "entropy_threshold",
+        "entropy_plateau_threshold",
+        "entropy_ceiling_threshold",
+    )
+    def _check_unit_range(cls, v: float | None, info: Any) -> float | None:
+        if v is not None and not 0 <= v <= 1:
+            raise ValueError(f"{info.field_name} must be between 0 and 1")
+        return v
+
+    @field_validator("compounding_weight", "min_integration_roi")
+    def _check_non_negative(cls, v: float, info: Any) -> float:
+        if v < 0:
+            raise ValueError(f"{info.field_name} must be non-negative")
+        return v
+
+    @field_validator("entropy_plateau_consecutive", "entropy_ceiling_consecutive")
+    def _check_positive(cls, v: int | None, info: Any) -> int | None:
+        if v is not None and v <= 0:
+            raise ValueError(f"{info.field_name} must be a positive integer")
+        return v
+
+
+class SynergySettings(BaseModel):
+    """Settings for module synergy calculations."""
+
+    threshold: float | None = None
+    confidence: float | None = None
+    threshold_window: int | None = None
+    threshold_weight: float | None = None
+    ma_window: int | None = None
+    stationarity_confidence: float | None = None
+    std_threshold: float | None = None
+    variance_confidence: float | None = None
+    weight_roi: float = 1.0
+    weight_efficiency: float = 1.0
+    weight_resilience: float = 1.0
+    weight_antifragility: float = 1.0
+    weight_reliability: float = 1.0
+    weight_maintainability: float = 1.0
+    weight_throughput: float = 1.0
+    weights_lr: float = 0.1
+    train_interval: int = 10
+    replay_size: int = 100
+
+    @field_validator(
+        "threshold",
+        "confidence",
+        "threshold_weight",
+        "stationarity_confidence",
+        "std_threshold",
+        "variance_confidence",
+    )
+    def _synergy_unit_range(cls, v: float | None, info: Any) -> float | None:
+        if v is not None and not 0 <= v <= 1:
+            raise ValueError(f"{info.field_name} must be between 0 and 1")
+        return v
+
+    @field_validator("threshold_window", "ma_window", "train_interval", "replay_size")
+    def _synergy_positive_int(cls, v: int | None, info: Any) -> int | None:
+        if v is not None and v <= 0:
+            raise ValueError(f"{info.field_name} must be a positive integer")
+        return v
+
+    @field_validator(
+        "weight_roi",
+        "weight_efficiency",
+        "weight_resilience",
+        "weight_antifragility",
+        "weight_reliability",
+        "weight_maintainability",
+        "weight_throughput",
+        "weights_lr",
+    )
+    def _synergy_non_negative(cls, v: float, info: Any) -> float:
+        if v < 0:
+            raise ValueError(f"{info.field_name} must be non-negative")
+        return v
+
+
+class AlignmentSettings(BaseModel):
+    """Grouping of alignment-related settings."""
+
+    rules: AlignmentRules = Field(default_factory=AlignmentRules)
+    enable_flagger: bool = True
+    warning_threshold: float = 0.5
+    failure_threshold: float = 0.9
+    improvement_warning_threshold: float = 0.5
+    improvement_failure_threshold: float = 0.9
+    baseline_metrics_path: str = "sandbox_metrics.yaml"
+
+    @field_validator(
+        "warning_threshold",
+        "failure_threshold",
+        "improvement_warning_threshold",
+        "improvement_failure_threshold",
+    )
+    def _alignment_unit_range(cls, v: float, info: Any) -> float:
+        if not 0 <= v <= 1:
+            raise ValueError(f"{info.field_name} must be between 0 and 1")
+        return v
 
 
 class SandboxSettings(BaseSettings):
@@ -393,6 +522,55 @@ class SandboxSettings(BaseSettings):
         description="Penalty weight for each failure category detected.",
     )
 
+    # Grouped settings
+    roi: ROISettings = Field(default_factory=ROISettings, exclude=True)
+    synergy: SynergySettings = Field(default_factory=SynergySettings, exclude=True)
+    alignment: AlignmentSettings = Field(default_factory=AlignmentSettings, exclude=True)
+
+    def __init__(self, **data: Any) -> None:  # pragma: no cover - simple wiring
+        super().__init__(**data)
+        self.roi = ROISettings(
+            threshold=self.roi_threshold,
+            confidence=self.roi_confidence,
+            ema_alpha=self.roi_ema_alpha,
+            compounding_weight=self.roi_compounding_weight,
+            min_integration_roi=self.min_integration_roi,
+            entropy_threshold=self.entropy_threshold,
+            entropy_plateau_threshold=self.entropy_plateau_threshold,
+            entropy_plateau_consecutive=self.entropy_plateau_consecutive,
+            entropy_ceiling_threshold=self.entropy_ceiling_threshold,
+            entropy_ceiling_consecutive=self.entropy_ceiling_consecutive,
+        )
+        self.synergy = SynergySettings(
+            threshold=self.synergy_threshold,
+            confidence=self.synergy_confidence,
+            threshold_window=self.synergy_threshold_window,
+            threshold_weight=self.synergy_threshold_weight,
+            ma_window=self.synergy_ma_window,
+            stationarity_confidence=self.synergy_stationarity_confidence,
+            std_threshold=self.synergy_std_threshold,
+            variance_confidence=self.synergy_variance_confidence,
+            weight_roi=self.synergy_weight_roi,
+            weight_efficiency=self.synergy_weight_efficiency,
+            weight_resilience=self.synergy_weight_resilience,
+            weight_antifragility=self.synergy_weight_antifragility,
+            weight_reliability=self.synergy_weight_reliability,
+            weight_maintainability=self.synergy_weight_maintainability,
+            weight_throughput=self.synergy_weight_throughput,
+            weights_lr=self.synergy_weights_lr,
+            train_interval=self.synergy_train_interval,
+            replay_size=self.synergy_replay_size,
+        )
+        self.alignment = AlignmentSettings(
+            rules=self.alignment_rules,
+            enable_flagger=self.enable_alignment_flagger,
+            warning_threshold=self.alignment_warning_threshold,
+            failure_threshold=self.alignment_failure_threshold,
+            improvement_warning_threshold=self.improvement_warning_threshold,
+            improvement_failure_threshold=self.improvement_failure_threshold,
+            baseline_metrics_path=self.alignment_baseline_metrics_path,
+        )
+
     model_config = SettingsConfigDict(
         env_file=os.getenv("MENACE_ENV_FILE", ".env"),
         extra="ignore",
@@ -404,4 +582,26 @@ class SandboxSettings(BaseSettings):
             extra = "ignore"
 
 
-__all__ = ["SandboxSettings", "AlignmentRules"]
+def load_sandbox_settings(path: str | None = None) -> SandboxSettings:
+    """Load :class:`SandboxSettings` from optional YAML/JSON file."""
+
+    data: dict[str, Any] = {}
+    if path:
+        with open(path, "r", encoding="utf-8") as fh:
+            if path.endswith((".yml", ".yaml")):
+                data = yaml.safe_load(fh) or {}
+            elif path.endswith(".json"):
+                data = json.load(fh)
+            else:  # pragma: no cover - defensive
+                raise ValueError(f"Unsupported config format: {path}")
+    return SandboxSettings(**data)
+
+
+__all__ = [
+    "SandboxSettings",
+    "AlignmentRules",
+    "ROISettings",
+    "SynergySettings",
+    "AlignmentSettings",
+    "load_sandbox_settings",
+]
