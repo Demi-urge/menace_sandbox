@@ -24,9 +24,11 @@ import secrets
 import tempfile
 from contextlib import suppress
 try:
-    from .lock_utils import _ContextFileLock, is_lock_stale, Timeout
+    from .lock_utils import SandboxLock, is_lock_stale, Timeout
+    _ContextFileLock = SandboxLock  # backward compatibility
 except ImportError:  # pragma: no cover - allow running as script
-    from lock_utils import _ContextFileLock, is_lock_stale, Timeout
+    from lock_utils import SandboxLock, is_lock_stale, Timeout
+    _ContextFileLock = SandboxLock
 import json
 from pathlib import Path
 import atexit
@@ -142,7 +144,7 @@ except Exception:  # pragma: no cover - fs errors
     logger.exception("failed to remove stale lock %s", GLOBAL_LOCK_PATH)
 
 # File-based lock preventing multiple agent instances
-_global_lock = _ContextFileLock(GLOBAL_LOCK_PATH)
+_global_lock = SandboxLock(GLOBAL_LOCK_PATH)
 INSTANCE_LOCK_PATH = os.getenv(
     "VISUAL_AGENT_INSTANCE_LOCK",
     os.path.join(tempfile.gettempdir(), "visual_agent.lock.tmp"),

@@ -20,7 +20,10 @@ from . import metrics_exporter
 
 from .audit_logger import log_event
 
-from .lock_utils import _ContextFileLock, LOCK_TIMEOUT
+from .lock_utils import SandboxLock, LOCK_TIMEOUT
+
+# Backwards compatibility for tests importing the old name
+_ContextFileLock = SandboxLock
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -70,7 +73,7 @@ GLOBAL_LOCK_PATH = os.getenv(
     "VISUAL_AGENT_LOCK_FILE",
     os.path.join(tempfile.gettempdir(), "visual_agent.lock"),
 )
-_global_lock = _ContextFileLock(GLOBAL_LOCK_PATH)
+_global_lock = SandboxLock(GLOBAL_LOCK_PATH)
 
 
 class VisualAgentClient:
