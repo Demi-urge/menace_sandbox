@@ -311,6 +311,46 @@ def test_compose_pipeline_synergy_weighting(monkeypatch, tmp_path):
     assert pipeline == ["wf1", "wf3"]
 
 
+def test_compose_pipeline_cluster_map_synergy(monkeypatch):
+    monkeypatch.setattr(mwp, "ROITracker", None)
+    monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
+
+    class ZeroComparator:
+        @staticmethod
+        def compare(a, b):
+            return types.SimpleNamespace(aggregate=0.0)
+
+    monkeypatch.setattr(mwp, "WorkflowSynergyComparator", ZeroComparator)
+
+    embeddings = {
+        "wf1": [1.0, 0.0],
+        "wf2": [0.6, 0.8],
+        "wf3": [0.55, 0.835],
+    }
+
+    def fake_encode(self, wid, _spec):
+        return embeddings[wid]
+
+    planner = MetaWorkflowPlanner(graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({}))
+    planner.cluster_map = {
+        ("wf1", "wf2"): {"score": 0.1},
+        ("wf1", "wf3"): {"score": 0.9},
+    }
+    monkeypatch.setattr(MetaWorkflowPlanner, "encode_workflow", fake_encode)
+
+    workflows = {wid: {} for wid in embeddings}
+    retr = DummyRetriever(embeddings)
+
+    pipeline = planner.compose_pipeline(
+        "wf1", workflows, length=2, synergy_weight=0.0, retriever=retr
+    )
+    assert pipeline == ["wf1", "wf2"]
+    pipeline = planner.compose_pipeline(
+        "wf1", workflows, length=2, synergy_weight=1.0, retriever=retr
+    )
+    assert pipeline == ["wf1", "wf3"]
+
+
 def test_compose_pipeline_transition_matrix(monkeypatch, tmp_path):
     monkeypatch.setattr(mwp, "ROITracker", None)
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
