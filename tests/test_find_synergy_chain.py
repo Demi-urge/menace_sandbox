@@ -45,7 +45,9 @@ def test_find_synergy_chain_prefers_reinforced(tmp_path, monkeypatch):
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
     monkeypatch.setattr(mwp, "CodeDB", None)
     monkeypatch.setattr(mwp.MetaWorkflowPlanner, "_load_cluster_map", lambda self: None)
-    monkeypatch.setattr(mwp.MetaWorkflowPlanner, "_workflow_domain", lambda self, wid: (0, "d"))
+    monkeypatch.setattr(
+        mwp.MetaWorkflowPlanner, "_workflow_domain", lambda self, wid: ([0], ["d"])
+    )
     monkeypatch.setattr(mwp.MetaWorkflowPlanner, "transition_probabilities", lambda self: {})
 
     chain = mwp.find_synergy_chain("a", length=2, cluster_map={})

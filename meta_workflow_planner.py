@@ -199,11 +199,11 @@ class MetaWorkflowPlanner:
             rois,
             failures,
         ) = self._semantic_tokens(workflow, workflow_id)
-        d_idx, d_label = self._workflow_domain(
+        d_indices, d_labels = self._workflow_domain(
             workflow_id, {workflow_id: workflow}
         )
-        if d_label:
-            tags.append(d_label)
+        if d_labels:
+            tags.extend(d_labels)
 
         # Merge in module categories from the code database
         mods.extend(mod_cats)
@@ -235,12 +235,14 @@ class MetaWorkflowPlanner:
         vec.extend(tag_vec)
         domain_vec = [0.0] * self.max_domains
         trans_vec = [0.0] * self.max_domains
-        if 0 <= d_idx < self.max_domains:
-            domain_vec[d_idx] = 1.0
+        if d_indices:
+            for idx in d_indices:
+                if 0 <= idx < self.max_domains:
+                    domain_vec[idx] = 1.0
             trans_probs = self.transition_probabilities()
             for (src, dst), prob in trans_probs.items():
-                if src == d_idx and 0 <= dst < self.max_domains:
-                    trans_vec[dst] = float(prob)
+                if src in d_indices and 0 <= dst < self.max_domains:
+                    trans_vec[dst] = max(trans_vec[dst], float(prob))
         vec.extend(domain_vec)
         vec.extend(trans_vec)
 
@@ -258,8 +260,8 @@ class MetaWorkflowPlanner:
                     "code_tags": code_tags,
                     "dependency_depth": depth,
                     "branching_factor": branching,
-                    "domain": d_label,
-                    "domain_index": d_idx,
+                    "domains": d_labels,
+                    "domain_indices": d_indices,
                     "domain_transitions": trans_vec,
                     "vector_schema": {
                         "graph": 2,
@@ -302,11 +304,11 @@ class MetaWorkflowPlanner:
             rois,
             failures,
         ) = self._semantic_tokens(workflow, workflow_id)
-        d_idx, d_label = self._workflow_domain(
+        d_indices, d_labels = self._workflow_domain(
             workflow_id, {workflow_id: workflow}
         )
-        if d_label:
-            tags.append(d_label)
+        if d_labels:
+            tags.extend(d_labels)
 
         mods.extend(mod_cats)
 
@@ -332,12 +334,14 @@ class MetaWorkflowPlanner:
         vec.extend(self._embed_tokens(norm_tags))
         domain_vec = [0.0] * self.max_domains
         trans_vec = [0.0] * self.max_domains
-        if 0 <= d_idx < self.max_domains:
-            domain_vec[d_idx] = 1.0
+        if d_indices:
+            for idx in d_indices:
+                if 0 <= idx < self.max_domains:
+                    domain_vec[idx] = 1.0
             trans_probs = self.transition_probabilities()
             for (src, dst), prob in trans_probs.items():
-                if src == d_idx and 0 <= dst < self.max_domains:
-                    trans_vec[dst] = float(prob)
+                if src in d_indices and 0 <= dst < self.max_domains:
+                    trans_vec[dst] = max(trans_vec[dst], float(prob))
         vec.extend(domain_vec)
         vec.extend(trans_vec)
         return vec
@@ -573,40 +577,52 @@ class MetaWorkflowPlanner:
         self,
         workflow_id: str,
         workflows: Mapping[str, Mapping[str, Any]] | None = None,
-    ) -> tuple[int, str]:
-        """Return ``(index, label)`` for ``workflow_id``'s domain."""
+    ) -> tuple[List[int], List[str]]:
+        """Return ``([indices], [labels])`` for ``workflow_id``'s domains.
 
-        domain = ""
+        Historically a single domain label was returned for a workflow.  The
+        planner now supports multiple domains per workflow by deriving all
+        available context tags from the :class:`CodeDB` (when available) and
+        fallback workflow metadata.  Each discovered domain label is normalised
+        to lower case and converted into an index via :func:`_get_index` with
+        ``"other"`` acting as a catch-all bucket.
+        """
+
+        labels: List[str] = []
         if self.code_db is not None:
             try:
-                if hasattr(self.code_db, "get_domain"):
-                    domain = str(self.code_db.get_domain(workflow_id) or "").lower()
-                elif hasattr(self.code_db, "get_platform"):
-                    domain = str(self.code_db.get_platform(workflow_id) or "").lower()
-                elif hasattr(self.code_db, "get_context_tags"):
+                if hasattr(self.code_db, "get_context_tags"):
                     tags = self.code_db.get_context_tags(workflow_id) or []
-                    if tags:
-                        domain = str(tags[0]).lower()
+                    labels.extend(str(t).lower() for t in tags if t)
                 elif hasattr(self.code_db, "context_tags"):
                     tags = self.code_db.context_tags(  # type: ignore[attr-defined]
                         workflow_id
                     ) or []
-                    if tags:
-                        domain = str(tags[0]).lower()
+                    labels.extend(str(t).lower() for t in tags if t)
+                elif hasattr(self.code_db, "get_domain"):
+                    d = self.code_db.get_domain(workflow_id)
+                    if d:
+                        labels.append(str(d).lower())
+                elif hasattr(self.code_db, "get_platform"):
+                    d = self.code_db.get_platform(workflow_id)
+                    if d:
+                        labels.append(str(d).lower())
             except Exception:
-                domain = ""
-        if not domain and workflows is not None:
+                labels = []
+
+        if not labels and workflows is not None:
             wf = workflows.get(workflow_id, {})
-            domain = str(
-                wf.get("domain")
-                or wf.get("platform")
-                or wf.get("category")
-                or ""
-            ).lower()
-        if not domain:
-            return -1, ""
-        idx = _get_index(domain, self.domain_index, self.max_domains)
-        return idx, domain
+            meta = wf.get("domain") or wf.get("platform") or wf.get("category")
+            if isinstance(meta, str):
+                labels.append(meta.lower())
+            elif isinstance(meta, Iterable):
+                labels.extend(str(m).lower() for m in meta if m)
+
+        labels = [l for i, l in enumerate(labels) if l and l not in labels[:i]]
+        if not labels:
+            return [], []
+        indices = [_get_index(l, self.domain_index, self.max_domains) for l in labels]
+        return indices, labels
 
     # ------------------------------------------------------------------
     def compose_pipeline(
@@ -646,7 +662,7 @@ class MetaWorkflowPlanner:
         graph = self.graph or WorkflowGraph()
 
         current_vec = self.encode_workflow(start, workflows[start])
-        prev_domain = self._workflow_domain(start, workflows)[0]
+        prev_domains = self._workflow_domain(start, workflows)[0]
         current_roi = (
             _roi_weight_from_db(self.roi_db, start) if self.roi_db is not None else 0.0
         )
@@ -720,14 +736,17 @@ class MetaWorkflowPlanner:
                 roi_avg = (current_roi + cand_roi) / 2.0
                 score = base * (1.0 + roi_weight * roi_avg)
 
-                cand_domain = self._workflow_domain(wid, workflows)[0]
-                if prev_domain >= 0 and cand_domain >= 0:
-                    prob = trans_probs.get((prev_domain, cand_domain))
-                    if prob is None:
+                cand_domains = self._workflow_domain(wid, workflows)[0]
+                if prev_domains and cand_domains:
+                    prob = 0.0
+                    for src in prev_domains:
+                        for dst in cand_domains:
+                            prob = max(prob, trans_probs.get((src, dst), 0.0))
+                    if prob == 0.0:
                         logger.debug(
                             "no transition stats for domains %s -> %s",
-                            prev_domain,
-                            cand_domain,
+                            prev_domains,
+                            cand_domains,
                         )
                         score *= 1.0
                     else:
@@ -744,7 +763,7 @@ class MetaWorkflowPlanner:
             pipeline.append(best_id)
             available.remove(best_id)
             current = best_id
-            prev_domain = self._workflow_domain(current, workflows)[0]
+            prev_domains = self._workflow_domain(current, workflows)[0]
             if best_vec is not None:
                 current_vec = best_vec
             current_roi = best_roi
@@ -1032,13 +1051,17 @@ class MetaWorkflowPlanner:
                 )
 
         # Penalize improbable domain transitions
-        domains = [self._workflow_domain(wid)[0] for wid in chain]
+        domain_lists = [self._workflow_domain(wid)[0] for wid in chain]
         trans_probs = self.transition_probabilities()
         penalty = 0.0
-        for a, b in zip(domains, domains[1:]):
-            if a < 0 or b < 0:
+        for prev, curr in zip(domain_lists, domain_lists[1:]):
+            if not prev or not curr:
                 continue
-            penalty += 1.0 - trans_probs.get((a, b), 0.0)
+            prob = 0.0
+            for a in prev:
+                for b in curr:
+                    prob = max(prob, trans_probs.get((a, b), 0.0))
+            penalty += 1.0 - prob
         if penalty:
             roi_gain = max(0.0, roi_gain - penalty)
 
@@ -2226,49 +2249,51 @@ class MetaWorkflowPlanner:
         info["score"] = prev_score * decay + new_score * (1.0 - decay)
 
         matrix = self.cluster_map.setdefault(("__domain_transitions__",), {})
-        domains = [self._workflow_domain(wid)[0] for wid in chain]
+        domain_lists = [self._workflow_domain(wid)[0] for wid in chain]
         step_rois = [m.get("roi", 0.0) for m in step_metrics] if step_metrics else []
         step_fails = [m.get("failures", 0.0) for m in step_metrics] if step_metrics else []
         step_ents = [m.get("entropy", 0.0) for m in step_metrics] if step_metrics else []
-        for i, (a, b) in enumerate(zip(domains, domains[1:])):
-            if a < 0 or b < 0:
+        for i, (src_list, dst_list) in enumerate(zip(domain_lists, domain_lists[1:])):
+            if not src_list or not dst_list:
                 continue
-            entry = matrix.setdefault(
-                (a, b),
-                {
-                    "count": 0,
-                    "delta_roi": 0.0,
-                    "delta_failures": 0.0,
-                    "delta_entropy": 0.0,
-                    "last_roi": roi_gain,
-                    "last_failures": failures,
-                    "last_entropy": entropy,
-                },
-            )
-            entry["count"] += 1
-            if step_rois:
-                roi_a = step_rois[i] if i < len(step_rois) else 0.0
-                roi_b = step_rois[i + 1] if i + 1 < len(step_rois) else roi_gain
-                delta_r = roi_b - roi_a
-                fail_a = step_fails[i] if i < len(step_fails) else failures
-                fail_b = step_fails[i + 1] if i + 1 < len(step_fails) else failures
-                delta_f = fail_b - fail_a
-                ent_a = step_ents[i] if i < len(step_ents) else entropy
-                ent_b = step_ents[i + 1] if i + 1 < len(step_ents) else entropy
-                delta_e = ent_b - ent_a
-            else:
-                prev_roi = float(entry.get("last_roi", roi_gain))
-                entry["last_roi"] = roi_gain
-                delta_r = roi_gain - prev_roi
-                prev_fail = float(entry.get("last_failures", failures))
-                entry["last_failures"] = failures
-                delta_f = failures - prev_fail
-                prev_ent = float(entry.get("last_entropy", entropy))
-                entry["last_entropy"] = entropy
-                delta_e = entropy - prev_ent
-            entry["delta_roi"] += (delta_r - entry.get("delta_roi", 0.0)) / entry["count"]
-            entry["delta_failures"] += (delta_f - entry.get("delta_failures", 0.0)) / entry["count"]
-            entry["delta_entropy"] += (delta_e - entry.get("delta_entropy", 0.0)) / entry["count"]
+            for a in src_list:
+                for b in dst_list:
+                    entry = matrix.setdefault(
+                        (a, b),
+                        {
+                            "count": 0,
+                            "delta_roi": 0.0,
+                            "delta_failures": 0.0,
+                            "delta_entropy": 0.0,
+                            "last_roi": roi_gain,
+                            "last_failures": failures,
+                            "last_entropy": entropy,
+                        },
+                    )
+                    entry["count"] += 1
+                    if step_rois:
+                        roi_a = step_rois[i] if i < len(step_rois) else 0.0
+                        roi_b = step_rois[i + 1] if i + 1 < len(step_rois) else roi_gain
+                        delta_r = roi_b - roi_a
+                        fail_a = step_fails[i] if i < len(step_fails) else failures
+                        fail_b = step_fails[i + 1] if i + 1 < len(step_fails) else failures
+                        delta_f = fail_b - fail_a
+                        ent_a = step_ents[i] if i < len(step_ents) else entropy
+                        ent_b = step_ents[i + 1] if i + 1 < len(step_ents) else entropy
+                        delta_e = ent_b - ent_a
+                    else:
+                        prev_roi = float(entry.get("last_roi", roi_gain))
+                        entry["last_roi"] = roi_gain
+                        delta_r = roi_gain - prev_roi
+                        prev_fail = float(entry.get("last_failures", failures))
+                        entry["last_failures"] = failures
+                        delta_f = failures - prev_fail
+                        prev_ent = float(entry.get("last_entropy", entropy))
+                        entry["last_entropy"] = entropy
+                        delta_e = entropy - prev_ent
+                    entry["delta_roi"] += (delta_r - entry.get("delta_roi", 0.0)) / entry["count"]
+                    entry["delta_failures"] += (delta_f - entry.get("delta_failures", 0.0)) / entry["count"]
+                    entry["delta_entropy"] += (delta_e - entry.get("delta_entropy", 0.0)) / entry["count"]
 
         if save:
             self._save_cluster_map()
@@ -2294,7 +2319,7 @@ class MetaWorkflowPlanner:
         return info
 
     # ------------------------------------------------------------------
-    def transition_probabilities(self, *, smoothing: float = 0.0) -> Dict[tuple[str, str], float]:
+    def transition_probabilities(self, *, smoothing: float = 0.0) -> Dict[tuple[int, int], float]:
         """Return normalized transition weights as probabilities.
 
         The transition matrix stored under the special
@@ -2894,7 +2919,7 @@ def find_synergy_chain(
     if cluster_map is None:
         cluster_map = getattr(planner, "cluster_map", {})
     trans_probs = planner.transition_probabilities()
-    prev_domain = planner._workflow_domain(start_workflow_id)[0]
+    prev_domains = planner._workflow_domain(start_workflow_id)[0]
 
     chain = [start_workflow_id]
     current = start_workflow_id
@@ -2910,9 +2935,13 @@ def find_synergy_chain(
             if cluster_map is not None:
                 cm_score = float(cluster_map.get((current, wf_id), {}).get("score", 0.0))
                 score *= 1.0 + cm_score
-            cand_domain = planner._workflow_domain(wf_id)[0]
-            if prev_domain >= 0 and cand_domain >= 0:
-                score *= 1.0 + trans_probs.get((prev_domain, cand_domain), 0.0)
+            cand_domains = planner._workflow_domain(wf_id)[0]
+            if prev_domains and cand_domains:
+                prob = 0.0
+                for src in prev_domains:
+                    for dst in cand_domains:
+                        prob = max(prob, trans_probs.get((src, dst), 0.0))
+                score *= 1.0 + prob
             if score > best_score:
                 best_id = wf_id
                 best_score = score
@@ -2920,7 +2949,7 @@ def find_synergy_chain(
             break
         chain.append(best_id)
         current = best_id
-        prev_domain = planner._workflow_domain(best_id)[0]
+        prev_domains = planner._workflow_domain(best_id)[0]
     return chain
 
 
