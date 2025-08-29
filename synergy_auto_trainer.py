@@ -162,8 +162,10 @@ class SynergyAutoTrainer:
         # update metrics for each successful cycle
         try:
             synergy_trainer_iterations.inc()
-        except Exception:
-            pass
+        except Exception:  # pragma: no cover - metrics may be unavailable
+            self.logger.exception(
+                "failed to increment synergy_trainer_iterations gauge"
+            )
         lock = FileLock(str(self.weights_file) + ".lock")
         success = False
         try:
@@ -176,12 +178,16 @@ class SynergyAutoTrainer:
             self.logger.warning("synergy_weight_cli failed: %s", exc)
             try:
                 synergy_trainer_failures_total.inc()
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - metrics may be unavailable
+                self.logger.exception(
+                    "failed to increment synergy_trainer_failures_total gauge"
+                )
             try:
                 synergy_weight_update_failures_total.inc()
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - metrics may be unavailable
+                self.logger.exception(
+                    "failed to increment synergy_weight_update_failures_total gauge"
+                )
             try:
                 dispatch_alert(
                     "synergy_weight_update_failure",
@@ -200,16 +206,22 @@ class SynergyAutoTrainer:
                 self._last_id = hist[-1][0]
                 try:
                     synergy_trainer_last_id.set(float(self._last_id))
-                except Exception:
-                    pass
-            try:
-                self.progress_file.parent.mkdir(parents=True, exist_ok=True)
-                self.progress_file.write_text(
-                    json.dumps({"last_id": self._last_id})
-                )
-                self.logger.info("progress saved (last_id=%d)", self._last_id)
-            except Exception as exc:
-                self.logger.exception("failed to update progress: %s", exc)
+                except Exception:  # pragma: no cover - metrics may be unavailable
+                    self.logger.exception(
+                        "failed to set synergy_trainer_last_id gauge"
+                    )
+                try:
+                    self.progress_file.parent.mkdir(parents=True, exist_ok=True)
+                    self.progress_file.write_text(
+                        json.dumps({"last_id": self._last_id})
+                    )
+                    self.logger.info(
+                        "progress saved (last_id=%d)", self._last_id
+                    )
+                except Exception as exc:
+                    self.logger.exception(
+                        "failed to update progress: %s", exc
+                    )
 
     # --------------------------------------------------------------
     def _loop(self) -> None:
