@@ -166,6 +166,13 @@ class SandboxSettings(BaseSettings):
     menace_env_file: str = Field(".env", env="MENACE_ENV_FILE")
     sandbox_data_dir: str = Field("sandbox_data", env="SANDBOX_DATA_DIR")
     sandbox_env_presets: str | None = Field(None, env="SANDBOX_ENV_PRESETS")
+    exploration_strategy: str = Field(
+        "epsilon_greedy", env="EXPLORATION_STRATEGY"
+    )
+    exploration_epsilon: float = Field(0.1, env="EXPLORATION_EPSILON")
+    exploration_temperature: float = Field(
+        1.0, env="EXPLORATION_TEMPERATURE"
+    )
     default_module_timeout: float | None = Field(
         None,
         env="SANDBOX_TIMEOUT",
@@ -199,6 +206,18 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_MAX_RECURSION_DEPTH",
         description="Maximum depth when resolving dependencies recursively (default unlimited).",
     )
+
+    @field_validator("exploration_epsilon")
+    def _validate_exploration_epsilon(cls, v: float) -> float:
+        if not 0 <= v <= 1:
+            raise ValueError("exploration_epsilon must be between 0 and 1")
+        return v
+
+    @field_validator("exploration_temperature")
+    def _validate_exploration_temperature(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("exploration_temperature must be positive")
+        return v
     test_redundant_modules: bool = Field(
         True,
         env="SANDBOX_TEST_REDUNDANT",
