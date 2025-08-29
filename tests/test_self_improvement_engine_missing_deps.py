@@ -35,6 +35,7 @@ ALLOWED = {
     "contextlib",
     "subprocess",
     "builtins",
+    "collections",
     "_io",
 }
 
@@ -61,7 +62,10 @@ def _reload_with_missing(monkeypatch, missing):
                 elif attr == "radar":
                     obj = types.SimpleNamespace(track=lambda *a, **k: None)
                 else:
-                    obj = lambda *a, **k: types.SimpleNamespace()
+                    def _factory(*a: object, **k: object) -> types.SimpleNamespace:
+                        return types.SimpleNamespace()
+
+                    obj = _factory
                 setattr(mod, attr, obj)
         sys.modules[name] = mod
         return mod
@@ -73,11 +77,11 @@ def _reload_with_missing(monkeypatch, missing):
 
 
 def test_missing_sandbox_runner(monkeypatch):
-    mod = _reload_with_missing(monkeypatch, {"sandbox_runner.environment", "sandbox_runner.orphan_integration"})
     with pytest.raises(RuntimeError, match="sandbox_runner"):
-        mod.integrate_orphans()
-    with pytest.raises(RuntimeError, match="sandbox_runner"):
-        mod.post_round_orphan_scan()
+        _reload_with_missing(
+            monkeypatch,
+            {"sandbox_runner.environment", "sandbox_runner.orphan_integration"},
+        )
 
 
 def test_missing_quick_fix_engine(monkeypatch):
