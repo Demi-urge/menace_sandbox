@@ -8,6 +8,7 @@ import math
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence, TYPE_CHECKING
+from statistics import fmean, pvariance
 
 from roi_results_db import ROIResultsDB
 from workflow_graph import WorkflowGraph
@@ -462,6 +463,7 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runner: WorkflowSandboxRunner | None = None,
+        runs: int = 3,
     ) -> List[Dict[str, Any]]:
         """Suggest and validate workflow chains.
 
@@ -500,6 +502,7 @@ class MetaWorkflowPlanner:
                 runner=runner,
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
+                runs=runs,
             )
             if record:
                 results.append(record)
@@ -511,12 +514,13 @@ class MetaWorkflowPlanner:
         self,
         workflows: Mapping[str, Callable[[], Any]],
         *,
+        runs: int = 3,
         metrics_db: Any | None = None,
     ) -> List[Dict[str, Any]]:
         """Discover meta-workflows and persist successful chains."""
 
         target = self.encode("self_improvement", {"workflow": []})
-        records = self.plan_and_validate(target, workflows)
+        records = self.plan_and_validate(target, workflows, runs=runs)
 
         successes: List[Dict[str, Any]] = []
         for record in records:
@@ -547,8 +551,13 @@ class MetaWorkflowPlanner:
         runner: WorkflowSandboxRunner | None = None,
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
+        runs: int = 3,
     ) -> Dict[str, Any] | None:
-        """Validate a single chain and update ROI logs and cluster map."""
+        """Validate a single chain and update ROI logs and cluster map.
+
+        ``runs`` controls how many times the chain is executed.  Metrics are
+        aggregated across runs using their mean and population variance.
+        """
 
         funcs: List[Callable[[], Any]] = []
         for wid in chain:
@@ -572,45 +581,94 @@ class MetaWorkflowPlanner:
         except Exception:
             WorkflowSynergyComparator = None  # type: ignore
 
-        metrics = runner.run(funcs)
-        failure_count = max(
-            metrics.crash_count,
-            sum(1 for m in metrics.modules if not m.success),
-        )
+        roi_gains: List[float] = []
+        failure_counts: List[float] = []
+        entropies: List[float] = []
+        runtimes: List[float] = []
+        success_rates: List[float] = []
+        per_run_steps: List[List[Dict[str, Any]]] = []
+
         spec = {"steps": [{"module": m} for m in chain]}
-        if WorkflowSynergyComparator is not None:
-            try:
-                entropy = WorkflowSynergyComparator._entropy(spec)
-            except Exception:
-                entropy = 0.0
-        else:
-            entropy = 0.0
-        # Track per-step entropy to allow granular convergence checks
-        step_entropies: List[float] = []
-        if WorkflowSynergyComparator is not None:
-            for i in range(1, len(chain) + 1):
+        for _ in range(max(1, runs)):
+            metrics = runner.run(funcs)
+            failure_count = max(
+                metrics.crash_count,
+                sum(1 for m in metrics.modules if not m.success),
+            )
+            if WorkflowSynergyComparator is not None:
                 try:
-                    sub_spec = {"steps": [{"module": m} for m in chain[:i]]}
-                    step_entropies.append(WorkflowSynergyComparator._entropy(sub_spec))
+                    entropy = WorkflowSynergyComparator._entropy(spec)
                 except Exception:
-                    step_entropies.append(0.0)
-        else:
-            step_entropies = [0.0] * len(chain)
-        roi_gain = sum(
-            float(m.result)
-            for m in metrics.modules
-            if isinstance(m.result, (int, float))
-        )
-        # Capture per-step metrics for cluster tracking
-        step_metrics = [
-            {
-                "module": m.name,
-                "roi": float(m.result) if isinstance(m.result, (int, float)) else 0.0,
-                "failures": 0 if m.success else 1,
-                "entropy": step_entropies[i] if i < len(step_entropies) else 0.0,
-            }
-            for i, m in enumerate(metrics.modules)
-        ]
+                    entropy = 0.0
+            else:
+                entropy = 0.0
+            # Track per-step entropy to allow granular convergence checks
+            step_entropies: List[float] = []
+            if WorkflowSynergyComparator is not None:
+                for i in range(1, len(chain) + 1):
+                    try:
+                        sub_spec = {"steps": [{"module": m} for m in chain[:i]]}
+                        step_entropies.append(
+                            WorkflowSynergyComparator._entropy(sub_spec)
+                        )
+                    except Exception:
+                        step_entropies.append(0.0)
+            else:
+                step_entropies = [0.0] * len(chain)
+            roi_gain = sum(
+                float(m.result)
+                for m in metrics.modules
+                if isinstance(m.result, (int, float))
+            )
+            step_metrics = [
+                {
+                    "module": m.name,
+                    "roi": float(m.result)
+                    if isinstance(m.result, (int, float))
+                    else 0.0,
+                    "failures": 0 if m.success else 1,
+                    "entropy": step_entropies[i]
+                    if i < len(step_entropies)
+                    else 0.0,
+                }
+                for i, m in enumerate(metrics.modules)
+            ]
+
+            roi_gains.append(roi_gain)
+            failure_counts.append(float(failure_count))
+            entropies.append(float(entropy))
+            runtimes.append(sum(m.duration for m in metrics.modules))
+            success_rates.append(
+                (len(metrics.modules) - failure_count) / len(metrics.modules)
+                if metrics.modules
+                else 0.0
+            )
+            per_run_steps.append(step_metrics)
+
+        roi_gain = fmean(roi_gains)
+        failure_count = fmean(failure_counts)
+        entropy = fmean(entropies)
+        roi_var = pvariance(roi_gains) if len(roi_gains) > 1 else 0.0
+        failure_var = pvariance(failure_counts) if len(failure_counts) > 1 else 0.0
+        entropy_var = pvariance(entropies) if len(entropies) > 1 else 0.0
+        runtime = fmean(runtimes)
+        success_rate = fmean(success_rates)
+
+        # Aggregate per-step metrics across runs
+        step_metrics: List[Dict[str, Any]] = []
+        if per_run_steps:
+            for i in range(len(per_run_steps[0])):
+                roi_vals = [s[i].get("roi", 0.0) for s in per_run_steps]
+                fail_vals = [s[i].get("failures", 0.0) for s in per_run_steps]
+                ent_vals = [s[i].get("entropy", 0.0) for s in per_run_steps]
+                step_metrics.append(
+                    {
+                        "module": per_run_steps[0][i].get("module", ""),
+                        "roi": fmean(roi_vals),
+                        "failures": fmean(fail_vals),
+                        "entropy": fmean(ent_vals),
+                    }
+                )
 
         chain_id = "->".join(chain)
         prev_roi = (
@@ -624,7 +682,10 @@ class MetaWorkflowPlanner:
                 self.roi_tracker.record_scenario_delta(
                     chain_id,
                     roi_delta,
-                    metrics_delta={"failures": float(failure_count), "entropy": float(entropy)},
+                    metrics_delta={
+                        "failures": float(failure_count),
+                        "entropy": float(entropy),
+                    },
                 )
             except Exception:
                 pass
@@ -636,6 +697,9 @@ class MetaWorkflowPlanner:
                     failure_count,
                     entropy,
                     roi_delta=roi_delta,
+                    roi_var=roi_var,
+                    failures_var=failure_var,
+                    entropy_var=entropy_var,
                 )
             except Exception:
                 pass
@@ -648,24 +712,27 @@ class MetaWorkflowPlanner:
                 self.roi_db.log_result(
                     workflow_id="->".join(chain),
                     run_id="0",
-                    runtime=sum(m.duration for m in metrics.modules),
-                    success_rate=(
-                        (len(metrics.modules) - failure_count) / len(metrics.modules)
-                        if metrics.modules
-                        else 0.0
-                    ),
+                    runtime=runtime,
+                    success_rate=success_rate,
                     roi_gain=roi_gain,
                     workflow_synergy_score=max(0.0, 1.0 - entropy),
                     bottleneck_index=0.0,
                     patchability_score=0.0,
                     module_deltas={
-                        m.name: {
-                            "roi_delta": float(m.result)
-                            if isinstance(m.result, (int, float))
-                            else 0.0,
-                            "success_rate": 1.0 if m.success else 0.0,
-                        }
-                        for m in metrics.modules
+                        **{
+                            m["module"]: {
+                                "roi_delta": m.get("roi", 0.0),
+                                "success_rate": 1.0 - m.get("failures", 0.0),
+                            }
+                            for m in step_metrics
+                        },
+                        "__aggregate__": {
+                            "roi_gain_var": roi_var,
+                            "failures_mean": failure_count,
+                            "failures_var": failure_var,
+                            "entropy_mean": entropy,
+                            "entropy_var": entropy_var,
+                        },
                     },
                 )
             except Exception:
@@ -697,8 +764,11 @@ class MetaWorkflowPlanner:
         return {
             "chain": list(chain),
             "roi_gain": roi_gain,
+            "roi_var": roi_var,
             "failures": failure_count,
+            "failures_var": failure_var,
             "entropy": entropy,
+            "entropy_var": entropy_var,
             "step_metrics": step_metrics,
         }
 
@@ -711,6 +781,7 @@ class MetaWorkflowPlanner:
         runner: WorkflowSandboxRunner | None = None,
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
+        runs: int = 3,
     ) -> List[Dict[str, Any]]:
         """Mutate chains and re-validate.
 
@@ -775,6 +846,7 @@ class MetaWorkflowPlanner:
                 runner=runner,
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
+                runs=runs,
             )
             if record:
                 results.append(record)
@@ -790,6 +862,7 @@ class MetaWorkflowPlanner:
         runner: WorkflowSandboxRunner | None = None,
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
+        runs: int = 3,
     ) -> List[Dict[str, Any]]:
         """Split underperforming subchains and merge high-ROI chains."""
 
@@ -831,6 +904,7 @@ class MetaWorkflowPlanner:
                 runner=runner,
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
+                runs=runs,
             )
             if record:
                 results.append(record)
@@ -847,6 +921,7 @@ class MetaWorkflowPlanner:
         runner: WorkflowSandboxRunner | None = None,
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
+        runs: int = 3,
     ) -> List[Dict[str, Any]]:
         """Mutate ``pipeline`` when ROI stagnates or entropy drifts.
 
@@ -864,6 +939,7 @@ class MetaWorkflowPlanner:
             runner=runner,
             failure_threshold=failure_threshold,
             entropy_threshold=entropy_threshold,
+            runs=runs,
         )
         if not record:
             return []
@@ -895,6 +971,7 @@ class MetaWorkflowPlanner:
             runner=runner,
             failure_threshold=failure_threshold,
             entropy_threshold=entropy_threshold,
+            runs=runs,
         )
 
         try:  # pragma: no cover - best effort logging
@@ -923,6 +1000,7 @@ class MetaWorkflowPlanner:
         runner: WorkflowSandboxRunner | None = None,
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
+        runs: int = 3,
     ) -> List[Dict[str, Any]]:
         """Monitor ``pipeline`` and split or terminate on stagnating ROI.
 
@@ -941,6 +1019,7 @@ class MetaWorkflowPlanner:
             runner=runner,
             failure_threshold=failure_threshold,
             entropy_threshold=entropy_threshold,
+            runs=runs,
         )
         if not record:
             return []
@@ -974,6 +1053,7 @@ class MetaWorkflowPlanner:
                 runner=runner,
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
+                runs=runs,
             )
         return []
 
@@ -988,6 +1068,7 @@ class MetaWorkflowPlanner:
         runner: WorkflowSandboxRunner | None = None,
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
+        runs: int = 3,
     ) -> List[Dict[str, Any]]:
         """Split ``pipeline`` into sub-pipelines when improvement stalls."""
 
@@ -1006,6 +1087,7 @@ class MetaWorkflowPlanner:
             runner=runner,
             failure_threshold=failure_threshold,
             entropy_threshold=entropy_threshold,
+            runs=runs,
         )
         if not record:
             return []
@@ -1045,6 +1127,7 @@ class MetaWorkflowPlanner:
                 runner=runner,
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
+                runs=runs,
             )
             if rec:
                 results.append(rec)
@@ -1067,6 +1150,7 @@ class MetaWorkflowPlanner:
         runner: WorkflowSandboxRunner | None = None,
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
+        runs: int = 3,
     ) -> List[Dict[str, Any]]:
         """Merge pipelines that show stable entropy and ROI improvements."""
 
@@ -1080,6 +1164,7 @@ class MetaWorkflowPlanner:
                     runner=runner,
                     failure_threshold=failure_threshold,
                     entropy_threshold=entropy_threshold,
+                    runs=runs,
                 )
                 if not rec:
                     continue
@@ -1121,6 +1206,7 @@ class MetaWorkflowPlanner:
         entropy_threshold: float = 2.0,
         roi_improvement_threshold: float = 0.0,
         entropy_stability_threshold: float = 1.0,
+        runs: int = 3,
     ) -> List[Dict[str, Any]]:
         """Evolve converged pipelines based on ROI and entropy trends.
 
@@ -1152,6 +1238,7 @@ class MetaWorkflowPlanner:
                     runner=runner,
                     failure_threshold=failure_threshold,
                     entropy_threshold=entropy_threshold,
+                    runs=runs,
                 )
                 if recs:
                     best = max(recs, key=lambda r: r.get("roi_gain", 0.0))
@@ -1166,6 +1253,7 @@ class MetaWorkflowPlanner:
                     runner=runner,
                     failure_threshold=failure_threshold,
                     entropy_threshold=entropy_threshold,
+                    runs=runs,
                 )
                 if recs:
                     best = max(recs, key=lambda r: r.get("roi_gain", 0.0))
@@ -1183,6 +1271,7 @@ class MetaWorkflowPlanner:
                 runner=runner,
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
+                runs=runs,
             )
             for rec in recs:
                 results.append(rec)
@@ -1196,7 +1285,7 @@ class MetaWorkflowPlanner:
 
         chain = record.get("chain", [])
         roi_gain = float(record.get("roi_gain", 0.0))
-        failures = int(record.get("failures", 0))
+        failures = float(record.get("failures", 0.0))
         entropy = float(record.get("entropy", 0.0))
         chain_id = "->".join(chain)
 
@@ -1246,6 +1335,7 @@ class MetaWorkflowPlanner:
         runner: WorkflowSandboxRunner | None = None,
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
+        runs: int = 3,
     ) -> List[Dict[str, Any]]:
         """Merge high-ROI variants using clustering results.
 
@@ -1284,6 +1374,7 @@ class MetaWorkflowPlanner:
                 runner=runner,
                 failure_threshold=failure_threshold,
                 entropy_threshold=entropy_threshold,
+                runs=runs,
             )
             if rec:
                 results.append(rec)
