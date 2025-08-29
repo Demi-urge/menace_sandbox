@@ -49,7 +49,7 @@ from typing import (
     get_args,
     TYPE_CHECKING,
 )
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
 from filelock import FileLock
 from dataclasses import dataclass, asdict
 
@@ -129,7 +129,16 @@ def _tracking_import(
     return mod
 
 
-builtins.__import__ = _tracking_import
+@contextmanager
+def _patched_imports() -> Iterable[None]:
+    """Temporarily install import tracker."""
+
+    previous = builtins.__import__
+    builtins.__import__ = _tracking_import
+    try:
+        yield
+    finally:
+        builtins.__import__ = previous
 
 logger = get_logger(__name__)
 

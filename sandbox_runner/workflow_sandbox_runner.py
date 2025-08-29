@@ -189,8 +189,16 @@ class WorkflowSandboxRunner:
 
         proc = psutil.Process() if psutil else None
 
+        try:
+            from .environment import _patched_imports
+        except Exception:  # pragma: no cover - fallback when environment unavailable
+            @contextlib.contextmanager
+            def _patched_imports():
+                yield
+
         with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
             root = pathlib.Path(tmp).resolve()
+            stack.enter_context(_patched_imports())
 
             funcs = [workflow] if callable(workflow) else list(workflow)
 
