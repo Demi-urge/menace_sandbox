@@ -21,6 +21,10 @@ from . import workflow_run_summary
 from . import sandbox_runner
 from .workflow_synergy_comparator import WorkflowSynergyComparator
 from .meta_workflow_planner import MetaWorkflowPlanner
+try:  # pragma: no cover - optional dependency
+    from vector_service.retriever import Retriever  # type: ignore
+except Exception:  # pragma: no cover - allow running without retriever
+    Retriever = None  # type: ignore
 try:  # pragma: no cover - optional at runtime
     from .workflow_graph import WorkflowGraph
 except Exception:  # pragma: no cover - best effort
@@ -66,6 +70,7 @@ def merge_variant_records(
     runner: sandbox_runner.workflow_sandbox_runner.WorkflowSandboxRunner | None = None,
     failure_threshold: int = 0,
     entropy_threshold: float = 2.0,
+    retriever: Retriever | None = None,
 ) -> list[Dict[str, Any]]:
     """Merge high-performing variants using :class:`MetaWorkflowPlanner`.
 
@@ -75,6 +80,8 @@ def merge_variant_records(
     """
 
     planner = planner or MetaWorkflowPlanner()
+    if retriever is None:
+        raise ValueError("merge_variant_records requires a Retriever")
     return planner.merge_high_performing_variants(
         records,
         workflows,
@@ -82,6 +89,7 @@ def merge_variant_records(
         runner=runner,
         failure_threshold=failure_threshold,
         entropy_threshold=entropy_threshold,
+        retriever=retriever,
     )
 
 

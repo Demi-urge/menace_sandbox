@@ -14,6 +14,7 @@ from statistics import fmean, pvariance
 from roi_results_db import ROIResultsDB
 from workflow_graph import WorkflowGraph
 from vector_utils import persist_embedding, cosine_similarity
+from cache_utils import get_cached_chain, set_cached_chain
 
 try:  # pragma: no cover - optional heavy dependency
     from vector_service.retriever import Retriever  # type: ignore
@@ -310,20 +311,24 @@ class MetaWorkflowPlanner:
         workflows: Mapping[str, Mapping[str, Any]],
         *,
         threshold: float = 0.75,
-        retriever: Retriever | None = None,
+        retriever: Retriever,
     ) -> List[List[str]]:
         """Group ``workflows`` into similarity clusters.
 
-        Each workflow is encoded via :meth:`encode_workflow` and the resulting
-        vector is used to query a :class:`vector_service.retriever.Retriever`
-        for similar candidates.  The cosine similarity of the query and
-        candidate vectors is multiplied by ``(1 + ROI)`` for both workflows
-        using weights from :func:`_roi_weight_from_db`.  Pairs whose weighted
-        similarity meets or exceeds ``threshold`` are placed in the same
-        cluster.  When no retriever is available the method falls back to a
-        brute-force pairwise comparison.  Missing ROI information results in
+        ``retriever`` must be an initialised :class:`vector_service.retriever.Retriever`
+        instance.  Each workflow is encoded via :meth:`encode_workflow`, persisted
+        in the ``workflow_meta`` vector database and the embedding is used to
+        query the retriever.  The cosine similarity of a query and candidate
+        vector is multiplied by ``(1 + ROI)`` for both workflows using weights
+        from :func:`_roi_weight_from_db`.  Pairs whose weighted similarity meets
+        or exceeds ``threshold`` are placed in the same cluster.  Retrieval
+        results are cached via :mod:`cache_utils` to avoid repeated brute-force
+        scans across invocations.  Missing ROI information results in
         unweighted similarity scores so that the function remains best effort.
         """
+
+        if retriever is None or Retriever is None:
+            raise ValueError("cluster_workflows requires an initialised Retriever")
 
         ids = list(workflows.keys())
         if not ids:
@@ -332,52 +337,48 @@ class MetaWorkflowPlanner:
         vecs: Dict[str, List[float]] = {}
         roi_map: Dict[str, float] = {}
         for wid in ids:
-            vecs[wid] = self.encode_workflow(wid, workflows[wid])
+            vec = self.encode_workflow(wid, workflows[wid])
+            vecs[wid] = vec
             roi_map[wid] = (
                 _roi_weight_from_db(self.roi_db, wid) if self.roi_db is not None else 0.0
             )
+            try:
+                persist_embedding("workflow_meta", wid, vec, origin_db="workflow")
+            except TypeError:  # pragma: no cover - legacy signature
+                persist_embedding("workflow_meta", wid, vec)
 
         sims: Dict[str, Dict[str, float]] = {wid: {} for wid in ids}
 
-        if retriever is None and Retriever is not None:
-            try:  # pragma: no cover - best effort
-                retriever = Retriever()
-            except Exception:
-                retriever = None
-
-        if retriever is not None and Retriever is not None:
-            try:  # pragma: no cover - optional path
-                ur = retriever._get_retriever()
-                for wid, vec in vecs.items():
+        ur = retriever._get_retriever()
+        for wid, vec in vecs.items():
+            cache_key = json.dumps(vec, sort_keys=True)
+            cached_hits = get_cached_chain(cache_key, ["workflow_meta"])
+            if cached_hits is None:
+                try:  # pragma: no cover - best effort
                     hits, _, _ = ur.retrieve(
                         vec, top_k=len(ids) * 2, dbs=["workflow_meta"]
                     )  # type: ignore[attr-defined]
-                    for hit in hits:
-                        other = str(
-                            getattr(hit, "record_id", None)
-                            or getattr(getattr(hit, "metadata", {}), "get", lambda *_: None)("id")
-                            or ""
-                        )
-                        if not other or other == wid or other not in vecs:
-                            continue
-                        sim = cosine_similarity(vec, vecs[other])
-                        sim *= (1.0 + roi_map[wid]) * (1.0 + roi_map[other])
-                        if sim > sims[wid].get(other, 0.0):
-                            sims[wid][other] = sim
-                            sims[other][wid] = sim
-            except Exception:
-                retriever = None
+                    cached_hits = [
+                        {
+                            "record_id": str(
+                                getattr(h, "record_id", None)
+                                or getattr(getattr(h, "metadata", {}), "get", lambda *_: None)("id")
+                                or ""
+                            )
+                        }
+                        for h in hits
+                    ]
+                    set_cached_chain(cache_key, ["workflow_meta"], cached_hits)
+                except Exception:
+                    cached_hits = []
 
-        if retriever is None:
-            for i, wid in enumerate(ids):
-                vec_a = vecs[wid]
-                roi_a = roi_map[wid]
-                for j in range(i + 1, len(ids)):
-                    other = ids[j]
-                    vec_b = vecs[other]
-                    roi_b = roi_map[other]
-                    sim = cosine_similarity(vec_a, vec_b)
-                    sim *= (1.0 + roi_a) * (1.0 + roi_b)
+            for hit in cached_hits:
+                other = str(hit.get("record_id", ""))
+                if not other or other == wid or other not in vecs:
+                    continue
+                sim = cosine_similarity(vec, vecs[other])
+                sim *= (1.0 + roi_map[wid]) * (1.0 + roi_map[other])
+                if sim > sims[wid].get(other, 0.0):
                     sims[wid][other] = sim
                     sims[other][wid] = sim
 
@@ -1329,14 +1330,15 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runs: int = 3,
+        retriever: Retriever | None = None,
     ) -> List[Dict[str, Any]]:
         """Merge high-ROI variants using clustering results.
 
         ``records`` should contain ``chain`` and ``roi_gain`` entries.  Chains
         exceeding ``roi_threshold`` are clustered via :meth:`cluster_workflows`
-        and each cluster is merged into a single pipeline containing the union
-        of steps.  The merged pipelines are validated and successful results are
-        returned.
+        (using the provided ``retriever``) and each cluster is merged into a
+        single pipeline containing the union of steps.  The merged pipelines are
+        validated and successful results are returned.
         """
 
         high = [r for r in records if r.get("roi_gain", 0.0) > roi_threshold]
@@ -1350,7 +1352,11 @@ class MetaWorkflowPlanner:
             chain_lookup[cid] = rec["chain"]
             specs[cid] = {"steps": [{"module": w} for w in rec["chain"]]}
 
-        clusters = self.cluster_workflows(specs, threshold=cluster_threshold)
+        if retriever is None:
+            raise ValueError("merge_high_performing_variants requires a Retriever")
+        clusters = self.cluster_workflows(
+            specs, threshold=cluster_threshold, retriever=retriever
+        )
 
         results: List[Dict[str, Any]] = []
         for cluster in clusters:
