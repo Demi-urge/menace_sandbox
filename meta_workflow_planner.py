@@ -338,12 +338,17 @@ class MetaWorkflowPlanner:
         """
 
         chain_id = "->".join(chain)
-        workflow = {"workflow": [{"function": step} for step in chain]}
-        vec = self.encode(chain_id, workflow)
-        try:
-            persist_embedding("workflow_chain", chain_id, vec, origin_db="workflow")
-        except TypeError:  # pragma: no cover - compatibility shim
-            persist_embedding("workflow_chain", chain_id, vec)
+        cached = get_cached_chain(chain_id)
+        if cached is not None:
+            vec = list(cached)
+        else:
+            workflow = {"workflow": [{"function": step} for step in chain]}
+            vec = self.encode(chain_id, workflow)
+            try:
+                persist_embedding("workflow_chain", chain_id, vec, origin_db="workflow")
+            except TypeError:  # pragma: no cover - compatibility shim
+                persist_embedding("workflow_chain", chain_id, vec)
+            set_cached_chain(chain_id, vec)
         info = self.cluster_map.setdefault(tuple(chain), {})
         info["embedding"] = vec
         self._save_cluster_map()
