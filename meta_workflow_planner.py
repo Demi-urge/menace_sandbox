@@ -154,7 +154,9 @@ class MetaWorkflowPlanner:
                 self.roi_db = None
         if self.roi_tracker is None and ROITracker is not None:
             try:
-                self.roi_tracker = ROITracker(window=self.roi_window)
+                self.roi_tracker = ROITracker(
+                    window=self.roi_window, results_db=self.roi_db
+                )
             except Exception:
                 self.roi_tracker = None
         if self.stability_db is None and WorkflowStabilityDB is not None:
@@ -168,6 +170,21 @@ class MetaWorkflowPlanner:
             except Exception:
                 self.code_db = None
         self._load_cluster_map()
+
+    # ------------------------------------------------------------------
+    def begin_run(self, workflow_id: str, run_id: str) -> None:
+        """Configure trackers for a new sandbox run.
+
+        ``ROITracker`` persists per-module ROI deltas when a run context is
+        provided.  Sandbox orchestrators should invoke this hook with the
+        workflow identifier and a unique ``run_id`` before recording metrics.
+        """
+
+        if self.roi_tracker is not None:
+            try:
+                self.roi_tracker.set_run_context(workflow_id, run_id, self.roi_db)
+            except Exception:
+                logger.exception("failed to configure ROITracker run context")
 
     # ------------------------------------------------------------------
     def encode(self, workflow_id: str, workflow: Mapping[str, Any]) -> List[float]:

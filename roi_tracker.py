@@ -58,6 +58,10 @@ from .borderline_bucket import BorderlineBucket
 from .truth_adapter import TruthAdapter
 from .roi_calculator import ROICalculator, propose_fix
 from .readiness_index import compute_readiness
+try:  # pragma: no cover - optional during tests
+    from .roi_results_db import ROIResultsDB  # type: ignore
+except Exception:  # pragma: no cover - allow operation without DB
+    ROIResultsDB = None  # type: ignore
 LOCAL_TABLES.add("workflow_module_deltas")
 
 try:  # pragma: no cover - optional dependency
@@ -233,6 +237,7 @@ class ROITracker:
         raroi_borderline_threshold: float = 0.0,
         borderline_bucket: BorderlineBucket | None = None,
         telemetry_backend: TelemetryBackend | None = None,
+        results_db: "ROIResultsDB" | None = None,
     ) -> None:
         """Create a tracker for monitoring ROI deltas.
 
@@ -287,7 +292,10 @@ class ROITracker:
         self.confidence_threshold = float(confidence_threshold)
         self.raroi_borderline_threshold = float(raroi_borderline_threshold)
         self.borderline_bucket = borderline_bucket or BorderlineBucket()
-        self.telemetry = telemetry_backend or TelemetryBackend()
+        self.telemetry = telemetry_backend or TelemetryBackend("./telemetry.db")
+        self.results_db = results_db
+        self.current_workflow_id: str | None = None
+        self.current_run_id: str | None = None
         self.window = window
         self.tolerance = tolerance
         self.entropy_threshold = (
@@ -618,6 +626,26 @@ class ROITracker:
         else:
             vertex = int(round(-b / (2 * a)))
         return vertex, preds
+
+    # ------------------------------------------------------------------
+    def set_run_context(
+        self,
+        workflow_id: str,
+        run_id: str,
+        results_db: "ROIResultsDB" | None = None,
+    ) -> None:
+        """Configure persistence context for ROI deltas.
+
+        When set, subsequent :meth:`update` calls persist per-module ROI deltas
+        to :class:`ROIResultsDB`.  Passing ``results_db`` overrides the tracker
+        instance provided during initialisation, allowing callers to inject a
+        database on demand.
+        """
+
+        self.current_workflow_id = workflow_id
+        self.current_run_id = run_id
+        if results_db is not None:
+            self.results_db = results_db
 
     # ------------------------------------------------------------------
     def _filter_value(self, delta: float) -> Optional[float]:
@@ -1912,6 +1940,30 @@ class ROITracker:
                     if cid is not None:
                         self.cluster_deltas.setdefault(cid, []).append(adjusted)
                         self.cluster_raroi.setdefault(cid, []).append(raroi)
+                if (
+                    self.results_db is not None
+                    and self.current_workflow_id is not None
+                    and self.current_run_id is not None
+                ):
+                    runtime = 0.0
+                    success_rate = 0.0
+                    if metrics:
+                        runtime = float(
+                            metrics.get("workflow_runtime", metrics.get("runtime", 0.0))
+                        )
+                        success_rate = float(metrics.get("success_rate", 0.0))
+                    for m in modules:
+                        try:
+                            self.results_db.log_module_delta(
+                                self.current_workflow_id,
+                                self.current_run_id,
+                                str(m),
+                                runtime,
+                                success_rate,
+                                float(adjusted),
+                            )
+                        except Exception:
+                            pass
             if retrieval_metrics:
                 hits = [m for m in retrieval_metrics if m.get("hit")]
                 if hits:

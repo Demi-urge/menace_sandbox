@@ -18,6 +18,7 @@ import json
 import math
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from collections import Counter
 
 # ---------------------------------------------------------------------------
 # Optional dependencies
@@ -55,6 +56,11 @@ try:  # pragma: no cover - optional dependency
     from .roi_tracker import ROITracker  # type: ignore
 except BaseException:  # pragma: no cover - gracefully degrade
     ROITracker = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    from .roi_results_db import ROIResultsDB  # type: ignore
+except Exception:  # pragma: no cover - gracefully degrade
+    ROIResultsDB = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from . import workflow_merger  # type: ignore
@@ -214,6 +220,10 @@ class WorkflowSynergyComparator:
         graph = cls._build_graph(modules)
         base_vec = cls._embed_graph(graph, spec)
         dim = len(base_vec) // len(modules) if modules else len(base_vec)
+        if modules and (dim == 0 or len(base_vec) % len(modules) != 0):
+            counts = Counter(modules)
+            base_vec = [counts[m] for m in modules]
+            dim = 1
 
         if not all_modules:
             return base_vec
@@ -421,36 +431,16 @@ class WorkflowSynergyComparator:
             cls._update_best_practices(modules)
         return report
 
-    @staticmethod
-    def _roi_and_modularity(graph: Any, modules: Iterable[str]) -> Tuple[float, float]:
-        """Return efficiency and modularity for ``graph``.
+    @classmethod
+    def _modularity(cls, graph: Any, modules: Iterable[str]) -> float:
+        """Return structural modularity for ``graph``.
 
-        Efficiency attempts to combine runtime and ROI information when
-        available.  If ``ROITracker`` exposes both runtime and ROI histories the
-        most recent ROI per runtime is used.  As a fallback the dedicated
-        ``synergy_efficiency`` metric is consulted.  Modularity prefers
-        community detection via :mod:`networkx` but falls back to the ratio of
-        unique modules to total steps when the optional dependency is missing or
-        raises an error.
+        When :mod:`networkx` is available the function attempts community
+        detection to derive a modularity score.  Otherwise the ratio of unique
+        modules to total steps acts as a lightweight heuristic.
         """
 
         modules = list(modules)
-        efficiency = 0.0
-        if ROITracker is not None:
-            try:  # pragma: no cover - optional dependency
-                tracker = ROITracker()
-                hist = tracker.metrics_history
-                runtime_hist = hist.get("workflow_runtime") or hist.get("runtime")
-                roi_hist = hist.get("synergy_roi") or hist.get("roi")
-                if runtime_hist and roi_hist and runtime_hist[-1]:
-                    efficiency = float(roi_hist[-1]) / float(runtime_hist[-1])
-                else:
-                    eff_hist = hist.get("synergy_efficiency", [])
-                    if eff_hist:
-                        efficiency = float(eff_hist[-1])
-            except Exception:
-                pass
-
         modularity = 0.0
         if _HAS_NX and isinstance(graph, nx.Graph):
             try:  # pragma: no cover - optional dependency
@@ -473,6 +463,58 @@ class WorkflowSynergyComparator:
         if not modularity and modules:
             modularity = len(set(modules)) / float(len(modules))
 
+        return modularity
+
+    @staticmethod
+    def _workflow_id(src: Dict[str, Any] | str | Path, spec: Dict[str, Any]) -> str:
+        """Best effort extraction of a workflow identifier."""
+
+        if isinstance(src, (str, Path)):
+            return Path(str(src)).stem
+        return str(spec.get("id", ""))
+
+    @staticmethod
+    def _efficiency_from_db(workflow_id: str) -> float:
+        """Return ROI/runtime ratio for ``workflow_id`` using ``ROIResultsDB``."""
+
+        if workflow_id and ROIResultsDB is not None:
+            try:  # pragma: no cover - optional dependency
+                db = ROIResultsDB()
+                results = db.fetch_results(workflow_id)
+                if results:
+                    latest = results[-1]
+                    if latest.runtime:
+                        return float(latest.roi_gain) / float(latest.runtime)
+            except Exception:
+                pass
+        if ROITracker is not None:
+            try:  # pragma: no cover - optional dependency
+                tracker = ROITracker()
+                eff_hist = tracker.metrics_history.get("synergy_efficiency", [])
+                if eff_hist:
+                    return float(eff_hist[-1])
+            except Exception:
+                pass
+        return 0.0
+
+    @classmethod
+    def _roi_and_modularity(
+        cls,
+        wid_a: str,
+        wid_b: str,
+        graph_a: Any,
+        graph_b: Any,
+        mods_a: Iterable[str],
+        mods_b: Iterable[str],
+    ) -> Tuple[float, float]:
+        """Return efficiency and modularity for the given workflows."""
+
+        eff_a = cls._efficiency_from_db(wid_a)
+        eff_b = cls._efficiency_from_db(wid_b)
+        efficiency = (eff_a + eff_b) / 2 if (eff_a or eff_b) else 0.0
+        mod_a = cls._modularity(graph_a, mods_a)
+        mod_b = cls._modularity(graph_b, mods_b)
+        modularity = (mod_a + mod_b) / 2 if (mod_a or mod_b) else 0.0
         return efficiency, modularity
 
     # ------------------------------------------------------------------
@@ -523,10 +565,14 @@ class WorkflowSynergyComparator:
         best_a = cls.best_practice_match(spec_a)
         best_b = cls.best_practice_match(spec_b)
 
-        # Additional metrics derived from ROITracker and structural communities
-        combined_modules = mods_a + mods_b
-        union_graph = cls._build_graph(combined_modules)
-        efficiency, modularity = cls._roi_and_modularity(union_graph, combined_modules)
+        # Additional metrics derived from structural communities and ROI history
+        graph_a = cls._build_graph(mods_a)
+        graph_b = cls._build_graph(mods_b)
+        wid_a = cls._workflow_id(a_spec, spec_a)
+        wid_b = cls._workflow_id(b_spec, spec_b)
+        efficiency, modularity = cls._roi_and_modularity(
+            wid_a, wid_b, graph_a, graph_b, mods_a, mods_b
+        )
 
         metrics = {
             "similarity": similarity,
