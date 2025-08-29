@@ -21,6 +21,7 @@ from typing import Any, Callable, Iterable, Mapping
 import threading
 import inspect
 import subprocess
+import ast
 
 from db_router import init_db_router
 
@@ -130,15 +131,164 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
         initial_parents: Mapping[str, list[str]] | None = None,
         on_module: Callable[[str, Path, list[str]], None] | None = None,
         on_dependency: Callable[[str, str, list[str]], None] | None = None,
+        max_depth: int | None = None,
     ) -> set[str]:
-        for p in paths:
-            parents = list(initial_parents.get(p, []) if initial_parents else [])
+        """Walk imports for ``paths`` to discover local dependencies.
+
+        This simplified implementation mirrors the behaviour of the sandbox
+        runner's dependency collector.  It parses ``import`` statements for the
+        given modules, recursively following imports that resolve to files within
+        the current repository.  ``on_module`` and ``on_dependency`` callbacks
+        are invoked on a best-effort basis.
+
+        Raises
+        ------
+        RuntimeError
+            If a provided path does not exist so dependencies cannot be
+            determined.
+        """
+
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+
+        queue: list[tuple[Path, list[str]]] = []
+        for m in paths:
+            p = Path(m)
+            if not p.is_absolute():
+                p = repo / p
+            if not p.exists():
+                raise RuntimeError(f"module not found: {m}")
+            try:
+                rel = p.resolve().relative_to(repo).as_posix()
+            except Exception:
+                rel = p.as_posix()
+            parents = list(initial_parents.get(rel, []) if initial_parents else [])
+            queue.append((p, parents))
+
+        seen: set[str] = set()
+        while queue:
+            path, parents = queue.pop()
+            try:
+                rel = path.resolve().relative_to(repo).as_posix()
+            except Exception:
+                rel = path.as_posix()
+
             if on_module is not None:
                 try:
-                    on_module(p, Path(p), parents)
-                except Exception:
+                    on_module(rel, path, parents)
+                except Exception:  # pragma: no cover - best effort
                     pass
-        return set(paths)
+            if rel in seen:
+                continue
+            seen.add(rel)
+
+            if max_depth is not None and len(parents) >= max_depth:
+                continue
+
+            try:
+                src = path.read_text(encoding="utf-8")
+                tree = ast.parse(src)
+            except Exception:
+                continue
+
+            pkg_parts = rel.split("/")[:-1]
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        parts = alias.name.split(".")
+                        for cand in (
+                            repo / Path(*parts).with_suffix(".py"),
+                            repo / Path(*parts) / "__init__.py",
+                        ):
+                            if cand.exists():
+                                dep_rel = cand.resolve().relative_to(repo).as_posix()
+                                dep_parents = [rel] + parents
+                                if on_dependency is not None:
+                                    try:
+                                        on_dependency(dep_rel, rel, dep_parents)
+                                    except Exception:  # pragma: no cover - best effort
+                                        pass
+                                queue.append((cand, dep_parents))
+                                break
+                elif isinstance(node, ast.ImportFrom):
+                    if node.level:
+                        base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
+                    else:
+                        base_prefix = pkg_parts
+                    parts = base_prefix + (node.module.split(".") if node.module else [])
+                    candidates = [
+                        repo / Path(*parts).with_suffix(".py"),
+                        repo / Path(*parts) / "__init__.py",
+                    ]
+                    dep = next((c for c in candidates if c.exists()), None)
+                    if dep is not None:
+                        dep_rel = dep.resolve().relative_to(repo).as_posix()
+                        dep_parents = [rel] + parents
+                        if on_dependency is not None:
+                            try:
+                                on_dependency(dep_rel, rel, dep_parents)
+                            except Exception:  # pragma: no cover - best effort
+                                pass
+                        queue.append((dep, dep_parents))
+                    for alias in node.names:
+                        if alias.name == "*":
+                            continue
+                        sub_parts = parts + alias.name.split(".")
+                        for cand in (
+                            repo / Path(*sub_parts).with_suffix(".py"),
+                            repo / Path(*sub_parts) / "__init__.py",
+                        ):
+                            if cand.exists():
+                                dep_rel = cand.resolve().relative_to(repo).as_posix()
+                                dep_parents = [rel] + parents
+                                if on_dependency is not None:
+                                    try:
+                                        on_dependency(dep_rel, rel, dep_parents)
+                                    except Exception:  # pragma: no cover - best effort
+                                        pass
+                                queue.append((cand, dep_parents))
+                                break
+                elif isinstance(node, ast.Call):
+                    mod_name: str | None = None
+                    if (
+                        isinstance(node.func, ast.Attribute)
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "importlib"
+                        and node.func.attr == "import_module"
+                        and node.args
+                    ):
+                        arg = node.args[0]
+                        if isinstance(arg, ast.Str):
+                            mod_name = arg.s
+                        elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                            mod_name = arg.value
+                    elif (
+                        isinstance(node.func, ast.Name)
+                        and node.func.id in {"import_module", "__import__"}
+                        and node.args
+                    ):
+                        arg = node.args[0]
+                        if isinstance(arg, ast.Str):
+                            mod_name = arg.s
+                        elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                            mod_name = arg.value
+                    if mod_name:
+                        parts = mod_name.split(".")
+                        for cand in (
+                            repo / Path(*parts).with_suffix(".py"),
+                            repo / Path(*parts) / "__init__.py",
+                        ):
+                            if cand.exists():
+                                dep_rel = cand.resolve().relative_to(repo).as_posix()
+                                dep_parents = [rel] + parents
+                                if on_dependency is not None:
+                                    try:
+                                        on_dependency(dep_rel, rel, dep_parents)
+                                    except Exception:  # pragma: no cover - best effort
+                                        pass
+                                queue.append((cand, dep_parents))
+                                break
+
+        return seen
 
 try:
     from sandbox_runner.orphan_discovery import (
