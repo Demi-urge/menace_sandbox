@@ -38,6 +38,10 @@ from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
 from .error_cluster_predictor import ErrorClusterPredictor
 try:
+    from .sandbox_settings import SandboxSettings
+except Exception:  # pragma: no cover - fallback for flat layout
+    from sandbox_settings import SandboxSettings  # type: ignore
+try:
     from .sandbox_runner import post_round_orphan_scan
 except Exception:  # pragma: no cover - fallback for flat layout
     from sandbox_runner import post_round_orphan_scan  # type: ignore
@@ -83,11 +87,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         state_getter: Callable[[], tuple[int, ...]] | None = None,
         error_predictor: ErrorClusterPredictor | None = None,
         *,
-        score_threshold: float = 0.5,
+        score_threshold: float | None = None,
         score_weights: tuple[float, float, float, float, float, float] | None = None,
         flakiness_runs: int = 5,
         smoothing_factor: float = 0.5,
         weight_update_interval: float | None = None,
+        settings: SandboxSettings | None = None,
     ) -> None:
         super().__init__(telemetry_db, engine)
         self.audit_trail = audit_trail or getattr(engine, "audit_trail", None)
@@ -95,8 +100,13 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.state_getter = state_getter
         self.error_predictor = error_predictor
         self._bad_hashes: set[str] = set()
-        self.score_threshold = score_threshold
-        self.score_weights = score_weights or (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+        settings = settings or SandboxSettings()
+        if score_threshold is None:
+            score_threshold = settings.score_threshold
+        if score_weights is None:
+            score_weights = tuple(settings.score_weights)
+        self.score_threshold = float(score_threshold)
+        self.score_weights = tuple(score_weights)
         env_runs = os.getenv("FLAKINESS_RUNS")
         if env_runs is not None:
             try:
