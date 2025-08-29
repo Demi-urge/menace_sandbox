@@ -7,6 +7,8 @@ import os
 # Allow importing modules from repository root using ``menace`` prefix.
 __path__.append(os.path.dirname(os.path.dirname(__file__)))
 
+from .numeric_backend import NUMERIC_BACKEND
+
 # Default flag used by modules expecting it
 RAISE_ERRORS = False
 
@@ -16,4 +18,4 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional dependency
     MenaceDB = None  # type: ignore
 
-__all__ = ["RAISE_ERRORS", "MenaceDB"]
+__all__ = ["RAISE_ERRORS", "MenaceDB", "NUMERIC_BACKEND"]
