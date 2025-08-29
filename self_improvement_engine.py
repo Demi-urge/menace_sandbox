@@ -206,18 +206,56 @@ def _call_with_retries(
 def integrate_orphans(
     *args: object, retries: int = 3, delay: float = 0.1, **kwargs: object
 ) -> list[str]:
-    """Proxy for :mod:`sandbox_runner` orphan integration."""
+    """Invoke :mod:`sandbox_runner` orphan integration with safeguards.
 
-    func = _load_callable("sandbox_runner.orphan_integration", "integrate_orphans")
+    The sandbox runner is an optional component.  If it is not available the
+    function raises a :class:`RuntimeError` with instructions on how to enable
+    it so that callers receive a clear and actionable failure instead of silent
+    no-ops.
+    """
+
+    try:
+        from sandbox_runner import orphan_integration as _oi
+    except Exception as exc:  # pragma: no cover - exercised when optional
+        raise RuntimeError(
+            "sandbox_runner is required for orphan integration."
+            " Install the sandbox runner package or add it to PYTHONPATH."
+        ) from exc
+
+    if not hasattr(_oi, "integrate_orphans"):
+        raise RuntimeError(
+            "sandbox_runner.orphan_integration.integrate_orphans is missing;"
+            " ensure the sandbox runner is up to date."
+        )
+
+    func = _oi.integrate_orphans
     return _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
 
 
 def post_round_orphan_scan(
     *args: object, retries: int = 3, delay: float = 0.1, **kwargs: object
 ) -> dict[str, object]:
-    """Proxy for the sandbox orphan scan step."""
+    """Trigger the sandbox post-round orphan scan.
 
-    func = _load_callable("sandbox_runner.orphan_integration", "post_round_orphan_scan")
+    When the sandbox runner is not installed an explicit error is raised to
+    guide the user towards installing the missing dependency.
+    """
+
+    try:
+        from sandbox_runner import orphan_integration as _oi
+    except Exception as exc:  # pragma: no cover - exercised when optional
+        raise RuntimeError(
+            "sandbox_runner is required for orphan scanning."
+            " Install the sandbox runner package or add it to PYTHONPATH."
+        ) from exc
+
+    if not hasattr(_oi, "post_round_orphan_scan"):
+        raise RuntimeError(
+            "sandbox_runner.orphan_integration.post_round_orphan_scan is missing;"
+            " ensure the sandbox runner is up to date."
+        )
+
+    func = _oi.post_round_orphan_scan
     return _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
 
 
