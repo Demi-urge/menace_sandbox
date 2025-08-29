@@ -99,6 +99,9 @@ class SandboxSettings(BaseSettings):
     auto_dashboard_port: int | None = Field(None, env="AUTO_DASHBOARD_PORT")
     visual_agent_autostart: bool = Field(True, env="VISUAL_AGENT_AUTOSTART")
     visual_agent_urls: str = Field("http://127.0.0.1:8001", env="VISUAL_AGENT_URLS")
+    va_prompt_template: str | None = Field(None, env="VA_PROMPT_TEMPLATE")
+    va_prompt_prefix: str = Field("", env="VA_PROMPT_PREFIX")
+    va_repo_layout_lines: int = Field(20, env="VA_REPO_LAYOUT_LINES")
     use_memory: bool = Field(
         True,
         env="SANDBOX_USE_MEMORY",

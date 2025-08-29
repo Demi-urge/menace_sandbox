@@ -11,6 +11,8 @@ import json
 import base64
 import logging
 import ast
+import tempfile
+import py_compile
 from datetime import datetime
 
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
@@ -57,6 +59,8 @@ from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
 from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
 from typing import TYPE_CHECKING
+from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
+from .sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - optional dependency
     from vector_service import CognitionLayer, PatchLogger, VectorServiceError
@@ -75,10 +79,11 @@ if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
     from .data_bot import DataBot
 
-# Allow overriding the visual agent prompt through environment variables
-VA_PROMPT_TEMPLATE = os.getenv("VA_PROMPT_TEMPLATE")
-VA_PROMPT_PREFIX = os.getenv("VA_PROMPT_PREFIX", "")
-VA_REPO_LAYOUT_LINES = int(os.getenv("VA_REPO_LAYOUT_LINES", "20"))
+# Load prompt configuration from settings instead of environment variables
+_settings = SandboxSettings()
+VA_PROMPT_TEMPLATE = _settings.va_prompt_template
+VA_PROMPT_PREFIX = _settings.va_prompt_prefix
+VA_REPO_LAYOUT_LINES = _settings.va_repo_layout_lines
 
 
 class SelfCodingEngine:
@@ -510,8 +515,10 @@ class SelfCodingEngine:
             return text + ("\n" if not text.endswith("\n") else "")
         return _fallback()
 
-    def patch_file(self, path: Path, description: str, *, context_meta: Dict[str, Any] | None = None) -> str:
-        """Append a generated helper to the given file and return its code."""
+    def patch_file(
+        self, path: Path, description: str, *, context_meta: Dict[str, Any] | None = None
+    ) -> tuple[str, bool]:
+        """Generate helper code and append it to ``path`` if it passes verification."""
         try:
             code = self.generate_helper(description, path=path, metadata=context_meta)
         except TypeError:
@@ -524,6 +531,26 @@ class SelfCodingEngine:
                 "tags": [ERROR_FIX],
             },
         )
+        verified = True
+        if self.formal_verifier:
+            with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
+                fh.write(code)
+                tmp_path = Path(fh.name)
+            try:
+                verified = self.formal_verifier.verify(tmp_path)
+            finally:
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+        else:
+            try:
+                ast.parse(code)
+            except SyntaxError:
+                verified = False
+        if not verified:
+            self.logger.warning("pre-verification failed; patch not applied")
+            return "", False
         with open(path, "a", encoding="utf-8") as fh:
             fh.write("\n" + code)
         self.memory_mgr.store(str(path), code, tags="code")
@@ -536,44 +563,39 @@ class SelfCodingEngine:
                 "success": True,
             },
         )
-        return code
+        return code, True
 
     def _run_ci(self, path: Path | None = None) -> bool:
-        """Run formal verification, linting and tests.
+        """Run verification and linting inside an isolated sandbox."""
 
-        Return ``True`` if all checks pass.
-        """
-        ok = True
-        if self.formal_verifier and path is not None:
-            try:
-                if not self.formal_verifier.verify(path):
+        file_name = path.name if path else None
+        test_data = {file_name: path.read_text(encoding="utf-8")} if path else None
+
+        def workflow() -> bool:
+            ok = True
+            target = Path(file_name) if file_name else Path(".")
+            if self.formal_verifier and path is not None:
+                try:
+                    if not self.formal_verifier.verify(target):
+                        ok = False
+                except Exception as exc:  # pragma: no cover - verifier issues
+                    self.logger.error("formal verification failed: %s", exc)
                     ok = False
-            except Exception as exc:  # pragma: no cover - verifier issues
-                self.logger.error("formal verification failed: %s", exc)
+            try:
+                py_compile.compile(str(target), doraise=True)
+            except Exception as exc:
+                self.logger.error("lint failed: %s", exc)
                 ok = False
-        try:
-            subprocess.run(["ruff", "--quiet", "."], check=True)
-        except Exception as exc:  # pragma: no cover - ruff optional
-            self.logger.error("ruff failed: %s", exc)
-            ok = False
-        try:
-            pytest_cmd = [
-                "pytest",
-                "-q",
-                "--hypothesis-show-statistics",
-                "--cov=menace",
-                "--cov-branch",
-            ]
-            duration = os.getenv("MENACE_TEST_DURATION")
-            if duration:
-                pytest_cmd.append(f"--hypothesis-max-examples={duration}")
-            subprocess.run(pytest_cmd, check=True)
-        except Exception as exc:
-            self.logger.error("pytest failed: %s", exc)
-            ok = False
-        if ok:
-            self.logger.info("CI checks succeeded")
-        return ok
+            return ok
+
+        runner = WorkflowSandboxRunner()
+        metrics = runner.run(workflow, test_data=test_data)
+        if metrics.modules:
+            result = metrics.modules[0].result
+            if result:
+                self.logger.info("CI checks succeeded")
+            return bool(result)
+        return False
 
     def _current_errors(self) -> int:
         """Return the latest recorded error count for the bot."""
@@ -618,6 +640,11 @@ class SelfCodingEngine:
                 "description": description,
                 "tags": [ERROR_FIX],
             },
+        )
+        self._log_attempt(
+            requesting_bot,
+            "apply_patch_start",
+            {"path": str(path), "description": description},
         )
         try:
             self._check_permission(WRITE, requesting_bot)
@@ -671,13 +698,20 @@ class SelfCodingEngine:
                     "retrieval_session_id": "",
                 }
         original = path.read_text(encoding="utf-8")
-        generated_code = self.patch_file(path, description, context_meta=context_meta)
+        generated_code, pre_verified = self.patch_file(
+            path, description, context_meta=context_meta
+        )
+        self._log_attempt(
+            requesting_bot,
+            "patch_verification",
+            {"path": str(path), "verified": pre_verified},
+        )
         session_id = ""
         if context_meta:
             session_id = context_meta.get("retrieval_session_id", "")
         vectors: List[Tuple[str, str, float]] = []
         retrieval_metadata: Dict[str, Dict[str, Any]] = {}
-        if not generated_code.strip():
+        if not pre_verified or not generated_code.strip():
             self.logger.info("no code generated; skipping enhancement")
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
@@ -687,6 +721,11 @@ class SelfCodingEngine:
                     self.cognition_layer.record_patch_outcome(session_id, False)
                 except Exception:
                     self.logger.exception("failed to record patch outcome")
+            self._log_attempt(
+                requesting_bot,
+                "apply_patch_result",
+                {"path": str(path), "success": False},
+            )
             return None, False, 0.0
         if self.formal_verifier and not self.formal_verifier.verify(path):
             path.write_text(original, encoding="utf-8")
@@ -765,6 +804,11 @@ class SelfCodingEngine:
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             self._track_contributors(session_id, vectors, False, patch_id, retrieval_metadata)
+            self._log_attempt(
+                requesting_bot,
+                "apply_patch_result",
+                {"path": str(path), "success": False, "patch_id": patch_id},
+            )
             return patch_id, True, roi_delta
         if not self._run_ci(path):
             self.logger.error("CI checks failed; skipping commit")
@@ -794,6 +838,11 @@ class SelfCodingEngine:
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             self._track_contributors(session_id, vectors, False, retrieval_metadata=retrieval_metadata)
+            self._log_attempt(
+                requesting_bot,
+                "apply_patch_result",
+                {"path": str(path), "success": False},
+            )
             return None, False, 0.0
         if self.safety_monitor and not self.safety_monitor.validate_bot(self.bot_name):
             path.write_text(original, encoding="utf-8")
@@ -822,6 +871,11 @@ class SelfCodingEngine:
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             self._track_contributors(session_id, vectors, False, retrieval_metadata=retrieval_metadata)
+            self._log_attempt(
+                requesting_bot,
+                "apply_patch_result",
+                {"path": str(path), "success": False},
+            )
             return None, False, 0.0
         if self.pipeline:
             try:
@@ -997,6 +1051,11 @@ class SelfCodingEngine:
             except Exception:
                 self.logger.exception("failed to record patch outcome")
         self._track_contributors(session_id, vectors, bool(patch_id) and not reverted, patch_id, retrieval_metadata)
+        self._log_attempt(
+            requesting_bot,
+            "apply_patch_result",
+            {"path": str(path), "success": not reverted, "patch_id": patch_id},
+        )
         return patch_id, reverted, roi_delta
 
     def rollback_patch(self, patch_id: str) -> None:
