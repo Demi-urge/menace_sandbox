@@ -29,33 +29,63 @@ _PRUNE_RUNS = 50
 try:  # pragma: no cover - optional heavy dependency
     from vector_service.retriever import Retriever  # type: ignore
 except Exception:  # pragma: no cover - allow running without retriever
+    logger.warning("vector_service.retriever import failed; similar search disabled")
     Retriever = None  # type: ignore
 
 try:  # pragma: no cover - optional heavy dependency
     from roi_tracker import ROITracker  # type: ignore
 except Exception:  # pragma: no cover - allow running without ROI tracker
-    ROITracker = None  # type: ignore
+    logger.warning("roi_tracker import failed; using no-op ROITracker fallback")
+
+    class ROITracker:  # type: ignore[no-redef]
+        """Deterministic no-op fallback used when ``roi_tracker`` is unavailable."""
+
+        def __init__(self, *_, **__):
+            pass
+
+        def record_scenario_delta(self, *_, **__):
+            """No-op fallback implementation."""
+
+            logger.debug("ROITracker fallback invoked; no data recorded")
 
 try:  # pragma: no cover - optional persistence helper
     from workflow_stability_db import WorkflowStabilityDB  # type: ignore
 except Exception:  # pragma: no cover - allow running without stability db
+    logger.warning(
+        "workflow_stability_db import failed; stability tracking disabled"
+    )
     WorkflowStabilityDB = None  # type: ignore
 
 try:  # pragma: no cover - optional heavy dependency
     import networkx as nx  # type: ignore
     _HAS_NX = True
 except Exception:  # pragma: no cover - executed when networkx missing
+    logger.warning("networkx import failed; graph features will be limited")
     nx = None  # type: ignore
     _HAS_NX = False
 
 try:  # pragma: no cover - optional heavy dependency
     from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
 except Exception:  # pragma: no cover - allow running without comparator
-    WorkflowSynergyComparator = None  # type: ignore
+    logger.warning(
+        "workflow_synergy_comparator import failed; synergy metrics disabled"
+    )
+
+    class WorkflowSynergyComparator:  # type: ignore[no-redef]
+        """Fallback comparator returning neutral metrics."""
+
+        @staticmethod
+        def compare(*_, **__):
+            return type("Result", (), {"aggregate": 0.0})()
+
+        @staticmethod
+        def _entropy(*_, **__):
+            return 0.0
 
 try:  # pragma: no cover - optional code database
     from code_database import CodeDB  # type: ignore
 except Exception:  # pragma: no cover - database unavailable
+    logger.warning("code_database import failed; code context features disabled")
     CodeDB = None  # type: ignore
 
 try:  # pragma: no cover - optional persistence helper
@@ -67,6 +97,7 @@ try:  # pragma: no cover - optional clustering dependency
     from sklearn.cluster import DBSCAN  # type: ignore
     _HAS_SKLEARN = True
 except Exception:  # pragma: no cover - allow running without scikit-learn
+    logger.warning("scikit-learn import failed; clustering disabled")
     DBSCAN = None  # type: ignore
     _HAS_SKLEARN = False
 
@@ -853,10 +884,10 @@ class MetaWorkflowPlanner:
             except Exception:
                 return None
 
-        try:
-            from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
-        except Exception:
-            WorkflowSynergyComparator = None  # type: ignore
+        if WorkflowSynergyComparator is None:
+            logger.warning(
+                "WorkflowSynergyComparator unavailable; entropy metrics will be zero"
+            )
 
         roi_gains: List[float] = []
         failure_rates: List[float] = []
@@ -2794,10 +2825,10 @@ def simulate_meta_workflow(
         except Exception:
             return {"roi_gain": 0.0, "failures": 0, "entropy": 0.0}
 
-    try:  # pragma: no cover - optional dependency
-        from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
-    except Exception:  # pragma: no cover - when comparator unavailable
-        WorkflowSynergyComparator = None  # type: ignore
+    if WorkflowSynergyComparator is None:
+        logger.warning(
+            "WorkflowSynergyComparator unavailable; entropy metrics will be zero"
+        )
 
     total_roi = 0.0
     total_failures = 0
