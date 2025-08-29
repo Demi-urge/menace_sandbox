@@ -8,6 +8,7 @@ from typing import Any
 import networkx as nx
 import pytest
 
+import cache_utils
 import meta_workflow_planner as mwp
 from meta_workflow_planner import MetaWorkflowPlanner, find_synergy_candidates
 from vector_utils import cosine_similarity
@@ -125,6 +126,7 @@ def test_embedding_generation(sample_embeddings):
         + 3 * planner.max_functions
         + planner.max_modules
         + planner.max_tags
+        + planner.max_domains
     )
     roi_segment = vec[2:5]
     assert roi_segment[:2] == [1.0, 1.0]
@@ -225,7 +227,12 @@ def test_compose_pipeline_transition_matrix(monkeypatch):
     monkeypatch.setattr(mwp.MetaWorkflowPlanner, "encode_workflow", fake_encode)
 
     planner = MetaWorkflowPlanner(graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({}))
-    planner.cluster_map = {("__domain_transitions__",): {("a", "a"): {"count": 10, "roi": -1.0}}}
+    planner.domain_index.update({"a": 1, "b": 2})
+    planner.cluster_map = {
+        ("__domain_transitions__",): {
+            (planner.domain_index["a"], planner.domain_index["a"]): {"count": 10, "roi": -1.0}
+        }
+    }
     workflows = {"wf1": {"domain": "a"}, "wf2": {"domain": "a"}, "wf3": {"domain": "b"}}
     pipeline = planner.compose_pipeline("wf1", workflows, length=2)
     assert pipeline == ["wf1", "wf3"]
@@ -243,26 +250,35 @@ def test_update_cluster_map_records_transitions():
     planner._update_cluster_map(["a", "b"], roi_gain=2.0)
     planner._update_cluster_map(["a", "b"], roi_gain=3.0)
     matrix = planner.cluster_map.get(("__domain_transitions__",), {})
-    entry = matrix.get(("alpha", "beta"))
+    entry = matrix.get(
+        (planner.domain_index["alpha"], planner.domain_index["beta"])
+    )
     assert entry and entry["count"] == 2 and entry.get("delta_roi", 0.0) != 0.0
 
 
 def test_transition_probabilities_normalization():
     planner = MetaWorkflowPlanner()
+    planner.domain_index = {"other": 0, "a": 1, "b": 2, "c": 3}
     planner.cluster_map = {
         ("__domain_transitions__",): {
-            ("a", "b"): {"count": 2, "roi": 1.0, "delta_roi": 0.5},
-            ("a", "c"): {"count": 1, "roi": -1.0, "delta_roi": 0.0},
+            (1, 2): {"count": 2, "roi": 1.0, "delta_roi": 0.5},
+            (1, 3): {"count": 1, "roi": -1.0, "delta_roi": 0.0},
         }
     }
     probs = planner.transition_probabilities()
-    assert probs[("a", "b")] > 0 and probs[("a", "c")] == 0
+    assert probs[(1, 2)] > 0 and probs[(1, 3)] == 0
     assert abs(sum(probs.values()) - 1.0) < 1e-8
 
 
 def test_cluster_workflows_roi_weighting(monkeypatch):
     monkeypatch.setattr(mwp, "ROITracker", None)
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
+    monkeypatch.setattr(mwp.MetaWorkflowPlanner, "_load_cluster_map", lambda self: None)
+    monkeypatch.setattr(
+        cache_utils,
+        "_get_cache",
+        lambda: types.SimpleNamespace(get=lambda *a, **k: None),
+    )
 
     embeddings = {
         "wf1": [1.0, 0.0],
