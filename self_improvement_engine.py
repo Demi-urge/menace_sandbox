@@ -62,6 +62,10 @@ try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB, WorkflowRecord
 except Exception:  # pragma: no cover - best effort fallback
     WorkflowDB = WorkflowRecord = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .workflow_summary_db import WorkflowSummaryDB
+except Exception:  # pragma: no cover - fallback for flat layout
+    from workflow_summary_db import WorkflowSummaryDB  # type: ignore
 
 router = GLOBAL_ROUTER or init_db_router("self_improvement_engine")
 STABLE_WORKFLOWS = WorkflowStabilityDB()
@@ -1499,12 +1503,25 @@ class SelfImprovementEngine:
         db: WorkflowDB | None = None
         if WorkflowDB is not None and WorkflowRecord is not None:
             try:
+                from collections import defaultdict
+
                 db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
-                for rec in db.fetch_workflows(limit=50):
+                domain_groups: dict[str, list[tuple[str, Callable[[], Any]]]] = defaultdict(list)
+                for rec in db.fetch_workflows(limit=200):
                     seq = rec.get("workflow") or []
                     seq_str = "-".join(seq) if isinstance(seq, list) else str(seq)
                     wid = str(rec.get("id") or rec.get("wid") or "")
-                    workflows[wid] = self.workflow_evolver.build_callable(seq_str)
+                    domain = rec.get("category") or ""
+                    tags = rec.get("tags") or []
+                    if not domain and isinstance(tags, list) and tags:
+                        domain = str(tags[0])
+                    domain_groups[domain or "uncategorized"].append(
+                        (wid, self.workflow_evolver.build_callable(seq_str))
+                    )
+                for group in domain_groups.values():
+                    if group:
+                        wid, fn = group[0]
+                        workflows[wid] = fn
             except Exception:
                 self.logger.exception("failed loading workflows for meta discovery")
         records = planner.discover_and_persist(workflows, metrics_db=self.metrics_db)
@@ -1515,6 +1532,11 @@ class SelfImprovementEngine:
                 db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
             except Exception:
                 db = None
+        summary_db = None
+        try:
+            summary_db = WorkflowSummaryDB()
+        except Exception:
+            summary_db = None
         for rec in records:
             chain = rec.get("chain") or []
             roi = float(rec.get("roi_gain", 0.0))
@@ -1525,6 +1547,17 @@ class SelfImprovementEngine:
                 except Exception:
                     self.logger.exception(
                         "meta workflow persistence failed",
+                        extra=log_record(workflow_id=chain_id),
+                    )
+            if summary_db is not None and chain:
+                try:
+                    summary = f"{chain_id} (roi={roi:.3f})"
+                    summary_db.set_summary(
+                        abs(hash(chain_id)) % (10**9), summary
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "meta workflow summary logging failed",
                         extra=log_record(workflow_id=chain_id),
                     )
             if self.evolution_history:
