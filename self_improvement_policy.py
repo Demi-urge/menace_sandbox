@@ -10,6 +10,7 @@ import random
 import math
 import statistics
 from typing import List
+from dataclasses import dataclass, asdict
 
 try:  # pragma: no cover - optional dependency
     import torch
@@ -21,8 +22,31 @@ except Exception:  # pragma: no cover - fallback if torch missing
     F = None  # type: ignore
 
 
+@dataclass
+class RLConfig:
+    """Common configuration for all strategies."""
+
+    state_dim: int | None = None
+    action_dim: int | None = None
+
+
 class RLStrategy:
     """Base class for reinforcement learning update strategies."""
+
+    def __init__(self, config: RLConfig | None = None) -> None:
+        self.config = config or RLConfig()
+
+    def _validate(self, state: Tuple[int, ...], action: int) -> None:
+        if self.config.state_dim is not None and len(state) != self.config.state_dim:
+            raise ValueError(
+                f"state has dimension {len(state)} but expected {self.config.state_dim}"
+            )
+        if self.config.action_dim is not None and not (
+            0 <= action < self.config.action_dim
+        ):
+            raise ValueError(
+                f"action {action} outside range(0, {self.config.action_dim})"
+            )
 
     def update(
         self,
@@ -42,8 +66,18 @@ class RLStrategy:
         return max(values.values()) if values else 0.0
 
 
+@dataclass
+class QLearningConfig(RLConfig):
+    """Configuration for tabular Q-learning style strategies."""
+
+
 class QLearningStrategy(RLStrategy):
     """Standard Q-learning update."""
+
+    Config = QLearningConfig
+
+    def __init__(self, config: QLearningConfig | None = None) -> None:
+        super().__init__(config or self.Config())
 
     def update(
         self,
@@ -55,6 +89,7 @@ class QLearningStrategy(RLStrategy):
         alpha: float,
         gamma: float,
     ) -> float:
+        self._validate(state, action)
         state_table = table.setdefault(state, {})
         q = state_table.get(action, 0.0)
         next_best = 0.0
@@ -68,7 +103,10 @@ class QLearningStrategy(RLStrategy):
 class QLambdaStrategy(RLStrategy):
     """Q(lambda) update using eligibility traces."""
 
-    def __init__(self, lam: float = 0.9) -> None:
+    Config = QLearningConfig
+
+    def __init__(self, lam: float = 0.9, config: QLearningConfig | None = None) -> None:
+        super().__init__(config or self.Config())
         self.lam = lam
         self.eligibility: Dict[Tuple[int, ...], Dict[int, float]] = {}
 
@@ -82,6 +120,7 @@ class QLambdaStrategy(RLStrategy):
         alpha: float,
         gamma: float,
     ) -> float:
+        self._validate(state, action)
         state_table = table.setdefault(state, {})
         q = state_table.get(action, 0.0)
         next_best = 0.0
@@ -105,6 +144,11 @@ class QLambdaStrategy(RLStrategy):
 class SarsaStrategy(RLStrategy):
     """SARSA update."""
 
+    Config = QLearningConfig
+
+    def __init__(self, config: QLearningConfig | None = None) -> None:
+        super().__init__(config or self.Config())
+
     def update(
         self,
         table: Dict[Tuple[int, ...], Dict[int, float]],
@@ -115,6 +159,7 @@ class SarsaStrategy(RLStrategy):
         alpha: float,
         gamma: float,
     ) -> float:
+        self._validate(state, action)
         state_table = table.setdefault(state, {})
         q = state_table.get(action, 0.0)
         next_val = 0.0
@@ -125,10 +170,18 @@ class SarsaStrategy(RLStrategy):
         return q
 
 
+@dataclass
+class ActorCriticConfig(RLConfig):
+    """Configuration for :class:`ActorCriticStrategy`."""
+
+
 class ActorCriticStrategy(RLStrategy):
     """Simplified actor-critic update."""
 
-    def __init__(self) -> None:
+    Config = ActorCriticConfig
+
+    def __init__(self, config: ActorCriticConfig | None = None) -> None:
+        super().__init__(config or self.Config())
         self.state_values: Dict[Tuple[int, ...], float] = {}
 
     def update(
@@ -141,6 +194,7 @@ class ActorCriticStrategy(RLStrategy):
         alpha: float,
         gamma: float,
     ) -> float:
+        self._validate(state, action)
         state_table = table.setdefault(state, {})
         q = state_table.get(action, 0.0)
         v = self.state_values.get(state, 0.0)
@@ -151,24 +205,31 @@ class ActorCriticStrategy(RLStrategy):
         return state_table[action]
 
 
+@dataclass
+class DQNConfig(RLConfig):
+    """Configuration for DQN-based strategies."""
+
+    hidden_dim: int = 32
+    lr: float = 1e-3
+    batch_size: int = 32
+    capacity: int = 1000
+    target_sync: int = 10
+
+
 class DQNStrategy(RLStrategy):
     """Simple Deep Q-Network strategy using PyTorch."""
 
-    def __init__(
-        self,
-        state_dim: Optional[int] = None,
-        action_dim: int = 2,
-        hidden_dim: int = 32,
-        lr: float = 1e-3,
-        batch_size: int = 32,
-        capacity: int = 1000,
-    ) -> None:
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.hidden_dim = hidden_dim
-        self.lr = lr
-        self.batch_size = batch_size
-        self.capacity = capacity
+    Config = DQNConfig
+
+    def __init__(self, config: DQNConfig | None = None) -> None:
+        cfg = config or self.Config()
+        super().__init__(cfg)
+        self.state_dim = cfg.state_dim
+        self.action_dim = cfg.action_dim or 2
+        self.hidden_dim = cfg.hidden_dim
+        self.lr = cfg.lr
+        self.batch_size = cfg.batch_size
+        self.capacity = cfg.capacity
         self.memory: List[Tuple[torch.Tensor, int, float, Optional[torch.Tensor], bool]] = []
         self.model: Optional[nn.Module] = None
         self.optimizer: Optional[torch.optim.Optimizer] = None
@@ -176,7 +237,12 @@ class DQNStrategy(RLStrategy):
     # ------------------------------------------------------------------
     def _ensure_model(self, dim: int) -> None:
         if self.model is None:
+            if self.config.state_dim is not None and dim != self.config.state_dim:
+                raise ValueError(
+                    f"state has dimension {dim} but expected {self.config.state_dim}"
+                )
             self.state_dim = dim
+            self.config.state_dim = dim
             self.model = nn.Sequential(
                 nn.Linear(dim, self.hidden_dim),
                 nn.ReLU(),
@@ -225,6 +291,7 @@ class DQNStrategy(RLStrategy):
         alpha: float,
         gamma: float,
     ) -> float:
+        self._validate(state, action)
         self._ensure_model(len(state))
         assert self.model is not None and self.optimizer is not None
 
@@ -269,23 +336,18 @@ class DQNStrategy(RLStrategy):
 class DoubleDQNStrategy(RLStrategy):
     """Double DQN with target network using PyTorch."""
 
-    def __init__(
-        self,
-        state_dim: Optional[int] = None,
-        action_dim: int = 2,
-        hidden_dim: int = 32,
-        lr: float = 1e-3,
-        batch_size: int = 32,
-        capacity: int = 1000,
-        target_sync: int = 10,
-    ) -> None:
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.hidden_dim = hidden_dim
-        self.lr = lr
-        self.batch_size = batch_size
-        self.capacity = capacity
-        self.target_sync = target_sync
+    Config = DQNConfig
+
+    def __init__(self, config: DQNConfig | None = None) -> None:
+        cfg = config or self.Config()
+        super().__init__(cfg)
+        self.state_dim = cfg.state_dim
+        self.action_dim = cfg.action_dim or 2
+        self.hidden_dim = cfg.hidden_dim
+        self.lr = cfg.lr
+        self.batch_size = cfg.batch_size
+        self.capacity = cfg.capacity
+        self.target_sync = cfg.target_sync
         self.memory: List[Tuple[torch.Tensor, int, float, Optional[torch.Tensor], bool]] = []
         self.model: Optional[nn.Module] = None
         self.target_model: Optional[nn.Module] = None
@@ -295,7 +357,12 @@ class DoubleDQNStrategy(RLStrategy):
     # ------------------------------------------------------------------
     def _ensure_model(self, dim: int) -> None:
         if self.model is None:
+            if self.config.state_dim is not None and dim != self.config.state_dim:
+                raise ValueError(
+                    f"state has dimension {dim} but expected {self.config.state_dim}"
+                )
             self.state_dim = dim
+            self.config.state_dim = dim
             self.model = nn.Sequential(
                 nn.Linear(dim, self.hidden_dim),
                 nn.ReLU(),
@@ -352,8 +419,13 @@ class DoubleDQNStrategy(RLStrategy):
         alpha: float,
         gamma: float,
     ) -> float:
+        self._validate(state, action)
         self._ensure_model(len(state))
-        assert self.model is not None and self.target_model is not None and self.optimizer is not None
+        assert (
+            self.model is not None
+            and self.target_model is not None
+            and self.optimizer is not None
+        )
 
         s_t = torch.tensor(state, dtype=torch.float32)
         ns_t = torch.tensor(next_state, dtype=torch.float32) if next_state is not None else None
@@ -401,24 +473,27 @@ class DoubleDQNStrategy(RLStrategy):
 class DeepQLearningStrategy(RLStrategy):
     """Simpler online Deep Q-learning using PyTorch."""
 
-    def __init__(
-        self,
-        state_dim: Optional[int] = None,
-        action_dim: int = 2,
-        hidden_dim: int = 32,
-        lr: float = 1e-3,
-    ) -> None:
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.hidden_dim = hidden_dim
-        self.lr = lr
+    Config = DQNConfig
+
+    def __init__(self, config: DQNConfig | None = None) -> None:
+        cfg = config or self.Config()
+        super().__init__(cfg)
+        self.state_dim = cfg.state_dim
+        self.action_dim = cfg.action_dim or 2
+        self.hidden_dim = cfg.hidden_dim
+        self.lr = cfg.lr
         self.model: Optional[nn.Module] = None
         self.optimizer: Optional[torch.optim.Optimizer] = None
 
     # ------------------------------------------------------------------
     def _ensure_model(self, dim: int) -> None:
         if self.model is None:
+            if self.config.state_dim is not None and dim != self.config.state_dim:
+                raise ValueError(
+                    f"state has dimension {dim} but expected {self.config.state_dim}"
+                )
             self.state_dim = dim
+            self.config.state_dim = dim
             self.model = nn.Sequential(
                 nn.Linear(dim, self.hidden_dim),
                 nn.ReLU(),
@@ -465,6 +540,7 @@ class DeepQLearningStrategy(RLStrategy):
         alpha: float,
         gamma: float,
     ) -> float:
+        self._validate(state, action)
         self._ensure_model(len(state))
         assert self.model is not None and self.optimizer is not None
 
@@ -487,7 +563,9 @@ class DeepQLearningStrategy(RLStrategy):
         return float(q_sa.detach().item())
 
     # ------------------------------------------------------------------
-    def value(self, table: Dict[Tuple[int, ...], Dict[int, float]], state: Tuple[int, ...]) -> float:  # type: ignore[override]
+    def value(
+        self, table: Dict[Tuple[int, ...], Dict[int, float]], state: Tuple[int, ...]
+    ) -> float:  # type: ignore[override]
         self._ensure_model(len(state))
         assert self.model is not None
         with torch.no_grad():
@@ -669,6 +747,49 @@ class SelfImprovementPolicy:
         return max(actions, key=actions.get)
 
     # ------------------------------------------------------------------
+    def to_json(self) -> str:
+        """Serialize policy configuration and values to JSON."""
+        data: Dict[str, object] = {
+            "alpha": self.alpha,
+            "gamma": self.gamma,
+            "epsilon": self.epsilon,
+            "strategy": self.strategy.__class__.__name__,
+            "values": [
+                {"state": list(k), "actions": v} for k, v in self.values.items()
+            ],
+        }
+        cfg = getattr(self.strategy, "config", None)
+        if cfg is not None:
+            data["strategy_config"] = asdict(cfg)
+        return json.dumps(data)
+
+    @classmethod
+    def from_json(cls, data: str) -> "SelfImprovementPolicy":
+        """Deserialize a policy from JSON produced by :meth:`to_json`."""
+        obj = json.loads(data)
+        strat_name = obj.get("strategy")
+        strat_cls = _STRATEGY_CLASSES.get(str(strat_name).lower(), QLearningStrategy)
+        cfg_dict = obj.get("strategy_config")
+        if cfg_dict and hasattr(strat_cls, "Config"):
+            cfg = getattr(strat_cls, "Config")(**cfg_dict)
+            strat = strat_cls(config=cfg)  # type: ignore[arg-type]
+        else:
+            strat = strat_cls()
+        policy = cls(
+            alpha=obj.get("alpha", 0.5),
+            gamma=obj.get("gamma", 0.9),
+            epsilon=obj.get("epsilon", 0.1),
+            strategy=strat,
+        )
+        values: Dict[Tuple[int, ...], Dict[int, float]] = {}
+        for item in obj.get("values", []):
+            state = tuple(item["state"])
+            acts = {int(a): float(q) for a, q in item["actions"].items()}
+            values[state] = acts
+        policy.values = values
+        return policy
+
+    # ------------------------------------------------------------------
     def save(self, path: Optional[str] = None) -> None:
         fp = path or self.path
         if not fp:
@@ -728,6 +849,10 @@ class ConfigurableSelfImprovementPolicy(SelfImprovementPolicy):
 
 
 __all__ = [
+    "RLConfig",
+    "QLearningConfig",
+    "ActorCriticConfig",
+    "DQNConfig",
     "RLStrategy",
     "QLearningStrategy",
     "QLambdaStrategy",
