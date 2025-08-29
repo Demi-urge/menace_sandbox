@@ -12,6 +12,7 @@ entropy/stability metrics.  Results are appended to
 from typing import Sequence, Iterable, List, Dict, Any, Mapping, Callable
 import json
 from pathlib import Path
+import logging
 
 try:  # pragma: no cover - allow import when used as package or module
     from .workflow_chain_suggester import WorkflowChainSuggester
@@ -31,6 +32,7 @@ except Exception:  # pragma: no cover - fallback to absolute imports
     import workflow_run_summary  # type: ignore
 
 RESULTS_PATH = Path("sandbox_data/chain_simulations.json")
+logger = logging.getLogger(__name__)
 
 
 def _persist_outcomes(outcomes: List[Dict[str, Any]], path: Path = RESULTS_PATH) -> None:
@@ -44,12 +46,18 @@ def _persist_outcomes(outcomes: List[Dict[str, Any]], path: Path = RESULTS_PATH)
             if isinstance(data, list):
                 existing = data
         except Exception:
-            pass
+            logger.exception("Failed to load existing outcomes from %s", path)
     existing.extend(outcomes)
-    try:
-        path.write_text(json.dumps(existing, indent=2))
-    except Exception:
-        pass  # pragma: no cover - best effort
+    for attempt in range(3):
+        try:
+            path.write_text(json.dumps(existing, indent=2))
+            break
+        except Exception:
+            logger.exception(
+                "Failed to persist outcomes to %s on attempt %d", path, attempt + 1
+            )
+            if attempt == 2:
+                raise
 
 
 def simulate_chains(chains: Iterable[Sequence[str]]) -> List[Dict[str, Any]]:
