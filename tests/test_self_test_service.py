@@ -35,25 +35,34 @@ sys.modules.setdefault("env_config", types.SimpleNamespace(DATABASE_URL="sqlite:
 sys.modules.setdefault("httpx", types.ModuleType("httpx"))
 sys.modules.setdefault("sqlalchemy", types.ModuleType("sqlalchemy"))
 sys.modules.setdefault("sqlalchemy.engine", types.ModuleType("engine"))
+sys.modules.setdefault("sandbox_runner", types.ModuleType("sandbox_runner"))
+od_stub = types.ModuleType("sandbox_runner.orphan_discovery")
+od_stub.append_orphan_cache = lambda *a, **k: None
+od_stub.append_orphan_classifications = lambda *a, **k: None
+od_stub.prune_orphan_cache = lambda *a, **k: None
+od_stub.load_orphan_cache = lambda *a, **k: set()
+sys.modules.setdefault("sandbox_runner.orphan_discovery", od_stub)
+sys.modules.setdefault("orphan_discovery", od_stub)
 
 
 ROOT = __import__("pathlib").Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 spec = importlib.util.spec_from_file_location(
     "menace.self_test_service",
     ROOT / "self_test_service.py",
 )
 mod = importlib.util.module_from_spec(spec)
-import sys
+import sys  # noqa: E402
 
 pkg = sys.modules.get("menace")
 if pkg is not None:
     pkg.__path__ = [str(ROOT)]
 spec.loader.exec_module(mod)
-import types
+import types  # noqa: E402
 
-import menace.error_bot as eb
-from menace.data_bot import DataBot, MetricsDB
+import menace.error_bot as eb  # noqa: E402
+from menace.data_bot import DataBot, MetricsDB  # noqa: E402
 
 
 def test_scheduler_start(monkeypatch):
@@ -324,6 +333,7 @@ def test_container_exec(monkeypatch):
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
     async def avail(self):
         return True
     monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
@@ -363,6 +373,7 @@ def test_container_metrics(tmp_path, monkeypatch):
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
     async def avail(self):
         return True
     monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
@@ -697,6 +708,10 @@ def test_gauge_updates(monkeypatch):
     assert _get(mod.self_test_failed_total) == 1
     assert _get(mod.self_test_average_runtime_seconds) == 2.0
     assert _get(mod.self_test_average_coverage) == 90.0
+    assert "suite_metrics" in svc.results
+    first = next(iter(svc.results["suite_metrics"].values()))
+    assert first["coverage"] == 90.0
+    assert first["runtime"] == 2.0
 
 
 def test_timeout_metric(monkeypatch):
@@ -737,3 +752,52 @@ def test_timeout_metric(monkeypatch):
         return gauge.labels().get()
 
     assert _get(mod.self_test_container_timeouts_total) == 1
+
+
+def test_summary_artifact_on_failure(monkeypatch, tmp_path):
+    async def fake_exec(*cmd, **kwargs):
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "summary": {"passed": 0, "failed": 1, "duration": 0.5},
+                        "coverage": {"percent": 50.0},
+                        "duration": 0.5,
+                    },
+                    fh,
+                )
+
+        class P:
+            returncode = 1
+
+            async def communicate(self):
+                return b"", b"err"
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    svc = mod.SelfTestService(report_dir=tmp_path)
+    with pytest.raises(RuntimeError):
+        svc.run_once()
+    files = list(tmp_path.glob("*.json"))
+    assert len(files) == 1
+    data = json.loads(files[0].read_text())
+    assert data["failed"] == 1
+
+
+def test_cli_report(tmp_path, capsys):
+    report = tmp_path / "report_1.json"
+    report.write_text(json.dumps({"hello": "world"}))
+    rc = mod.cli(["report", "--report-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "hello" in out

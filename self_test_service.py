@@ -195,6 +195,7 @@ class SelfTestService:
         recursive_isolated: bool = SandboxSettings().recursive_isolated,
         clean_orphans: bool = False,
         include_redundant: bool = SandboxSettings().test_redundant_modules,
+        report_dir: str | Path = Path("sandbox_data/self_test_reports"),
     ) -> None:
         """Create a new service instance.
 
@@ -258,6 +259,7 @@ class SelfTestService:
         except ValueError:
             self.container_timeout = container_timeout
         self.offline_install = os.getenv("MENACE_OFFLINE_INSTALL", "0") == "1"
+        self.report_dir = Path(report_dir)
         self.image_tar_path = os.getenv("MENACE_SELF_TEST_IMAGE_TAR")
         state_env = os.getenv("SELF_TEST_STATE")
         self.state_path = Path(state_path or state_env) if (state_path or state_env) else None
@@ -535,6 +537,20 @@ class SelfTestService:
                 json.dump(data, fh)
         except Exception:
             self.logger.exception("failed to store state")
+
+    # ------------------------------------------------------------------
+    def _write_summary_report(self, data: Mapping[str, Any]) -> None:
+        """Write *data* to a timestamped JSON file under ``report_dir``."""
+
+        try:
+            report_path = Path(self.report_dir)
+            report_path.mkdir(parents=True, exist_ok=True)
+            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            out = report_path / f"report_{ts}.json"
+            with open(out, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2)
+        except Exception:
+            self.logger.exception("failed to write summary report")
 
     # ------------------------------------------------------------------
     def _start_health_server(self, port: int) -> None:
@@ -1562,11 +1578,13 @@ class SelfTestService:
 
             async def _process(
                 cmd: list[str], tmp: str | None, is_container: bool, name: str | None
-            ) -> tuple[int, int, float, float, bool, str, str, str]:
+            ) -> tuple[int, int, float, float, bool, str, str, str, list[dict[str, Any]]]:
                 report: dict[str, Any] = {}
                 out: bytes = b""
                 err: bytes = b""
                 attempts = self.container_retries + 1 if is_container else 1
+                delay = 0.1
+                records: list[dict[str, Any]] = []
                 for attempt in range(attempts):
                     proc = await asyncio.create_subprocess_exec(
                         *cmd,
@@ -1578,7 +1596,7 @@ class SelfTestService:
                             proc.communicate(),
                             timeout=self.container_timeout if is_container else None,
                         )
-                    except asyncio.TimeoutError:
+                    except asyncio.TimeoutError as exc:
                         proc.kill()
                         await proc.wait()
                         if is_container and name:
@@ -1587,14 +1605,32 @@ class SelfTestService:
                             self_test_container_timeouts_total.inc()
                         except Exception:
                             self.logger.exception("failed to update container timeout metric")
+                        rec = log_record(
+                            attempt=attempt + 1,
+                            error="timeout",
+                            name=name,
+                        )
+                        self.logger.warning("container attempt timed out", extra=rec)
+                        records.append(dict(rec))
                         if attempt == attempts - 1:
                             self.logger.error("self test container timed out")
                             break
+                        await asyncio.sleep(delay)
+                        delay *= 2
                         continue
 
                     if proc.returncode != 0 and is_container and attempt < attempts - 1:
                         if name:
                             await self._force_remove_container(name)
+                        rec = log_record(
+                            attempt=attempt + 1,
+                            error=f"exit {proc.returncode}",
+                            name=name,
+                        )
+                        self.logger.warning("container attempt failed", extra=rec)
+                        records.append(dict(rec))
+                        await asyncio.sleep(delay)
+                        delay *= 2
                         continue
                     break
 
@@ -1676,7 +1712,17 @@ class SelfTestService:
                         self.error_logger.log(exc, "self_tests", "sandbox")
                     except Exception:
                         self.logger.exception("error logging failed")
-                return pcount, fcount, cov, runtime, failed_flag, out_snip, err_snip, log_snip
+                return (
+                    pcount,
+                    fcount,
+                    cov,
+                    runtime,
+                    failed_flag,
+                    out_snip,
+                    err_snip,
+                    log_snip,
+                    records,
+                )
 
             tasks = [asyncio.create_task(_process(cmd, tmp, is_c, name)) for cmd, tmp, is_c, name, _ in proc_info]
 
@@ -1686,12 +1732,28 @@ class SelfTestService:
             stdout_snip = ""
             stderr_snip = ""
             logs_snip = ""
+            suite_metrics: dict[str, dict[str, float]] = {}
+            retry_errors: dict[str, list[dict[str, Any]]] = {}
             for (cmd, tmp, is_c, name, p), res in zip(proc_info, results):
                 if isinstance(res, Exception):
                     if first_exc is None:
                         first_exc = res
                     continue
-                pcount, fcount, cov, runtime, failed_flag, out_snip, err_snip, log_snip = res
+                (
+                    pcount,
+                    fcount,
+                    cov,
+                    runtime,
+                    failed_flag,
+                    out_snip,
+                    err_snip,
+                    log_snip,
+                    recs,
+                ) = res
+                key = p or "<root>"
+                suite_metrics[key] = {"coverage": cov, "runtime": runtime}
+                if recs:
+                    retry_errors[key] = recs
                 any_failed = any_failed or failed_flag
                 passed += pcount
                 failed += fcount
@@ -1710,8 +1772,8 @@ class SelfTestService:
                     partial = {
                         "passed": passed,
                         "failed": failed,
-                        "coverage": coverage_total / max(len(paths), 1),
-                        "runtime": runtime_total,
+                        "coverage": coverage_total / max(len(suite_metrics), 1),
+                        "runtime": runtime_total / max(len(suite_metrics), 1),
                     }
                     try:
                         self.result_callback(partial)
@@ -1723,14 +1785,19 @@ class SelfTestService:
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to store test results")
 
-            coverage = coverage_total / max(len(proc_info), 1)
-            runtime = runtime_total
+            coverage = coverage_total / max(len(suite_metrics), 1)
+            runtime_avg = runtime_total / max(len(suite_metrics), 1)
+            runtime = runtime_avg
             self.results = {
                 "passed": passed,
                 "failed": failed,
                 "coverage": coverage,
-                "runtime": runtime,
+                "runtime": runtime_avg,
+                "total_runtime": runtime_total,
+                "suite_metrics": suite_metrics,
             }
+            if retry_errors:
+                self.results["retry_errors"] = retry_errors
             self.results["module_metrics"] = self.module_metrics
             failed_modules = {
                 Path(m).stem.lower()
@@ -1894,6 +1961,12 @@ class SelfTestService:
                 self_test_average_coverage.set(float(coverage))
             except Exception:
                 self.logger.exception("failed to update metrics")
+
+            if (first_exc or any_failed) and self.results:
+                try:
+                    self._write_summary_report(self.results)
+                except Exception:
+                    self.logger.exception("failed to persist summary report")
 
             if first_exc:
                 raise first_exc
@@ -2173,7 +2246,7 @@ def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    run = sub.add_parser("run", help="Run self tests once")
+    run = sub.add_parser("run", help="Run self tests once", aliases=["manual"])
     run.add_argument("paths", nargs="*", help="Test paths or patterns")
     run.add_argument("--workers", type=int, default=1, help="Number of pytest workers")
     run.add_argument(
@@ -2224,6 +2297,11 @@ def cli(argv: list[str] | None = None) -> int:
         "--metrics-port",
         type=int,
         help="Port to expose Prometheus gauges",
+    )
+    run.add_argument(
+        "--report-dir",
+        default="sandbox_data/self_test_reports",
+        help="Directory to store failure reports",
     )
     run.add_argument(
         "--include-orphans",
@@ -2349,6 +2427,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="Port to expose Prometheus gauges",
     )
     sched.add_argument(
+        "--report-dir",
+        default="sandbox_data/self_test_reports",
+        help="Directory to store failure reports",
+    )
+    sched.add_argument(
         "--include-orphans",
         action="store_true",
         help="Also test modules listed in sandbox_data/orphan_modules.json",
@@ -2420,6 +2503,13 @@ def cli(argv: list[str] | None = None) -> int:
         help="Run tests on the host instead of a container",
     )
     sched.set_defaults(use_container=True)
+
+    rep = sub.add_parser("report", help="Show last self test report")
+    rep.add_argument(
+        "--report-dir",
+        default="sandbox_data/self_test_reports",
+        help="Directory containing failure reports",
+    )
 
     clean = sub.add_parser("cleanup", help="Remove stale test containers")
     clean.add_argument(
@@ -2499,6 +2589,7 @@ def cli(argv: list[str] | None = None) -> int:
             auto_include_isolated=args.discover_isolated,
             clean_orphans=args.clean_orphans,
             include_redundant=args.include_redundant,
+            report_dir=args.report_dir,
         )
         try:
             asyncio.run(service._run_once(refresh_orphans=args.refresh_orphans))
@@ -2540,11 +2631,21 @@ def cli(argv: list[str] | None = None) -> int:
             auto_include_isolated=args.discover_isolated,
             clean_orphans=args.clean_orphans,
             include_redundant=args.include_redundant,
+            report_dir=args.report_dir,
         )
         try:
             service.run_scheduled(interval=args.interval, refresh_orphans=args.refresh_orphans)
         except KeyboardInterrupt:
             pass
+        return 0
+
+    if args.cmd == "report":
+        report_dir = Path(args.report_dir)
+        files = sorted(report_dir.glob("*.json"))
+        if not files:
+            print("no reports found", file=sys.stderr)
+            return 1
+        print(files[-1].read_text())
         return 0
 
     if args.cmd == "cleanup":
