@@ -36,15 +36,15 @@ workflows = {
 
 # Cluster similar workflow specs
 retr = Retriever()
-clusters = planner.cluster_workflows(workflows, threshold=0.8, retriever=retr)
+clusters = planner.cluster_workflows(workflows, retriever=retr, epsilon=0.8)
 
 # Build a high‑synergy chain starting from A
 pipeline = planner.compose_pipeline("A", workflows, length=3)
 ```
 
 `cluster_workflows` encodes each specification, persists the embedding and
-groups workflows using ROI‑weighted cosine similarity via the provided
-`Retriever`, while `compose_pipeline` iteratively blends embedding similarity,
+groups workflows using ROI‑weighted cosine similarity and DBSCAN via the
+provided `Retriever`, while `compose_pipeline` iteratively blends embedding similarity,
 `WorkflowSynergyComparator` scores and recent ROI trends to choose the next
 step.  The default formula is
 ``(similarity * similarity_weight + synergy * synergy_weight) * (1 + ROI * roi_weight)``
@@ -81,9 +81,9 @@ method accepts a custom runner or will instantiate a default
   maintain stable token indices across planner instances.
 - `graph` and `roi_db` – optional helpers providing structural context and ROI
   history. When omitted, lightweight defaults are created.
-- `cluster_workflows(threshold, retriever)` controls the similarity cutoff for
-  the ROI‑weighted similarity matrix when grouping workflow identifiers using a
-  provided `Retriever` instance.
+- `cluster_workflows(retriever, epsilon, min_samples)` groups workflow
+  identifiers using ROI‑weighted similarity and DBSCAN. ``epsilon`` and
+  ``min_samples`` control the clustering density.
 - `compose_pipeline(length, similarity_weight, synergy_weight, roi_weight)` limits
   the number of steps in generated chains and exposes weights to balance
   embedding similarity, structural synergy and ROI.

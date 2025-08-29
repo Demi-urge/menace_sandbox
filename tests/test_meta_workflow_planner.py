@@ -227,7 +227,9 @@ def test_cluster_workflows_roi_weighting(monkeypatch):
     planner = MetaWorkflowPlanner(roi_db=DummyROI(roi_trends))
     workflows = {wid: {} for wid in embeddings}
     retr = DummyRetriever(embeddings)
-    clusters = planner.cluster_workflows(workflows, threshold=0.75, retriever=retr)
+    clusters = planner.cluster_workflows(
+        workflows, retriever=retr, epsilon=0.5, min_samples=2
+    )
     cluster_ids = [sorted(c) for c in clusters]
     assert ["wf1", "wf2"] in cluster_ids
     assert ["wf3"] in cluster_ids
