@@ -13,6 +13,10 @@ from .data_bot import MetricsDB
 from .error_bot import ErrorDB
 
 
+_ROI_ENV = "SAFE_MODE_ROI_DROP"
+_ERR_ENV = "SAFE_MODE_ERROR_THRESHOLD"
+
+
 class SelfServiceOverride:
     """Toggle system behavior without human input."""
 
@@ -21,16 +25,21 @@ class SelfServiceOverride:
         roi_db: ROIDB,
         metrics_db: MetricsDB,
         error_db: Optional[ErrorDB] = None,
-        roi_drop: float = 0.1,
-        error_threshold: float = 0.25,
+        roi_drop: float | None = None,
+        error_threshold: float | None = None,
     ) -> None:
         self.roi_db = roi_db
         self.metrics_db = metrics_db
         self.error_db = error_db
+        if roi_drop is None:
+            roi_drop = float(os.getenv(_ROI_ENV, "0.1"))
+        if error_threshold is None:
+            error_threshold = float(os.getenv(_ERR_ENV, "0.25"))
         self.roi_drop = roi_drop
         self.error_threshold = error_threshold
         self.logger = logging.getLogger(self.__class__.__name__)
-        
+        self._safe_mode = os.environ.get("MENACE_SAFE") == "1"
+
     # ------------------------------------------------------------------
     def _calc_roi_drop(self) -> float:
         df = self.roi_db.history(limit=2)
@@ -54,13 +63,24 @@ class SelfServiceOverride:
         return 0.0
 
     # ------------------------------------------------------------------
+    def _enable_safe_mode(self) -> None:
+        if not self._safe_mode:
+            os.environ["MENACE_SAFE"] = "1"
+            self._safe_mode = True
+
+    def _disable_safe_mode(self) -> None:
+        if self._safe_mode:
+            os.environ["MENACE_SAFE"] = "0"
+            self._safe_mode = False
+
     def adjust(self) -> None:
         drop = self._calc_roi_drop()
         err = self._error_rate()
         if drop >= self.roi_drop or err >= self.error_threshold:
-            self.logger.warning(
-                "performance drop detected; safe mode feature disabled"
-            )
+            self.logger.warning("performance drop detected; enabling safe mode")
+            self._enable_safe_mode()
+        else:
+            self._disable_safe_mode()
 
     # ------------------------------------------------------------------
     def run_continuous(
@@ -83,6 +103,12 @@ class SelfServiceOverride:
         self._thread = threading.Thread(target=_loop, daemon=True)
         self._thread.start()
         return self._thread
+
+    def stop(self) -> None:
+        if hasattr(self, "_stop"):
+            self._stop.set()
+        if hasattr(self, "_thread"):
+            self._thread.join(timeout=1.0)
 
 
 class AutoRollbackService(SelfServiceOverride):
@@ -114,7 +140,12 @@ class AutoRollbackService(SelfServiceOverride):
 
     def _revert_last_patch(self) -> None:
         try:
-            subprocess.run(self.revert_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(
+                self.revert_cmd,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
             self.logger.warning("last patch reverted")
         except Exception:
             self.logger.exception("git revert failed")
@@ -125,9 +156,12 @@ class AutoRollbackService(SelfServiceOverride):
         energy = self._energy_score()
         if drop >= self.roi_drop or err >= self.error_threshold or energy < self.energy_threshold:
             self.logger.warning(
-                "rollback triggered; safe mode feature disabled"
+                "rollback triggered; enabling safe mode"
             )
+            self._enable_safe_mode()
             self._revert_last_patch()
+        else:
+            self._disable_safe_mode()
 
 
 __all__ = ["SelfServiceOverride", "AutoRollbackService"]
