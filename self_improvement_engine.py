@@ -1,6 +1,18 @@
 from __future__ import annotations
 
-"""Periodic self-improvement engine for the Menace system."""
+"""Periodic self-improvement engine for the Menace system.
+
+The module relies on a few optional helpers that may not be installed in
+minimal environments:
+
+* ``sandbox_runner`` – integrates orphaned modules discovered during sandbox
+  runs.
+* ``quick_fix_engine`` – generates small corrective patches for helper code.
+
+When these dependencies are missing the corresponding public functions now
+raise :class:`RuntimeError` to surface configuration problems instead of
+silently degrading behaviour.
+"""
 
 # flake8: noqa
 
@@ -115,16 +127,10 @@ except Exception:  # pragma: no cover - fallback for limited environments
     environment = None  # type: ignore
 
     def integrate_orphans(*args: object, **kwargs: object) -> list[str]:  # type: ignore
-        logging.getLogger(__name__).exception(
-            "Fallback integrate_orphans invoked due to missing dependency"
-        )
-        return []
+        raise RuntimeError("sandbox_runner dependency is required for orphan integration")
 
     def post_round_orphan_scan(*args: object, **kwargs: object) -> dict[str, object]:  # type: ignore
-        logging.getLogger(__name__).exception(
-            "Fallback post_round_orphan_scan invoked due to missing dependency"
-        )
-        return {}
+        raise RuntimeError("sandbox_runner dependency is required for orphan scanning")
 from .self_test_service import SelfTestService
 try:
     from . import self_test_service as sts
@@ -142,7 +148,9 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback for tests
     def generate_patch(*_: object, **__: object) -> int | None:
         """Fallback patch generator used when quick_fix_engine is unavailable."""
-        return None
+        raise RuntimeError(
+            "quick_fix_engine dependency is required for patch generation"
+        )
 from .error_logger import TelemetryEvent
 from . import mutation_logger as MutationLogger
 from .gpt_memory import GPTMemoryManager
