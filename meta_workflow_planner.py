@@ -2128,24 +2128,28 @@ def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
 
 # ---------------------------------------------------------------------------
 def _io_compatible(graph: WorkflowGraph, a: str, b: str) -> bool:
-    """Return ``True`` when the outputs of ``a`` feed the inputs of ``b``.
+    """Return ``True`` when the outputs of ``a`` satisfy the inputs of ``b``.
 
-    The check relies on :func:`workflow_graph.get_io_signature`.  When the
-    signatures are unavailable or the function is missing, compatibility is
-    assumed to avoid false negatives.
+    This helper relies on :func:`workflow_graph.get_io_signature` which must
+    provide explicit typed ``inputs`` and ``outputs`` mappings.  Each mapping is
+    expected to describe the name of the channel and its MIME or schema type.
+    Compatibility requires that all of ``a``'s outputs exactly match ``b``'s
+    declared inputs (both names and types).  Missing or partially specified
+    signatures are treated as incompatible and result in ``False`` being
+    returned.
     """
 
     getter = getattr(graph, "get_io_signature", None)
     if not callable(getter):
-        return True
+        return False
     try:
         sig_a = getter(a)
         sig_b = getter(b)
     except Exception:
-        return True
+        return False
 
     if not sig_a or not sig_b:
-        return True
+        return False
 
     out_a = getattr(sig_a, "outputs", None)
     in_b = getattr(sig_b, "inputs", None)
@@ -2154,12 +2158,19 @@ def _io_compatible(graph: WorkflowGraph, a: str, b: str) -> bool:
     if in_b is None and isinstance(sig_b, Mapping):
         in_b = sig_b.get("inputs")
 
-    if not out_a or not in_b:
-        return True
+    if not isinstance(out_a, Mapping) or not isinstance(in_b, Mapping):
+        return False
+
+    # Ensure explicit data types are provided for every channel
+    if any(not isinstance(v, str) or not v for v in out_a.values()):
+        return False
+    if any(not isinstance(v, str) or not v for v in in_b.values()):
+        return False
+
     try:
-        return bool(set(out_a) & set(in_b))
+        return dict(out_a) == dict(in_b)
     except Exception:
-        return True
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -2187,12 +2198,14 @@ def compose_meta_workflow(
     ordered: List[str] = []
     prev: str | None = None
     for wid in chain:
-        if prev is None or _io_compatible(graph, prev, wid):
+        if prev is None:
             ordered.append(wid)
             prev = wid
-        else:
-            break
+            continue
 
+        if _io_compatible(graph, prev, wid):
+            ordered.append(wid)
+            prev = wid
     return {
         "chain": "->".join(ordered),
         "steps": [{"workflow_id": wid} for wid in ordered],
