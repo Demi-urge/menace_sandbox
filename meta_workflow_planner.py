@@ -48,6 +48,13 @@ try:  # pragma: no cover - optional code database
 except Exception:  # pragma: no cover - database unavailable
     CodeDB = None  # type: ignore
 
+try:  # pragma: no cover - optional clustering dependency
+    from sklearn.cluster import DBSCAN  # type: ignore
+    _HAS_SKLEARN = True
+except Exception:  # pragma: no cover - allow running without scikit-learn
+    DBSCAN = None  # type: ignore
+    _HAS_SKLEARN = False
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
@@ -310,25 +317,35 @@ class MetaWorkflowPlanner:
         self,
         workflows: Mapping[str, Mapping[str, Any]],
         *,
-        threshold: float = 0.75,
         retriever: Retriever,
+        epsilon: float = 0.5,
+        min_samples: int = 2,
     ) -> List[List[str]]:
-        """Group ``workflows`` into similarity clusters.
+        """Group ``workflows`` into similarity clusters using DBSCAN.
 
         ``retriever`` must be an initialised :class:`vector_service.retriever.Retriever`
         instance.  Each workflow is encoded via :meth:`encode_workflow`, persisted
         in the ``workflow_meta`` vector database and the embedding is used to
         query the retriever.  The cosine similarity of a query and candidate
         vector is multiplied by ``(1 + ROI)`` for both workflows using weights
-        from :func:`_roi_weight_from_db`.  Pairs whose weighted similarity meets
-        or exceeds ``threshold`` are placed in the same cluster.  Retrieval
-        results are cached via :mod:`cache_utils` to avoid repeated brute-force
-        scans across invocations.  Missing ROI information results in
-        unweighted similarity scores so that the function remains best effort.
+        from :func:`_roi_weight_from_db`.  The weighted similarities are
+        normalised and converted to a distance matrix which is clustered with
+        :class:`sklearn.cluster.DBSCAN`.  ``epsilon`` and ``min_samples`` control
+        the density threshold for clustering.  Retrieval results are cached via
+        :mod:`cache_utils` to avoid repeated brute-force scans across invocations.
+        Missing ROI information results in unweighted similarity scores so that
+        the function remains best effort.
         """
 
-        if retriever is None or Retriever is None:
-            raise ValueError("cluster_workflows requires an initialised Retriever")
+        if (
+            retriever is None
+            or Retriever is None
+            or not _HAS_SKLEARN
+            or DBSCAN is None
+        ):
+            raise ValueError(
+                "cluster_workflows requires an initialised Retriever and scikit-learn"
+            )
 
         ids = list(workflows.keys())
         if not ids:
@@ -363,7 +380,7 @@ class MetaWorkflowPlanner:
                             "record_id": str(
                                 getattr(h, "record_id", None)
                                 or getattr(getattr(h, "metadata", {}), "get", lambda *_: None)("id")
-                                or ""
+                                or "",
                             )
                         }
                         for h in hits
@@ -382,17 +399,37 @@ class MetaWorkflowPlanner:
                     sims[wid][other] = sim
                     sims[other][wid] = sim
 
-        # Cluster based on thresholded similarities
-        remaining = set(ids)
-        clusters: List[List[str]] = []
-        while remaining:
-            wid = remaining.pop()
-            cluster = [wid]
-            for other in list(remaining):
-                if sims[wid].get(other, 0.0) >= threshold:
-                    cluster.append(other)
-                    remaining.remove(other)
-            clusters.append(cluster)
+        # Normalise similarities and build distance matrix for DBSCAN
+        max_sim = max((max(d.values()) for d in sims.values() if d), default=1.0)
+        if max_sim <= 0.0:
+            max_sim = 1.0
+
+        dist_matrix: List[List[float]] = []
+        for wid1 in ids:
+            row: List[float] = []
+            for wid2 in ids:
+                if wid1 == wid2:
+                    row.append(0.0)
+                else:
+                    sim = sims[wid1].get(wid2, 0.0) / max_sim
+                    row.append(1.0 - sim)
+            dist_matrix.append(row)
+
+        clustering = DBSCAN(
+            eps=epsilon, min_samples=min_samples, metric="precomputed"
+        )
+        labels = clustering.fit_predict(dist_matrix)
+
+        label_map: Dict[int, List[str]] = defaultdict(list)
+        noise: List[List[str]] = []
+        for wid, label in zip(ids, labels):
+            if int(label) == -1:
+                noise.append([wid])
+            else:
+                label_map[int(label)].append(wid)
+
+        clusters: List[List[str]] = list(label_map.values())
+        clusters.extend(noise)
         return clusters
 
     # ------------------------------------------------------------------
@@ -1459,7 +1496,8 @@ class MetaWorkflowPlanner:
         workflows: Mapping[str, Callable[[], Any]],
         *,
         roi_threshold: float = 0.0,
-        cluster_threshold: float = 0.75,
+        cluster_epsilon: float = 0.5,
+        cluster_min_samples: int = 2,
         runner: WorkflowSandboxRunner | None = None,
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
@@ -1471,8 +1509,9 @@ class MetaWorkflowPlanner:
         ``records`` should contain ``chain`` and ``roi_gain`` entries.  Chains
         exceeding ``roi_threshold`` are clustered via :meth:`cluster_workflows`
         (using the provided ``retriever``) and each cluster is merged into a
-        single pipeline containing the union of steps.  The merged pipelines are
-        validated and successful results are returned.
+        single pipeline containing the union of steps.  Clustering is controlled
+        by ``cluster_epsilon`` and ``cluster_min_samples`` and the merged
+        pipelines are validated before being returned.
         """
 
         high = [r for r in records if r.get("roi_gain", 0.0) > roi_threshold]
@@ -1489,7 +1528,10 @@ class MetaWorkflowPlanner:
         if retriever is None:
             raise ValueError("merge_high_performing_variants requires a Retriever")
         clusters = self.cluster_workflows(
-            specs, threshold=cluster_threshold, retriever=retriever
+            specs,
+            retriever=retriever,
+            epsilon=cluster_epsilon,
+            min_samples=cluster_min_samples,
         )
 
         results: List[Dict[str, Any]] = []
