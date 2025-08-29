@@ -448,7 +448,7 @@ class MetaWorkflowPlanner:
         epsilon: float = 0.5,
         min_samples: int = 2,
     ) -> List[List[str]]:
-        """Group ``workflows`` into similarity clusters using DBSCAN.
+        """Group ``workflows`` into similarity clusters.
 
         ``retriever`` must be an initialised :class:`vector_service.retriever.Retriever`
         instance.  Each workflow is encoded via :meth:`encode_workflow`, persisted
@@ -457,23 +457,20 @@ class MetaWorkflowPlanner:
         vector is multiplied by ``(1 + ROI)`` for both workflows using weights
         from :func:`_roi_weight_from_db` and further scaled by ``(1 -
         failure_rate) * (1 - entropy)`` for each workflow.  Weighted similarities
-        are cached to speed up repeated invocations and then normalised and
-        converted to a distance matrix clustered via
-        :class:`sklearn.cluster.DBSCAN`. ``epsilon`` and ``min_samples`` control
-        the density threshold for clustering. Retrieval results are cached via
-        :mod:`cache_utils` to avoid repeated brute-force scans across
-        invocations. Missing ROI information results in unweighted similarity
-        scores so that the function remains best effort.
+        are cached to speed up repeated invocations and then normalised.  When
+        scikit-learn is available, the resulting distance matrix is clustered via
+        :class:`sklearn.cluster.DBSCAN`.  If scikit-learn is unavailable a
+        lightweight similarity-threshold grouping is used instead where
+        ``epsilon`` acts as the distance threshold and ``min_samples`` determines
+        the minimum component size before a cluster is accepted.  Retrieval
+        results are cached via :mod:`cache_utils` to avoid repeated brute-force
+        scans across invocations. Missing ROI information results in unweighted
+        similarity scores so that the function remains best effort.
         """
 
-        if (
-            retriever is None
-            or Retriever is None
-            or not _HAS_SKLEARN
-            or DBSCAN is None
-        ):
+        if retriever is None or Retriever is None:
             raise ValueError(
-                "cluster_workflows requires an initialised Retriever and scikit-learn"
+                "cluster_workflows requires an initialised Retriever"
             )
 
         ids = list(workflows.keys())
@@ -555,21 +552,57 @@ class MetaWorkflowPlanner:
                     row.append(1.0 - sim)
             dist_matrix.append(row)
 
-        clustering = DBSCAN(
-            eps=epsilon, min_samples=min_samples, metric="precomputed"
-        )
-        labels = clustering.fit_predict(dist_matrix)
+        if _HAS_SKLEARN and DBSCAN is not None:
+            clustering = DBSCAN(
+                eps=epsilon, min_samples=min_samples, metric="precomputed"
+            )
+            labels = clustering.fit_predict(dist_matrix)
 
-        label_map: Dict[int, List[str]] = defaultdict(list)
-        noise: List[List[str]] = []
-        for wid, label in zip(ids, labels):
-            if int(label) == -1:
-                noise.append([wid])
+            label_map: Dict[int, List[str]] = defaultdict(list)
+            noise: List[List[str]] = []
+            for wid, label in zip(ids, labels):
+                if int(label) == -1:
+                    noise.append([wid])
+                else:
+                    label_map[int(label)].append(wid)
+
+            clusters: List[List[str]] = list(label_map.values())
+            clusters.extend(noise)
+            return clusters
+
+        # Fallback when scikit-learn is unavailable.  Workflows whose
+        # normalised similarity exceeds ``1 - epsilon`` are linked and connected
+        # components are returned as clusters.  Components smaller than
+        # ``min_samples`` are treated as noise and returned as single-item
+        # clusters.
+        threshold = 1.0 - epsilon
+        norm_sims: Dict[str, Dict[str, float]] = {
+            wid: {other: sims[wid].get(other, 0.0) / max_sim for other in ids if other != wid}
+            for wid in ids
+        }
+
+        visited: set[str] = set()
+        clusters: List[List[str]] = []
+        for wid in ids:
+            if wid in visited:
+                continue
+            queue = [wid]
+            component: List[str] = []
+            visited.add(wid)
+            while queue:
+                cur = queue.pop()
+                component.append(cur)
+                for other, sim in norm_sims[cur].items():
+                    if sim >= threshold and other not in visited:
+                        visited.add(other)
+                        queue.append(other)
+
+            if len(component) >= min_samples:
+                clusters.append(component)
             else:
-                label_map[int(label)].append(wid)
+                for n in component:
+                    clusters.append([n])
 
-        clusters: List[List[str]] = list(label_map.values())
-        clusters.extend(noise)
         return clusters
 
     # ------------------------------------------------------------------
