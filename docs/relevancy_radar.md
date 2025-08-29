@@ -6,6 +6,14 @@ used and recommending maintenance actions. It combines three components:
 those findings on a schedule and `ModuleRetirementService` performs any
 resulting cleanup.
 
+## Installation
+
+`RelevancyRadar` uses `networkx` for dependency analysis. Install it with:
+
+```bash
+pip install networkx
+```
+
 ## Components and interaction
 
 - **`RelevancyRadar`** collects import and execution counts, records optional
