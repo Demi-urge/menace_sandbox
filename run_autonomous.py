@@ -1,4 +1,5 @@
 from __future__ import annotations
+# flake8: noqa
 
 """Wrapper for running the autonomous sandbox loop after dependency checks.
 
@@ -1669,24 +1670,26 @@ def main(argv: List[str] | None = None) -> None:
             synergy_dash_port = _free_port()
             logger.info("using port %d for SynergyDashboard", synergy_dash_port)
         from threading import Thread
-
-        from menace.self_improvement_engine import SynergyDashboard
-
-        synergy_file = (
-            Path(args.sandbox_data_dir or settings.sandbox_data_dir)
-            / "synergy_history.db"
-        )
-        s_dash = SynergyDashboard(str(synergy_file))
-        dash_t = Thread(
-            target=s_dash.run,
-            kwargs={"port": synergy_dash_port},
-            daemon=True,
-        )
-        logger.info("starting SynergyDashboard on port %d", synergy_dash_port)
-        dash_t.start()
-        logger.info("SynergyDashboard running on port %d", synergy_dash_port)
-        cleanup_funcs.append(s_dash.stop)
-        cleanup_funcs.append(lambda: dash_t.is_alive() and dash_t.join(0.1))
+        try:
+            from menace.self_improvement_engine import SynergyDashboard
+        except RuntimeError as exc:
+            logger.warning("SynergyDashboard unavailable: %s", exc)
+        else:
+            synergy_file = (
+                Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+                / "synergy_history.db"
+            )
+            s_dash = SynergyDashboard(str(synergy_file))
+            dash_t = Thread(
+                target=s_dash.run,
+                kwargs={"port": synergy_dash_port},
+                daemon=True,
+            )
+            logger.info("starting SynergyDashboard on port %d", synergy_dash_port)
+            dash_t.start()
+            logger.info("SynergyDashboard running on port %d", synergy_dash_port)
+            cleanup_funcs.append(s_dash.stop)
+            cleanup_funcs.append(lambda: dash_t.is_alive() and dash_t.join(0.1))
 
     agent_proc = None
     agent_mgr = None

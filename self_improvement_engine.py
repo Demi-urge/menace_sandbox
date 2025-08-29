@@ -129,8 +129,11 @@ except ImportError:  # pragma: no cover - fallback for flat layout
     import security_auditor  # type: ignore
 try:  # pragma: no cover - optional dependency
     import sandbox_runner.environment as environment
-except ImportError:  # pragma: no cover - fallback for limited environments
-    environment = None  # type: ignore
+except ImportError as exc:  # pragma: no cover - explicit guidance for users
+    raise RuntimeError(
+        "sandbox_runner is required for self_improvement_engine."
+        " Install the sandbox runner package or add it to PYTHONPATH."
+    ) from exc
 
 
 def _repo_path() -> Path:
