@@ -144,6 +144,14 @@ CANONICAL_PROFILES: List[str] = [
     "concurrency_spike",
 ]
 
+# Export a subset of public attributes for consumers.
+__all__ = [
+    "CANONICAL_PROFILES",
+    "suggest_profiles_for_module",
+    "generate_canonical_presets",
+    "generate_combined_presets",
+]
+
 # legacy aliases mapping to canonical scenario names
 _PROFILE_ALIASES = {
     "high_latency": "high_latency_api",
@@ -167,6 +175,8 @@ _KEYWORD_PROFILE_MAP: Dict[str, List[str]] = {
     "common": CANONICAL_PROFILES,
     "misc": CANONICAL_PROFILES,
     "shared": CANONICAL_PROFILES,
+    "base": CANONICAL_PROFILES,
+    "core": CANONICAL_PROFILES,
 }
 
 
@@ -217,16 +227,15 @@ def suggest_profiles_for_module(module_name: str) -> List[str]:
         if key and key in name:
             profiles.extend(profs)
 
-    if not profiles:
-        return list(CANONICAL_PROFILES)
-
     seen: set[str] = set()
     unique: List[str] = []
     for prof in profiles:
         if prof not in seen:
             unique.append(prof)
             seen.add(prof)
-    return unique
+
+    # If no keywords matched, fall back to the canonical set to keep coverage high.
+    return unique or list(CANONICAL_PROFILES)
 
 # probability of injecting a random profile when none specified
 _PROFILE_PROB = 0.3
