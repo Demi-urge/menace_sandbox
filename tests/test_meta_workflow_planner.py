@@ -351,13 +351,19 @@ def test_update_cluster_map_records_transitions():
 
     planner.code_db = DummyCodeDB()
     planner.cluster_map = {}
-    planner._update_cluster_map(["a", "b"], roi_gain=2.0)
-    planner._update_cluster_map(["a", "b"], roi_gain=3.0)
+    planner._update_cluster_map(["a", "b"], roi_gain=2.0, failures=1.0, entropy=0.5)
+    planner._update_cluster_map(["a", "b"], roi_gain=3.0, failures=2.0, entropy=1.0)
     matrix = planner.cluster_map.get(("__domain_transitions__",), {})
     entry = matrix.get(
         (planner.domain_index["alpha"], planner.domain_index["beta"])
     )
-    assert entry and entry["count"] == 2 and entry.get("delta_roi", 0.0) != 0.0
+    assert (
+        entry
+        and entry["count"] == 2
+        and entry.get("delta_roi", 0.0) != 0.0
+        and entry.get("delta_failures", 0.0) != 0.0
+        and entry.get("delta_entropy", 0.0) != 0.0
+    )
 
 
 def test_transition_probabilities_normalization():
@@ -365,12 +371,29 @@ def test_transition_probabilities_normalization():
     planner.domain_index = {"other": 0, "a": 1, "b": 2, "c": 3}
     planner.cluster_map = {
         ("__domain_transitions__",): {
-            (1, 2): {"count": 2, "roi": 1.0, "delta_roi": 0.5},
-            (1, 3): {"count": 1, "roi": -1.0, "delta_roi": 0.0},
+            (1, 2): {
+                "count": 2,
+                "delta_roi": 1.0,
+                "delta_failures": 0.1,
+                "delta_entropy": 0.1,
+            },
+            (1, 3): {
+                "count": 1,
+                "delta_roi": 1.0,
+                "delta_failures": 0.3,
+                "delta_entropy": 0.4,
+            },
+            (2, 3): {
+                "count": 1,
+                "delta_roi": -1.0,
+                "delta_failures": 0.1,
+                "delta_entropy": 0.1,
+            },
         }
     }
     probs = planner.transition_probabilities()
-    assert probs[(1, 2)] > 0 and probs[(1, 3)] == 0
+    assert probs[(1, 2)] > probs[(1, 3)] > 0
+    assert probs[(2, 3)] == 0
     assert abs(sum(probs.values()) - 1.0) < 1e-8
 
 

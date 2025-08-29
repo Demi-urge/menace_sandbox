@@ -2266,6 +2266,8 @@ class MetaWorkflowPlanner:
         matrix = self.cluster_map.setdefault(("__domain_transitions__",), {})
         domains = [self._workflow_domain(wid)[0] for wid in chain]
         step_rois = [m.get("roi", 0.0) for m in step_metrics] if step_metrics else []
+        step_fails = [m.get("failures", 0.0) for m in step_metrics] if step_metrics else []
+        step_ents = [m.get("entropy", 0.0) for m in step_metrics] if step_metrics else []
         for i, (a, b) in enumerate(zip(domains, domains[1:])):
             if a < 0 or b < 0:
                 continue
@@ -2274,19 +2276,37 @@ class MetaWorkflowPlanner:
                 {
                     "count": 0,
                     "delta_roi": 0.0,
+                    "delta_failures": 0.0,
+                    "delta_entropy": 0.0,
                     "last_roi": roi_gain,
+                    "last_failures": failures,
+                    "last_entropy": entropy,
                 },
             )
             entry["count"] += 1
             if step_rois:
                 roi_a = step_rois[i] if i < len(step_rois) else 0.0
                 roi_b = step_rois[i + 1] if i + 1 < len(step_rois) else roi_gain
-                delta = roi_b - roi_a
+                delta_r = roi_b - roi_a
+                fail_a = step_fails[i] if i < len(step_fails) else failures
+                fail_b = step_fails[i + 1] if i + 1 < len(step_fails) else failures
+                delta_f = fail_b - fail_a
+                ent_a = step_ents[i] if i < len(step_ents) else entropy
+                ent_b = step_ents[i + 1] if i + 1 < len(step_ents) else entropy
+                delta_e = ent_b - ent_a
             else:
                 prev_roi = float(entry.get("last_roi", roi_gain))
                 entry["last_roi"] = roi_gain
-                delta = roi_gain - prev_roi
-            entry["delta_roi"] += (delta - entry.get("delta_roi", 0.0)) / entry["count"]
+                delta_r = roi_gain - prev_roi
+                prev_fail = float(entry.get("last_failures", failures))
+                entry["last_failures"] = failures
+                delta_f = failures - prev_fail
+                prev_ent = float(entry.get("last_entropy", entropy))
+                entry["last_entropy"] = entropy
+                delta_e = entropy - prev_ent
+            entry["delta_roi"] += (delta_r - entry.get("delta_roi", 0.0)) / entry["count"]
+            entry["delta_failures"] += (delta_f - entry.get("delta_failures", 0.0)) / entry["count"]
+            entry["delta_entropy"] += (delta_e - entry.get("delta_entropy", 0.0)) / entry["count"]
 
         if save:
             self._save_cluster_map()
@@ -2317,10 +2337,11 @@ class MetaWorkflowPlanner:
 
         The transition matrix stored under the special
         ``("__domain_transitions__",)`` key tracks how often workflows move
-        between domains along with the average ROI gains.  This method converts
-        the counts and ROI deltas into a probability distribution where pairs
-        with higher counts and positive ROI changes receive larger weight.
-        Transitions with negative ROI are assigned zero probability.
+        between domains along with the average ROI, failure and entropy deltas.
+        This method converts those statistics into a probability distribution
+        where pairs with higher counts, positive ROI and *lower* failure/
+        entropy receive larger weight.  Transitions with non-positive ROI are
+        assigned zero probability.
 
         Parameters
         ----------
@@ -2335,8 +2356,15 @@ class MetaWorkflowPlanner:
         weights: Dict[tuple[int, int], float] = {}
         for pair, stats in matrix.items():
             count = float(stats.get("count", 0.0))
-            delta = float(stats.get("delta_roi", stats.get("roi", 0.0)))
-            weight = max(0.0, count * delta)
+            roi_delta = float(stats.get("delta_roi", stats.get("roi", 0.0)))
+            fail_delta = float(
+                stats.get("delta_failures", stats.get("failures", 0.0))
+            )
+            ent_delta = float(
+                stats.get("delta_entropy", stats.get("entropy", 0.0))
+            )
+            penalty = max(0.0, fail_delta) + max(0.0, ent_delta)
+            weight = max(0.0, count * (roi_delta - penalty))
             if weight > 0.0 or smoothing > 0.0:
                 weights[pair] = weight + smoothing
             else:
