@@ -346,6 +346,7 @@ class SelfTestService:
         clean_orphans: bool = False,
         include_redundant: bool = SandboxSettings().test_redundant_modules,
         report_dir: str | Path = Path("sandbox_data/self_test_reports"),
+        stub_scenarios: Mapping[str, Any] | None = None,
     ) -> None:
         """Create a new service instance.
 
@@ -456,6 +457,9 @@ class SelfTestService:
             self.workers = int(env_workers) if env_workers is not None else 1
         except ValueError:
             self.workers = 1
+
+        # Optional mapping defining scenario templates for generated stubs.
+        self.stub_scenarios = dict(stub_scenarios or {})
 
         # Allow the test runner to be customised via environment variable.  This
         # defaults to ``pytest`` to preserve historical behaviour but can be
@@ -1198,8 +1202,25 @@ class SelfTestService:
         return any(c.exists() for c in candidates)
 
     # ------------------------------------------------------------------
-    def _generate_pytest_stub(self, mod: str) -> Path:
-        """Create a temporary pytest stub for *mod* and return its path."""
+    def _generate_pytest_stub(
+        self,
+        mod: str,
+        scenarios: Mapping[str, Any] | None = None,
+    ) -> Path:
+        """Create a temporary pytest stub for *mod* and return its path.
+
+        Parameters
+        ----------
+        mod:
+            Path to the module under test.
+        scenarios:
+            Optional mapping providing scenario templates and fixture data. The
+            structure is ``{"tests": {...}, "fixtures": {...}}`` where the
+            ``tests`` mapping associates function or class names with a list of
+            scenario dictionaries.  Each scenario may specify ``args``,
+            ``kwargs`` and an ``expected`` result.  Arguments can reference
+            fixtures via ``{"fixture": "name"}`` entries.
+        """
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
         stub_root = repo / "sandbox_data" / "selftest_stubs"
@@ -1212,9 +1233,24 @@ class SelfTestService:
             rel = Path(mod).resolve()
         import_name = ".".join(rel.with_suffix("").parts)
 
+        tests: Mapping[str, Any]
+        fixtures: Mapping[str, Any]
+        if scenarios and ("tests" in scenarios or "fixtures" in scenarios):
+            tests = scenarios.get("tests", {})  # type: ignore[assignment]
+            fixtures = scenarios.get("fixtures", {})  # type: ignore[assignment]
+        else:
+            tests = scenarios or {}
+            fixtures = {}
+
         stub_path = tmp_dir / f"test_{Path(mod).stem}_stub.py"
         stub_code = (
-            "import importlib, inspect\n\n"
+            "import importlib, inspect, json\n\n"
+            f"SCENARIOS = json.loads('''{json.dumps(tests)}''')\n"
+            f"FIXTURES = json.loads('''{json.dumps(fixtures)}''')\n\n"
+            "def _resolve(v):\n"
+            "    if isinstance(v, dict) and 'fixture' in v:\n"
+            "        return FIXTURES.get(v['fixture'])\n"
+            "    return v\n\n"
             "def _dummy_value(p):\n"
             "    ann = getattr(p.annotation, '__origin__', p.annotation)\n"
             "    if ann in (int, float, complex):\n"
@@ -1237,6 +1273,13 @@ class SelfTestService:
             "        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD) and p.default is inspect._empty:\n"
             "            args.append(_dummy_value(p))\n"
             "    return obj(*args)\n\n"
+            "def _run_scenario(func, scen, is_method=False, inst=None):\n"
+            "    args = [_resolve(a) for a in scen.get('args', [])]\n"
+            "    kwargs = {k: _resolve(v) for k, v in scen.get('kwargs', {}).items()}\n"
+            "    target = func if not is_method else getattr(inst, func)\n"
+            "    result = target(*args, **kwargs)\n"
+            "    if 'expected' in scen:\n"
+            "        assert result == _resolve(scen['expected'])\n\n"
             "def test_stub():\n"
             "    try:\n"
             f"        mod = importlib.import_module('{import_name}')\n"
@@ -1244,16 +1287,32 @@ class SelfTestService:
             "        return\n"
             "    for name in dir(mod):\n"
             "        obj = getattr(mod, name)\n"
+            "        scen_list = SCENARIOS.get(name, [])\n"
             "        if inspect.isfunction(obj) and obj.__module__ == mod.__name__:\n"
-            "            try:\n"
-            "                _call_with_dummies(obj)\n"
-            "            except Exception:\n"
-            "                pass\n"
+            "            if scen_list:\n"
+            "                for scen in scen_list:\n"
+            "                    _run_scenario(obj, scen)\n"
+            "            else:\n"
+            "                try:\n"
+            "                    _call_with_dummies(obj)\n"
+            "                except Exception:\n"
+            "                    pass\n"
             "        elif inspect.isclass(obj) and obj.__module__ == mod.__name__:\n"
-            "            try:\n"
-            "                _call_with_dummies(obj, True)\n"
-            "            except Exception:\n"
-            "                pass\n"
+            "            if scen_list:\n"
+            "                for scen in scen_list:\n"
+            "                    init_args = [_resolve(a) for a in scen.get('init_args', [])]\n"
+            "                    init_kwargs = {k: _resolve(v) for k, v in scen.get('init_kwargs', {}).items()}\n"
+            "                    inst = obj(*init_args, **init_kwargs)\n"
+            "                    method = scen.get('method')\n"
+            "                    if method:\n"
+            "                        _run_scenario(method, scen, True, inst)\n"
+            "                    elif 'expected' in scen:\n"
+            "                        assert inst == _resolve(scen['expected'])\n"
+            "            else:\n"
+            "                try:\n"
+            "                    _call_with_dummies(obj, True)\n"
+            "                except Exception:\n"
+            "                    pass\n"
         )
         stub_path.write_text(stub_code, encoding="utf-8")
         return stub_path
@@ -1273,7 +1332,7 @@ class SelfTestService:
         info = self.orphan_traces.get(mod, {})
         if info.get("classification") == "candidate" and not self._has_pytest_file(mod):
             try:
-                stub_path = self._generate_pytest_stub(mod)
+                stub_path = self._generate_pytest_stub(mod, self.stub_scenarios.get(mod))
                 target = stub_path.as_posix()
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to create pytest stub for %s", mod)
@@ -1349,7 +1408,7 @@ class SelfTestService:
             info = self.orphan_traces.get(mod, {})
             if info.get("classification") == "candidate" and not self._has_pytest_file(mod):
                 try:
-                    stub_path = self._generate_pytest_stub(mod)
+                    stub_path = self._generate_pytest_stub(mod, self.stub_scenarios.get(mod))
                     target = stub_path.as_posix()
                 except Exception:
                     self.logger.exception("failed to create pytest stub for %s", mod)
