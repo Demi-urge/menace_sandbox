@@ -532,6 +532,9 @@ class MetaWorkflowPlanner:
                 cand_vec = self.encode_workflow(wid, workflows[wid])
                 sim = cosine_similarity(current_vec, cand_vec)
 
+                cm_score = float(self.cluster_map.get((current, wid), {}).get("score", 0.0))
+                sim *= 1.0 + cm_score
+
                 roi = (
                     _roi_weight_from_db(self.roi_db, wid)
                     if self.roi_db is not None
@@ -1813,9 +1816,13 @@ class MetaWorkflowPlanner:
             avg_roi = sum(s.get("roi", 0.0) for s in step_metrics) / len(step_metrics)
             avg_fail = sum(s.get("failures", 0.0) for s in step_metrics) / len(step_metrics)
             avg_ent = sum(s.get("entropy", 0.0) for s in step_metrics) / len(step_metrics)
-            info["score"] = (roi_gain - failures - entropy) + (avg_roi - avg_fail - avg_ent)
+            new_score = (roi_gain - failures - entropy) + (avg_roi - avg_fail - avg_ent)
         else:
-            info["score"] = roi_gain - failures - entropy
+            new_score = roi_gain - failures - entropy
+
+        decay = 0.9
+        prev_score = float(info.get("score", 0.0))
+        info["score"] = prev_score * decay + new_score * (1.0 - decay)
 
         self._save_cluster_map()
         return info
@@ -2156,6 +2163,7 @@ def find_synergy_candidates(
     retriever: Retriever,
     roi_db: ROIResultsDB | None = None,
     roi_window: int = 5,
+    cluster_map: Mapping[tuple[str, ...], Mapping[str, Any]] | None = None,
 ) -> List[Dict[str, Any]]:
     """Return top ``top_k`` workflows similar to ``query`` weighted by ROI.
 
@@ -2163,20 +2171,25 @@ def find_synergy_candidates(
     stored workflow embedding.  ``retriever`` must be provided to fetch
     candidate workflow identifiers.  Results are ranked by cosine similarity
     scaled by the average ROI gain from ``roi_db``.  Retrieval failures yield an
-    empty list.
+    empty list.  When ``cluster_map`` is provided, historic reinforcement scores
+    for ``(query, candidate)`` pairs are used to boost similarity prior to
+    ranking.
     """
 
     roi_db = roi_db or ROIResultsDB()
     embeddings = _load_embeddings()
 
+    query_id: str | None
     if isinstance(query, str):
         query_vec = embeddings.get(query)
         if query_vec is None:
             return []
         exclude = {query}
+        query_id = query
     else:
         query_vec = [float(x) for x in query]
-        exclude: set[str] = set()
+        exclude = set()
+        query_id = None
 
     try:  # pragma: no cover - optional path
         ur = retriever._get_retriever()
@@ -2199,6 +2212,11 @@ def find_synergy_candidates(
         if vec is None:
             continue
         sim = cosine_similarity(query_vec, vec)
+
+        if cluster_map is not None and query_id is not None:
+            cm_score = float(cluster_map.get((query_id, wf_id), {}).get("score", 0.0))
+            sim *= 1.0 + cm_score
+
         roi = _roi_weight_from_db(roi_db, wf_id, window=roi_window)
         scored.append(
             {
