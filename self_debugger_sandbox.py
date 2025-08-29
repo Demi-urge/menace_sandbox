@@ -69,6 +69,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     ----------
     flakiness_runs:
         Number of test executions used when estimating flakiness.
+    weight_update_interval:
+        Minimum seconds between score weight recalculations. Can also be set
+        via the ``WEIGHT_UPDATE_INTERVAL`` environment variable.
     """
 
     def __init__(
@@ -84,6 +87,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         score_weights: tuple[float, float, float, float, float, float] | None = None,
         flakiness_runs: int = 5,
         smoothing_factor: float = 0.5,
+        weight_update_interval: float | None = None,
     ) -> None:
         super().__init__(telemetry_db, engine)
         self.audit_trail = audit_trail or getattr(engine, "audit_trail", None)
@@ -101,6 +105,16 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 self.logger.exception("invalid FLAKINESS_RUNS value")
         self.flakiness_runs = max(1, int(flakiness_runs))
         self.smoothing_factor = max(0.0, min(1.0, float(smoothing_factor))) or 0.5
+        env_interval = os.getenv("WEIGHT_UPDATE_INTERVAL")
+        if weight_update_interval is None and env_interval is not None:
+            try:
+                weight_update_interval = float(env_interval)
+            except Exception:
+                self.logger.exception("invalid WEIGHT_UPDATE_INTERVAL value")
+        if weight_update_interval is None:
+            weight_update_interval = 60.0
+        self._last_weights_update = 0.0
+        self._weight_update_interval = max(0.0, float(weight_update_interval))
         self._score_db: PatchHistoryDB | None = None
         self._db_lock = threading.Lock()
         self._history_lock = threading.Lock()
@@ -191,8 +205,6 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             "synergy_resilience": (0.0, 1.0),
             "synergy_antifragility": (0.0, 1.0),
         }
-        self._last_weights_update = 0.0
-        self._weight_update_interval = 60.0
         self._last_test_log: Path | None = None
         self.graph = KnowledgeGraph()
         self.error_logger = ErrorLogger(knowledge_graph=self.graph)

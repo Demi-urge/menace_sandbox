@@ -6,6 +6,7 @@
 
 - `SANDBOX_SCORE_DB` – path of the local score history database.
 - `PATCH_SCORE_BACKEND_URL` – optional remote backend used for storing and retrieving patch scores. Supports `http://` or `https://` endpoints and `s3://bucket/prefix` URLs.
+- `WEIGHT_UPDATE_INTERVAL` – minimum seconds between score weight recalculations. Defaults to `60` and can also be supplied via the ``weight_update_interval`` constructor argument.
 
 Essential environment variables:
 
