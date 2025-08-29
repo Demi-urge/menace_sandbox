@@ -765,11 +765,14 @@ class MetaWorkflowPlanner:
                 if prev_domain >= 0 and cand_domain >= 0:
                     prob = trans_probs.get((prev_domain, cand_domain))
                     if prob is None:
-                        pass
-                    elif prob > 0:
-                        score *= 1.0 + prob
+                        logger.debug(
+                            "no transition stats for domains %s -> %s",
+                            prev_domain,
+                            cand_domain,
+                        )
+                        score *= 1.0
                     else:
-                        score *= 0.8
+                        score *= 1.0 + prob
 
                 if score > best_score:
                     best_id = wid
