@@ -11,16 +11,32 @@ from pathlib import Path
 from vector_utils import cosine_similarity
 from roi_results_db import ROIResultsDB
 from workflow_stability_db import WorkflowStabilityDB
-from workflow_synergy_comparator import WorkflowSynergyComparator
+from logging_utils import get_logger
+
+logger = get_logger(__name__)
+
+try:  # pragma: no cover - optional dependency
+    from workflow_synergy_comparator import WorkflowSynergyComparator
+except Exception:  # pragma: no cover - provide deterministic fallback
+    logger.warning(
+        "workflow_synergy_comparator import failed; entropy metrics disabled"
+    )
+
+    class WorkflowSynergyComparator:  # type: ignore[no-redef]
+        @staticmethod
+        def _entropy(*_, **__):
+            return 0.0
 
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB  # type: ignore
 except Exception:  # pragma: no cover - allow using a dummy DB in tests
+    logger.warning("task_handoff_bot.WorkflowDB import failed; workflow DB disabled")
     WorkflowDB = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from code_database import CodeDB  # type: ignore
 except Exception:  # pragma: no cover - used in tests without the real DB
+    logger.warning("code_database import failed; context tag support disabled")
     CodeDB = None  # type: ignore
 
 
