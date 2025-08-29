@@ -98,8 +98,7 @@ def _async_radar_track(module: str) -> None:
             target=_radar_track_module_usage, args=(module,), daemon=True
         ).start()
     except RuntimeError as exc:
-        logger.exception("relevancy radar thread failed: %s", exc)
-        environment_failure_total.labels(reason="radar_thread_start").inc()
+        record_error(exc)
 
 import builtins
 
@@ -171,20 +170,51 @@ from collections import Counter
 try:
     from error_logger import ErrorLogger
 except Exception:  # pragma: no cover - optional during minimal imports
+    from error_ontology import ErrorCategory, classify_exception
+
     class ErrorLogger:  # type: ignore[misc]
-        """Fallback stub used when :mod:`error_logger` is unavailable."""
+        """Minimal internal logger when :mod:`error_logger` is unavailable."""
 
         class _Classifier:
             @staticmethod
-            def classify_details(_exc: object, _stack: object) -> tuple[str, str, str]:
-                return "", "", ""
+            def classify_details(exc: Exception, stack: str) -> tuple[str, ErrorCategory, str]:
+                return "", classify_exception(exc, stack), ""
 
         classifier = _Classifier()
 
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            pass
+        def __init__(
+            self, *args: object, log_path: str | os.PathLike[str] | None = None, **_kwargs: object
+        ) -> None:
+            default = Path(__file__).resolve().parents[1] / "sandbox_data" / "errors.log"
+            path = os.getenv("SANDBOX_ERROR_LOG")
+            self._path = Path(log_path or path or default)
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._lock = threading.Lock()
 
-        def log(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - no-op
+        def log(
+            self,
+            exc: Exception,
+            _task_id: object,
+            _bot_id: object,
+            *,
+            patch_id: object | None = None,
+            deploy_id: object | None = None,
+        ) -> None:
+            stack = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            )
+            _, category, _ = self.classifier.classify_details(exc, stack)
+            record = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "category": category.value,
+                "type": type(exc).__name__,
+                "message": str(exc),
+                "stack": stack,
+            }
+            with self._lock:
+                with self._path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(record) + "\n")
+
             return None
 from knowledge_graph import KnowledgeGraph
 
@@ -412,6 +442,10 @@ def record_error(exc: Exception) -> None:
     _, category, _ = ERROR_LOGGER.classifier.classify_details(exc, stack)
     ERROR_LOGGER.log(exc, None, None)
     ERROR_CATEGORY_COUNTS[category.value] += 1
+    try:
+        environment_failure_total.labels(reason=category.value).inc()
+    except Exception:  # pragma: no cover - metrics best effort
+        logger.exception("failed to update environment_failure_total")
 
 
 def _get_history_db() -> InputHistoryDB:
