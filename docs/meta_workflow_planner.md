@@ -69,6 +69,14 @@ Each record contains the chain, total ROI gain, failure count and entropy. The
 method accepts a custom runner or will instantiate a default
 `WorkflowSandboxRunner` when available.
 
+## Persistent reinforcement
+
+`MetaWorkflowPlanner` persists reinforcement signals after each chain execution
+by recording the chain, ROI gain, failure count and entropy in
+`synergy_history.db`.  On startup the planner reloads this history to seed its
+`cluster_map`, allowing previously successful (or failing) chains to influence
+future planning sessions.
+
 ## Configuration
 
 `MetaWorkflowPlanner` accepts several knobs to tailor the generated vectors:

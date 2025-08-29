@@ -52,6 +52,11 @@ try:  # pragma: no cover - optional code database
 except Exception:  # pragma: no cover - database unavailable
     CodeDB = None  # type: ignore
 
+try:  # pragma: no cover - optional persistence helper
+    from . import synergy_history_db as shd  # type: ignore
+except Exception:  # pragma: no cover - fallback when run as script
+    import synergy_history_db as shd  # type: ignore
+
 try:  # pragma: no cover - optional clustering dependency
     from sklearn.cluster import DBSCAN  # type: ignore
     _HAS_SKLEARN = True
@@ -1856,16 +1861,46 @@ class MetaWorkflowPlanner:
 
     # ------------------------------------------------------------------
     def _load_cluster_map(self) -> None:
-        """Load ``cluster_map`` from ``sandbox_data/meta_clusters.json`` if present."""
+        """Load ``cluster_map`` from persistence layers if present."""
 
         path = Path("sandbox_data/meta_clusters.json")
-        if not path.exists():
-            return
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+                self.cluster_map = {tuple(k.split("|")): v for k, v in data.items()}
+            except Exception:
+                self.cluster_map = {}
+
+        # Populate from historic reinforcement stored in ``synergy_history.db``
         try:
-            data = json.loads(path.read_text())
-            self.cluster_map = {tuple(k.split("|")): v for k, v in data.items()}
-        except Exception:
-            self.cluster_map = {}
+            connect = getattr(shd, "connect", None)
+            fetch_all = getattr(shd, "fetch_all", None)
+            if connect and fetch_all:
+                conn = connect()
+                try:
+                    for entry in fetch_all(conn):
+                        chain = entry.get("chain")
+                        if not isinstance(chain, str):
+                            continue
+                        self._update_cluster_map(
+                            chain.split("|"),
+                            float(entry.get("roi", 0.0)),
+                            int(entry.get("failures", 0)),
+                            float(entry.get("entropy", 0.0)),
+                            record_history=False,
+                            save=False,
+                        )
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:  # pragma: no cover - best effort
+                        pass
+                if self.cluster_map:
+                    self._save_cluster_map()
+        except Exception:  # pragma: no cover - persistence optional
+            logger.warning(
+                "Failed to load persistent reinforcement history", exc_info=True
+            )
 
     # ------------------------------------------------------------------
     def _update_cluster_map(
@@ -1877,6 +1912,8 @@ class MetaWorkflowPlanner:
         *,
         step_metrics: Sequence[Mapping[str, Any]] | None = None,
         tol: float = 0.01,
+        record_history: bool = True,
+        save: bool = True,
     ) -> Dict[str, Any]:
         """Update metric histories for ``chain`` and detect convergence."""
 
@@ -1963,7 +2000,26 @@ class MetaWorkflowPlanner:
             entry["roi"] += (roi_gain - entry["roi"]) / entry["count"]
             entry["fail"] += (failures - entry["fail"]) / entry["count"]
 
-        self._save_cluster_map()
+        if save:
+            self._save_cluster_map()
+
+        if record_history:
+            try:  # pragma: no cover - best effort persistence
+                rec = getattr(shd, "record", None)
+                if rec:
+                    rec(
+                        {
+                            "chain": "|".join(chain),
+                            "roi": float(roi_gain),
+                            "failures": float(failures),
+                            "entropy": float(entropy),
+                        }
+                    )
+            except Exception:
+                logger.warning(
+                    "Failed to record reinforcement metrics", exc_info=True
+                )
+
         return info
 
     # ------------------------------------------------------------------
