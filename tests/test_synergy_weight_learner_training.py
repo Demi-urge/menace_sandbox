@@ -4,12 +4,10 @@ import types
 import importlib.util
 import importlib
 import pytest
-# flake8: noqa
+
+torch = pytest.importorskip("torch")
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-
-# remove torch temporarily
-_orig_torch = sys.modules.pop("torch", None)
 
 spec = importlib.util.spec_from_file_location(
     "menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py")
@@ -18,7 +16,7 @@ menace = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace
 spec.loader.exec_module(menace)
 
-# stub heavy dependencies needed for self_improvement_engine
+# stub heavy dependencies
 modules = [
     "menace.self_model_bootstrap",
     "menace.research_aggregator_bot",
@@ -31,6 +29,7 @@ modules = [
     "menace.learning_engine",
     "menace.unified_event_bus",
     "menace.neuroplasticity",
+    "menace.self_improvement_policy",
     "menace.self_coding_engine",
     "menace.action_planner",
     "menace.evolution_history_db",
@@ -45,9 +44,13 @@ for name in modules:
 
 sys.modules["menace.self_model_bootstrap"].bootstrap = lambda *a, **k: 0
 ra = sys.modules["menace.research_aggregator_bot"]
+
+
 class DummyAgg:
     def __init__(self, *a, **k):
         pass
+
+
 ra.ResearchAggregatorBot = DummyAgg
 ra.ResearchItem = object
 ra.InfoDB = object
@@ -112,16 +115,65 @@ pyd_settings_mod.BaseSettings = object
 pyd_settings_mod.SettingsConfigDict = dict
 sys.modules.setdefault("pydantic_settings", pyd_settings_mod)
 
-sie = importlib.import_module("menace.self_improvement_engine")
+policy_mod = sys.modules["menace.self_improvement_policy"]
+policy_mod.SelfImprovementPolicy = object
+policy_mod.ConfigurableSelfImprovementPolicy = lambda *a, **k: object()
 
 
-def test_actor_critic_used_without_torch(tmp_path):
-    assert "torch" not in sys.modules
-    learner = sie.SynergyWeightLearner(path=tmp_path / "weights.json")
-    assert isinstance(learner.strategy, sie.ActorCriticStrategy)
-    start = dict(learner.weights)
+class DummyStrategy:
+    def update(self, *a, **k):
+        return 0.0
+
+    def predict(self, *_):
+        return [0.0] * 7
+
+
+policy_mod.DQNStrategy = lambda *a, **k: DummyStrategy()
+policy_mod.DoubleDQNStrategy = lambda *a, **k: DummyStrategy()
+policy_mod.ActorCriticStrategy = lambda *a, **k: DummyStrategy()
+policy_mod.torch = torch
+
+import menace.self_improvement_engine as sie  # noqa: E402
+
+
+class DummySettings:
+    synergy_weights_lr = 0.2
+    synergy_train_interval = 1
+    synergy_replay_size = 50
+
+
+def _state_dict_equal(a, b):
+    if a.keys() != b.keys():
+        return False
+    for k in a:
+        v1, v2 = a[k], b[k]
+        if isinstance(v1, torch.Tensor):
+            if not torch.allclose(v1, v2):
+                return False
+        elif isinstance(v1, dict):
+            if not _state_dict_equal(v1, v2):
+                return False
+        elif isinstance(v1, list):
+            if len(v1) != len(v2):
+                return False
+            for x, y in zip(v1, v2):
+                if isinstance(x, torch.Tensor):
+                    if not torch.allclose(x, y):
+                        return False
+                else:
+                    if x != y:
+                        return False
+        else:
+            if v1 != v2:
+                return False
+    return True
+
+
+def test_weight_convergence_and_persistence(tmp_path):
+    path = tmp_path / "weights.json"
+    learner = sie.SynergyWeightLearner(path=path, settings=DummySettings())
     deltas = {
-        "synergy_roi": 0.5,
+        "synergy_roi": 1.0,
         "synergy_efficiency": 0.0,
         "synergy_resilience": 0.0,
         "synergy_antifragility": 0.0,
@@ -129,11 +181,19 @@ def test_actor_critic_used_without_torch(tmp_path):
         "synergy_maintainability": 0.0,
         "synergy_throughput": 0.0,
     }
-    learner.update(1.0, deltas)
-    assert learner.weights != start
-    assert (tmp_path / "weights.json").exists()
-    reloaded = sie.SynergyWeightLearner(path=tmp_path / "weights.json")
-    assert reloaded.weights == pytest.approx(learner.weights)
+    for _ in range(40):
+        learner.update(2.0, deltas)
+    assert learner.weights["roi"] == pytest.approx(2.0, rel=0.2)
+    assert learner.eval_loss >= 0.0
+    base = path.with_suffix("")
+    assert (tmp_path / (base.name + ".model.pt")).exists()
+    assert (tmp_path / (base.name + ".optim.pt")).exists()
 
-    if _orig_torch is not None:
-        sys.modules["torch"] = _orig_torch
+    learner2 = sie.SynergyWeightLearner(path=path, settings=DummySettings())
+    assert learner2.weights["roi"] == pytest.approx(learner.weights["roi"])
+    assert _state_dict_equal(
+        learner.model.state_dict(), learner2.model.state_dict()
+    )
+    assert _state_dict_equal(
+        learner.optimizer.state_dict(), learner2.optimizer.state_dict()
+    )

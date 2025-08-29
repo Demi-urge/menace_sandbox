@@ -3,6 +3,7 @@ import sys
 import types
 import importlib.util
 import pytest
+# flake8: noqa
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -29,9 +30,12 @@ modules = [
     "menace.self_coding_engine",
     "menace.action_planner",
     "menace.evolution_history_db",
+    "menace.self_test_service",
+    "menace.mutation_logger",
     "menace.self_improvement_policy",
     "menace.pre_execution_roi_bot",
     "menace.env_config",
+    "relevancy_radar",
 ]
 for name in modules:
     sys.modules.setdefault(name, types.ModuleType(name))
@@ -60,9 +64,16 @@ sys.modules["menace.learning_engine"].LearningEngine = object
 sys.modules["menace.unified_event_bus"].UnifiedEventBus = object
 sys.modules["menace.neuroplasticity"].PathwayRecord = object
 sys.modules["menace.neuroplasticity"].Outcome = object
+sys.modules["menace.neuroplasticity"].PathwayDB = object
 sys.modules["menace.self_coding_engine"].SelfCodingEngine = object
 sys.modules["menace.action_planner"].ActionPlanner = object
 sys.modules["menace.evolution_history_db"].EvolutionHistoryDB = object
+sys.modules["menace.evolution_history_db"].EvolutionEvent = object
+sys.modules["menace.self_test_service"].SelfTestService = object
+sys.modules["menace.mutation_logger"] = types.ModuleType("menace.mutation_logger")
+rr = types.ModuleType("relevancy_radar")
+rr.tracked_import = __import__
+sys.modules["relevancy_radar"] = rr
 policy_mod = sys.modules["menace.self_improvement_policy"]
 policy_mod.SelfImprovementPolicy = object
 policy_mod.ConfigurableSelfImprovementPolicy = lambda *a, **k: object()

@@ -284,6 +284,8 @@ class SandboxSettings(BaseSettings):
     roi_compounding_weight: float = Field(1.0, env="ROI_COMPOUNDING_WEIGHT")
     sandbox_score_db: str = Field("score_history.db", env="SANDBOX_SCORE_DB")
     synergy_weights_lr: float = Field(0.1, env="SYNERGY_WEIGHTS_LR")
+    synergy_train_interval: int = Field(10, env="SYNERGY_TRAIN_INTERVAL")
+    synergy_replay_size: int = Field(100, env="SYNERGY_REPLAY_SIZE")
     scenario_metric_thresholds: dict[str, float] = Field(
         default_factory=lambda: {
             "schema_mismatch_rate": 0.1,

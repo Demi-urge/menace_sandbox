@@ -109,6 +109,7 @@ import math
 import shutil
 import ast
 import yaml
+from collections import deque
 from pathlib import Path
 from typing import Mapping, Callable, Iterable, Dict, Any, Sequence
 from datetime import datetime
@@ -481,7 +482,18 @@ POLICY_STATE_LEN = 21
 class SynergyWeightLearner:
     """Learner adjusting synergy weights using a simple RL policy."""
 
-    def __init__(self, path: Path | None = None, lr: float = 0.1) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        lr: float | None = None,
+        *,
+        settings: SandboxSettings | None = None,
+    ) -> None:
+        settings = settings or SandboxSettings()
+        if lr is None:
+            lr = float(getattr(settings, "synergy_weights_lr", 0.1))
+        self.train_interval = int(getattr(settings, "synergy_train_interval", 10))
+        self.replay_size = int(getattr(settings, "synergy_replay_size", 100))
         if sip_torch is None:
             logger.warning("PyTorch not installed - using ActorCritic strategy")
         self.path = Path(path) if path else None
@@ -489,6 +501,14 @@ class SynergyWeightLearner:
         self.weights = DEFAULT_SYNERGY_WEIGHTS.copy()
         self.strategy = ActorCriticStrategy()
         self._state: tuple[float, ...] = (0.0,) * 7
+        self._steps = 0
+        self.eval_loss = 0.0
+        self.buffer: deque[tuple["sip_torch.Tensor", float]] = deque(maxlen=self.replay_size) if sip_torch is not None and type(self) is SynergyWeightLearner else deque()
+        if sip_torch is not None and type(self) is SynergyWeightLearner:
+            # simple linear model mapping state -> weights
+            self.model = sip_torch.nn.Linear(7, 7)
+            self.optimizer = sip_torch.optim.Adam(self.model.parameters(), lr=self.lr)
+            self.loss_fn = sip_torch.nn.MSELoss()
         self.load()
 
     # ------------------------------------------------------------------
@@ -514,14 +534,25 @@ class SynergyWeightLearner:
         else:
             for k in self.weights:
                 self.weights[k] = float(data[k])
+        base = os.path.splitext(self.path)[0]
         try:
-            base = os.path.splitext(self.path)[0]
             pkl = base + ".policy.pkl"
             if os.path.exists(pkl):
                 with open(pkl, "rb") as fh:
                     self.strategy = pickle.load(fh)
         except Exception as exc:
             logger.exception("failed to load strategy pickle: %s", exc)
+        if sip_torch is not None and hasattr(self, "model"):
+            model_file = Path(base + ".model.pt")
+            opt_file = Path(base + ".optim.pt")
+            if model_file.exists() and opt_file.exists():
+                try:
+                    self.model.load_state_dict(sip_torch.load(model_file))  # type: ignore[attr-defined]
+                    self.optimizer.load_state_dict(  # type: ignore[attr-defined]
+                        sip_torch.load(opt_file)
+                    )
+                except Exception as exc:
+                    logger.warning("failed to load model state: %s", exc)
 
         logger.info("loaded synergy weights", extra=log_record(weights=self.weights))
 
@@ -533,12 +564,22 @@ class SynergyWeightLearner:
             _atomic_write(self.path, json.dumps(self.weights))
         except Exception as exc:
             logger.exception("failed to save synergy weights: %s", exc)
+        base = os.path.splitext(self.path)[0]
         try:
-            base = os.path.splitext(self.path)[0]
             pkl = Path(base + ".policy.pkl")
             _atomic_write(pkl, pickle.dumps(self.strategy), binary=True)
         except Exception as exc:
             logger.exception("failed to save strategy pickle: %s", exc)
+        if self.path and sip_torch is not None and hasattr(self, "model"):
+            try:
+                buf = io.BytesIO()
+                sip_torch.save(self.model.state_dict(), buf)
+                _atomic_write(Path(base + ".model.pt"), buf.getvalue(), binary=True)
+                buf = io.BytesIO()
+                sip_torch.save(self.optimizer.state_dict(), buf)
+                _atomic_write(Path(base + ".optim.pt"), buf.getvalue(), binary=True)
+            except Exception as exc:
+                logger.exception("failed to save model state: %s", exc)
         try:
             synergy_weight_updates_total.inc()
         except Exception:
@@ -563,19 +604,42 @@ class SynergyWeightLearner:
             "synergy_throughput",
         ]
         self._state = tuple(float(deltas.get(n, 0.0)) for n in names)
-        q_vals_list: list[float] = []
-        for idx, _ in enumerate(names):
-            reward = roi_delta * self._state[idx]
+        if sip_torch is not None and hasattr(self, "model"):
+            self._steps += 1
+            reward = float(roi_delta)
             if extra:
                 reward *= 1.0 + float(extra.get("avg_roi", 0.0))
                 reward *= 1.0 + float(extra.get("pass_rate", 0.0))
-            q = self.strategy.update(
-                {}, self._state, idx, reward, self._state, 1.0, 0.9
-            )
-            q_vals_list.append(float(q))
-        if hasattr(self.strategy, "predict"):
-            q_vals = self.strategy.predict(self._state)
-            q_vals_list = [float(v.item() if hasattr(v, "item") else v) for v in q_vals]
+            state_tensor = sip_torch.tensor(self._state, dtype=sip_torch.float32)
+            self.buffer.append((state_tensor, reward))
+            if self._steps % self.train_interval == 0 and self.buffer:
+                states, rewards = zip(*self.buffer)
+                states_batch = sip_torch.stack(states)
+                rewards_batch = sip_torch.tensor(rewards, dtype=sip_torch.float32).unsqueeze(1)
+                targets = states_batch * rewards_batch
+                preds = self.model(states_batch)
+                loss = self.loss_fn(preds, targets)
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+                self.eval_loss = float(loss.item())
+                self.buffer.clear()
+            with sip_torch.no_grad():
+                q_vals_list = self.model(state_tensor).clamp(0.0, 10.0).tolist()
+        else:
+            q_vals_list: list[float] = []
+            for idx, _ in enumerate(names):
+                reward = roi_delta * self._state[idx]
+                if extra:
+                    reward *= 1.0 + float(extra.get("avg_roi", 0.0))
+                    reward *= 1.0 + float(extra.get("pass_rate", 0.0))
+                q = self.strategy.update(
+                    {}, self._state, idx, reward, self._state, 1.0, 0.9
+                )
+                q_vals_list.append(float(q))
+            if hasattr(self.strategy, "predict"):
+                q_vals = self.strategy.predict(self._state)
+                q_vals_list = [float(v.item() if hasattr(v, "item") else v) for v in q_vals]
         mapping = {
             "roi": 0,
             "efficiency": 1,
@@ -587,7 +651,7 @@ class SynergyWeightLearner:
         }
         for key, idx in mapping.items():
             val = q_vals_list[idx]
-            self.weights[key] = max(0.0, min(val, 10.0))
+            self.weights[key] = max(0.0, min(float(val), 10.0))
         logger.info(
             "updated synergy weights",
             extra=log_record(
