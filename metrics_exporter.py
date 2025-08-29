@@ -683,6 +683,16 @@ sandbox_restart_total = Gauge(
 sandbox_last_failure_ts = Gauge(
     "sandbox_last_failure_ts", "Timestamp of last sandbox failure"
 )
+environment_failure_total = Gauge(
+    "environment_failure_total",
+    "Total number of sandbox environment failures",
+    labelnames=["reason"],
+)
+self_improvement_failure_total = Gauge(
+    "self_improvement_failure_total",
+    "Total number of self-improvement engine failures",
+    labelnames=["reason"],
+)
 
 # Gauges for sandbox cleanup statistics
 cleanup_idle = Gauge(

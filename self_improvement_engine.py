@@ -26,10 +26,10 @@ import logging
 
 try:
     from .logging_utils import log_record, get_logger, setup_logging, set_correlation_id
-except Exception:  # pragma: no cover - simplified environments
+except ImportError:  # pragma: no cover - simplified environments
     try:
         from logging_utils import log_record  # type: ignore
-    except Exception:  # pragma: no cover - last resort
+    except ImportError:  # pragma: no cover - last resort
 
         def log_record(**fields: object) -> dict[str, object]:  # type: ignore
             return fields
@@ -72,6 +72,7 @@ from .metrics_exporter import (
     orphan_modules_legacy_total,
     prediction_mae,
     prediction_reliability,
+    self_improvement_failure_total,
 )
 
 from .composite_workflow_scorer import CompositeWorkflowScorer
@@ -82,11 +83,11 @@ from .workflow_scorer_core import EvaluationResult
 from .workflow_stability_db import WorkflowStabilityDB
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB, WorkflowRecord
-except Exception:  # pragma: no cover - best effort fallback
+except ImportError:  # pragma: no cover - best effort fallback
     WorkflowDB = WorkflowRecord = None  # type: ignore
 try:  # pragma: no cover - optional dependency
     from .workflow_summary_db import WorkflowSummaryDB
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_summary_db import WorkflowSummaryDB  # type: ignore
 
 router = GLOBAL_ROUTER or init_db_router("self_improvement_engine")
@@ -125,15 +126,15 @@ from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
 try:  # pragma: no cover - allow flat imports
     from .module_synergy_grapher import get_synergy_cluster
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from module_synergy_grapher import get_synergy_cluster  # type: ignore
 try:
     from . import security_auditor
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     import security_auditor  # type: ignore
 try:  # pragma: no cover - optional dependency
     import sandbox_runner.environment as environment
-except Exception:  # pragma: no cover - fallback for limited environments
+except ImportError:  # pragma: no cover - fallback for limited environments
     environment = None  # type: ignore
 
 
@@ -155,10 +156,10 @@ def _load_callable(module: str, attr: str) -> Callable[..., Any]:
     try:
         mod = importlib.import_module(module)
         return getattr(mod, attr)
-    except Exception as exc:  # pragma: no cover - best effort logging
-        logging.getLogger(__name__).error(
-            "missing dependency %s.%s: %s", module, attr, exc
-        )
+    except (ImportError, AttributeError) as exc:  # pragma: no cover - best effort logging
+        logger = logging.getLogger(__name__)
+        logger.exception("missing dependency %s.%s", module, attr)
+        self_improvement_failure_total.labels(reason="missing_dependency").inc()
         raise RuntimeError(f"{module} dependency is required for {attr}") from exc
 
 
@@ -189,15 +190,16 @@ def _call_with_retries(
         except Exception as exc:  # pragma: no cover - exercised in tests
             last_exc = exc
             logging.getLogger(__name__).warning(
-                "call to %s failed on attempt %s/%s: %s",
+                "call to %s failed on attempt %s/%s", 
                 getattr(func, "__name__", repr(func)),
                 attempt,
                 retries,
-                exc,
+                exc_info=True,
             )
             if attempt < retries:
                 time.sleep(delay * attempt)
     assert last_exc is not None
+    self_improvement_failure_total.labels(reason="call_retry_failure").inc()
     raise last_exc
 
 
@@ -231,7 +233,7 @@ def generate_patch(
 from .self_test_service import SelfTestService
 try:
     from . import self_test_service as sts
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     import self_test_service as sts  # type: ignore
 from orphan_analyzer import classify_module, analyze_redundancy
 
@@ -247,23 +249,23 @@ from .local_knowledge_module import init_local_knowledge
 from gpt_memory_interface import GPTMemoryInterface
 try:
     from .gpt_knowledge_service import GPTKnowledgeService
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from gpt_knowledge_service import GPTKnowledgeService  # type: ignore
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
 try:  # helper for standardised GPT memory logging
     from .memory_logging import log_with_tags
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from memory_logging import log_with_tags  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .memory_aware_gpt_client import ask_with_memory
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from memory_aware_gpt_client import ask_with_memory  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .local_knowledge_module import LocalKnowledgeModule
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from local_knowledge_module import LocalKnowledgeModule  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .knowledge_retriever import (
@@ -272,8 +274,8 @@ try:  # pragma: no cover - allow flat imports
         recent_feedback,
         recent_improvement_path,
         recent_error_fix,
-)
-except Exception:  # pragma: no cover - fallback for flat layout
+    )
+except ImportError:  # pragma: no cover - fallback for flat layout
     from knowledge_retriever import (  # type: ignore
         get_feedback,
         get_error_fixes,
@@ -283,47 +285,47 @@ except Exception:  # pragma: no cover - fallback for flat layout
     )
 try:  # pragma: no cover - allow flat imports
     from .relevancy_radar import RelevancyRadar, scan as radar_scan, radar
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from relevancy_radar import RelevancyRadar, scan as radar_scan, radar  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .module_retirement_service import ModuleRetirementService
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     try:
         from module_retirement_service import ModuleRetirementService  # type: ignore
-    except Exception:  # pragma: no cover - last resort
+    except ImportError:  # pragma: no cover - last resort
         ModuleRetirementService = object  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .relevancy_metrics_db import RelevancyMetricsDB
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from relevancy_metrics_db import RelevancyMetricsDB  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .intent_clusterer import IntentClusterer
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from intent_clusterer import IntentClusterer  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .universal_retriever import UniversalRetriever
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from universal_retriever import UniversalRetriever  # type: ignore
 try:  # pragma: no cover - optional planner integration
     from .workflow_chain_suggester import WorkflowChainSuggester
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     try:
         from workflow_chain_suggester import WorkflowChainSuggester  # type: ignore
-    except Exception:  # pragma: no cover - best effort
+    except ImportError:  # pragma: no cover - best effort
         WorkflowChainSuggester = None  # type: ignore
 try:  # pragma: no cover - optional planner integration
     from .meta_workflow_planner import MetaWorkflowPlanner
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     try:
         from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
-    except Exception:  # pragma: no cover - best effort
+    except ImportError:  # pragma: no cover - best effort
         MetaWorkflowPlanner = None  # type: ignore
 try:  # pragma: no cover - optional consumer
     from .workflow_synthesizer import consume_planner_suggestions
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     try:
         from workflow_synthesizer import consume_planner_suggestions  # type: ignore
-    except Exception:  # pragma: no cover - best effort
+    except ImportError:  # pragma: no cover - best effort
         consume_planner_suggestions = None  # type: ignore
 try:  # pragma: no cover - optional dependency
     from sandbox_runner.orphan_discovery import (
@@ -331,7 +333,7 @@ try:  # pragma: no cover - optional dependency
         append_orphan_cache,
         append_orphan_traces,
     )
-except Exception:  # pragma: no cover - best effort fallback
+except ImportError:  # pragma: no cover - best effort fallback
     append_orphan_classifications = append_orphan_cache = append_orphan_traces = None  # type: ignore
 from .human_alignment_flagger import (
     HumanAlignmentFlagger,
@@ -346,43 +348,43 @@ from .alignment_review_agent import AlignmentReviewAgent
 from .governance import check_veto, load_rules
 try:  # pragma: no cover - allow flat imports
     from .evaluation_dashboard import append_governance_result
-except Exception:  # pragma: no cover - fallback for flat layout or missing deps
+except ImportError:  # pragma: no cover - fallback for flat layout or missing deps
     try:
         from evaluation_dashboard import append_governance_result  # type: ignore
-    except Exception:  # pragma: no cover - best effort fallback
+    except ImportError:  # pragma: no cover - best effort fallback
         append_governance_result = lambda *a, **k: None  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .deployment_governance import evaluate as deployment_evaluate
-except Exception:  # pragma: no cover - fallback for flat layout or missing deps
+except ImportError:  # pragma: no cover - fallback for flat layout or missing deps
     try:
         from deployment_governance import evaluate as deployment_evaluate  # type: ignore
-    except Exception:  # pragma: no cover - best effort fallback
+    except ImportError:  # pragma: no cover - best effort fallback
         def deployment_evaluate(*_: object, **__: object) -> dict[str, object] | None:
             """Fallback deployment evaluation used when governance tools are missing."""
             return None
 try:
     from .borderline_bucket import BorderlineBucket
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from borderline_bucket import BorderlineBucket  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .foresight_gate import ForesightDecision, is_foresight_safe_to_promote
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from foresight_gate import ForesightDecision, is_foresight_safe_to_promote  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .upgrade_forecaster import UpgradeForecaster
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from upgrade_forecaster import UpgradeForecaster  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .workflow_graph import WorkflowGraph
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_graph import WorkflowGraph  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .forecast_logger import ForecastLogger, log_forecast_record
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from forecast_logger import ForecastLogger, log_forecast_record  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .workflow_evolution_manager import WorkflowEvolutionManager
-except Exception:  # pragma: no cover - fallback for flat layout
+except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_evolution_manager import WorkflowEvolutionManager  # type: ignore
 
 logger = get_logger(__name__)

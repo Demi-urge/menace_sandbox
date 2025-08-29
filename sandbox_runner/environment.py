@@ -19,7 +19,7 @@ from .orphan_integration import integrate_and_graph_orphans
 
 try:
     import resource
-except Exception:  # pragma: no cover - not available on some platforms
+except (ImportError, OSError):  # pragma: no cover - not available on some platforms
     resource = None  # type: ignore
 import shutil
 import subprocess
@@ -54,22 +54,23 @@ from filelock import FileLock
 from dataclasses import dataclass, asdict
 
 from .workflow_sandbox_runner import WorkflowSandboxRunner
+from ..metrics_exporter import environment_failure_total
 
 try:
     from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     DiagnosticManager = None  # type: ignore
     ResolutionRecord = None  # type: ignore
 
 try:
     import psutil  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
 _USE_MODULE_SYNERGY = os.getenv("SANDBOX_USE_MODULE_SYNERGY") == "1"
 try:  # pragma: no cover - optional dependency
     from module_synergy_grapher import get_synergy_cluster
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     def get_synergy_cluster(*_args: object, **_kwargs: object) -> set[str]:  # type: ignore
         return set()
 
@@ -82,7 +83,7 @@ if TYPE_CHECKING:  # pragma: no cover
 _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
 try:  # pragma: no cover - optional dependency
     from relevancy_radar import track_usage as _radar_track_module_usage
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     def _radar_track_module_usage(_module: str) -> None:  # type: ignore
         return None
 
@@ -96,8 +97,9 @@ def _async_radar_track(module: str) -> None:
         threading.Thread(
             target=_radar_track_module_usage, args=(module,), daemon=True
         ).start()
-    except Exception:
-        pass
+    except RuntimeError as exc:
+        logger.exception("relevancy radar thread failed: %s", exc)
+        environment_failure_total.labels(reason="radar_thread_start").inc()
 
 import builtins
 
@@ -108,24 +110,18 @@ def _tracking_import(
     name, globals=None, locals=None, fromlist=(), level=0
 ):  # pragma: no cover - thin wrapper
     mod = _original_import(name, globals, locals, fromlist, level)
-    try:
-        _async_radar_track(name)
-    except Exception:
-        pass
-    try:  # lazily resolve helper to avoid early import cycles
-        record_fn = globals().get("record_module_usage")
-        module_file = getattr(mod, "__file__", "")
-        if record_fn and module_file:
-            root = globals().get("ROOT")
-            path = Path(module_file).resolve()
-            if root:
-                try:
-                    path = path.relative_to(root)
-                except Exception:
-                    pass
-            record_fn(path.as_posix())
-    except Exception:
-        pass
+    _async_radar_track(name)
+    record_fn = globals().get("record_module_usage")
+    module_file = getattr(mod, "__file__", "")
+    if record_fn and module_file:
+        root = globals().get("ROOT")
+        path = Path(module_file).resolve()
+        if root:
+            try:
+                path = path.relative_to(root)
+            except ValueError:
+                pass
+        record_fn(path.as_posix())
     return mod
 
 
@@ -164,12 +160,12 @@ if os.name == "nt" and "fcntl" not in sys.modules:
         fcntl_stub.LOCK_UN = 8
 
         sys.modules["fcntl"] = fcntl_stub
-    except Exception:
+    except (OSError, ImportError):
         pass
 
 try:  # pragma: no cover - optional dependency
     from pyroute2 import IPRoute, NSPopen, netns
-except Exception as exc:
+except (ImportError, OSError) as exc:
     IPRoute = None  # type: ignore
     NSPopen = None  # type: ignore
     netns = None  # type: ignore
@@ -177,12 +173,12 @@ except Exception as exc:
 
 try:
     from faker import Faker  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     Faker = None  # type: ignore
 
 try:
     from hypothesis import strategies as _hyp_strats  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     _hyp_strats = None  # type: ignore
 
 _FAKER = Faker() if Faker is not None else None
