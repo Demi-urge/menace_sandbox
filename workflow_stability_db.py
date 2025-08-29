@@ -77,10 +77,13 @@ class WorkflowStabilityDB:
         self,
         workflow_id: str,
         roi: float,
-        failures: int,
+        failures: float,
         entropy: float,
         *,
         roi_delta: float | None = None,
+        roi_var: float = 0.0,
+        failures_var: float = 0.0,
+        entropy_var: float = 0.0,
     ) -> None:
         """Persist metrics for ``workflow_id``.
 
@@ -97,6 +100,12 @@ class WorkflowStabilityDB:
         roi_delta:
             Optional ROI delta.  When omitted it is derived from the previous
             stored ROI.
+        roi_var:
+            Population variance of observed ROI across runs.
+        failures_var:
+            Population variance of failure counts across runs.
+        entropy_var:
+            Population variance of entropy across runs.
         """
 
         wf = str(workflow_id)
@@ -108,8 +117,11 @@ class WorkflowStabilityDB:
             {
                 "roi": float(roi),
                 "roi_delta": float(roi_delta),
-                "failures": int(failures),
+                "roi_var": float(roi_var),
+                "failures": float(failures),
+                "failures_var": float(failures_var),
                 "entropy": float(entropy),
+                "entropy_var": float(entropy_var),
             }
         )
         self.data[wf] = entry
