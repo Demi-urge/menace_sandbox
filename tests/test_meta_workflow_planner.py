@@ -259,6 +259,86 @@ def test_compose_pipeline_transition_matrix(monkeypatch):
     }
     workflows = {"wf1": {"domain": "a"}, "wf2": {"domain": "a"}, "wf3": {"domain": "b"}}
     pipeline = planner.compose_pipeline("wf1", workflows, length=2)
+    assert pipeline == ["wf1", "wf2"]
+
+
+def test_compose_pipeline_missing_transition(monkeypatch, caplog):
+    monkeypatch.setattr(mwp, "ROITracker", None)
+    monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
+    monkeypatch.setattr(mwp, "WorkflowSynergyComparator", DummySynergyComparator)
+
+    embeddings = {
+        "wf1": [1.0, 0.0],
+        "wf2": [0.6, 0.8],
+        "wf3": [0.9, 0.1],
+    }
+
+    def fake_encode(self, wid, _spec):
+        return embeddings[wid]
+
+    monkeypatch.setattr(mwp.MetaWorkflowPlanner, "encode_workflow", fake_encode)
+
+    planner = MetaWorkflowPlanner(graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({}))
+    planner.domain_index.update({"a": 1, "b": 2, "c": 3})
+
+    def fake_trans_probs(self):
+        return {
+            (planner.domain_index["a"], planner.domain_index["b"]): 0.5,
+        }
+
+    monkeypatch.setattr(mwp.MetaWorkflowPlanner, "transition_probabilities", fake_trans_probs)
+
+    workflows = {
+        "wf1": {"domain": "a"},
+        "wf2": {"domain": "b"},
+        "wf3": {"domain": "c"},
+    }
+
+    with caplog.at_level("DEBUG"):
+        pipeline = planner.compose_pipeline("wf1", workflows, length=2)
+
+    assert pipeline == ["wf1", "wf3"]
+    assert "no transition stats" in caplog.text
+
+
+def test_compose_pipeline_negative_transition(monkeypatch):
+    monkeypatch.setattr(mwp, "ROITracker", None)
+    monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
+    monkeypatch.setattr(mwp, "WorkflowSynergyComparator", DummySynergyComparator)
+
+    embeddings = {"wf1": [1.0], "wf2": [2.0], "wf3": [3.0]}
+
+    def fake_encode(self, wid, _spec):
+        return embeddings[wid]
+
+    def fake_cosine(a, b):
+        pair = (a[0], b[0])
+        if pair in ((1.0, 2.0), (2.0, 1.0)):
+            return 0.95
+        if pair in ((1.0, 3.0), (3.0, 1.0)):
+            return 0.75
+        return 0.0
+
+    monkeypatch.setattr(mwp.MetaWorkflowPlanner, "encode_workflow", fake_encode)
+    monkeypatch.setattr(mwp, "cosine_similarity", fake_cosine)
+
+    planner = MetaWorkflowPlanner(graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({}))
+    planner.domain_index.update({"a": 1, "b": 2, "c": 3})
+
+    def fake_trans_probs(self):
+        return {
+            (planner.domain_index["a"], planner.domain_index["b"]): -0.9,
+        }
+
+    monkeypatch.setattr(mwp.MetaWorkflowPlanner, "transition_probabilities", fake_trans_probs)
+
+    workflows = {
+        "wf1": {"domain": "a"},
+        "wf2": {"domain": "b"},
+        "wf3": {"domain": "c"},
+    }
+
+    pipeline = planner.compose_pipeline("wf1", workflows, length=2)
     assert pipeline == ["wf1", "wf3"]
 
 
