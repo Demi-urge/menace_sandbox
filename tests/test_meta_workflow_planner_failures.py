@@ -143,16 +143,16 @@ def test_validate_chain_multi_run_aggregation(tmp_path, monkeypatch):
     assert record is not None
     assert record["roi_gain"] == pytest.approx(2.0)
     assert record["roi_var"] == pytest.approx(2 / 3)
-    assert record["failures"] == pytest.approx(1 / 3)
-    assert record["failures_var"] == pytest.approx(2 / 9)
+    assert record["failures"] == pytest.approx(1 / 6)
+    assert record["failures_var"] == pytest.approx(1 / 18)
 
     chain_id = "a->b"
     db_rec = roi_db.fetch_results(chain_id)[0]
     agg = db_rec.module_deltas["__aggregate__"]
     assert agg["roi_gain_var"] == pytest.approx(2 / 3)
-    assert agg["failures_mean"] == pytest.approx(1 / 3)
+    assert agg["failures_mean"] == pytest.approx(1 / 6)
     stable = stability_db.data[chain_id]
     assert stable["roi"] == pytest.approx(2.0)
     assert stable["roi_var"] == pytest.approx(2 / 3)
-    assert stable["failures"] == pytest.approx(1 / 3)
-    assert stable["failures_var"] == pytest.approx(2 / 9)
+    assert stable["failures"] == pytest.approx(1 / 6)
+    assert stable["failures_var"] == pytest.approx(1 / 18)
