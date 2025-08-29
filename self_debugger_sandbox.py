@@ -19,6 +19,8 @@ import math
 from statistics import pstdev
 import sqlite3
 import threading
+import importlib
+from contextlib import contextmanager
 from typing import Callable, Mapping
 from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
@@ -101,73 +103,84 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.smoothing_factor = max(0.0, min(1.0, float(smoothing_factor))) or 0.5
         self._score_db: PatchHistoryDB | None = None
         self._db_lock = threading.Lock()
+        self._history_lock = threading.Lock()
         self._history_conn: sqlite3.Connection | None = None
         self._history_records: list[tuple[float, float, float, float, float, float]] = []
         try:
             self._history_conn = router.get_connection("flakiness_history")
-            self._history_conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS flakiness_history(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    filename TEXT,
-                    flakiness REAL,
-                    ts TEXT
+            with self._history_lock:
+                self._history_conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS flakiness_history(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        filename TEXT,
+                        flakiness REAL,
+                        ts TEXT
+                    )
+                    """
                 )
-                """
-            )
-            self._history_conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS composite_history(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    coverage_delta REAL,
-                    error_delta REAL,
-                    roi_delta REAL,
-                    complexity REAL,
-                    synergy_roi REAL,
-                    synergy_efficiency REAL,
-                    synergy_resilience REAL,
-                    synergy_antifragility REAL,
-                    flakiness REAL,
-                    score REAL,
-                    ts TEXT
+                self._history_conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS composite_history(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        coverage_delta REAL,
+                        error_delta REAL,
+                        roi_delta REAL,
+                        complexity REAL,
+                        synergy_roi REAL,
+                        synergy_efficiency REAL,
+                        synergy_resilience REAL,
+                        synergy_antifragility REAL,
+                        flakiness REAL,
+                        score REAL,
+                        ts TEXT
+                    )
+                    """
                 )
-                """
-            )
-            self._history_conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS patch_scores(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    description TEXT,
-                    result TEXT,
-                    coverage_delta REAL,
-                    error_delta REAL,
-                    roi_delta REAL,
-                    complexity REAL,
-                    synergy_roi REAL,
-                    synergy_efficiency REAL,
-                    synergy_resilience REAL,
-                    synergy_antifragility REAL,
-                    flakiness REAL,
-                    runtime_impact REAL,
-                    score REAL,
-                    ts TEXT
+                self._history_conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS patch_scores(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        description TEXT,
+                        result TEXT,
+                        coverage_delta REAL,
+                        error_delta REAL,
+                        roi_delta REAL,
+                        complexity REAL,
+                        synergy_roi REAL,
+                        synergy_efficiency REAL,
+                        synergy_resilience REAL,
+                        synergy_antifragility REAL,
+                        flakiness REAL,
+                        runtime_impact REAL,
+                        score REAL,
+                        ts TEXT
+                    )
+                    """
                 )
-                """
-            )
-            self._history_conn.commit()
+                self._history_conn.commit()
             self._load_history_stats()
         except Exception:
             self.logger.exception("score history init failed")
             self._history_conn = None
+        self._test_timeout = float(os.getenv("TEST_RUN_TIMEOUT", "300"))
+        self._test_retries = int(os.getenv("TEST_RUN_RETRIES", "2"))
         self._score_backend = None
-        backend_url = os.getenv("PATCH_SCORE_BACKEND_URL")
-        if backend_url:
+        backend_spec = os.getenv("PATCH_SCORE_BACKEND") or os.getenv(
+            "PATCH_SCORE_BACKEND_URL"
+        )
+        if backend_spec:
             try:
-                from .patch_score_backend import backend_from_url
-
-                self._score_backend = backend_from_url(backend_url)
+                self._score_backend = self._load_score_backend(backend_spec)
+                # fail fast check
+                check = getattr(self._score_backend, "ping", None)
+                if callable(check):
+                    check()
+                else:
+                    self._score_backend.fetch_recent(1)
             except Exception:
                 self.logger.exception("patch score backend init failed")
+                raise
         self._metric_stats: dict[str, tuple[float, float]] = {
             "coverage": (0.0, 1.0),
             "error": (0.0, 1.0),
@@ -183,6 +196,40 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._last_test_log: Path | None = None
         self.graph = KnowledgeGraph()
         self.error_logger = ErrorLogger(knowledge_graph=self.graph)
+
+    # ------------------------------------------------------------------
+    def _load_score_backend(self, spec: str):
+        """Instantiate a scoring backend from *spec*."""
+        from .patch_score_backend import backend_from_url, PatchScoreBackend
+
+        if "://" in spec or spec.startswith("file:"):
+            return backend_from_url(spec)
+        mod_name, _, cls_name = spec.partition(":")
+        if not cls_name:
+            mod_name, _, cls_name = spec.rpartition(".")
+        module = importlib.import_module(mod_name)
+        backend_cls = getattr(module, cls_name)
+        backend = backend_cls()
+        assert isinstance(backend, PatchScoreBackend)
+        return backend
+
+    # ------------------------------------------------------------------
+    @contextmanager
+    def _history_db(self):
+        """Yield the history connection under a thread-safe lock."""
+        if not self._history_conn:
+            yield None
+            return
+        with self._history_lock:
+            try:
+                yield self._history_conn
+                self._history_conn.commit()
+            except Exception:
+                try:
+                    self._history_conn.rollback()
+                except Exception:
+                    pass
+                raise
 
     # ------------------------------------------------------------------
     def _record_exception(self, exc: Exception) -> TelemetryEvent:
@@ -280,7 +327,20 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            out_b, err_b = await proc.communicate()
+            try:
+                out_b, err_b = await asyncio.wait_for(
+                    proc.communicate(), timeout=self._test_timeout
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                out_b, err_b = await proc.communicate()
+                output = (out_b or b"") + (err_b or b"")
+                out_text = output.decode("utf-8", "replace")
+                self.logger.error(
+                    "test run timeout",
+                    extra=log_record(cmd=cmd, output=out_text),
+                )
+                raise CoverageSubprocessError(out_text)
             output = (out_b or b"") + (err_b or b"")
             out_text = output.decode("utf-8", "replace")
             if proc.returncode != 0:
@@ -288,11 +348,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     "test run failed",
                     extra=log_record(cmd=cmd, rc=proc.returncode, output=out_text),
                 )
-            else:
-                self.logger.debug(
-                    "test run output", extra=log_record(cmd=cmd, output=out_text)
-                )
-            return data_file, int(proc.returncode), out_text
+                raise CoverageSubprocessError(out_text)
+            self.logger.debug(
+                "test run output", extra=log_record(cmd=cmd, output=out_text)
+            )
+            return data_file, 0, out_text
 
         # Support a list of paths treated as individual test sets
         if paths and isinstance(paths[0], (list, tuple)):
@@ -367,7 +427,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
         start = time.perf_counter()
         try:
-            percent = asyncio.run(self._coverage_percent(test_paths, env))
+            percent = with_retry(
+                lambda: asyncio.run(self._coverage_percent(test_paths, env)),
+                attempts=self._test_retries,
+                logger=self.logger,
+                exc=CoverageSubprocessError,
+            )
         except CoverageSubprocessError as exc:
             runtime = time.perf_counter() - start
             log_file = sandbox_dir / f"fail_{int(time.time()*1000)}.log"
@@ -436,15 +501,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             except Exception:
                 self.logger.exception("flakiness history update failed")
 
-        if self._history_conn:
-            try:
-                self._history_conn.execute(
-                    "INSERT INTO flakiness_history(filename, flakiness, ts) VALUES(?,?,?)",
-                    (str(path), float(flakiness), datetime.utcnow().isoformat()),
-                )
-                self._history_conn.commit()
-            except Exception:
-                self.logger.exception("local flakiness history update failed")
+        try:
+            with self._history_db() as conn:
+                if conn:
+                    conn.execute(
+                        "INSERT INTO flakiness_history(filename, flakiness, ts) VALUES(?,?,?)",
+                        (str(path), float(flakiness), datetime.utcnow().isoformat()),
+                    )
+        except Exception:
+            self.logger.exception("local flakiness history update failed")
 
         return flakiness
 
@@ -507,15 +572,16 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             self._history_records = []
             return
         try:
-            cur = self._history_conn.execute(
-                (
-                    "SELECT coverage_delta, error_delta, roi_delta, complexity, "
-                    "synergy_roi, synergy_efficiency FROM composite_history "
-                    "ORDER BY id DESC LIMIT ?"
-                ),
-                (limit,),
-            )
-            rows = cur.fetchall()
+            with self._history_db() as conn:
+                cur = conn.execute(
+                    (
+                        "SELECT coverage_delta, error_delta, roi_delta, complexity, "
+                        "synergy_roi, synergy_efficiency FROM composite_history "
+                        "ORDER BY id DESC LIMIT ?"
+                    ),
+                    (limit,),
+                )
+                rows = cur.fetchall()
             self._history_records = [
                 (
                     float(r[0] or 0.0),
@@ -740,29 +806,30 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         if not self._history_conn:
             return []
         try:
-            cur = self._history_conn.execute(
-                """
-                SELECT
-                    description,
-                    result,
-                    coverage_delta,
-                    error_delta,
-                    roi_delta,
-                    complexity,
-                    synergy_roi,
-                    synergy_efficiency,
-                    synergy_resilience,
-                    synergy_antifragility,
-                    flakiness,
-                    runtime_impact,
-                    score,
-                    ts
-                FROM patch_scores
-                ORDER BY id DESC LIMIT ?
-                """,
-                (int(limit),),
-            )
-            rows = cur.fetchall()
+            with self._history_db() as conn:
+                cur = conn.execute(
+                    """
+                    SELECT
+                        description,
+                        result,
+                        coverage_delta,
+                        error_delta,
+                        roi_delta,
+                        complexity,
+                        synergy_roi,
+                        synergy_efficiency,
+                        synergy_resilience,
+                        synergy_antifragility,
+                        flakiness,
+                        runtime_impact,
+                        score,
+                        ts
+                    FROM patch_scores
+                    ORDER BY id DESC LIMIT ?
+                    """,
+                    (int(limit),),
+                )
+                rows = cur.fetchall()
             return [tuple(r) for r in rows]
         except Exception:
             self.logger.exception("recent scores fetch failed")
@@ -868,41 +935,41 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         except Exception:
             return 0.0
 
-        if self._history_conn:
-            try:
-                self._history_conn.execute(
-                    """
-                    INSERT INTO composite_history(
-                        coverage_delta,
-                        error_delta,
-                        roi_delta,
-                        complexity,
-                        synergy_roi,
-                        synergy_efficiency,
-                        synergy_resilience,
-                        synergy_antifragility,
-                        flakiness,
-                        score,
-                        ts
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        float(coverage_delta),
-                        float(error_delta),
-                        float(roi_delta),
-                        float(complexity),
-                        float(synergy_roi),
-                        float(synergy_efficiency),
-                        float(synergy_resilience),
-                        float(synergy_antifragility),
-                        float(flakiness),
-                        float(score),
-                        datetime.utcnow().isoformat(),
-                    ),
-                )
-                self._history_conn.commit()
-            except Exception:
-                self.logger.exception("score history persistence failed")
+        try:
+            with self._history_db() as conn:
+                if conn:
+                    conn.execute(
+                        """
+                        INSERT INTO composite_history(
+                            coverage_delta,
+                            error_delta,
+                            roi_delta,
+                            complexity,
+                            synergy_roi,
+                            synergy_efficiency,
+                            synergy_resilience,
+                            synergy_antifragility,
+                            flakiness,
+                            score,
+                            ts
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            float(coverage_delta),
+                            float(error_delta),
+                            float(roi_delta),
+                            float(complexity),
+                            float(synergy_roi),
+                            float(synergy_efficiency),
+                            float(synergy_resilience),
+                            float(synergy_antifragility),
+                            float(flakiness),
+                            float(score),
+                            datetime.utcnow().isoformat(),
+                        ),
+                    )
+        except Exception:
+            self.logger.exception("score history persistence failed")
 
         return score
 
@@ -984,47 +1051,47 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         extra=log_record(action="store", error=str(exc)),
                     )
                     self.logger.exception("patch score backend store failed")
-            if self._history_conn:
-                try:
-                    self._history_conn.execute(
-                        """
-                        INSERT INTO patch_scores(
-                            description,
-                            result,
-                            coverage_delta,
-                            error_delta,
-                            roi_delta,
-                            complexity,
-                            synergy_roi,
-                            synergy_efficiency,
-                            synergy_resilience,
-                            synergy_antifragility,
-                            flakiness,
-                            runtime_impact,
-                            score,
-                            ts
-                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                        """,
-                        (
-                            description,
-                            result,
-                            None if coverage_delta is None else float(coverage_delta),
-                            None if error_delta is None else float(error_delta),
-                            None if roi_delta is None else float(roi_delta),
-                            None if complexity is None else float(complexity),
-                            None if synergy_roi is None else float(synergy_roi),
-                            None if synergy_efficiency is None else float(synergy_efficiency),
-                            None if synergy_resilience is None else float(synergy_resilience),
-                            None if synergy_antifragility is None else float(synergy_antifragility),
-                            None if flakiness is None else float(flakiness),
-                            None if runtime_impact is None else float(runtime_impact),
-                            None if score is None else float(score),
-                            datetime.utcnow().isoformat(),
-                        ),
-                    )
-                    self._history_conn.commit()
-                except Exception:
-                    self.logger.exception("patch score persistence failed")
+            try:
+                with self._history_db() as conn:
+                    if conn:
+                        conn.execute(
+                            """
+                            INSERT INTO patch_scores(
+                                description,
+                                result,
+                                coverage_delta,
+                                error_delta,
+                                roi_delta,
+                                complexity,
+                                synergy_roi,
+                                synergy_efficiency,
+                                synergy_resilience,
+                                synergy_antifragility,
+                                flakiness,
+                                runtime_impact,
+                                score,
+                                ts
+                            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            """,
+                            (
+                                description,
+                                result,
+                                None if coverage_delta is None else float(coverage_delta),
+                                None if error_delta is None else float(error_delta),
+                                None if roi_delta is None else float(roi_delta),
+                                None if complexity is None else float(complexity),
+                                None if synergy_roi is None else float(synergy_roi),
+                                None if synergy_efficiency is None else float(synergy_efficiency),
+                                None if synergy_resilience is None else float(synergy_resilience),
+                                None if synergy_antifragility is None else float(synergy_antifragility),
+                                None if flakiness is None else float(flakiness),
+                                None if runtime_impact is None else float(runtime_impact),
+                                None if score is None else float(score),
+                                datetime.utcnow().isoformat(),
+                            ),
+                        )
+            except Exception:
+                self.logger.exception("patch score persistence failed")
         except Exception:
             self.logger.exception("audit trail logging failed")
 
