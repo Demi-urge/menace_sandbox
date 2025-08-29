@@ -483,6 +483,31 @@ class MetaWorkflowPlanner:
         return clusters
 
     # ------------------------------------------------------------------
+    def _workflow_domain(
+        self,
+        workflow_id: str,
+        workflows: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> str:
+        """Return domain label for ``workflow_id`` using CodeDB tags or metadata."""
+
+        domain = ""
+        if self.code_db is not None:
+            try:
+                if hasattr(self.code_db, "get_context_tags"):
+                    tags = self.code_db.get_context_tags(workflow_id) or []
+                elif hasattr(self.code_db, "context_tags"):
+                    tags = self.code_db.context_tags(workflow_id) or []  # type: ignore[attr-defined]
+                else:
+                    tags = []
+                if tags:
+                    domain = str(tags[0]).lower()
+            except Exception:
+                domain = ""
+        if not domain and workflows is not None:
+            domain = str(workflows.get(workflow_id, {}).get("domain", "")).lower()
+        return domain
+
+    # ------------------------------------------------------------------
     def compose_pipeline(
         self,
         start: str,
@@ -519,7 +544,24 @@ class MetaWorkflowPlanner:
         graph = self.graph or WorkflowGraph()
 
         current_vec = self.encode_workflow(start, workflows[start])
-        prev_domain = str(workflows.get(start, {}).get("domain", "")).lower()
+        prev_domain = self._workflow_domain(start, workflows)
+
+        transitions = self.cluster_map.setdefault(("__domain_transitions__",), {})
+        if not transitions:
+            temp: Dict[tuple[str, str], Dict[str, float]] = {}
+            for chain, info in self.cluster_map.items():
+                if not chain or chain == ("__domain_transitions__",):
+                    continue
+                roi_hist = info.get("roi_history", [])
+                roi_gain = roi_hist[-1] if roi_hist else 0.0
+                domains = [self._workflow_domain(wid, workflows) for wid in chain]
+                for a, b in zip(domains, domains[1:]):
+                    if not a or not b:
+                        continue
+                    entry = temp.setdefault((a, b), {"count": 0, "roi": 0.0})
+                    entry["count"] += 1
+                    entry["roi"] += (roi_gain - entry["roi"]) / entry["count"]
+            transitions.update(temp)
 
         while available and len(pipeline) < length:
             best_id: str | None = None
@@ -554,12 +596,20 @@ class MetaWorkflowPlanner:
                 base = similarity_weight * sim + synergy_weight * synergy
                 score = base * (1.0 + roi_weight * roi)
 
-                cand_domain = str(workflows.get(wid, {}).get("domain", "")).lower()
+                cand_domain = self._workflow_domain(wid, workflows)
                 if prev_domain and cand_domain:
-                    if cand_domain == prev_domain:
-                        score *= 0.8
+                    entry = transitions.get((prev_domain, cand_domain), {"count": 0, "roi": 0.0})
+                    if transitions:
+                        avg_count = fmean(v["count"] for v in transitions.values())
+                        avg_roi = fmean(v["roi"] for v in transitions.values())
+                        count_weight = (avg_count + 1.0) / (entry["count"] + 1.0)
+                        roi_weight = 1.0 + (entry["roi"] - avg_roi)
+                        score *= max(0.0, count_weight * roi_weight)
                     else:
-                        score *= 1.1
+                        if cand_domain == prev_domain:
+                            score *= 0.8
+                        else:
+                            score *= 1.1
 
                 if score > best_score:
                     best_id = wid
@@ -570,7 +620,7 @@ class MetaWorkflowPlanner:
             pipeline.append(best_id)
             available.remove(best_id)
             current = best_id
-            prev_domain = str(workflows.get(current, {}).get("domain", "")).lower()
+            prev_domain = self._workflow_domain(current, workflows)
             if best_vec is not None:
                 current_vec = best_vec
 
@@ -1823,6 +1873,15 @@ class MetaWorkflowPlanner:
         decay = 0.9
         prev_score = float(info.get("score", 0.0))
         info["score"] = prev_score * decay + new_score * (1.0 - decay)
+
+        matrix = self.cluster_map.setdefault(("__domain_transitions__",), {})
+        domains = [self._workflow_domain(wid) for wid in chain]
+        for a, b in zip(domains, domains[1:]):
+            if not a or not b:
+                continue
+            entry = matrix.setdefault((a, b), {"count": 0, "roi": 0.0})
+            entry["count"] += 1
+            entry["roi"] += (roi_gain - entry["roi"]) / entry["count"]
 
         self._save_cluster_map()
         return info
