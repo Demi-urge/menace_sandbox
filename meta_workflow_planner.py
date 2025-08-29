@@ -2126,7 +2126,7 @@ class MetaWorkflowPlanner:
         return info
 
     # ------------------------------------------------------------------
-    def transition_probabilities(self) -> Dict[tuple[str, str], float]:
+    def transition_probabilities(self, *, smoothing: float = 0.0) -> Dict[tuple[str, str], float]:
         """Return normalized transition weights as probabilities.
 
         The transition matrix stored under the special
@@ -2135,6 +2135,14 @@ class MetaWorkflowPlanner:
         the counts and ROI deltas into a probability distribution where pairs
         with higher counts and positive ROI changes receive larger weight.
         Transitions with negative ROI are assigned zero probability.
+
+        Parameters
+        ----------
+        smoothing:
+            Optional non-negative value added to every transition weight prior
+            to normalisation.  This acts as a mild uniform prior so that unseen
+            transitions retain a tiny probability instead of being completely
+            discarded.
         """
 
         matrix = self.cluster_map.get(("__domain_transitions__",), {})
@@ -2143,7 +2151,8 @@ class MetaWorkflowPlanner:
             count = float(stats.get("count", 0.0))
             delta = float(stats.get("delta_roi", stats.get("roi", 0.0)))
             weight = max(0.0, count * delta)
-            weights[pair] = weight
+            if weight > 0.0 or smoothing:
+                weights[pair] = weight + smoothing
         total = sum(weights.values())
         if total <= 0:
             return {pair: 0.0 for pair in weights}
@@ -2640,7 +2649,13 @@ def find_synergistic_workflows(workflow_id: str, top_k: int = 5) -> List[Dict[st
 
 # ---------------------------------------------------------------------------
 def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
-    """Return high-synergy workflow sequence starting from ``start_workflow_id``."""
+    """Return high-synergy workflow sequence starting from ``start_workflow_id``.
+
+    The chain is biased toward historically successful domain transitions using
+    :func:`MetaWorkflowPlanner.transition_probabilities`.  When transition
+    statistics are available, moving between domains with higher ROI deltas is
+    preferred, e.g. ``YouTube -> Reddit -> Email``.
+    """
 
     embeddings = _load_embeddings()
     start_vec = embeddings.get(start_workflow_id)
@@ -2675,6 +2690,10 @@ def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
             )
     roi_scores = _roi_scores(tracker)
 
+    planner = MetaWorkflowPlanner()
+    trans_probs = planner.transition_probabilities()
+    prev_domain = planner._workflow_domain(start_workflow_id)[0]
+
     chain = [start_workflow_id]
     current = start_workflow_id
     for _ in range(max(0, length - 1)):
@@ -2686,6 +2705,9 @@ def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
                 continue
             sim = cosine_similarity(current_vec, vec)
             score = sim * roi_scores.get(wf_id, 0.0)
+            cand_domain = planner._workflow_domain(wf_id)[0]
+            if prev_domain >= 0 and cand_domain >= 0:
+                score *= 1.0 + trans_probs.get((prev_domain, cand_domain), 0.0)
             if score > best_score:
                 best_id = wf_id
                 best_score = score
@@ -2693,7 +2715,29 @@ def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
             break
         chain.append(best_id)
         current = best_id
+        prev_domain = planner._workflow_domain(best_id)[0]
     return chain
+
+
+# ---------------------------------------------------------------------------
+def plan_pipeline(
+    start_workflow_id: str,
+    workflows: Mapping[str, Mapping[str, Any]],
+    *,
+    length: int = 5,
+) -> List[str]:
+    """Plan a workflow pipeline biased by domain transition ROI.
+
+    This convenience wrapper instantiates :class:`MetaWorkflowPlanner` and uses
+    :meth:`MetaWorkflowPlanner.compose_pipeline` which consults
+    :func:`transition_probabilities` to favour historically profitable domain
+    shifts.
+    """
+
+    planner = MetaWorkflowPlanner()
+    # Ensure transition statistics are loaded before composing the pipeline.
+    planner.transition_probabilities()
+    return planner.compose_pipeline(start_workflow_id, workflows, length=length)
 
 
 # ---------------------------------------------------------------------------
@@ -2893,6 +2937,7 @@ __all__ = [
     "MetaWorkflowPlanner",
     "simulate_meta_workflow",
     "compose_meta_workflow",
+    "plan_pipeline",
     "find_synergy_chain",
     "find_synergy_candidates",
     "find_synergistic_workflows",
