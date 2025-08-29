@@ -69,6 +69,43 @@ import os
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
+# Stub external dependency used during sandbox imports
+
+
+class _NeuroStub(types.SimpleNamespace):
+    def __getattr__(self, name):  # pragma: no cover - simple default
+        return lambda *a, **k: [] if name.startswith("get") else None
+
+
+sys.modules.setdefault("neurosales", _NeuroStub())
+
+# Additional stubs to avoid heavy imports
+sys.modules.setdefault(
+    "environment_bootstrap", types.SimpleNamespace(EnvironmentBootstrapper=object)
+)
+sys.modules.setdefault(
+    "light_bootstrap", types.SimpleNamespace(EnvironmentBootstrapper=object)
+)
+sys.modules.setdefault(
+    "vector_service.embedding_scheduler",
+    types.SimpleNamespace(start_scheduler_from_env=lambda *a, **k: None),
+)
+sys.modules.setdefault(
+    "unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object)
+)
+sys.modules.setdefault(
+    "automated_reviewer", types.SimpleNamespace(AutomatedReviewer=object)
+)
+sys.modules.setdefault(
+    "jsonschema", types.SimpleNamespace(ValidationError=Exception, validate=lambda *a, **k: None)
+)
+sys.modules.setdefault(
+    "quick_fix_engine", types.SimpleNamespace(generate_patch=lambda *a, **k: None)
+)
+sys.modules.setdefault("menace.quick_fix_engine", sys.modules["quick_fix_engine"])
+import patch_score_backend as _psb
+sys.modules.setdefault("menace.patch_score_backend", _psb)
+
 # Create a lightweight menace package with stub modules used during import
 menace_pkg = types.ModuleType("menace")
 menace_pkg.__path__ = []
@@ -602,6 +639,58 @@ def test_flakiness_variable(monkeypatch):
     monkeypatch.setattr(dbg, "_run_tests", fake_run)
     flakiness = dbg._test_flakiness(Path("dummy.py"))
     assert abs(flakiness - 6.324) < 0.001
+
+
+def test_flakiness_handles_failed_runs(monkeypatch):
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), flakiness_runs=5)
+    vals = [50.0, RuntimeError("boom"), 70.0, RuntimeError("boom"), 50.0]
+
+    def flaky_run(path, env=None):
+        v = vals.pop(0)
+        if isinstance(v, Exception):
+            raise v
+        return v, 0.0
+
+    monkeypatch.setattr(dbg, "_run_tests", flaky_run)
+    flakiness = dbg._test_flakiness(Path("dummy.py"))
+    assert flakiness > 10.0
+
+
+def test_run_tests_retries_on_subprocess_failure(monkeypatch):
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+
+    calls = {"n": 0}
+
+    async def fake_cov(paths, env=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise sds.CoverageSubprocessError("boom")
+        return 80.0
+
+    monkeypatch.setattr(dbg, "_generate_tests", lambda logs: [])
+    monkeypatch.setattr(dbg, "_recent_logs", lambda limit=5: [])
+    monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
+    dbg._test_retries = 2
+    cov, _ = dbg._run_tests(Path("dummy.py"))
+    assert cov == 80.0
+    assert calls["n"] == 2
+
+
+def test_backend_unreachable_fails_fast(monkeypatch):
+    from menace.patch_score_backend import PatchScoreBackend
+
+    class BadBackend(PatchScoreBackend):
+        def store(self, record):
+            pass
+
+        def fetch_recent(self, limit: int = 20):
+            raise RuntimeError("nope")
+
+    mod = types.SimpleNamespace(BadBackend=BadBackend)
+    monkeypatch.setitem(sys.modules, "bad_backend", mod)
+    monkeypatch.setenv("PATCH_SCORE_BACKEND", "bad_backend:BadBackend")
+    with pytest.raises(RuntimeError):
+        sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
 
 
 def test_score_weights_evolve_from_audit():
