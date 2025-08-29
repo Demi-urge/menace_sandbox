@@ -1,3 +1,4 @@
+ # flake8: noqa
 import os
 import sys
 import types
@@ -94,12 +95,13 @@ def test_self_service_override_enables_safe(tmp_path, monkeypatch):
 
     roi = FakeROI()
 
+    monkeypatch.delenv("MENACE_SAFE", raising=False)
     metrics = db.MetricsDB(tmp_path / "m.db")
     metrics.add(db.MetricRecord(bot="b", cpu=1.0, memory=1.0, response_time=0.1, disk_io=1.0, net_io=1.0, errors=10))
 
     svc = so.SelfServiceOverride(roi, metrics)
     svc.adjust()
-    assert os.environ.get("MENACE_SAFE") is None
+    assert os.environ.get("MENACE_SAFE") == "1"
 
 
 def test_publish_retry_and_log(monkeypatch, caplog):
@@ -141,6 +143,7 @@ def test_auto_rollback_service(tmp_path, monkeypatch):
 
     roi = FakeROI()
 
+    monkeypatch.delenv("MENACE_SAFE", raising=False)
     metrics = db.MetricsDB(tmp_path / "m.db")
     metrics.add(db.MetricRecord(bot="b", cpu=1.0, memory=1.0, response_time=0.1, disk_io=1.0, net_io=1.0, errors=10))
     metrics.log_eval("system", "avg_energy_score", 0.2)
@@ -156,5 +159,4 @@ def test_auto_rollback_service(tmp_path, monkeypatch):
     svc = so.AutoRollbackService(roi, metrics)
     svc.adjust()
     assert calls and calls[0][0] == "git"
-    assert os.environ.get("MENACE_SAFE") is None
-
+    assert os.environ.get("MENACE_SAFE") == "1"
