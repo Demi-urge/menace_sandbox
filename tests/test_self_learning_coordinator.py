@@ -29,6 +29,7 @@ sys.modules.setdefault("menace.error_bot", stub_err)
 from menace.unified_event_bus import UnifiedEventBus
 from menace.data_bot import MetricsDB
 from menace.self_learning_coordinator import SelfLearningCoordinator
+from unittest.mock import MagicMock
 
 # Cleanup stubs so they don't affect other tests
 for mod in [
@@ -203,4 +204,37 @@ def test_telemetry_summary_updates_training(tmp_path):
         )
     )
     assert len(engine.records) >= 2
+
+
+def test_stop_unsubscribes_callbacks():
+    class DummyBus:
+        def __init__(self) -> None:
+            self.subs: dict[str, list] = {}
+
+        def subscribe(self, topic, callback):
+            self.subs.setdefault(topic, []).append(callback)
+
+        def unsubscribe(self, topic, callback):
+            if topic in self.subs and callback in self.subs[topic]:
+                self.subs[topic].remove(callback)
+                if not self.subs[topic]:
+                    del self.subs[topic]
+
+        def publish(self, topic, event):
+            for cb in list(self.subs.get(topic, [])):
+                cb(topic, event)
+
+    bus = DummyBus()
+    coord = SelfLearningCoordinator(bus)
+    orig = coord._on_memory
+    mem_cb = MagicMock(side_effect=orig)
+    coord._on_memory = mem_cb
+    coord._train_all = MagicMock()
+    coord.start()
+    bus.publish("memory:new", {"key": "A"})
+    assert mem_cb.call_count == 1
+    coord.stop()
+    bus.publish("memory:new", {"key": "B"})
+    assert mem_cb.call_count == 1
+    assert "memory:new" not in bus.subs
 
