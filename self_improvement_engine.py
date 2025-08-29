@@ -860,6 +860,16 @@ async def self_improvement_cycle(
 
     planner = MetaWorkflowPlanner()
 
+    ENTROPY_THRESHOLD = 0.2
+
+    def _should_encode(record: Mapping[str, Any]) -> bool:
+        """Return True if ``record`` indicates improvement and stability."""
+
+        return (
+            float(record.get("roi_gain", 0.0)) > 0.0
+            and abs(float(record.get("entropy", 0.0))) <= ENTROPY_THRESHOLD
+        )
+
     async def _log(record: Mapping[str, Any]) -> None:
         chain = record.get("chain", [])
         cid = "->".join(chain)
@@ -911,19 +921,29 @@ async def self_improvement_cycle(
                     if recs:
                         for rec in recs:
                             await _log(rec)
-                            next_active.append(rec.get("chain", []))
+                            c = rec.get("chain", [])
+                            if _should_encode(rec) and c:
+                                planner.encode_chain(c)
+                            next_active.append(c)
                     else:
                         next_active.append(chain)
                 if len(next_active) > 1:
                     remerged = planner.remerge_pipelines(next_active, workflows)
                     for rec in remerged:
                         await _log(rec)
-                        next_active.append(rec.get("chain", []))
+                        c = rec.get("chain", [])
+                        if _should_encode(rec) and c:
+                            planner.encode_chain(c)
+                        next_active.append(c)
                 active = next_active
 
             evolved = planner.iterate_pipelines(workflows)
             for rec in evolved:
                 await _log(rec)
+                c = rec.get("chain", [])
+                if _should_encode(rec) and c:
+                    planner.encode_chain(c)
+            planner.cleanup_chain_embeddings()
         except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
             break
         except Exception:  # pragma: no cover - keep background loop alive

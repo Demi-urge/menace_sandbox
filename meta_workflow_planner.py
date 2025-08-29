@@ -317,6 +317,52 @@ class MetaWorkflowPlanner:
         return vec
 
     # ------------------------------------------------------------------
+    def encode_chain(self, chain: Sequence[str]) -> List[float]:
+        """Encode a workflow ``chain`` and persist its embedding.
+
+        The chain is converted into a minimal workflow representation where each
+        element is treated as a function step.  The resulting vector is persisted
+        to the ``workflow_chain`` database and the planner's ``cluster_map`` is
+        updated with the computed embedding.
+        """
+
+        chain_id = "->".join(chain)
+        workflow = {"workflow": [{"function": step} for step in chain]}
+        vec = self.encode(chain_id, workflow)
+        try:
+            persist_embedding("workflow_chain", chain_id, vec, origin_db="workflow")
+        except TypeError:  # pragma: no cover - compatibility shim
+            persist_embedding("workflow_chain", chain_id, vec)
+        info = self.cluster_map.setdefault(tuple(chain), {})
+        info["embedding"] = vec
+        self._save_cluster_map()
+        return vec
+
+    # ------------------------------------------------------------------
+    def cleanup_chain_embeddings(self, *, path: str | Path = "embeddings.jsonl") -> None:
+        """Remove obsolete chain embeddings from the vector store."""
+
+        active = {"->".join(k) for k in self.cluster_map}
+        store = Path(path)
+        if not store.exists():
+            return
+        try:  # pragma: no cover - best effort
+            lines = store.read_text().splitlines()
+            with store.open("w", encoding="utf-8") as fh:
+                for line in lines:
+                    try:
+                        data = json.loads(line)
+                    except Exception:
+                        continue
+                    if data.get("type") != "workflow_chain":
+                        fh.write(line + "\n")
+                        continue
+                    if data.get("id") in active:
+                        fh.write(line + "\n")
+        except Exception:
+            logger.warning("Failed to cleanup chain embeddings", exc_info=True)
+
+    # ------------------------------------------------------------------
     def cluster_workflows(
         self,
         workflows: Mapping[str, Mapping[str, Any]],
