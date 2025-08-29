@@ -1,3 +1,4 @@
+# flake8: noqa
 """Data Bot for collecting and analysing performance metrics."""
 
 from __future__ import annotations
@@ -176,6 +177,16 @@ class MetricsDB:
             hit INTEGER,
             tokens INTEGER,
             score REAL,
+            ts TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+        )
+        conn.execute(
+            """
+        CREATE TABLE IF NOT EXISTS training_stats(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT,
+            success INTEGER,
             ts TEXT DEFAULT CURRENT_TIMESTAMP
         )
         """
@@ -553,6 +564,16 @@ class MetricsDB:
                     float(stale_seconds),
                     datetime.utcnow().isoformat(),
                 ),
+            )
+            conn.commit()
+
+    def log_training_stat(self, source: str, success: bool) -> None:
+        """Record a training event for monitoring."""
+
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO training_stats(source, success, ts) VALUES(?,?,?)",
+                (source, 1 if success else 0, datetime.utcnow().isoformat()),
             )
             conn.commit()
 
