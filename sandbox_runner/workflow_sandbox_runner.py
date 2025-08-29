@@ -989,6 +989,37 @@ class WorkflowSandboxRunner:
                     )
                     metrics.modules.append(module_metric)
 
+                    # Recursively execute nested workflows returned by the module
+                    nested_funcs: list[Callable[[], Any]] = []
+                    if isinstance(result, Mapping) and result.get("steps"):
+                        for step in result["steps"]:
+                            if callable(step):
+                                nested_funcs.append(step)
+                            elif isinstance(step, Mapping):
+                                wf_obj = step.get("workflow") or step.get("call")
+                                if callable(wf_obj):
+                                    nested_funcs.append(wf_obj)
+                    elif isinstance(result, (list, tuple)):
+                        nested_funcs = [c for c in result if callable(c)]
+                    if nested_funcs:
+                        prev_metrics = self.metrics
+                        prev_telemetry = self.telemetry
+                        nested_metrics = self.run(
+                            nested_funcs,
+                            safe_mode=safe_mode,
+                            test_data=test_data,
+                            network_mocks=network_mocks,
+                            fs_mocks=fs_mocks,
+                            module_fixtures=module_fixtures,
+                            roi_delta=roi_delta,
+                            timeout=timeout,
+                            memory_limit=memory_limit,
+                        )
+                        metrics.modules.extend(nested_metrics.modules)
+                        metrics.crash_count += nested_metrics.crash_count
+                        self.metrics = prev_metrics
+                        self.telemetry = prev_telemetry
+
             # ------------------------------------------------------------------
             # Aggregate metrics into a simple telemetry dictionary
             times = {m.name: m.duration for m in metrics.modules}

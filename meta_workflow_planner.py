@@ -934,7 +934,6 @@ class MetaWorkflowPlanner:
         success_rates: List[float] = []
         per_run_steps: List[List[Dict[str, Any]]] = []
 
-        spec = {"steps": [{"module": m} for m in chain]}
         run_count = max(1, runs)
 
         def _single_run() -> tuple[float, float, float, float, float, List[Dict[str, Any]]]:
@@ -945,6 +944,9 @@ class MetaWorkflowPlanner:
             )
             module_count = len(metrics.modules)
             failure_rate = failure_count / module_count if module_count else 0.0
+
+            module_names = [m.name for m in metrics.modules]
+            spec = {"steps": [{"module": n} for n in module_names]}
             if comparator is not None:
                 try:
                     entropy = comparator._entropy(spec)
@@ -952,6 +954,7 @@ class MetaWorkflowPlanner:
                     entropy = 0.0
             else:
                 entropy = 0.0
+
             step_entropies: List[float] = []
             if comparator is not None:
                 for i in range(1, len(chain) + 1):
@@ -962,11 +965,14 @@ class MetaWorkflowPlanner:
                         step_entropies.append(0.0)
             else:
                 step_entropies = [0.0] * len(chain)
+
             roi_gain = sum(
                 float(m.result)
                 for m in metrics.modules
                 if isinstance(m.result, (int, float))
             )
+
+            top_metrics = metrics.modules[: len(chain)]
             step_metrics = [
                 {
                     "module": m.name,
@@ -978,7 +984,7 @@ class MetaWorkflowPlanner:
                     if i < len(step_entropies)
                     else 0.0,
                 }
-                for i, m in enumerate(metrics.modules)
+                for i, m in enumerate(top_metrics)
             ]
             runtime = sum(m.duration for m in metrics.modules)
             success_rate = 1.0 - failure_rate
@@ -1042,6 +1048,17 @@ class MetaWorkflowPlanner:
                         "entropy": fmean(ent_vals),
                     }
                 )
+
+        # Penalize improbable domain transitions
+        domains = [self._workflow_domain(wid)[0] for wid in chain]
+        trans_probs = self.transition_probabilities()
+        penalty = 0.0
+        for a, b in zip(domains, domains[1:]):
+            if a < 0 or b < 0:
+                continue
+            penalty += 1.0 - trans_probs.get((a, b), 0.0)
+        if penalty:
+            roi_gain = max(0.0, roi_gain - penalty)
 
         chain_id = "->".join(chain)
         prev_roi = (
