@@ -208,6 +208,43 @@ def test_compose_pipeline_roi_weighting(monkeypatch):
     assert pipeline == ["wf1", "wf2"]
 
 
+def test_compose_pipeline_transition_matrix(monkeypatch):
+    monkeypatch.setattr(mwp, "ROITracker", None)
+    monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
+    monkeypatch.setattr(mwp, "WorkflowSynergyComparator", DummySynergyComparator)
+
+    embeddings = {
+        "wf1": [1.0, 0.0],
+        "wf2": [0.9, 0.1],
+        "wf3": [0.8, 0.2],
+    }
+
+    def fake_encode(self, wid, _spec):
+        return embeddings[wid]
+
+    monkeypatch.setattr(mwp.MetaWorkflowPlanner, "encode_workflow", fake_encode)
+
+    planner = MetaWorkflowPlanner(graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({}))
+    planner.cluster_map = {("__domain_transitions__",): {("a", "a"): {"count": 10, "roi": -1.0}}}
+    workflows = {"wf1": {"domain": "a"}, "wf2": {"domain": "a"}, "wf3": {"domain": "b"}}
+    pipeline = planner.compose_pipeline("wf1", workflows, length=2)
+    assert pipeline == ["wf1", "wf3"]
+
+
+def test_update_cluster_map_records_transitions():
+    planner = MetaWorkflowPlanner()
+
+    class DummyCodeDB:
+        def get_context_tags(self, wid):
+            return {"a": ["alpha"], "b": ["beta"]}[wid]
+
+    planner.code_db = DummyCodeDB()
+    planner.cluster_map = {}
+    planner._update_cluster_map(["a", "b"], roi_gain=2.0)
+    matrix = planner.cluster_map.get(("__domain_transitions__",), {})
+    assert ("alpha", "beta") in matrix
+
+
 def test_cluster_workflows_roi_weighting(monkeypatch):
     monkeypatch.setattr(mwp, "ROITracker", None)
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
