@@ -105,7 +105,7 @@ def test_engine_downgrades_and_logs(tmp_path):
     assert not decision.safe
     assert decision.reasons == ["low_confidence"]
 
-    # mimic self_improvement_engine gating without heavy imports
+    # mimic self_improvement gating without heavy imports
     log_path = tmp_path / "gov.jsonl"
 
     class _ED:

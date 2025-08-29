@@ -115,7 +115,7 @@ consume this projection to prioritise follow‑up cycles:
 ```python
 from unified_event_bus import UnifiedEventBus
 from workflow_graph import WorkflowGraph
-from self_improvement_engine import SelfImprovementEngine
+from self_improvement import SelfImprovementEngine
 
 bus = UnifiedEventBus()
 graph = WorkflowGraph()
@@ -1136,7 +1136,7 @@ from the data directory and derives the threshold using
 length of this history with a minimum of ``3``.
 
 Synergy weights used during self-improvement are updated based on these
-metrics. See [self_improvement_engine.md#synergy-weight-learners](self_improvement_engine.md#synergy-weight-learners)
+metrics. See [self_improvement.md#synergy-weight-learners](self_improvement.md#synergy-weight-learners)
 for details on how the history influences weight adjustments.
 
 Writes to this history file are protected with a ``filelock.FileLock``. The lock

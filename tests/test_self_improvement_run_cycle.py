@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_test_method():
-    path = ROOT / "self_improvement_engine.py"
+    path = ROOT / "self_improvement.py"
     tree = ast.parse(path.read_text())
     method = None
     for node in tree.body:

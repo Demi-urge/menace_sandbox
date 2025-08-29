@@ -62,7 +62,7 @@ def _common_stubs(monkeypatch):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.setattr(sys.modules["menace"], "__path__", [str(root)])
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
-    _stub_module(monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot)
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummyBot)
     _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)

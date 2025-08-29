@@ -115,7 +115,7 @@ def test_history_plot(monkeypatch, tmp_path):
     ],
 )
 def test_load_engine_env(monkeypatch, tmp_path, env, cls_name):
-    mod = types.ModuleType("menace.self_improvement_engine")
+    mod = types.ModuleType("menace.self_improvement")
 
     class BaseLearner:
         def __init__(self, *a, **k):
@@ -144,9 +144,9 @@ def test_load_engine_env(monkeypatch, tmp_path, env, cls_name):
     mod.SACSynergyLearner = SAC
     mod.TD3SynergyLearner = TD3
 
-    monkeypatch.setitem(sys.modules, "menace.self_improvement_engine", mod)
+    monkeypatch.setitem(sys.modules, "menace.self_improvement", mod)
     if "menace" in sys.modules:
-        monkeypatch.setattr(sys.modules["menace"], "self_improvement_engine", mod, raising=False)
+        monkeypatch.setattr(sys.modules["menace"], "self_improvement", mod, raising=False)
 
     monkeypatch.setenv("SYNERGY_LEARNER", env)
 

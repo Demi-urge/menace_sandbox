@@ -58,7 +58,7 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .contrarian_db import ContrarianDB
     from .conversation_manager_bot import ConversationManagerBot
     from .self_coding_engine import SelfCodingEngine
-    from .self_improvement_engine import SelfImprovementEngine
+    from .self_improvement import SelfImprovementEngine
 
 try:
     from prometheus_client import Summary  # type: ignore

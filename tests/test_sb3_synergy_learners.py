@@ -12,7 +12,7 @@ sys.modules["menace"] = menace
 spec.loader.exec_module(menace)
 
 pytest.importorskip("torch")
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 
 
 def test_td3_synergy_learner(tmp_path):

@@ -15,7 +15,7 @@ menace = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace
 spec.loader.exec_module(menace)
 
-# stub heavy dependencies so self_improvement_engine can be imported
+# stub heavy dependencies so self_improvement can be imported
 modules = [
     "menace.self_model_bootstrap",
     "menace.research_aggregator_bot",
@@ -111,7 +111,7 @@ pyd_settings_mod.BaseSettings = object
 pyd_settings_mod.SettingsConfigDict = dict
 sys.modules.setdefault("pydantic_settings", pyd_settings_mod)
 
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 
 class _Rec:
     def __init__(self, r, sr):
@@ -179,7 +179,7 @@ def test_dqn_engine_weights_update(tmp_path):
     import importlib
     import menace.self_improvement_policy as sip
     sip = importlib.reload(sip)
-    sie = importlib.reload(sys.modules["menace.self_improvement_engine"])
+    sie = importlib.reload(sys.modules["menace.self_improvement"])
 
     path = tmp_path / "dqn.json"
     engine = _make_engine(path, sie.DQNSynergyLearner)
@@ -195,7 +195,7 @@ def test_sac_engine_weights_update(tmp_path):
     import importlib
     import menace.self_improvement_policy as sip
     sip = importlib.reload(sip)
-    sie = importlib.reload(sys.modules["menace.self_improvement_engine"])
+    sie = importlib.reload(sys.modules["menace.self_improvement"])
 
     path = tmp_path / "sac.json"
     engine = _make_engine(path, sie.SACSynergyLearner)
@@ -208,7 +208,7 @@ def test_sac_engine_weights_update(tmp_path):
 
 def test_update_failure_dispatches_alert(monkeypatch, tmp_path):
     import importlib
-    sie = importlib.reload(sys.modules["menace.self_improvement_engine"])
+    sie = importlib.reload(sys.modules["menace.self_improvement"])
 
     path = tmp_path / "w.json"
     engine = _make_engine(path, sie.SynergyWeightLearner)

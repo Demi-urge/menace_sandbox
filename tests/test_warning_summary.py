@@ -2,7 +2,7 @@
 
 import logging
 
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 from human_alignment_flagger import flag_improvement
 
 

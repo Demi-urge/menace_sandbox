@@ -6,7 +6,7 @@ from typing import Iterable
 import pytest
 
 
-source = Path("self_improvement_engine.py").read_text()
+source = Path("self_improvement.py").read_text()
 module_ast = ast.parse(source)
 cls = next(
     n for n in module_ast.body if isinstance(n, ast.ClassDef) and n.name == "SelfImprovementEngine"

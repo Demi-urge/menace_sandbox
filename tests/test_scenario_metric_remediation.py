@@ -30,7 +30,7 @@ class DummyMID:
 mid.ModuleIndexDB = DummyMID
 sys.modules.setdefault("menace.module_index_db", mid)
 
-from tests import test_self_improvement_engine_rl_synergy as base
+from tests import test_self_improvement_rl_synergy as base
 sie = base.sie
 
 

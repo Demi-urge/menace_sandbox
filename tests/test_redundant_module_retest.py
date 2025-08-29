@@ -2,7 +2,7 @@ import json
 import types
 from pathlib import Path
 
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 
 
 def test_redundant_modules_retested(monkeypatch, tmp_path):

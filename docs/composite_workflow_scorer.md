@@ -125,7 +125,7 @@ further evolution once improvements flatten out.
 Example:
 
 ```python
-from menace_sandbox.self_improvement_engine import (
+from menace_sandbox.self_improvement import (
     SelfImprovementEngine,
     ImprovementEngineRegistry,
 )

@@ -246,7 +246,7 @@ def test_background_self_improvement_loop(monkeypatch):
     js.validate = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "jsonschema", js)
 
-    from menace_sandbox import self_improvement_engine as sie  # delayed import
+    from menace_sandbox import self_improvement as sie  # delayed import
 
     planner = DummyPlanner()
     monkeypatch.setattr(sie, "MetaWorkflowPlanner", lambda: planner)

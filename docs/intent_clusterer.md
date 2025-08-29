@@ -7,7 +7,7 @@ related to a natural language goal.  Modules are assigned to intent clusters
 using a soft‑clustering strategy so they may belong to multiple clusters when
 similarity to several centroids exceeds a configurable threshold.  The
 clusterer underpins several parts of the sandbox self‑improvement loop,
-including the `self_improvement_engine` and `workflow_evolution_bot`.  The class
+including the `self_improvement` and `workflow_evolution_bot`.  The class
 can be imported either directly or via the package root:
 
 ```python
@@ -24,7 +24,7 @@ from universal_retriever import UniversalRetriever
 retriever = UniversalRetriever(...)
 clusterer = IntentClusterer(retriever)
 module_paths = [
-    Path("self_improvement_engine.py"),
+    Path("self_improvement.py"),
     Path("bot_creation_bot.py"),
 ]
 clusterer.index_modules(module_paths)

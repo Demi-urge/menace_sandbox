@@ -13,7 +13,7 @@ sys.modules['menace'] = menace_pkg
 spec.loader.exec_module(menace_pkg)
 
 scm_module = importlib.import_module('menace.self_coding_manager')
-sie_module = importlib.import_module('menace.self_improvement_engine')
+sie_module = importlib.import_module('menace.self_improvement')
 mutation_logger = importlib.import_module('menace.mutation_logger')
 
 

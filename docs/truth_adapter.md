@@ -78,7 +78,7 @@ A true low-confidence flag signals the adapter no longer trusts its calibration.
 For automated retraining the `SelfImprovementEngine` exposes a CLI:
 
 ```bash
-python self_improvement_engine.py fit-truth-adapter live.npz shadow.npz
+python self_improvement.py fit-truth-adapter live.npz shadow.npz
 ```
 
 This command merges live and shadow datasets and overwrites the persisted model
@@ -91,7 +91,7 @@ Model parameters and metadata persist under `sandbox_data/truth_adapter.pkl`. Th
 ## Calibration Workflow
 
 Sandbox components that consume sandbox ROI now invoke the adapter to replace raw
-values with calibrated predictions.  The `self_improvement_engine` and
+values with calibrated predictions.  The `self_improvement` and
 `action_planner` both run ROI figures through `TruthAdapter.predict` before
 recording them via `ROITracker`.  The tracker persists the adapter's metadata so
 dashboard endpoints such as `/roi_data` can surface `needs_retrain` flags and

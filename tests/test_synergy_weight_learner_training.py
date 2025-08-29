@@ -133,7 +133,7 @@ policy_mod.DoubleDQNStrategy = lambda *a, **k: DummyStrategy()
 policy_mod.ActorCriticStrategy = lambda *a, **k: DummyStrategy()
 policy_mod.torch = torch
 
-import menace.self_improvement_engine as sie  # noqa: E402
+import menace.self_improvement as sie  # noqa: E402
 
 
 class DummySettings:

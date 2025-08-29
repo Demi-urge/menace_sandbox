@@ -167,7 +167,7 @@ map_mod.ModelAutomationPipeline = _Pipe
 map_mod.AutomationResult = object
 sys.modules.setdefault("menace.model_automation_pipeline", map_mod)
 sys.modules.setdefault("model_automation_pipeline", map_mod)
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 import menace.code_database as cd
 import menace.menace_memory_manager as mm
 import menace.data_bot as db

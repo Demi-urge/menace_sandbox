@@ -100,7 +100,7 @@ def test_sandbox_init_fallback(monkeypatch, tmp_path, caplog):
     _stub_module(monkeypatch, "menace.unified_event_bus", UnifiedEventBus=DummyBus)
     _stub_module(monkeypatch, "menace.menace_orchestrator", MenaceOrchestrator=DummyOrch)
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
-    _stub_module(monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=lambda *a, **k: DummyImprover())
+    _stub_module(monkeypatch, "menace.self_improvement", SelfImprovementEngine=lambda *a, **k: DummyImprover())
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
     _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummySandbox)
     _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyEngine)

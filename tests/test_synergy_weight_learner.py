@@ -14,7 +14,7 @@ menace = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace
 spec.loader.exec_module(menace)
 
-# stub heavy dependencies so self_improvement_engine can be imported
+# stub heavy dependencies so self_improvement can be imported
 modules = [
     "menace.self_model_bootstrap",
     "menace.research_aggregator_bot",
@@ -125,7 +125,7 @@ pyd_settings_mod.BaseSettings = object
 pyd_settings_mod.SettingsConfigDict = dict
 sys.modules.setdefault("pydantic_settings", pyd_settings_mod)
 
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 
 
 def test_synergy_weight_learner_updates(tmp_path):
@@ -324,7 +324,7 @@ def test_dqn_synergy_learner_multi_cycle_sync(tmp_path):
     import importlib
 
     # reload with real strategies when torch is available
-    import menace.self_improvement_engine as sie
+    import menace.self_improvement as sie
     import menace.self_improvement_policy as sip
     sip = importlib.reload(sip)
     sie = importlib.reload(sie)
@@ -378,7 +378,7 @@ def test_sb3_learners_positive_convergence(tmp_path, cls_name):
     torch = pytest.importorskip("torch")
     import importlib
 
-    import menace.self_improvement_engine as sie
+    import menace.self_improvement as sie
     import menace.self_improvement_policy as sip
 
     # reload modules with real RL strategies when torch is available
@@ -424,7 +424,7 @@ def test_sb3_learners_persistence_and_files(tmp_path, cls_name):
     pytest.importorskip("stable_baselines3")
     import importlib
 
-    import menace.self_improvement_engine as sie
+    import menace.self_improvement as sie
     import menace.self_improvement_policy as sip
 
     sip = importlib.reload(sip)

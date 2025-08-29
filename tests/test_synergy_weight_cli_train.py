@@ -17,15 +17,15 @@ class DummySettings:
 
 
 def _stub_engine(monkeypatch, learner_cls):
-    mod = types.ModuleType("menace.self_improvement_engine")
+    mod = types.ModuleType("menace.self_improvement")
     mod.SynergyWeightLearner = learner_cls
     mod.DQNSynergyLearner = learner_cls
     mod.DoubleDQNSynergyLearner = learner_cls
     mod.SACSynergyLearner = learner_cls
     mod.TD3SynergyLearner = learner_cls
-    monkeypatch.setitem(sys.modules, "menace.self_improvement_engine", mod)
+    monkeypatch.setitem(sys.modules, "menace.self_improvement", mod)
     if "menace" in sys.modules:
-        monkeypatch.setattr(sys.modules["menace"], "self_improvement_engine", mod, raising=False)
+        monkeypatch.setattr(sys.modules["menace"], "self_improvement", mod, raising=False)
 
 
 class FakeLearner:

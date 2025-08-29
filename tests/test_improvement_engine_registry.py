@@ -19,7 +19,7 @@ neuro_stub = types.ModuleType("neurosales")
 neuro_stub.add_message = lambda *a, **k: None
 sys.modules.setdefault("neurosales", neuro_stub)
 
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 import asyncio
 import menace.diagnostic_manager as dm
 import menace.error_bot as eb

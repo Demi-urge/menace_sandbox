@@ -298,7 +298,7 @@ def test_repo_section_metrics(monkeypatch, tmp_path):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyPolicy
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -410,7 +410,7 @@ def test_gpt_trigger_on_diminishing(monkeypatch, tmp_path):
     )
     _stub_module(
         monkeypatch,
-        "menace.self_improvement_engine",
+        "menace.self_improvement",
         SelfImprovementEngine=lambda *a, **k: DummyImprover(),
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
@@ -472,7 +472,7 @@ def test_section_loop_gpt_trigger(monkeypatch, tmp_path):
     )
     _stub_module(
         monkeypatch,
-        "menace.self_improvement_engine",
+        "menace.self_improvement",
         SelfImprovementEngine=lambda *a, **k: DummyImprover(),
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
@@ -544,7 +544,7 @@ def test_metrics_db_records(monkeypatch, tmp_path):
     )
     _stub_module(
         monkeypatch,
-        "menace.self_improvement_engine",
+        "menace.self_improvement",
         SelfImprovementEngine=lambda *a, **k: DummyImprover(),
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
@@ -638,7 +638,7 @@ def test_metric_predictions_recorded(monkeypatch, tmp_path):
     )
     _stub_module(
         monkeypatch,
-        "menace.self_improvement_engine",
+        "menace.self_improvement",
         SelfImprovementEngine=lambda *a, **k: DummyImprover(),
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
@@ -701,7 +701,7 @@ def test_section_worker_netem(monkeypatch):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyPolicy
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -811,7 +811,7 @@ def test_section_worker_netem_no_tc(monkeypatch):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyPolicy
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -878,7 +878,7 @@ def test_auto_prompt_selection(monkeypatch):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyPolicy
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -975,7 +975,7 @@ def test_prompt_truncation_and_metrics(monkeypatch):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyPolicy
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -1059,7 +1059,7 @@ def test_prompt_synergy_and_length(monkeypatch):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyPolicy
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -1149,7 +1149,7 @@ def test_preset_adaptation(monkeypatch, tmp_path):
     )
     _stub_module(
         monkeypatch,
-        "menace.self_improvement_engine",
+        "menace.self_improvement",
         SelfImprovementEngine=lambda *a, **k: DummyImprover(),
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
@@ -1235,7 +1235,7 @@ def test_preset_persistence_across_runs(monkeypatch, tmp_path):
     )
     _stub_module(
         monkeypatch,
-        "menace.self_improvement_engine",
+        "menace.self_improvement",
         SelfImprovementEngine=lambda *a, **k: DummyImprover(),
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
@@ -1335,7 +1335,7 @@ def test_no_preset_adapt_flag(monkeypatch, tmp_path):
     )
     _stub_module(
         monkeypatch,
-        "menace.self_improvement_engine",
+        "menace.self_improvement",
         SelfImprovementEngine=lambda *a, **k: DummyImprover(),
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
@@ -1484,7 +1484,7 @@ def test_brainstorm_trigger_on_low_roi(monkeypatch, tmp_path):
     )
     _stub_module(
         monkeypatch,
-        "menace.self_improvement_engine",
+        "menace.self_improvement",
         SelfImprovementEngine=lambda *a, **k: _StaticImprover(),
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
@@ -1575,7 +1575,7 @@ def test_brainstorm_trigger_on_resilience_drop(monkeypatch, tmp_path):
     )
     _stub_module(
         monkeypatch,
-        "menace.self_improvement_engine",
+        "menace.self_improvement",
         SelfImprovementEngine=lambda *a, **k: _ResilienceImprover(),
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
@@ -1677,7 +1677,7 @@ def test_sandbox_prediction_mae_and_reliability(monkeypatch, tmp_path):
     )
     _stub_module(
         monkeypatch,
-        "menace.self_improvement_engine",
+        "menace.self_improvement",
         SelfImprovementEngine=lambda *a, **k: DummyImprover(),
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
@@ -1797,7 +1797,7 @@ def test_workflow_sim_synergy_metrics(monkeypatch, tmp_path):
         monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot
     )
     _stub_module(
-        monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot
+        monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
     _stub_module(
@@ -2020,7 +2020,7 @@ def test_modules_marked_complete_skip_improvement(monkeypatch):
     _stub_module(monkeypatch, "adaptive_roi_predictor", load_training_data=lambda *a, **k: None)
     _stub_module(
         monkeypatch,
-        "menace.self_improvement_engine",
+        "menace.self_improvement",
         SelfImprovementEngine=lambda *a, **k: DummyImprover(),
     )
     _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
@@ -2148,7 +2148,7 @@ def test_scheduler_raroi_shortens_interval(monkeypatch):
     assert sleeps == [5.0]
 
 
-def test_self_improvement_engine_raroi_prioritisation(monkeypatch):
+def test_self_improvement_raroi_prioritisation(monkeypatch):
     import menace.self_test_service as sts
     from menace.roi_tracker import ROITracker
     from types import SimpleNamespace

@@ -21,7 +21,7 @@ class DummyLogger:
 
 
 def _load_integrator(repo: Path, data_dir: Path):
-    src = Path("self_improvement_engine.py").read_text()
+    src = Path("self_improvement.py").read_text()
     tree = ast.parse(src)
     cls = next(
         n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SelfImprovementEngine"

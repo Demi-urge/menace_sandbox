@@ -18,7 +18,7 @@ menace = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace
 spec.loader.exec_module(menace)
 
-# stub heavy dependencies needed for self_improvement_engine
+# stub heavy dependencies needed for self_improvement
 modules = [
     "menace.self_model_bootstrap",
     "menace.research_aggregator_bot",
@@ -112,7 +112,7 @@ pyd_settings_mod.BaseSettings = object
 pyd_settings_mod.SettingsConfigDict = dict
 sys.modules.setdefault("pydantic_settings", pyd_settings_mod)
 
-sie = importlib.import_module("menace.self_improvement_engine")
+sie = importlib.import_module("menace.self_improvement")
 
 
 def test_actor_critic_used_without_torch(tmp_path):

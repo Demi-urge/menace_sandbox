@@ -10,7 +10,7 @@ import pytest
 
 
 def _load_proxies():
-    src = Path("self_improvement_engine.py").read_text()
+    src = Path("self_improvement.py").read_text()
     tree = ast.parse(src)
     wanted = {"_load_callable", "_call_with_retries", "integrate_orphans", "post_round_orphan_scan", "generate_patch"}
     nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted]

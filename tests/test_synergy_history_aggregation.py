@@ -100,7 +100,7 @@ ps_mod.BaseSettings = object
 ps_mod.SettingsConfigDict = dict
 sys.modules.setdefault("pydantic_settings", ps_mod)
 
-import menace.self_improvement_engine as sie
+import menace.self_improvement as sie
 
 sie.ModelAutomationPipeline = lambda *a, **k: object()
 sie.ErrorBot = lambda *a, **k: object()

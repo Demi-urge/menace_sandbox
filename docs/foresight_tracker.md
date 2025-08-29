@@ -22,7 +22,7 @@ Any additional numeric metrics can be supplied; they are included in the stabili
 
 ```python
 from menace_sandbox.foresight_tracker import ForesightTracker
-from menace_sandbox.self_improvement_engine import SelfImprovementEngine
+from menace_sandbox.self_improvement import SelfImprovementEngine
 
 tracker = ForesightTracker(max_cycles=5, volatility_threshold=2.0)
 engine = SelfImprovementEngine(foresight_tracker=tracker)

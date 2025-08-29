@@ -104,8 +104,8 @@ sys.modules.setdefault("module_index_db", module_index_db)
 
 
 def _load_refresh_methods(fake_generate, fake_try, fake_run=lambda *a, **k: None):
-    """Extract refresh helpers from self_improvement_engine with hooks."""
-    path = ROOT / "self_improvement_engine.py"
+    """Extract refresh helpers from self_improvement with hooks."""
+    path = ROOT / "self_improvement.py"
     src = path.read_text()
     tree = ast.parse(src)
     methods = []

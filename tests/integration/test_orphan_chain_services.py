@@ -102,10 +102,10 @@ sys.modules["sandbox_runner.environment"] = types.ModuleType(
 )
 
 spec_sie = importlib.util.spec_from_file_location(
-    "menace.self_improvement_engine", ROOT / "self_improvement_engine.py"
+    "menace.self_improvement", ROOT / "self_improvement.py"
 )
 sie = importlib.util.module_from_spec(spec_sie)
-sys.modules["menace.self_improvement_engine"] = sie
+sys.modules["menace.self_improvement"] = sie
 spec_sie.loader.exec_module(sie)
 
 # ---------------------------------------------------------------------------
@@ -206,7 +206,7 @@ def test_self_test_service_executes_and_cleans(tmp_path, monkeypatch):
     assert orphan_list == ["red.py"]
 
 
-def test_self_improvement_engine_integration(tmp_path, monkeypatch):
+def test_self_improvement_integration(tmp_path, monkeypatch):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
     data_dir, map_path = _build_repo(tmp_path)
     monkeypatch.chdir(tmp_path)

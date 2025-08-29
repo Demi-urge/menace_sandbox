@@ -42,7 +42,7 @@ sys.modules["menace.error_logger"] = error_logger
 
 sys.modules["menace.synergy_history_db"] = types.ModuleType("menace.synergy_history_db")
 
-# Simple stubs for modules referenced in self_improvement_engine
+# Simple stubs for modules referenced in self_improvement
 for name in [
     "self_model_bootstrap",
     "research_aggregator_bot",
@@ -152,8 +152,8 @@ sys.modules["sandbox_settings"] = sandbox_settings
 
 def _load_engine():
     spec = importlib.util.spec_from_file_location(
-        "menace.self_improvement_engine",
-        os.path.join(os.path.dirname(__file__), "..", "self_improvement_engine.py"),
+        "menace.self_improvement",
+        os.path.join(os.path.dirname(__file__), "..", "self_improvement.py"),
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod

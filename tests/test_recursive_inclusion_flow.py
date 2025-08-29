@@ -119,7 +119,7 @@ def test_recursive_inclusion_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(env, "auto_include_modules", auto_stub)
 
     def _load_update_method():
-        path = Path(__file__).resolve().parents[1] / "self_improvement_engine.py"
+        path = Path(__file__).resolve().parents[1] / "self_improvement.py"
         src = path.read_text()
         tree = ast.parse(src)
         method = None

@@ -255,7 +255,7 @@ __all__ = [
     "whisper_utils",
     "vision_utils",
     "oversight_bots",
-    "self_improvement_engine",
+    "self_improvement",
     "self_model_bootstrap",
     "unified_event_bus",
     "networked_event_bus",
