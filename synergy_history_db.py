@@ -13,7 +13,10 @@ import logging
 from filelock import FileLock
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-from . import RAISE_ERRORS
+try:  # pragma: no cover - allow running as standalone module
+    from . import RAISE_ERRORS
+except Exception:  # pragma: no cover - fallback when not part of package
+    RAISE_ERRORS = False
 
 try:  # pragma: no cover - package context
     from .scope_utils import Scope, build_scope_clause, apply_scope
