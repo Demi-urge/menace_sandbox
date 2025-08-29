@@ -99,13 +99,24 @@ def _persist_embeddings(tmp_path: Path, embeddings: Mapping[str, Sequence[float]
 
 
 @pytest.fixture
-def sample_embeddings(tmp_path):
+def sample_embeddings(tmp_path, monkeypatch):
     g = nx.DiGraph()
     trends = {
         "wf1": [{"roi_gain": 1.0}, {"roi_gain": 1.0}],
         "wf2": [{"roi_gain": 1.0}, {"roi_gain": 1.0}],
         "wf3": [{"roi_gain": 5.0}, {"roi_gain": 5.0}],
     }
+
+    def fake_embed(text, embedder=None):
+        return [1.0, 0.0]
+
+    class DummyEmbedder:
+        def get_sentence_embedding_dimension(self):
+            return 2
+
+    monkeypatch.setattr(mwp, "governed_embed", fake_embed)
+    monkeypatch.setattr(mwp, "get_embedder", lambda: DummyEmbedder())
+
     planner = MetaWorkflowPlanner(
         graph=DummyGraph(g), roi_db=DummyROI(trends), roi_window=3
     )
@@ -118,12 +129,13 @@ def sample_embeddings(tmp_path):
     }
     vecs = {wid: planner.encode(wid, wf) for wid, wf in workflows.items()}
     records = _load_records(Path("embeddings.jsonl"))
-    yield planner, vecs, records
+    embed_dim = 2
+    yield planner, vecs, records, embed_dim
     os.chdir(old_cwd)
 
 
 def test_embedding_generation(sample_embeddings):
-    planner, vecs, records = sample_embeddings
+    planner, vecs, records, embed_dim = sample_embeddings
     vec = vecs["wf1"]
     assert (
         len(vec)
@@ -131,9 +143,7 @@ def test_embedding_generation(sample_embeddings):
         + planner.roi_window
         + 2
         + planner.roi_window
-        + 3 * planner.max_functions
-        + planner.max_modules
-        + planner.max_tags
+        + 3 * embed_dim
         + planner.max_domains
         + planner.max_domains
     )
@@ -143,20 +153,24 @@ def test_embedding_generation(sample_embeddings):
 
 
 def test_embedding_clustering(sample_embeddings):
-    _planner, _vecs, records = sample_embeddings
+    _planner, _vecs, records, _embed_dim = sample_embeddings
     clusters = _cluster(records, threshold=0.65)
     cluster_ids = [sorted(rec["id"] for rec in group) for group in clusters]
     assert ["wf1", "wf2", "wf3"] in cluster_ids
 
 
 def test_embedding_retrieval(sample_embeddings):
-    _planner, vecs, records = sample_embeddings
+    _planner, vecs, records, _embed_dim = sample_embeddings
     query_vec = vecs["wf1"]
     best = _retrieve(records, query_vec)
     assert best == "wf1"
 
 
-def test_domain_transition_vector():
+def test_domain_transition_vector(monkeypatch):
+    monkeypatch.setattr(mwp, "governed_embed", lambda text, embedder=None: [1.0, 0.0])
+    monkeypatch.setattr(
+        mwp, "get_embedder", lambda: type("E", (), {"get_sentence_embedding_dimension": lambda self: 2})()
+    )
     planner = MetaWorkflowPlanner()
     planner.domain_index = {"other": 0, "alpha": 1, "beta": 2}
     planner.cluster_map[("__domain_transitions__",)] = {
@@ -164,14 +178,13 @@ def test_domain_transition_vector():
     }
     workflow = {"domain": "alpha"}
     vec = planner.encode_workflow("wf", workflow)
+    embed_dim = 2
     base = (
         2
         + planner.roi_window
         + 2
         + planner.roi_window
-        + 3 * planner.max_functions
-        + planner.max_modules
-        + planner.max_tags
+        + 3 * embed_dim
     )
     domain_start = base
     trans_start = domain_start + planner.max_domains
@@ -180,7 +193,7 @@ def test_domain_transition_vector():
 
 
 def test_find_synergy_candidates(sample_embeddings):
-    planner, _vecs, records = sample_embeddings
+    planner, _vecs, records, _embed_dim = sample_embeddings
     emb_map = {rec["id"]: rec["vector"] for rec in records}
     retr = DummyRetriever(emb_map)
     cands = find_synergy_candidates("wf1", top_k=2, retriever=retr, roi_db=planner.roi_db)

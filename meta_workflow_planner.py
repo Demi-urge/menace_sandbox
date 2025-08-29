@@ -7,11 +7,13 @@ import json
 import math
 import random
 import time
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence, TYPE_CHECKING
 from statistics import fmean, pvariance
 from concurrent.futures import ThreadPoolExecutor
+
+from governed_embeddings import governed_embed, get_embedder
 
 from roi_results_db import ROIResultsDB
 from workflow_graph import WorkflowGraph
@@ -126,13 +128,7 @@ class MetaWorkflowPlanner:
     max_tags: int = 50
     max_domains: int = 10
     roi_window: int = 5
-    function_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
-    module_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
-    tag_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
     domain_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
-    function_df: Dict[str, int] = field(default_factory=dict)
-    tag_df: Dict[str, int] = field(default_factory=dict)
-    doc_count: int = 0
     graph: WorkflowGraph | None = None
     roi_db: ROIResultsDB | None = None
     roi_tracker: ROITracker | None = None
@@ -212,25 +208,10 @@ class MetaWorkflowPlanner:
         # Merge in module categories from the code database
         mods.extend(mod_cats)
 
-        # Normalize tokens prior to encoding
-        norm_funcs = [f.lower().strip() for f in funcs if f]
-        norm_mods = [m.lower().strip() for m in mods if m]
-        norm_tags = [t.lower().strip() for t in tags if t]
-        func_counts = Counter(norm_funcs)
-        tag_counts = Counter(norm_tags)
-        avg_rois: Dict[str, float] = defaultdict(float)
-        avg_failures: Dict[str, float] = defaultdict(float)
-        counts: Dict[str, int] = defaultdict(int)
-        for fn, r, fl in zip(norm_funcs, rois, failures):
-            counts[fn] += 1
-            avg_rois[fn] += float(r)
-            avg_failures[fn] += float(fl)
-        for fn in list(avg_rois.keys()):
-            c = counts[fn]
-            if c:
-                avg_rois[fn] /= c
-                avg_failures[fn] /= c
-        norm_mods = sorted(set(norm_mods))
+        # Normalize tokens prior to embedding
+        norm_funcs = sorted({f.lower().strip() for f in funcs if f})
+        norm_mods = sorted({m.lower().strip() for m in mods if m})
+        norm_tags = sorted({t.lower().strip() for t in tags if t})
 
         code_depth = max(depths) if depths else 0.0
         code_branching = max(branchings) if branchings else 0.0
@@ -241,31 +222,17 @@ class MetaWorkflowPlanner:
                     code_curve[i] += float(val)
             code_curve = [v / len(curves) for v in code_curve]
 
-        self.doc_count += 1
         vec: List[float] = []
         vec.extend([depth, branching])
         vec.extend(roi_curve)
         vec.extend([code_depth, code_branching])
         vec.extend(code_curve)
-        vec.extend(
-            self._encode_tfidf_tokens(
-                func_counts, self.function_index, self.function_df, self.max_functions
-            )
-        )
-        vec.extend(
-            self._encode_value_tokens(avg_rois, self.function_index, self.max_functions)
-        )
-        vec.extend(
-            self._encode_value_tokens(
-                avg_failures, self.function_index, self.max_functions
-            )
-        )
-        vec.extend(
-            self._encode_tokens(norm_mods, self.module_index, self.max_modules)
-        )
-        vec.extend(
-            self._encode_tfidf_tokens(tag_counts, self.tag_index, self.tag_df, self.max_tags)
-        )
+        func_vec = self._embed_tokens(norm_funcs)
+        mod_vec = self._embed_tokens(norm_mods)
+        tag_vec = self._embed_tokens(norm_tags)
+        vec.extend(func_vec)
+        vec.extend(mod_vec)
+        vec.extend(tag_vec)
         domain_vec = [0.0] * self.max_domains
         trans_vec = [0.0] * self.max_domains
         if 0 <= d_idx < self.max_domains:
@@ -278,6 +245,7 @@ class MetaWorkflowPlanner:
         vec.extend(trans_vec)
 
         code_tags = norm_tags
+        embed_dim = len(func_vec)
 
         try:
             persist_embedding(
@@ -298,11 +266,9 @@ class MetaWorkflowPlanner:
                         "roi_curve": self.roi_window,
                         "code_graph": 2,
                         "code_roi_curve": self.roi_window,
-                        "function_tokens": self.max_functions,
-                        "function_roi": self.max_functions,
-                        "function_failure": self.max_functions,
-                        "module_tokens": self.max_modules,
-                        "tag_tokens": self.max_tags,
+                        "function_embedding": embed_dim,
+                        "module_embedding": embed_dim,
+                        "tag_embedding": embed_dim,
                         "domain": self.max_domains,
                         "domain_transition": self.max_domains,
                     },
@@ -344,24 +310,9 @@ class MetaWorkflowPlanner:
 
         mods.extend(mod_cats)
 
-        norm_funcs = [f.lower().strip() for f in funcs if f]
-        norm_mods = [m.lower().strip() for m in mods if m]
-        norm_tags = [t.lower().strip() for t in tags if t]
-        func_counts = Counter(norm_funcs)
-        tag_counts = Counter(norm_tags)
-        avg_rois: Dict[str, float] = defaultdict(float)
-        avg_failures: Dict[str, float] = defaultdict(float)
-        counts: Dict[str, int] = defaultdict(int)
-        for fn, r, fl in zip(norm_funcs, rois, failures):
-            counts[fn] += 1
-            avg_rois[fn] += float(r)
-            avg_failures[fn] += float(fl)
-        for fn in list(avg_rois.keys()):
-            c = counts[fn]
-            if c:
-                avg_rois[fn] /= c
-                avg_failures[fn] /= c
-        norm_mods = sorted(set(norm_mods))
+        norm_funcs = sorted({f.lower().strip() for f in funcs if f})
+        norm_mods = sorted({m.lower().strip() for m in mods if m})
+        norm_tags = sorted({t.lower().strip() for t in tags if t})
 
         code_depth = max(depths) if depths else 0.0
         code_branching = max(branchings) if branchings else 0.0
@@ -372,30 +323,13 @@ class MetaWorkflowPlanner:
                     code_curve[i] += float(val)
             code_curve = [v / len(curves) for v in code_curve]
 
-        self.doc_count += 1
         vec: List[float] = [depth, branching]
         vec.extend(roi_curve)
         vec.extend([code_depth, code_branching])
         vec.extend(code_curve)
-        vec.extend(
-            self._encode_tfidf_tokens(
-                func_counts, self.function_index, self.function_df, self.max_functions
-            )
-        )
-        vec.extend(
-            self._encode_value_tokens(avg_rois, self.function_index, self.max_functions)
-        )
-        vec.extend(
-            self._encode_value_tokens(
-                avg_failures, self.function_index, self.max_functions
-            )
-        )
-        vec.extend(
-            self._encode_tokens(norm_mods, self.module_index, self.max_modules)
-        )
-        vec.extend(
-            self._encode_tfidf_tokens(tag_counts, self.tag_index, self.tag_df, self.max_tags)
-        )
+        vec.extend(self._embed_tokens(norm_funcs))
+        vec.extend(self._embed_tokens(norm_mods))
+        vec.extend(self._embed_tokens(norm_tags))
         domain_vec = [0.0] * self.max_domains
         trans_vec = [0.0] * self.max_domains
         if 0 <= d_idx < self.max_domains:
@@ -2663,42 +2597,36 @@ class MetaWorkflowPlanner:
         )
 
     # ------------------------------------------------------------------
-    def _encode_tokens(
-        self, tokens: Iterable[str], mapping: Dict[str, int], max_size: int
-    ) -> List[float]:
-        vec = [0.0] * max_size
-        for tok in {t.lower().strip() for t in tokens if t}:
-            idx = _get_index(tok, mapping, max_size)
-            if idx < max_size:
-                vec[idx] = 1.0
-        return vec
+    def _embed_tokens(self, tokens: Iterable[str]) -> List[float]:
+        """Return normalized embedding for ``tokens``.
 
-    def _encode_tfidf_tokens(
-        self,
-        counts: Mapping[str, int],
-        mapping: Dict[str, int],
-        df_map: Dict[str, int],
-        max_size: int,
-    ) -> List[float]:
-        vec = [0.0] * max_size
-        for tok, tf in counts.items():
-            idx = _get_index(tok, mapping, max_size)
-            if idx >= max_size:
+        Tokens are individually embedded using :func:`governed_embed` and the
+        resulting vectors averaged.  The mean vector is L2-normalised to unit
+        length.  If embedding fails or no tokens are supplied, a zero vector of
+        the model's dimensionality is returned.
+        """
+
+        vectors: List[List[float]] = []
+        for tok in tokens:
+            vec = governed_embed(tok)
+            if vec:
+                vectors.append(list(vec))
+        if not vectors:
+            embedder = get_embedder()
+            if embedder is None:
+                return []
+            dim = getattr(embedder, "get_sentence_embedding_dimension", lambda: 0)()
+            return [0.0] * dim
+        dim = len(vectors[0])
+        mean = [0.0] * dim
+        for vec in vectors:
+            if len(vec) != dim:
                 continue
-            df_map[tok] = df_map.get(tok, 0) + 1
-            idf = math.log((1 + self.doc_count) / (1 + df_map[tok])) + 1.0
-            vec[idx] = float(tf) * idf
-        return vec
-
-    def _encode_value_tokens(
-        self, values: Mapping[str, float], mapping: Dict[str, int], max_size: int
-    ) -> List[float]:
-        vec = [0.0] * max_size
-        for tok, val in values.items():
-            idx = _get_index(tok, mapping, max_size)
-            if idx < max_size:
-                vec[idx] = float(val)
-        return vec
+            for i, val in enumerate(vec):
+                mean[i] += float(val)
+        mean = [v / len(vectors) for v in mean]
+        norm = math.sqrt(sum(v * v for v in mean)) or 1.0
+        return [v / norm for v in mean]
 
 
 # ---------------------------------------------------------------------------
