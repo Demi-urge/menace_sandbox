@@ -57,7 +57,7 @@ from sandbox_settings import SandboxSettings, load_sandbox_settings
 
 settings = load_sandbox_settings()
 
-if settings.sandbox_central_logging:
+if getattr(settings, "sandbox_central_logging", False):
     setup_logging()
 from .metrics_exporter import (
     synergy_weight_updates_total,
@@ -92,14 +92,14 @@ except ImportError:  # pragma: no cover - fallback for flat layout
 
 router = GLOBAL_ROUTER or init_db_router("self_improvement_engine")
 STABLE_WORKFLOWS = WorkflowStabilityDB()
-PLANNER_INTERVAL = settings.meta_planning_interval
+PLANNER_INTERVAL = getattr(settings, "meta_planning_interval", 0)
 # Time based interval (in seconds) used to periodically trigger the meta
 # workflow planner in a background thread.  Keeping the configuration separate
 # from the cycle based ``PLANNER_INTERVAL`` allows the planner to run even when
 # no explicit self-improvement cycles are executed.
-META_PLANNING_PERIOD = settings.meta_planning_period
-META_PLANNING_LOOP = settings.meta_planning_loop
-META_IMPROVEMENT_THRESHOLD = settings.meta_improvement_threshold
+META_PLANNING_PERIOD = getattr(settings, "meta_planning_period", 0)
+META_PLANNING_LOOP = getattr(settings, "meta_planning_loop", 0)
+META_IMPROVEMENT_THRESHOLD = getattr(settings, "meta_improvement_threshold", 0)
 neuro_stub = sys.modules.get("neurosales")
 if neuro_stub:
     if not hasattr(neuro_stub, "get_recent_messages"):
@@ -261,11 +261,27 @@ def post_round_orphan_scan(
 
 def generate_patch(
     *args: object, retries: int = 3, delay: float = 0.1, **kwargs: object
-) -> int | None:
-    """Proxy for :func:`quick_fix_engine.generate_patch`."""
+) -> int:
+    """Generate a patch via :mod:`quick_fix_engine`.
 
+    This wrapper ensures the optional dependency is available and converts
+    missing or unsuccessful patch generation into a structured
+    :class:`RuntimeError` with logging instead of returning ``None``.
+    """
+
+    logger = logging.getLogger(__name__)
     func = _load_callable("quick_fix_engine", "generate_patch")
-    return _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
+    try:
+        patch_id = _call_with_retries(
+            func, *args, retries=retries, delay=delay, **kwargs
+        )
+    except Exception as exc:  # pragma: no cover - best effort logging
+        logger.error("quick_fix_engine failed: %s", exc)
+        raise RuntimeError("quick_fix_engine failed to generate patch") from exc
+    if patch_id is None:
+        logger.error("quick_fix_engine returned no patch")
+        raise RuntimeError("quick_fix_engine did not produce a patch")
+    return int(patch_id)
 
 
 from .self_test_service import SelfTestService
