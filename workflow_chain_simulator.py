@@ -20,7 +20,7 @@ try:  # pragma: no cover - allow import when used as package or module
     from .composite_workflow_scorer import CompositeWorkflowScorer
     from .workflow_synergy_comparator import WorkflowSynergyComparator
     from .workflow_stability_db import WorkflowStabilityDB
-    from .meta_workflow_planner import MetaWorkflowPlanner
+    from .meta_workflow_planner import MetaWorkflowPlanner, simulate_meta_workflow as _simulate_meta_workflow
     from . import workflow_run_summary
 except Exception:  # pragma: no cover - fallback to absolute imports
     from workflow_chain_suggester import WorkflowChainSuggester  # type: ignore
@@ -28,7 +28,7 @@ except Exception:  # pragma: no cover - fallback to absolute imports
     from composite_workflow_scorer import CompositeWorkflowScorer  # type: ignore
     from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
     from workflow_stability_db import WorkflowStabilityDB  # type: ignore
-    from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
+    from meta_workflow_planner import MetaWorkflowPlanner, simulate_meta_workflow as _simulate_meta_workflow  # type: ignore
     import workflow_run_summary  # type: ignore
 
 RESULTS_PATH = Path("sandbox_data/chain_simulations.json")
@@ -126,4 +126,26 @@ def run_scheduler(
     return records
 
 
-__all__ = ["simulate_chains", "simulate_suggested_chains", "run_scheduler"]
+def simulate_meta_workflow(
+    meta_spec: Mapping[str, Any],
+    workflows: Mapping[str, Callable[[], Any]] | None = None,
+    runner=None,
+) -> Dict[str, Any]:
+    """Execute ``meta_spec`` and persist the aggregated outcome.
+
+    This is a thin wrapper around
+    :func:`meta_workflow_planner.simulate_meta_workflow` that persists the
+    result for later inspection alongside other chain simulations.
+    """
+
+    result = _simulate_meta_workflow(meta_spec, workflows=workflows, runner=runner)
+    _persist_outcomes([{"meta_spec": meta_spec, **result}])
+    return result
+
+
+__all__ = [
+    "simulate_chains",
+    "simulate_suggested_chains",
+    "run_scheduler",
+    "simulate_meta_workflow",
+]
