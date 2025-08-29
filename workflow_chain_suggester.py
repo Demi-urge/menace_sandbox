@@ -172,8 +172,9 @@ class WorkflowChainSuggester:
                 return float(trends[-1].get("roi_gain", 0.0)) - float(
                     trends[-2].get("roi_gain", 0.0)
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("ROI delta fetch failed for %s: %s", workflow_id, exc)
+            return 0.0
         return 0.0
 
     def _entropy(self, chain: Sequence[str]) -> float:
