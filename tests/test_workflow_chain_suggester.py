@@ -1,4 +1,6 @@
 
+import logging
+
 from workflow_chain_suggester import WorkflowChainSuggester
 
 
@@ -98,3 +100,24 @@ def test_high_entropy_chain_is_filtered(monkeypatch):
     )
     chains = suggester.suggest_chains([1.0, 0.0, 0.0], top_k=2)
     assert ["1", "2"] not in chains
+
+
+class BoomROI:
+    """ROI DB stub that raises to trigger error handling."""
+
+    def fetch_trends(self, workflow_id):  # pragma: no cover - simple stub
+        raise RuntimeError("boom")
+
+
+def test_roi_delta_logs_and_defaults(caplog):
+    suggester = WorkflowChainSuggester(
+        wf_db=DummyDB(), roi_db=BoomROI(), stability_db=DummyStabilityDB(),
+    )
+
+    caplog.set_level(logging.WARNING)
+    caplog.clear()
+    result = suggester._roi_delta("x")
+
+    assert isinstance(result, float)
+    assert result == 0.0
+    assert any("ROI delta fetch failed" in rec.message for rec in caplog.records)
