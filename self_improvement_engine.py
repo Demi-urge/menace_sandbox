@@ -43,6 +43,7 @@ import threading
 import asyncio
 import os
 import sys
+import importlib
 
 from db_router import GLOBAL_ROUTER, init_db_router
 
@@ -109,7 +110,7 @@ import shutil
 import ast
 import yaml
 from pathlib import Path
-from typing import Mapping, Callable, Iterable, Dict, Any
+from typing import Mapping, Callable, Iterable, Dict, Any, Sequence
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
 try:  # pragma: no cover - allow flat imports
@@ -122,15 +123,44 @@ except Exception:  # pragma: no cover - fallback for flat layout
     import security_auditor  # type: ignore
 try:  # pragma: no cover - optional dependency
     import sandbox_runner.environment as environment
-    from sandbox_runner.orphan_integration import integrate_orphans, post_round_orphan_scan
 except Exception:  # pragma: no cover - fallback for limited environments
     environment = None  # type: ignore
 
-    def integrate_orphans(*args: object, **kwargs: object) -> list[str]:  # type: ignore
-        raise RuntimeError("sandbox_runner dependency is required for orphan integration")
 
-    def post_round_orphan_scan(*args: object, **kwargs: object) -> dict[str, object]:  # type: ignore
-        raise RuntimeError("sandbox_runner dependency is required for orphan scanning")
+def _load_callable(module: str, attr: str) -> Callable[..., Any]:
+    """Dynamically import ``attr`` from ``module`` with logging."""
+
+    try:
+        mod = importlib.import_module(module)
+        return getattr(mod, attr)
+    except Exception as exc:  # pragma: no cover - best effort logging
+        logging.getLogger(__name__).error(
+            "missing dependency %s.%s: %s", module, attr, exc
+        )
+        raise RuntimeError(f"{module} dependency is required for {attr}") from exc
+
+
+def integrate_orphans(*args: object, **kwargs: object) -> list[str]:
+    """Proxy for :mod:`sandbox_runner` orphan integration."""
+
+    func = _load_callable("sandbox_runner.orphan_integration", "integrate_orphans")
+    return func(*args, **kwargs)
+
+
+def post_round_orphan_scan(*args: object, **kwargs: object) -> dict[str, object]:
+    """Proxy for the sandbox orphan scan step."""
+
+    func = _load_callable("sandbox_runner.orphan_integration", "post_round_orphan_scan")
+    return func(*args, **kwargs)
+
+
+def generate_patch(*args: object, **kwargs: object) -> int | None:
+    """Proxy for :func:`quick_fix_engine.generate_patch`."""
+
+    func = _load_callable("quick_fix_engine", "generate_patch")
+    return func(*args, **kwargs)
+
+
 from .self_test_service import SelfTestService
 try:
     from . import self_test_service as sts
@@ -143,14 +173,6 @@ import socket
 import contextlib
 import subprocess
 from .error_cluster_predictor import ErrorClusterPredictor
-try:  # pragma: no cover - optional dependency
-    from .quick_fix_engine import generate_patch
-except Exception:  # pragma: no cover - fallback for tests
-    def generate_patch(*_: object, **__: object) -> int | None:
-        """Fallback patch generator used when quick_fix_engine is unavailable."""
-        raise RuntimeError(
-            "quick_fix_engine dependency is required for patch generation"
-        )
 from .error_logger import TelemetryEvent
 from . import mutation_logger as MutationLogger
 from .gpt_memory import GPTMemoryManager
@@ -1094,6 +1116,9 @@ class SelfImprovementEngine:
         relevancy_radar: RelevancyRadar | None = None,
         intent_clusterer: IntentClusterer | None = None,
         workflow_evolver: WorkflowEvolutionManager | None = None,
+        sandbox_integrate: Callable[..., Any] | None = None,
+        orphan_scan: Callable[..., Any] | None = None,
+        patch_generator: Callable[..., Any] | None = None,
         tau: float = 0.5,
         runner_config: Dict[str, Any] | None = None,
         **kwargs: Any,
@@ -1146,6 +1171,9 @@ class SelfImprovementEngine:
             except Exception:
                 self.intent_clusterer = None
         self.workflow_evolver = workflow_evolver or WorkflowEvolutionManager()
+        self._sandbox_integrate = sandbox_integrate or integrate_orphans
+        self._post_round_scan = orphan_scan or post_round_orphan_scan
+        self._patch_generator = patch_generator or generate_patch
         self.runner_config = runner_config
         self.pre_roi_bot = pre_roi_bot
         self.pre_roi_scale = (
@@ -1900,7 +1928,16 @@ class SelfImprovementEngine:
                 self.logger.exception(
                     "gpt suggestion failed", extra=log_record(module=module)
                 )
-        patch_id = generate_patch(module, self.self_coding_engine)
+        try:
+            patch_id = self._patch_generator(module, self.self_coding_engine)
+        except RuntimeError as exc:
+            self.logger.error("quick_fix_engine unavailable: %s", exc)
+            raise
+        except Exception:
+            self.logger.exception(
+                "patch generation failed", extra=log_record(module=module)
+            )
+            patch_id = None
         elapsed = time.perf_counter() - start
         if self.metrics_db:
             try:
@@ -2322,7 +2359,7 @@ class SelfImprovementEngine:
                                     )
                                     try:
                                         repo = Path(__file__).resolve().parent
-                                        integrate_orphans(repo, router=GLOBAL_ROUTER)
+                                        self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
                                     except Exception:
                                         self.logger.exception(
                                             "post_patch_orphan_integration_failed"
@@ -4042,7 +4079,7 @@ class SelfImprovementEngine:
                 replace_modules.append(mod)
 
         audit_fn = globals().get("audit_log_event")
-        gen_patch = globals().get("generate_patch")
+        gen_patch = self._patch_generator
 
         for mod in retire_modules:
             path = repo / mod if not Path(mod).is_absolute() else Path(mod)
@@ -4072,9 +4109,12 @@ class SelfImprovementEngine:
             except Exception:
                 cls = "error"
             patch_id = None
-            if callable(gen_patch):
+            if gen_patch:
                 try:
                     patch_id = gen_patch(str(path))
+                except RuntimeError as exc:
+                    self.logger.error("quick_fix_engine unavailable: %s", exc)
+                    raise
                 except Exception:
                     patch_id = None
             if audit_fn:
@@ -4644,7 +4684,7 @@ class SelfImprovementEngine:
             self.module_index.refresh(mods, force=True)
             self.module_index.save()
             self._last_map_refresh = time.time()
-            _tracker, tested, updated_wfs, _, _ = integrate_orphans(
+            _tracker, tested, updated_wfs, _, _ = self._sandbox_integrate(
                 repo,
                 modules=sorted(mods),
                 logger=self.logger,
@@ -4834,9 +4874,12 @@ class SelfImprovementEngine:
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
         try:
-            added, syn_ok, intent_ok = post_round_orphan_scan(
+            added, syn_ok, intent_ok = self._post_round_scan(
                 repo, logger=self.logger, router=GLOBAL_ROUTER
             )
+        except RuntimeError as exc:
+            self.logger.error("post_round_orphan_scan unavailable: %s", exc)
+            raise
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("recursive orphan integration failed")
             return
@@ -5573,7 +5616,7 @@ class SelfImprovementEngine:
                         )
                         try:
                             repo = Path(__file__).resolve().parent
-                            integrate_orphans(repo, router=GLOBAL_ROUTER)
+                            self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
                         except Exception:
                             self.logger.exception(
                                 "post_patch_orphan_integration_failed"
@@ -5622,7 +5665,7 @@ class SelfImprovementEngine:
                     extra=log_record(module=mod),
                 )
                 repo = Path(__file__).resolve().parent
-                integrate_orphans(repo, router=GLOBAL_ROUTER)
+                self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
             except Exception:
                 self.logger.exception(
                     "post_patch_orphan_discovery_failed",
@@ -5722,7 +5765,7 @@ class SelfImprovementEngine:
                             )
                             try:
                                 repo = Path(__file__).resolve().parent
-                                integrate_orphans(repo, router=GLOBAL_ROUTER)
+                                self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
                             except Exception:
                                 self.logger.exception(
                                     "post_patch_orphan_integration_failed"
@@ -5771,7 +5814,7 @@ class SelfImprovementEngine:
                         extra=log_record(module=mod),
                     )
                     repo = Path(__file__).resolve().parent
-                    integrate_orphans(repo, router=GLOBAL_ROUTER)
+                    self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
                 except Exception:
                     self.logger.exception(
                         "post_patch_orphan_discovery_failed",
@@ -5943,9 +5986,12 @@ class SelfImprovementEngine:
             if self.self_coding_engine:
                 try:
                     context = {"synergy_cluster": list(cluster)} if cluster else None
-                    task_id = generate_patch(
+                    task_id = self._patch_generator(
                         mod, self.self_coding_engine, context=context
                     )
+                except RuntimeError as exc:
+                    self.logger.error("quick_fix_engine unavailable: %s", exc)
+                    raise
                 except Exception:
                     self.logger.exception(
                         "replacement generation failed",
@@ -6139,7 +6185,7 @@ class SelfImprovementEngine:
 
                 try:
                     repo = Path(__file__).resolve().parent
-                    integrate_orphans(repo, router=GLOBAL_ROUTER)
+                    self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
                         "recursive orphan inclusion failed: %s", exc
