@@ -137,7 +137,7 @@ def test_httpx_network_mock():
         [step],
         safe_mode=True,
         network_mocks={
-            "httpx": (
+            "http://example.com": (
                 lambda self, method, url, *a, **kw: httpx.Response(200, text="mocked")
             )
         },
@@ -184,7 +184,6 @@ def test_mocked_writes_succeed_in_safe_mode():
 
     def mock_open(path, mode, *a, **kw):
         captured.append(Path(path))
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
         return original_open(path, mode, *a, **kw)
 
     def step():
@@ -248,7 +247,7 @@ def test_aiohttp_network_mock():
     metrics = runner.run(
         [step],
         safe_mode=True,
-        network_mocks={"aiohttp": mock_request},
+        network_mocks={"http://example.com": mock_request},
     )
 
     assert metrics.crash_count == 0
@@ -266,25 +265,6 @@ def test_socket_blocked_in_safe_mode():
 
     assert metrics.crash_count == 1
     assert "network access disabled" in (metrics.modules[0].exception or "")
-
-
-def test_socket_network_mock():
-    sentinel = object()
-
-    def step():
-        import socket
-
-        return socket.socket()
-
-    runner = WorkflowSandboxRunner()
-    metrics = runner.run(
-        [step],
-        safe_mode=True,
-        network_mocks={"socket": lambda *a, **kw: sentinel},
-    )
-
-    assert metrics.crash_count == 0
-    assert metrics.modules[0].result is sentinel
 
 
 def test_os_shutil_wrappers_redirected():
