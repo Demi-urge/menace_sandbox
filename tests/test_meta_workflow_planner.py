@@ -250,6 +250,54 @@ def test_compose_pipeline_roi_weighting(monkeypatch, tmp_path):
     assert pipeline == ["wf1", "wf2"]
 
 
+def test_compose_pipeline_synergy_weighting(monkeypatch, tmp_path):
+    monkeypatch.setattr(mwp, "ROITracker", None)
+    monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
+
+    class WeightedComparator:
+        @staticmethod
+        def compare(a, b):
+            a_id = a.get("id") if isinstance(a, dict) else a
+            b_id = b.get("id") if isinstance(b, dict) else b
+            if {a_id, b_id} == {"wf1", "wf3"}:
+                score = 0.9
+            elif {a_id, b_id} == {"wf1", "wf2"}:
+                score = 0.1
+            else:
+                score = 0.0
+            return types.SimpleNamespace(aggregate=score)
+
+    monkeypatch.setattr(mwp, "WorkflowSynergyComparator", WeightedComparator)
+
+    embeddings = {
+        "wf1": [1.0, 0.0],
+        "wf2": [0.6, 0.8],
+        "wf3": [0.55, 0.835],
+    }
+
+    def fake_encode(self, wid, _spec):
+        return embeddings[wid]
+
+    monkeypatch.setattr(mwp.MetaWorkflowPlanner, "encode_workflow", fake_encode)
+
+    old_cwd = _persist_embeddings(tmp_path, embeddings)
+    retr = DummyRetriever(embeddings)
+    planner = MetaWorkflowPlanner(
+        graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({})
+    )
+    workflows = {wid: {"id": wid} for wid in embeddings}
+
+    pipeline = planner.compose_pipeline(
+        "wf1", workflows, length=2, synergy_weight=0.0, retriever=retr
+    )
+    assert pipeline == ["wf1", "wf2"]
+    pipeline = planner.compose_pipeline(
+        "wf1", workflows, length=2, synergy_weight=1.0, retriever=retr
+    )
+    os.chdir(old_cwd)
+    assert pipeline == ["wf1", "wf3"]
+
+
 def test_compose_pipeline_transition_matrix(monkeypatch, tmp_path):
     monkeypatch.setattr(mwp, "ROITracker", None)
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
