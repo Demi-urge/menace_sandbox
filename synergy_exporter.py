@@ -13,11 +13,15 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict
 
 from .metrics_exporter import Gauge, start_metrics_server, stop_metrics_server
-from . import synergy_auto_trainer  # ensure trainer gauges are registered
-from .db_router import GLOBAL_ROUTER, init_db_router
+try:  # pragma: no cover - optional dependency
+    from . import synergy_auto_trainer  # ensure trainer gauges are registered
+except Exception:  # pragma: no cover - optional
+    synergy_auto_trainer = None
+try:  # pragma: no cover - optional relative/absolute
+    from .retry_utils import with_retry
+except Exception:  # pragma: no cover - package aliasing
+    from retry_utils import with_retry  # type: ignore
 
-# Reuse existing router or initialise one when executed directly.
-router = GLOBAL_ROUTER or init_db_router("synergy_exporter")
 
 # Gauges tracking exporter uptime and failures
 exporter_uptime = Gauge(
@@ -55,52 +59,70 @@ class SynergyExporter:
         self.failures = 0
 
     # ------------------------------------------------------------------
+    def _safe_set_gauge(
+        self, gauge: Gauge, value: float, *, count_failure: bool = False
+    ) -> None:
+        def op() -> None:
+            gauge.set(value)
+
+        try:
+            with_retry(op, attempts=3, delay=0.1, logger=self.logger)
+        except Exception:  # pragma: no cover - metrics library issues
+            self.logger.exception("failed to update gauge %s", getattr(gauge, "name", ""))
+            if count_failure:
+                self.failures += 1
+                # best effort to record failure without infinite recursion
+                self._safe_set_gauge(exporter_failures, float(self.failures))
+
     def _load_latest(self) -> Dict[str, float]:
         p = self.history_file
         if not p.exists():
             return {}
         try:
-            with router.get_connection("synergy_history") as conn:
+            with sqlite3.connect(self.history_file) as conn:  # noqa: P204
                 row = conn.execute(
                     "SELECT entry FROM synergy_history ORDER BY id DESC LIMIT 1"
                 ).fetchone()
-            if row:
-                data = json.loads(row[0])
-                if isinstance(data, dict):
-                    return {str(k): float(v) for k, v in data.items()}
-        except Exception as exc:  # pragma: no cover - runtime issues
-            self.logger.exception("failed to read %s: %s", p, exc)
-            self.failures += 1
-            try:
-                exporter_failures.set(float(self.failures))
-            except Exception:  # pragma: no cover - metrics library issues
-                pass
+        except sqlite3.Error as exc:
+            self.logger.exception("SQLite error reading %s: %s", p, exc)
+            raise
+        if not row:
+            return {}
+        try:
+            data = json.loads(row[0])
+        except json.JSONDecodeError as exc:
+            self.logger.exception("invalid JSON in %s: %s", p, exc)
+            raise
+        if isinstance(data, dict):
+            return {str(k): float(v) for k, v in data.items()}
         return {}
 
     def _update_loop(self) -> None:
         while not self._stop.is_set():
-            vals = self._load_latest()
+            try:
+                vals = self._load_latest()
+            except sqlite3.Error as exc:
+                self.logger.error("SQLite error during update: %s", exc)
+                self.failures += 1
+                self._safe_set_gauge(exporter_failures, float(self.failures))
+                self._stop.wait(self.interval)
+                continue
+            except json.JSONDecodeError as exc:
+                self.logger.error("JSON error during update: %s", exc)
+                self.failures += 1
+                self._safe_set_gauge(exporter_failures, float(self.failures))
+                self._stop.wait(self.interval)
+                continue
             for name, value in vals.items():
                 g = self._gauges.get(name)
                 if g is None:
                     g = Gauge(name, f"Latest value for {name}")
                     self._gauges[name] = g
-                try:
-                    g.set(float(value))
-                except Exception:  # pragma: no cover - metrics library issues
-                    self.logger.exception("failed to update gauge %s", name)
-                    self.failures += 1
-                    try:
-                        exporter_failures.set(float(self.failures))
-                    except Exception:  # pragma: no cover - metrics library issues
-                        pass
+                self._safe_set_gauge(g, float(value), count_failure=True)
             if vals:
                 self.last_update = time.time()
             if self.start_time is not None:
-                try:
-                    exporter_uptime.set(time.time() - self.start_time)
-                except Exception:  # pragma: no cover - metrics library issues
-                    pass
+                self._safe_set_gauge(exporter_uptime, time.time() - self.start_time)
             self._stop.wait(self.interval)
 
     def _start_health_server(self) -> None:
@@ -114,7 +136,10 @@ class SynergyExporter:
                     self.end_headers()
                     return
                 body = json.dumps(
-                    {"status": "ok", "updated": exporter.last_update}
+                    {
+                        "healthy": exporter.failures == 0,
+                        "last_update": exporter.last_update,
+                    }
                 ).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -143,8 +168,8 @@ class SynergyExporter:
         start_metrics_server(self.port)
         self.logger.info("metrics server running on port %d", self.port)
         self.start_time = time.time()
-        exporter_uptime.set(0.0)
-        exporter_failures.set(float(self.failures))
+        self._safe_set_gauge(exporter_uptime, 0.0)
+        self._safe_set_gauge(exporter_failures, float(self.failures))
         self._thread = threading.Thread(target=self._update_loop, daemon=True)
         self._thread.start()
         self._start_health_server()
@@ -155,7 +180,6 @@ class SynergyExporter:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=1.0)
-            self._thread = None
         if self._health_server:
             try:
                 self._health_server.shutdown()
@@ -167,10 +191,7 @@ class SynergyExporter:
             self._health_server = None
             self._health_thread = None
         if self.start_time is not None:
-            try:
-                exporter_uptime.set(time.time() - self.start_time)
-            except Exception:  # pragma: no cover - metrics library issues
-                pass
+            self._safe_set_gauge(exporter_uptime, time.time() - self.start_time)
         stop_metrics_server()
 
     def restart(self) -> None:
