@@ -21,7 +21,10 @@ from .local_knowledge_module import init_local_knowledge
 
 logger = logging.getLogger(__name__)
 
-PRUNE_INTERVAL = 50
+# Default number of interactions added to GPT memory before a compaction is
+# triggered.  This value can be overridden at runtime via the ``prune_interval``
+# parameter or the ``PRUNE_INTERVAL`` environment variable.
+DEFAULT_PRUNE_INTERVAL = 50
 
 
 def main(
@@ -29,8 +32,25 @@ def main(
     *,
     stop_event: Event | None = None,
     persist_progress: Optional[str] = None,
+    prune_interval: int | None = None,
 ) -> None:
-    """Run the self-learning coordinator until ``stop_event`` is set."""
+    """Run the self-learning coordinator until ``stop_event`` is set.
+
+    Parameters
+    ----------
+    persist_events:
+        Path to persist event bus data, if desired.
+    stop_event:
+        Event used to signal shutdown of the service.
+    persist_progress:
+        Optional path for writing evaluation results on shutdown.
+    prune_interval:
+        Number of new GPT memory interactions that triggers a database
+        compaction.  Lower values prune more frequently (using more CPU) while
+        higher values prune less often (using more disk).  Defaults to
+        ``DEFAULT_PRUNE_INTERVAL`` or the value of the ``PRUNE_INTERVAL``
+        environment variable.  Must be a positive integer.
+    """
 
     bus = UnifiedEventBus(persist_events) if persist_events else UnifiedEventBus()
 
@@ -52,6 +72,16 @@ def main(
     )
     coord.start()
 
+    # Determine the effective prune interval from argument or environment.
+    if prune_interval is None:
+        env_value = os.getenv("PRUNE_INTERVAL", str(DEFAULT_PRUNE_INTERVAL))
+        try:
+            prune_interval = int(env_value)
+        except ValueError as exc:  # pragma: no cover - validation
+            raise ValueError("prune_interval must be an integer") from exc
+    if prune_interval <= 0:
+        raise ValueError("prune_interval must be positive")
+
     def _prune_task() -> None:
         last = 0
         while stop_event is None or not stop_event.is_set():
@@ -60,9 +90,9 @@ def main(
                 count = cur.fetchone()[0]
             except Exception:
                 count = 0
-            if count - last >= PRUNE_INTERVAL:
+            if count - last >= prune_interval:
                 try:
-                    gpt_mem.compact(PRUNE_INTERVAL)
+                    gpt_mem.compact(prune_interval)
                 except Exception:  # pragma: no cover - defensive
                     logger.exception("scheduled prune failed")
                 last = count
@@ -98,8 +128,20 @@ def run_background(
     persist_events: Optional[str] = None,
     *,
     persist_progress: Optional[str] = None,
+    prune_interval: int | None = None,
 ) -> tuple[callable, callable]:
-    """Return ``start`` and ``stop`` callables to manage the background thread."""
+    """Return ``start`` and ``stop`` callables to manage the background thread.
+
+    Parameters
+    ----------
+    persist_events: optional str
+        Path to persist event bus data, if desired.
+    persist_progress: optional str
+        Optional path for writing evaluation results on shutdown.
+    prune_interval: optional int
+        Passed through to :func:`main` to control GPT memory compaction
+        frequency.  See :func:`main` for tuning guidance and validation rules.
+    """
 
     stop_event = Event()
     thread: Thread | None = None
@@ -109,6 +151,7 @@ def run_background(
             persist_events,
             stop_event=stop_event,
             persist_progress=persist_progress,
+            prune_interval=prune_interval,
         )
 
     def start() -> None:
