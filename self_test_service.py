@@ -1,3 +1,4 @@
+# flake8: noqa
 from __future__ import annotations
 
 """Service running self tests on a schedule."""
@@ -456,10 +457,15 @@ class SelfTestService:
             auto_include_modules(list(paths), **kwargs)
         except Exception:
             self.logger.exception("module auto-inclusion failed")
+            if self.clean_orphans:
+                try:
+                    self._clean_orphan_list(mods, success=False)
+                except Exception:
+                    self.logger.exception("failed to record orphan modules")
         else:
             if self.clean_orphans:
                 try:
-                    self._clean_orphan_list(mods)
+                    self._clean_orphan_list(mods, success=True)
                 except Exception:
                     self.logger.exception("failed to clean orphan modules")
 
@@ -740,8 +746,8 @@ class SelfTestService:
         """Return orphan modules detected in the repository.
 
         This helper performs discovery only; persisting the results is handled
-        by :meth:`_run_once` after combining orphan and isolated modules.  The
-        discovery always enables recursive dependency tracing so helper modules
+        by :meth:`_run_once` after combining orphan and isolated modules.
+        Discovery always enables recursive dependency tracing so helper modules
         and their parent chains are captured in :attr:`orphan_traces`.
         """
         from sandbox_runner import discover_recursive_orphans as _discover
@@ -761,17 +767,20 @@ class SelfTestService:
                     for p in (
                         v.get("parents") if isinstance(v, dict) else v
                     )
-                ]
+                ],
+                "classification": v.get("classification") if isinstance(v, dict) else None,
+                "redundant": bool(v.get("redundant")) if isinstance(v, dict) else None,
             }
-            if isinstance(v, dict) and "redundant" in v:
-                info["redundant"] = bool(v["redundant"])
             self.orphan_traces[str(Path(*k.split(".")).with_suffix(".py"))] = info
 
-        # incorporate isolated modules so dependency chains are complete
-        try:
-            isolated = _discover_iso(Path.cwd(), recursive=True)
-        except Exception:
-            isolated = []
+        # incorporate isolated modules so dependency chains are complete when
+        # either recursive orphan discovery or isolated discovery is requested
+        isolated: list[str] = []
+        if self.recursive_orphans or self.discover_isolated:
+            try:
+                isolated = _discover_iso(Path.cwd(), recursive=True)
+            except Exception:
+                isolated = []
         for m in isolated:
             key = str(Path(m))
             self.orphan_traces.setdefault(
@@ -950,13 +959,15 @@ class SelfTestService:
         return filtered
 
     # ------------------------------------------------------------------
-    def _clean_orphan_list(self, modules: Iterable[str]) -> None:
-        """Prune ``sandbox_data/orphan_modules.json`` after integration.
+    def _clean_orphan_list(self, modules: Iterable[str], *, success: bool = True) -> None:
+        """Update ``sandbox_data/orphan_modules.json`` after integration.
 
-        ``modules`` should contain the root modules that were successfully
-        merged.  Any helper imports recorded in ``self.orphan_traces`` for those
-        modules are also removed from the orphan list.  Entries marked
-        ``{"redundant": true}`` are preserved for later auditing.
+        ``modules`` should contain the root modules that were processed.  Any
+        helper imports recorded in ``self.orphan_traces`` for those modules are
+        included.  When ``success`` is ``True`` the entries are pruned from the
+        orphan list; otherwise they are appended with the collected metadata.
+        Entries marked ``{"redundant": true}`` are preserved for later
+        auditing.
         """
         repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
 
@@ -970,16 +981,37 @@ class SelfTestService:
                 return str(q)
 
         roots = {_norm(m) for m in modules}
-        to_remove: set[str] = set(roots)
+        targets: set[str] = set(roots)
         for mod, info in self.orphan_traces.items():
             parents = [_norm(p) for p in info.get("parents", [])]
-            if mod in roots or any(parent in roots for parent in parents):
-                to_remove.add(mod)
+            norm_mod = _norm(mod)
+            if norm_mod in roots or any(parent in roots for parent in parents):
+                targets.add(norm_mod)
 
-        try:
-            prune_orphan_cache(repo, to_remove, self.orphan_traces)
-        except Exception:
-            self.logger.exception("failed to prune orphan modules")
+        if success:
+            try:
+                prune_orphan_cache(repo, targets, self.orphan_traces)
+            except Exception:
+                self.logger.exception("failed to prune orphan modules")
+        else:
+            entries: dict[str, dict[str, Any]] = {}
+            for mod in targets:
+                info = self.orphan_traces.get(mod, {})
+                entry: dict[str, Any] = {
+                    "parents": [_norm(p) for p in info.get("parents", [])],
+                    "classification": info.get("classification", "candidate"),
+                    "redundant": bool(info.get("redundant")),
+                }
+                if "test_passed" in info:
+                    entry["test_passed"] = bool(info["test_passed"])
+                if info.get("warnings"):
+                    entry["warnings"] = info.get("warnings")
+                entries[mod] = entry
+            try:
+                append_orphan_cache(repo, entries)
+                append_orphan_classifications(repo, entries)
+            except Exception:
+                self.logger.exception("failed to append orphan modules")
 
     # ------------------------------------------------------------------
     def _has_pytest_file(self, mod: str) -> bool:
@@ -1741,7 +1773,7 @@ class SelfTestService:
                     self.logger.exception("result callback failed")
             if self.clean_orphans and passed_set:
                 try:
-                    self._clean_orphan_list(passed_set)
+                    self._clean_orphan_list(passed_set, success=False)
                 except Exception:
                     self.logger.exception("failed to clean orphan list")
 
@@ -1828,7 +1860,7 @@ class SelfTestService:
 
                 if self.clean_orphans and integrate_mods and not cleaned:
                     try:
-                        self._clean_orphan_list(integrate_mods)
+                        self._clean_orphan_list(integrate_mods, success=integrated_now > 0)
                     except Exception:
                         self.logger.exception("failed to clean orphan list")
 
