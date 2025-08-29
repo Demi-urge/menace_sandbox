@@ -166,6 +166,106 @@ class SandboxSettings(BaseSettings):
     menace_env_file: str = Field(".env", env="MENACE_ENV_FILE")
     sandbox_data_dir: str = Field("sandbox_data", env="SANDBOX_DATA_DIR")
     sandbox_env_presets: str | None = Field(None, env="SANDBOX_ENV_PRESETS")
+    sandbox_repo_path: str = Field(
+        ".",
+        env="SANDBOX_REPO_PATH",
+        description="Path to repository root for sandbox operations.",
+    )
+    sandbox_central_logging: bool = Field(
+        False,
+        env="SANDBOX_CENTRAL_LOGGING",
+        description="Enable centralised logging output.",
+    )
+    meta_planning_interval: int = Field(
+        10,
+        env="META_PLANNING_INTERVAL",
+        description="Cycles between meta planning runs.",
+    )
+    meta_planning_period: int = Field(
+        3600,
+        env="META_PLANNING_PERIOD",
+        description="Seconds between background meta planning runs.",
+    )
+    meta_planning_loop: bool = Field(
+        False,
+        env="META_PLANNING_LOOP",
+        description="Run meta planning continuously in its own loop.",
+    )
+    meta_improvement_threshold: float = Field(
+        0.01,
+        env="META_IMPROVEMENT_THRESHOLD",
+        description="Minimum improvement required to accept meta plan updates.",
+    )
+    meta_mutation_rate: float = Field(
+        1.0,
+        env="META_MUTATION_RATE",
+        description="Mutation rate multiplier for meta planning.",
+    )
+    meta_roi_weight: float = Field(
+        1.0,
+        env="META_ROI_WEIGHT",
+        description="Weight applied to ROI when composing workflows.",
+    )
+    meta_domain_penalty: float = Field(
+        1.0,
+        env="META_DOMAIN_PENALTY",
+        description="Penalty for domain transitions in meta planning.",
+    )
+    workflows_db: str = Field(
+        "workflows.db",
+        env="WORKFLOWS_DB",
+        description="SQLite database storing workflow definitions.",
+    )
+    gpt_memory_db: str = Field(
+        "gpt_memory.db",
+        env="GPT_MEMORY_DB",
+        description="Path to GPT memory database file.",
+    )
+    synergy_learner: str = Field(
+        "",
+        env="SYNERGY_LEARNER",
+        description="Override synergy learner backend.",
+    )
+    sandbox_auto_map: bool = Field(
+        False,
+        env="SANDBOX_AUTO_MAP",
+        description="Automatically update module map after runs.",
+    )
+    sandbox_autodiscover_modules: bool = Field(
+        False,
+        env="SANDBOX_AUTODISCOVER_MODULES",
+        description="Deprecated auto-discovery flag for module mapping.",
+    )
+    auto_train_synergy: bool = Field(
+        False,
+        env="AUTO_TRAIN_SYNERGY",
+        description="Enable automatic periodic synergy training.",
+    )
+    auto_train_interval: float = Field(
+        600.0,
+        env="AUTO_TRAIN_INTERVAL",
+        description="Interval in seconds between automatic synergy training runs.",
+    )
+    patch_score_backend_url: str | None = Field(
+        None,
+        env="PATCH_SCORE_BACKEND_URL",
+        description="URL to patch score backend service.",
+    )
+    orphan_reuse_threshold: float = Field(
+        0.0,
+        env="ORPHAN_REUSE_THRESHOLD",
+        description="Minimum reuse score required for orphan modules.",
+    )
+    clean_orphans: bool = Field(
+        False,
+        env="SANDBOX_CLEAN_ORPHANS",
+        description="Remove failing orphans from tracking file.",
+    )
+    exclude_dirs: str | None = Field(
+        None,
+        env="SANDBOX_EXCLUDE_DIRS",
+        description="Comma-separated directories to exclude during scans.",
+    )
     exploration_strategy: str = Field(
         "epsilon_greedy", env="EXPLORATION_STRATEGY"
     )
@@ -217,6 +317,30 @@ class SandboxSettings(BaseSettings):
     def _validate_exploration_temperature(cls, v: float) -> float:
         if v <= 0:
             raise ValueError("exploration_temperature must be positive")
+        return v
+
+    @field_validator("meta_planning_interval", "meta_planning_period")
+    def _validate_meta_intervals(cls, v: int, info: Any) -> int:
+        if v <= 0:
+            raise ValueError(f"{info.field_name} must be a positive integer")
+        return v
+
+    @field_validator(
+        "meta_improvement_threshold",
+        "meta_mutation_rate",
+        "meta_roi_weight",
+        "meta_domain_penalty",
+        "orphan_reuse_threshold",
+    )
+    def _validate_non_negative(cls, v: float, info: Any) -> float:
+        if v < 0:
+            raise ValueError(f"{info.field_name} must be non-negative")
+        return v
+
+    @field_validator("auto_train_interval")
+    def _validate_auto_train_interval(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("auto_train_interval must be positive")
         return v
     test_redundant_modules: bool = Field(
         True,
