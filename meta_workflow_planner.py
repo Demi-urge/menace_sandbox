@@ -641,16 +641,19 @@ class MetaWorkflowPlanner:
         ``retriever`` (when provided or available globally) is used via
         :func:`find_synergy_candidates` to obtain a shortlist of potential next
         steps for the current workflow.  Each candidate is then scored using the
-        retrieved cosine ``similarity``, structural ``synergy`` from
-        :class:`WorkflowSynergyComparator` and recent ``ROI`` trends along with
-        historic domain transition probabilities.  If retrieval fails a
-        best-effort fallback to exhaustive iteration is performed.
+        retrieved cosine ``similarity``, structural ``synergy`` and recent ``ROI``
+        trends along with historic domain transition probabilities.  Synergy
+        scores are sourced from :class:`WorkflowSynergyComparator` when
+        available, otherwise any historic ``cluster_map`` pair metrics are used.
+        If retrieval fails a best-effort fallback to exhaustive iteration is
+        performed.
 
-        The final ranking score is ``(similarity * similarity_weight +
-        synergy * synergy_weight) * (1 + ROI * roi_weight)`` further scaled by
-        ``1 + transition_prob`` where ``transition_prob`` reflects empirical ROI
-        deltas between workflow domains.  The method stops once ``length`` steps
-        have been selected or no compatible candidates remain.
+        The final ranking score is ``(similarity * similarity_weight)`` scaled by
+        ``(1 + synergy_weight * synergy)`` and ``(1 + ROI * roi_weight)`` then
+        further multiplied by ``1 + transition_prob`` where ``transition_prob``
+        reflects empirical ROI deltas between workflow domains.  The method
+        stops once ``length`` steps have been selected or no compatible
+        candidates remain.
         """
 
         if start not in workflows:
@@ -731,10 +734,16 @@ class MetaWorkflowPlanner:
                         synergy = float(getattr(scores, "aggregate", 0.0))
                     except Exception:
                         synergy = 0.0
+                    if synergy == 0.0:
+                        synergy = float(
+                            self.cluster_map.get((current, wid), {}).get("score", 0.0)
+                        )
 
-                base = similarity_weight * sim + synergy_weight * synergy
+                score = similarity_weight * sim
+                if synergy_weight:
+                    score *= 1.0 + synergy_weight * synergy
                 roi_avg = (current_roi + cand_roi) / 2.0
-                score = base * (1.0 + roi_weight * roi_avg)
+                score *= 1.0 + roi_weight * roi_avg
 
                 cand_domains = self._workflow_domain(wid, workflows)[0]
                 if prev_domains and cand_domains:
