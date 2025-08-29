@@ -158,6 +158,19 @@ from menace.error_logger import ErrorLogger
 from menace.knowledge_graph import KnowledgeGraph
 from menace.error_forecaster import ErrorForecaster
 from menace.quick_fix_engine import QuickFixEngine
+try:  # optional metrics exporter
+    from metrics_exporter import (
+        sandbox_cpu_percent,
+        sandbox_memory_mb,
+        sandbox_crashes_total,
+    )
+except Exception:  # pragma: no cover - metrics exporter missing
+    sandbox_cpu_percent = sandbox_memory_mb = sandbox_crashes_total = None
+
+try:  # optional system metrics
+    import psutil  # type: ignore
+except Exception:  # pragma: no cover - psutil not installed
+    psutil = None
 if os.getenv("MENACE_LIGHT_IMPORTS"):
     class ForesightTracker:  # type: ignore[no-redef]
         def __init__(
@@ -1263,6 +1276,40 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
         scenario: str | None = None,
     ) -> None:
         workflow_id = section or "workflow"
+        def _record_metrics() -> None:
+            if sandbox_cpu_percent is None or sandbox_memory_mb is None:
+                return
+            cpu = 0.0
+            mem = 0.0
+            if psutil:
+                try:
+                    cpu = float(psutil.cpu_percent())
+                except Exception:
+                    cpu = 0.0
+                try:
+                    mem = float(psutil.Process().memory_info().rss) / (1024 * 1024)
+                except Exception:
+                    mem = 0.0
+            else:
+                try:
+                    if hasattr(os, "getloadavg") and os.cpu_count():
+                        load = os.getloadavg()[0]
+                        cpu = min(100.0, 100.0 * load / (os.cpu_count() or 1))
+                except Exception:
+                    cpu = 0.0
+                try:
+                    import resource
+
+                    mem = float(
+                        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                    ) / 1024
+                except Exception:
+                    mem = 0.0
+            try:
+                sandbox_cpu_percent.set(cpu)
+                sandbox_memory_mb.set(mem)
+            except Exception:
+                pass
 
         def _run() -> bool:
             try:
@@ -1270,8 +1317,14 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                 return True
             except Exception as exc:
                 err_logger.log(exc, section, "sandbox_runner")
+                if sandbox_crashes_total is not None:
+                    try:
+                        sandbox_crashes_total.inc()
+                    except Exception:
+                        pass
                 return False
             finally:
+                _record_metrics()
                 forecaster = getattr(ctx.sandbox, "error_forecaster", None)
                 qfix = getattr(ctx.sandbox, "quick_fix_engine", None)
                 if forecaster:

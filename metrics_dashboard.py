@@ -156,6 +156,9 @@ class MetricsDashboard:
             "retired_modules_total",
             "compressed_modules_total",
             "replaced_modules_total",
+            "sandbox_cpu_percent",
+            "sandbox_memory_mb",
+            "sandbox_crashes_total",
         )
         if exporter is not None:
             for name in names:

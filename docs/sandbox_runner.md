@@ -126,6 +126,28 @@ projection = graph.simulate_impact_wave("42", 1.0, 0.0)
 # use `projection` to decide which dependant workflow to schedule next
 ```
 
+## Monitoring sandbox performance
+
+``sandbox_runner`` emits basic health gauges via :mod:`metrics_exporter`. Start
+the exporter and point Prometheus at the port to scrape them:
+
+```python
+from menace.metrics_exporter import start_metrics_server
+
+start_metrics_server(8001)
+```
+
+The runner updates ``sandbox_cpu_percent``, ``sandbox_memory_mb`` and
+``sandbox_crashes_total`` for each cycle.  ``sandbox_dashboard.py`` renders a
+small Chart.js page showing these values alongside ROI history:
+
+```bash
+python sandbox_dashboard.py --port 8002
+```
+
+Open ``http://localhost:8002`` to view CPU and memory usage and the cumulative
+crash count.
+
 ## Algorithm Overview
 
 Each cycle proceeds through a consistent set of stages:
