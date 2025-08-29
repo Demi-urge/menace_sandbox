@@ -402,18 +402,25 @@ class MetaWorkflowPlanner:
         workflows: Mapping[str, Mapping[str, Any]],
         *,
         length: int = 3,
+        similarity_weight: float = 1.0,
         synergy_weight: float = 1.0,
         roi_weight: float = 1.0,
     ) -> List[str]:
-        """Compose a workflow pipeline using embedding similarity.
+        """Compose a workflow pipeline using similarity, synergy and ROI.
 
-        At each step the current workflow and every candidate are encoded via
-        :meth:`encode_workflow`.  The cosine similarity is multiplied by
-        ``(1 + ROI)`` for the candidate workflow with ROI obtained through
-        :func:`_roi_weight_from_db`.  ``synergy_weight`` simply scales the
-        similarity term while ``roi_weight`` adjusts the influence of the ROI
-        multiplier.  The method stops once ``length`` steps have been selected
-        or no compatible candidates remain.
+        For each step the current workflow is compared against every available
+        candidate.  The following metrics are combined:
+
+        * ``similarity`` – cosine similarity of workflow embeddings.
+        * ``synergy`` – aggregate score from :class:`WorkflowSynergyComparator`
+          capturing structural entropy and module overlap.
+        * ``ROI`` – recent ROI trend obtained through
+          :func:`_roi_weight_from_db`.
+
+        The final ranking score is ``(similarity * similarity_weight +
+        synergy * synergy_weight) * (1 + roi_weight * ROI)``.  The method stops
+        once ``length`` steps have been selected or no compatible candidates
+        remain.
         """
 
         if start not in workflows:
@@ -433,14 +440,28 @@ class MetaWorkflowPlanner:
             for wid in list(available):
                 if not _io_compatible(graph, current, wid):
                     continue
+
                 cand_vec = self.encode_workflow(wid, workflows[wid])
                 sim = cosine_similarity(current_vec, cand_vec)
+
                 roi = (
                     _roi_weight_from_db(self.roi_db, wid)
                     if self.roi_db is not None
                     else 0.0
                 )
-                score = synergy_weight * sim * (1.0 + roi_weight * roi)
+
+                synergy = 0.0
+                if WorkflowSynergyComparator is not None:
+                    try:
+                        scores = WorkflowSynergyComparator.compare(
+                            workflows[current], workflows[wid]
+                        )
+                        synergy = float(getattr(scores, "aggregate", 0.0))
+                    except Exception:
+                        synergy = 0.0
+
+                base = similarity_weight * sim + synergy_weight * synergy
+                score = base * (1.0 + roi_weight * roi)
                 if score > best_score:
                     best_id = wid
                     best_score = score

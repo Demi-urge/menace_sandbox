@@ -30,6 +30,14 @@ class DummyROI:
         return self.trends.get(workflow_id, [])
 
 
+class DummySynergyComparator:
+    """Comparator stub returning zero aggregate synergy."""
+
+    @staticmethod
+    def compare(_a, _b):
+        return types.SimpleNamespace(aggregate=0.0)
+
+
 def _load_records(path: Path):
     with path.open("r", encoding="utf-8") as fh:
         return [json.loads(line) for line in fh]
@@ -149,6 +157,7 @@ def test_find_synergy_candidates(sample_embeddings):
 def test_compose_pipeline_chaining(monkeypatch):
     monkeypatch.setattr(mwp, "ROITracker", None)
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
+    monkeypatch.setattr(mwp, "WorkflowSynergyComparator", DummySynergyComparator)
 
     embeddings = {
         "wf1": [1.0, 0.0],
@@ -172,6 +181,7 @@ def test_compose_pipeline_chaining(monkeypatch):
 def test_compose_pipeline_roi_weighting(monkeypatch):
     monkeypatch.setattr(mwp, "ROITracker", None)
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
+    monkeypatch.setattr(mwp, "WorkflowSynergyComparator", DummySynergyComparator)
 
     embeddings = {
         "wf1": [1.0, 0.0],
@@ -223,6 +233,7 @@ def test_cluster_workflows_roi_weighting(monkeypatch):
 def test_compose_pipeline_io_compatibility(monkeypatch):
     monkeypatch.setattr(mwp, "ROITracker", None)
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
+    monkeypatch.setattr(mwp, "WorkflowSynergyComparator", DummySynergyComparator)
 
     embeddings = {
         "wf1": [1.0, 0.0],
