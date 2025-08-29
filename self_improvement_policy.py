@@ -9,6 +9,7 @@ import json
 import random
 import math
 import statistics
+import warnings
 from typing import List
 from dataclasses import dataclass, asdict
 
@@ -617,7 +618,13 @@ def strategy_factory(
     if cls in {DeepQLearningStrategy, DQNStrategy, DoubleDQNStrategy} and (
         torch is None or nn is None
     ):
-        cls = QLearningStrategy
+        warnings.warn(
+            "PyTorch not available; falling back to deterministic policy.",
+            RuntimeWarning,
+        )
+        strat = QLearningStrategy()
+        setattr(strat, "_deterministic_fallback", True)
+        return strat
     return cls()
 
 
@@ -650,6 +657,9 @@ class SelfImprovementPolicy:
             self.strategy = strategy_factory(strategy)
         else:
             self.strategy = strategy
+        if getattr(self.strategy, "_deterministic_fallback", False):
+            self.epsilon = 0.0
+            self.exploration = "epsilon_greedy"
         self.values: Dict[Tuple[int, ...], Dict[int, float]] = {}
         self.path = path
         self.episodes = 0
@@ -790,41 +800,90 @@ class SelfImprovementPolicy:
         return policy
 
     # ------------------------------------------------------------------
+    def save_q_table(self, fp: str) -> None:
+        with open(fp, "wb") as fh:
+            pickle.dump(self.values, fh)
+
+    def load_q_table(self, fp: str) -> None:
+        with open(fp, "rb") as fh:
+            data = pickle.load(fh)
+        if isinstance(data, dict):
+            new_table: Dict[Tuple[int, ...], Dict[int, float]] = {}
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    new_table[tuple(k) if not isinstance(k, tuple) else k] = {
+                        int(a): float(q) for a, q in v.items()
+                    }
+                else:
+                    new_table[tuple(k) if not isinstance(k, tuple) else k] = {1: float(v)}
+            self.values = new_table
+
+    def save_dqn_weights(self, base: str) -> None:
+        if torch is None or not hasattr(self.strategy, "model"):
+            return
+        model = getattr(self.strategy, "model", None)
+        if model is not None:
+            torch.save(model.state_dict(), base + ".pt")
+        target = getattr(self.strategy, "target_model", None)
+        if target is not None:
+            torch.save(target.state_dict(), base + ".target.pt")
+
+    def load_dqn_weights(self, base: str) -> None:
+        if torch is None or not hasattr(self.strategy, "model"):
+            return
+        model_path = base + ".pt"
+        if os.path.exists(model_path):
+            state_dict = torch.load(model_path, map_location="cpu")
+            if hasattr(self.strategy, "_ensure_model"):
+                if (
+                    getattr(self.strategy, "config", None)
+                    and self.strategy.config.state_dim is None
+                ):
+                    first = next(iter(state_dict.values()))
+                    dim = first.shape[1]
+                else:
+                    dim = getattr(self.strategy.config, "state_dim", 1)
+                self.strategy._ensure_model(dim)  # type: ignore[attr-defined]
+            model = getattr(self.strategy, "model", None)
+            if model is not None:
+                model.load_state_dict(state_dict)
+        target_path = base + ".target.pt"
+        if os.path.exists(target_path) and hasattr(self.strategy, "target_model"):
+            target_state = torch.load(target_path, map_location="cpu")
+            if hasattr(self.strategy, "_ensure_model"):
+                if (
+                    getattr(self.strategy, "config", None)
+                    and self.strategy.config.state_dim is None
+                ):
+                    first = next(iter(target_state.values()))
+                    dim = first.shape[1]
+                else:
+                    dim = getattr(self.strategy.config, "state_dim", 1)
+                self.strategy._ensure_model(dim)  # type: ignore[attr-defined]
+            target = getattr(self.strategy, "target_model", None)
+            if target is not None:
+                target.load_state_dict(target_state)
+
     def save(self, path: Optional[str] = None) -> None:
         fp = path or self.path
         if not fp:
             return
         try:
-            with open(fp, "wb") as fh:
-                pickle.dump(self.values, fh)
-            if torch is not None and hasattr(self.strategy, "model"):
-                base = os.path.splitext(fp)[0]
-                model = getattr(self.strategy, "model", None)
-                if model is not None:
-                    torch.save(model.state_dict(), base + ".pt")
-                target = getattr(self.strategy, "target_model", None)
-                if target is not None:
-                    torch.save(target.state_dict(), base + ".target.pt")
+            self.save_q_table(fp)
+            base = os.path.splitext(fp)[0]
+            self.save_dqn_weights(base)
         except Exception:
             raise
 
     def load(self, path: Optional[str] = None) -> None:
         fp = path or self.path
-        if not fp or not os.path.exists(fp):
+        if not fp:
             return
         try:
-            with open(fp, "rb") as fh:
-                data = pickle.load(fh)
-            if isinstance(data, dict):
-                new_table: Dict[Tuple[int, ...], Dict[int, float]] = {}
-                for k, v in data.items():
-                    if isinstance(v, dict):
-                        new_table[tuple(k) if not isinstance(k, tuple) else k] = {
-                            int(a): float(q) for a, q in v.items()
-                        }
-                    else:
-                        new_table[tuple(k) if not isinstance(k, tuple) else k] = {1: float(v)}
-                self.values = new_table
+            if os.path.exists(fp):
+                self.load_q_table(fp)
+            base = os.path.splitext(fp)[0]
+            self.load_dqn_weights(base)
         except Exception:
             raise
 
