@@ -14,10 +14,13 @@ from vector_utils import cosine_similarity
 
 
 class DummyGraph:
-    """Wrapper exposing ``graph`` attribute for the planner."""
+    """Wrapper exposing ``graph`` attribute and static I/O signatures."""
 
     def __init__(self, g: nx.DiGraph) -> None:
         self.graph = g
+
+    def get_io_signature(self, _wid):
+        return {"inputs": {"x": "text/plain"}, "outputs": {"x": "text/plain"}}
 
 
 class DummyROI:
@@ -239,6 +242,7 @@ def test_compose_pipeline_io_compatibility(monkeypatch):
         "wf1": [1.0, 0.0],
         "wf2": [0.9, 0.1],
         "wf3": [0.8, 0.2],
+        "wf4": [0.95, 0.05],
     }
 
     def fake_encode(self, wid, _spec):
@@ -254,14 +258,49 @@ def test_compose_pipeline_io_compatibility(monkeypatch):
             return self.sigs.get(wid)
 
     sigs = {
-        "wf1": {"outputs": ["a"]},
-        "wf2": {"inputs": ["a"], "outputs": ["b"]},
-        "wf3": {"inputs": ["c"], "outputs": ["d"]},
+        "wf1": {"outputs": {"a": "text/plain"}},
+        # wf2 requires an extra input not produced by wf1
+        "wf2": {
+            "inputs": {"a": "text/plain", "extra": "text/plain"},
+            "outputs": {"b": "text/plain"},
+        },
+        # wf3 matches wf1's outputs exactly
+        "wf3": {"inputs": {"a": "text/plain"}, "outputs": {"c": "text/plain"}},
+        # wf4 lacks explicit input type and should be skipped
+        "wf4": {"inputs": {"a": ""}, "outputs": {"d": "text/plain"}},
     }
     planner = MetaWorkflowPlanner(graph=SigGraph(sigs), roi_db=DummyROI({}))
     workflows = {wid: {} for wid in embeddings}
     pipeline = planner.compose_pipeline("wf1", workflows, length=3)
-    assert pipeline == ["wf1", "wf2"]
+    assert pipeline == ["wf1", "wf3"]
+
+
+def test_compose_meta_workflow_skip_incompatible(monkeypatch):
+    monkeypatch.setattr(
+        mwp,
+        "find_synergy_chain",
+        lambda start_workflow_id, length=5: ["wf1", "wf2", "wf3"],
+    )
+
+    class SigGraph:
+        def __init__(self, sigs):
+            self.sigs = sigs
+
+        def get_io_signature(self, wid):
+            return self.sigs.get(wid)
+
+    sigs = {
+        "wf1": {"outputs": {"a": "text/plain"}},
+        "wf2": {
+            "inputs": {"b": "text/plain"},
+            "outputs": {"c": "text/plain"},
+        },
+        "wf3": {"inputs": {"a": "text/plain"}, "outputs": {"d": "text/plain"}},
+    }
+
+    result = mwp.compose_meta_workflow("wf1", length=3, graph=SigGraph(sigs))
+    assert result["chain"] == "wf1->wf3"
+    assert [s["workflow_id"] for s in result["steps"]] == ["wf1", "wf3"]
 
 
 def test_plan_and_validate_sandbox(monkeypatch):
@@ -348,7 +387,7 @@ def test_iterate_pipelines(monkeypatch):
     planner = MetaWorkflowPlanner(roi_db=DummyROI(), stability_db=DummyStability())
     planner.cluster_map = {
         ("a", "b"): {"delta_roi": -0.1, "converged": True},
-        ("c", "d"): {"delta_roi": 0.5, "converged": True},
+        ("c", "d"): {"delta_roi": 3.0, "delta_entropy": 2.5, "converged": True},
         ("e",): {"delta_roi": 0.4, "converged": True},
         ("f",): {"delta_roi": 0.3, "converged": True},
     }
