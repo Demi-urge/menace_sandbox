@@ -35,7 +35,7 @@ def test_validate_chain_penalizes_improbable_domain_transitions(monkeypatch):
     monkeypatch.setattr(
         planner,
         "_workflow_domain",
-        lambda wid, workflows=None: (0, "alpha") if wid == "a" else (1, "beta"),
+        lambda wid, workflows=None: ([0], ["alpha"]) if wid == "a" else ([1], ["beta"]),
     )
 
     def a():
@@ -49,6 +49,45 @@ def test_validate_chain_penalizes_improbable_domain_transitions(monkeypatch):
     record = planner._validate_chain(["a", "b"], workflows, runner=runner, runs=1)
     assert record is not None
     assert record["roi_gain"] == pytest.approx(1.0)
+
+
+def test_multi_domain_pipeline_records_transitions(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "workflow_synergy_comparator",
+        types.SimpleNamespace(WorkflowSynergyComparator=StubComparator),
+    )
+    planner = MetaWorkflowPlanner()
+    planner.domain_index = {
+        "other": 0,
+        "youtube": 1,
+        "reddit": 2,
+        "email": 3,
+        "social": 4,
+    }
+
+    def domain_stub(wid, workflows=None):
+        mapping = {
+            "yt": ([1], ["youtube"]),
+            "rd": ([2, 4], ["reddit", "social"]),
+            "em": ([3], ["email"]),
+        }
+        return mapping[wid]
+
+    monkeypatch.setattr(planner, "_workflow_domain", domain_stub)
+
+    def step():
+        return 1.0
+
+    workflows = {"yt": step, "rd": step, "em": step}
+    runner = WorkflowSandboxRunner()
+    record = planner._validate_chain(["yt", "rd", "em"], workflows, runner=runner, runs=1)
+    assert record is not None
+    matrix = planner.cluster_map.get(("__domain_transitions__",), {})
+    assert matrix[(1, 2)]["count"] == 1
+    assert matrix[(2, 3)]["count"] == 1
+    assert matrix[(1, 4)]["count"] == 1
+    assert matrix[(4, 3)]["count"] == 1
 
 
 class ModuleMetric:
@@ -98,7 +137,7 @@ def test_validate_chain_recursive_execution(monkeypatch):
     )
     planner = MetaWorkflowPlanner()
     planner.cluster_map = {}
-    monkeypatch.setattr(planner, "_workflow_domain", lambda wid, workflows=None: (-1, ""))
+    monkeypatch.setattr(planner, "_workflow_domain", lambda wid, workflows=None: ([], []))
 
     def child_ok():
         return 1.0
