@@ -2,8 +2,13 @@ import os
 import sys
 import types
 import asyncio
+from pathlib import Path
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 if "sqlalchemy" not in sys.modules:
     sa = types.ModuleType("sqlalchemy")
     engine_mod = types.ModuleType("sqlalchemy.engine")
@@ -15,7 +20,7 @@ if "pyroute2" not in sys.modules:
     pr2 = types.ModuleType("pyroute2")
     pr2.IPRoute = pr2.NSPopen = pr2.netns = object
     sys.modules["pyroute2"] = pr2
-import sandbox_runner.environment as env
+import sandbox_runner.environment as env  # noqa: E402
 
 
 def test_parse_failure_modes():
@@ -186,6 +191,7 @@ def test_generate_input_stubs_synthetic_plugin(monkeypatch, tmp_path):
             return [{"generated_text": "{\"foo\": 7}"}]
 
     dummy = DummyGen()
+
     async def loader():
         return dummy
     monkeypatch.setattr(gsp, "_aload_generator", loader)
@@ -201,6 +207,7 @@ def test_generate_input_stubs_synthetic_plugin(monkeypatch, tmp_path):
 
 def test_generative_load_default(monkeypatch):
     monkeypatch.delenv("SANDBOX_STUB_MODEL", raising=False)
+    monkeypatch.setenv("SANDBOX_ENABLE_TRANSFORMERS", "1")
     import sandbox_runner.generative_stub_provider as gsp
 
     called = {}
@@ -234,10 +241,13 @@ def test_generate_input_stubs_synthetic_fallback(monkeypatch, tmp_path):
     import importlib
     import sandbox_runner.generative_stub_provider as gsp
     gsp = importlib.reload(gsp)
+
     async def loader():
         return None
+
     monkeypatch.setattr(gsp, "_aload_generator", loader)
     importlib.reload(env)
+
     monkeypatch.setattr(env, "_FAKER", None)
     monkeypatch.setattr(env, "_hyp_strats", None)
 
@@ -362,6 +372,7 @@ def test_generate_input_stubs_misuse(monkeypatch):
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
     import importlib
     importlib.reload(env)
+
     def target(a: int, name: str) -> None:
         pass
 
@@ -420,6 +431,7 @@ def _stub_docker_logs(holder):
     dummy.from_env = lambda: DummyClient()
     dummy.types = types
     err_mod = types.ModuleType("docker.errors")
+
     class DummyErr(Exception):
         pass
     err_mod.DockerException = DummyErr
@@ -448,4 +460,3 @@ def test_execute_in_container_logs_created(monkeypatch):
     env._cleanup_pools()
     assert not os.path.exists(res["stdout_log"])
     assert not os.path.exists(res["stderr_log"])
-

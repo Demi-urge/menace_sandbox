@@ -1,9 +1,16 @@
 import os
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
-import importlib
-import sandbox_runner.input_history_db as ih
-import sandbox_runner.environment as env
+import importlib  # noqa: E402
+import sandbox_runner.input_history_db as ih  # noqa: E402
+import sandbox_runner.environment as env  # noqa: E402
 
 
 def test_aggregate_history_stubs(tmp_path, monkeypatch):
@@ -28,7 +35,8 @@ def test_generate_input_stubs_use_history(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", str(db_path))
     importlib.reload(env)
     expected = env.aggregate_history_stubs()
-    import sandbox_runner.generative_stub_provider as gsp
+    import sandbox_runner.generative_stub_provider as gsp  # noqa: E402
+
     def fail(*a, **k):
         raise RuntimeError("boom")
     monkeypatch.setattr(gsp, "generate_stubs", fail)
