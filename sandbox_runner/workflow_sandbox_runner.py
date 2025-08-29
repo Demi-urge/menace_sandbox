@@ -140,8 +140,10 @@ class WorkflowSandboxRunner:
 
         ``network_mocks`` and ``fs_mocks`` allow callers to supply custom
         functions for the patched network and filesystem helpers respectively.
-        Keys correspond to the fully-qualified helper name such as ``"requests"``
-        or ``"pathlib.Path.write_text"``.
+        ``network_mocks`` must map full URLs or URL prefixes to callables.  Any
+        network request performed while ``safe_mode`` is enabled that does not
+        match an entry in ``network_mocks`` (or ``test_data``) will raise a
+        :class:`RuntimeError`.
 
         ``module_fixtures`` maps module names to fixture dictionaries.  Each
         fixture may contain ``"files"`` and ``"env"`` mappings that are applied
@@ -172,6 +174,18 @@ class WorkflowSandboxRunner:
                 network_data[key] = value
             else:
                 file_data[key] = value
+
+        if timeout is None or memory_limit is None:
+            try:  # pragma: no cover - optional settings
+                from sandbox_settings import SandboxSettings
+
+                _settings = SandboxSettings()
+            except Exception:  # pragma: no cover - settings missing
+                _settings = None
+            if timeout is None and _settings and _settings.default_module_timeout is not None:
+                timeout = _settings.default_module_timeout
+            if memory_limit is None and _settings and _settings.default_memory_limit is not None:
+                memory_limit = _settings.default_memory_limit
 
         proc = psutil.Process() if psutil else None
 
@@ -628,9 +642,6 @@ class WorkflowSandboxRunner:
                         family = a[0]
                     if family == socket.AF_UNIX:
                         return original_socket(*a, **kw)
-                    fn = network_mocks.get("socket")
-                    if fn:
-                        return fn(*a, **kw)
                     raise RuntimeError("network access disabled in safe_mode")
 
                 stack.enter_context(mock.patch("socket.socket", _blocked_socket))
@@ -684,9 +695,11 @@ class WorkflowSandboxRunner:
                 def fake_request(self, method, url, *a, **kw):
                     if url in network_data:
                         return _response_for(network_data[url])
-                    fn = network_mocks.get("requests")
+                    fn = network_mocks.get(url)
                     if fn:
                         return fn(self, method, url, *a, **kw)
+                    if safe_mode:
+                        raise RuntimeError("network access disabled in safe_mode")
                     return orig_request(self, method, url, *a, **kw)
 
                 stack.enter_context(
@@ -711,9 +724,11 @@ class WorkflowSandboxRunner:
                     def fake_httpx_request(self, method, url, *a, **kw):
                         if url in network_data:
                             return _httpx_response(network_data[url])
-                        fn = network_mocks.get("httpx")
+                        fn = network_mocks.get(url)
                         if fn:
                             return fn(self, method, url, *a, **kw)
+                        if safe_mode:
+                            raise RuntimeError("network access disabled in safe_mode")
                         return orig_httpx_request(self, method, url, *a, **kw)
 
                     stack.enter_context(
@@ -726,12 +741,14 @@ class WorkflowSandboxRunner:
                         async def fake_async_httpx_request(self, method, url, *a, **kw):
                             if url in network_data:
                                 return _httpx_response(network_data[url])
-                            fn = network_mocks.get("httpx")
+                            fn = network_mocks.get(url)
                             if fn:
                                 res = fn(self, method, url, *a, **kw)
                                 if inspect.isawaitable(res):
                                     return await res
                                 return res
+                            if safe_mode:
+                                raise RuntimeError("network access disabled in safe_mode")
                             return await orig_async_httpx_request(self, method, url, *a, **kw)
 
                         stack.enter_context(
@@ -765,9 +782,11 @@ class WorkflowSandboxRunner:
                                     return self._b.decode()
 
                             return _AioResp(data)
-                        fn = network_mocks.get("aiohttp")
+                        fn = network_mocks.get(url)
                         if fn:
                             return await fn(self, method, url, *a, **kw)
+                        if safe_mode:
+                            raise RuntimeError("network access disabled in safe_mode")
                         return await orig_aio_request(self, method, url, *a, **kw)
 
                     stack.enter_context(
@@ -787,7 +806,7 @@ class WorkflowSandboxRunner:
                     u = url if isinstance(url, str) else url.get_full_url()
                     if u in network_data:
                         return _response_for(network_data[u])
-                    fn = network_mocks.get("urllib")
+                    fn = network_mocks.get(u)
                     if fn:
                         return fn(url, *a, **kw)
                     if safe_mode:
@@ -1079,6 +1098,22 @@ class WorkflowSandboxRunner:
                     )
                     for mod, dur in times.items():
                         g_time.labels(module=mod).set(dur)
+
+                    g_cpu = _Gauge(
+                        "workflow_sandbox_module_cpu_seconds",
+                        "CPU time per module",
+                        ["module"],
+                    )
+                    for mod, dur in cpu_times.items():
+                        g_cpu.labels(module=mod).set(dur)
+
+                    g_mem_mod = _Gauge(
+                        "workflow_sandbox_module_memory_bytes",
+                        "Peak memory usage per module",
+                        ["module"],
+                    )
+                    for mod, mem in peak_per_module.items():
+                        g_mem_mod.labels(module=mod).set(mem)
 
                     g_crash = _Gauge(
                         "workflow_sandbox_crash_total",

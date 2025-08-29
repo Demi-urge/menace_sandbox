@@ -37,6 +37,16 @@ class SandboxSettings(BaseSettings):
     menace_env_file: str = Field(".env", env="MENACE_ENV_FILE")
     sandbox_data_dir: str = Field("sandbox_data", env="SANDBOX_DATA_DIR")
     sandbox_env_presets: str | None = Field(None, env="SANDBOX_ENV_PRESETS")
+    default_module_timeout: float | None = Field(
+        None,
+        env="SANDBOX_TIMEOUT",
+        description="Default per-module execution timeout in seconds.",
+    )
+    default_memory_limit: int | None = Field(
+        None,
+        env="SANDBOX_MEMORY_LIMIT",
+        description="Default per-module RSS memory limit in bytes.",
+    )
     auto_include_isolated: bool = Field(
         True,
         env="SANDBOX_AUTO_INCLUDE_ISOLATED",
