@@ -87,7 +87,7 @@ def test_code_db_tags_in_embedding(workflow_file, expected_modules, expected_tag
     vec = planner.encode(workflow_file, workflow)
 
     base = 2 + planner.roi_window + 2 + planner.roi_window
-    module_start = base + planner.max_functions
+    module_start = base + 3 * planner.max_functions
     tag_start = module_start + planner.max_modules
 
     for mod in expected_modules:
@@ -96,7 +96,7 @@ def test_code_db_tags_in_embedding(workflow_file, expected_modules, expected_tag
 
     for tag in expected_tags:
         idx = planner.tag_index[tag]
-        assert vec[tag_start + idx] == 1.0
+        assert vec[tag_start + idx] > 0.0
 
 
 def test_function_context_tags_in_embedding():
@@ -111,9 +111,9 @@ def test_function_context_tags_in_embedding():
     vec = planner.encode_workflow("wf_func", workflow)
 
     base = 2 + planner.roi_window + 2 + planner.roi_window
-    module_start = base + planner.max_functions
+    module_start = base + 3 * planner.max_functions
     tag_start = module_start + planner.max_modules
 
     idx = planner.tag_index["functag"]
-    assert vec[tag_start + idx] == 1.0
+    assert vec[tag_start + idx] > 0.0
 

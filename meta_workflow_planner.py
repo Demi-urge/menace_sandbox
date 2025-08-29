@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import math
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence, TYPE_CHECKING
 
@@ -70,6 +72,9 @@ class MetaWorkflowPlanner:
     function_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
     module_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
     tag_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
+    function_df: Dict[str, int] = field(default_factory=dict)
+    tag_df: Dict[str, int] = field(default_factory=dict)
+    doc_count: int = 0
     graph: WorkflowGraph | None = None
     roi_db: ROIResultsDB | None = None
     roi_tracker: ROITracker | None = None
@@ -120,7 +125,9 @@ class MetaWorkflowPlanner:
             depths,
             branchings,
             curves,
-        ) = self._semantic_tokens(workflow)
+            rois,
+            failures,
+        ) = self._semantic_tokens(workflow, workflow_id)
         domain = workflow.get("domain")
         if isinstance(domain, str) and domain:
             tags.append(domain)
@@ -129,9 +136,24 @@ class MetaWorkflowPlanner:
         mods.extend(mod_cats)
 
         # Normalize tokens prior to encoding
-        funcs = sorted({f.lower().strip() for f in funcs if f})
-        mods = sorted({m.lower().strip() for m in mods if m})
-        tags = sorted({t.lower().strip() for t in tags if t})
+        norm_funcs = [f.lower().strip() for f in funcs if f]
+        norm_mods = [m.lower().strip() for m in mods if m]
+        norm_tags = [t.lower().strip() for t in tags if t]
+        func_counts = Counter(norm_funcs)
+        tag_counts = Counter(norm_tags)
+        avg_rois: Dict[str, float] = defaultdict(float)
+        avg_failures: Dict[str, float] = defaultdict(float)
+        counts: Dict[str, int] = defaultdict(int)
+        for fn, r, fl in zip(norm_funcs, rois, failures):
+            counts[fn] += 1
+            avg_rois[fn] += float(r)
+            avg_failures[fn] += float(fl)
+        for fn in list(avg_rois.keys()):
+            c = counts[fn]
+            if c:
+                avg_rois[fn] /= c
+                avg_failures[fn] /= c
+        norm_mods = sorted(set(norm_mods))
 
         code_depth = max(depths) if depths else 0.0
         code_branching = max(branchings) if branchings else 0.0
@@ -142,16 +164,33 @@ class MetaWorkflowPlanner:
                     code_curve[i] += float(val)
             code_curve = [v / len(curves) for v in code_curve]
 
+        self.doc_count += 1
         vec: List[float] = []
         vec.extend([depth, branching])
         vec.extend(roi_curve)
         vec.extend([code_depth, code_branching])
         vec.extend(code_curve)
-        vec.extend(self._encode_tokens(funcs, self.function_index, self.max_functions))
-        vec.extend(self._encode_tokens(mods, self.module_index, self.max_modules))
-        vec.extend(self._encode_tokens(tags, self.tag_index, self.max_tags))
+        vec.extend(
+            self._encode_tfidf_tokens(
+                func_counts, self.function_index, self.function_df, self.max_functions
+            )
+        )
+        vec.extend(
+            self._encode_value_tokens(avg_rois, self.function_index, self.max_functions)
+        )
+        vec.extend(
+            self._encode_value_tokens(
+                avg_failures, self.function_index, self.max_functions
+            )
+        )
+        vec.extend(
+            self._encode_tokens(norm_mods, self.module_index, self.max_modules)
+        )
+        vec.extend(
+            self._encode_tfidf_tokens(tag_counts, self.tag_index, self.tag_df, self.max_tags)
+        )
 
-        code_tags = tags
+        code_tags = norm_tags
 
         try:
             persist_embedding(
@@ -165,6 +204,17 @@ class MetaWorkflowPlanner:
                     "dependency_depth": depth,
                     "branching_factor": branching,
                     "domain": domain,
+                    "vector_schema": {
+                        "graph": 2,
+                        "roi_curve": self.roi_window,
+                        "code_graph": 2,
+                        "code_roi_curve": self.roi_window,
+                        "function_tokens": self.max_functions,
+                        "function_roi": self.max_functions,
+                        "function_failure": self.max_functions,
+                        "module_tokens": self.max_modules,
+                        "tag_tokens": self.max_tags,
+                    },
                 },
             )
         except TypeError:  # pragma: no cover - compatibility shim
@@ -192,13 +242,30 @@ class MetaWorkflowPlanner:
             depths,
             branchings,
             curves,
-        ) = self._semantic_tokens(workflow)
+            rois,
+            failures,
+        ) = self._semantic_tokens(workflow, workflow_id)
 
         mods.extend(mod_cats)
 
-        funcs = sorted({f.lower().strip() for f in funcs if f})
-        mods = sorted({m.lower().strip() for m in mods if m})
-        tags = sorted({t.lower().strip() for t in tags if t})
+        norm_funcs = [f.lower().strip() for f in funcs if f]
+        norm_mods = [m.lower().strip() for m in mods if m]
+        norm_tags = [t.lower().strip() for t in tags if t]
+        func_counts = Counter(norm_funcs)
+        tag_counts = Counter(norm_tags)
+        avg_rois: Dict[str, float] = defaultdict(float)
+        avg_failures: Dict[str, float] = defaultdict(float)
+        counts: Dict[str, int] = defaultdict(int)
+        for fn, r, fl in zip(norm_funcs, rois, failures):
+            counts[fn] += 1
+            avg_rois[fn] += float(r)
+            avg_failures[fn] += float(fl)
+        for fn in list(avg_rois.keys()):
+            c = counts[fn]
+            if c:
+                avg_rois[fn] /= c
+                avg_failures[fn] /= c
+        norm_mods = sorted(set(norm_mods))
 
         code_depth = max(depths) if depths else 0.0
         code_branching = max(branchings) if branchings else 0.0
@@ -209,13 +276,30 @@ class MetaWorkflowPlanner:
                     code_curve[i] += float(val)
             code_curve = [v / len(curves) for v in code_curve]
 
+        self.doc_count += 1
         vec: List[float] = [depth, branching]
         vec.extend(roi_curve)
         vec.extend([code_depth, code_branching])
         vec.extend(code_curve)
-        vec.extend(self._encode_tokens(funcs, self.function_index, self.max_functions))
-        vec.extend(self._encode_tokens(mods, self.module_index, self.max_modules))
-        vec.extend(self._encode_tokens(tags, self.tag_index, self.max_tags))
+        vec.extend(
+            self._encode_tfidf_tokens(
+                func_counts, self.function_index, self.function_df, self.max_functions
+            )
+        )
+        vec.extend(
+            self._encode_value_tokens(avg_rois, self.function_index, self.max_functions)
+        )
+        vec.extend(
+            self._encode_value_tokens(
+                avg_failures, self.function_index, self.max_functions
+            )
+        )
+        vec.extend(
+            self._encode_tokens(norm_mods, self.module_index, self.max_modules)
+        )
+        vec.extend(
+            self._encode_tfidf_tokens(tag_counts, self.tag_index, self.tag_df, self.max_tags)
+        )
         return vec
 
     # ------------------------------------------------------------------
@@ -1398,6 +1482,24 @@ class MetaWorkflowPlanner:
                 curve = [float(x) for x in rc]
         return mods, tags, depth, branching, curve
 
+    def _roi_db_context(self, workflow_id: str | None, func: str) -> tuple[float, float]:
+        if not self.roi_db or not hasattr(self.roi_db, "fetch_module_trajectories"):
+            return 0.0, 0.0
+        if workflow_id is None:
+            return 0.0, 0.0
+        try:
+            data = self.roi_db.fetch_module_trajectories(workflow_id, module=func)
+        except Exception:
+            return 0.0, 0.0
+        stats = data.get(func, [])
+        if not stats:
+            return 0.0, 0.0
+        avg_roi = sum(s.get("roi_delta", 0.0) for s in stats) / len(stats)
+        avg_fail = 1.0 - (
+            sum(s.get("success_rate", 0.0) for s in stats) / len(stats)
+        )
+        return float(avg_roi), float(avg_fail)
+
     # ------------------------------------------------------------------
     def _module_db_tags(self, module: str) -> tuple[List[str], List[str]]:
         """Return module categories and context tags for ``module``.
@@ -1434,9 +1536,8 @@ class MetaWorkflowPlanner:
 
     # ------------------------------------------------------------------
     def _semantic_tokens(
-        self, workflow: Mapping[str, Any]
+        self, workflow: Mapping[str, Any], workflow_id: str | None = None
     ) -> tuple[
-        List[str],
         List[str],
         List[str],
         List[str],
@@ -1444,6 +1545,8 @@ class MetaWorkflowPlanner:
         List[float],
         List[float],
         List[List[float]],
+        List[float],
+        List[float],
     ]:
         steps = workflow.get("workflow") or workflow.get("task_sequence") or []
         funcs: List[str] = []
@@ -1453,6 +1556,8 @@ class MetaWorkflowPlanner:
         depths: List[float] = []
         branchings: List[float] = []
         curves: List[List[float]] = []
+        rois: List[float] = []
+        failures: List[float] = []
         if isinstance(workflow.get("category"), str):
             cat = str(workflow["category"])
             modules.append(cat)
@@ -1478,6 +1583,9 @@ class MetaWorkflowPlanner:
                 depths.append(d)
                 branchings.append(b)
                 curves.append(curve)
+                r, f = self._roi_db_context(workflow_id, fname)
+                rois.append(r)
+                failures.append(f)
             if mod:
                 mname = str(mod)
                 modules.append(mname)
@@ -1496,6 +1604,8 @@ class MetaWorkflowPlanner:
             depths,
             branchings,
             curves,
+            rois,
+            failures,
         )
 
     # ------------------------------------------------------------------
@@ -1507,6 +1617,33 @@ class MetaWorkflowPlanner:
             idx = _get_index(tok, mapping, max_size)
             if idx < max_size:
                 vec[idx] = 1.0
+        return vec
+
+    def _encode_tfidf_tokens(
+        self,
+        counts: Mapping[str, int],
+        mapping: Dict[str, int],
+        df_map: Dict[str, int],
+        max_size: int,
+    ) -> List[float]:
+        vec = [0.0] * max_size
+        for tok, tf in counts.items():
+            idx = _get_index(tok, mapping, max_size)
+            if idx >= max_size:
+                continue
+            df_map[tok] = df_map.get(tok, 0) + 1
+            idf = math.log((1 + self.doc_count) / (1 + df_map[tok])) + 1.0
+            vec[idx] = float(tf) * idf
+        return vec
+
+    def _encode_value_tokens(
+        self, values: Mapping[str, float], mapping: Dict[str, int], max_size: int
+    ) -> List[float]:
+        vec = [0.0] * max_size
+        for tok, val in values.items():
+            idx = _get_index(tok, mapping, max_size)
+            if idx < max_size:
+                vec[idx] = float(val)
         return vec
 
 

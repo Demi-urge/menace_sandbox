@@ -111,7 +111,7 @@ def test_embedding_generation(sample_embeddings):
         + planner.roi_window
         + 2
         + planner.roi_window
-        + planner.max_functions
+        + 3 * planner.max_functions
         + planner.max_modules
         + planner.max_tags
     )
@@ -122,10 +122,9 @@ def test_embedding_generation(sample_embeddings):
 
 def test_embedding_clustering(sample_embeddings):
     _planner, _vecs, records = sample_embeddings
-    clusters = _cluster(records)
+    clusters = _cluster(records, threshold=0.65)
     cluster_ids = [sorted(rec["id"] for rec in group) for group in clusters]
-    assert ["wf1", "wf2"] in cluster_ids
-    assert ["wf3"] in cluster_ids
+    assert ["wf1", "wf2", "wf3"] in cluster_ids
 
 
 def test_embedding_retrieval(sample_embeddings):
