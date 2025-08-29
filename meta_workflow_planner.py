@@ -692,9 +692,11 @@ class MetaWorkflowPlanner:
                 score *= (1.0 - failure_rate) * (1.0 - entropy)
 
                 cand_domain = self._workflow_domain(wid, workflows)[0]
-                if prev_domain >= 0 and cand_domain >= 0 and prev_domain != cand_domain:
+                if prev_domain >= 0 and cand_domain >= 0:
                     prob = trans_probs.get((prev_domain, cand_domain))
-                    if prob is not None:
+                    if prob is None:
+                        pass
+                    elif prob > 0:
                         score *= 1.0 + prob
                     else:
                         score *= 0.8
@@ -2108,7 +2110,7 @@ class MetaWorkflowPlanner:
         weights: Dict[tuple[str, str], float] = {}
         for pair, stats in matrix.items():
             count = float(stats.get("count", 0.0))
-            delta = float(stats.get("delta_roi", 0.0))
+            delta = float(stats.get("delta_roi", stats.get("roi", 0.0)))
             weight = max(0.0, count * delta)
             weights[pair] = weight
         total = sum(weights.values())
@@ -2132,6 +2134,25 @@ class MetaWorkflowPlanner:
                         depth = max(
                             nx.shortest_path_length(g, anc, workflow_id) for anc in ancestors
                         )
+            else:
+                edges = g.get("edges") if isinstance(g, dict) else None
+                if isinstance(edges, dict):
+                    branching = float(len(edges.get(workflow_id, {})))
+                    reverse: Dict[str, set[str]] = {}
+                    for src, dests in edges.items():
+                        for dst in dests.keys():
+                            reverse.setdefault(dst, set()).add(src)
+                    visited = {workflow_id}
+                    queue = [(workflow_id, 0)]
+                    max_depth = 0
+                    while queue:
+                        node, d = queue.pop(0)
+                        max_depth = max(max_depth, d)
+                        for parent in reverse.get(node, ()):  # pragma: no cover - trivial
+                            if parent not in visited:
+                                visited.add(parent)
+                                queue.append((parent, d + 1))
+                    depth = float(max_depth)
         except Exception:
             depth = 0.0
             branching = 0.0
