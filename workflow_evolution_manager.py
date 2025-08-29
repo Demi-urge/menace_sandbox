@@ -125,8 +125,8 @@ def _build_callable(sequence: str) -> Callable[[], bool]:
 
     Each element in ``sequence`` is treated as an importable module name.  The
     manager attempts to execute a ``main`` or ``run`` attribute from each module
-    sequentially.  Missing modules or callables fall back to a no-op returning
-    ``True`` so evaluation can continue in minimal environments.
+    sequentially.  Missing modules or callables log an error and propagate
+    failure so ROI metrics accurately reflect the absence of steps.
     """
 
     steps = [s for s in sequence.split("-") if s]
@@ -140,17 +140,20 @@ def _build_callable(sequence: str) -> Callable[[], bool]:
             if callable(func):
                 funcs.append(func)  # type: ignore[arg-type]
                 continue
+            logger.error("module %s lacks main/run callable", step)
         except Exception as exc:  # pragma: no cover - import failures
-            logger.debug("failed importing %s: %s", step, exc)
-        funcs.append(lambda: True)
+            logger.error("failed importing %s: %s", step, exc)
+
+        def _missing() -> bool:
+            raise ModuleNotFoundError(f"module {step} missing or invalid")
+
+        _missing.__name__ = step
+        funcs.append(_missing)
 
     def _workflow() -> bool:
         ok = True
         for fn in funcs:
-            try:
-                ok = bool(fn()) and ok
-            except Exception:  # pragma: no cover - execution errors
-                ok = False
+            ok = bool(fn()) and ok
         return ok
 
     return _workflow
