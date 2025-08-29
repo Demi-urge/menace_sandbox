@@ -127,6 +127,7 @@ def test_embedding_generation(sample_embeddings):
         + planner.max_modules
         + planner.max_tags
         + planner.max_domains
+        + planner.max_domains
     )
     roi_segment = vec[2:5]
     assert roi_segment[:2] == [1.0, 1.0]
@@ -145,6 +146,29 @@ def test_embedding_retrieval(sample_embeddings):
     query_vec = vecs["wf1"]
     best = _retrieve(records, query_vec)
     assert best == "wf1"
+
+
+def test_domain_transition_vector():
+    planner = MetaWorkflowPlanner()
+    planner.domain_index = {"other": 0, "alpha": 1, "beta": 2}
+    planner.cluster_map[("__domain_transitions__",)] = {
+        (1, 2): {"count": 1.0, "delta_roi": 1.0}
+    }
+    workflow = {"domain": "alpha"}
+    vec = planner.encode_workflow("wf", workflow)
+    base = (
+        2
+        + planner.roi_window
+        + 2
+        + planner.roi_window
+        + 3 * planner.max_functions
+        + planner.max_modules
+        + planner.max_tags
+    )
+    domain_start = base
+    trans_start = domain_start + planner.max_domains
+    assert vec[domain_start + planner.domain_index["alpha"]] == 1.0
+    assert vec[trans_start + planner.domain_index["beta"]] == pytest.approx(1.0)
 
 
 def test_find_synergy_candidates(sample_embeddings):
