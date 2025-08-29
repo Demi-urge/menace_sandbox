@@ -134,3 +134,37 @@ class _ContextFileLock(FileLock):
                 logger.warning("lock file already removed: %s", self.lock_file)
             except Exception as exc:
                 logger.exception("failed to remove lock file: %s", exc)
+
+
+class SandboxLock(_ContextFileLock):
+    """File lock used throughout the sandbox with cross-platform support.
+
+    This class behaves as a regular context manager (``with lock:``) while also
+    supporting the explicit ``with lock.acquire():`` style used by some parts of
+    the codebase.  It delegates all heavy lifting to :class:`_ContextFileLock`,
+    which performs platform specific locking using ``fcntl`` on POSIX systems
+    and ``msvcrt`` on Windows.
+    """
+
+    def __enter__(self) -> "SandboxLock":
+        # ``_ContextFileLock.acquire`` returns a guard object that releases the
+        # lock on exit.  Store it so ``__exit__`` can delegate correctly.
+        self._guard = super().acquire()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        guard = getattr(self, "_guard", None)
+        if guard is not None:
+            guard.__exit__(exc_type, exc, tb)
+            self._guard = None
+        else:  # pragma: no cover - defensive fallback
+            super().release()
+
+
+__all__ = [
+    "SandboxLock",
+    "_ContextFileLock",
+    "is_lock_stale",
+    "LOCK_TIMEOUT",
+    "Timeout",
+]

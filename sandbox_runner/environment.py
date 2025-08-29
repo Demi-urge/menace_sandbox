@@ -50,11 +50,11 @@ from typing import (
     TYPE_CHECKING,
 )
 from contextlib import asynccontextmanager, contextmanager, suppress
-from filelock import FileLock
+from lock_utils import SandboxLock as FileLock
 from dataclasses import dataclass, asdict
 
 from .workflow_sandbox_runner import WorkflowSandboxRunner
-from ..metrics_exporter import environment_failure_total
+from metrics_exporter import environment_failure_total
 
 try:
     from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord
@@ -140,27 +140,9 @@ logger = get_logger(__name__)
 
 if os.name == "nt" and "fcntl" not in sys.modules:
     try:
-        import types
-        import msvcrt  # type: ignore
-
-        fcntl_stub = types.ModuleType("fcntl")
-
-        def ioctl(fd: int, op: int, arg: int = 0, mutate_flag: bool = True) -> None:
-            raise NotImplementedError("fcntl.ioctl is not available on Windows")
-
-        def flock(fd: int, flags: int) -> None:
-            mode = msvcrt.LK_UNLCK if flags & 8 else msvcrt.LK_LOCK
-            msvcrt.locking(fd, mode, 1)
-
-        fcntl_stub.ioctl = ioctl  # type: ignore
-        fcntl_stub.flock = flock  # type: ignore
-        fcntl_stub.LOCK_EX = 1
-        fcntl_stub.LOCK_SH = 2
-        fcntl_stub.LOCK_NB = 4
-        fcntl_stub.LOCK_UN = 8
-
-        sys.modules["fcntl"] = fcntl_stub
-    except (OSError, ImportError):
+        import fcntl_compat as _fcntl
+        sys.modules["fcntl"] = _fcntl
+    except Exception:  # pragma: no cover - best effort
         pass
 
 try:  # pragma: no cover - optional dependency
