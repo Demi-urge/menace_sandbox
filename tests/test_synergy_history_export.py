@@ -50,7 +50,7 @@ def test_history_persistence_and_export(tmp_path: Path) -> None:
     port = _free_port()
     exporter = se.start_synergy_exporter(history_file=hist_file, interval=0.05, port=port)
     try:
-        db_mod.record(hist_file, {"synergy_roi": 0.1})
+        db_mod.record({"synergy_roi": 0.1}, hist_file)
         metrics = {}
         for _ in range(40):
             try:
@@ -62,10 +62,16 @@ def test_history_persistence_and_export(tmp_path: Path) -> None:
                 pass
             time.sleep(0.05)
         assert metrics.get("synergy_roi") == 0.1
-        assert se.exporter_failures.labels().get() == 0.0
-        assert se.exporter_uptime.labels().get() >= 0.0
+        def _val(g):
+            try:
+                return g.labels().get()
+            except Exception:
+                return g._value.get()  # type: ignore[attr-defined]
 
-        db_mod.record(hist_file, {"synergy_roi": 0.2})
+        assert _val(se.exporter_failures) == 0.0
+        assert _val(se.exporter_uptime) >= 0.0
+
+        db_mod.record({"synergy_roi": 0.2}, hist_file)
         for _ in range(40):
             try:
                 data = urllib.request.urlopen(f"http://localhost:{port}/metrics").read().decode()
@@ -81,7 +87,7 @@ def test_history_persistence_and_export(tmp_path: Path) -> None:
             f"http://localhost:{exporter.health_port}/health"
         ).read().decode()
         info = json.loads(health)
-        assert info["status"] == "ok"
+        assert info["healthy"] is True
     finally:
         exporter.stop()
         me.stop_metrics_server()
@@ -90,5 +96,5 @@ def test_history_persistence_and_export(tmp_path: Path) -> None:
     assert history == [{"synergy_roi": 0.1}, {"synergy_roi": 0.2}]
     assert exporter._thread is not None
     assert not exporter._thread.is_alive()
-    assert se.exporter_failures.labels().get() == 0.0
-    assert se.exporter_uptime.labels().get() > 0
+    assert _val(se.exporter_failures) == 0.0
+    assert _val(se.exporter_uptime) > 0

@@ -143,7 +143,7 @@ def test_autonomous_extended_run(monkeypatch, tmp_path: Path) -> None:
     health_url = f"http://localhost:{exporter.health_port}/health"
     data = urllib.request.urlopen(health_url).read().decode()
     info = json.loads(data)
-    assert info.get("status") == "ok"
+    assert info.get("healthy") is True
 
     roi_file = tmp_path / "roi_history.json"
     roi_data = json.loads(roi_file.read_text())

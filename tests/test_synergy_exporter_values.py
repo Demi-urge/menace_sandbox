@@ -54,10 +54,12 @@ def test_metrics_and_health_update(tmp_path: Path) -> None:
         assert metrics.get("synergy_roi") == 0.1
         assert metrics.get("security_score") == 50
 
-        health = urllib.request.urlopen(f"http://localhost:{exp.health_port}/health").read().decode()
+        health = urllib.request.urlopen(
+            f"http://localhost:{exp.health_port}/health"
+        ).read().decode()
         info = json.loads(health)
-        assert info["status"] == "ok"
-        first_ts = info.get("updated")
+        assert info["healthy"] is True
+        first_ts = info.get("last_update")
         assert isinstance(first_ts, float)
 
         conn = db_mod.connect(hist_file)
@@ -76,10 +78,12 @@ def test_metrics_and_health_update(tmp_path: Path) -> None:
         assert metrics.get("synergy_roi") == 0.2
         assert metrics.get("security_score") == 60
 
-        health2 = urllib.request.urlopen(f"http://localhost:{exp.health_port}/health").read().decode()
+        health2 = urllib.request.urlopen(
+            f"http://localhost:{exp.health_port}/health"
+        ).read().decode()
         info2 = json.loads(health2)
-        assert info2["status"] == "ok"
-        second_ts = info2.get("updated")
+        assert info2["healthy"] is True
+        second_ts = info2.get("last_update")
         assert isinstance(second_ts, float)
         assert second_ts >= first_ts
     finally:

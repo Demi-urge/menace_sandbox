@@ -51,10 +51,12 @@ def test_health_endpoint_returns_json(tmp_path: Path) -> None:
             time.sleep(0.05)
         assert metrics.get("synergy_roi") == 0.42
 
-        health = urllib.request.urlopen(f"http://localhost:{exp.health_port}/health").read().decode()
+        health = urllib.request.urlopen(
+            f"http://localhost:{exp.health_port}/health"
+        ).read().decode()
         info = json.loads(health)
-        assert info["status"] == "ok"
-        assert isinstance(info.get("updated"), float)
+        assert info["healthy"] is True
+        assert isinstance(info.get("last_update"), float)
     finally:
         exp.stop()
         me.stop_metrics_server()
