@@ -79,13 +79,13 @@ def test_metrics_property(monkeypatch):
     result = mgr.run({}, argparse.Namespace())
     assert result == "ok"
     metrics = mgr.metrics
-    assert metrics["restart_count"] == 1.0
-    assert isinstance(metrics["last_failure_time"], float)
+    assert metrics["sandbox_restart_total"] == 1.0
+    assert isinstance(metrics["sandbox_last_failure_ts"], float)
 
 
-def test_gauge_updates_on_failure(monkeypatch):
+def test_gauge_updates_on_failure(monkeypatch, tmp_path):
     stub = types.ModuleType("metrics_exporter")
-    stub._USING_STUB = True
+    stub._USING_STUB = False
 
     class DummyGauge:
         def __init__(self, *a, **k):
@@ -99,10 +99,6 @@ def test_gauge_updates_on_failure(monkeypatch):
     stub.sandbox_restart_total = DummyGauge()
     stub.sandbox_last_failure_ts = DummyGauge()
     monkeypatch.setitem(sys.modules, "metrics_exporter", stub)
-    monkeypatch.setattr(srm, "sandbox_restart_total", stub.sandbox_restart_total)
-    monkeypatch.setattr(srm, "sandbox_last_failure_ts", stub.sandbox_last_failure_ts)
-    monkeypatch.setattr(srm, "sandbox_restart_total", stub.sandbox_restart_total)
-    monkeypatch.setattr(srm, "sandbox_last_failure_ts", stub.sandbox_last_failure_ts)
 
     calls = []
 
@@ -114,10 +110,11 @@ def test_gauge_updates_on_failure(monkeypatch):
 
     monkeypatch.setattr(srm.time, "sleep", lambda s: None)
     mgr = srm.SandboxRecoveryManager(fail_twice_then_ok, retry_delay=0)
-    mgr.run({}, argparse.Namespace())
+    mgr.run({}, argparse.Namespace(sandbox_data_dir=str(tmp_path)))
 
     assert stub.sandbox_restart_total.values == [1.0, 2.0]
     assert len(stub.sandbox_last_failure_ts.values) == 2
+    assert not (tmp_path / "recovery.json").exists()
 
 
 def test_json_fallback_and_cli(monkeypatch, tmp_path, capsys):
@@ -146,12 +143,12 @@ def test_json_fallback_and_cli(monkeypatch, tmp_path, capsys):
     mgr.run({}, args)
 
     data = json.loads((tmp_path / "recovery.json").read_text())
-    assert data["restart_count"] == 1.0
-    assert isinstance(data["last_failure_time"], float)
+    assert data["sandbox_restart_total"] == 1.0
+    assert isinstance(data["sandbox_last_failure_ts"], float)
 
     metrics = srm.load_metrics(tmp_path / "recovery.json")
-    assert metrics["restart_count"] == 1.0
-    assert isinstance(metrics["last_failure_time"], float)
+    assert metrics["sandbox_restart_total"] == 1.0
+    assert isinstance(metrics["sandbox_last_failure_ts"], float)
 
 
 def test_json_metrics_multiple_failures(monkeypatch, tmp_path):
@@ -185,8 +182,8 @@ def test_json_metrics_multiple_failures(monkeypatch, tmp_path):
     mgr.run({}, args)
 
     data = json.loads((tmp_path / "recovery.json").read_text())
-    assert data["restart_count"] == 2.0
-    assert isinstance(data["last_failure_time"], float)
+    assert data["sandbox_restart_total"] == 2.0
+    assert isinstance(data["sandbox_last_failure_ts"], float)
 
 
 def test_run_autonomous_integration(monkeypatch, tmp_path):
