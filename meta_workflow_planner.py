@@ -556,7 +556,9 @@ class MetaWorkflowPlanner:
                 if hasattr(self.code_db, "get_context_tags"):
                     tags = self.code_db.get_context_tags(workflow_id) or []
                 elif hasattr(self.code_db, "context_tags"):
-                    tags = self.code_db.context_tags(workflow_id) or []  # type: ignore[attr-defined]
+                    tags = self.code_db.context_tags(  # type: ignore[attr-defined]
+                        workflow_id
+                    ) or []
                 else:
                     tags = []
                 if tags:
@@ -590,11 +592,15 @@ class MetaWorkflowPlanner:
           :func:`_roi_weight_from_db`.
         * ``failure rate`` and ``entropy`` – recent reliability metrics from
           :func:`_failure_entropy_metrics`.
+        * ``domain transition priors`` – historical ROI and failure rates
+          between workflow domains.
 
         The final ranking score is ``(similarity * similarity_weight +
         synergy * synergy_weight) * (1 + roi_weight * ROI)
-        * (1 - failure_rate) * (1 - entropy)``.  The method stops once
-        ``length`` steps have been selected or no compatible candidates remain.
+        * (1 - failure_rate) * (1 - entropy) * transition_weight`` where
+        ``transition_weight`` is derived from the domain transition priors.
+        The method stops once ``length`` steps have been selected or no
+        compatible candidates remain.
         """
 
         if start not in workflows:
@@ -616,13 +622,16 @@ class MetaWorkflowPlanner:
                     continue
                 roi_hist = info.get("roi_history", [])
                 roi_gain = roi_hist[-1] if roi_hist else 0.0
+                fail_hist = info.get("failure_history", [])
+                fail_rate = fail_hist[-1] if fail_hist else 0.0
                 domains = [self._workflow_domain(wid, workflows) for wid in chain]
                 for a, b in zip(domains, domains[1:]):
                     if not a or not b:
                         continue
-                    entry = temp.setdefault((a, b), {"count": 0, "roi": 0.0})
+                    entry = temp.setdefault((a, b), {"count": 0, "roi": 0.0, "fail": 0.0})
                     entry["count"] += 1
                     entry["roi"] += (roi_gain - entry["roi"]) / entry["count"]
+                    entry["fail"] += (fail_rate - entry["fail"]) / entry["count"]
             transitions.update(temp)
 
         while available and len(pipeline) < length:
@@ -663,13 +672,18 @@ class MetaWorkflowPlanner:
 
                 cand_domain = self._workflow_domain(wid, workflows)
                 if prev_domain and cand_domain:
-                    entry = transitions.get((prev_domain, cand_domain), {"count": 0, "roi": 0.0})
+                    entry = transitions.get(
+                        (prev_domain, cand_domain),
+                        {"count": 0, "roi": 0.0, "fail": 0.0},
+                    )
                     if transitions:
                         avg_count = fmean(v["count"] for v in transitions.values())
                         avg_roi = fmean(v["roi"] for v in transitions.values())
+                        avg_fail = fmean(v.get("fail", 0.0) for v in transitions.values())
                         count_weight = (avg_count + 1.0) / (entry["count"] + 1.0)
                         roi_weight = 1.0 + (entry["roi"] - avg_roi)
-                        score *= max(0.0, count_weight * roi_weight)
+                        fail_weight = 1.0 - (entry["fail"] - avg_fail)
+                        score *= max(0.0, count_weight * roi_weight * fail_weight)
                     else:
                         if cand_domain == prev_domain:
                             score *= 0.8
@@ -1944,9 +1958,10 @@ class MetaWorkflowPlanner:
         for a, b in zip(domains, domains[1:]):
             if not a or not b:
                 continue
-            entry = matrix.setdefault((a, b), {"count": 0, "roi": 0.0})
+            entry = matrix.setdefault((a, b), {"count": 0, "roi": 0.0, "fail": 0.0})
             entry["count"] += 1
             entry["roi"] += (roi_gain - entry["roi"]) / entry["count"]
+            entry["fail"] += (failures - entry["fail"]) / entry["count"]
 
         self._save_cluster_map()
         return info
