@@ -792,9 +792,11 @@ libcst
 kafka-python
 pyspark
 stable-baselines3
-torch
+torch or numpy
 sentry-sdk
 ```
+
+At least one numeric backend (PyTorch or NumPy) must be installed.
 
 For convenience, a `setup_env.sh` script installs dependencies and pytest. To
 prepare a fresh environment for running the test suite in one step run:
