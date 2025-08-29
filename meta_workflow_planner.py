@@ -1165,6 +1165,30 @@ class MetaWorkflowPlanner:
         }
 
     # ------------------------------------------------------------------
+    def _log_evolution(
+        self,
+        chain: Sequence[str],
+        event: str,
+        **extra: Any,
+    ) -> None:
+        """Persist ``event`` about ``chain`` to ``synergy_history_db``.
+
+        The helper records evolutionary actions such as mutation, halting,
+        splitting or remerging.  Entries are best-effort and ignored when the
+        history database is unavailable.
+        """
+
+        try:  # pragma: no cover - persistence best effort
+            rec = getattr(shd, "record", None)
+            if not rec:
+                return
+            entry: Dict[str, Any] = {"chain": "->".join(chain), "event": event}
+            entry.update(extra)
+            rec(entry)
+        except Exception:
+            logger.warning("Failed to log evolution event", exc_info=True)
+
+    # ------------------------------------------------------------------
     def mutate_chains(
         self,
         chains: Sequence[Sequence[str]],
@@ -1176,6 +1200,7 @@ class MetaWorkflowPlanner:
         runs: int = 3,
         max_workers: int | None = None,
         offspring: int | None = None,
+        epsilon: float = 0.0,
     ) -> List[Dict[str, Any]]:
         """Mutate ``chains`` using genetic operators and re‑validate offspring.
 
@@ -1183,7 +1208,10 @@ class MetaWorkflowPlanner:
         weights.  Offspring are generated via single‑point crossover followed by
         a weighted mutation whose rate is inversely proportional to the parents'
         average score.  Each unique offspring is validated and any successful
-        records are returned.
+        records are returned.  ``epsilon`` specifies the minimum ROI improvement
+        over the best parent required to continue; when the gain falls below
+        this threshold the generation halts and the chain is split for further
+        exploration.
         """
 
         if not chains:
@@ -1234,8 +1262,36 @@ class MetaWorkflowPlanner:
                 runs=runs,
                 max_workers=max_workers,
             )
-            if record:
-                results.append(record)
+            if not record:
+                continue
+
+            results.append(record)
+            parents = (parent_a, parent_b)
+            parent_rois: List[float] = []
+            for p in parents:
+                info = self.cluster_map.get(tuple(p), {})
+                hist = info.get("roi_history") or []
+                if hist:
+                    parent_rois.append(float(hist[-1]))
+            base_roi = max(parent_rois) if parent_rois else 0.0
+            improvement = record.get("roi_gain", 0.0) - base_roi
+            if improvement < epsilon:
+                self._log_evolution(record.get("chain", []), "halt", improvement=improvement)
+                splits = self.split_pipeline(
+                    record.get("chain", []),
+                    workflows,
+                    roi_improvement_threshold=epsilon,
+                    runner=runner,
+                    failure_threshold=failure_threshold,
+                    entropy_threshold=entropy_threshold,
+                    runs=runs,
+                    max_workers=max_workers,
+                )
+                results.extend(splits)
+                break
+
+            self._log_evolution(record.get("chain", []), "mutate", improvement=improvement)
+
         return results
 
     # ------------------------------------------------------------------
@@ -1530,6 +1586,7 @@ class MetaWorkflowPlanner:
             )
             if rec:
                 results.append(rec)
+                self._log_evolution(rec.get("chain", []), "split", parent=chain_id)
                 try:  # pragma: no cover - best effort logging
                     from workflow_lineage import log_lineage
 
@@ -1551,17 +1608,49 @@ class MetaWorkflowPlanner:
         *,
         roi_improvement_threshold: float = 0.0,
         entropy_stability_threshold: float = 1.0,
+        similarity_threshold: float = 0.0,
         runner: WorkflowSandboxRunner | None = None,
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runs: int = 3,
         max_workers: int | None = None,
     ) -> List[Dict[str, Any]]:
-        """Merge pipelines that show stable entropy and ROI improvements."""
+        """Merge pipelines that show stable entropy and ROI improvements.
+
+        Pipelines are considered for merging when the cosine similarity of their
+        embeddings, adjusted by any ``cluster_map`` pair scores, exceeds
+        ``similarity_threshold``.  Only complementary pairs that also satisfy
+        the ROI and entropy constraints are revalidated and returned.
+        """
 
         results: List[Dict[str, Any]] = []
+        embeddings: Dict[int, List[float]] = {}
+        for idx, pipe in enumerate(pipelines):
+            vec = self.cluster_map.get(tuple(pipe), {}).get("embedding")
+            if vec is None:
+                try:
+                    vec = self.encode_chain(pipe)
+                except Exception:
+                    vec = None
+            if vec is not None:
+                embeddings[idx] = vec
+
         for i in range(len(pipelines)):
             for j in range(i + 1, len(pipelines)):
+                vec_i = embeddings.get(i)
+                vec_j = embeddings.get(j)
+                sim = 0.0
+                if vec_i is not None and vec_j is not None:
+                    sim = cosine_similarity(vec_i, vec_j)
+                    if pipelines[i] and pipelines[j]:
+                        cm_score = float(
+                            self.cluster_map
+                            .get((pipelines[i][-1], pipelines[j][0]), {})
+                            .get("score", 0.0)
+                        )
+                        sim *= 1.0 + cm_score
+                if sim < similarity_threshold:
+                    continue
                 merged = list(pipelines[i]) + [w for w in pipelines[j] if w not in pipelines[i]]
                 rec = self._validate_chain(
                     merged,
@@ -1589,6 +1678,14 @@ class MetaWorkflowPlanner:
                     and abs(entropy_val) <= entropy_stability_threshold
                 ):
                     results.append(rec)
+                    self._log_evolution(
+                        rec.get("chain", []),
+                        "remerge",
+                        parents="|".join(
+                            ["->".join(pipelines[i]), "->".join(pipelines[j])]
+                        ),
+                        similarity=float(sim),
+                    )
                     try:  # pragma: no cover - best effort logging
                         from workflow_lineage import log_lineage
 
