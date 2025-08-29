@@ -563,15 +563,12 @@ class MetaWorkflowPlanner:
                         )
                         if not other or other == wid or other not in vecs:
                             continue
-                        sim = cosine_similarity(vec, vecs[other])
-                        sim *= (1.0 + roi_map[wid]) * (1.0 + roi_map[other])
-                        sim *= (1.0 - failure_map[wid]) * (1.0 - failure_map[other])
-                        sim *= (1.0 - entropy_map[wid]) * (1.0 - entropy_map[other])
-                        cached_hits.append({"record_id": other, "score": sim})
-                        if sim > sims[wid].get(other, 0.0):
-                            sims[wid][other] = sim
-                            sims[other][wid] = sim
-                    set_cached_chain(cache_key, ["workflow_meta"], cached_hits)
+                        base_sim = cosine_similarity(vec, vecs[other])
+                        cached_hits.append({"record_id": other, "score": base_sim})
+                    try:
+                        set_cached_chain(cache_key, ["workflow_meta"], cached_hits)
+                    except Exception:
+                        pass
                 except Exception:
                     cached_hits = []
 
@@ -579,16 +576,14 @@ class MetaWorkflowPlanner:
                 other = str(hit.get("record_id", ""))
                 if not other or other == wid or other not in vecs:
                     continue
-                sim = float(hit.get("score", 0.0))
-                if sim == 0.0:
-                    sim = cosine_similarity(vec, vecs[other])
-                    sim *= (1.0 + roi_map[wid]) * (1.0 + roi_map[other])
-                    sim *= (1.0 - failure_map[wid]) * (1.0 - failure_map[other])
-                    sim *= (1.0 - entropy_map[wid]) * (1.0 - entropy_map[other])
+                base_sim = float(hit.get("score", 0.0))
+                sim = base_sim
+                sim *= (1.0 + roi_map[wid]) * (1.0 + roi_map[other])
+                sim *= (1.0 - failure_map[wid]) * (1.0 - failure_map[other])
+                sim *= (1.0 - entropy_map[wid]) * (1.0 - entropy_map[other])
                 if sim > sims[wid].get(other, 0.0):
                     sims[wid][other] = sim
                     sims[other][wid] = sim
-
         # Normalise similarities and build distance matrix for DBSCAN
         max_sim = max((max(d.values()) for d in sims.values() if d), default=1.0)
         if max_sim <= 0.0:
@@ -706,6 +701,9 @@ class MetaWorkflowPlanner:
 
         current_vec = self.encode_workflow(start, workflows[start])
         prev_domain = self._workflow_domain(start, workflows)[0]
+        current_roi = (
+            _roi_weight_from_db(self.roi_db, start) if self.roi_db is not None else 0.0
+        )
 
         self.cluster_map.setdefault(("__domain_transitions__",), {})
         trans_probs = self.transition_probabilities()
@@ -714,21 +712,22 @@ class MetaWorkflowPlanner:
             best_id: str | None = None
             best_score = -1.0
             best_vec: List[float] | None = None
+            best_roi = 0.0
             for wid in list(available):
                 if not _io_compatible(graph, current, wid):
                     continue
 
                 cand_vec = self.encode_workflow(wid, workflows[wid])
-                sim = cosine_similarity(current_vec, cand_vec)
-
-                cm_score = float(self.cluster_map.get((current, wid), {}).get("score", 0.0))
-                sim *= 1.0 + cm_score
-
-                roi = (
+                cand_roi = (
                     _roi_weight_from_db(self.roi_db, wid)
                     if self.roi_db is not None
                     else 0.0
                 )
+                sim = cosine_similarity(current_vec, cand_vec)
+                sim *= (1.0 + roi_weight * current_roi) * (1.0 + roi_weight * cand_roi)
+
+                cm_score = float(self.cluster_map.get((current, wid), {}).get("score", 0.0))
+                sim *= 1.0 + cm_score
 
                 failure_rate, entropy = self._failure_entropy_metrics(wid)
 
@@ -743,8 +742,7 @@ class MetaWorkflowPlanner:
                         synergy = 0.0
 
                 base = similarity_weight * sim + synergy_weight * synergy
-                score = base * (1.0 + roi_weight * roi)
-                score *= (1.0 - failure_rate) * (1.0 - entropy)
+                score = base * (1.0 - failure_rate) * (1.0 - entropy)
 
                 cand_domain = self._workflow_domain(wid, workflows)[0]
                 if prev_domain >= 0 and cand_domain >= 0:
@@ -760,6 +758,7 @@ class MetaWorkflowPlanner:
                     best_id = wid
                     best_score = score
                     best_vec = cand_vec
+                    best_roi = cand_roi
             if best_id is None:
                 break
             pipeline.append(best_id)
@@ -768,6 +767,7 @@ class MetaWorkflowPlanner:
             prev_domain = self._workflow_domain(current, workflows)[0]
             if best_vec is not None:
                 current_vec = best_vec
+            current_roi = best_roi if 'best_roi' in locals() else 0.0
 
         return pipeline
 
@@ -908,7 +908,21 @@ class MetaWorkflowPlanner:
             except Exception:
                 return None
 
-        if WorkflowSynergyComparator is None:
+        comparator = WorkflowSynergyComparator
+        try:  # pragma: no cover - allow dynamic replacement via sys.modules
+            import sys
+            mod = sys.modules.get("workflow_synergy_comparator")
+            if mod is not None:
+                comparator = getattr(mod, "WorkflowSynergyComparator", comparator)
+        except Exception:
+            pass
+        if comparator is None:
+            try:  # pragma: no cover - allow dynamic import for testing
+                from workflow_synergy_comparator import WorkflowSynergyComparator as _WSC  # type: ignore
+                comparator = _WSC
+            except Exception:
+                comparator = None
+        if comparator is None:
             logger.warning(
                 "WorkflowSynergyComparator unavailable; entropy metrics will be zero"
             )
@@ -931,21 +945,19 @@ class MetaWorkflowPlanner:
             )
             module_count = len(metrics.modules)
             failure_rate = failure_count / module_count if module_count else 0.0
-            if WorkflowSynergyComparator is not None:
+            if comparator is not None:
                 try:
-                    entropy = WorkflowSynergyComparator._entropy(spec)
+                    entropy = comparator._entropy(spec)
                 except Exception:
                     entropy = 0.0
             else:
                 entropy = 0.0
             step_entropies: List[float] = []
-            if WorkflowSynergyComparator is not None:
+            if comparator is not None:
                 for i in range(1, len(chain) + 1):
                     try:
                         sub_spec = {"steps": [{"module": m} for m in chain[:i]]}
-                        step_entropies.append(
-                            WorkflowSynergyComparator._entropy(sub_spec)
-                        )
+                        step_entropies.append(comparator._entropy(sub_spec))
                     except Exception:
                         step_entropies.append(0.0)
             else:
@@ -1922,20 +1934,26 @@ class MetaWorkflowPlanner:
                         entry["delta_roi"] = float(entry.get("delta_roi", 0.0)) * _DECAY_FACTOR
                     continue
 
-                info.setdefault("ts", now)
+                last = float(info.get("ts", now))
+                age = max(0.0, now - last)
+                decay = _DECAY_FACTOR ** (age / 3600.0)
+                info["ts"] = now
+
                 delta_roi = float(info.get("delta_roi", 0.0))
                 delta_fail = float(info.get("delta_failures", 0.0))
                 delta_ent = float(info.get("delta_entropy", 0.0))
 
-                if delta_roi > 0 or delta_fail < 0 or delta_ent < 0:
-                    info["stagnant_runs"] = 0
-                else:
+                if delta_roi < 0 or delta_fail > 0 or delta_ent > 0:
                     info["stagnant_runs"] = int(info.get("stagnant_runs", 0)) + 1
                     if info["stagnant_runs"] >= _PRUNE_RUNS:
                         to_prune.append(key)
+                else:
+                    info["stagnant_runs"] = 0
 
-                info["score"] = float(info.get("score", 0.0)) * _DECAY_FACTOR
-                info["delta_roi"] = delta_roi * _DECAY_FACTOR
+                info["score"] = float(info.get("score", 0.0)) * decay
+                info["delta_roi"] = delta_roi * decay
+                info["delta_failures"] = float(info.get("delta_failures", 0.0)) * decay
+                info["delta_entropy"] = float(info.get("delta_entropy", 0.0)) * decay
 
             for key in to_prune:
                 self.cluster_map.pop(key, None)
@@ -1965,11 +1983,20 @@ class MetaWorkflowPlanner:
                             entry["delta_roi"] = float(entry.get("delta_roi", 0.0)) * _DECAY_FACTOR
                         continue
 
-                    info["score"] = float(info.get("score", 0.0)) * _DECAY_FACTOR
-                    info["delta_roi"] = float(info.get("delta_roi", 0.0)) * _DECAY_FACTOR
-                    info.setdefault("ts", now)
+                    last = float(info.get("ts", now))
+                    age = max(0.0, now - last)
+                    decay = _DECAY_FACTOR ** (age / 3600.0)
+                    info["score"] = float(info.get("score", 0.0)) * decay
+                    info["delta_roi"] = float(info.get("delta_roi", 0.0)) * decay
+                    info["delta_failures"] = float(info.get("delta_failures", 0.0)) * decay
+                    info["delta_entropy"] = float(info.get("delta_entropy", 0.0)) * decay
+                    info["ts"] = now
                     info.setdefault("stagnant_runs", 0)
-                    if int(info.get("stagnant_runs", 0)) >= _PRUNE_RUNS:
+                    if int(info.get("stagnant_runs", 0)) >= _PRUNE_RUNS and (
+                        float(info.get("delta_roi", 0.0)) < 0
+                        or float(info.get("delta_failures", 0.0)) > 0
+                        or float(info.get("delta_entropy", 0.0)) > 0
+                    ):
                         del self.cluster_map[key]
             except Exception:
                 self.cluster_map = {}
@@ -2140,6 +2167,7 @@ class MetaWorkflowPlanner:
                             "roi": float(roi_gain),
                             "failures": float(failures),
                             "entropy": float(entropy),
+                            "score": float(info.get("score", 0.0)),
                         }
                     )
             except Exception:
@@ -2915,7 +2943,15 @@ def simulate_meta_workflow(
         except Exception:
             return {"roi_gain": 0.0, "failures": 0, "entropy": 0.0}
 
-    if WorkflowSynergyComparator is None:
+    comparator = WorkflowSynergyComparator
+    try:  # pragma: no cover - allow dynamic replacement via sys.modules
+        import sys
+        mod = sys.modules.get("workflow_synergy_comparator")
+        if mod is not None:
+            comparator = getattr(mod, "WorkflowSynergyComparator", comparator)
+    except Exception:
+        pass
+    if comparator is None:
         logger.warning(
             "WorkflowSynergyComparator unavailable; entropy metrics will be zero"
         )
@@ -2959,11 +2995,9 @@ def simulate_meta_workflow(
             total_failures += failures
 
             entropy = 0.0
-            if wid and WorkflowSynergyComparator is not None:
+            if wid and comparator is not None:
                 try:
-                    entropy = WorkflowSynergyComparator._entropy(
-                        {"steps": [{"module": wid}]}
-                    )
+                    entropy = comparator._entropy({"steps": [{"module": wid}]})
                 except Exception:
                     entropy = 0.0
             entropies.append(entropy)
