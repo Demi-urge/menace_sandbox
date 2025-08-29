@@ -23,6 +23,17 @@ Persisting cycle data across runs is possible by providing `state_path` when cre
 
 Each engine may use its own databases, event bus and automation pipeline allowing multiple bots to improve in parallel.
 
+## Optional Dependencies
+
+Some features of the engine depend on optional packages. Missing modules now
+cause a ``RuntimeError`` to surface configuration issues:
+
+* `sandbox_runner` – integrates orphaned modules and performs post-round scans.
+* `quick_fix_engine` – generates small helper patches.
+
+Ensure these dependencies are installed before enabling the related
+functionality.
+
 ## Usage Notes
 
 Invoke `run_cycle()` to process a single improvement step or register the engine
