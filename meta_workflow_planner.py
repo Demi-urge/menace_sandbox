@@ -469,6 +469,7 @@ class MetaWorkflowPlanner:
         graph = self.graph or WorkflowGraph()
 
         current_vec = self.encode_workflow(start, workflows[start])
+        prev_domain = str(workflows.get(start, {}).get("domain", "")).lower()
 
         while available and len(pipeline) < length:
             best_id: str | None = None
@@ -499,6 +500,14 @@ class MetaWorkflowPlanner:
 
                 base = similarity_weight * sim + synergy_weight * synergy
                 score = base * (1.0 + roi_weight * roi)
+
+                cand_domain = str(workflows.get(wid, {}).get("domain", "")).lower()
+                if prev_domain and cand_domain:
+                    if cand_domain == prev_domain:
+                        score *= 0.8
+                    else:
+                        score *= 1.1
+
                 if score > best_score:
                     best_id = wid
                     best_score = score
@@ -508,6 +517,7 @@ class MetaWorkflowPlanner:
             pipeline.append(best_id)
             available.remove(best_id)
             current = best_id
+            prev_domain = str(workflows.get(current, {}).get("domain", "")).lower()
             if best_vec is not None:
                 current_vec = best_vec
 
