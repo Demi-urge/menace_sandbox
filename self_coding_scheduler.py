@@ -11,10 +11,17 @@ from typing import Iterable, Optional, List
 from .self_coding_manager import SelfCodingManager
 from .data_bot import DataBot
 from .advanced_error_management import AutomatedRollbackManager
+from .sandbox_settings import SandboxSettings
 
 
 class SelfCodingScheduler:
-    """Trigger :class:`SelfCodingManager` based on ROI and error metrics."""
+    """Trigger :class:`SelfCodingManager` based on ROI and error metrics.
+
+    Defaults for ``interval``, ``roi_drop`` and ``error_increase`` are loaded
+    from :class:`SandboxSettings` (``SELF_CODING_INTERVAL``,
+    ``SELF_CODING_ROI_DROP`` and ``SELF_CODING_ERROR_INCREASE``) and can be
+    overridden via constructor arguments.
+    """
 
     def __init__(
         self,
@@ -23,19 +30,27 @@ class SelfCodingScheduler:
         *,
         rollback_mgr: AutomatedRollbackManager | None = None,
         nodes: Optional[Iterable[str]] = None,
-        interval: int = 300,
-        roi_drop: float = -0.1,
-        error_increase: float = 1.0,
+        interval: int | None = None,
+        roi_drop: float | None = None,
+        error_increase: float | None = None,
         patch_path: Path | None = None,
         description: str = "auto_patch",
+        settings: SandboxSettings | None = None,
     ) -> None:
         self.manager = manager
         self.data_bot = data_bot
         self.rollback_mgr = rollback_mgr
         self.nodes: List[str] = list(nodes or [])
-        self.interval = interval
-        self.roi_drop = roi_drop
-        self.error_increase = error_increase
+        self.settings = settings or SandboxSettings()
+        self.interval = interval if interval is not None else self.settings.self_coding_interval
+        self.roi_drop = (
+            roi_drop if roi_drop is not None else self.settings.self_coding_roi_drop
+        )
+        self.error_increase = (
+            error_increase
+            if error_increase is not None
+            else self.settings.self_coding_error_increase
+        )
         self.patch_path = patch_path or Path("auto_helpers.py")
         self.description = description
         self.last_roi = self.data_bot.roi(self.manager.bot_name)

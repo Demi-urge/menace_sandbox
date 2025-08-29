@@ -55,6 +55,7 @@ sys.modules.setdefault("git", types.ModuleType("git"))
 
 import menace.self_coding_scheduler as sched_mod
 from menace.self_coding_scheduler import SelfCodingScheduler
+from menace.sandbox_settings import SandboxSettings
 
 
 class DummyManager:
@@ -87,3 +88,34 @@ def test_patch_failure_logged(monkeypatch):
     with pytest.raises(SystemExit):
         sched._loop()
     assert calls and "self-coding loop failed" in calls[0]
+
+
+def test_settings_provide_defaults():
+    mgr = DummyManager()
+    data_bot = types.SimpleNamespace(roi=lambda b: 0.0, db=types.SimpleNamespace(fetch=lambda l: []))
+    cfg = SandboxSettings(
+        self_coding_interval=123,
+        self_coding_roi_drop=-0.5,
+        self_coding_error_increase=2.5,
+    )
+    sched = SelfCodingScheduler(mgr, data_bot, settings=cfg)
+    assert (sched.interval, sched.roi_drop, sched.error_increase) == (123, -0.5, 2.5)
+
+
+def test_constructor_overrides_settings():
+    mgr = DummyManager()
+    data_bot = types.SimpleNamespace(roi=lambda b: 0.0, db=types.SimpleNamespace(fetch=lambda l: []))
+    cfg = SandboxSettings(
+        self_coding_interval=123,
+        self_coding_roi_drop=-0.5,
+        self_coding_error_increase=2.5,
+    )
+    sched = SelfCodingScheduler(
+        mgr,
+        data_bot,
+        interval=5,
+        roi_drop=-0.2,
+        error_increase=1.1,
+        settings=cfg,
+    )
+    assert (sched.interval, sched.roi_drop, sched.error_increase) == (5, -0.2, 1.1)

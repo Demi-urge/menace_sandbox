@@ -358,6 +358,21 @@ class SandboxSettings(BaseSettings):
         env="ADAPTIVE_ROI_PRIORITIZATION",
         description="Prioritize improvements using AdaptiveROI classifications.",
     )
+    self_coding_interval: int = Field(
+        300,
+        env="SELF_CODING_INTERVAL",
+        description="Seconds between self-coding checks.",
+    )
+    self_coding_roi_drop: float = Field(
+        -0.1,
+        env="SELF_CODING_ROI_DROP",
+        description="ROI drop triggering self-coding.",
+    )
+    self_coding_error_increase: float = Field(
+        1.0,
+        env="SELF_CODING_ERROR_INCREASE",
+        description="Error increase triggering self-coding.",
+    )
     roi_growth_weighting: bool = Field(
         True,
         env="ROI_GROWTH_WEIGHTING",
