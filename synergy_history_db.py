@@ -7,7 +7,7 @@ initialises the router with the identifier ``"synergy_history_db"``.
 import json
 import sqlite3
 from pathlib import Path
-from typing import Dict, Iterator, List, Tuple, Literal
+from typing import Any, Dict, Iterator, List, Tuple, Literal
 from contextlib import contextmanager
 import logging
 from filelock import FileLock
@@ -100,11 +100,32 @@ def connect_locked(
         yield conn
 
 
+def _parse_entry(text: str) -> Dict[str, Any]:
+    """Return parsed history entry preserving non-numeric fields."""
+
+    try:
+        data = json.loads(text)
+    except Exception as exc:  # pragma: no cover - corrupted entries
+        logger.exception("invalid history entry: %s", exc)
+        if RAISE_ERRORS:
+            raise HistoryParseError(str(exc)) from exc
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    parsed: Dict[str, Any] = {}
+    for k, v in data.items():
+        try:
+            parsed[str(k)] = float(v)  # type: ignore[arg-type]
+        except Exception:
+            parsed[str(k)] = v
+    return parsed
+
+
 def load_history(
     path: str | Path | None = None,
     *,
     router: DBRouter | None = None,
-) -> List[Dict[str, float]]:
+) -> List[Dict[str, Any]]:
     """Return synergy history entries from the SQLite database."""
     if path is not None and not Path(path).exists():
         return []
@@ -113,17 +134,7 @@ def load_history(
         rows = conn.execute(
             "SELECT entry FROM synergy_history ORDER BY id"
         ).fetchall()
-        hist: List[Dict[str, float]] = []
-        for (text,) in rows:
-            try:
-                data = json.loads(text)
-                if isinstance(data, dict):
-                    hist.append({str(k): float(v) for k, v in data.items()})
-            except Exception as exc:
-                logger.exception("invalid history entry: %s", exc)
-                if RAISE_ERRORS:
-                    raise HistoryParseError(str(exc)) from exc
-        return hist
+        return [_parse_entry(text) for (text,) in rows]
     except Exception as exc:
         logger.exception("failed to load history: %s", exc)
         if RAISE_ERRORS:
@@ -132,7 +143,7 @@ def load_history(
 
 
 def insert_entry(
-    conn: sqlite3.Connection, entry: Dict[str, float], *, source_menace_id: str | None = None
+    conn: sqlite3.Connection, entry: Dict[str, Any], *, source_menace_id: str | None = None
 ) -> None:
     menace_id = source_menace_id or getattr(globals().get("router"), "menace_id", "")
     path = None
@@ -157,20 +168,12 @@ def fetch_all(
     *,
     scope: Literal["local", "global", "all"] = "local",
     source_menace_id: str | None = None,
-) -> List[Dict[str, float]]:
+) -> List[Dict[str, Any]]:
     menace_id = source_menace_id or getattr(globals().get("router"), "menace_id", "")
     clause, params = build_scope_clause("synergy_history", Scope(scope), menace_id)
     query = apply_scope("SELECT entry FROM synergy_history", clause) + " ORDER BY id"
     rows = conn.execute(query, params).fetchall()
-    out: List[Dict[str, float]] = []
-    for (text,) in rows:
-        try:
-            data = json.loads(text)
-            if isinstance(data, dict):
-                out.append({str(k): float(v) for k, v in data.items()})
-        except Exception:
-            continue
-    return out
+    return [_parse_entry(text) for (text,) in rows]
 
 
 def fetch_after(
@@ -179,7 +182,7 @@ def fetch_after(
     *,
     scope: Literal["local", "global", "all"] = "local",
     source_menace_id: str | None = None,
-) -> List[Tuple[int, Dict[str, float]]]:
+) -> List[Tuple[int, Dict[str, Any]]]:
     """Return entries with ``id`` greater than ``last_id``."""
     menace_id = source_menace_id or getattr(globals().get("router"), "menace_id", "")
     clause, scope_params = build_scope_clause("synergy_history", Scope(scope), menace_id)
@@ -188,15 +191,11 @@ def fetch_after(
     ) + " ORDER BY id"
     params = [int(last_id), *scope_params]
     rows = conn.execute(query, params).fetchall()
-    out: List[Tuple[int, Dict[str, float]]] = []
+    out: List[Tuple[int, Dict[str, Any]]] = []
     for row_id, text in rows:
         try:
-            data = json.loads(text)
-            if isinstance(data, dict):
-                out.append(
-                    (int(row_id), {str(k): float(v) for k, v in data.items()})
-                )
-        except Exception as exc:
+            out.append((int(row_id), _parse_entry(text)))
+        except Exception as exc:  # pragma: no cover - parse already handled
             logger.exception("failed to parse history row %s: %s", row_id, exc)
             if RAISE_ERRORS:
                 raise HistoryParseError(str(exc)) from exc
@@ -208,22 +207,14 @@ def fetch_latest(
     *,
     scope: Literal["local", "global", "all"] = "local",
     source_menace_id: str | None = None,
-) -> Dict[str, float]:
+) -> Dict[str, Any]:
     menace_id = source_menace_id or getattr(globals().get("router"), "menace_id", "")
     clause, params = build_scope_clause("synergy_history", Scope(scope), menace_id)
     query = apply_scope("SELECT entry FROM synergy_history", clause) + " ORDER BY id DESC LIMIT 1"
     row = conn.execute(query, params).fetchone()
     if not row:
         return {}
-    try:
-        data = json.loads(row[0])
-        if isinstance(data, dict):
-            return {str(k): float(v) for k, v in data.items()}
-    except Exception as exc:
-        logger.exception("failed to parse latest history entry: %s", exc)
-        if RAISE_ERRORS:
-            raise HistoryParseError(str(exc)) from exc
-    return {}
+    return _parse_entry(row[0])
 
 
 def migrate_json_to_db(json_path: str | Path, db_path: str | Path | None = None) -> None:
@@ -246,7 +237,7 @@ def migrate_json_to_db(json_path: str | Path, db_path: str | Path | None = None)
 
 
 def record(
-    entry: Dict[str, float],
+    entry: Dict[str, Any],
     path: str | Path | None = None,
     *,
     source_menace_id: str | None = None,
