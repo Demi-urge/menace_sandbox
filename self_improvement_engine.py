@@ -2,6 +2,11 @@ from __future__ import annotations
 
 """Periodic self-improvement engine for the Menace system.
 
+Configuration is loaded via :class:`sandbox_settings.SandboxSettings` which
+validates environment variables or values supplied through a configuration
+file.  This surfaces misconfiguration errors early and provides typed access to
+all tunable parameters.
+
 The module relies on a few optional helpers that may not be installed in
 minimal environments:
 
@@ -48,9 +53,12 @@ import importlib
 
 from db_router import GLOBAL_ROUTER, init_db_router
 
-if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
+from sandbox_settings import SandboxSettings, load_sandbox_settings
+
+settings = load_sandbox_settings()
+
+if settings.sandbox_central_logging:
     setup_logging()
-from sandbox_settings import SandboxSettings
 from .metrics_exporter import (
     synergy_weight_updates_total,
     synergy_weight_update_failures_total,
@@ -83,14 +91,14 @@ except Exception:  # pragma: no cover - fallback for flat layout
 
 router = GLOBAL_ROUTER or init_db_router("self_improvement_engine")
 STABLE_WORKFLOWS = WorkflowStabilityDB()
-PLANNER_INTERVAL = int(os.getenv("META_PLANNING_INTERVAL", "10"))
+PLANNER_INTERVAL = settings.meta_planning_interval
 # Time based interval (in seconds) used to periodically trigger the meta
 # workflow planner in a background thread.  Keeping the configuration separate
 # from the cycle based ``PLANNER_INTERVAL`` allows the planner to run even when
 # no explicit self-improvement cycles are executed.
-META_PLANNING_PERIOD = int(os.getenv("META_PLANNING_PERIOD", "3600"))
-META_PLANNING_LOOP = os.getenv("META_PLANNING_LOOP") == "1"
-META_IMPROVEMENT_THRESHOLD = float(os.getenv("META_IMPROVEMENT_THRESHOLD", "0.01"))
+META_PLANNING_PERIOD = settings.meta_planning_period
+META_PLANNING_LOOP = settings.meta_planning_loop
+META_IMPROVEMENT_THRESHOLD = settings.meta_improvement_threshold
 neuro_stub = sys.modules.get("neurosales")
 if neuro_stub:
     if not hasattr(neuro_stub, "get_recent_messages"):
@@ -127,6 +135,18 @@ try:  # pragma: no cover - optional dependency
     import sandbox_runner.environment as environment
 except Exception:  # pragma: no cover - fallback for limited environments
     environment = None  # type: ignore
+
+
+def _repo_path() -> Path:
+    """Return repository root from :class:`SandboxSettings`."""
+
+    return Path(SandboxSettings().sandbox_repo_path)
+
+
+def _data_dir() -> Path:
+    """Return sandbox data directory from :class:`SandboxSettings`."""
+
+    return Path(SandboxSettings().sandbox_data_dir)
 
 
 def _load_callable(module: str, attr: str) -> Callable[..., Any]:
@@ -420,7 +440,7 @@ def _update_alignment_baseline(settings: SandboxSettings | None = None) -> None:
         path_str = getattr(settings, "alignment_baseline_metrics_path", "")
         if not path_str:
             return
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        repo = _repo_path()
         test_count = 0
         total_complexity = 0
         for file in repo.rglob("*.py"):
@@ -1018,13 +1038,10 @@ async def self_improvement_cycle(
 
     planner = MetaWorkflowPlanner()
 
-    # Allow runtime tuning via environment variables
-    try:
-        mutation_rate = float(os.getenv("META_MUTATION_RATE", "1.0"))
-        roi_weight = float(os.getenv("META_ROI_WEIGHT", "1.0"))
-        domain_penalty = float(os.getenv("META_DOMAIN_PENALTY", "1.0"))
-    except Exception:
-        mutation_rate = roi_weight = domain_penalty = 1.0
+    cfg = SandboxSettings()
+    mutation_rate = cfg.meta_mutation_rate
+    roi_weight = cfg.meta_roi_weight
+    domain_penalty = cfg.meta_domain_penalty
 
     for name, value in {
         "mutation_rate": mutation_rate,
@@ -1269,7 +1286,7 @@ class SelfImprovementEngine:
         self.metrics_db = getattr(meta_logger, "metrics_db", None) if meta_logger else None
         if self.metrics_db is None:
             try:
-                data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+                data_dir = _data_dir()
                 self.metrics_db = RelevancyMetricsDB(data_dir / "relevancy_metrics.db")
             except Exception:
                 self.metrics_db = None
@@ -1396,7 +1413,7 @@ class SelfImprovementEngine:
             or getattr(self_coding_engine, "gpt_memory", None)
             or getattr(self_coding_engine, "gpt_memory_manager", None)
             or init_local_knowledge(
-                os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
+                SandboxSettings().gpt_memory_db
             ).memory
         )
         self.gpt_memory_manager = self.gpt_memory  # backward compatibility
@@ -1418,7 +1435,7 @@ class SelfImprovementEngine:
             self.relevancy_eval_interval = 3600.0
 
         if synergy_learner_cls is SynergyWeightLearner:
-            env_name = os.getenv("SYNERGY_LEARNER", "").lower()
+            env_name = SandboxSettings().synergy_learner.lower()
             mapping = {
                 "dqn": DQNSynergyLearner,
                 "double": DoubleDQNSynergyLearner,
@@ -1504,8 +1521,8 @@ class SelfImprovementEngine:
         self._load_synergy_weights()
         from .module_index_db import ModuleIndexDB
 
-        auto_map = os.getenv("SANDBOX_AUTO_MAP") == "1"
-        if not auto_map and os.getenv("SANDBOX_AUTODISCOVER_MODULES") == "1":
+        auto_map = SandboxSettings().sandbox_auto_map
+        if not auto_map and SandboxSettings().sandbox_autodiscover_modules:
             self.logger.warning(
                 "SANDBOX_AUTODISCOVER_MODULES is deprecated; use SANDBOX_AUTO_MAP"
             )
@@ -1514,7 +1531,7 @@ class SelfImprovementEngine:
         map_path = getattr(
             self.module_index,
             "path",
-            Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "module_map.json",
+            _data_dir() / "module_map.json",
         )
         try:
             self._last_map_refresh = map_path.stat().st_mtime
@@ -1522,7 +1539,7 @@ class SelfImprovementEngine:
             self._last_map_refresh = 0.0
         if self.module_index and self.patch_db:
             try:
-                repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                repo = _repo_path()
                 with self.patch_db._connect() as conn:
                     rows = conn.execute(
                         "SELECT DISTINCT filename FROM patch_history"
@@ -1555,7 +1572,7 @@ class SelfImprovementEngine:
 
         if module_groups is None:
             try:
-                repo_path = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                repo_path = _repo_path()
                 discovered = discover_module_groups(repo_path)
                 module_groups = {
                     (m if m.endswith(".py") else f"{m}.py"): grp
@@ -1589,7 +1606,7 @@ class SelfImprovementEngine:
         if score_backend is not None:
             self._score_backend = score_backend
         else:
-            backend_url = os.getenv("PATCH_SCORE_BACKEND_URL")
+            backend_url = SandboxSettings().patch_score_backend_url
             if backend_url:
                 try:
                     self._score_backend = backend_from_url(backend_url)
@@ -1624,11 +1641,8 @@ class SelfImprovementEngine:
                     "failed to subscribe to self_improve events: %s", exc
                 )
 
-        if os.getenv("AUTO_TRAIN_SYNERGY") == "1":
-            try:
-                interval = float(os.getenv("AUTO_TRAIN_INTERVAL", "600"))
-            except Exception:
-                interval = 600.0
+        if SandboxSettings().auto_train_synergy:
+            interval = SandboxSettings().auto_train_interval
             hist_file = Path(settings.sandbox_data_dir) / "synergy_history.db"
             self._start_synergy_trainer(hist_file, interval)
 
@@ -1767,7 +1781,7 @@ class SelfImprovementEngine:
             try:
                 from collections import defaultdict
 
-                db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
+                db = WorkflowDB(Path(SandboxSettings().workflows_db))
                 domain_groups: dict[str, list[tuple[str, Callable[[], Any]]]] = defaultdict(list)
                 for rec in db.fetch_workflows(limit=200):
                     seq = rec.get("workflow") or []
@@ -1791,7 +1805,7 @@ class SelfImprovementEngine:
             return []
         if db is None and WorkflowDB is not None and WorkflowRecord is not None:
             try:
-                db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
+                db = WorkflowDB(Path(SandboxSettings().workflows_db))
             except Exception:
                 db = None
         summary_db = None
@@ -1866,7 +1880,7 @@ class SelfImprovementEngine:
             workflows: dict[str, Callable[[], Any]] = {}
             if WorkflowDB is not None and WorkflowRecord is not None:
                 try:
-                    db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
+                    db = WorkflowDB(Path(SandboxSettings().workflows_db))
                     for rec in db.fetch_workflows(limit=200):
                         seq = rec.get("workflow") or []
                         seq_str = "-".join(seq) if isinstance(seq, list) else str(seq)
@@ -2267,7 +2281,7 @@ class SelfImprovementEngine:
                 workflows: dict[str, Callable[[], Any]] = {}
                 if WorkflowDB is not None and WorkflowRecord is not None:
                     try:
-                        db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
+                        db = WorkflowDB(Path(SandboxSettings().workflows_db))
                         for rec in db.fetch_workflows(limit=200):
                             seq = rec.get("workflow") or []
                             seq_str = "-".join(seq) if isinstance(seq, list) else str(seq)
@@ -2951,7 +2965,7 @@ class SelfImprovementEngine:
         pdb = self.patch_db or (self.data_bot.patch_db if self.data_bot else None)
         if pdb:
             try:
-                repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                repo = _repo_path()
                 with pdb._connect() as conn:
                     rows = conn.execute(
                         "SELECT roi_delta, complexity_delta, reverted, filename "
@@ -3834,7 +3848,7 @@ class SelfImprovementEngine:
                     return None, False, 0.0
 
             with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
-                repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+                repo = _repo_path().resolve()
                 src = Path(__file__).resolve()
                 try:
                     module_rel = src.relative_to(repo).as_posix()
@@ -3950,7 +3964,7 @@ class SelfImprovementEngine:
             if not module_path.exists():
                 return None
             out_dir = (
-                Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+                _data_dir()
                 / "compressed_modules"
             )
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -3971,7 +3985,7 @@ class SelfImprovementEngine:
         mods = {m for m in modules if m}
         if not mods:
             return
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        repo = _repo_path()
         try:
             grapher = getattr(self, "module_synergy_grapher", None)
             if grapher is None:
@@ -4025,8 +4039,8 @@ class SelfImprovementEngine:
 
         import time
 
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        repo = _repo_path()
+        data_dir = _data_dir()
         if not data_dir.is_absolute():
             data_dir = repo / data_dir
         meta_path = data_dir / "orphan_classifications.json"
@@ -4304,7 +4318,7 @@ class SelfImprovementEngine:
             from task_handoff_bot import WorkflowDB
 
             idx = getattr(self, "module_index", None) or ModuleIndexDB()
-            wf_db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
+            wf_db = WorkflowDB(Path(SandboxSettings().workflows_db))
             workflows = wf_db.fetch(limit=1000)
             total_wf = len(workflows)
             grp_counts: dict[int, int] = {}
@@ -4340,10 +4354,7 @@ class SelfImprovementEngine:
             info = self.orphan_traces.setdefault(mod, {"parents": []})
             info["reuse_score"] = score
 
-        try:
-            reuse_threshold = float(os.getenv("ORPHAN_REUSE_THRESHOLD", "0"))
-        except Exception:
-            reuse_threshold = 0.0
+        reuse_threshold = SandboxSettings().orphan_reuse_threshold
 
         scenario_results: dict[str, dict[str, dict[str, Any]]] = {}
         tracker_wf = None
@@ -4688,7 +4699,7 @@ class SelfImprovementEngine:
         if not self.module_index:
             return set()
 
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        repo = _repo_path()
 
         candidates: set[str] = set()
         for p in paths:
@@ -4825,7 +4836,7 @@ class SelfImprovementEngine:
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("recursive orphan update failed: %s", exc)
 
-            data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+            data_dir = _data_dir()
             orphan_path = data_dir / "orphan_modules.json"
             meta_path = data_dir / "orphan_classifications.json"
             survivors = [
@@ -4935,7 +4946,7 @@ class SelfImprovementEngine:
         from pathlib import Path
         from sandbox_runner.dependency_utils import collect_local_dependencies
 
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        repo = _repo_path().resolve()
         traces = getattr(self, "orphan_traces", None)
 
         roots: list[str] = []
@@ -4982,7 +4993,7 @@ class SelfImprovementEngine:
     def _post_round_orphan_scan(self) -> None:
         """Run a post-round orphan discovery and integration pass."""
 
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        repo = _repo_path()
         try:
             added, syn_ok, intent_ok = self._post_round_scan(
                 repo, logger=self.logger, router=GLOBAL_ROUTER
@@ -5011,8 +5022,8 @@ class SelfImprovementEngine:
     # ------------------------------------------------------------------
     def _update_orphan_modules(self, modules: Iterable[str] | None = None) -> None:
         """Discover orphan modules and update the tracking file or integrate ``modules``."""
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        repo = _repo_path()
+        data_dir = _data_dir()
         path = data_dir / "orphan_modules.json"
 
         if not hasattr(self, "orphan_traces"):
@@ -5370,11 +5381,10 @@ class SelfImprovementEngine:
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("module map refresh failed: %s", exc)
 
-        env_clean = os.getenv("SANDBOX_CLEAN_ORPHANS")
-        if env_clean and env_clean.lower() in ("1", "true", "yes"):
+        if SandboxSettings().clean_orphans:
             survivors = [m for m in filtered if m not in passing]
         else:
-            survivors = [m for m in filtered if m not in passing]
+            survivors = filtered
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(sorted(survivors), indent=2))
@@ -5387,7 +5397,7 @@ class SelfImprovementEngine:
     # ------------------------------------------------------------------
     def _load_orphan_candidates(self) -> list[str]:
         """Read orphan module candidates from the tracking file."""
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        data_dir = _data_dir()
         path = data_dir / "orphan_modules.json"
         try:
             if path.exists():
@@ -5419,8 +5429,8 @@ class SelfImprovementEngine:
         their self tests again.
         """
 
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        repo = _repo_path()
+        data_dir = _data_dir()
         if not data_dir.is_absolute():
             data_dir = repo / data_dir
         orphan_path = data_dir / "orphan_modules.json"
@@ -5471,7 +5481,7 @@ class SelfImprovementEngine:
             repo_mods = self._collect_recursive_modules(modules)
             passing = self._test_orphan_modules(repo_mods)
             if passing:
-                repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                repo = _repo_path()
                 added_modules: set[str] = set()
                 try:
                     _tracker, tested = environment.auto_include_modules(
@@ -5524,7 +5534,7 @@ class SelfImprovementEngine:
         except Exception as exc:  # pragma: no cover - database issues
             self.logger.exception("module refresh query failed: %s", exc)
             return
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        repo = _repo_path()
         pending: dict[str, Path] = {}
         for r in rows:
             p = Path(r[0])
@@ -5565,7 +5575,7 @@ class SelfImprovementEngine:
         if not new_mods:
             return
         try:
-            exclude_env = os.getenv("SANDBOX_EXCLUDE_DIRS")
+            exclude_env = SandboxSettings().exclude_dirs
             exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
             mapping = build_module_map(repo, ignore=exclude)
             mapping = {
@@ -5578,7 +5588,7 @@ class SelfImprovementEngine:
                         mapping.pop(key, None)
             self.module_index.merge_groups(mapping)
             self.module_clusters.update(mapping)
-            data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+            data_dir = _data_dir()
             out = data_dir / "module_map.json"
             out.parent.mkdir(parents=True, exist_ok=True)
             with open(out, "w", encoding="utf-8") as fh:
@@ -5973,7 +5983,7 @@ class SelfImprovementEngine:
                 self.event_bus.publish("relevancy_flags", flags)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("relevancy flag publish failed")
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        repo = _repo_path()
         for mod, status in flags.items():
             self.logger.info(
                 "module flagged", extra=log_record(module=mod, status=status)
@@ -6007,7 +6017,7 @@ class SelfImprovementEngine:
         if auto_process:
             try:
                 service = ModuleRetirementService(
-                    Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                    _repo_path()
                 )
                 results = service.process_flags(flags)
             except Exception:
@@ -6042,7 +6052,7 @@ class SelfImprovementEngine:
 
     def _handle_relevancy_flags(self, flags: dict[str, str]) -> None:
         """Process relevancy radar flags and trigger follow-up actions."""
-        service = ModuleRetirementService(Path(os.getenv("SANDBOX_REPO_PATH", ".")))
+        service = ModuleRetirementService(_repo_path())
         try:
             results = service.process_flags(flags)
         except Exception:
@@ -6066,7 +6076,7 @@ class SelfImprovementEngine:
             except Exception:
                 self.logger.exception("relevancy actions publish failed")
         if append_orphan_classifications:
-            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+            repo = _repo_path()
             retire_entries = {
                 m: {"classification": "retired"}
                 for m, status in flags.items()
@@ -6165,7 +6175,7 @@ class SelfImprovementEngine:
 
         if WorkflowDB is not None and WorkflowRecord is not None:
             try:
-                db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
+                db = WorkflowDB(Path(SandboxSettings().workflows_db))
                 for rec in db.fetch_workflows(limit=limit):
                     seq = rec.get("workflow") or []
                     seq_str = "-".join(seq) if isinstance(seq, list) else str(seq)
@@ -6266,7 +6276,7 @@ class SelfImprovementEngine:
                         self.logger.exception("planner suggestion handling failed")
 
             def _handle_new_modules() -> None:
-                repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                repo = _repo_path()
                 pending = self._update_orphan_modules() or []
                 while pending:
                     added_modules: set[str] = set()
@@ -6333,7 +6343,7 @@ class SelfImprovementEngine:
                                 )
                         try:
                             service = ModuleRetirementService(
-                                Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                                _repo_path()
                             )
                             pending = {m: "retire" for m in flagged}
                             results = service.process_flags(pending)
@@ -6378,7 +6388,7 @@ class SelfImprovementEngine:
                     record_new = getattr(self, "_record_new_modules", None)
                     if record_new:
                         record_new(added_modules)
-                    repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                    repo = _repo_path()
                     abs_paths = [str(repo / p) for p in passing]
                     integrated: set[str] = set()
                     try:
@@ -7209,7 +7219,7 @@ class SelfImprovementEngine:
             group_idx = None
             if self.patch_db:
                 try:
-                    repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                    repo = _repo_path()
                     with self.patch_db._connect() as conn:
                         row = conn.execute(
                             "SELECT filename FROM patch_history ORDER BY id DESC LIMIT 1"
@@ -7378,7 +7388,7 @@ class SelfImprovementEngine:
                 finally:
                     try:
                         self._update_orphan_modules()
-                        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                        repo = _repo_path()
                         traces = getattr(self, "orphan_traces", {})
                         if append_orphan_cache:
                             cache_entries = {
@@ -7998,22 +8008,23 @@ def cli(argv: list[str] | None = None) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Self-improvement utilities")
+    parser.add_argument("--config", help="Path to sandbox settings file")
     parser.add_argument(
         "--mutation-rate",
         type=float,
-        default=float(os.getenv("META_MUTATION_RATE", "1.0")),
+        default=None,
         help="Mutation rate multiplier for meta planning",
     )
     parser.add_argument(
         "--roi-weight",
         type=float,
-        default=float(os.getenv("META_ROI_WEIGHT", "1.0")),
+        default=None,
         help="Weight applied to ROI when composing pipelines",
     )
     parser.add_argument(
         "--domain-penalty",
         type=float,
-        default=float(os.getenv("META_DOMAIN_PENALTY", "1.0")),
+        default=None,
         help="Penalty for transitioning between workflow domains",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -8055,9 +8066,15 @@ def cli(argv: list[str] | None = None) -> None:
     p_update.add_argument("shadow", help="NPZ file with shadow data")
 
     args = parser.parse_args(argv)
-    os.environ["META_MUTATION_RATE"] = str(args.mutation_rate)
-    os.environ["META_ROI_WEIGHT"] = str(args.roi_weight)
-    os.environ["META_DOMAIN_PENALTY"] = str(args.domain_penalty)
+    cfg = load_sandbox_settings(args.config)
+    mutation_rate = args.mutation_rate if args.mutation_rate is not None else cfg.meta_mutation_rate
+    roi_weight = args.roi_weight if args.roi_weight is not None else cfg.meta_roi_weight
+    domain_penalty = (
+        args.domain_penalty if args.domain_penalty is not None else cfg.meta_domain_penalty
+    )
+    os.environ["META_MUTATION_RATE"] = str(mutation_rate)
+    os.environ["META_ROI_WEIGHT"] = str(roi_weight)
+    os.environ["META_DOMAIN_PENALTY"] = str(domain_penalty)
 
     if args.cmd == "synergy-dashboard":
         dash = SynergyDashboard(
