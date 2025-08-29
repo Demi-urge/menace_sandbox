@@ -45,6 +45,18 @@ jobs:
       - name: Run fuzz and property-based tests
         run: pytest tests/fuzz tests/test_bot_testing_bot_property.py tests/test_communication_testing_bot_property.py
 
+  workflow-policy-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: bash ./setup_env.sh
+      - name: Run workflow and policy integration tests
+        run: pytest tests/integration/test_workflow_policy_integration.py -q
+
   stress-tests:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.stress == 'true'
     runs-on: ubuntu-latest
