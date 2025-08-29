@@ -93,10 +93,12 @@ class MetaWorkflowPlanner:
     max_functions: int = 50
     max_modules: int = 50
     max_tags: int = 50
+    max_domains: int = 10
     roi_window: int = 5
     function_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
     module_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
     tag_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
+    domain_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
     function_df: Dict[str, int] = field(default_factory=dict)
     tag_df: Dict[str, int] = field(default_factory=dict)
     doc_count: int = 0
@@ -153,9 +155,11 @@ class MetaWorkflowPlanner:
             rois,
             failures,
         ) = self._semantic_tokens(workflow, workflow_id)
-        domain = workflow.get("domain")
-        if isinstance(domain, str) and domain:
-            tags.append(domain)
+        d_idx, d_label = self._workflow_domain(
+            workflow_id, {workflow_id: workflow}
+        )
+        if d_label:
+            tags.append(d_label)
 
         # Merge in module categories from the code database
         mods.extend(mod_cats)
@@ -214,6 +218,10 @@ class MetaWorkflowPlanner:
         vec.extend(
             self._encode_tfidf_tokens(tag_counts, self.tag_index, self.tag_df, self.max_tags)
         )
+        domain_vec = [0.0] * self.max_domains
+        if 0 <= d_idx < self.max_domains:
+            domain_vec[d_idx] = 1.0
+        vec.extend(domain_vec)
 
         code_tags = norm_tags
 
@@ -228,7 +236,8 @@ class MetaWorkflowPlanner:
                     "code_tags": code_tags,
                     "dependency_depth": depth,
                     "branching_factor": branching,
-                    "domain": domain,
+                    "domain": d_label,
+                    "domain_index": d_idx,
                     "vector_schema": {
                         "graph": 2,
                         "roi_curve": self.roi_window,
@@ -239,6 +248,7 @@ class MetaWorkflowPlanner:
                         "function_failure": self.max_functions,
                         "module_tokens": self.max_modules,
                         "tag_tokens": self.max_tags,
+                        "domain": self.max_domains,
                     },
                 },
             )
@@ -270,6 +280,11 @@ class MetaWorkflowPlanner:
             rois,
             failures,
         ) = self._semantic_tokens(workflow, workflow_id)
+        d_idx, d_label = self._workflow_domain(
+            workflow_id, {workflow_id: workflow}
+        )
+        if d_label:
+            tags.append(d_label)
 
         mods.extend(mod_cats)
 
@@ -325,6 +340,10 @@ class MetaWorkflowPlanner:
         vec.extend(
             self._encode_tfidf_tokens(tag_counts, self.tag_index, self.tag_df, self.max_tags)
         )
+        domain_vec = [0.0] * self.max_domains
+        if 0 <= d_idx < self.max_domains:
+            domain_vec[d_idx] = 1.0
+        vec.extend(domain_vec)
         return vec
 
     # ------------------------------------------------------------------
@@ -563,8 +582,8 @@ class MetaWorkflowPlanner:
         self,
         workflow_id: str,
         workflows: Mapping[str, Mapping[str, Any]] | None = None,
-    ) -> str:
-        """Return domain label for ``workflow_id`` using CodeDB tags or metadata."""
+    ) -> tuple[int, str]:
+        """Return ``(index, label)`` for ``workflow_id``'s domain."""
 
         domain = ""
         if self.code_db is not None:
@@ -583,7 +602,10 @@ class MetaWorkflowPlanner:
                 domain = ""
         if not domain and workflows is not None:
             domain = str(workflows.get(workflow_id, {}).get("domain", "")).lower()
-        return domain
+        if not domain:
+            return -1, ""
+        idx = _get_index(domain, self.domain_index, self.max_domains)
+        return idx, domain
 
     # ------------------------------------------------------------------
     def compose_pipeline(
@@ -628,7 +650,7 @@ class MetaWorkflowPlanner:
         graph = self.graph or WorkflowGraph()
 
         current_vec = self.encode_workflow(start, workflows[start])
-        prev_domain = self._workflow_domain(start, workflows)
+        prev_domain = self._workflow_domain(start, workflows)[0]
 
         self.cluster_map.setdefault(("__domain_transitions__",), {})
         trans_probs = self.transition_probabilities()
@@ -669,8 +691,8 @@ class MetaWorkflowPlanner:
                 score = base * (1.0 + roi_weight * roi)
                 score *= (1.0 - failure_rate) * (1.0 - entropy)
 
-                cand_domain = self._workflow_domain(wid, workflows)
-                if prev_domain and cand_domain:
+                cand_domain = self._workflow_domain(wid, workflows)[0]
+                if prev_domain >= 0 and cand_domain >= 0:
                     prob = trans_probs.get((prev_domain, cand_domain))
                     if prob is not None:
                         if prob > 0.0:
@@ -692,7 +714,7 @@ class MetaWorkflowPlanner:
             pipeline.append(best_id)
             available.remove(best_id)
             current = best_id
-            prev_domain = self._workflow_domain(current, workflows)
+            prev_domain = self._workflow_domain(current, workflows)[0]
             if best_vec is not None:
                 current_vec = best_vec
 
@@ -2024,9 +2046,9 @@ class MetaWorkflowPlanner:
         info["score"] = prev_score * decay + new_score * (1.0 - decay)
 
         matrix = self.cluster_map.setdefault(("__domain_transitions__",), {})
-        domains = [self._workflow_domain(wid) for wid in chain]
+        domains = [self._workflow_domain(wid)[0] for wid in chain]
         for a, b in zip(domains, domains[1:]):
-            if not a or not b:
+            if a < 0 or b < 0:
                 continue
             entry = matrix.setdefault(
                 (a, b),

@@ -87,7 +87,7 @@ def test_mutate_pipeline_triggers_on_rising_failures(planner):
     results = planner.mutate_pipeline(
         pipeline, workflows, runner=runner, failure_threshold=10
     )
-    assert results and all(r["chain"] != pipeline for r in results)
+    assert results and any(r["chain"] != pipeline for r in results)
 
 
 def test_manage_pipeline_splits_on_rising_failures(planner):

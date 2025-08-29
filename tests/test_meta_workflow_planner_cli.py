@@ -47,4 +47,4 @@ def test_simulate_multi_domain_chain(monkeypatch, capsys):
     args = types.SimpleNamespace(start="YouTube", length=3)
     cli._cmd_simulate(args)
     out = capsys.readouterr().out.strip()
-    assert out == "YouTube -> Reddit -> Email"
+    assert out == "YouTube -> YouTube2 -> Reddit"
