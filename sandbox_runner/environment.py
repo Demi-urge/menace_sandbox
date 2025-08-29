@@ -7251,18 +7251,20 @@ def auto_include_modules(
     :func:`orphan_analyzer.classify_module` now occurs *after* optional self
     testing so that modules are executed before being marked as redundant.
 
-    Optional integration of isolated modules discovered via
-    ``scripts.discover_isolated_modules`` is preserved but expansion is limited
-    to dependencies of the originally requested modules.
+    Isolated modules discovered via ``scripts.discover_isolated_modules`` are
+    always merged into the candidate set when isolated inclusion is enabled or
+    recursive processing is requested.
 
-    Each candidate module is executed via :class:`self_test_service.SelfTestService`
-    (when ``validate`` is ``True``) with ``recursive_orphans=True`` and
-    ``discover_isolated=True``. Only modules that pass these self tests are
-    considered for integration. Modules that fail validation or are classified
-    as redundant after testing are recorded in ``sandbox_data/orphan_modules.json``
-    while passing entries are pruned from that cache. Modules whose simulated
-    ROI increase is below ``SandboxSettings.min_integration_roi`` are discarded
-    prior to workflow integration. Redundant modules are integrated only when
+    Each candidate module—along with any newly discovered paths—is executed via
+    :class:`self_test_service.SelfTestService` with ``recursive_orphans=True``,
+    ``discover_isolated=True`` and ``auto_include_isolated=True`` when
+    validation is requested or the module was newly discovered. Only modules
+    that pass these self tests are considered for integration. Modules that fail
+    validation or are classified as redundant after testing are recorded in
+    ``sandbox_data/orphan_modules.json`` while passing entries are pruned from
+    that cache. Modules whose simulated ROI increase is below
+    ``SandboxSettings.min_integration_roi`` are discarded prior to workflow
+    integration. Redundant modules are integrated only when
     :class:`sandbox_settings.SandboxSettings` sets ``test_redundant_modules``.
 
     The return value from :func:`run_workflow_simulations` is forwarded to the
@@ -7398,8 +7400,8 @@ def auto_include_modules(
         except Exception:
             pass
 
-    include_isolated = recursive or getattr(settings, "auto_include_isolated", True)
-    if include_isolated:
+    include_isolated = getattr(settings, "auto_include_isolated", True)
+    if include_isolated or recursive:
         try:
             from scripts.discover_isolated_modules import discover_isolated_modules
 
@@ -7427,7 +7429,6 @@ def auto_include_modules(
             candidate_paths.difference_update(retired_present)
 
     new_paths = set(mod_paths) - candidate_paths
-    derived_mods = set(mod_paths)
 
     mods = sorted(mod_paths)
     passed_mods: list[str] = []
@@ -7530,12 +7531,12 @@ def auto_include_modules(
     mods = [
         m
         for m in passed_mods
-        if m in derived_mods and (settings.test_redundant_modules or m not in redundant_mods)
+        if settings.test_redundant_modules or m not in redundant_mods
     ]
     tested = {
-        "added": [m for m in passed_mods if m in derived_mods],
-        "failed": [m for m in failed_mods if m in derived_mods],
-        "redundant": [m for m in redundant_mods if m in derived_mods],
+        "added": list(passed_mods),
+        "failed": list(failed_mods),
+        "redundant": list(redundant_mods),
     }
 
     # Evaluate preliminary ROI for each candidate module and exclude those with
