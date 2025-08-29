@@ -1,5 +1,6 @@
 import sys
 import types
+from threading import Lock
 
 import pytest
 import meta_workflow_planner as mwp
@@ -27,11 +28,14 @@ class DummyRunner:
         self.failures = list(failures)
         self.rois = list(rois) if rois is not None else [1.0] * len(self.failures)
         self.calls = 0
+        self._lock = Lock()
 
     def run(self, funcs):
-        fail = self.failures[self.calls] if self.calls < len(self.failures) else 0
-        roi = self.rois[self.calls] if self.calls < len(self.rois) else 1.0
-        self.calls += 1
+        with self._lock:
+            idx = self.calls
+            self.calls += 1
+        fail = self.failures[idx] if idx < len(self.failures) else 0
+        roi = self.rois[idx] if idx < len(self.rois) else 1.0
         modules = []
         for i, fn in enumerate(funcs):
             success = i >= fail
@@ -129,7 +133,12 @@ def test_validate_chain_multi_run_aggregation(tmp_path, monkeypatch):
     workflows = {"a": wf, "b": wf}
     runner = DummyRunner([0, 1, 0], rois=[1.0, 2.0, 3.0])
     record = planner._validate_chain(
-        ["a", "b"], workflows, runner=runner, runs=3, failure_threshold=10
+        ["a", "b"],
+        workflows,
+        runner=runner,
+        runs=3,
+        failure_threshold=10,
+        max_workers=3,
     )
     assert record is not None
     assert record["roi_gain"] == pytest.approx(2.0)
