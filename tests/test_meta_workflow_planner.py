@@ -60,6 +60,24 @@ def _retrieve(records, query_vec):
     return best_id
 
 
+class DummyRetriever:
+    """Simple retriever using cosine similarity over provided embeddings."""
+
+    def __init__(self, embeddings):
+        self.embeddings = embeddings
+
+    def _get_retriever(self):
+        return self
+
+    def retrieve(self, query_vec, top_k, dbs=None):
+        hits = []
+        for wid, vec in self.embeddings.items():
+            score = cosine_similarity(vec, query_vec)
+            hits.append(types.SimpleNamespace(record_id=wid, score=score, metadata={"id": wid}))
+        hits.sort(key=lambda h: h.score, reverse=True)
+        return hits[:top_k], None, None
+
+
 @pytest.fixture
 def sample_embeddings(tmp_path):
     g = nx.DiGraph()
@@ -118,8 +136,10 @@ def test_embedding_retrieval(sample_embeddings):
 
 
 def test_find_synergy_candidates(sample_embeddings):
-    planner, _vecs, _records = sample_embeddings
-    cands = find_synergy_candidates("wf1", top_k=2, retriever=None, roi_db=planner.roi_db)
+    planner, _vecs, records = sample_embeddings
+    emb_map = {rec["id"]: rec["vector"] for rec in records}
+    retr = DummyRetriever(emb_map)
+    cands = find_synergy_candidates("wf1", top_k=2, retriever=retr, roi_db=planner.roi_db)
     assert cands
     # wf3 has the highest ROI weight and should therefore rank first
     assert cands[0]["workflow_id"] == "wf3"
@@ -194,7 +214,8 @@ def test_cluster_workflows_roi_weighting(monkeypatch):
     roi_trends = {"wf2": [{"roi_gain": 0.5}]}
     planner = MetaWorkflowPlanner(roi_db=DummyROI(roi_trends))
     workflows = {wid: {} for wid in embeddings}
-    clusters = planner.cluster_workflows(workflows, threshold=0.75)
+    retr = DummyRetriever(embeddings)
+    clusters = planner.cluster_workflows(workflows, threshold=0.75, retriever=retr)
     cluster_ids = [sorted(c) for c in clusters]
     assert ["wf1", "wf2"] in cluster_ids
     assert ["wf3"] in cluster_ids

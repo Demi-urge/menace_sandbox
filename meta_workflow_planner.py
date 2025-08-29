@@ -220,42 +220,80 @@ class MetaWorkflowPlanner:
 
     # ------------------------------------------------------------------
     def cluster_workflows(
-        self, workflows: Mapping[str, Mapping[str, Any]], *, threshold: float = 0.75
+        self,
+        workflows: Mapping[str, Mapping[str, Any]],
+        *,
+        threshold: float = 0.75,
+        retriever: Retriever | None = None,
     ) -> List[List[str]]:
         """Group ``workflows`` into similarity clusters.
 
-        For every candidate pair a fresh embedding is generated via
-        :meth:`encode_workflow`.  The cosine similarity of the two vectors is
-        multiplied by ``(1 + ROI_a)`` and ``(1 + ROI_b)`` with ROI values
-        obtained through :func:`_roi_weight_from_db`.  Workflows whose weighted
+        Each workflow is encoded via :meth:`encode_workflow` and the resulting
+        vector is used to query a :class:`vector_service.retriever.Retriever`
+        for similar candidates.  The cosine similarity of the query and
+        candidate vectors is multiplied by ``(1 + ROI)`` for both workflows
+        using weights from :func:`_roi_weight_from_db`.  Pairs whose weighted
         similarity meets or exceeds ``threshold`` are placed in the same
-        cluster.  Missing ROI information simply results in unweighted
-        similarity scores so that the function remains best effort.
+        cluster.  When no retriever is available the method falls back to a
+        brute-force pairwise comparison.  Missing ROI information results in
+        unweighted similarity scores so that the function remains best effort.
         """
 
         ids = list(workflows.keys())
         if not ids:
             return []
 
-        # Build ROI‑weighted similarity matrix using fresh embeddings for each pair
-        sims: Dict[str, Dict[str, float]] = {wid: {} for wid in ids}
-        for i, wid in enumerate(ids):
-            vec_a = self.encode_workflow(wid, workflows[wid])
-            roi_a = (
+        vecs: Dict[str, List[float]] = {}
+        roi_map: Dict[str, float] = {}
+        for wid in ids:
+            vecs[wid] = self.encode_workflow(wid, workflows[wid])
+            roi_map[wid] = (
                 _roi_weight_from_db(self.roi_db, wid) if self.roi_db is not None else 0.0
             )
-            for j in range(i + 1, len(ids)):
-                other = ids[j]
-                vec_b = self.encode_workflow(other, workflows[other])
-                roi_b = (
-                    _roi_weight_from_db(self.roi_db, other)
-                    if self.roi_db is not None
-                    else 0.0
-                )
-                sim = cosine_similarity(vec_a, vec_b)
-                sim *= (1.0 + roi_a) * (1.0 + roi_b)
-                sims[wid][other] = sim
-                sims[other][wid] = sim
+
+        sims: Dict[str, Dict[str, float]] = {wid: {} for wid in ids}
+
+        if retriever is None and Retriever is not None:
+            try:  # pragma: no cover - best effort
+                retriever = Retriever()
+            except Exception:
+                retriever = None
+
+        if retriever is not None and Retriever is not None:
+            try:  # pragma: no cover - optional path
+                ur = retriever._get_retriever()
+                for wid, vec in vecs.items():
+                    hits, _, _ = ur.retrieve(
+                        vec, top_k=len(ids) * 2, dbs=["workflow_meta"]
+                    )  # type: ignore[attr-defined]
+                    for hit in hits:
+                        other = str(
+                            getattr(hit, "record_id", None)
+                            or getattr(getattr(hit, "metadata", {}), "get", lambda *_: None)("id")
+                            or ""
+                        )
+                        if not other or other == wid or other not in vecs:
+                            continue
+                        sim = cosine_similarity(vec, vecs[other])
+                        sim *= (1.0 + roi_map[wid]) * (1.0 + roi_map[other])
+                        if sim > sims[wid].get(other, 0.0):
+                            sims[wid][other] = sim
+                            sims[other][wid] = sim
+            except Exception:
+                retriever = None
+
+        if retriever is None:
+            for i, wid in enumerate(ids):
+                vec_a = vecs[wid]
+                roi_a = roi_map[wid]
+                for j in range(i + 1, len(ids)):
+                    other = ids[j]
+                    vec_b = vecs[other]
+                    roi_b = roi_map[other]
+                    sim = cosine_similarity(vec_a, vec_b)
+                    sim *= (1.0 + roi_a) * (1.0 + roi_b)
+                    sims[wid][other] = sim
+                    sims[other][wid] = sim
 
         # Cluster based on thresholded similarities
         remaining = set(ids)
@@ -1553,23 +1591,22 @@ def _roi_weight_from_db(
 
 
 # ---------------------------------------------------------------------------
+
 def find_synergy_candidates(
     query: Sequence[float] | str,
     *,
     top_k: int = 5,
-    retriever: Retriever | None = None,
+    retriever: Retriever,
     roi_db: ROIResultsDB | None = None,
     roi_window: int = 5,
 ) -> List[Dict[str, Any]]:
     """Return top ``top_k`` workflows similar to ``query`` weighted by ROI.
 
     ``query`` may be either a numeric embedding vector or an identifier of a
-    stored workflow embedding.  Results are ranked by cosine similarity scaled
-    by the average ROI gain retrieved from ``roi_db``.  When ``retriever`` is
-    provided the underlying :class:`vector_service.retriever.Retriever` is used
-    to gather candidate workflow identifiers.  If ``retriever`` is ``None`` or
-    the lookup fails the function falls back to scanning all stored
-    embeddings.
+    stored workflow embedding.  ``retriever`` must be provided to fetch
+    candidate workflow identifiers.  Results are ranked by cosine similarity
+    scaled by the average ROI gain from ``roi_db``.  Retrieval failures yield an
+    empty list.
     """
 
     roi_db = roi_db or ROIResultsDB()
@@ -1584,45 +1621,27 @@ def find_synergy_candidates(
         query_vec = [float(x) for x in query]
         exclude: set[str] = set()
 
-    candidates: List[tuple[str, float]] = []
-
-    if retriever is None and Retriever is not None:
-        try:  # pragma: no cover - best effort
-            retriever = Retriever()
-        except Exception:
-            retriever = None
-
-    if retriever is not None and Retriever is not None:
-        try:  # pragma: no cover - optional path
-            ur = retriever._get_retriever()
-            hits, _, _ = ur.retrieve(
-                query_vec, top_k=top_k * 3, dbs=["workflow_meta"]
-            )  # type: ignore[attr-defined]
-            for hit in hits:
-                wf_id = str(
-                    getattr(hit, "record_id", None)
-                    or getattr(getattr(hit, "metadata", {}), "get", lambda *_: None)("id")
-                    or ""
-                )
-                if not wf_id or wf_id in exclude:
-                    continue
-                vec = embeddings.get(wf_id)
-                if vec is None:
-                    continue
-                sim = cosine_similarity(query_vec, vec)
-                candidates.append((wf_id, sim))
-        except Exception:
-            candidates = []
-
-    if not candidates:
-        for wf_id, vec in embeddings.items():
-            if wf_id in exclude:
-                continue
-            sim = cosine_similarity(query_vec, vec)
-            candidates.append((wf_id, sim))
+    try:  # pragma: no cover - optional path
+        ur = retriever._get_retriever()
+        hits, _, _ = ur.retrieve(
+            query_vec, top_k=top_k * 3, dbs=["workflow_meta"]
+        )  # type: ignore[attr-defined]
+    except Exception:
+        return []
 
     scored: List[Dict[str, Any]] = []
-    for wf_id, sim in candidates:
+    for hit in hits:
+        wf_id = str(
+            getattr(hit, "record_id", None)
+            or getattr(getattr(hit, "metadata", {}), "get", lambda *_: None)("id")
+            or ""
+        )
+        if not wf_id or wf_id in exclude:
+            continue
+        vec = embeddings.get(wf_id)
+        if vec is None:
+            continue
+        sim = cosine_similarity(query_vec, vec)
         roi = _roi_weight_from_db(roi_db, wf_id, window=roi_window)
         scored.append(
             {
@@ -1674,7 +1693,17 @@ def find_synergistic_workflows(workflow_id: str, top_k: int = 5) -> List[Dict[st
                 }
             )
     except Exception:
-        return find_synergy_candidates(workflow_id, top_k=top_k, roi_db=roi_db)
+        retr: Retriever | None = None
+        if Retriever is not None:
+            try:  # pragma: no cover - best effort
+                retr = Retriever()
+            except Exception:
+                retr = None
+        if retr is None:
+            return []
+        return find_synergy_candidates(
+            workflow_id, top_k=top_k, retriever=retr, roi_db=roi_db
+        )
 
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:top_k]

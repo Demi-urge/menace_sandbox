@@ -16,8 +16,16 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from meta_workflow_planner import MetaWorkflowPlanner, find_synergy_candidates, find_synergy_chain
+from meta_workflow_planner import (
+    MetaWorkflowPlanner,
+    find_synergy_candidates,
+    find_synergy_chain,
+)
 from roi_results_db import module_impact_report
+try:  # pragma: no cover - optional dependency
+    from vector_service.retriever import Retriever  # type: ignore
+except Exception:  # pragma: no cover - allow running without retriever
+    Retriever = None  # type: ignore
 
 
 def _cmd_encode(args: argparse.Namespace) -> int:
@@ -38,7 +46,17 @@ def _cmd_candidates(args: argparse.Namespace) -> int:
         query: Sequence[float] | str = [float(x) for x in args.embedding.split(",") if x]
     else:
         query = args.workflow_id
-    results = find_synergy_candidates(query, top_k=args.top_k)
+    retr: Retriever | None = None
+    if Retriever is not None:
+        try:  # pragma: no cover - best effort
+            retr = Retriever()
+        except Exception:
+            retr = None
+    results = (
+        find_synergy_candidates(query, top_k=args.top_k, retriever=retr)
+        if retr is not None
+        else []
+    )
     for idx, item in enumerate(results, start=1):
         wf = item["workflow_id"]
         score = item.get("score", 0.0)
