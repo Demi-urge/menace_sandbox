@@ -463,11 +463,32 @@ class MetaWorkflowPlanner:
                 entropy = 0.0
         else:
             entropy = 0.0
+        # Track per-step entropy to allow granular convergence checks
+        step_entropies: List[float] = []
+        if WorkflowSynergyComparator is not None:
+            for i in range(1, len(chain) + 1):
+                try:
+                    sub_spec = {"steps": [{"module": m} for m in chain[:i]]}
+                    step_entropies.append(WorkflowSynergyComparator._entropy(sub_spec))
+                except Exception:
+                    step_entropies.append(0.0)
+        else:
+            step_entropies = [0.0] * len(chain)
         roi_gain = sum(
             float(m.result)
             for m in metrics.modules
             if isinstance(m.result, (int, float))
         )
+        # Capture per-step metrics for cluster tracking
+        step_metrics = [
+            {
+                "module": m.name,
+                "roi": float(m.result) if isinstance(m.result, (int, float)) else 0.0,
+                "failures": 0 if m.success else 1,
+                "entropy": step_entropies[i] if i < len(step_entropies) else 0.0,
+            }
+            for i, m in enumerate(metrics.modules)
+        ]
 
         chain_id = "->".join(chain)
         prev_roi = (
@@ -528,7 +549,13 @@ class MetaWorkflowPlanner:
             except Exception:
                 pass
 
-        self._update_cluster_map(chain, roi_gain, failures=failure_count, entropy=entropy)
+        self._update_cluster_map(
+            chain,
+            roi_gain,
+            failures=failure_count,
+            entropy=entropy,
+            step_metrics=step_metrics,
+        )
 
         embeddings = _load_embeddings()
         vecs = [embeddings.get(wid) for wid in chain if embeddings.get(wid)]
@@ -550,6 +577,7 @@ class MetaWorkflowPlanner:
             "roi_gain": roi_gain,
             "failures": failure_count,
             "entropy": entropy,
+            "step_metrics": step_metrics,
         }
 
     # ------------------------------------------------------------------
@@ -1077,7 +1105,13 @@ class MetaWorkflowPlanner:
             except Exception:
                 pass
 
-        self._update_cluster_map(chain, roi_gain, failures, entropy)
+        self._update_cluster_map(
+            chain,
+            roi_gain,
+            failures,
+            entropy,
+            step_metrics=record.get("step_metrics"),
+        )
 
     # ------------------------------------------------------------------
     def merge_high_performing_variants(
@@ -1167,6 +1201,7 @@ class MetaWorkflowPlanner:
         failures: int = 0,
         entropy: float = 0.0,
         *,
+        step_metrics: Sequence[Mapping[str, Any]] | None = None,
         tol: float = 0.01,
     ) -> Dict[str, Any]:
         """Update metric histories for ``chain`` and detect convergence."""
@@ -1178,17 +1213,18 @@ class MetaWorkflowPlanner:
                 "roi_history": [],
                 "failure_history": [],
                 "entropy_history": [],
+                "step_metrics": [],
+                "step_deltas": [],
                 "delta_roi": 0.0,
                 "delta_failures": 0.0,
                 "delta_entropy": 0.0,
                 "converged": False,
+                "score": 0.0,
             },
         )
         roi_hist = info["roi_history"]
         if roi_hist:
             info["delta_roi"] = roi_gain - roi_hist[-1]
-            if abs(info["delta_roi"]) < tol:
-                info["converged"] = True
         roi_hist.append(roi_gain)
 
         fail_hist = info["failure_history"]
@@ -1198,6 +1234,46 @@ class MetaWorkflowPlanner:
         ent_hist = info["entropy_history"]
         info["delta_entropy"] = entropy - (ent_hist[-1] if ent_hist else entropy)
         ent_hist.append(entropy)
+
+        if step_metrics is not None:
+            hist = info["step_metrics"]
+            if hist:
+                prev = hist[-1]
+                deltas: List[Dict[str, float]] = []
+                for i, step in enumerate(step_metrics):
+                    prev_step = prev[i] if i < len(prev) else {}
+                    deltas.append(
+                        {
+                            "roi": step.get("roi", 0.0) - float(prev_step.get("roi", 0.0)),
+                            "failures": step.get("failures", 0.0)
+                            - float(prev_step.get("failures", 0.0)),
+                            "entropy": step.get("entropy", 0.0)
+                            - float(prev_step.get("entropy", 0.0)),
+                        }
+                    )
+                info["step_deltas"] = deltas
+                if (
+                    abs(info["delta_roi"]) < tol
+                    and abs(info["delta_failures"]) < tol
+                    and abs(info["delta_entropy"]) < tol
+                    and all(
+                        abs(d["roi"]) < tol
+                        and abs(d["failures"]) < tol
+                        and abs(d["entropy"]) < tol
+                        for d in deltas
+                    )
+                ):
+                    info["converged"] = True
+                else:
+                    info["converged"] = False
+            hist.append(list(step_metrics))
+
+            avg_roi = sum(s.get("roi", 0.0) for s in step_metrics) / len(step_metrics)
+            avg_fail = sum(s.get("failures", 0.0) for s in step_metrics) / len(step_metrics)
+            avg_ent = sum(s.get("entropy", 0.0) for s in step_metrics) / len(step_metrics)
+            info["score"] = (roi_gain - failures - entropy) + (avg_roi - avg_fail - avg_ent)
+        else:
+            info["score"] = roi_gain - failures - entropy
 
         self._save_cluster_map()
         return info

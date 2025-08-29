@@ -51,7 +51,9 @@ def planner(monkeypatch):
         "workflow_synergy_comparator",
         types.SimpleNamespace(WorkflowSynergyComparator=StubComparator),
     )
-    return MetaWorkflowPlanner()
+    planner = MetaWorkflowPlanner()
+    planner.cluster_map = {}
+    return planner
 
 
 def wf() -> float:
@@ -61,7 +63,16 @@ def wf() -> float:
 def test_mutate_pipeline_triggers_on_rising_failures(planner):
     workflows = {"a": wf, "b": wf, "c": wf}
     pipeline = ["a", "b"]
-    planner._update_cluster_map(pipeline, roi_gain=2.0, failures=0, entropy=0.0)
+    planner._update_cluster_map(
+        pipeline,
+        roi_gain=2.0,
+        failures=0,
+        entropy=0.0,
+        step_metrics=[
+            {"module": m, "roi": 1.0, "failures": 0, "entropy": 0.0}
+            for m in pipeline
+        ],
+    )
     runner = DummyRunner([1])
     results = planner.mutate_pipeline(
         pipeline, workflows, runner=runner, failure_threshold=10
@@ -72,7 +83,16 @@ def test_mutate_pipeline_triggers_on_rising_failures(planner):
 def test_manage_pipeline_splits_on_rising_failures(planner):
     workflows = {"a": wf, "b": wf}
     pipeline = ["a", "b"]
-    planner._update_cluster_map(pipeline, roi_gain=2.0, failures=0, entropy=0.0)
+    planner._update_cluster_map(
+        pipeline,
+        roi_gain=2.0,
+        failures=0,
+        entropy=0.0,
+        step_metrics=[
+            {"module": m, "roi": 1.0, "failures": 0, "entropy": 0.0}
+            for m in pipeline
+        ],
+    )
     runner = DummyRunner([1, 0, 0, 0])
     results = planner.manage_pipeline(
         pipeline, workflows, runner=runner, failure_threshold=10
