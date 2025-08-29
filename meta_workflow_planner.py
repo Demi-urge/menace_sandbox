@@ -2927,6 +2927,10 @@ def find_synergy_chain(
     planner = MetaWorkflowPlanner()
     if cluster_map is None:
         cluster_map = getattr(planner, "cluster_map", {})
+    # Ensure the planner's cluster map reflects the provided data so that
+    # _failure_entropy_metrics can consult historic metrics.
+    planner.cluster_map = dict(cluster_map)
+
     trans_probs = planner.transition_probabilities()
     prev_domains = planner._workflow_domain(start_workflow_id)[0]
 
@@ -2941,6 +2945,9 @@ def find_synergy_chain(
                 continue
             sim = cosine_similarity(current_vec, vec)
             score = sim * roi_scores.get(wf_id, 0.0)
+            # Penalise workflows with higher failure rates or entropy.
+            failure, entropy = planner._failure_entropy_metrics(wf_id)
+            score *= (1.0 - failure) * (1.0 - entropy)
             if cluster_map is not None:
                 cm_score = float(cluster_map.get((current, wf_id), {}).get("score", 0.0))
                 score *= 1.0 + cm_score
