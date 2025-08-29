@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 from pathlib import Path
-from typing import Dict, Iterable, Mapping
+from typing import Dict, Iterable, Mapping, Tuple, List
 
 import networkx as nx
 
@@ -28,8 +29,23 @@ def build_module_graph(
     repo_path: str | Path,
     *,
     ignore: Iterable[str] | None = None,
+    failures: List[Tuple[Path, Exception]] | None = None,
 ) -> nx.DiGraph:
-    """Return a graph with import and call edges between modules."""
+    """Return a graph with import and call edges between modules.
+
+    Parameters
+    ----------
+    repo_path:
+        Root of the repository to scan.
+    ignore:
+        Optional iterable of glob-style patterns to skip.
+    failures:
+        If provided, parse failures will be appended as ``(path, exception)``.
+        When ``None`` (default) parse failures raise exceptions.
+    """
+
+    logger = logging.getLogger(__name__)
+
     root = Path(repo_path)
     graph = nx.DiGraph()
     modules: Dict[str, Path] = {}
@@ -40,9 +56,27 @@ def build_module_graph(
 
     for mod, file in modules.items():
         try:
-            tree = ast.parse(file.read_text())
-        except Exception:
-            continue
+            source = file.read_text()
+        except OSError as exc:
+            logger.error("Failed to read %s: %s", file, exc)
+            if failures is not None:
+                failures.append((file, exc))
+                continue
+            raise
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as exc:
+            logger.error("Syntax error parsing %s: %s", file, exc)
+            if failures is not None:
+                failures.append((file, exc))
+                continue
+            raise
+        except Exception as exc:
+            logger.error("Failed to parse %s: %s", file, exc)
+            if failures is not None:
+                failures.append((file, exc))
+                continue
+            raise
         imports: Dict[str, str] = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
