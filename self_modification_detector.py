@@ -69,7 +69,10 @@ def _fetch_reference_hashes(url: str) -> Dict[str, str] | None:
     return None
 
 
-def detect_self_modification(reference_hashes: Dict[str, str], current_hashes: Dict[str, str]) -> List[str]:
+def detect_self_modification(
+    reference_hashes: Dict[str, str],
+    current_hashes: Dict[str, str],
+) -> List[str]:
     """Return list of files whose hashes differ from ``reference_hashes``."""
     changed: List[str] = []
     for filename, ref_hash in reference_hashes.items():
@@ -131,8 +134,20 @@ def monitor_self_integrity(interval_seconds: int = 10, reference_url: str | None
 
     global _MONITOR_THREAD
     if _MONITOR_THREAD is None or not _MONITOR_THREAD.is_alive():
+        _STOP_EVENT.clear()
         _MONITOR_THREAD = threading.Thread(target=_monitor, daemon=True)
         _MONITOR_THREAD.start()
+
+
+def stop_monitoring() -> None:
+    """Stop the integrity monitoring thread if running."""
+    global _MONITOR_THREAD
+    _STOP_EVENT.set()
+    if _MONITOR_THREAD is not None:
+        try:
+            _MONITOR_THREAD.join()
+        finally:
+            _MONITOR_THREAD = None
 
 
 __all__ = [
@@ -141,5 +156,6 @@ __all__ = [
     "load_reference_hashes",
     "detect_self_modification",
     "monitor_self_integrity",
+    "stop_monitoring",
     "trigger_lockdown",
 ]
