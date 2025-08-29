@@ -684,28 +684,22 @@ class MetaWorkflowPlanner:
         similarity_weight: float = 1.0,
         synergy_weight: float = 1.0,
         roi_weight: float = 1.0,
+        retriever: Retriever | None = None,
     ) -> List[str]:
-        """Compose a workflow pipeline using similarity, synergy, ROI and stability.
+        """Compose a workflow pipeline using retrieval to limit candidates.
 
-        For each step the current workflow is compared against every available
-        candidate.  The following metrics are combined:
+        ``retriever`` (when provided or available globally) is used via
+        :func:`find_synergy_candidates` to obtain a shortlist of potential next
+        steps for the current workflow.  Each candidate is then scored using the
+        retrieved cosine ``similarity`` weighted by recent ``ROI`` trends and
+        historic domain transition probabilities.  If retrieval fails a
+        best-effort fallback to exhaustive iteration is performed.
 
-        * ``similarity`` – cosine similarity of workflow embeddings.
-        * ``synergy`` – aggregate score from :class:`WorkflowSynergyComparator`
-          capturing structural entropy and module overlap.
-        * ``ROI`` – recent ROI trend obtained through
-          :func:`_roi_weight_from_db`.
-        * ``failure rate`` and ``entropy`` – recent reliability metrics from
-          :func:`_failure_entropy_metrics`.
-        * ``domain transition priors`` – historical ROI and failure rates
-          between workflow domains.
-
-        The final ranking score is ``(similarity * similarity_weight +
-        synergy * synergy_weight) * (1 + roi_weight * ROI)
-        * (1 - failure_rate) * (1 - entropy) * transition_weight`` where
-        ``transition_weight`` is derived from the domain transition priors.
-        The method stops once ``length`` steps have been selected or no
-        compatible candidates remain.
+        The final ranking score is ``similarity * (1 + roi_weight * ROI)``
+        further scaled by ``1 + transition_prob`` where ``transition_prob``
+        reflects empirical ROI deltas between workflow domains.  The method
+        stops once ``length`` steps have been selected or no compatible
+        candidates remain.
         """
 
         if start not in workflows:
@@ -725,41 +719,60 @@ class MetaWorkflowPlanner:
         self.cluster_map.setdefault(("__domain_transitions__",), {})
         trans_probs = self.transition_probabilities()
 
+        if retriever is None and Retriever is not None:
+            try:  # pragma: no cover - best effort
+                retriever = Retriever()
+            except Exception:  # pragma: no cover - fallback to exhaustive search
+                retriever = None
+
         while available and len(pipeline) < length:
+            candidates: List[tuple[str, List[float], float, float]] = []
+            if retriever is not None:
+                try:
+                    cands = find_synergy_candidates(
+                        current,
+                        top_k=len(available),
+                        retriever=retriever,
+                        roi_db=self.roi_db,
+                        roi_window=self.roi_window,
+                        cluster_map=self.cluster_map,
+                    )
+                except Exception:
+                    cands = []
+                for cand in cands:
+                    wid = cand.get("workflow_id")
+                    if wid not in available or not _io_compatible(graph, current, wid):
+                        continue
+                    cand_vec = self.encode_workflow(wid, workflows[wid])
+                    candidates.append(
+                        (
+                            wid,
+                            cand_vec,
+                            float(cand.get("similarity", 0.0)),
+                            float(cand.get("roi", 0.0)),
+                        )
+                    )
+
+            if not candidates:
+                for wid in list(available):
+                    if not _io_compatible(graph, current, wid):
+                        continue
+                    cand_vec = self.encode_workflow(wid, workflows[wid])
+                    cand_roi = (
+                        _roi_weight_from_db(self.roi_db, wid)
+                        if self.roi_db is not None
+                        else 0.0
+                    )
+                    sim = cosine_similarity(current_vec, cand_vec)
+                    candidates.append((wid, cand_vec, sim, cand_roi))
+
             best_id: str | None = None
             best_score = -1.0
             best_vec: List[float] | None = None
             best_roi = 0.0
-            for wid in list(available):
-                if not _io_compatible(graph, current, wid):
-                    continue
-
-                cand_vec = self.encode_workflow(wid, workflows[wid])
-                cand_roi = (
-                    _roi_weight_from_db(self.roi_db, wid)
-                    if self.roi_db is not None
-                    else 0.0
-                )
-                sim = cosine_similarity(current_vec, cand_vec)
-                sim *= (1.0 + roi_weight * current_roi) * (1.0 + roi_weight * cand_roi)
-
-                cm_score = float(self.cluster_map.get((current, wid), {}).get("score", 0.0))
-                sim *= 1.0 + cm_score
-
-                failure_rate, entropy = self._failure_entropy_metrics(wid)
-
-                synergy = 0.0
-                if WorkflowSynergyComparator is not None:
-                    try:
-                        scores = WorkflowSynergyComparator.compare(
-                            workflows[current], workflows[wid]
-                        )
-                        synergy = float(getattr(scores, "aggregate", 0.0))
-                    except Exception:
-                        synergy = 0.0
-
-                base = similarity_weight * sim + synergy_weight * synergy
-                score = base * (1.0 - failure_rate) * (1.0 - entropy)
+            for wid, cand_vec, sim, cand_roi in candidates:
+                score = similarity_weight * sim
+                score *= (1.0 + roi_weight * current_roi) * (1.0 + roi_weight * cand_roi)
 
                 cand_domain = self._workflow_domain(wid, workflows)[0]
                 if prev_domain >= 0 and cand_domain >= 0:
@@ -779,6 +792,7 @@ class MetaWorkflowPlanner:
                     best_score = score
                     best_vec = cand_vec
                     best_roi = cand_roi
+
             if best_id is None:
                 break
             pipeline.append(best_id)
@@ -787,7 +801,7 @@ class MetaWorkflowPlanner:
             prev_domain = self._workflow_domain(current, workflows)[0]
             if best_vec is not None:
                 current_vec = best_vec
-            current_roi = best_roi if 'best_roi' in locals() else 0.0
+            current_roi = best_roi
 
         return pipeline
 
