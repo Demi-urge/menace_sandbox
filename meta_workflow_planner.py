@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import json
 import math
 import random
+import time
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence, TYPE_CHECKING
@@ -19,6 +20,11 @@ from cache_utils import get_cached_chain, set_cached_chain
 from logging_utils import get_logger
 
 logger = get_logger(__name__)
+
+# Decay factor applied when persisting/loading cluster metrics to favor recent runs
+_DECAY_FACTOR = 0.9
+# Number of consecutive runs without improvement before pruning a chain
+_PRUNE_RUNS = 50
 
 try:  # pragma: no cover - optional heavy dependency
     from vector_service.retriever import Retriever  # type: ignore
@@ -1828,6 +1834,35 @@ class MetaWorkflowPlanner:
         path = Path("sandbox_data/meta_clusters.json")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+
+            now = time.time()
+            to_prune: List[tuple[str, ...]] = []
+            for key, info in list(self.cluster_map.items()):
+                if key == ("__domain_transitions__",):
+                    # Apply decay to transition deltas
+                    matrix: Dict[tuple[str, str], Dict[str, Any]] = info
+                    for entry in matrix.values():
+                        entry["delta_roi"] = float(entry.get("delta_roi", 0.0)) * _DECAY_FACTOR
+                    continue
+
+                info.setdefault("ts", now)
+                delta_roi = float(info.get("delta_roi", 0.0))
+                delta_fail = float(info.get("delta_failures", 0.0))
+                delta_ent = float(info.get("delta_entropy", 0.0))
+
+                if delta_roi > 0 or delta_fail < 0 or delta_ent < 0:
+                    info["stagnant_runs"] = 0
+                else:
+                    info["stagnant_runs"] = int(info.get("stagnant_runs", 0)) + 1
+                    if info["stagnant_runs"] >= _PRUNE_RUNS:
+                        to_prune.append(key)
+
+                info["score"] = float(info.get("score", 0.0)) * _DECAY_FACTOR
+                info["delta_roi"] = delta_roi * _DECAY_FACTOR
+
+            for key in to_prune:
+                self.cluster_map.pop(key, None)
+
             data = {"|".join(k): v for k, v in self.cluster_map.items()}
             with path.open("w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
@@ -1845,6 +1880,20 @@ class MetaWorkflowPlanner:
             try:
                 data = json.loads(path.read_text())
                 self.cluster_map = {tuple(k.split("|")): v for k, v in data.items()}
+                now = time.time()
+                for key, info in list(self.cluster_map.items()):
+                    if key == ("__domain_transitions__",):
+                        matrix: Dict[tuple[str, str], Dict[str, Any]] = info
+                        for entry in matrix.values():
+                            entry["delta_roi"] = float(entry.get("delta_roi", 0.0)) * _DECAY_FACTOR
+                        continue
+
+                    info["score"] = float(info.get("score", 0.0)) * _DECAY_FACTOR
+                    info["delta_roi"] = float(info.get("delta_roi", 0.0)) * _DECAY_FACTOR
+                    info.setdefault("ts", now)
+                    info.setdefault("stagnant_runs", 0)
+                    if int(info.get("stagnant_runs", 0)) >= _PRUNE_RUNS:
+                        del self.cluster_map[key]
             except Exception:
                 self.cluster_map = {}
 
@@ -1908,8 +1957,10 @@ class MetaWorkflowPlanner:
                 "delta_entropy": 0.0,
                 "converged": False,
                 "score": 0.0,
+                "stagnant_runs": 0,
             },
         )
+        info["ts"] = time.time()
         roi_hist = info["roi_history"]
         if roi_hist:
             info["delta_roi"] = roi_gain - roi_hist[-1]
