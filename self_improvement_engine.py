@@ -48,7 +48,6 @@ import time
 import threading
 import asyncio
 import os
-import sys
 import importlib
 
 from db_router import GLOBAL_ROUTER, init_db_router
@@ -100,14 +99,10 @@ PLANNER_INTERVAL = getattr(settings, "meta_planning_interval", 0)
 META_PLANNING_PERIOD = getattr(settings, "meta_planning_period", 0)
 META_PLANNING_LOOP = getattr(settings, "meta_planning_loop", 0)
 META_IMPROVEMENT_THRESHOLD = getattr(settings, "meta_improvement_threshold", 0)
-neuro_stub = sys.modules.get("neurosales")
-if neuro_stub:
-    if not hasattr(neuro_stub, "get_recent_messages"):
-        neuro_stub.get_recent_messages = lambda *a, **k: []  # type: ignore
-    if not hasattr(neuro_stub, "push_chain"):
-        neuro_stub.push_chain = lambda *a, **k: None  # type: ignore
-    if not hasattr(neuro_stub, "__getattr__"):
-        neuro_stub.__getattr__ = lambda name: (lambda *a, **k: None)  # type: ignore
+try:
+    import neurosales  # noqa: F401
+except ImportError as exc:  # pragma: no cover - fail fast when dependency missing
+    raise RuntimeError("neurosales dependency is required") from exc
 from alert_dispatcher import dispatch_alert
 import json
 import inspect
