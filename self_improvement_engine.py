@@ -75,6 +75,8 @@ PLANNER_INTERVAL = int(os.getenv("META_PLANNING_INTERVAL", "10"))
 # from the cycle based ``PLANNER_INTERVAL`` allows the planner to run even when
 # no explicit self-improvement cycles are executed.
 META_PLANNING_PERIOD = int(os.getenv("META_PLANNING_PERIOD", "3600"))
+META_PLANNING_LOOP = os.getenv("META_PLANNING_LOOP") == "1"
+META_IMPROVEMENT_THRESHOLD = float(os.getenv("META_IMPROVEMENT_THRESHOLD", "0.01"))
 neuro_stub = sys.modules.get("neurosales")
 if neuro_stub:
     if not hasattr(neuro_stub, "get_recent_messages"):
@@ -1414,6 +1416,18 @@ class SelfImprovementEngine:
         if META_PLANNING_PERIOD > 0 and MetaWorkflowPlanner is not None:
             self._start_meta_planner_thread(float(META_PLANNING_PERIOD))
 
+        # Optional background evolution loop using the meta planner
+        self._meta_loop_thread: threading.Thread | None = None
+        self._meta_loop_stop: threading.Event | None = None
+        if (
+            META_PLANNING_LOOP
+            and MetaWorkflowPlanner is not None
+            and self.workflow_evolver is not None
+        ):
+            self._start_meta_planning_loop(
+                float(PLANNER_INTERVAL), float(META_IMPROVEMENT_THRESHOLD)
+            )
+
     def _plan_cross_domain_chains(self, top_k: int = 3) -> list[list[str]]:
         """Use meta planner to suggest new cross-domain workflow chains."""
         if MetaWorkflowPlanner is None or WorkflowChainSuggester is None:
@@ -2019,6 +2033,117 @@ class SelfImprovementEngine:
             self._meta_planner_thread.join(timeout=1.0)
             self._meta_planner_thread = None
             self._meta_planner_stop = None
+
+    # ------------------------------------------------------------------
+    def _meta_planning_loop(
+        self, interval: float, improvement_threshold: float
+    ) -> None:
+        """Background evolution loop driven by :class:`MetaWorkflowPlanner`."""
+
+        assert self._meta_loop_stop is not None
+        if MetaWorkflowPlanner is None or self.workflow_evolver is None:
+            return
+        planner = MetaWorkflowPlanner()
+
+        while not self._meta_loop_stop.is_set():
+            try:
+                workflows: dict[str, Callable[[], Any]] = {}
+                if WorkflowDB is not None and WorkflowRecord is not None:
+                    try:
+                        db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
+                        for rec in db.fetch_workflows(limit=200):
+                            seq = rec.get("workflow") or []
+                            seq_str = "-".join(seq) if isinstance(seq, list) else str(seq)
+                            wid = str(rec.get("id") or rec.get("wid") or "")
+                            workflows[wid] = self.workflow_evolver.build_callable(seq_str)
+                    except Exception:
+                        self.logger.exception(
+                            "failed loading workflows for meta planning loop"
+                        )
+
+                records = planner.discover_and_persist(
+                    workflows, metrics_db=self.metrics_db
+                )
+                active = [r.get("chain", []) for r in records if r.get("chain")]
+
+                while active and not self._meta_loop_stop.is_set():
+                    mutated = planner.mutate_chains(active, workflows)
+                    refined = planner.refine_chains(mutated, workflows)
+                    chains = [r.get("chain", []) for r in refined if r.get("chain")]
+                    if len(chains) > 1:
+                        refined += planner.remerge_pipelines(chains, workflows)
+                        chains = [r.get("chain", []) for r in refined if r.get("chain")]
+
+                    improved = any(
+                        (
+                            abs(
+                                float(
+                                    planner.cluster_map.get(tuple(c), {}).get(
+                                        "delta_roi", 0.0
+                                    )
+                                )
+                            )
+                            > improvement_threshold
+                            or abs(
+                                float(
+                                    planner.cluster_map.get(tuple(c), {}).get(
+                                        "delta_failures", 0.0
+                                    )
+                                )
+                            )
+                            > improvement_threshold
+                            or abs(
+                                float(
+                                    planner.cluster_map.get(tuple(c), {}).get(
+                                        "delta_entropy", 0.0
+                                    )
+                                )
+                            )
+                            > improvement_threshold
+                        )
+                        for c in chains
+                    )
+
+                    if not improved:
+                        try:
+                            dispatch_alert(
+                                f"Meta planning stagnation: no chain improved beyond {improvement_threshold}"
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed to dispatch meta planning alert"
+                            )
+
+                    if all(
+                        planner.cluster_map.get(tuple(c), {}).get("converged")
+                        for c in chains
+                    ):
+                        break
+                    active = chains
+            except Exception:  # pragma: no cover - keep loop alive
+                self.logger.exception("meta planning loop iteration failed")
+
+            self._meta_loop_stop.wait(interval)
+
+    def _start_meta_planning_loop(
+        self, interval: float, improvement_threshold: float
+    ) -> None:
+        if self._meta_loop_thread:
+            return
+        self._meta_loop_stop = threading.Event()
+        self._meta_loop_thread = threading.Thread(
+            target=self._meta_planning_loop,
+            args=(interval, improvement_threshold),
+            daemon=True,
+        )
+        self._meta_loop_thread.start()
+
+    def stop_meta_planning_loop(self) -> None:
+        if self._meta_loop_thread and self._meta_loop_stop:
+            self._meta_loop_stop.set()
+            self._meta_loop_thread.join(timeout=1.0)
+            self._meta_loop_thread = None
+            self._meta_loop_stop = None
 
     # ------------------------------------------------------------------
     def _metric_delta(self, name: str, window: int = 3) -> float:
