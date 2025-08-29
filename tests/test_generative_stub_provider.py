@@ -1,16 +1,21 @@
 import os
-
-os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-
 import asyncio
 import subprocess
 import sys
-import sandbox_runner.generative_stub_provider as gsp
 import importlib
 import time
 import pytest
 import logging
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
+import sandbox_runner.generative_stub_provider as gsp  # noqa: E402
+
 
 class DummyGen:
     def __init__(self):
@@ -20,12 +25,14 @@ class DummyGen:
         self.calls += 1
         return [{"generated_text": "{\"x\": 1}"}]
 
+
 def test_generate_stubs_cache(monkeypatch, tmp_path):
     path = tmp_path / "cache.json"
     monkeypatch.setenv("SANDBOX_STUB_CACHE", str(path))
     gsp_mod = importlib.reload(gsp)
 
     dummy = DummyGen()
+
     async def loader():
         return dummy
     monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
@@ -59,8 +66,9 @@ async def test_async_generate_stubs_cache(monkeypatch, tmp_path):
     def target(x: int) -> None:
         pass
 
-    first = await gsp_mod.async_generate_stubs([{"x": 0}], {"strategy": "synthetic", "target": target})
-    second = await gsp_mod.async_generate_stubs([{"x": 0}], {"strategy": "synthetic", "target": target})
+    ctx = {"strategy": "synthetic", "target": target}
+    first = await gsp_mod.async_generate_stubs([{"x": 0}], ctx)
+    second = await gsp_mod.async_generate_stubs([{"x": 0}], ctx)
 
     assert first == [{"x": 1}]
     assert second == [{"x": 1}]
@@ -77,6 +85,7 @@ def test_async_generate_returns_json(monkeypatch, tmp_path):
             return [{"generated_text": "{\"y\": 2}"}]
 
     dummy = AsyncGen()
+
     async def loader():
         return dummy
     monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
@@ -85,8 +94,50 @@ def test_async_generate_returns_json(monkeypatch, tmp_path):
     def target(y: int) -> None:
         pass
 
-    result = asyncio.run(gsp_mod.async_generate_stubs([{"y": 0}], {"strategy": "synthetic", "target": target}))
+    ctx = {"strategy": "synthetic", "target": target}
+    result = asyncio.run(gsp_mod.async_generate_stubs([{"y": 0}], ctx))
     assert result == [{"y": 2}]
+
+
+def test_deterministic_fallback(monkeypatch, tmp_path):
+    path = tmp_path / "cache.json"
+    monkeypatch.setenv("SANDBOX_STUB_CACHE", str(path))
+    gsp_mod = importlib.reload(gsp)
+
+    async def loader():
+        return None
+
+    monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
+
+    def target(a: int, b: float, c: bool, d: str, e: int | None = None) -> None:
+        pass
+
+    ctx = {"strategy": "synthetic", "target": target}
+    res = gsp_mod.generate_stubs([{}], ctx)
+    assert res == [{"a": 0, "b": 0.0, "c": False, "d": "", "e": None}]
+
+
+def test_generation_failure_propagates(monkeypatch, tmp_path):
+    path = tmp_path / "cache.json"
+    monkeypatch.setenv("SANDBOX_STUB_CACHE", str(path))
+    gsp_mod = importlib.reload(gsp)
+
+    class BrokenGen:
+        def __call__(self, prompt, max_length=64, num_return_sequences=1):
+            raise RuntimeError("boom")
+
+    async def loader():
+        return BrokenGen()
+
+    monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
+    gsp_mod._CACHE = {}
+
+    def target(x: int) -> None:
+        pass
+
+    ctx = {"strategy": "synthetic", "target": target}
+    with pytest.raises(RuntimeError):
+        gsp_mod.generate_stubs([{"x": 0}], ctx)
 
 
 @pytest.mark.asyncio
@@ -96,6 +147,7 @@ async def test_async_cache_file(tmp_path, monkeypatch):
     gsp_mod = importlib.reload(gsp)
 
     dummy = DummyGen()
+
     async def loader():
         return dummy
     monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
@@ -104,6 +156,7 @@ async def test_async_cache_file(tmp_path, monkeypatch):
         pass
 
     orig_save = gsp_mod._save_cache
+
     def slow_save():
         time.sleep(0.1)
         orig_save()
@@ -111,22 +164,17 @@ async def test_async_cache_file(tmp_path, monkeypatch):
     monkeypatch.setattr(gsp_mod, "_save_cache", slow_save)
     gsp_mod._CACHE = {}
 
-    marker_time = None
-    async def marker():
-        nonlocal marker_time
-        await asyncio.sleep(0.01)
-        marker_time = time.perf_counter()
-
     start = time.perf_counter()
-    await asyncio.gather(
-        gsp_mod.async_generate_stubs([{"x": 0}], {"strategy": "synthetic", "target": target}),
-        marker(),
-    )
-    assert marker_time - start < 0.1
+    ctx = {"strategy": "synthetic", "target": target}
+    await gsp_mod.async_generate_stubs([{"x": 0}], ctx)
+    duration = time.perf_counter() - start
+    assert duration < 0.1
+    await asyncio.sleep(0.15)
     assert path.exists()
     assert dummy.calls == 1
 
     orig_load = gsp_mod._load_cache
+
     def slow_load():
         time.sleep(0.1)
         return orig_load()
@@ -134,9 +182,16 @@ async def test_async_cache_file(tmp_path, monkeypatch):
     monkeypatch.setattr(gsp_mod, "_load_cache", slow_load)
     gsp_mod._CACHE = {}
     marker_time = None
+
+    async def marker():
+        nonlocal marker_time
+        await asyncio.sleep(0.01)
+        marker_time = time.perf_counter()
+
     start = time.perf_counter()
+    ctx = {"strategy": "synthetic", "target": target}
     res, _ = await asyncio.gather(
-        gsp_mod.async_generate_stubs([{"x": 0}], {"strategy": "synthetic", "target": target}),
+        gsp_mod.async_generate_stubs([{"x": 0}], ctx),
         marker(),
     )
     assert marker_time - start < 0.1
@@ -187,13 +242,11 @@ def test_generated_stub_missing_fields(monkeypatch, tmp_path, caplog):
     def target(x: int, y: int) -> None:
         pass
 
-    caplog.set_level(logging.WARNING)
-    res = gsp_mod.generate_stubs([
-        {"x": 0, "y": 0}
-    ], {"strategy": "synthetic", "target": target})
-
-    assert res == [{"x": 0, "y": 0}]
-    assert "invalid stub generated" in caplog.text
+    caplog.set_level(logging.ERROR)
+    with pytest.raises(RuntimeError):
+        gsp_mod.generate_stubs([
+            {"x": 0, "y": 0}
+        ], {"strategy": "synthetic", "target": target})
 
 
 def test_generated_stub_bad_type(monkeypatch, tmp_path, caplog):
@@ -216,13 +269,11 @@ def test_generated_stub_bad_type(monkeypatch, tmp_path, caplog):
     def target(x: int, y: int) -> None:
         pass
 
-    caplog.set_level(logging.WARNING)
-    res = gsp_mod.generate_stubs([
-        {"x": 0, "y": 0}
-    ], {"strategy": "synthetic", "target": target})
-
-    assert res == [{"x": 0, "y": 0}]
-    assert "invalid stub generated" in caplog.text
+    caplog.set_level(logging.ERROR)
+    with pytest.raises(RuntimeError):
+        gsp_mod.generate_stubs([
+            {"x": 0, "y": 0}
+        ], {"strategy": "synthetic", "target": target})
 
 
 def test_import_exit_no_errors(tmp_path):
