@@ -952,7 +952,9 @@ class MetaWorkflowPlanner:
             pass
         if comparator is None:
             try:  # pragma: no cover - allow dynamic import for testing
-                from workflow_synergy_comparator import WorkflowSynergyComparator as _WSC  # type: ignore
+                from workflow_synergy_comparator import (
+                    WorkflowSynergyComparator as _WSC,  # type: ignore
+                )
                 comparator = _WSC
             except Exception:
                 comparator = None
@@ -2898,13 +2900,21 @@ def find_synergistic_workflows(workflow_id: str, top_k: int = 5) -> List[Dict[st
 
 
 # ---------------------------------------------------------------------------
-def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
+def find_synergy_chain(
+    start_workflow_id: str,
+    length: int = 5,
+    *,
+    cluster_map: Mapping[tuple[str, ...], Mapping[str, Any]] | None = None,
+) -> List[str]:
     """Return high-synergy workflow sequence starting from ``start_workflow_id``.
 
     The chain is biased toward historically successful domain transitions using
     :func:`MetaWorkflowPlanner.transition_probabilities`.  When transition
     statistics are available, moving between domains with higher ROI deltas is
-    preferred, e.g. ``YouTube -> Reddit -> Email``.
+    preferred, e.g. ``YouTube -> Reddit -> Email``.  If a ``cluster_map`` is
+    provided (or loaded via :class:`MetaWorkflowPlanner`), historic reinforcement
+    scores for ``(current, candidate)`` pairs further boost similarity when
+    selecting each step.
     """
 
     embeddings = _load_embeddings()
@@ -2941,6 +2951,8 @@ def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
     roi_scores = _roi_scores(tracker)
 
     planner = MetaWorkflowPlanner()
+    if cluster_map is None:
+        cluster_map = getattr(planner, "cluster_map", {})
     trans_probs = planner.transition_probabilities()
     prev_domain = planner._workflow_domain(start_workflow_id)[0]
 
@@ -2955,6 +2967,9 @@ def find_synergy_chain(start_workflow_id: str, length: int = 5) -> List[str]:
                 continue
             sim = cosine_similarity(current_vec, vec)
             score = sim * roi_scores.get(wf_id, 0.0)
+            if cluster_map is not None:
+                cm_score = float(cluster_map.get((current, wf_id), {}).get("score", 0.0))
+                score *= 1.0 + cm_score
             cand_domain = planner._workflow_domain(wf_id)[0]
             if prev_domain >= 0 and cand_domain >= 0:
                 score *= 1.0 + trans_probs.get((prev_domain, cand_domain), 0.0)
