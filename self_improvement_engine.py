@@ -11,7 +11,8 @@ minimal environments:
 
 When these dependencies are missing the corresponding public functions now
 raise :class:`RuntimeError` to surface configuration problems instead of
-silently degrading behaviour.
+silently degrading behaviour.  Calls are wrapped with a small retry loop so
+that transient failures are retried while permanent issues propagate errors.
 """
 
 # flake8: noqa
@@ -141,25 +142,70 @@ def _load_callable(module: str, attr: str) -> Callable[..., Any]:
         raise RuntimeError(f"{module} dependency is required for {attr}") from exc
 
 
-def integrate_orphans(*args: object, **kwargs: object) -> list[str]:
+def _call_with_retries(
+    func: Callable[..., Any],
+    *args: Any,
+    retries: int = 3,
+    delay: float = 0.1,
+    **kwargs: Any,
+) -> Any:
+    """Execute ``func`` with retry semantics.
+
+    Parameters
+    ----------
+    func:
+        Callable to execute.
+    retries:
+        Number of attempts before re-raising the last exception.
+    delay:
+        Base delay between attempts in seconds.  The delay is multiplied by the
+        attempt number to provide a simple linear backoff.
+    """
+
+    last_exc: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:  # pragma: no cover - exercised in tests
+            last_exc = exc
+            logging.getLogger(__name__).warning(
+                "call to %s failed on attempt %s/%s: %s",
+                getattr(func, "__name__", repr(func)),
+                attempt,
+                retries,
+                exc,
+            )
+            if attempt < retries:
+                time.sleep(delay * attempt)
+    assert last_exc is not None
+    raise last_exc
+
+
+def integrate_orphans(
+    *args: object, retries: int = 3, delay: float = 0.1, **kwargs: object
+) -> list[str]:
     """Proxy for :mod:`sandbox_runner` orphan integration."""
 
     func = _load_callable("sandbox_runner.orphan_integration", "integrate_orphans")
-    return func(*args, **kwargs)
+    return _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
 
 
-def post_round_orphan_scan(*args: object, **kwargs: object) -> dict[str, object]:
+def post_round_orphan_scan(
+    *args: object, retries: int = 3, delay: float = 0.1, **kwargs: object
+) -> dict[str, object]:
     """Proxy for the sandbox orphan scan step."""
 
     func = _load_callable("sandbox_runner.orphan_integration", "post_round_orphan_scan")
-    return func(*args, **kwargs)
+    return _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
 
 
-def generate_patch(*args: object, **kwargs: object) -> int | None:
+def generate_patch(
+    *args: object, retries: int = 3, delay: float = 0.1, **kwargs: object
+) -> int | None:
     """Proxy for :func:`quick_fix_engine.generate_patch`."""
 
     func = _load_callable("quick_fix_engine", "generate_patch")
-    return func(*args, **kwargs)
+    return _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
 
 
 from .self_test_service import SelfTestService
