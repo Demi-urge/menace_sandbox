@@ -683,6 +683,15 @@ sandbox_restart_total = Gauge(
 sandbox_last_failure_ts = Gauge(
     "sandbox_last_failure_ts", "Timestamp of last sandbox failure"
 )
+sandbox_cpu_percent = Gauge(
+    "sandbox_cpu_percent", "Current sandbox CPU usage percentage"
+)
+sandbox_memory_mb = Gauge(
+    "sandbox_memory_mb", "Current sandbox memory usage in megabytes"
+)
+sandbox_crashes_total = Gauge(
+    "sandbox_crashes_total", "Total sandbox cycle crashes"
+)
 environment_failure_total = Gauge(
     "environment_failure_total",
     "Total number of sandbox environment failures",
@@ -876,6 +885,9 @@ __all__ = [
     "isolated_modules_integrated_total",
     "sandbox_restart_total",
     "sandbox_last_failure_ts",
+    "sandbox_cpu_percent",
+    "sandbox_memory_mb",
+    "sandbox_crashes_total",
     "cleanup_idle",
     "cleanup_unhealthy",
     "cleanup_lifetime",

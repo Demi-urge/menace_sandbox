@@ -44,6 +44,7 @@ _TEMPLATE = """
 <canvas id="workflow_mae" width="400" height="200"></canvas>
 <canvas id="workflow_variance" width="400" height="200"></canvas>
 <canvas id="workflow_confidence" width="400" height="200"></canvas>
+<canvas id="health" width="400" height="200"></canvas>
 <div id="warnings"></div>
 <script>
 async function load() {
@@ -82,6 +83,11 @@ async function load() {
       new Chart(document.getElementById('workflow_variance'), {type:'bar',data:{labels:wfids,datasets:[{label:'Variance',data:varVals}]}});
       new Chart(document.getElementById('workflow_confidence'), {type:'bar',data:{labels:wfids,datasets:[{label:'Confidence',data:confVals}]}});
     }
+    const m = await fetch('/metrics').then(r => r.json());
+    new Chart(document.getElementById('health'), {
+      type:'bar',
+      data:{labels:['CPU %','Memory MB','Crashes'],datasets:[{label:'Sandbox',data:[m.sandbox_cpu_percent||0,m.sandbox_memory_mb||0,m.sandbox_crashes_total||0]}]}
+    });
     if (data.warnings && data.warnings.some(w => w)) {
       let html = '<h2>Alignment Warnings</h2><table><tr><th>Cycle</th><th>ROI delta</th><th>Warning</th></tr>';
       for (let i = 0; i < data.roi.length; i++) {
