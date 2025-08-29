@@ -89,6 +89,10 @@ method accepts a custom runner or will instantiate a default
 
 The resulting embedding structure is:
 
-1. Dependency depth and branching factor.
-2. ROI curve of length `roi_window`.
-3. One-hot vectors for functions, modules and tags.
+1. Dependency depth and branching factor from the workflow graph.
+2. ROI curve of length `roi_window` representing recent gains.
+3. Code context depth, branching and average code ROI curve.
+4. TF‑IDF weighted function tokens, followed by per‑function average ROI and
+   failure ratios.
+5. One‑hot module tokens.
+6. TF‑IDF weighted tag tokens.
