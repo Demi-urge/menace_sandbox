@@ -619,25 +619,8 @@ class MetaWorkflowPlanner:
         current_vec = self.encode_workflow(start, workflows[start])
         prev_domain = self._workflow_domain(start, workflows)
 
-        transitions = self.cluster_map.setdefault(("__domain_transitions__",), {})
-        if not transitions:
-            temp: Dict[tuple[str, str], Dict[str, float]] = {}
-            for chain, info in self.cluster_map.items():
-                if not chain or chain == ("__domain_transitions__",):
-                    continue
-                roi_hist = info.get("roi_history", [])
-                roi_gain = roi_hist[-1] if roi_hist else 0.0
-                fail_hist = info.get("failure_history", [])
-                fail_rate = fail_hist[-1] if fail_hist else 0.0
-                domains = [self._workflow_domain(wid, workflows) for wid in chain]
-                for a, b in zip(domains, domains[1:]):
-                    if not a or not b:
-                        continue
-                    entry = temp.setdefault((a, b), {"count": 0, "roi": 0.0, "fail": 0.0})
-                    entry["count"] += 1
-                    entry["roi"] += (roi_gain - entry["roi"]) / entry["count"]
-                    entry["fail"] += (fail_rate - entry["fail"]) / entry["count"]
-            transitions.update(temp)
+        self.cluster_map.setdefault(("__domain_transitions__",), {})
+        trans_probs = self.transition_probabilities()
 
         while available and len(pipeline) < length:
             best_id: str | None = None
@@ -677,23 +660,17 @@ class MetaWorkflowPlanner:
 
                 cand_domain = self._workflow_domain(wid, workflows)
                 if prev_domain and cand_domain:
-                    entry = transitions.get(
-                        (prev_domain, cand_domain),
-                        {"count": 0, "roi": 0.0, "fail": 0.0},
-                    )
-                    if transitions:
-                        avg_count = fmean(v["count"] for v in transitions.values())
-                        avg_roi = fmean(v["roi"] for v in transitions.values())
-                        avg_fail = fmean(v.get("fail", 0.0) for v in transitions.values())
-                        count_weight = (avg_count + 1.0) / (entry["count"] + 1.0)
-                        roi_weight = 1.0 + (entry["roi"] - avg_roi)
-                        fail_weight = 1.0 - (entry["fail"] - avg_fail)
-                        score *= max(0.0, count_weight * roi_weight * fail_weight)
-                    else:
-                        if cand_domain == prev_domain:
-                            score *= 0.8
+                    prob = trans_probs.get((prev_domain, cand_domain))
+                    if prob is not None:
+                        if prob > 0.0:
+                            weight = 1.0 + prob
+                            if prev_domain != cand_domain:
+                                weight += prob
+                            score *= weight
                         else:
-                            score *= 1.1
+                            score *= 0.8
+                    elif prev_domain == cand_domain:
+                        score *= 0.9
 
                 if score > best_score:
                     best_id = wid
@@ -1995,10 +1972,23 @@ class MetaWorkflowPlanner:
         for a, b in zip(domains, domains[1:]):
             if not a or not b:
                 continue
-            entry = matrix.setdefault((a, b), {"count": 0, "roi": 0.0, "fail": 0.0})
+            entry = matrix.setdefault(
+                (a, b),
+                {
+                    "count": 0,
+                    "roi": 0.0,
+                    "fail": 0.0,
+                    "delta_roi": 0.0,
+                    "last_roi": roi_gain,
+                },
+            )
+            prev_roi = float(entry.get("last_roi", roi_gain))
+            entry["last_roi"] = roi_gain
             entry["count"] += 1
             entry["roi"] += (roi_gain - entry["roi"]) / entry["count"]
             entry["fail"] += (failures - entry["fail"]) / entry["count"]
+            delta = roi_gain - prev_roi
+            entry["delta_roi"] += (delta - entry["delta_roi"]) / entry["count"]
 
         if save:
             self._save_cluster_map()
@@ -2021,6 +2011,31 @@ class MetaWorkflowPlanner:
                 )
 
         return info
+
+    # ------------------------------------------------------------------
+    def transition_probabilities(self) -> Dict[tuple[str, str], float]:
+        """Return normalized transition weights as probabilities.
+
+        The transition matrix stored under the special
+        ``("__domain_transitions__",)`` key tracks how often workflows move
+        between domains along with the average ROI gains.  This method converts
+        the counts and ROI deltas into a probability distribution where pairs
+        with higher counts and positive ROI changes receive larger weight.
+        Transitions with negative ROI are assigned zero probability.
+        """
+
+        matrix = self.cluster_map.get(("__domain_transitions__",), {})
+        weights: Dict[tuple[str, str], float] = {}
+        for pair, stats in matrix.items():
+            count = float(stats.get("count", 0.0))
+            roi = float(stats.get("roi", 0.0))
+            delta = float(stats.get("delta_roi", 0.0))
+            weight = max(0.0, count * (roi + delta))
+            weights[pair] = weight
+        total = sum(weights.values())
+        if total <= 0:
+            return {pair: 0.0 for pair in weights}
+        return {pair: w / total for pair, w in weights.items()}
 
     # ------------------------------------------------------------------
     def _graph_features(self, workflow_id: str) -> List[float] | tuple[float, float]:

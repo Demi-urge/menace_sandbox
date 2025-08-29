@@ -241,8 +241,23 @@ def test_update_cluster_map_records_transitions():
     planner.code_db = DummyCodeDB()
     planner.cluster_map = {}
     planner._update_cluster_map(["a", "b"], roi_gain=2.0)
+    planner._update_cluster_map(["a", "b"], roi_gain=3.0)
     matrix = planner.cluster_map.get(("__domain_transitions__",), {})
-    assert ("alpha", "beta") in matrix
+    entry = matrix.get(("alpha", "beta"))
+    assert entry and entry["count"] == 2 and entry.get("delta_roi", 0.0) != 0.0
+
+
+def test_transition_probabilities_normalization():
+    planner = MetaWorkflowPlanner()
+    planner.cluster_map = {
+        ("__domain_transitions__",): {
+            ("a", "b"): {"count": 2, "roi": 1.0, "delta_roi": 0.5},
+            ("a", "c"): {"count": 1, "roi": -1.0, "delta_roi": 0.0},
+        }
+    }
+    probs = planner.transition_probabilities()
+    assert probs[("a", "b")] > 0 and probs[("a", "c")] == 0
+    assert abs(sum(probs.values()) - 1.0) < 1e-8
 
 
 def test_cluster_workflows_roi_weighting(monkeypatch):
