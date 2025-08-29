@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import math
+import random
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence, TYPE_CHECKING
@@ -782,66 +783,58 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runs: int = 3,
+        offspring: int | None = None,
     ) -> List[Dict[str, Any]]:
-        """Mutate chains and re-validate.
+        """Mutate ``chains`` using genetic operators and re‑validate offspring.
 
-        The original implementation only swapped the first two steps, trimmed
-        the last element or appended an unused workflow.  For richer evolution
-        we now support insertion, removal and substitution at arbitrary
-        positions.  This keeps the search space intentionally small by only
-        inserting or substituting with the first workflow identifier not
-        already present in the chain.
+        Parent chains are selected according to their ``cluster_map['score']``
+        weights.  Offspring are generated via single‑point crossover followed by
+        a weighted mutation whose rate is inversely proportional to the parents'
+        average score.  Each unique offspring is validated and any successful
+        records are returned.
         """
 
+        if not chains:
+            return []
+
         wf_ids = list(workflows.keys())
-        seen: set[tuple[str, ...]] = set()
-        candidates: List[List[str]] = []
+        population = [list(c) for c in chains]
+        weights: List[float] = []
+        for c in population:
+            info = self.cluster_map.get(tuple(c), {})
+            weights.append(max(float(info.get("score", 0.0)), 0.0) + 1.0)
 
-        for chain in chains:
-            chain = list(chain)
-
-            # Swap the first two steps when possible
-            if len(chain) >= 2:
-                swapped = chain[:]
-                swapped[0], swapped[1] = swapped[1], swapped[0]
-                candidates.append(swapped)
-
-            # Remove each individual step
-            for idx in range(len(chain)):
-                removed = chain[:idx] + chain[idx + 1:]
-                if removed:
-                    tup = tuple(removed)
-                    if tup not in seen:
-                        seen.add(tup)
-                        candidates.append(removed)
-
-            # Insert a new workflow at every position
-            for idx in range(len(chain) + 1):
-                for wid in wf_ids:
-                    if wid not in chain:
-                        inserted = chain[:idx] + [wid] + chain[idx:]
-                        tup = tuple(inserted)
-                        if tup not in seen:
-                            seen.add(tup)
-                            candidates.append(inserted)
-                        break
-
-            # Substitute each step with an unused workflow
-            for idx, current in enumerate(chain):
-                for wid in wf_ids:
-                    if wid != current and wid not in chain:
-                        substituted = chain[:]
-                        substituted[idx] = wid
-                        tup = tuple(substituted)
-                        if tup not in seen:
-                            seen.add(tup)
-                            candidates.append(substituted)
-                        break
-
+        off_count = offspring or max(2, len(population))
         results: List[Dict[str, Any]] = []
-        for c in candidates:
+        seen: set[tuple[str, ...]] = set()
+
+        for _ in range(off_count):
+            parent_a, parent_b = random.choices(population, weights=weights, k=2)
+            cut_a = random.randint(1, len(parent_a)) if parent_a else 0
+            cut_b = random.randint(1, len(parent_b)) if parent_b else 0
+            child = parent_a[:cut_a] + parent_b[cut_b:]
+
+            score_a = weights[population.index(parent_a)] - 1.0
+            score_b = weights[population.index(parent_b)] - 1.0
+            avg_score = max((score_a + score_b) / 2.0, 0.0)
+            mutation_rate = 1.0 / (1.0 + avg_score)
+
+            if random.random() < mutation_rate and wf_ids:
+                if child:
+                    idx = random.randrange(len(child))
+                    replacements = [w for w in wf_ids if w not in child]
+                    if replacements:
+                        child[idx] = random.choice(replacements)
+                else:
+                    child = [random.choice(wf_ids)]
+
+            tup = tuple(child)
+            if tup in seen:
+                continue
+            seen.add(tup)
+
             record = self._validate_chain(
-                c,
+                child,
                 workflows,
                 runner=runner,
                 failure_threshold=failure_threshold,
@@ -1208,12 +1201,13 @@ class MetaWorkflowPlanner:
         entropy_stability_threshold: float = 1.0,
         runs: int = 3,
     ) -> List[Dict[str, Any]]:
-        """Evolve converged pipelines based on ROI and entropy trends.
+        """Evolve converged pipelines based on metric deltas.
 
-        ``cluster_map`` entries marked as converged are inspected.  Chains with
-        non‑positive ROI deltas trigger :meth:`mutate_chains`.  Chains whose
-        entropy exceeds ``entropy_stability_threshold`` are refined via
-        :meth:`split_pipeline`.  Remaining converged chains are considered for
+        ``cluster_map`` entries flagged as converged are evaluated by
+        combining ``delta_roi``, ``delta_failures`` and ``delta_entropy`` into a
+        simple fitness score.  Pipelines with negative fitness undergo
+        :meth:`mutate_chains` while those with unstable entropy are processed by
+        :meth:`split_pipeline`.  Remaining candidates are considered for
         re‑merging.  Winning variants are persisted for reinforcement and
         returned.
         """
@@ -1224,14 +1218,13 @@ class MetaWorkflowPlanner:
         for chain, info in list(self.cluster_map.items()):
             if not info.get("converged"):
                 continue
-            chain_id = "->".join(chain)
-            roi_delta = float(info.get("delta_roi", 0.0))
-            entropy_val = 0.0
-            if self.stability_db is not None:
-                entry = self.stability_db.data.get(chain_id, {})
-                entropy_val = float(entry.get("entropy", 0.0))
 
-            if roi_delta <= roi_improvement_threshold:
+            roi_delta = float(info.get("delta_roi", 0.0))
+            fail_delta = float(info.get("delta_failures", 0.0))
+            ent_delta = float(info.get("delta_entropy", 0.0))
+            fitness = roi_delta - fail_delta - abs(ent_delta)
+
+            if fitness <= roi_improvement_threshold:
                 recs = self.mutate_chains(
                     [list(chain)],
                     workflows,
@@ -1244,7 +1237,7 @@ class MetaWorkflowPlanner:
                     best = max(recs, key=lambda r: r.get("roi_gain", 0.0))
                     results.append(best)
                     self._reinforce(best)
-            elif abs(entropy_val) > entropy_stability_threshold:
+            elif abs(ent_delta) > entropy_stability_threshold:
                 recs = self.split_pipeline(
                     list(chain),
                     workflows,
