@@ -104,6 +104,7 @@ class MetaWorkflowPlanner:
                 self.code_db = CodeDB()
             except Exception:
                 self.code_db = None
+        self._load_cluster_map()
 
     # ------------------------------------------------------------------
     def encode(self, workflow_id: str, workflow: Mapping[str, Any]) -> List[float]:
@@ -1133,6 +1134,32 @@ class MetaWorkflowPlanner:
         return results
 
     # ------------------------------------------------------------------
+    def _save_cluster_map(self) -> None:
+        """Persist ``cluster_map`` to ``sandbox_data/meta_clusters.json``."""
+
+        path = Path("sandbox_data/meta_clusters.json")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = {"|".join(k): v for k, v in self.cluster_map.items()}
+            with path.open("w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    def _load_cluster_map(self) -> None:
+        """Load ``cluster_map`` from ``sandbox_data/meta_clusters.json`` if present."""
+
+        path = Path("sandbox_data/meta_clusters.json")
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text())
+            self.cluster_map = {tuple(k.split("|")): v for k, v in data.items()}
+        except Exception:
+            self.cluster_map = {}
+
+    # ------------------------------------------------------------------
     def _update_cluster_map(
         self,
         chain: Sequence[str],
@@ -1172,6 +1199,7 @@ class MetaWorkflowPlanner:
         info["delta_entropy"] = entropy - (ent_hist[-1] if ent_hist else entropy)
         ent_hist.append(entropy)
 
+        self._save_cluster_map()
         return info
 
     # ------------------------------------------------------------------
