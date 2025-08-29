@@ -108,8 +108,23 @@ try:
     from . import security_auditor
 except Exception:  # pragma: no cover - fallback for flat layout
     import security_auditor  # type: ignore
-import sandbox_runner.environment as environment
-from sandbox_runner.orphan_integration import integrate_orphans, post_round_orphan_scan
+try:  # pragma: no cover - optional dependency
+    import sandbox_runner.environment as environment
+    from sandbox_runner.orphan_integration import integrate_orphans, post_round_orphan_scan
+except Exception:  # pragma: no cover - fallback for limited environments
+    environment = None  # type: ignore
+
+    def integrate_orphans(*args: object, **kwargs: object) -> list[str]:  # type: ignore
+        logging.getLogger(__name__).exception(
+            "Fallback integrate_orphans invoked due to missing dependency"
+        )
+        return []
+
+    def post_round_orphan_scan(*args: object, **kwargs: object) -> dict[str, object]:  # type: ignore
+        logging.getLogger(__name__).exception(
+            "Fallback post_round_orphan_scan invoked due to missing dependency"
+        )
+        return {}
 from .self_test_service import SelfTestService
 try:
     from . import self_test_service as sts
@@ -497,7 +512,7 @@ class SynergyWeightLearner:
         try:
             synergy_weight_updates_total.inc()
         except Exception:
-            pass
+            logger.exception("Unhandled exception in self_improvement_engine")
 
         logger.info("saved synergy weights", extra=log_record(weights=self.weights))
 
@@ -1358,7 +1373,7 @@ class SelfImprovementEngine:
                     self.module_index.merge_groups(grp_map)
                     grp_map = {m: self.module_index.get(m) for m in grp_map}
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
             self.module_clusters.update(grp_map)
         logging.basicConfig(level=logging.INFO)
         self._score_backend: PatchScoreBackend | None = None
@@ -1524,7 +1539,7 @@ class SelfImprovementEngine:
                                 failure_reason=str(exc),
                             )
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
             return chains
         except Exception:
             return []
@@ -1743,19 +1758,19 @@ class SelfImprovementEngine:
                 if insight:
                     summaries.append(f"{FEEDBACK} insight: {insight}")
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
             try:
                 insight = recent_improvement_path(self.knowledge_service)  # type: ignore[attr-defined]
                 if insight:
                     summaries.append(f"{IMPROVEMENT_PATH} insight: {insight}")
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
             try:
                 insight = recent_error_fix(self.knowledge_service)  # type: ignore[attr-defined]
                 if insight:
                     summaries.append(f"{ERROR_FIX} insight: {insight}")
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
         return "\n".join(summaries)
 
     def _record_memory_outcome(
@@ -2636,7 +2651,7 @@ class SelfImprovementEngine:
             try:
                 synergy_weight_update_failures_total.inc()
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
             try:
                 dispatch_alert(
                     "synergy_weight_update_failure",
@@ -2646,7 +2661,7 @@ class SelfImprovementEngine:
                 )
                 synergy_weight_update_alerts_total.inc()
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
             self.logger.exception("synergy weight update failed: %s", exc)
         finally:
             MutationLogger.record_mutation_outcome(
@@ -2904,7 +2919,7 @@ class SelfImprovementEngine:
                         "skip_candidate", f"raroi_history_{idx}", roi_est, category
                     )
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
             else:
                 feats.append(feat)
             prev = val
@@ -2949,7 +2964,7 @@ class SelfImprovementEngine:
                 if rows:
                     gpt_score = float(rows[0][-1])
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
 
         # GPT feedback metrics from evaluation history
         gpt_fb_score = 0.0
@@ -2969,13 +2984,13 @@ class SelfImprovementEngine:
                 if token_row and token_row[0] is not None:
                     gpt_fb_tokens = float(token_row[0])
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
             try:
                 eval_db.conn.close()
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
         except Exception:
-            pass
+            logger.exception("Unhandled exception in self_improvement_engine")
 
         # Resource usage deltas from ROITracker
         res_cost = res_cpu = res_gpu = 0.0
@@ -3012,7 +3027,7 @@ class SelfImprovementEngine:
                 if reps:
                     rep_count = float(reps[-1])
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
 
         before = hist_roi
         after = hist_roi + perf_delta
@@ -3103,7 +3118,7 @@ class SelfImprovementEngine:
                         if c.recommendation and c.roi_delta < 0.0
                     }
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
                 self.logger.info(
                     "borderline workflow; deferring to review/shadow testing",
                     extra=log_record(
@@ -3121,7 +3136,7 @@ class SelfImprovementEngine:
                 try:
                     self._log_action("review", mod, weight, category, confidence)
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
                 try:
                     self.borderline_bucket.add_candidate(mod, raroi, confidence, reason)
                     settings = SandboxSettings()
@@ -3136,9 +3151,9 @@ class SelfImprovementEngine:
                                 ),
                             )
                         except Exception:
-                            pass
+                            logger.exception("Unhandled exception in self_improvement_engine")
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
                 continue
             scored.append((mod, base_roi, category, weight))
             self.logger.debug(
@@ -3320,7 +3335,7 @@ class SelfImprovementEngine:
             try:
                 self.roi_predictor.record_drift(acc, mae)
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
             self.logger.info(
                 "adaptive roi evaluation",
                 extra=log_record(accuracy=float(acc), mae=float(mae)),
@@ -3335,12 +3350,12 @@ class SelfImprovementEngine:
                         ),
                     )
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
             try:  # pragma: no cover - best effort telemetry
                 prediction_mae.labels(metric="adaptive_roi").set(float(mae))
                 prediction_reliability.labels(metric="adaptive_roi").set(float(acc))
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
             if mae > mae_threshold or acc < acc_threshold:
                 self.logger.info(
                     "adaptive roi model drift detected",
@@ -3557,7 +3572,7 @@ class SelfImprovementEngine:
                             if c.recommendation and c.roi_delta < 0.0
                         }
                     except Exception:
-                        pass
+                        logger.exception("Unhandled exception in self_improvement_engine")
                     self.logger.info(
                         "self optimisation deferred: borderline",
                         extra=log_record(
@@ -3574,7 +3589,7 @@ class SelfImprovementEngine:
                     try:
                         self._log_action("review", bot_name, final_score, growth, confidence)
                     except Exception:
-                        pass
+                        logger.exception("Unhandled exception in self_improvement_engine")
                     try:
                         self.borderline_bucket.add_candidate(bot_name, raroi, confidence, reason)
                         settings = SandboxSettings()
@@ -3589,9 +3604,9 @@ class SelfImprovementEngine:
                                     ),
                                 )
                             except Exception:
-                                pass
+                                logger.exception("Unhandled exception in self_improvement_engine")
                     except Exception:
-                        pass
+                        logger.exception("Unhandled exception in self_improvement_engine")
                     return None, False, 0.0
                 mult = (
                     self.growth_multipliers.get(growth, 1.0)
@@ -3765,7 +3780,7 @@ class SelfImprovementEngine:
                 try:
                     grapher.load(graph_path)
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
                 self.module_synergy_grapher = grapher
             grapher.update_graph(sorted(mods))
         except Exception:
@@ -3887,7 +3902,7 @@ class SelfImprovementEngine:
                     orphan_path.parent.mkdir(parents=True, exist_ok=True)
                     orphan_path.write_text(json.dumps(existing, indent=2))
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
                 continue
             if cls == "legacy":
                 legacy.append(rel)
@@ -3909,7 +3924,7 @@ class SelfImprovementEngine:
                 elif prev_cls != "legacy" and cls == "legacy":
                     orphan_modules_legacy_total.inc(1)
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
 
         try:
             existing_meta = (
@@ -4057,7 +4072,7 @@ class SelfImprovementEngine:
                 orphan_modules_redundant_total.inc(len(redundant))
                 orphan_modules_legacy_total.inc(len(legacy))
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
             return set()
 
         added_modules: set[str] = set()
@@ -4236,7 +4251,7 @@ class SelfImprovementEngine:
                 try:
                     roi_total = sum(tracker_res.module_deltas.get(m, []))
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
                 if roi_total < 0:
                     continue
                 if reuse_scores.get(m, 0.0) < reuse_threshold:
@@ -4288,7 +4303,7 @@ class SelfImprovementEngine:
                 orphan_modules_redundant_total.inc(len(redundant))
                 orphan_modules_legacy_total.inc(len(legacy))
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
             try:
                 existing_meta = (
                     json.loads(meta_path.read_text()) if meta_path.exists() else {}
@@ -4417,7 +4432,7 @@ class SelfImprovementEngine:
             orphan_modules_redundant_total.inc(len(redundant))
             orphan_modules_legacy_total.inc(len(legacy))
         except Exception:
-            pass
+            logger.exception("Unhandled exception in self_improvement_engine")
 
         if self.data_bot and getattr(self.data_bot, "metrics_db", None):
             try:
@@ -4564,7 +4579,7 @@ class SelfImprovementEngine:
             if redundant:
                 orphan_modules_redundant_total.inc(redundant)
         except Exception:
-            pass
+            logger.exception("Unhandled exception in self_improvement_engine")
 
         unknown = [m for m in mods if m not in self.module_clusters]
         if not unknown:
@@ -4587,7 +4602,7 @@ class SelfImprovementEngine:
                         extra=log_record(modules=sorted(mods), workflows=updated_wfs),
                     )
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
                 for m in mods:
                     info = traces.setdefault(m, {})
                     info.setdefault("workflows", [])
@@ -4639,7 +4654,7 @@ class SelfImprovementEngine:
             try:
                 orphan_modules_reintroduced_total.inc(len(mods))
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
             roi_vals: dict[str, float] = {}
             for m in mods:
                 roi_val = 0.0
@@ -4668,7 +4683,7 @@ class SelfImprovementEngine:
                         ),
                     )
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
 
             counts = getattr(self, "_last_orphan_counts", {})
             tested = float(counts.get("orphan_modules_tested", len(mods)))
@@ -4840,7 +4855,7 @@ class SelfImprovementEngine:
                     if redundant_mods:
                         orphan_modules_redundant_total.set(len(redundant_mods))
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
                 existing_meta.update(
                     {m: {"classification": "legacy"} for m in legacy_mods}
                 )
@@ -4923,7 +4938,7 @@ class SelfImprovementEngine:
                                         m: metrics.get(m, 0) for m in safe
                                     }
                             except Exception:
-                                pass
+                                logger.exception("Unhandled exception in self_improvement_engine")
                             environment.try_integrate_into_workflows(
                                 sorted(safe), **kwargs
                             )
@@ -5063,7 +5078,7 @@ class SelfImprovementEngine:
                     else:
                         orphan_modules_redundant_total.inc(1)
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
                 continue
             if is_redundant:
                 info["classification"] = cls
@@ -5126,7 +5141,7 @@ class SelfImprovementEngine:
                                     m: metrics.get(m, 0) for m in safe
                                 }
                         except Exception:
-                            pass
+                            logger.exception("Unhandled exception in self_improvement_engine")
                         environment.try_integrate_into_workflows(sorted(safe), **kwargs)
                     except Exception:  # pragma: no cover - best effort
                         pass
@@ -5330,7 +5345,7 @@ class SelfImprovementEngine:
                         else:
                             orphan_modules_redundant_total.inc(1)
                     except Exception:
-                        pass
+                        logger.exception("Unhandled exception in self_improvement_engine")
                     continue
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("classification failed for %s: %s", path, exc)
@@ -5374,7 +5389,7 @@ class SelfImprovementEngine:
                         {"event": "module_map_refreshed", "modules": sorted(new_mods)}
                     )
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
             self.logger.info(
                 "module map refreshed",
                 extra=log_record(modules=sorted(new_mods)),
@@ -5976,7 +5991,7 @@ class SelfImprovementEngine:
                 wf_flags = {f for f in flagged if f.startswith("workflow:")}
                 self.meta_logger.flagged_sections.difference_update(wf_flags)
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
 
         results: dict[int, dict[str, str]] = {}
         for wf_id, seq in workflows:
@@ -6586,7 +6601,7 @@ class SelfImprovementEngine:
                         ctx_obj = wf_ctx() if callable(wf_ctx) else wf_ctx
                         workflow_id = getattr(ctx_obj, "workflow_id", workflow_id)
                     except Exception:
-                        pass
+                        logger.exception("Unhandled exception in self_improvement_engine")
                     metrics = {
                         "raroi": scorecard.get("raroi"),
                         "confidence": scorecard.get("confidence"),
@@ -6686,7 +6701,7 @@ class SelfImprovementEngine:
                                 if logger_obj is not None:
                                     logger_obj.close()
                             except Exception:
-                                pass
+                                logger.exception("Unhandled exception in self_improvement_engine")
                     scorecard["forecast"] = forecast_info
                     scorecard["reasons"] = list(reasons)
                     try:
@@ -6763,7 +6778,7 @@ class SelfImprovementEngine:
                                         ),
                                     )
                                 except Exception:
-                                    pass
+                                    logger.exception("Unhandled exception in self_improvement_engine")
                         except Exception:
                             self.logger.exception("borderline enqueue failed")
                         self.workflow_ready = False
@@ -6908,7 +6923,7 @@ class SelfImprovementEngine:
                                     try:
                                         db.log_eval("self_improvement", name, val)
                                     except Exception:
-                                        pass
+                                        logger.exception("Unhandled exception in self_improvement_engine")
                     if scenario_metrics:
                         self._evaluate_scenario_metrics(scenario_metrics)
                         self.logger.info(
@@ -7013,7 +7028,7 @@ class SelfImprovementEngine:
                 ctx_obj = wf_ctx() if callable(wf_ctx) else wf_ctx
                 workflow_id = getattr(ctx_obj, "workflow_id", workflow_id)
             except Exception:
-                pass
+                logger.exception("Unhandled exception in self_improvement_engine")
             try:
                 profile_map = getattr(self.foresight_tracker, "workflow_profiles", None)
                 if not isinstance(profile_map, Mapping):
@@ -7209,7 +7224,7 @@ class SelfImprovementEngine:
                     ctx_obj = wf_ctx() if callable(wf_ctx) else wf_ctx
                     workflow_id = getattr(ctx_obj, "workflow_id", workflow_id)
                 except Exception:
-                    pass
+                    logger.exception("Unhandled exception in self_improvement_engine")
                 risk_info: dict[str, object] | None = None
                 try:
                     risk_info = self.foresight_tracker.predict_roi_collapse(workflow_id)
