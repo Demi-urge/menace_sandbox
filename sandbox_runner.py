@@ -172,23 +172,58 @@ try:  # optional system metrics
 except Exception:  # pragma: no cover - psutil not installed
     psutil = None
 if os.getenv("MENACE_LIGHT_IMPORTS"):
+    from collections import deque
+    from numbers import Number
+    from typing import Deque, Dict, Mapping
+
     class ForesightTracker:  # type: ignore[no-redef]
+        """Minimal in-repo fallback used when heavy imports are disabled."""
+
         def __init__(
             self,
             window: int = 10,
             volatility_threshold: float = 1.0,
             N: int | None = None,
-        ) -> None:  # pragma: no cover - stub
+        ) -> None:
             if N is not None:
                 window = N
             self.max_cycles = window
+            self.volatility_threshold = volatility_threshold
+            self.history: Dict[str, Deque[dict[str, float | str]]] = {}
 
         @property
-        def window(self) -> int:  # pragma: no cover - stub
-            return getattr(self, "max_cycles", 0)
+        def window(self) -> int:
+            """Legacy alias returning the configured history window."""
 
-        def to_dict(self) -> dict:  # pragma: no cover - stub
-            return {}
+            return self.max_cycles
+
+        def record_cycle_metrics(
+            self,
+            workflow_id: str,
+            metrics: Mapping[str, float],
+            **extra_metrics: float | str,
+        ) -> None:
+            """Store ``metrics`` for ``workflow_id`` respecting the window size."""
+
+            entry = {k: float(v) for k, v in metrics.items()}
+            for key, value in extra_metrics.items():
+                entry[key] = float(value) if isinstance(value, Number) else value
+            queue = self.history.setdefault(
+                workflow_id, deque(maxlen=self.max_cycles)
+            )
+            queue.append(entry)
+
+        def to_dict(self) -> dict:
+            """Return a JSON-serialisable representation of tracked data."""
+
+            return {
+                "window": self.max_cycles,
+                "volatility_threshold": self.volatility_threshold,
+                "history": {
+                    wf_id: [dict(entry) for entry in list(entries)]
+                    for wf_id, entries in self.history.items()
+                },
+            }
 
         @classmethod
         def from_dict(
@@ -197,8 +232,26 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
             window: int | None = None,
             volatility_threshold: float | None = None,
             N: int | None = None,
-        ) -> "ForesightTracker":  # pragma: no cover - stub
-            return cls(window=window or N or 10)
+        ) -> "ForesightTracker":
+            if window is not None:
+                N = window
+            if N is None:
+                N = int(data.get("window", data.get("N", 10)))
+            if volatility_threshold is None:
+                volatility_threshold = float(data.get("volatility_threshold", 1.0))
+            tracker = cls(window=N, volatility_threshold=volatility_threshold)
+            raw_history = data.get("history", {})
+            for wf_id, entries in raw_history.items():
+                queue: Deque[dict[str, float | str]] = deque(maxlen=tracker.max_cycles)
+                for entry in list(entries)[-tracker.max_cycles:]:
+                    queue.append(
+                        {
+                            k: (float(v) if isinstance(v, Number) else v)
+                            for k, v in entry.items()
+                        }
+                    )
+                tracker.history[wf_id] = queue
+            return tracker
 else:  # pragma: no cover - import when not in light mode
     from foresight_tracker import ForesightTracker
 from relevancy_metrics_db import RelevancyMetricsDB
