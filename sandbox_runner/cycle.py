@@ -101,8 +101,7 @@ from .environment import (
     record_error,
     run_scenarios,
     ERROR_CATEGORY_COUNTS,
-    discover_and_integrate_orphans,
-    try_integrate_into_workflows,
+    auto_include_modules,
 )
 from .resource_tuner import ResourceTuner
 from .orphan_discovery import (
@@ -112,6 +111,7 @@ from .orphan_discovery import (
     load_orphan_cache,
     load_orphan_traces,
     append_orphan_traces,
+    discover_recursive_orphans,
 )
 
 _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
@@ -259,23 +259,26 @@ def run_workflow_scenarios(
 
 @radar.track
 def include_orphan_modules(ctx: "SandboxContext") -> None:
-    """Discover orphan modules and feed viable ones into the workflow.
+    """Discover orphan modules and integrate viable ones into the workflow.
 
-    This helper loads existing orphan traces, discovers and integrates new
-    orphan modules via :func:`environment.discover_and_integrate_orphans` and
-    updates caches, metrics and auxiliary indexes.  Modules returned by the
-    helper are added to ``ctx.module_map`` before invoking
-    :func:`try_integrate_into_workflows` so that newly discovered modules are
-    immediately visible to workflow integration.
+    Cached traces are merged with fresh results from
+    :func:`discover_recursive_orphans` and ``scripts.discover_isolated_modules``.
+    Parent chains are recorded in ``ctx.orphan_traces`` and the full candidate
+    list is validated and integrated via :func:`environment.auto_include_modules`.
+    Prometheus counters are updated and passing modules are pruned from
+    ``orphan_modules.json``.
     """
 
     settings = getattr(ctx, "settings", SandboxSettings())
     if not getattr(settings, "auto_include_isolated", False):
         return
 
+    repo = getattr(ctx, "repo")
     traces = getattr(ctx, "orphan_traces", {})
+
+    # Load cached traces
     try:
-        cached = load_orphan_cache(ctx.repo)
+        cached = load_orphan_cache(repo)
         for k, info in cached.items():
             cur = traces.get(k)
             if cur:
@@ -285,7 +288,7 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
     except Exception:
         pass
     try:
-        hist = load_orphan_traces(ctx.repo)
+        hist = load_orphan_traces(repo)
         for k, info in hist.items():
             cur = traces.setdefault(k, {"parents": []})
             if "classification_history" not in cur and info.get("classification_history"):
@@ -294,43 +297,142 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                 cur["roi_history"] = list(info.get("roi_history", []))
     except Exception:
         pass
-    ctx.orphan_traces = traces
 
-    try:
-        added = discover_and_integrate_orphans(ctx.repo, router=GLOBAL_ROUTER)
-    except Exception:
-        logger.exception("orphan integration failed")
-        return
-
-    failed: list[str] = []
+    candidates: set[str] = {m for m, i in traces.items() if not i.get("redundant") and not i.get("failed")}
     redundant: list[str] = []
     legacy: list[str] = []
 
-    if not added:
+    try:
+        import orphan_analyzer  # type: ignore
+    except Exception:
+        orphan_analyzer = None  # type: ignore
+
+    def _classify(rel: str, parents: list[str] | None = None) -> None:
+        entry = traces.setdefault(rel, {"parents": []})
+        if parents:
+            entry["parents"] = list(dict.fromkeys(entry.get("parents", []) + parents))
+        cls = entry.get("classification", "candidate")
+        redundant_flag = bool(entry.get("redundant"))
+        if orphan_analyzer is not None:
+            path = Path(repo) / rel
+            try:
+                res = orphan_analyzer.classify_module(path)
+                cls = res[0] if isinstance(res, tuple) else res
+            except Exception:
+                pass
+            try:
+                redundant_flag = bool(orphan_analyzer.analyze_redundancy(path))
+            except Exception:
+                redundant_flag = cls in {"legacy", "redundant"}
+        entry["classification"] = cls
+        entry["redundant"] = redundant_flag
+        if redundant_flag:
+            if cls == "legacy":
+                legacy.append(rel)
+            else:
+                redundant.append(rel)
+        else:
+            candidates.add(rel)
+
+    # Recursive orphan discovery
+    try:
+        mapping = discover_recursive_orphans(str(repo))
+        for name, info in mapping.items():
+            rel = Path(*name.split(".")).with_suffix(".py").as_posix()
+            parents = [Path(*p.split(".")).with_suffix(".py").as_posix() for p in info.get("parents", [])]
+            ent = traces.setdefault(rel, {"parents": []})
+            ent["classification"] = info.get("classification", ent.get("classification", "candidate"))
+            ent["redundant"] = info.get("redundant", ent.get("redundant", False))
+            ent["parents"] = list(dict.fromkeys(ent.get("parents", []) + parents))
+            _classify(rel)
+    except Exception:
+        logger.exception("discover_recursive_orphans failed")
+
+    # Isolated modules discovery
+    try:
+        from scripts.discover_isolated_modules import discover_isolated_modules
+        for rel in discover_isolated_modules(repo, recursive=True):
+            _classify(Path(rel).as_posix())
+    except Exception:
+        logger.exception("discover_isolated_modules failed")
+
+    ctx.orphan_traces = traces
+
+    if not candidates:
         logger.info(
             "isolated module tests",
             extra=log_record(
                 added=[],
-                failed=failed,
-                redundant=redundant,
-                legacy=legacy,
+                failed=[],
+                redundant=sorted(redundant),
+                legacy=sorted(legacy),
                 synergy_graph=False,
                 intent_clusters=False,
             ),
         )
         return
 
-    module_map = set(getattr(ctx, "module_map", set()))
-    module_map.update(added)
-    ctx.module_map = module_map
-
     try:
-        try_integrate_into_workflows(sorted(added), router=GLOBAL_ROUTER)
+        tracker, tested = auto_include_modules(
+            sorted(candidates), recursive=True, validate=True, router=GLOBAL_ROUTER
+        )
     except Exception:
-        logger.exception("workflow integration failed")
+        logger.exception("auto include modules failed")
+        return
+
+    ctx.tracker = tracker
+
+    added = tested.get("added", [])
+    failed = list(set(tested.get("failed", [])) | set(tested.get("low_roi", [])) | set(tested.get("rejected", [])))
+    redundant_mods = set(tested.get("redundant", []))
+    tested_mods = set(added) | set(failed) | redundant_mods
+
+    for m in tested_mods:
+        entry = traces.setdefault(m, {"parents": []})
+        cls = entry.get("classification", "candidate")
+        entry.setdefault("classification_history", []).append(cls)
+        deltas = tracker.module_deltas.get(m, [])
+        if deltas:
+            entry.setdefault("roi_history", []).extend(deltas)
 
     try:
-        prune_orphan_cache(ctx.repo, added, traces)
+        trace_entries = {
+            k: {
+                "classification_history": v.get("classification_history", []),
+                "roi_history": v.get("roi_history", []),
+            }
+            for k, v in traces.items()
+            if v.get("classification_history") or v.get("roi_history")
+        }
+        if trace_entries:
+            append_orphan_traces(repo, trace_entries)
+        cache_entries = {
+            k: {
+                "parents": v.get("parents", []),
+                "classification": v.get("classification", "candidate"),
+                "redundant": v.get("redundant", False),
+                **({"failed": True} if k in failed else {}),
+            }
+            for k, v in traces.items()
+        }
+        if cache_entries:
+            append_orphan_cache(repo, cache_entries)
+            append_orphan_classifications(
+                repo,
+                {
+                    k: {
+                        "parents": v.get("parents", []),
+                        "classification": v.get("classification", "candidate"),
+                        "redundant": v.get("redundant", False),
+                    }
+                    for k, v in traces.items()
+                },
+            )
+    except Exception:
+        logger.exception("failed to record orphan traces")
+
+    try:
+        prune_orphan_cache(repo, added, traces)
     except Exception:
         logger.exception("failed to prune orphan cache")
 
@@ -338,44 +440,31 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         traces.pop(m, None)
     ctx.orphan_traces = traces
 
-    try:
-        cache_updates = {
-            k: {
-                "parents": v.get("parents", []),
-                "classification": v.get("classification", "candidate"),
-                "redundant": v.get("redundant", False),
-                **({"failed": True} if v.get("failed") else {}),
-                **({"mtime": v.get("mtime")} if v.get("mtime") is not None else {}),
-            }
-            for k, v in traces.items()
-        }
-        append_orphan_cache(ctx.repo, cache_updates)
-        class_entries = {
-            k: {
-                "parents": v.get("parents", []),
-                "classification": v.get("classification", "candidate"),
-                "redundant": v.get("redundant", False),
-            }
-            for k, v in traces.items()
-        }
-        append_orphan_classifications(ctx.repo, class_entries)
-        append_orphan_traces(
-            ctx.repo,
-            {
-                k: {
-                    "classification_history": v.get("classification_history", []),
-                    "roi_history": v.get("roi_history", []),
-                }
-                for k, v in traces.items()
-                if v.get("classification_history") or v.get("roi_history")
-            },
-        )
-    except Exception:
-        logger.exception("failed to record orphan traces")
+    module_map = set(getattr(ctx, "module_map", set()))
+    module_map.update(added)
+    ctx.module_map = module_map
+
+    for m in redundant_mods:
+        cls = traces.get(m, {}).get("classification")
+        if cls == "legacy" and m not in legacy:
+            legacy.append(m)
+        elif cls != "legacy" and m not in redundant:
+            redundant.append(m)
+
+    tested_count = len(tested_mods)
+    passed_count = len(added)
+    failed_count = len(failed)
+    redundant_count = len([m for m in redundant_mods if traces.get(m, {}).get("classification") != "legacy"])
+    legacy_count = len([m for m in redundant_mods if traces.get(m, {}).get("classification") == "legacy"])
+    reclassified_count = len(tested.get("reclassified", []))
 
     try:
-        orphan_modules_tested_total.inc(len(added))
-        orphan_modules_reintroduced_total.inc(len(added))
+        orphan_modules_tested_total.inc(tested_count)
+        orphan_modules_reintroduced_total.inc(passed_count)
+        orphan_modules_failed_total.inc(failed_count)
+        orphan_modules_redundant_total.inc(redundant_count)
+        orphan_modules_legacy_total.inc(legacy_count)
+        orphan_modules_reclassified_total.inc(reclassified_count)
     except Exception:
         pass
 
@@ -390,8 +479,6 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             intent_clusters=False,
         ),
     )
-
-
 @radar.track
 def _sandbox_cycle_runner(
     ctx: "SandboxContext",
