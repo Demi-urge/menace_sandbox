@@ -4936,10 +4936,16 @@ class SelfImprovementEngine:
                         meta_path.unlink()
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to clean orphan classifications")
+            errors: list[str] = []
             try:
                 orphan_modules_reintroduced_total.inc(len(mods))
-            except Exception:
-                logger.exception("Unhandled exception in self_improvement_engine")
+            except Exception as exc:
+                self.logger.error(
+                    "failed to increment orphan_modules_reintroduced_total: %s",
+                    exc,
+                    extra=log_record(error=str(exc)),
+                )
+                errors.append(f"orphan_modules_reintroduced_total: {exc}")
             roi_vals: dict[str, float] = {}
             for m in mods:
                 roi_val = 0.0
@@ -4958,8 +4964,14 @@ class SelfImprovementEngine:
                         db.log_eval(m, "orphan_module_roi", roi_val)
                         db.log_eval(m, "orphan_module_pass", 1.0)
                         db.log_eval(m, "orphan_module_fail", 0.0)
-                except Exception:  # pragma: no cover - best effort
-                    pass
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.error(
+                        "metrics db logging failed for %s: %s",
+                        m,
+                        exc,
+                        extra=log_record(module=m, error=str(exc)),
+                    )
+                    errors.append(f"{m}: {exc}")
                 try:
                     self.logger.info(
                         "orphan integration stats",
@@ -4967,8 +4979,14 @@ class SelfImprovementEngine:
                             module=m, roi=float(roi_val), passed=True, failed=False
                         ),
                     )
-                except Exception:
-                    logger.exception("Unhandled exception in self_improvement_engine")
+                except Exception as exc:
+                    self.logger.error(
+                        "failed to log integration stats for %s: %s",
+                        m,
+                        exc,
+                        extra=log_record(module=m, error=str(exc)),
+                    )
+                    errors.append(f"{m}: {exc}")
 
             counts = getattr(self, "_last_orphan_counts", {})
             tested = float(counts.get("orphan_modules_tested", len(mods)))
@@ -5003,12 +5021,19 @@ class SelfImprovementEngine:
                             "orphan_worst_scenario_roi": worst_robust,
                         },
                     )
-                except Exception:  # pragma: no cover - best effort
-                    pass
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.error(
+                        "tracker metric update failed: %s",
+                        exc,
+                        extra=log_record(error=str(exc)),
+                    )
+                    errors.append(f"tracker: {exc}")
+            if errors:
+                raise RuntimeError("; ".join(errors))
             return mods
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan integration failed: %s", exc)
-            return set()
+            raise
 
     def _collect_recursive_modules(self, modules: Iterable[str]) -> set[str]:
         """Return ``modules`` plus any local imports they depend on recursively."""
