@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from db_router import GLOBAL_ROUTER as router
+from db_router import GLOBAL_ROUTER
 
 from typing import TYPE_CHECKING
 
@@ -72,9 +72,9 @@ def get_connection(
     """
 
     if conn is None:
-        if not router:
+        if GLOBAL_ROUTER is None:
             raise RuntimeError("Database router is not initialised")
-        with router.get_connection("models") as conn:
+        with GLOBAL_ROUTER.get_connection("models") as conn:
             try:
                 yield conn
                 conn.commit()
