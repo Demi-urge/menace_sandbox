@@ -485,6 +485,7 @@ class CognitionLayer:
         *,
         top_k: int = 5,
         session_id: str = "",
+        prioritise: str | None = None,
     ) -> Tuple[str, str]:
         """Retrieve context for *prompt* and store vector metrics.
 
@@ -496,14 +497,16 @@ class CognitionLayer:
         stats: Dict[str, Any] = {}
         metadata: Dict[str, List[Dict[str, Any]]]
         try:
-            result = self.context_builder.build_context(
-                prompt,
-                top_k=top_k,
-                include_vectors=True,
-                session_id=session_id,
-                return_stats=True,
-                return_metadata=True,
-            )
+            kwargs = {
+                "top_k": top_k,
+                "include_vectors": True,
+                "session_id": session_id,
+                "return_stats": True,
+                "return_metadata": True,
+            }
+            if prioritise is not None:
+                kwargs["prioritise"] = prioritise
+            result = self.context_builder.build_context(prompt, **kwargs)
         except TypeError:  # pragma: no cover - older builders
             result = self.context_builder.build_context(
                 prompt,
@@ -598,20 +601,23 @@ class CognitionLayer:
         *,
         top_k: int = 5,
         session_id: str = "",
+        prioritise: str | None = None,
     ) -> Tuple[str, str]:
         """Asynchronous wrapper for :meth:`query`."""
 
         stats: Dict[str, Any] = {}
         metadata: Dict[str, List[Dict[str, Any]]]
         try:
-            result = await self.context_builder.build_async(
-                prompt,
-                top_k=top_k,
-                include_vectors=True,
-                session_id=session_id,
-                return_stats=True,
-                return_metadata=True,
-            )
+            kwargs = {
+                "top_k": top_k,
+                "include_vectors": True,
+                "session_id": session_id,
+                "return_stats": True,
+                "return_metadata": True,
+            }
+            if prioritise is not None:
+                kwargs["prioritise"] = prioritise
+            result = await self.context_builder.build_async(prompt, **kwargs)
         except TypeError:  # pragma: no cover - older builders
             result = await self.context_builder.build_async(
                 prompt,
