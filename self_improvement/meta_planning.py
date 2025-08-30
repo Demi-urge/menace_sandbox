@@ -5,13 +5,15 @@ optimization using the optional :class:`MetaWorkflowPlanner` component.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
+from statistics import fmean
 import asyncio
 
 from ..logging_utils import get_logger, log_record
 from ..sandbox_settings import SandboxSettings, load_sandbox_settings
 from ..workflow_stability_db import WorkflowStabilityDB
+from ..roi_results_db import ROIResultsDB
 
 try:  # pragma: no cover - optional dependency
     from ..unified_event_bus import UnifiedEventBus
@@ -28,17 +30,102 @@ except Exception:  # pragma: no cover - gracefully degrade
 
 
 class _FallbackPlanner:
-    """Minimal no-op planner used when :class:`MetaWorkflowPlanner` is missing."""
+    """Lightweight planner leveraging ROI and stability metrics.
 
-    roi_db = None
-    stability_db = None
+    The implementation intentionally mirrors the public interface of
+    :class:`MetaWorkflowPlanner` so the rest of the system can continue to
+    operate when the full planner is unavailable.  It performs a very small
+    amount of optimisation by selecting individual workflows that have shown a
+    positive average ROI and have been marked stable.
+    """
 
-    def __init__(self) -> None:  # pragma: no cover - trivial
-        self.cluster_map: dict[tuple[str, ...], Any] = {}
+    def __init__(self) -> None:
+        try:
+            self.roi_db: ROIResultsDB | None = ROIResultsDB()
+        except Exception:  # pragma: no cover - best effort
+            self.roi_db = None
+        try:
+            self.stability_db: WorkflowStabilityDB | None = WorkflowStabilityDB()
+        except Exception:  # pragma: no cover - best effort
+            self.stability_db = None
+        self.cluster_map: dict[tuple[str, ...], dict[str, Any]] = {}
+        self.mutation_rate = 0.0
+        self.roi_weight = 0.0
+        self.domain_transition_penalty = 0.0
+        self.roi_window = 5
 
+    # ------------------------------------------------------------------
+    def begin_run(self, workflow_id: str, run_id: str) -> None:  # pragma: no cover - no-op
+        """Compatibility stub for :class:`MetaWorkflowPlanner`."""
+
+    # ------------------------------------------------------------------
     def discover_and_persist(
         self, workflows: Mapping[str, Callable[[], Any]]
-    ) -> list[Mapping[str, Any]]:  # pragma: no cover - trivial
+    ) -> list[Mapping[str, Any]]:
+        """Return stable workflows ordered by average ROI."""
+
+        records: list[dict[str, Any]] = []
+        for wid in workflows:
+            roi = 0.0
+            failures = 0
+            entropy = 0.0
+            if self.roi_db is not None:
+                try:
+                    results = self.roi_db.fetch_results(wid)
+                    recent = [r.roi_gain for r in results[-self.roi_window :]]
+                    roi = fmean(recent) if recent else 0.0
+                except Exception:  # pragma: no cover - best effort
+                    roi = 0.0
+            stable = True
+            if self.stability_db is not None:
+                try:
+                    entry = self.stability_db.data.get(wid, {})
+                    failures = int(entry.get("failures", 0))
+                    entropy = float(entry.get("entropy", 0.0))
+                    stable = self.stability_db.is_stable(
+                        wid, current_roi=roi, threshold=1.0
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    stable = True
+            if roi > 0.0 and stable:
+                self.cluster_map[(wid,)] = {"last_roi": roi}
+                records.append(
+                    {
+                        "chain": [wid],
+                        "roi_gain": roi,
+                        "failures": failures,
+                        "entropy": entropy,
+                    }
+                )
+
+        records.sort(key=lambda r: r["roi_gain"], reverse=True)
+        return records
+
+    # ------------------------------------------------------------------
+    def mutate_pipeline(
+        self,
+        chain: Sequence[str],
+        workflows: Mapping[str, Callable[[], Any]],
+        **_: Any,
+    ) -> list[Mapping[str, Any]]:  # pragma: no cover - interface stub
+        return []
+
+    # ------------------------------------------------------------------
+    def split_pipeline(
+        self,
+        chain: Sequence[str],
+        workflows: Mapping[str, Callable[[], Any]],
+        **_: Any,
+    ) -> list[Mapping[str, Any]]:  # pragma: no cover - interface stub
+        return []
+
+    # ------------------------------------------------------------------
+    def remerge_pipelines(
+        self,
+        pipelines: Sequence[Sequence[str]],
+        workflows: Mapping[str, Callable[[], Any]],
+        **_: Any,
+    ) -> list[Mapping[str, Any]]:  # pragma: no cover - interface stub
         return []
 
 
