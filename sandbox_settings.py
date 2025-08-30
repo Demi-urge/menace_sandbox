@@ -197,6 +197,11 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_CIRCUIT_RESET_TIMEOUT",
         description="Time in seconds before a tripped circuit resets.",
     )
+    retry_optional_dependencies: bool = Field(
+        False,
+        env="RETRY_OPTIONAL_DEPENDENCIES",
+        description="Retry loading optional modules instead of using a stub.",
+    )
     openai_api_key: str | None = Field(
         None, env="OPENAI_API_KEY", description="API key for OpenAI access."
     )

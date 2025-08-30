@@ -12,13 +12,21 @@ import time
 import asyncio
 import inspect
 import random
+from dataclasses import dataclass
 from typing import Any, Callable, Awaitable
 
 from ..metrics_exporter import self_improvement_failure_total
+from ..sandbox_settings import SandboxSettings
 
 
 def _load_callable(module: str, attr: str) -> Callable[..., Any]:
-    """Dynamically import ``attr`` from ``module`` with logging."""
+    """Dynamically import ``attr`` from ``module`` with logging.
+
+    When the dependency is missing a stub is returned. The stub carries a
+    structured error object and, depending on :class:`SandboxSettings`, may
+    attempt to lazily retry the import on first use.
+    """
+
     try:
         mod = importlib.import_module(module)
         return getattr(mod, attr)
@@ -26,7 +34,37 @@ def _load_callable(module: str, attr: str) -> Callable[..., Any]:
         logger = logging.getLogger(__name__)
         logger.exception("missing dependency %s.%s", module, attr)
         self_improvement_failure_total.labels(reason="missing_dependency").inc()
-        raise RuntimeError(f"{module} dependency is required for {attr}") from exc
+
+        @dataclass
+        class MissingDependencyError:
+            module: str
+            attr: str
+            exc: Exception
+
+        error = MissingDependencyError(module, attr, exc)
+        settings = SandboxSettings()
+
+        if not getattr(settings, "retry_optional_dependencies", False):
+            def _stub(*_args: Any, **_kwargs: Any) -> Any:
+                raise RuntimeError(f"{module} dependency is required for {attr}")
+
+            _stub.error = error
+            return _stub
+
+        def _retry_stub(*args: Any, **kwargs: Any) -> Any:
+            def _load_and_call() -> Any:
+                mod_inner = importlib.import_module(module)
+                func = getattr(mod_inner, attr)
+                return func(*args, **kwargs)
+
+            return _call_with_retries(
+                _load_and_call,
+                retries=getattr(settings, "sandbox_max_retries", 3) or 3,
+                delay=getattr(settings, "sandbox_retry_delay", 0.1),
+            )
+
+        _retry_stub.error = error
+        return _retry_stub
 
 
 def _call_with_retries(

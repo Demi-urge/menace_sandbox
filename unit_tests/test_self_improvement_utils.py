@@ -1,5 +1,4 @@
 import ast
-import ast
 import importlib
 import logging
 import time
@@ -10,6 +9,7 @@ from unittest.mock import patch
 import asyncio
 import random
 import inspect
+from dataclasses import dataclass
 
 import pytest
 
@@ -29,6 +29,13 @@ def _load_utils():
             return types.SimpleNamespace(inc=lambda: setattr(self, "count", self.count + 1))
 
     counter = Counter()
+
+    class _StubSettings:
+        def __init__(self) -> None:
+            self.retry_optional_dependencies = False
+            self.sandbox_retry_delay = 0
+            self.sandbox_max_retries = 0
+
     ns = {
         "importlib": importlib,
         "logging": logging,
@@ -40,6 +47,8 @@ def _load_utils():
         "Any": Any,
         "Awaitable": Awaitable,
         "self_improvement_failure_total": counter,
+        "SandboxSettings": _StubSettings,
+        "dataclass": dataclass,
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns, counter
@@ -52,11 +61,36 @@ def test_load_callable_success():
     assert counter.count == 0
 
 
-def test_load_callable_missing_increments_metric():
+def test_load_callable_missing_returns_stub_and_records_metric():
     utils, counter = _load_utils()
     with patch("importlib.import_module", side_effect=ImportError):
+        fn = utils["_load_callable"]("missing", "attr")
         with pytest.raises(RuntimeError):
-            utils["_load_callable"]("missing", "attr")
+            fn()
+    assert counter.count == 1
+    assert fn.error.module == "missing"
+
+
+def test_load_callable_retry_succeeds_when_enabled():
+    utils, counter = _load_utils()
+    utils["time"].sleep = lambda *a, **k: None
+
+    attempts = {"count": 0}
+
+    def side_effect(name):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise ImportError
+        return types.SimpleNamespace(attr=lambda: "ok")
+
+    with patch("importlib.import_module", side_effect=side_effect):
+        utils["SandboxSettings"] = lambda: types.SimpleNamespace(
+            retry_optional_dependencies=True,
+            sandbox_retry_delay=0,
+            sandbox_max_retries=3,
+        )
+        fn = utils["_load_callable"]("mod", "attr")
+        assert fn() == "ok"
     assert counter.count == 1
 
 
