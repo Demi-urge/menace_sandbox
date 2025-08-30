@@ -13,6 +13,7 @@ from pathlib import Path
 from collections import Counter, OrderedDict
 import atexit
 import importlib
+from importlib import metadata
 import random
 import threading
 from contextlib import AbstractAsyncContextManager
@@ -41,6 +42,9 @@ _CACHE: "OrderedDict[Tuple[str, str], Dict[str, Any]]" = OrderedDict()
 
 # protect cache mutations across threads and async tasks
 _CACHE_LOCK = threading.Lock()
+
+# Entry-point group for discovering available text generation models
+MODEL_ENTRY_POINT_GROUP = "sandbox.stub_models"
 
 
 class _SaveTaskManager(AbstractAsyncContextManager):
@@ -82,6 +86,25 @@ _RETRY_MAX = 30.0
 _CACHE_MAX = 1024
 
 
+def _available_models(settings: Any | None = None) -> set[str]:
+    """Return names of available text generation models."""
+
+    models: set[str] = set()
+    if settings is not None:
+        models.update(getattr(settings, "stub_models", []) or [])
+
+    try:
+        eps = metadata.entry_points(group=MODEL_ENTRY_POINT_GROUP)
+    except TypeError:  # pragma: no cover - legacy API
+        eps = metadata.entry_points().get(MODEL_ENTRY_POINT_GROUP, [])
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to gather stub model entry points")
+        eps = []
+    for ep in eps:
+        models.add(ep.name)
+    return models
+
+
 def _validate_env() -> None:
     """Validate environment configuration and log warnings."""
 
@@ -119,8 +142,16 @@ def _validate_env() -> None:
     _CACHE_MAX = _int_env("SANDBOX_STUB_CACHE_MAX", 1024)
 
     model = os.getenv("SANDBOX_STUB_MODEL")
-    if model and model not in {"openai", "gpt2-large", "distilgpt2"}:
-        logger.warning("unknown SANDBOX_STUB_MODEL %s", model)
+    if model:
+        available = _available_models()
+        if available and model not in available:
+            msg = f"unknown SANDBOX_STUB_MODEL {model!r}; available: {sorted(available)}"
+            logger.error(msg)
+            raise ValueError(msg)
+        if not available:
+            logger.warning(
+                "SANDBOX_STUB_MODEL=%s but no stub models are configured", model
+            )
 
 
 _validate_env()

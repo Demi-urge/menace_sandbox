@@ -6,6 +6,7 @@ import json
 import yaml
 import logging
 from pathlib import Path
+import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -231,6 +232,32 @@ def test_generative_load_default(monkeypatch):
     assert called["task"] == "text-generation"
     assert called["model"] == "gpt2-large"
     assert gen is not None
+
+
+def test_generative_model_validation(monkeypatch):
+    monkeypatch.setenv("SANDBOX_STUB_MODEL", "unknown")
+
+    class DummyEP:
+        def __init__(self, name):
+            self.name = name
+
+    def dummy_entry_points(*args, **kwargs):
+        if kwargs.get("group") == "sandbox.stub_models":
+            return [DummyEP("known")]
+        if not args and not kwargs:
+            return {"sandbox.stub_models": [DummyEP("known")]}  # legacy API
+        return []
+
+    from importlib import metadata
+    monkeypatch.setattr(metadata, "entry_points", dummy_entry_points)
+
+    import importlib
+    import sys
+
+    sys.modules.pop("sandbox_runner.generative_stub_provider", None)
+    with pytest.raises(ValueError):
+        importlib.import_module("sandbox_runner.generative_stub_provider")
+    sys.modules.pop("sandbox_runner.generative_stub_provider", None)
 
 
 def test_generate_input_stubs_synthetic_fallback(monkeypatch, tmp_path):
