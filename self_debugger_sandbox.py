@@ -1304,6 +1304,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         before_err = getattr(
                             self.engine, "_current_errors", lambda: 0
                         )()
+                        roi_before = (
+                            tracker.roi_history[-1]
+                            if tracker and getattr(tracker, "roi_history", None)
+                            else 0.0
+                        )
                         pid, reverted, roi_delta = await asyncio.to_thread(
                             self.engine.apply_patch, root_test, "auto_debug"
                         )
@@ -1332,6 +1337,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         )
                         complexity = self._code_complexity(root_test)
                         runtime_delta = after_runtime - before_runtime
+                        roi_after = roi_before + roi_delta
+                        if tracker is not None:
+                            try:
+                                tracker.update(roi_before, roi_after)
+                            except Exception:
+                                self.logger.exception("ROITracker update failed")
                         result = "reverted" if reverted else "success"
                         if (
                             not reverted

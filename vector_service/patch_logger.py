@@ -201,6 +201,7 @@ class TrackResult(dict):
         error_count: int | None = None,
         effort_estimate: float | None = None,
         roi_deltas: Mapping[str, float] | None = None,
+        roi_delta: float | None = None,
         enhancement_score: float | None = None,
     ) -> None:
         super().__init__(mapping or {})
@@ -219,6 +220,7 @@ class TrackResult(dict):
         # mapping for backwards compatibility so existing callers treating the
         # result as a plain ``dict`` continue to work without modification.
         self.roi_deltas = dict(roi_deltas or {})
+        self.roi_delta = roi_delta
 
 
 class PatchLogger:
@@ -310,6 +312,7 @@ class PatchLogger:
         patch_id: str = "",
         session_id: str = "",
         contribution: float | None = None,
+        roi_delta: float | None = None,
         retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
         risk_callback: "Callable[[Mapping[str, float]], Any]" | None = None,
         lines_changed: int | None = None,
@@ -337,6 +340,8 @@ class PatchLogger:
 
         start = time.time()
         status = "success" if result else "failure"
+        if contribution is None and roi_delta is not None:
+            contribution = roi_delta
         roi_tag_val = RoiTag.validate(roi_tag)
         roi_metrics: dict[str, dict[str, Any]] = {}
         roi_deltas: dict[str, float] = {}
@@ -674,6 +679,7 @@ class PatchLogger:
                             pairs,
                             patch_id=int(patch_id),
                             contribution=0.0 if contribution is None else contribution,
+                            roi_delta=roi_delta,
                             win=result,
                             regret=not result,
                             lines_changed=lines_changed,
@@ -834,6 +840,7 @@ class PatchLogger:
             "start_time": start_time,
             "end_time": end_time,
             "time_to_completion": time_to_completion,
+            "roi_delta": roi_delta,
         }
         if patch_id:
             payload["patch_id"] = patch_id
@@ -873,6 +880,7 @@ class PatchLogger:
             "patch_id": patch_id,
             "result": result,
             "roi_deltas": dict(roi_deltas),
+            "roi_delta": roi_delta,
             "lines_changed": lines_changed,
             "context_tokens": context_tokens_val,
             "patch_difficulty": patch_difficulty,
@@ -970,6 +978,7 @@ class PatchLogger:
             duration_s=time_to_completion,
             error_count=error_trace_count,
             roi_deltas=roi_deltas,
+            roi_delta=roi_delta,
             effort_estimate=effort_estimate_val,
             enhancement_score=enhancement_score,
         )
@@ -1132,6 +1141,7 @@ class PatchLogger:
         patch_id: str = "",
         session_id: str = "",
         contribution: float | None = None,
+        roi_delta: float | None = None,
         retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
         risk_callback: "Callable[[Mapping[str, float]], Any]" | None = None,
         lines_changed: int | None = None,
@@ -1158,6 +1168,7 @@ class PatchLogger:
             patch_id=patch_id,
             session_id=session_id,
             contribution=contribution,
+            roi_delta=roi_delta,
             retrieval_metadata=retrieval_metadata,
             risk_callback=risk_callback,
             lines_changed=lines_changed,

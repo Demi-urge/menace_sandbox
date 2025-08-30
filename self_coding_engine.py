@@ -271,6 +271,7 @@ class SelfCodingEngine:
             if patch_id is not None:
                 kwargs["patch_id"] = str(patch_id)
             if roi_delta is not None:
+                kwargs["roi_delta"] = roi_delta
                 kwargs["contribution"] = roi_delta
             self.patch_logger.track_contributors(ids, result, **kwargs)
         except Exception:
@@ -849,6 +850,7 @@ class SelfCodingEngine:
                         [(o, v) for o, v, _ in vectors],
                         patch_id=patch_id,
                         contribution=0.0,
+                        roi_delta=roi_delta,
                         win=False,
                         regret=True,
                         effort_estimate=effort_estimate,
@@ -893,6 +895,7 @@ class SelfCodingEngine:
                         [(o, v) for o, v, _ in vectors],
                         patch_id=0,
                         contribution=0.0,
+                        roi_delta=0.0,
                         win=False,
                         regret=True,
                         effort_estimate=effort_estimate,
@@ -933,6 +936,7 @@ class SelfCodingEngine:
                         [(o, v) for o, v, _ in vectors],
                         patch_id=0,
                         contribution=0.0,
+                        roi_delta=0.0,
                         win=False,
                         regret=True,
                         effort_estimate=effort_estimate,
@@ -1106,6 +1110,7 @@ class SelfCodingEngine:
                     [(o, v) for o, v, _ in vectors],
                     patch_id=patch_id,
                     contribution=roi_delta,
+                    roi_delta=roi_delta,
                     win=win_flag,
                     regret=regret_flag,
                     effort_estimate=effort_estimate,

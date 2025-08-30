@@ -54,7 +54,7 @@ def test_patch_logger_triggers_scheduler_on_roi(tmp_path, monkeypatch):
     bus.subscribe("patch_logger:outcome", lambda t, e: captured.append(e))
 
     pl = PatchLogger(event_bus=bus)
-    pl.track_contributors(["db:v1"], True, contribution=0.6)
+    pl.track_contributors(["db:v1"], True, roi_delta=0.6)
 
     cfg = json.loads((tmp_path / "model.json").read_text())
     current = Path(cfg["current"])
@@ -101,7 +101,7 @@ def test_patch_logger_does_not_trigger_when_below_threshold(tmp_path, monkeypatc
     )
 
     pl = PatchLogger(event_bus=bus)
-    pl.track_contributors(["db:v1"], True, contribution=0.5)
+    pl.track_contributors(["db:v1"], True, roi_delta=0.5)
 
     assert svc.model_path is None
     assert not svc.reliability_reloaded

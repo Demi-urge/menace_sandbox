@@ -1506,6 +1506,7 @@ class PatchHistoryDB:
         *,
         patch_id: int,
         contribution: float,
+        roi_delta: float | None = None,
         win: bool,
         regret: bool,
         lines_changed: int | None = None,
@@ -1557,7 +1558,7 @@ class PatchHistoryDB:
                 except Exception:
                     logger.exception("failed to serialise errors")
             conn.execute(
-                "UPDATE patch_history SET lines_changed=?, tests_passed=?, context_tokens=?, patch_difficulty=?, effort_estimate=?, enhancement_name=?, start_time=?, time_to_completion=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary), outcome=COALESCE(?, outcome), roi_deltas=COALESCE(?, roi_deltas), errors=COALESCE(?, errors), error_trace_count=COALESCE(?, error_trace_count), roi_tag=COALESCE(?, roi_tag), enhancement_score=COALESCE(?, enhancement_score) WHERE id=?",
+                "UPDATE patch_history SET lines_changed=?, tests_passed=?, context_tokens=?, patch_difficulty=?, effort_estimate=?, enhancement_name=?, start_time=?, time_to_completion=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary), outcome=COALESCE(?, outcome), roi_delta=COALESCE(?, roi_delta), roi_deltas=COALESCE(?, roi_deltas), errors=COALESCE(?, errors), error_trace_count=COALESCE(?, error_trace_count), roi_tag=COALESCE(?, roi_tag), enhancement_score=COALESCE(?, enhancement_score) WHERE id=?",
                 (
                     lines_changed,
                     None if tests_passed is None else int(bool(tests_passed)),
@@ -1571,6 +1572,7 @@ class PatchHistoryDB:
                     diff,
                     summary,
                     outcome,
+                    roi_delta,
                     roi_json,
                     err_json,
                     error_trace_count,

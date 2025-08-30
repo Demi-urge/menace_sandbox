@@ -138,6 +138,7 @@ class DummyPatchDB:
         *,
         patch_id,
         contribution,
+        roi_delta=None,
         win,
         regret,
         lines_changed=None,
@@ -175,6 +176,7 @@ class DummyPatchDB:
             "time_to_completion": time_to_completion,
             "timestamp": timestamp,
             "roi_deltas": roi_deltas,
+            "roi_delta": roi_delta,
             "errors": errors,
             "error_trace_count": error_trace_count,
             "roi_tag": roi_tag,
@@ -248,7 +250,7 @@ def test_track_contributors_forwards_contribution_vector_metrics(monkeypatch):
     _, _, _, _, _, _, _ = patch_metrics(monkeypatch)
     vm = DummyVectorMetricsDB()
     pl = PatchLogger(vector_metrics=vm)
-    pl.track_contributors(["v1"], True, patch_id="p", session_id="s", contribution=0.3)
+    pl.track_contributors(["v1"], True, patch_id="p", session_id="s", roi_delta=0.3)
     assert vm.calls and vm.calls[0]["contribution"] == 0.3
 
 
@@ -261,7 +263,7 @@ def test_track_contributors_forwards_contribution_patch_db(monkeypatch):
         False,
         patch_id="7",
         session_id="s",
-        contribution=0.8,
+        roi_delta=0.8,
         lines_changed=5,
         tests_passed=True,
         enhancement_name="feat",
@@ -271,6 +273,7 @@ def test_track_contributors_forwards_contribution_patch_db(monkeypatch):
         outcome="failed",
     )
     assert pdb.kwargs and pdb.kwargs["contribution"] == 0.8
+    assert pdb.kwargs["roi_delta"] == 0.8
     assert pdb.kwargs["lines_changed"] == 5
     assert pdb.kwargs["tests_passed"] is True
     assert pdb.kwargs["context_tokens"] == 0
@@ -291,7 +294,7 @@ def test_track_contributors_forwards_roi_feedback(monkeypatch):
     vm = DummyVectorMetricsDB()
     rt = DummyROITracker()
     pl = PatchLogger(vector_metrics=vm, roi_tracker=rt)
-    pl.track_contributors(["db1:v1", "db1:v2", "db2:v3"], True, session_id="s", contribution=0.5)
+    pl.track_contributors(["db1:v1", "db1:v2", "db2:v3"], True, session_id="s", roi_delta=0.5)
     # aggregated ROI per origin
     fb = {c["db"]: c["roi"] for c in vm.fb_calls}
     assert fb["db1"] == pytest.approx(1.0)
@@ -304,7 +307,7 @@ def test_track_contributors_forwards_roi_feedback_failure(monkeypatch):
     vm = DummyVectorMetricsDB()
     rt = DummyROITracker()
     pl = PatchLogger(vector_metrics=vm, roi_tracker=rt)
-    pl.track_contributors(["db1:v1", "db1:v2", "db2:v3"], False, session_id="s", contribution=0.5)
+    pl.track_contributors(["db1:v1", "db1:v2", "db2:v3"], False, session_id="s", roi_delta=0.5)
     fb = {c["db"]: c["roi"] for c in vm.fb_calls}
     assert fb["db1"] == pytest.approx(1.0)
     assert fb["db2"] == pytest.approx(0.5)

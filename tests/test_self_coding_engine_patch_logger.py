@@ -27,7 +27,7 @@ class RecordingPatchLogger:
         tracker = self.roi_tracker
         if tracker is None:
             return {}
-        contrib = kwargs.get("contribution", 0.0)
+        contrib = kwargs.get("roi_delta", kwargs.get("contribution", 0.0))
         totals: dict[str, float] = {}
         for vid in vector_ids:
             if isinstance(vid, tuple):
@@ -134,6 +134,7 @@ def test_track_contributors_records_roi():
     assert pl.calls
     vids, result, kwargs = pl.calls[0]
     assert kwargs["contribution"] == pytest.approx(1.5)
+    assert kwargs["roi_delta"] == pytest.approx(1.5)
     assert kwargs["session_id"] == "sess"
     assert kwargs["retrieval_metadata"]["db1:v1"]["prompt_tokens"] == 3
     assert pl.roi_tracker.metrics["db1"]["roi"] == pytest.approx(1.5)
