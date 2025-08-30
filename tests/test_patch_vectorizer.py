@@ -19,6 +19,18 @@ class PatchHistoryDB:  # noqa: D401 - minimal stub
         self.path = Path(path)
         self.router = DBRouter("patch_history", str(self.path), str(self.path))
 
+    def get(self, pid):
+        conn = self.router.get_connection("patch_history")
+        row = conn.execute(
+            "SELECT description, diff, summary FROM patch_history WHERE id=?",
+            (pid,),
+        ).fetchone()
+        if row:
+            return types.SimpleNamespace(
+                description=row[0], diff=row[1], summary=row[2]
+            )
+        return None
+
 
 code_db_mod.PatchHistoryDB = PatchHistoryDB
 sys.modules.setdefault("code_database", code_db_mod)
@@ -45,7 +57,10 @@ sys.modules.setdefault(
     importlib.import_module("menace_sandbox.embeddable_db_mixin"),
 )
 
-from vector_service.patch_vectorizer import PatchVectorizer  # noqa: E402
+from vector_service.patch_vectorizer import (  # noqa: E402
+    PatchVectorizer,
+    backfill_patch_embeddings,
+)
 from code_database import PatchHistoryDB  # noqa: E402
 
 
@@ -83,5 +98,33 @@ def test_patch_vectorizer_embeds_diff_and_summary(tmp_path, monkeypatch):
     assert meta and meta["record"]["diff"] == "diff text"
     assert meta["record"]["summary"] == "summary text"
 
+    expected = "\n".join(["desc text", "diff text", "summary text"])
+    assert pv.get_vector(1) == [float(len(expected))]
+
+
+def test_backfill_helper(tmp_path, monkeypatch):
+    db_path = tmp_path / "patch_history.db"
+    phdb = PatchHistoryDB(db_path)
+    conn = phdb.router.get_connection("patch_history")
+    conn.execute(
+        "CREATE TABLE patch_history (id INTEGER PRIMARY KEY AUTOINCREMENT, description TEXT, diff TEXT, summary TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO patch_history (description, diff, summary) VALUES (?, ?, ?)",
+        ("desc text", "diff text", "summary text"),
+    )
+    conn.commit()
+
+    captured = {}
+
+    def fake_encode(self, text: str):
+        captured["text"] = text
+        return [float(len(text))]
+
+    monkeypatch.setattr(PatchVectorizer, "encode_text", fake_encode, raising=False)
+
+    backfill_patch_embeddings(path=db_path, index_path=tmp_path / "patch.index")
+
+    pv = PatchVectorizer(path=db_path, index_path=tmp_path / "patch.index")
     expected = "\n".join(["desc text", "diff text", "summary text"])
     assert pv.get_vector(1) == [float(len(expected))]
