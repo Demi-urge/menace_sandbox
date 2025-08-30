@@ -34,6 +34,15 @@ Orphan module processing is also exported via Prometheus gauges:
 - `orphan_modules_failed_total` – orphan modules whose tests failed.
 - `orphan_modules_redundant_total` – modules skipped due to redundancy.
 
+## Dependency resolution
+
+`SelfTestService` relies on `sandbox_runner.dependency_utils.collect_local_dependencies`
+to walk import graphs.  When `sandbox_runner` is not installed, an internal
+resolver is used.  This fallback understands package‑relative imports,
+namespace packages (PEP 420) and `from ... import *` patterns so self tests can
+still determine local dependencies.  Optional modules are skipped when missing
+and a best‑effort dependency set is produced.
+
 ## Recursive orphan discovery
 
 `SelfTestService` cooperates with `sandbox_runner` to locate orphan modules and
