@@ -40,7 +40,7 @@ def test_prompt_engine_retrieves_top_n_snippets(monkeypatch, tmp_path):
         ("3", [0.0, 1.0], {"summary": "A3", "tests_passed": True, "ts": 1}),
     ]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
-    engine = PromptEngine(retriever=pr, top_n=2)
+    engine = PromptEngine(retriever=pr, top_n=2, confidence_threshold=0.0)
     prompt = engine.build_prompt("goal")
     assert "Successful example:" in prompt
     assert "Code summary: A1" in prompt
@@ -56,7 +56,7 @@ def test_prompt_engine_orders_by_roi_and_recency(monkeypatch, tmp_path):
         ("4", [1.0, 0.0], {"summary": "old fail", "tests_passed": False, "ts": 1}),
     ]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
-    engine = PromptEngine(retriever=pr, top_n=4)
+    engine = PromptEngine(retriever=pr, top_n=4, confidence_threshold=0.05)
     prompt = engine.build_prompt("goal")
     assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
     assert "Code summary: new fail" in prompt

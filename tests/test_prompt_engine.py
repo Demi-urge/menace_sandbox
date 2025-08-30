@@ -51,6 +51,26 @@ def test_prompt_engine_sections_and_ranking():
     assert prompt.rindex("Code summary: fail") > prompt.index("Avoid pattern:")
 
 
+def test_prompt_engine_custom_headers():
+    records = [
+        _record(0.9, summary="good", tests_passed=True, ts=1),
+        _record(0.8, summary="bad", tests_passed=False, ts=2),
+    ]
+    engine = PromptEngine(
+        retriever=DummyRetriever(records),
+        patch_retriever=DummyRetriever(records),
+        top_n=2,
+        confidence_threshold=0.0,
+        success_header="Correct example:",
+        failure_header="Incorrect example:",
+    )
+    prompt = engine.build_prompt("desc")
+    assert "Correct example:" in prompt
+    assert "Incorrect example:" in prompt
+    assert "Successful example:" not in prompt
+    assert "Avoid pattern:" not in prompt
+
+
 def test_prompt_engine_handles_retry_trace():
     records = [_record(1.0, summary="foo", tests_passed=True, raroi=0.5)]
     engine = PromptEngine(patch_retriever=DummyRetriever(records))

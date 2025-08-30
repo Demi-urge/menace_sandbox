@@ -92,6 +92,12 @@ class PromptEngine:
         prompts.
     max_tokens:
         Maximum number of tokens allowed for each snippet block.
+    success_header:
+        Header inserted before successful examples. Defaults to
+        ``"Successful example:"``.
+    failure_header:
+        Header inserted before failed examples. Defaults to
+        ``"Avoid pattern:"``.
     """
 
     retriever: Retriever | None = None
@@ -125,6 +131,8 @@ class PromptEngine:
             "coding_standards;repository_layout;metadata;version_control;testing",
         ).split(";"),
     )
+    success_header: str = "Successful example:"
+    failure_header: str = "Avoid pattern:"
 
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
         if self.retriever is None:
@@ -186,12 +194,12 @@ class PromptEngine:
 
         lines: List[str] = []
         if successes:
-            lines.append("Successful example:")
+            lines.append(self.success_header)
             for _, text in successes:
                 lines.extend(text.splitlines())
                 lines.append("")
         if failures:
-            lines.append("Avoid pattern:")
+            lines.append(self.failure_header)
             for _, text in failures:
                 lines.extend(text.splitlines())
                 lines.append("")
@@ -522,6 +530,8 @@ class PromptEngine:
         retriever: Retriever | None = None,
         context_builder: ContextBuilder | None = None,
         roi_tracker: Any | None = None,
+        success_header: str = "Successful example:",
+        failure_header: str = "Avoid pattern:",
     ) -> str:
         """Class method wrapper used by existing callers and tests."""
 
@@ -531,6 +541,8 @@ class PromptEngine:
             roi_tracker=roi_tracker,
             confidence_threshold=confidence_threshold,
             top_n=top_n,
+            success_header=success_header,
+            failure_header=failure_header,
         )
         return engine.build_prompt(
             goal,
@@ -547,6 +559,8 @@ def build_prompt(
     context: str | None = None,
     retrieval_context: str | None = None,
     top_n: int = 5,
+    success_header: str = "Successful example:",
+    failure_header: str = "Avoid pattern:",
 ) -> str:
     """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`."""
 
@@ -556,6 +570,8 @@ def build_prompt(
         context=context,
         retrieval_context=retrieval_context,
         top_n=top_n,
+        success_header=success_header,
+        failure_header=failure_header,
     )
 
 

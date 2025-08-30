@@ -42,3 +42,28 @@ Please attempt a different solution.
   <trace>
   Please attempt a different solution.
   ```
+* `success_header` and `failure_header` – control the section titles for
+  successful and failing examples.  The defaults are `"Successful example:"`
+  and `"Avoid pattern:"`.
+
+### Custom headers
+
+Codex-style prompts can be produced by overriding these headers:
+
+```python
+engine = PromptEngine(
+    retriever=my_retriever,
+    success_header="Correct example:",
+    failure_header="Incorrect example:",
+)
+```
+
+Which yields output of the form:
+
+```
+Correct example:
+<successful snippet>
+
+Incorrect example:
+<failing snippet>
+```

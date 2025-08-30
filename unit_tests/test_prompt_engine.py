@@ -35,6 +35,22 @@ def test_retrieval_snippets_included():
     assert "Outcome: works (tests passed)" in prompt
 
 
+def test_custom_headers_codex_style():
+    records = [
+        _record(1.0, summary="ok", tests_passed=True, ts=1),
+        _record(1.0, summary="fail", tests_passed=False, ts=2),
+    ]
+    engine = PromptEngine(
+        retriever=DummyRetriever(records),
+        confidence_threshold=0.0,
+        success_header="Correct example:",
+        failure_header="Incorrect example:",
+    )
+    prompt = engine.build_prompt("desc")
+    assert "Correct example:" in prompt
+    assert "Incorrect example:" in prompt
+
+
 def test_orders_by_roi_and_timestamp():
     records = [
         _record(
@@ -54,7 +70,7 @@ def test_orders_by_roi_and_timestamp():
         _record(1.0, ts=1, summary="old fail", tests_passed=False),
         _record(1.0, ts=2, summary="new fail", tests_passed=False),
     ]
-    engine = PromptEngine(retriever=DummyRetriever(records))
+    engine = PromptEngine(retriever=DummyRetriever(records), confidence_threshold=-1.0)
     prompt = engine.build_prompt("desc")
     assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
     assert prompt.index("Code summary: new fail") < prompt.index("Code summary: old fail")
