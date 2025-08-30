@@ -19,6 +19,7 @@ class DummyROITracker:
 
     def update_db_metrics(self, metrics):  # pragma: no cover - interface only
         self.last_update = metrics
+
     def update(self, *_args, **_kwargs):  # pragma: no cover - interface stub
         return None
 
@@ -43,6 +44,13 @@ class DummyPatchLogger:
         contribution=None,
         retrieval_metadata=None,
         risk_callback=None,
+        lines_changed=None,
+        tests_passed=None,
+        enhancement_name=None,
+        timestamp=None,
+        diff=None,
+        summary=None,
+        outcome=None,
     ):
         if risk_callback is not None:
             risk_callback(self.risk_scores)

@@ -215,6 +215,7 @@ class PatchLogger:
         timestamp: float | None = None,
         diff: str | None = None,
         summary: str | None = None,
+        outcome: str | None = None,
     ) -> dict[str, float]:
         """Log patch outcome for vectors contributing to a patch.
 
@@ -366,6 +367,7 @@ class PatchLogger:
                             timestamp=timestamp,
                             diff=diff,
                             summary=summary,
+                            outcome=outcome,
                         )
                     except Exception:
                         logger.exception("patch_db.record_vector_metrics failed")
@@ -636,7 +638,7 @@ class PatchLogger:
                 logger.exception(
                     "UnifiedEventBus patch_logger outcome publish failed"
                 )
-        summary = {
+        summary_payload = {
             "patch_id": patch_id,
             "result": result,
             "roi_deltas": dict(roi_deltas),
@@ -644,15 +646,19 @@ class PatchLogger:
             "tests_passed": tests_passed,
             "enhancement_name": enhancement_name,
             "timestamp": timestamp,
+            "diff": diff,
+            "summary": summary,
+            "outcome": outcome,
+            "errors": errors,
         }
         if self.event_bus is not None:
             try:
-                self.event_bus.publish("patch:summary", summary)
+                self.event_bus.publish("patch:summary", summary_payload)
             except Exception:
                 logger.exception("event bus patch summary publish failed")
         elif UnifiedEventBus is not None:
             try:
-                UnifiedEventBus().publish("patch:summary", summary)
+                UnifiedEventBus().publish("patch:summary", summary_payload)
             except Exception:
                 logger.exception("UnifiedEventBus patch summary publish failed")
 
@@ -682,6 +688,7 @@ class PatchLogger:
         timestamp: float | None = None,
         diff: str | None = None,
         summary: str | None = None,
+        outcome: str | None = None,
     ) -> dict[str, float]:
         """Asynchronous wrapper for :meth:`track_contributors`."""
 
@@ -701,6 +708,7 @@ class PatchLogger:
             timestamp=timestamp,
             diff=diff,
             summary=summary,
+            outcome=outcome,
         )
 
 

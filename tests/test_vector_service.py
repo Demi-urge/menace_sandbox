@@ -138,6 +138,7 @@ class DummyPatchDB:
         timestamp=None,
         diff=None,
         summary=None,
+        outcome=None,
     ):
         self.called = True
         self.args = (
@@ -153,6 +154,7 @@ class DummyPatchDB:
             timestamp,
             diff,
             summary,
+            outcome,
         )
 
 

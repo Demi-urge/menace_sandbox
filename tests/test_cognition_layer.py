@@ -1,4 +1,3 @@
-import types
 import pytest
 import time
 
@@ -118,6 +117,9 @@ class DummyPatchLogger:
         tests_passed=None,
         enhancement_name=None,
         timestamp=None,
+        diff=None,
+        summary=None,
+        outcome=None,
     ):
         self.calls.append(
             {
@@ -131,6 +133,9 @@ class DummyPatchLogger:
                 "tests_passed": tests_passed,
                 "enhancement_name": enhancement_name,
                 "timestamp": timestamp,
+                "diff": diff,
+                "summary": summary,
+                "outcome": outcome,
             }
         )
         origin_totals = {}
@@ -218,8 +223,8 @@ def test_query_and_record_patch_outcome_updates_metrics_and_ranking():
     assert ranker.rank_calls == 1
 
     rows = metrics.conn.execute(
-        "SELECT session_id, vector_id, contribution, win, regret, tokens, wall_time_ms, prompt_tokens, age FROM vector_metrics"
-        " WHERE event_type='retrieval' AND session_id=?",
+        "SELECT session_id, vector_id, contribution, win, regret, tokens, wall_time_ms, "
+        "prompt_tokens, age FROM vector_metrics WHERE event_type='retrieval' AND session_id=?",
         (sid,),
     ).fetchall()
     assert len(rows) >= 2
@@ -355,6 +360,13 @@ def test_build_context_and_feedback_updates_weights(monkeypatch):
             session_id="",
             contribution=None,
             retrieval_metadata=None,
+            lines_changed=None,
+            tests_passed=None,
+            enhancement_name=None,
+            timestamp=None,
+            diff=None,
+            summary=None,
+            outcome=None,
         ):
             super().track_contributors(
                 vector_ids,
@@ -363,6 +375,13 @@ def test_build_context_and_feedback_updates_weights(monkeypatch):
                 session_id=session_id,
                 contribution=contribution,
                 retrieval_metadata=retrieval_metadata,
+                lines_changed=lines_changed,
+                tests_passed=tests_passed,
+                enhancement_name=enhancement_name,
+                timestamp=timestamp,
+                diff=diff,
+                summary=summary,
+                outcome=outcome,
             )
             if not result:
                 scores = {}
@@ -381,7 +400,8 @@ def test_build_context_and_feedback_updates_weights(monkeypatch):
         roi_tracker=tracker,
     )
 
-    import sys, types
+    import sys
+    import types
 
     sys.modules.setdefault("roi_tracker", types.SimpleNamespace(ROITracker=DummyROITracker))
 
