@@ -85,12 +85,11 @@ def test_load_callable_success_and_cache():
 def test_load_callable_missing_returns_stub_and_records_metric():
     utils, counter = _load_utils()
     with patch("importlib.import_module", side_effect=ImportError):
-        fn = utils["_load_callable"]("missing", "attr", allow_install=True)
+        fn = utils["_load_callable"]("missing", "attr")
         with pytest.raises(RuntimeError) as ei:
             fn()
     assert counter.count == 1
     assert fn.error.module == "missing"
-    assert fn.error.install_attempted is False
     assert "pip install missing" in str(ei.value)
 
 

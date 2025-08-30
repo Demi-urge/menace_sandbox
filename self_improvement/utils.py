@@ -34,17 +34,15 @@ def _import_callable(module: str, attr: str) -> Callable[..., Any]:
 def _load_callable(
     module: str,
     attr: str,
-    *,
-    allow_install: bool = False,
 ) -> Callable[..., Any]:
     """Dynamically import ``attr`` from ``module`` with logging and caching.
 
     Successful imports are cached for future lookups. When the dependency is
     missing a stub is returned. The stub carries a structured error object and,
     depending on :class:`SandboxSettings`, may attempt to lazily retry the
-    import on first use. Automatic installation attempts have been removed; the
-    caller instead receives a :class:`RuntimeError` with instructions on how to
-    install the missing package.
+    import on first use. Automatic installation attempts are not performed; the
+    caller receives a :class:`RuntimeError` with guidance on how to install the
+    missing package.
     """
 
     logger = logging.getLogger(__name__)
@@ -68,15 +66,11 @@ def _load_callable(
             module: str
             attr: str
             exc: Exception
-            install_attempted: bool
-            install_output: str | None = None
 
         error = MissingDependencyError(
             module,
             attr,
             exc,
-            install_attempted=False,
-            install_output=None,
         )
         guide = f"Install it via `pip install {module.split('.')[0]}` to use {attr}"
 
