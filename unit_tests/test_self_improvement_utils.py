@@ -10,6 +10,8 @@ import asyncio
 import random
 import inspect
 from dataclasses import dataclass
+import subprocess
+import sys
 
 import pytest
 
@@ -35,6 +37,7 @@ def _load_utils():
             self.retry_optional_dependencies = False
             self.sandbox_retry_delay = 0
             self.sandbox_max_retries = 0
+            self.menace_offline_install = False
 
     ns = {
         "importlib": importlib,
@@ -49,26 +52,39 @@ def _load_utils():
         "self_improvement_failure_total": counter,
         "SandboxSettings": _StubSettings,
         "dataclass": dataclass,
+        "subprocess": subprocess,
+        "sys": sys,
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns, counter
 
 
-def test_load_callable_success():
+def test_load_callable_success_and_cache():
     utils, counter = _load_utils()
-    fn = utils["_load_callable"]("math", "sqrt")
-    assert fn(4) == 2
+    module = types.SimpleNamespace(attr=lambda: "ok")
+    with patch("importlib.import_module", return_value=module) as mod:
+        fn1 = utils["_load_callable"]("mod", "attr")
+        fn2 = utils["_load_callable"]("mod", "attr")
+        assert fn1 is fn2
+    assert mod.call_count == 1
+    assert utils["_load_callable"].diagnostics["cache_hits"] == 1
+    assert utils["_load_callable"].diagnostics["cache_misses"] == 1
     assert counter.count == 0
 
 
 def test_load_callable_missing_returns_stub_and_records_metric():
     utils, counter = _load_utils()
-    with patch("importlib.import_module", side_effect=ImportError):
+    with patch("subprocess.check_call", side_effect=Exception) as sp, patch(
+        "importlib.import_module", side_effect=ImportError
+    ):
         fn = utils["_load_callable"]("missing", "attr")
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError) as ei:
             fn()
     assert counter.count == 1
     assert fn.error.module == "missing"
+    assert "pip install missing" in str(ei.value)
+    assert utils["_load_callable"].diagnostics["install_attempts"] == 1
+    assert sp.called
 
 
 def test_load_callable_retry_succeeds_when_enabled():
@@ -83,11 +99,14 @@ def test_load_callable_retry_succeeds_when_enabled():
             raise ImportError
         return types.SimpleNamespace(attr=lambda: "ok")
 
-    with patch("importlib.import_module", side_effect=side_effect):
+    with patch("subprocess.check_call", side_effect=Exception), patch(
+        "importlib.import_module", side_effect=side_effect
+    ):
         utils["SandboxSettings"] = lambda: types.SimpleNamespace(
             retry_optional_dependencies=True,
             sandbox_retry_delay=0,
             sandbox_max_retries=3,
+            menace_offline_install=False,
         )
         fn = utils["_load_callable"]("mod", "attr")
         assert fn() == "ok"
