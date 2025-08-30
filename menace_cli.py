@@ -252,6 +252,25 @@ def handle_cache_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_branch_log(args: argparse.Namespace) -> int:
+    """Display patch branch actions from the audit trail."""
+    path = os.getenv("AUDIT_LOG_PATH", "audit.log")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    _sig, msg = line.split(" ", 1)
+                    data = json.loads(msg)
+                except ValueError:
+                    continue
+                if data.get("action") == "patch_branch":
+                    print(json.dumps(data))
+    except FileNotFoundError:
+        print("audit trail not found", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Menace workflow helper")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -376,6 +395,10 @@ def main(argv: list[str] | None = None) -> int:
 
     # allow plugins to register additional subcommands
     load_plugins(sub)
+
+    sub.add_parser(
+        "branch-log", help="Show patch branch audit trail"
+    ).set_defaults(func=handle_branch_log)
 
     args = parser.parse_args(argv)
 
