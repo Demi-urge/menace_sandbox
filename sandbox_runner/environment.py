@@ -2938,7 +2938,7 @@ def _cleanup_pools() -> None:
                         _RUNTIME_VMS_REMOVED,
                     )
                 except Exception:
-                    pass
+                    logger.exception('unexpected error')
 
         try:
             proc = subprocess.run(
@@ -2955,7 +2955,7 @@ def _cleanup_pools() -> None:
                         try:
                             logger.info("removing stale sandbox container %s", cid)
                         except Exception:
-                            pass
+                            logger.exception('unexpected error')
                         subprocess.run(
                             ["docker", "rm", "-f", cid],
                             stdout=subprocess.DEVNULL,
@@ -2965,7 +2965,7 @@ def _cleanup_pools() -> None:
             else:
                 pass
         except Exception:
-            pass
+            logger.exception('unexpected error')
 
         # also prune any leftover volumes and networks so runtime
         # resources are fully released when the sandbox exits
@@ -2991,7 +2991,7 @@ def _await_cleanup_task() -> None:
         try:
             task.cancel()
         except Exception:
-            pass
+            logger.exception('unexpected error')
     _CLEANUP_TASK = None
 
 
@@ -3011,7 +3011,7 @@ def _await_reaper_task() -> None:
         try:
             task.cancel()
         except Exception:
-            pass
+            logger.exception('unexpected error')
     _REAPER_TASK = None
 
 
@@ -3113,7 +3113,7 @@ def start_container_event_listener() -> None:
             try:
                 api.close()
             except Exception:
-                pass
+                logger.exception('unexpected error')
         global _EVENT_THREAD
         _EVENT_THREAD = None
 
@@ -3134,7 +3134,7 @@ def stop_container_event_listener() -> None:
     try:
         _EVENT_THREAD.join(timeout=1.0)
     except Exception:
-        pass
+        logger.exception('unexpected error')
     _EVENT_THREAD = None
     _EVENT_STOP = None
 
@@ -3174,7 +3174,7 @@ def ensure_cleanup_worker() -> None:
         cancelled = task.cancelled()
         exc = task.exception()
     except Exception:
-        pass
+        logger.exception('unexpected error')
     if cancelled or exc is not None:
         _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
         if _CLEANUP_TASK is None:
@@ -3201,7 +3201,7 @@ def ensure_cleanup_worker() -> None:
         cancelled = task.cancelled()
         exc = task.exception()
     except Exception:
-        pass
+        logger.exception('unexpected error')
     if done or cancelled or exc is not None:
         _REAPER_TASK = _schedule_coroutine(_reaper_worker())
         if _REAPER_TASK is None:
@@ -4291,7 +4291,7 @@ async def _section_worker(
                 runner = WorkflowSandboxRunner()
                 runner.run(lambda: exec(snip, {}), **rc)
             except Exception:
-                pass
+                logger.exception('unexpected error')
             conc_path = Path(td) / "concurrency.json"
             env["SANDBOX_CONCURRENCY_OUT"] = str(conc_path)
             if "memory" in modes and "MEMORY_LIMIT" not in env_input:
@@ -6147,7 +6147,7 @@ def run_repo_section_simulations(
                     if levels:
                         extra_presets.extend(levels.values())
             except Exception:
-                pass
+                logger.exception('unexpected error')
             for preset in extra_presets:
                 if preset not in all_presets:
                     all_presets.append(preset)
@@ -6631,7 +6631,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                     try:
                         overlay.unlink()
                     except Exception:
-                        pass
+                        logger.exception('unexpected error')
                     _remove_active_overlay(str(overlay.parent))
             else:
                 logger.warning("qemu binary or VM image missing, running locally")
@@ -6767,7 +6767,7 @@ def try_integrate_into_workflows(
             try:
                 _me.orphan_modules_side_effects_total.inc()
             except Exception:
-                pass
+                logger.exception('unexpected error')
             continue
         names[rel_str] = rel.with_suffix("").as_posix().replace("/", ".")
     if not names:
@@ -6827,7 +6827,7 @@ def try_integrate_into_workflows(
             try:
                 idx.set_tags(mod, tags)
             except Exception:
-                pass
+                logger.exception('unexpected error')
 
     clusterer = intent_clusterer
 
@@ -6839,7 +6839,7 @@ def try_integrate_into_workflows(
                 try:
                     expanded |= get_synergy_cluster(dotted, synergy_threshold)
                 except Exception:
-                    pass
+                    logger.exception('unexpected error')
             ids: set[int] = set()
             for name in expanded:
                 path = (repo / (name.replace(".", "/") + ".py")).resolve()
@@ -6881,9 +6881,9 @@ def try_integrate_into_workflows(
                     try:
                         idx.set_tags(rel.as_posix(), tags)
                     except Exception:
-                        pass
+                        logger.exception('unexpected error')
             except Exception:
-                pass
+                logger.exception('unexpected error')
         existing = set(wf.workflow)
         imported = {Path(s).stem for s in step_names}
         new_mods: list[str] = []
@@ -7116,7 +7116,7 @@ def run_workflow_simulations(
                 if isinstance(env_presets, Mapping):
                     preset_map.setdefault(name, []).append(preset)
         except Exception:
-            pass
+            logger.exception('unexpected error')
 
     wf_db = WorkflowDB(Path(workflows_db), router=router)
     workflows = wf_db.fetch()
@@ -7142,7 +7142,7 @@ def run_workflow_simulations(
                     if not present:
                         groups.setdefault(str(gid), []).append(dotted)
             except Exception:
-                pass
+                logger.exception('unexpected error')
         workflows = [
             WorkflowRecord(workflow=mods, title=f"workflow_{gid}", wid=i + 1)
             for i, (gid, mods) in enumerate(sorted(groups.items()))
@@ -7165,7 +7165,7 @@ def run_workflow_simulations(
                     preset_map[module] = new_presets
                     all_presets.extend(new_presets)
         except Exception:
-            pass
+            logger.exception('unexpected error')
 
     def _module_from_step(step: str) -> str:
         if ":" in step:
@@ -7524,7 +7524,7 @@ def auto_include_modules(
                     rel += ".py"
                 retired_flags.add(Path(rel).as_posix())
     except Exception:
-        pass
+        logger.exception('unexpected error')
 
     mod_paths = {Path(m).as_posix() for m in modules}
     isolated_mods: set[str] = set()
@@ -7540,7 +7540,7 @@ def auto_include_modules(
             else:
                 existing_mods = set(mapping)
     except Exception:
-        pass
+        logger.exception('unexpected error')
     mod_paths.difference_update(existing_mods)
     redundant_mods: dict[str, str] = {}
 
@@ -7598,7 +7598,7 @@ def auto_include_modules(
             mod_paths.update(deps)
             mod_paths.difference_update(existing_mods)
         except Exception:
-            pass
+            logger.exception('unexpected error')
 
     candidate_paths = set(mod_paths)
     evaluated: set[str] = set()
@@ -7625,7 +7625,7 @@ def auto_include_modules(
                 else:
                     mod_paths.add(path)
         except Exception:
-            pass
+            logger.exception('unexpected error')
 
     include_isolated = getattr(settings, "auto_include_isolated", True)
     if include_isolated or recursive:
@@ -7643,9 +7643,9 @@ def auto_include_modules(
                 try:
                     _me.isolated_modules_discovered_total.inc()
                 except Exception:
-                    pass
+                    logger.exception('unexpected error')
         except Exception:
-            pass
+            logger.exception('unexpected error')
 
     if retired_flags:
         retired_present = sorted(retired_flags.intersection(mod_paths))
@@ -7710,7 +7710,7 @@ def auto_include_modules(
                 if orphan_analyzer.analyze_redundancy(path):
                     redundant_mods[mod] = "redundant"
         except Exception:
-            pass
+            logger.exception('unexpected error')
 
     cache = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "orphan_modules.json"
     try:
@@ -7742,7 +7742,7 @@ def auto_include_modules(
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps(existing, indent=2))
     except Exception:
-        pass
+        logger.exception('unexpected error')
 
     try:
         from sandbox_runner.orphan_discovery import append_orphan_classifications
@@ -7753,7 +7753,7 @@ def auto_include_modules(
         }
         append_orphan_classifications(repo, class_entries)
     except Exception:
-        pass
+        logger.exception('unexpected error')
 
     mods = [
         m
@@ -7779,7 +7779,7 @@ def auto_include_modules(
             try:
                 tracker.load_history(str(hist_path))
             except Exception:
-                pass
+                logger.exception('unexpected error')
         for m in list(mods):
             roi_val = sum(tracker.module_deltas.get(m, []))
             if roi_val < min_roi:
@@ -7805,9 +7805,9 @@ def auto_include_modules(
                 cache.parent.mkdir(parents=True, exist_ok=True)
                 cache.write_text(json.dumps(existing, indent=2))
             except Exception:
-                pass
+                logger.exception('unexpected error')
     except Exception:
-        pass
+        logger.exception('unexpected error')
 
     baseline_result = run_workflow_simulations(router=router)
     baseline_tracker = (
@@ -7818,7 +7818,7 @@ def auto_include_modules(
         data_dir.mkdir(parents=True, exist_ok=True)
         baseline_tracker.save_history(str(data_dir / "roi_history.json"))
     except Exception:
-        pass
+        logger.exception('unexpected error')
     baseline_roi = sum(float(r) for r in getattr(baseline_tracker, "roi_history", []))
 
     if not mods:
@@ -7845,7 +7845,7 @@ def auto_include_modules(
                     conn.execute("DELETE FROM workflows WHERE id=?", (wid,))
                 conn.commit()
             except Exception:
-                pass
+                logger.exception('unexpected error')
     if low_roi_mods:
         tested.setdefault("low_roi", []).extend(low_roi_mods)
         tested["added"] = [m for m in tested.get("added", []) if m not in low_roi_mods]
@@ -7864,7 +7864,7 @@ def auto_include_modules(
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(existing, indent=2))
         except Exception:
-            pass
+            logger.exception('unexpected error')
     mods = accepted
     if not mods:
         return baseline_tracker, tested
@@ -7876,7 +7876,7 @@ def auto_include_modules(
             try:
                 _me.isolated_modules_integrated_total.inc()
             except Exception:
-                pass
+                logger.exception('unexpected error')
 
     data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
     map_file = data_dir / "module_map.json"
@@ -7907,7 +7907,7 @@ def auto_include_modules(
         map_file.parent.mkdir(parents=True, exist_ok=True)
         map_file.write_text(json.dumps(container, indent=2))
     except Exception:
-        pass
+        logger.exception('unexpected error')
 
     result = run_workflow_simulations(router=router)
     tracker = result[0] if isinstance(result, tuple) else result
@@ -7919,7 +7919,7 @@ def auto_include_modules(
             elif map_file.exists():
                 map_file.unlink()
         except Exception:
-            pass
+            logger.exception('unexpected error')
         cache = data_dir / "orphan_modules.json"
         try:
             existing_cache = json.loads(cache.read_text()) if cache.exists() else {}
@@ -7939,23 +7939,23 @@ def auto_include_modules(
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(existing_cache, indent=2))
         except Exception:
-            pass
+            logger.exception('unexpected error')
         try:
             data_dir.mkdir(parents=True, exist_ok=True)
             baseline_tracker.save_history(str(data_dir / "roi_history.json"))
         except Exception:
-            pass
+            logger.exception('unexpected error')
         return baseline_tracker, tested
 
     try:
         tracker.cluster_map.update(module_map)
     except Exception:
-        pass
+        logger.exception('unexpected error')
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
         tracker.save_history(str(data_dir / "roi_history.json"))
     except Exception:
-        pass
+        logger.exception('unexpected error')
     return tracker, tested
 
 
