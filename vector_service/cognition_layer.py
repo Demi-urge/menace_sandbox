@@ -40,7 +40,6 @@ from .patch_logger import PatchLogger
 from vector_metrics_db import VectorMetricsDB
 from .decorators import log_and_measure
 from .embedding_backfill import schedule_backfill
-from weight_adjuster import WeightAdjuster
 
 
 logger = logging.getLogger(__name__)
@@ -81,7 +80,6 @@ class CognitionLayer:
         event_bus: "UnifiedEventBus" | None = None,
         roi_tracker: ROITracker | None = None,
         ranking_model: Any | None = None,
-        weight_adjuster: WeightAdjuster | None = None,
     ) -> None:
         self.retriever = retriever or Retriever()
         self.patch_retriever = patch_retriever or PatchRetriever()
@@ -147,9 +145,6 @@ class CognitionLayer:
                     self._retrieval_meta[sid] = meta
             except Exception:
                 logger.exception("Failed to load pending sessions from metrics DB")
-        self.weight_adjuster = weight_adjuster or WeightAdjuster(
-            vector_metrics=self.vector_metrics
-        )
 
     # ------------------------------------------------------------------
     def reload_ranker_model(
@@ -944,11 +939,6 @@ class CognitionLayer:
             except Exception:
                 logger.exception("Failed to refresh context builder weights")
 
-        if self.weight_adjuster is not None:
-            try:
-                self.weight_adjuster.adjust(vectors, success, roi_deltas=roi_deltas)
-            except Exception:
-                logger.exception("Failed to adjust vector weights")
 
         if not success or roi_drop:
             try:
