@@ -188,12 +188,14 @@ class PromptEngine:
 
         successes: List[tuple[float, str]] = []
         failures: List[tuple[float, str]] = []
-        for meta in metas:
+        for rec, meta in zip(records, metas):
+            score = rec.get("weighted_score")
+            if score is None:
+                score = self._score_snippet(meta, min_ts=min_ts, span=span)
+            if score < self.confidence_threshold:
+                continue
             snippet, passed = self._compress_patch(meta, max_tokens=self.max_tokens)
             if not snippet:
-                continue
-            score = self._score_snippet(meta, min_ts=min_ts, span=span)
-            if score < self.confidence_threshold:
                 continue
             if passed:
                 successes.append((score, snippet))
@@ -350,6 +352,7 @@ class PromptEngine:
             score = self._score_snippet(meta, min_ts=min_ts, span=span)
             if score < self.confidence_threshold:
                 continue
+            rec["weighted_score"] = score
             scored.append((score, rec))
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -385,21 +388,21 @@ class PromptEngine:
                 roi_val = None
 
         try:
-            roi_score = float(roi_val) if roi_val is not None else 0.0
+            raroi = float(roi_val) if roi_val is not None else 0.0
         except Exception:  # pragma: no cover - defensive
-            roi_score = 0.0
+            raroi = 0.0
 
         ts = float(meta.get("ts") or 0.0)
-        recency_score = (ts - min_ts) / span if span else 0.0
+        normalised_ts = (ts - min_ts) / span if span else 0.0
+
+        score = (
+            self.roi_weight * raroi + self.recency_weight * normalised_ts
+        )
 
         tag = meta.get("roi_tag")
-        tag_score = float(self.roi_tag_weights.get(tag, 0.0))
+        score += float(self.roi_tag_weights.get(tag, 0.0))
 
-        return (
-            roi_score * self.roi_weight
-            + recency_score * self.recency_weight
-            + tag_score
-        )
+        return score
 
     # ------------------------------------------------------------------
     def _trim_tokens(self, text: str, limit: int) -> str:
