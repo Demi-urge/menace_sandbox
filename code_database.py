@@ -992,6 +992,8 @@ class PatchRecord:
     parent_patch_id: int | None = None
     reason: str | None = None
     trigger: str | None = None
+    diff: str | None = None
+    summary: str | None = None
 
     def __post_init__(self) -> None:
         assert self.filename, "filename cannot be empty"
@@ -1052,6 +1054,8 @@ class PatchHistoryDB:
                 parent_patch_id INTEGER,
                 reason TEXT,
                 trigger TEXT,
+                diff TEXT,
+                summary TEXT,
                 lines_changed INTEGER DEFAULT 0,
                 tests_passed INTEGER DEFAULT 0,
                 enhancement_name TEXT,
@@ -1146,6 +1150,8 @@ class PatchHistoryDB:
             "parent_patch_id": "ALTER TABLE patch_history ADD COLUMN parent_patch_id INTEGER",
             "reason": "ALTER TABLE patch_history ADD COLUMN reason TEXT",
             "trigger": "ALTER TABLE patch_history ADD COLUMN trigger TEXT",
+            "diff": "ALTER TABLE patch_history ADD COLUMN diff TEXT",
+            "summary": "ALTER TABLE patch_history ADD COLUMN summary TEXT",
             "lines_changed": "ALTER TABLE patch_history ADD COLUMN lines_changed INTEGER DEFAULT 0",
             "tests_passed": "ALTER TABLE patch_history ADD COLUMN tests_passed INTEGER DEFAULT 0",
             "enhancement_name": "ALTER TABLE patch_history ADD COLUMN enhancement_name TEXT",
@@ -1360,7 +1366,7 @@ class PatchHistoryDB:
                     pass
 
             cur = conn.execute(
-                "INSERT INTO patch_history(filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO patch_history(filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger, diff, summary) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     rec.filename,
                     rec.description,
@@ -1387,6 +1393,8 @@ class PatchHistoryDB:
                     rec.parent_patch_id,
                     rec.reason,
                     rec.trigger,
+                    rec.diff,
+                    rec.summary,
                 ),
             )
 
@@ -1427,7 +1435,7 @@ class PatchHistoryDB:
 
         def op(conn: sqlite3.Connection) -> PatchRecord | None:
             row = conn.execute(
-                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history WHERE id=?",
+                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger, diff, summary FROM patch_history WHERE id=?",
                 (patch_id,),
             ).fetchone()
             return PatchRecord(*row) if row else None
@@ -1438,7 +1446,7 @@ class PatchHistoryDB:
         """Return the highest ROI patches."""
         with self._connect() as conn:
             cur = conn.execute(
-                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history ORDER BY roi_delta DESC LIMIT ?",
+                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger, diff, summary FROM patch_history ORDER BY roi_delta DESC LIMIT ?",
                 (limit,),
             )
             rows = cur.fetchall()
@@ -1472,6 +1480,8 @@ class PatchHistoryDB:
         tests_passed: bool | None = None,
         enhancement_name: str | None = None,
         timestamp: float | None = None,
+        diff: str | None = None,
+        summary: str | None = None,
     ) -> None:
         """Update :class:`VectorMetricsDB` rows for *session_id* and *vectors*."""
 
@@ -1492,12 +1502,14 @@ class PatchHistoryDB:
         try:
             conn = self.router.get_connection("patch_history")
             conn.execute(
-                "UPDATE patch_history SET lines_changed=?, tests_passed=?, enhancement_name=?, timestamp=? WHERE id=?",
+                "UPDATE patch_history SET lines_changed=?, tests_passed=?, enhancement_name=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary) WHERE id=?",
                 (
                     lines_changed,
                     None if tests_passed is None else int(bool(tests_passed)),
                     enhancement_name,
                     timestamp,
+                    diff,
+                    summary,
                     patch_id,
                 ),
             )
@@ -1791,7 +1803,7 @@ class PatchHistoryDB:
             base = (
                 "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, "
                 "roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, "
-                "predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history"
+                "predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger, diff, summary FROM patch_history"
             )
             clauses: List[str] = []
             params: List[Any] = []
@@ -1826,7 +1838,7 @@ class PatchHistoryDB:
 
         def op(conn: sqlite3.Connection) -> List[PatchRecord]:
             rows = conn.execute(
-                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history WHERE description LIKE ? COLLATE NOCASE OR filename LIKE ? COLLATE NOCASE",
+                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger, diff, summary FROM patch_history WHERE description LIKE ? COLLATE NOCASE OR filename LIKE ? COLLATE NOCASE",
                 (pattern, pattern),
             ).fetchall()
             patches = [PatchRecord(*row) for row in rows]
@@ -1840,7 +1852,7 @@ class PatchHistoryDB:
 
         def op(conn: sqlite3.Connection) -> List[PatchRecord]:
             rows = conn.execute(
-                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history WHERE ts BETWEEN ? AND ?",
+                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger, diff, summary FROM patch_history WHERE ts BETWEEN ? AND ?",
                 (start.isoformat(), end.isoformat()),
             ).fetchall()
             patches = [PatchRecord(*row) for row in rows]
@@ -1861,7 +1873,7 @@ class PatchHistoryDB:
 
         def op(conn: sqlite3.Connection) -> List[PatchRecord]:
             rows = conn.execute(
-                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history WHERE code_hash=?",
+                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger, diff, summary FROM patch_history WHERE code_hash=?",
                 (code_hash,),
             ).fetchall()
             patches = [PatchRecord(*row) for row in rows]
@@ -1881,7 +1893,7 @@ class PatchHistoryDB:
             base = (
                 "SELECT id, filename, description, roi_before, roi_after, errors_before, errors_after, "
                 "roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, "
-                "predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history ORDER BY id DESC"
+                "predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger, diff, summary FROM patch_history ORDER BY id DESC"
             )
             rows = conn.execute(base + (" LIMIT ?" if limit is not None else ""),
                                  (() if limit is None else (limit,))).fetchall()
@@ -1903,8 +1915,7 @@ class PatchHistoryDB:
 
         def op(conn: sqlite3.Connection) -> List[tuple[int, PatchRecord]]:
             query = (
-                "SELECT id, filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history"
-            )
+                "SELECT id, filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger, diff, summary FROM patch_history"
             if index_hint:
                 query += f" INDEXED BY {index_hint}"
             query += " WHERE description LIKE ? COLLATE NOCASE OR filename LIKE ? COLLATE NOCASE"
@@ -1928,12 +1939,12 @@ class PatchHistoryDB:
             if ":" in vector:
                 origin, vid = vector.split(":", 1)
                 rows = conn.execute(
-                    "SELECT h.id, h.filename, h.description, h.roi_before, h.roi_after, h.errors_before, h.errors_after, h.roi_delta, h.complexity_before, h.complexity_after, h.complexity_delta, h.entropy_before, h.entropy_after, h.entropy_delta, h.predicted_roi, h.predicted_errors, h.reverted, h.trending_topic, h.ts, h.code_id, h.code_hash, h.source_bot, h.version, h.parent_patch_id, h.reason, h.trigger FROM patch_provenance p JOIN patch_history h ON h.id=p.patch_id WHERE p.origin=? AND p.vector_id=?",
+                    "SELECT h.id, h.filename, h.description, h.roi_before, h.roi_after, h.errors_before, h.errors_after, h.roi_delta, h.complexity_before, h.complexity_after, h.complexity_delta, h.entropy_before, h.entropy_after, h.entropy_delta, h.predicted_roi, h.predicted_errors, h.reverted, h.trending_topic, h.ts, h.code_id, h.code_hash, h.source_bot, h.version, h.parent_patch_id, h.reason, h.trigger, h.diff, h.summary FROM patch_provenance p JOIN patch_history h ON h.id=p.patch_id WHERE p.origin=? AND p.vector_id=?",
                     (origin, vid),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT h.id, h.filename, h.description, h.roi_before, h.roi_after, h.errors_before, h.errors_after, h.roi_delta, h.complexity_before, h.complexity_after, h.complexity_delta, h.entropy_before, h.entropy_after, h.entropy_delta, h.predicted_roi, h.predicted_errors, h.reverted, h.trending_topic, h.ts, h.code_id, h.code_hash, h.source_bot, h.version, h.parent_patch_id, h.reason, h.trigger FROM patch_provenance p JOIN patch_history h ON h.id=p.patch_id WHERE p.vector_id=?",
+                    "SELECT h.id, h.filename, h.description, h.roi_before, h.roi_after, h.errors_before, h.errors_after, h.roi_delta, h.complexity_before, h.complexity_after, h.complexity_delta, h.entropy_before, h.entropy_after, h.entropy_delta, h.predicted_roi, h.predicted_errors, h.reverted, h.trending_topic, h.ts, h.code_id, h.code_hash, h.source_bot, h.version, h.parent_patch_id, h.reason, h.trigger, h.diff, h.summary FROM patch_provenance p JOIN patch_history h ON h.id=p.patch_id WHERE p.vector_id=?",
                     (vector,),
                 ).fetchall()
             return [(row[0], PatchRecord(*row[1:])) for row in rows]

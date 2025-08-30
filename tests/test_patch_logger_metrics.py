@@ -95,6 +95,8 @@ class DummyPatchDB:
         tests_passed=None,
         enhancement_name=None,
         timestamp=None,
+        diff=None,
+        summary=None,
     ):
         self.kwargs = {
             "session_id": session_id,
@@ -107,6 +109,8 @@ class DummyPatchDB:
             "tests_passed": tests_passed,
             "enhancement_name": enhancement_name,
             "timestamp": timestamp,
+            "diff": diff,
+            "summary": summary,
         }
 
 
