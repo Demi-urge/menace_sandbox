@@ -149,9 +149,15 @@ class PatchLogger:
         patch_safety: PatchSafety | None = None,
     ) -> None:
         self.patch_db = patch_db or (PatchHistoryDB() if PatchHistoryDB is not None else None)
-        self.vector_metrics = vector_metrics or (
-            VectorMetricsDB() if VectorMetricsDB is not None else None
-        )
+        if vector_metrics is not None:
+            self.vector_metrics = vector_metrics
+        elif VectorMetricsDB is not None:
+            try:
+                self.vector_metrics = VectorMetricsDB()
+            except Exception:
+                self.vector_metrics = None
+        else:
+            self.vector_metrics = None
         self.metrics_db = metrics_db
         self.roi_tracker = roi_tracker
         self.event_bus = event_bus
@@ -203,6 +209,10 @@ class PatchLogger:
         contribution: float | None = None,
         retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
         risk_callback: "Callable[[Mapping[str, float]], Any]" | None = None,
+        lines_changed: int | None = None,
+        tests_passed: bool | None = None,
+        enhancement_name: str | None = None,
+        timestamp: float | None = None,
     ) -> dict[str, float]:
         """Log patch outcome for vectors contributing to a patch.
 
@@ -344,6 +354,10 @@ class PatchLogger:
                             contribution=0.0 if contribution is None else contribution,
                             win=result,
                             regret=not result,
+                            lines_changed=lines_changed,
+                            tests_passed=tests_passed,
+                            enhancement_name=enhancement_name,
+                            timestamp=timestamp,
                         )
                     except Exception:
                         logger.exception("patch_db.record_vector_metrics failed")
@@ -613,6 +627,25 @@ class PatchLogger:
                 logger.exception(
                     "UnifiedEventBus patch_logger outcome publish failed"
                 )
+        summary = {
+            "patch_id": patch_id,
+            "result": result,
+            "roi_deltas": dict(roi_deltas),
+            "lines_changed": lines_changed,
+            "tests_passed": tests_passed,
+            "enhancement_name": enhancement_name,
+            "timestamp": timestamp,
+        }
+        if self.event_bus is not None:
+            try:
+                self.event_bus.publish("patch:summary", summary)
+            except Exception:
+                logger.exception("event bus patch summary publish failed")
+        elif UnifiedEventBus is not None:
+            try:
+                UnifiedEventBus().publish("patch:summary", summary)
+            except Exception:
+                logger.exception("UnifiedEventBus patch summary publish failed")
 
         if risk_callback is not None:
             try:
@@ -634,6 +667,10 @@ class PatchLogger:
         contribution: float | None = None,
         retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
         risk_callback: "Callable[[Mapping[str, float]], Any]" | None = None,
+        lines_changed: int | None = None,
+        tests_passed: bool | None = None,
+        enhancement_name: str | None = None,
+        timestamp: float | None = None,
     ) -> dict[str, float]:
         """Asynchronous wrapper for :meth:`track_contributors`."""
 
@@ -647,6 +684,10 @@ class PatchLogger:
             contribution=contribution,
             retrieval_metadata=retrieval_metadata,
             risk_callback=risk_callback,
+            lines_changed=lines_changed,
+            tests_passed=tests_passed,
+            enhancement_name=enhancement_name,
+            timestamp=timestamp,
         )
 
 

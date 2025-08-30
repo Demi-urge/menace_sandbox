@@ -67,9 +67,15 @@ class DummyVectorMetricsDB:
 class DummyROITracker:
     def __init__(self) -> None:
         self.metrics: dict[str, dict[str, float]] = {}
+        self.deltas: dict[str, float] = {}
 
     def update_db_metrics(self, metrics: dict[str, dict[str, float]]) -> None:
         self.metrics.update(metrics)
+        for origin, stats in metrics.items():
+            self.deltas[origin] = stats.get("roi", 0.0)
+
+    def origin_db_deltas(self) -> dict[str, float]:
+        return dict(self.deltas)
 
 
 class DummyPatchDB:
@@ -85,6 +91,10 @@ class DummyPatchDB:
         contribution,
         win,
         regret,
+        lines_changed=None,
+        tests_passed=None,
+        enhancement_name=None,
+        timestamp=None,
     ):
         self.kwargs = {
             "session_id": session_id,
@@ -93,6 +103,10 @@ class DummyPatchDB:
             "contribution": contribution,
             "win": win,
             "regret": regret,
+            "lines_changed": lines_changed,
+            "tests_passed": tests_passed,
+            "enhancement_name": enhancement_name,
+            "timestamp": timestamp,
         }
 
 
@@ -167,8 +181,22 @@ def test_track_contributors_forwards_contribution_patch_db(monkeypatch):
     _, _, _, _, _, _, _ = patch_metrics(monkeypatch)
     pdb = DummyPatchDB()
     pl = PatchLogger(patch_db=pdb)
-    pl.track_contributors(["v2"], False, patch_id="7", session_id="s", contribution=0.8)
+    pl.track_contributors(
+        ["v2"],
+        False,
+        patch_id="7",
+        session_id="s",
+        contribution=0.8,
+        lines_changed=5,
+        tests_passed=True,
+        enhancement_name="feat",
+        timestamp=123.0,
+    )
     assert pdb.kwargs and pdb.kwargs["contribution"] == 0.8
+    assert pdb.kwargs["lines_changed"] == 5
+    assert pdb.kwargs["tests_passed"] is True
+    assert pdb.kwargs["enhancement_name"] == "feat"
+    assert pdb.kwargs["timestamp"] == 123.0
 
 
 def test_track_contributors_forwards_roi_feedback(monkeypatch):
@@ -220,6 +248,33 @@ def test_track_contributors_emits_safety_metrics(monkeypatch):
     assert ev["semantic_alerts"] == ["a1", "a2"]
     assert ev["roi_metrics"]["db1"]["alignment_severity"] == pytest.approx(2.0)
     assert ev["roi_metrics"]["db1"]["semantic_alerts"] == ["a1", "a2"]
+
+
+def test_track_contributors_emits_summary_event(monkeypatch):
+    _, _, _, _, _, _, _ = patch_metrics(monkeypatch)
+    events: list[tuple[str, dict]] = []
+
+    class Bus:
+        def publish(self, topic, payload):
+            events.append((topic, payload))
+
+    rt = DummyROITracker()
+    pl = PatchLogger(roi_tracker=rt, event_bus=Bus())
+    pl.track_contributors(
+        ["db1:v1"],
+        True,
+        session_id="s",
+        contribution=0.5,
+        lines_changed=10,
+        tests_passed=True,
+        enhancement_name="feat",
+        timestamp=1.23,
+    )
+    summary = [p for t, p in events if t == "patch:summary"][0]
+    assert summary["lines_changed"] == 10
+    assert summary["tests_passed"] is True
+    assert summary["enhancement_name"] == "feat"
+    assert summary["roi_deltas"]["db1"] == pytest.approx(0.5)
 
 
 # ---------------------------------------------------------------------------

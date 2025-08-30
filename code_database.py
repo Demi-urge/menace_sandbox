@@ -1051,7 +1051,11 @@ class PatchHistoryDB:
                 code_hash TEXT,
                 parent_patch_id INTEGER,
                 reason TEXT,
-                trigger TEXT
+                trigger TEXT,
+                lines_changed INTEGER DEFAULT 0,
+                tests_passed INTEGER DEFAULT 0,
+                enhancement_name TEXT,
+                timestamp REAL
             )
             """
         )
@@ -1142,7 +1146,11 @@ class PatchHistoryDB:
             "parent_patch_id": "ALTER TABLE patch_history ADD COLUMN parent_patch_id INTEGER",
             "reason": "ALTER TABLE patch_history ADD COLUMN reason TEXT",
             "trigger": "ALTER TABLE patch_history ADD COLUMN trigger TEXT",
-        }
+            "lines_changed": "ALTER TABLE patch_history ADD COLUMN lines_changed INTEGER DEFAULT 0",
+            "tests_passed": "ALTER TABLE patch_history ADD COLUMN tests_passed INTEGER DEFAULT 0",
+            "enhancement_name": "ALTER TABLE patch_history ADD COLUMN enhancement_name TEXT",
+            "timestamp": "ALTER TABLE patch_history ADD COLUMN timestamp REAL",
+ }
         for name, stmt in migrations.items():
             if name not in cols:
                 conn.execute(stmt)
@@ -1460,6 +1468,10 @@ class PatchHistoryDB:
         contribution: float,
         win: bool,
         regret: bool,
+        lines_changed: int | None = None,
+        tests_passed: bool | None = None,
+        enhancement_name: str | None = None,
+        timestamp: float | None = None,
     ) -> None:
         """Update :class:`VectorMetricsDB` rows for *session_id* and *vectors*."""
 
@@ -1476,6 +1488,22 @@ class PatchHistoryDB:
             )
         except Exception:
             logger.exception("vector metrics update failed")
+
+        try:
+            conn = self.router.get_connection("patch_history")
+            conn.execute(
+                "UPDATE patch_history SET lines_changed=?, tests_passed=?, enhancement_name=?, timestamp=? WHERE id=?",
+                (
+                    lines_changed,
+                    None if tests_passed is None else int(bool(tests_passed)),
+                    enhancement_name,
+                    timestamp,
+                    patch_id,
+                ),
+            )
+            conn.commit()
+        except Exception:
+            logger.exception("failed to update patch history with metrics")
 
     # ------------------------------------------------------------------
     def _insert_provenance(
