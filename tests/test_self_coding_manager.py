@@ -15,6 +15,8 @@ import menace.data_bot as db
 from menace.evolution_history_db import EvolutionHistoryDB
 from pathlib import Path
 import subprocess
+import tempfile
+import shutil
 import logging
 
 
@@ -41,7 +43,7 @@ class DummyPipeline:
         )
 
 
-def test_run_patch_logs_evolution(tmp_path):
+def test_run_patch_logs_evolution(monkeypatch, tmp_path):
     hist = EvolutionHistoryDB(tmp_path / "e.db")
     mdb = db.MetricsDB(tmp_path / "m.db")
     data_bot = db.DataBot(mdb, evolution_db=hist)
@@ -50,6 +52,38 @@ def test_run_patch_logs_evolution(tmp_path):
     mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
     file_path = tmp_path / "sample.py"
     file_path.write_text("def x():\n    pass\n")
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd[0] == "pytest":
+            return subprocess.CompletedProcess(cmd, 0)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    class DummyRunner:
+        def run(self, workflow, *, safe_mode=False, **kw):
+            workflow()
+            return types.SimpleNamespace(modules=[types.SimpleNamespace(result=True)])
+
+    monkeypatch.setattr(scm, "WorkflowSandboxRunner", lambda: DummyRunner())
+
     res = mgr.run_patch(file_path, "add")
     assert engine.calls
     assert pipeline.calls
@@ -68,6 +102,37 @@ def test_run_patch_logging_error(monkeypatch, tmp_path, caplog):
     mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
     file_path = tmp_path / "sample.py"
     file_path.write_text("def x():\n    pass\n")
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd[0] == "pytest":
+            return subprocess.CompletedProcess(cmd, 0)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    class DummyRunner:
+        def run(self, workflow, *, safe_mode=False, **kw):
+            workflow()
+            return types.SimpleNamespace(modules=[types.SimpleNamespace(result=True)])
+
+    monkeypatch.setattr(scm, "WorkflowSandboxRunner", lambda: DummyRunner())
 
     def fail(*a, **k):
         raise RuntimeError("boom")
