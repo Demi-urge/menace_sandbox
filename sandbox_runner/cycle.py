@@ -323,7 +323,7 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
 
     # Load cached traces
     try:
-        cached = load_orphan_cache(repo)
+        cached = load_orphan_cache(repo) or {}
         for k, info in cached.items():
             cur = traces.get(k)
             if cur:
@@ -331,9 +331,9 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             else:
                 traces[k] = dict(info)
     except Exception:
-        pass
+        logger.exception("failed to load orphan cache from %s", repo)
     try:
-        hist = load_orphan_traces(repo)
+        hist = load_orphan_traces(repo) or {}
         for k, info in hist.items():
             cur = traces.setdefault(k, {"parents": []})
             if "classification_history" not in cur and info.get("classification_history"):
@@ -341,7 +341,7 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             if "roi_history" not in cur and info.get("roi_history"):
                 cur["roi_history"] = list(info.get("roi_history", []))
     except Exception:
-        pass
+        logger.exception("failed to load orphan traces from %s", repo)
 
     candidates: set[str] = {m for m, i in traces.items() if not i.get("redundant") and not i.get("failed")}
     redundant: list[str] = []
@@ -364,10 +364,11 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                 res = orphan_analyzer.classify_module(path)
                 cls = res[0] if isinstance(res, tuple) else res
             except Exception:
-                pass
+                logger.warning("classification failed for %s", rel, exc_info=True)
             try:
                 redundant_flag = bool(orphan_analyzer.analyze_redundancy(path))
             except Exception:
+                logger.warning("redundancy analysis failed for %s", rel, exc_info=True)
                 redundant_flag = cls in {"legacy", "redundant"}
         entry["classification"] = cls
         entry["redundant"] = redundant_flag
