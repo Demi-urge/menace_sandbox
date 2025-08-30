@@ -123,35 +123,47 @@ class PromptEngine:
 
     # ------------------------------------------------------------------
     def build_snippets(self, patches: Iterable[Dict[str, Any]]) -> List[str]:
-        """Return formatted snippet lines for pre-ranked *patches*.
+        """Return formatted snippet lines sorted by ROI tag and age.
 
         Each element in *patches* is expected to be a mapping containing a
         ``metadata`` field.  The metadata is compressed via
         :func:`snippet_compressor.compress_snippets` and grouped into
-        successful or failed examples.  The order of *patches* is preserved so
-        callers can provide their own ranking.
+        successful or failed examples.  The groups are sorted by the internal
+        :meth:`_score_snippet` helper so callers receive the most relevant
+        examples first.
         """
 
-        successes: List[str] = []
-        failures: List[str] = []
-        for record in patches:
-            snippet, passed = self._compress_patch(record.get("metadata", {}))
+        records = list(patches)
+        metas = [r.get("metadata", {}) for r in records]
+        ts_vals = [float(m.get("ts") or 0.0) for m in metas]
+        min_ts = min(ts_vals) if ts_vals else 0.0
+        max_ts = max(ts_vals) if ts_vals else 0.0
+        span = max(max_ts - min_ts, 1.0)
+
+        successes: List[tuple[float, str]] = []
+        failures: List[tuple[float, str]] = []
+        for meta in metas:
+            snippet, passed = self._compress_patch(meta)
             if not snippet:
                 continue
+            score = self._score_snippet(meta, min_ts=min_ts, span=span)
             if passed:
-                successes.append(snippet)
+                successes.append((score, snippet))
             else:
-                failures.append(snippet)
+                failures.append((score, snippet))
+
+        successes.sort(key=lambda x: x[0], reverse=True)
+        failures.sort(key=lambda x: x[0], reverse=True)
 
         lines: List[str] = []
         if successes:
             lines.append("Successful example:")
-            for text in successes:
+            for _, text in successes:
                 lines.extend(text.splitlines())
                 lines.append("")
         if failures:
             lines.append("Avoid pattern:")
-            for text in failures:
+            for _, text in failures:
                 lines.extend(text.splitlines())
                 lines.append("")
         return [line for line in lines if line]
@@ -265,6 +277,27 @@ class PromptEngine:
 
         items.sort(key=score, reverse=True)
         return items[: self.top_n]
+
+    # ------------------------------------------------------------------
+    def _score_snippet(
+        self, meta: Dict[str, Any], *, min_ts: float = 0.0, span: float = 1.0
+    ) -> float:
+        """Return a ranking score for a snippet ``meta``.
+
+        The score combines the ROI tag weight from :mod:`vector_service.roi_tags`
+        with a normalised recency component derived from ``ts``.  Weighting is
+        controlled via the ``roi_weight`` and ``recency_weight`` attributes as
+        well as the ``roi_tag_weights`` mapping.
+        """
+
+        tag_val = meta.get("roi_tag")
+        tag = RoiTag.validate(tag_val)
+        roi_score = self.roi_tag_weights.get(tag.value, 0.0)
+
+        ts = float(meta.get("ts") or 0.0)
+        ts_score = (ts - min_ts) / span if span else 0.0
+
+        return self.roi_weight * roi_score + self.recency_weight * ts_score
 
     # ------------------------------------------------------------------
     def _trim_tokens(self, text: str, limit: int) -> str:

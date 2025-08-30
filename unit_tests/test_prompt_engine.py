@@ -47,6 +47,29 @@ def test_orders_by_roi_and_timestamp():
     assert prompt.index("Code summary: new fail") < prompt.index("Code summary: old fail")
 
 
+def test_build_snippets_sorted_by_score():
+    patches = [
+        {
+            "metadata": {
+                "summary": "bad",
+                "roi_tag": RoiTag.BUG_INTRODUCED.value,
+                "tests_passed": True,
+            }
+        },
+        {
+            "metadata": {
+                "summary": "good",
+                "roi_tag": RoiTag.HIGH_ROI.value,
+                "tests_passed": True,
+            }
+        },
+    ]
+    engine = PromptEngine()
+    lines = engine.build_snippets(patches)
+    text = "\n".join(lines)
+    assert text.index("Code summary: good") < text.index("Code summary: bad")
+
+
 def test_fallback_on_low_confidence(caplog, monkeypatch):
     records: List[Dict[str, Any]] = []
     engine = PromptEngine(retriever=DummyRetriever(records))
