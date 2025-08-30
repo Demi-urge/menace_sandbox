@@ -187,7 +187,7 @@ class SelfCodingEngine:
         self.knowledge_service = knowledge_service
         # expose ROI tracker to the prompt engine so retrieved examples can
         # carry risk-adjusted ROI hints when available
-        self.prompt_engine = PromptEngine(tracker)
+        self.prompt_engine = PromptEngine(roi_tracker=tracker)
         self.router = kwargs.get("router")
         # store tracebacks from failed attempts for retry prompts
         self._last_retry_trace: str | None = None
@@ -415,14 +415,15 @@ class SelfCodingEngine:
         if not self.llm_client or not self.prompt_engine:
             return _fallback()
         repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
-        retrieval_context = ""
-        if metadata:
-            retrieval_context = str(metadata.get("retrieval_context", ""))
+        context_block = "\n".join([p for p in (context, repo_layout) if p])
+        retrieval_context = (
+            str(metadata.get("retrieval_context", "")) if metadata else ""
+        )
         retry_trace = self._fetch_retry_trace(metadata)
         try:
             prompt = self.prompt_engine.build_prompt(
                 description,
-                context="\n".join([p for p in (context, repo_layout) if p]),
+                context=context_block,
                 retrieval_context=retrieval_context,
                 retry_trace=retry_trace,
             )
