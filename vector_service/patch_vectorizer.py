@@ -38,10 +38,21 @@ class PatchVectorizer(EmbeddableDBMixin):
 
     # ------------------------------------------------------------------
     @staticmethod
-    def _compose(record: Dict[str, Any]) -> str:
-        desc = record.get("description") or ""
-        diff = record.get("diff") or ""
-        summary = record.get("summary") or ""
+    def _compose(record: Any) -> str:
+        """Return text for embedding from ``record``.
+
+        ``record`` may be a mapping or an object with ``description``, ``diff``
+        and ``summary`` attributes.  Missing fields default to empty strings.
+        """
+
+        if isinstance(record, dict):
+            desc = record.get("description") or ""
+            diff = record.get("diff") or ""
+            summary = record.get("summary") or ""
+        else:
+            desc = getattr(record, "description", "") or ""
+            diff = getattr(record, "diff", "") or ""
+            summary = getattr(record, "summary", "") or ""
         return "\n".join(part for part in (desc, diff, summary) if part)
 
     def transform(self, record: Dict[str, Any]) -> List[float]:
@@ -52,15 +63,34 @@ class PatchVectorizer(EmbeddableDBMixin):
     vector = transform
 
     def iter_records(self) -> Iterator[Tuple[int, Dict[str, Any], str]]:
-        cur = self.conn.execute(
-            "SELECT id, description, diff, summary FROM patch_history"
-        )
-        for pid, desc, diff, summary in cur.fetchall():
+        cur = self.conn.execute("SELECT id FROM patch_history")
+        for (pid,) in cur.fetchall():
+            rec = self.db.get(pid)
+            if rec is None:
+                continue
             yield pid, {
-                "description": desc,
-                "diff": diff,
-                "summary": summary,
+                "description": getattr(rec, "description", None),
+                "diff": getattr(rec, "diff", None),
+                "summary": getattr(rec, "summary", None),
             }, "patch"
 
 
-__all__ = ["PatchVectorizer"]
+def backfill_patch_embeddings(
+    path: str | Path | None = None,
+    *,
+    index_path: str | Path | None = None,
+    backend: str = "annoy",
+    embedding_version: int = 1,
+) -> None:
+    """Backfill embeddings for existing patch history records."""
+
+    pv = PatchVectorizer(
+        path=path,
+        index_path=index_path,
+        backend=backend,
+        embedding_version=embedding_version,
+    )
+    pv.backfill_embeddings()
+
+
+__all__ = ["PatchVectorizer", "backfill_patch_embeddings"]
