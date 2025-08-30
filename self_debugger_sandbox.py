@@ -1185,11 +1185,27 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                     return None
 
                         subprocess.run(
-                            ["pytest", "-q"], cwd=str(repo), check=True, env=env
+                            ["pytest", "-q"],
+                            cwd=str(repo),
+                            check=True,
+                            env=env,
+                            timeout=self._test_timeout,
+                            capture_output=True,
+                            text=True,
                         )
-                    except Exception as exc:
+                    except subprocess.CalledProcessError as exc:
                         self._record_exception(exc)
-                        self.logger.exception("sandbox tests failed")
+                        self.logger.error(
+                            "sandbox tests failed",
+                            extra=log_record(cmd=exc.cmd, rc=exc.returncode, output=exc.stderr),
+                        )
+                        return None
+                    except subprocess.TimeoutExpired as exc:
+                        self._record_exception(exc)
+                        self.logger.error(
+                            "sandbox tests timed out",
+                            extra=log_record(cmd=exc.cmd, timeout=exc.timeout, output=exc.stderr),
+                        )
                         return None
 
                     root_test = Path(f"test_auto_{idx}.py")

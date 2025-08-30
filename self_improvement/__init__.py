@@ -2253,6 +2253,7 @@ class SelfImprovementEngine:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=60,
             )
             patch = diff_proc.stdout
             files_proc = subprocess.run(
@@ -2260,8 +2261,21 @@ class SelfImprovementEngine:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=60,
             )
             files = [ln.strip() for ln in files_proc.stdout.splitlines() if ln.strip()]
+        except subprocess.CalledProcessError as exc:
+            self.logger.error(
+                "git command failed",
+                extra=log_record(cmd=exc.cmd, rc=exc.returncode, output=exc.stderr),
+            )
+            return
+        except subprocess.TimeoutExpired as exc:
+            self.logger.error(
+                "git command timed out",
+                extra=log_record(cmd=exc.cmd, timeout=exc.timeout, output=exc.stderr),
+            )
+            return
         except Exception:
             return
 
@@ -2314,8 +2328,21 @@ class SelfImprovementEngine:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=60,
             )
             diff = diff_proc.stdout
+        except subprocess.CalledProcessError as exc:
+            self.logger.error(
+                "git command failed",
+                extra=log_record(cmd=exc.cmd, rc=exc.returncode, output=exc.stderr),
+            )
+            return
+        except subprocess.TimeoutExpired as exc:
+            self.logger.error(
+                "git command timed out",
+                extra=log_record(cmd=exc.cmd, timeout=exc.timeout, output=exc.stderr),
+            )
+            return
         except Exception:
             return
         try:
@@ -2324,7 +2351,20 @@ class SelfImprovementEngine:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=60,
             ).stdout.strip()
+        except subprocess.CalledProcessError as exc:
+            self.logger.error(
+                "git rev-parse failed",
+                extra=log_record(cmd=exc.cmd, rc=exc.returncode, output=exc.stderr),
+            )
+            commit_hash = "unknown"
+        except subprocess.TimeoutExpired as exc:
+            self.logger.error(
+                "git rev-parse timed out",
+                extra=log_record(cmd=exc.cmd, timeout=exc.timeout, output=exc.stderr),
+            )
+            commit_hash = "unknown"
         except Exception:
             commit_hash = "unknown"
         try:
@@ -6950,12 +6990,30 @@ class SelfImprovementEngine:
                         except Exception:
                             logs = None
                     try:
-                        out = subprocess.check_output(
+                        info_proc = subprocess.run(
                             ["git", "show", "-s", "--format=%an,%s"],
+                            capture_output=True,
                             text=True,
-                        ).strip()
+                            check=True,
+                            timeout=60,
+                        )
+                        out = info_proc.stdout.strip()
                         author, message = out.split(",", 1)
                         commit_info = {"author": author, "message": message}
+                    except subprocess.CalledProcessError as exc:
+                        self.logger.error(
+                            "git show failed",
+                            extra=log_record(
+                                cmd=exc.cmd, rc=exc.returncode, output=exc.stderr
+                            ),
+                        )
+                        commit_info = None
+                    except subprocess.TimeoutExpired as exc:
+                        self.logger.error(
+                            "git show timed out",
+                            extra=log_record(cmd=exc.cmd, timeout=exc.timeout, output=exc.stderr),
+                        )
+                        commit_info = None
                     except Exception:
                         commit_info = None
                     warnings = agent.evaluate_changes(actions, metrics, logs, commit_info)
