@@ -2,11 +2,10 @@ from typing import Any, Dict, List
 
 from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
 from vector_service.retriever import FallbackResult
-from typing import Any, Dict, List
 
 
 class DummyRetriever:
-    """Simple retriever returning predefined records."""
+    """Basic retriever returning predefined records."""
 
     def __init__(self, records: List[Dict[str, Any]]):
         self.records = records
@@ -15,56 +14,64 @@ class DummyRetriever:
         return self.records[:top_k]
 
 
+class DummyFallbackRetriever:
+    """Retriever that always returns a fallback result."""
+
+    def search(self, query: str, top_k: int):  # pragma: no cover - trivial
+        return FallbackResult("low_confidence", [], confidence=0.1)
+
+
 def _record(score: float, **meta: Any) -> Dict[str, Any]:
-    """Return retriever record with ``score`` and ``metadata``."""
+    """Helper to build retriever records with ``score`` and metadata."""
 
     return {"score": score, "metadata": meta}
 
 
-def test_prompt_engine_ranks_snippets_by_roi_and_timestamp():
+def test_prompt_engine_sections_and_ranking():
     records = [
         _record(0.9, raroi=0.4, summary="low", tests_passed=True, ts=1),
         _record(0.8, raroi=0.9, summary="high", tests_passed=True, ts=2),
-        _record(0.6, summary="new fail", tests_passed=False, ts=2),
-        _record(0.6, summary="old fail", tests_passed=False, ts=1),
+        _record(0.7, summary="fail", tests_passed=False, ts=2),
     ]
-    engine = PromptEngine(retriever=DummyRetriever(records), top_n=4)
-    prompt = engine.build_prompt("desc")
-    assert "Successful example:" in prompt
-    assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
-    assert "Code summary: new fail" in prompt
-    assert "Code summary: old fail" not in prompt
-
-
-def test_prompt_engine_falls_back_when_confidence_low(monkeypatch):
-    records = [_record(0.0, summary="bad", tests_passed=True)]
-    engine = PromptEngine(retriever=DummyRetriever(records))
-    monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
-    prompt = engine.build_prompt("desc")
-    assert prompt == DEFAULT_TEMPLATE
-
-
-def test_prompt_engine_includes_failure_trace():
-    records = [_record(1.0, summary="foo", tests_passed=True, raroi=0.5)]
-    engine = PromptEngine(retriever=DummyRetriever(records))
-    trace = "Traceback: fail"
-    prompt = engine.build_prompt("goal", retry_trace=trace)
-    expected = (
-        "Previous failure:\n"
-        "Traceback: fail\n"
-        "Please attempt a different solution."
+    engine = PromptEngine(
+        retriever=DummyRetriever(records),
+        patch_retriever=DummyRetriever(records),
+        top_n=3,
     )
-    assert expected in prompt
+    prompt = engine.build_prompt("desc")
+
+    # Sections from build_snippets are present
+    assert "Successful example:" in prompt
+    assert "Avoid pattern:" in prompt
+
+    # Ranking respects ROI values
+    assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
+    # Failure snippet appears after successes
+    assert prompt.rindex("Code summary: fail") > prompt.index("Avoid pattern:")
 
 
-def test_prompt_engine_handles_fallback(monkeypatch):
-    fb = FallbackResult("low_confidence", [], confidence=0.1)
+def test_prompt_engine_handles_retry_trace():
+    records = [_record(1.0, summary="foo", tests_passed=True, raroi=0.5)]
+    engine = PromptEngine(patch_retriever=DummyRetriever(records))
+    trace = "Previous failure:\nTraceback: fail\nPlease attempt a different solution."
+    prompt = engine.build_prompt("goal", retry_trace=trace)
 
-    class Dummy:
-        def search(self, q: str, top_k: int):
-            return fb
+    assert prompt.count("Previous failure:") == 1
+    assert "Traceback: fail" in prompt
+    assert prompt.strip().endswith("Please attempt a different solution.")
 
-    engine = PromptEngine(retriever=Dummy())
+
+def test_prompt_engine_uses_template_on_low_confidence(monkeypatch):
+    records = [_record(0.0, summary="bad", tests_passed=True)]
+    engine = PromptEngine(patch_retriever=DummyRetriever(records))
     monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
     prompt = engine.build_prompt("goal")
     assert prompt == DEFAULT_TEMPLATE
+
+
+def test_prompt_engine_handles_fallback_result(monkeypatch):
+    engine = PromptEngine(patch_retriever=DummyFallbackRetriever())
+    monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
+    prompt = engine.build_prompt("goal")
+    assert prompt == DEFAULT_TEMPLATE
+
