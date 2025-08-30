@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 from typing import Dict, Any
 
+from .error_parser import ErrorParser
+
 from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
 from .self_coding_engine import SelfCodingEngine
@@ -84,8 +86,14 @@ class SelfCodingManager:
         energy: int = 1,
         *,
         context_meta: Dict[str, Any] | None = None,
+        max_attempts: int = 3,
     ) -> AutomationResult:
-        """Patch *path* then deploy using the automation pipeline."""
+        """Patch *path* then deploy using the automation pipeline.
+
+        ``max_attempts`` controls how many times the patch is retried when tests
+        fail.  Context will be rebuilt for each retry excluding tags extracted
+        from the failing traceback.
+        """
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
         before_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
@@ -94,20 +102,60 @@ class SelfCodingManager:
             subprocess.run(["git", "clone", str(repo_root), tmp], check=True)
             clone_root = Path(tmp)
             cloned_path = clone_root / path.resolve().relative_to(repo_root)
-            patch_id, reverted, _ = self.engine.apply_patch(
-                cloned_path,
-                description,
-                parent_patch_id=self._last_patch_id,
-                reason=description,
-                trigger=path.name,
-                context_meta=context_meta,
-            )
-
-            def _run_tests() -> None:
-                subprocess.run(["pytest", "-q"], check=True, cwd=str(clone_root))
-
             runner = WorkflowSandboxRunner()
-            runner.run(_run_tests, safe_mode=True)
+            attempt = 0
+            patch_id: int | None = None
+            reverted = False
+            ctx_meta = context_meta
+            builder = getattr(getattr(self.engine, "cognition_layer", None), "context_builder", None)
+
+            while attempt < max_attempts:
+                attempt += 1
+                self.logger.info("patch attempt %s", attempt)
+                patch_id, reverted, _ = self.engine.apply_patch(
+                    cloned_path,
+                    description,
+                    parent_patch_id=self._last_patch_id,
+                    reason=description,
+                    trigger=path.name,
+                    context_meta=ctx_meta,
+                )
+
+                def _run_tests() -> None:
+                    subprocess.run(["pytest", "-q"], check=True, cwd=str(clone_root))
+
+                metrics = runner.run(_run_tests, safe_mode=True)
+                module = metrics.modules[0] if getattr(metrics, "modules", None) else None
+                passed = False
+                if module:
+                    if hasattr(module, "success"):
+                        passed = bool(getattr(module, "success"))
+                    else:
+                        passed = bool(getattr(module, "result", False))
+                if passed:
+                    break
+
+                if attempt >= max_attempts:
+                    raise RuntimeError("patch tests failed")
+
+                trace = getattr(module, "exception", "") or ""
+                info = ErrorParser.parse(trace)
+                tags = info.get("tags", []) if isinstance(info, dict) else []
+                self.logger.info(
+                    "rebuilding context", extra={"tags": tags, "attempt": attempt}
+                )
+                if not builder or not tags:
+                    raise RuntimeError("patch tests failed")
+                try:
+                    ctx, sid = builder.query(description, exclude_tags=tags)
+                    ctx_meta = {
+                        "retrieval_context": ctx,
+                        "retrieval_session_id": sid,
+                    }
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.error("context rebuild failed: %s", exc)
+                    raise RuntimeError("patch tests failed")
+
             path.write_text(cloned_path.read_text(encoding="utf-8"), encoding="utf-8")
         result = self.pipeline.run(self.bot_name, energy=energy)
         after_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0

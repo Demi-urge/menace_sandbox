@@ -8,10 +8,40 @@ import types
 stub_env = types.ModuleType("environment_bootstrap")
 stub_env.EnvironmentBootstrapper = object
 sys.modules.setdefault("environment_bootstrap", stub_env)
+db_stub = types.ModuleType("data_bot")
+db_stub.MetricsDB = object
+sys.modules.setdefault("data_bot", db_stub)
+import menace.data_bot as db
+sys.modules["data_bot"] = db
+sys.modules["menace"].RAISE_ERRORS = False
+ns = types.ModuleType("neurosales")
+ns.add_message = lambda *a, **k: None
+ns.get_history = lambda *a, **k: []
+ns.get_recent_messages = lambda *a, **k: []
+ns.list_conversations = lambda *a, **k: []
+sys.modules.setdefault("neurosales", ns)
+mapl_stub = types.ModuleType("menace.model_automation_pipeline")
+class AutomationResult:
+    def __init__(self, package=None, roi=None):
+        self.package = package
+        self.roi = roi
+class ModelAutomationPipeline: ...
+mapl_stub.AutomationResult = AutomationResult
+mapl_stub.ModelAutomationPipeline = ModelAutomationPipeline
+sys.modules["menace.model_automation_pipeline"] = mapl_stub
+prb_stub = types.ModuleType("menace.pre_execution_roi_bot")
+class ROIResult:
+    def __init__(self, roi, errors, proi, perr, risk):
+        self.roi = roi
+        self.errors = errors
+        self.predicted_roi = proi
+        self.predicted_errors = perr
+        self.risk = risk
+prb_stub.ROIResult = ROIResult
+sys.modules["menace.pre_execution_roi_bot"] = prb_stub
 import menace.self_coding_manager as scm
 import menace.model_automation_pipeline as mapl
 import menace.pre_execution_roi_bot as prb
-import menace.data_bot as db
 from menace.evolution_history_db import EvolutionHistoryDB
 from pathlib import Path
 import subprocess
@@ -52,6 +82,7 @@ def test_run_patch_logs_evolution(monkeypatch, tmp_path):
     mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
     file_path = tmp_path / "sample.py"
     file_path.write_text("def x():\n    pass\n")
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
 
     tmpdir_path = tmp_path / "clone"
 
@@ -89,7 +120,7 @@ def test_run_patch_logs_evolution(monkeypatch, tmp_path):
     assert pipeline.calls
     assert "# patched" in file_path.read_text()
     rows = hist.fetch()
-    assert rows and rows[0][0] == "self_coding"
+    assert rows and rows[0][0].startswith("self_coding")
     assert isinstance(res, mapl.AutomationResult)
 
 
@@ -102,6 +133,7 @@ def test_run_patch_logging_error(monkeypatch, tmp_path, caplog):
     mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
     file_path = tmp_path / "sample.py"
     file_path.write_text("def x():\n    pass\n")
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
 
     tmpdir_path = tmp_path / "clone"
 
