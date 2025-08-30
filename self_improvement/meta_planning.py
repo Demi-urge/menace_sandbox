@@ -10,6 +10,7 @@ from typing import Any, Callable, Mapping, Sequence
 from statistics import fmean
 import asyncio
 import json
+import os
 import time
 import threading
 from pathlib import Path
@@ -18,7 +19,7 @@ from ..logging_utils import get_logger, log_record
 from ..sandbox_settings import SandboxSettings, load_sandbox_settings
 from ..workflow_stability_db import WorkflowStabilityDB
 from ..roi_results_db import ROIResultsDB
-from ..lock_utils import SandboxLock
+from ..lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
 
 try:  # pragma: no cover - optional dependency
     from ..unified_event_bus import UnifiedEventBus
@@ -50,7 +51,14 @@ except ImportError as exc:  # pragma: no cover - gracefully degrade
 
 
 class _FallbackPlanner:
-    """Lightweight planner with basic mutation and persistence."""
+    """Lightweight planner with basic mutation and persistence.
+
+    Concurrency:
+        Access to the persistent state file is guarded by a
+        :class:`SandboxLock`, ensuring that multiple planner instances do not
+        corrupt state.  Writes are performed atomically by first writing to a
+        temporary file and then replacing the target.
+    """
 
     def __init__(self) -> None:
         cfg = load_sandbox_settings()
@@ -88,11 +96,23 @@ class _FallbackPlanner:
 
     # ------------------------------------------------------------------
     def _load_state(self) -> None:
+        """Load planner state from disk with inter-process locking."""
+
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.state_lock:
-                data = json.loads(self.state_path.read_text())
+            with self.state_lock.acquire(timeout=LOCK_TIMEOUT):
+                if self.state_path.exists():
+                    data = json.loads(self.state_path.read_text())
+                else:
+                    data = {}
             self.cluster_map = {tuple(k.split("|")): v for k, v in data.items()}
+        except Timeout as exc:  # pragma: no cover - lock contention
+            self.logger.warning(
+                "state lock acquisition timed out",
+                extra=log_record(path=str(self.state_path)),
+                exc_info=exc,
+            )
+            self.cluster_map = {}
         except (OSError, json.JSONDecodeError) as exc:
             get_logger(__name__).debug(
                 "failed to load fallback planner state",
@@ -102,11 +122,25 @@ class _FallbackPlanner:
             self.cluster_map = {}
 
     def _save_state(self) -> None:
+        """Persist planner state to disk atomically.
+
+        A file lock guards against concurrent writers.  Data is first written to
+        a temporary file and then moved into place to avoid partial saves.
+        """
+
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
             data = {"|".join(k): v for k, v in self.cluster_map.items()}
-            with self.state_lock:
-                self.state_path.write_text(json.dumps(data, indent=2))
+            tmp_path = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
+            with self.state_lock.acquire(timeout=LOCK_TIMEOUT):
+                tmp_path.write_text(json.dumps(data, indent=2))
+                os.replace(tmp_path, self.state_path)
+        except Timeout as exc:  # pragma: no cover - lock contention
+            self.logger.warning(
+                "state lock acquisition timed out",
+                extra=log_record(path=str(self.state_path)),
+                exc_info=exc,
+            )
         except OSError as exc:  # pragma: no cover - best effort
             self.logger.debug(
                 "failed to persist fallback planner state",
