@@ -12,7 +12,9 @@ template is returned instead of an unhelpful prompt.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
@@ -67,6 +69,12 @@ class PromptEngine:
         ``roi_tracker`` attribute for risk adjusted ROI calculations.
     roi_tracker:
         Optional ROI tracker overriding the tracker from ``context_builder``.
+    template_path:
+        Path to a JSON file containing static prompt templates used when
+        retrieval confidence is too low.
+    template_sections:
+        Names of sections from ``template_path`` to include in fallback
+        prompts.
     """
 
     retriever: Retriever | None = None
@@ -85,6 +93,18 @@ class PromptEngine:
             RoiTag.BUG_INTRODUCED.value: -1.0,
             RoiTag.BLOCKED.value: -1.0,
         }
+    )
+    template_path: Path = Path(
+        os.getenv(
+            "PROMPT_TEMPLATES_PATH",
+            Path(__file__).resolve().parent / "config" / "prompt_templates.v1.json",
+        )
+    )
+    template_sections: List[str] = field(
+        default_factory=lambda: os.getenv(
+            "PROMPT_TEMPLATE_SECTIONS",
+            "coding_standards;repository_layout;metadata;version_control;testing",
+        ).split(";"),
     )
 
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
@@ -135,6 +155,7 @@ class PromptEngine:
                 lines.extend(text.splitlines())
                 lines.append("")
         return [line for line in lines if line]
+
     # ------------------------------------------------------------------
     def build_prompt(self, task: str, retry_info: str | None = None) -> str:
         """Return a prompt for *task* using retrieved patch examples.
@@ -158,15 +179,12 @@ class PromptEngine:
             )
             return self._static_prompt()
 
-        confidence: float
         if isinstance(result, tuple):
-            records, confidence = result  # type: ignore[assignment]
+            records = result[0]
         else:
             records = result
-            total = 0.0
-            for rec in records:
-                total += float(rec.get("score") or rec.get("similarity") or 0.0)
-            confidence = total / len(records) if records else 0.0
+        scores = [float(rec.get("score") or 0.0) for rec in records]
+        confidence = sum(scores) / len(scores) if scores else 0.0
 
         ranked = self._rank_records(records)
         if not ranked or confidence < self.confidence_threshold:
@@ -223,7 +241,10 @@ class PromptEngine:
         if self.context_builder is not None:
             counter = getattr(self.context_builder, "_count_tokens", None)
         if counter is None:
-            counter = lambda s: len(str(s).split())
+            def _default_counter(s: Any) -> int:
+                return len(str(s).split())
+
+            counter = _default_counter
 
         tokens = counter(text)
         if tokens <= limit:
@@ -306,15 +327,17 @@ class PromptEngine:
         return lines
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def _static_prompt() -> str:
-        """Return a generic prompt template used when retrieval fails."""
+    def _static_prompt(self) -> str:
+        """Return a generic prompt assembled from static templates."""
 
-        try:  # pragma: no cover - optional heavy dependency
-            from bot_development_bot import (
-                DEFAULT_TEMPLATE as BOT_DEV_TEMPLATE,  # type: ignore
-            )
-            return Path(BOT_DEV_TEMPLATE).read_text(encoding="utf-8")
+        try:
+            with open(self.template_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            templates = data.get("templates", data)
+            lines: List[str] = []
+            for section in self.template_sections:
+                lines.extend(templates.get(section, []))
+            return "\n".join(lines) if lines else DEFAULT_TEMPLATE
         except Exception:
             return DEFAULT_TEMPLATE
 
