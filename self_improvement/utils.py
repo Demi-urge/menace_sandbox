@@ -154,7 +154,7 @@ def _call_with_retries(
     retries: int = 3,
     delay: float = 0.1,
     backoff: Callable[[int, float], float] | None = None,
-    jitter: float = 0.0,
+    jitter: float | None = None,
     max_delay: float | None = None,
     logger: logging.Logger | None = None,
     context: dict[str, Any] | None = None,
@@ -172,17 +172,58 @@ def _call_with_retries(
     logger = logger or logging.getLogger(__name__)
     if context:
         logger = logging.LoggerAdapter(logger, context)
-    backoff = backoff or (lambda attempt, base: base * attempt)
 
-    def _run(result: Awaitable[Any] | Any) -> Any:
-        if inspect.isawaitable(result):
-            return asyncio.run(result)
-        return result
+    settings = SandboxSettings()
+    if backoff is None:
+        factor = getattr(settings, "sandbox_retry_backoff_multiplier", 1.0)
+        backoff = lambda attempt, base: base * attempt * factor
+    if jitter is None:
+        jitter = getattr(settings, "sandbox_retry_jitter", 0.0)
+
+    try:
+        asyncio.get_running_loop()
+        loop_running = True
+    except RuntimeError:
+        loop_running = False
+
+    async def _async_call() -> Any:
+        last_exc: Exception | None = None
+        for attempt in range(1, retries + 1):
+            try:
+                result = func(*args, **kwargs)
+                if inspect.isawaitable(result):
+                    result = await result
+                return result
+            except Exception as exc:  # pragma: no cover - exercised in tests
+                last_exc = exc
+                logger.warning(
+                    "call to %s failed on attempt %s/%s",
+                    getattr(func, "__name__", repr(func)),
+                    attempt,
+                    retries,
+                    exc_info=True,
+                )
+                if attempt < retries:
+                    sleep_for = backoff(attempt, delay)
+                    if jitter:
+                        sleep_for += random.uniform(0, jitter)
+                    if max_delay is not None:
+                        sleep_for = min(sleep_for, max_delay)
+                    await asyncio.sleep(sleep_for)
+        assert last_exc is not None
+        self_improvement_failure_total.labels(reason="call_retry_failure").inc()
+        raise last_exc
+
+    if loop_running:
+        return _async_call()
 
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
-            return _run(func(*args, **kwargs))
+            result = func(*args, **kwargs)
+            if inspect.isawaitable(result):
+                result = asyncio.run(result)
+            return result
         except Exception as exc:  # pragma: no cover - exercised in tests
             last_exc = exc
             logger.warning(

@@ -182,6 +182,16 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_RETRY_DELAY",
         description="Initial delay between restart attempts in seconds.",
     )
+    sandbox_retry_backoff_multiplier: float = Field(
+        1.0,
+        env="SANDBOX_RETRY_BACKOFF_MULTIPLIER",
+        description="Multiplier applied to the base delay for each retry attempt.",
+    )
+    sandbox_retry_jitter: float = Field(
+        0.0,
+        env="SANDBOX_RETRY_JITTER",
+        description="Maximum jitter in seconds added to retry delays.",
+    )
     sandbox_max_retries: int | None = Field(
         None,
         env="SANDBOX_MAX_RETRIES",
