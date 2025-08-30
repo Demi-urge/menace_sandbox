@@ -33,13 +33,24 @@ DEFAULT_TEMPLATE = "No relevant patches were found. Proceed with a fresh impleme
 
 
 try:  # pragma: no cover - optional heavy imports for type checking
-    from vector_service.retriever import Retriever, PatchRetriever  # type: ignore
+    from vector_service.retriever import (
+        Retriever,
+        PatchRetriever,
+        FallbackResult,
+    )  # type: ignore
     from vector_service.context_builder import ContextBuilder  # type: ignore
     from vector_service.roi_tags import RoiTag  # type: ignore
 except Exception:  # pragma: no cover - allow running tests without service layer
     Retriever = Any  # type: ignore
     PatchRetriever = Any  # type: ignore
     ContextBuilder = Any  # type: ignore
+
+    class FallbackResult:  # type: ignore[too-many-ancestors]
+        reason = ""
+        confidence = 0.0
+
+        def __iter__(self):
+            return iter([])
 
     class RoiTag:  # type: ignore[misc]
         SUCCESS = "success"
@@ -163,6 +174,8 @@ class PromptEngine:
             if not snippet:
                 continue
             score = self._score_snippet(meta, min_ts=min_ts, span=span)
+            if score < self.confidence_threshold:
+                continue
             if passed:
                 successes.append((score, snippet))
             else:
@@ -217,6 +230,21 @@ class PromptEngine:
             audit_log_event(
                 "prompt_engine_fallback",
                 {"goal": task, "reason": "retrieval_error", "error": str(exc)},
+            )
+            return self._static_prompt()
+
+        if isinstance(result, FallbackResult):
+            logging.info(
+                "Retriever returned fallback (%s); using static template",
+                result.reason,
+            )
+            audit_log_event(
+                "prompt_engine_fallback",
+                {
+                    "goal": task,
+                    "reason": result.reason,
+                    "confidence": result.confidence,
+                },
             )
             return self._static_prompt()
 
@@ -290,7 +318,7 @@ class PromptEngine:
 
     # ------------------------------------------------------------------
     def _rank_records(self, records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Return ``records`` ordered by ROI tag and recency."""
+        """Return ``records`` ordered by ROI statistics or recency."""
 
         items = list(records)
         if not items:
@@ -300,17 +328,16 @@ class PromptEngine:
         max_ts = max(ts_vals) if ts_vals else 0.0
         span = max(max_ts - min_ts, 1.0)
 
-        def score(rec: Dict[str, Any]) -> float:
+        scored: List[tuple[float, Dict[str, Any]]] = []
+        for rec in items:
             meta = rec.get("metadata", {})
-            tag_val = meta.get("roi_tag") or rec.get("roi_tag")
-            tag = RoiTag.validate(tag_val)
-            roi_score = self.roi_tag_weights.get(tag.value, 0.0)
-            ts = float(meta.get("ts") or 0.0)
-            ts_score = (ts - min_ts) / span
-            return self.roi_weight * roi_score + self.recency_weight * ts_score
+            score = self._score_snippet(meta, min_ts=min_ts, span=span)
+            if score < self.confidence_threshold:
+                continue
+            scored.append((score, rec))
 
-        items.sort(key=score, reverse=True)
-        return items[: self.top_n]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [rec for _, rec in scored[: self.top_n]]
 
     # ------------------------------------------------------------------
     def _score_snippet(
@@ -318,20 +345,28 @@ class PromptEngine:
     ) -> float:
         """Return a ranking score for a snippet ``meta``.
 
-        The score combines the ROI tag weight from :mod:`vector_service.roi_tags`
-        with a normalised recency component derived from ``ts``.  Weighting is
-        controlled via the ``roi_weight`` and ``recency_weight`` attributes as
-        well as the ``roi_tag_weights`` mapping.
+        ROI deltas are converted into risk-adjusted ROI via
+        :mod:`roi_tracker.calculate_raroi` when a tracker is available.  When no
+        ROI information exists the score falls back to a normalised timestamp
+        so recent patches rank higher.
         """
 
-        tag_val = meta.get("roi_tag")
-        tag = RoiTag.validate(tag_val)
-        roi_score = self.roi_tag_weights.get(tag.value, 0.0)
+        roi_val = meta.get("raroi")
+        if roi_val is None and meta.get("roi_delta") is not None:
+            try:  # pragma: no cover - best effort
+                _, roi_val, _ = self.roi_tracker.calculate_raroi(
+                    float(meta["roi_delta"])
+                ) if self.roi_tracker else (None, None, None)
+            except Exception:
+                roi_val = None
+        if roi_val is not None:
+            try:
+                return float(roi_val)
+            except Exception:
+                pass
 
         ts = float(meta.get("ts") or 0.0)
-        ts_score = (ts - min_ts) / span if span else 0.0
-
-        return self.roi_weight * roi_score + self.recency_weight * ts_score
+        return (ts - min_ts) / span if span else 0.0
 
     # ------------------------------------------------------------------
     def _trim_tokens(self, text: str, limit: int) -> str:
@@ -434,12 +469,27 @@ class PromptEngine:
         """Return a generic prompt assembled from static templates."""
 
         try:
-            with open(self.template_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            templates = data.get("templates", data)
-            lines: List[str] = []
-            for section in self.template_sections:
-                lines.extend(templates.get(section, []))
+            if self.template_path.suffix in {".yaml", ".yml"}:
+                import yaml  # type: ignore
+
+                with open(self.template_path, "r", encoding="utf-8") as fh:
+                    data = yaml.safe_load(fh) or {}
+                tmpl = data.get("default_template") or data.get("templates", {})
+                lines: List[str] = []
+                if isinstance(tmpl, dict) and self.template_sections:
+                    for section in self.template_sections:
+                        lines.extend(tmpl.get(section, []))
+                elif isinstance(tmpl, list):
+                    lines = [str(x) for x in tmpl]
+                elif isinstance(tmpl, str):
+                    lines = [tmpl]
+            else:
+                with open(self.template_path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                templates = data.get("templates", data)
+                lines = []
+                for section in self.template_sections:
+                    lines.extend(templates.get(section, []))
             return "\n".join(lines) if lines else DEFAULT_TEMPLATE
         except Exception:
             return DEFAULT_TEMPLATE
