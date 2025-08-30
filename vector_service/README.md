@@ -47,6 +47,11 @@ examples = search_patches("fix bug", top_k=3)
 The returned list contains ``origin_db``, ``record_id`` and ``score`` fields
 similar to results from ``Retriever.search``.
 
+When available, the retriever looks up each patch's ``enhancement_score`` in
+``PatchHistoryDB`` and boosts the similarity score.  The balance between
+similarity and enhancement can be tuned with
+``ContextBuilderConfig.enhancement_weight``.
+
 ## Adding new modalities
 
 The vector service dynamically discovers vectorisers.  Any module placed under
