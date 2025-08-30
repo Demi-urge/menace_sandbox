@@ -89,10 +89,18 @@ def test_gauge_updates_on_failure(monkeypatch, tmp_path):
 
     class DummyGauge:
         def __init__(self, *a, **k):
-            self.values = []
+            self.values = {}
+            self.unlabelled = []
 
         def set(self, v):
-            self.values.append(v)
+            self.unlabelled.append(v)
+
+        def labels(self, **labels):
+            key = tuple(sorted(labels.items()))
+            self.values.setdefault(key, [])
+            def _set(val):
+                self.values[key].append(val)
+            return types.SimpleNamespace(set=_set)
 
     stub.Gauge = DummyGauge
     stub.CollectorRegistry = object
@@ -112,8 +120,9 @@ def test_gauge_updates_on_failure(monkeypatch, tmp_path):
     mgr = srm.SandboxRecoveryManager(fail_twice_then_ok, retry_delay=0)
     mgr.run({}, argparse.Namespace(sandbox_data_dir=str(tmp_path)))
 
-    assert stub.sandbox_restart_total.values == [1.0, 2.0]
-    assert len(stub.sandbox_last_failure_ts.values) == 2
+    key = (("reason", "RuntimeError"), ("service", "fail_twice_then_ok"))
+    assert stub.sandbox_restart_total.values[key] == [1.0, 2.0]
+    assert len(stub.sandbox_last_failure_ts.unlabelled) == 2
     assert not (tmp_path / "recovery.json").exists()
 
 
