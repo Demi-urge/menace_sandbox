@@ -987,6 +987,87 @@ class PatchLogger:
         )
 
     # ------------------------------------------------------------------
+    def recompute_enhancement_score(
+        self,
+        patch_id: str | int,
+        metrics: EnhancementMetrics,
+        *,
+        roi_tag: RoiTag | str | None = None,
+        errors: Sequence[Mapping[str, Any]] | None = None,
+        start_time: float | None = None,
+        time_to_completion: float | None = None,
+        error_trace_count: int | None = None,
+    ) -> float:
+        """Recalculate and persist enhancement score for ``patch_id``.
+
+        ``metrics`` should contain the latest patch statistics.  The updated
+        score along with the provided ``roi_tag`` and other optional metrics is
+        written to both ``PatchHistoryDB`` and ``VectorMetricsDB`` when those
+        databases are available.  The new enhancement score is returned.
+        """
+
+        score = _compute_enhancement_score(metrics)
+        roi_val = RoiTag.validate(roi_tag)
+
+        patch_difficulty = metrics.lines_changed + metrics.context_tokens
+        tests_passed = bool(metrics.tests_passed)
+        err_count = (
+            error_trace_count if error_trace_count is not None else metrics.error_traces
+        )
+        tt_completion = (
+            time_to_completion if time_to_completion is not None else metrics.time_to_completion
+        )
+
+        if self.patch_db is not None:
+            try:  # pragma: no cover - best effort
+                conn = self.patch_db.router.get_connection("patch_history")
+                conn.execute(
+                    "UPDATE patch_history SET lines_changed=?, tests_passed=?, "
+                    "context_tokens=?, patch_difficulty=?, start_time=COALESCE(?, start_time), "
+                    "time_to_completion=?, error_trace_count=?, roi_tag=?, effort_estimate=?, "
+                    "enhancement_score=? WHERE id=?",
+                    (
+                        metrics.lines_changed,
+                        int(tests_passed),
+                        metrics.context_tokens,
+                        patch_difficulty,
+                        start_time,
+                        tt_completion,
+                        err_count,
+                        roi_val.value,
+                        metrics.effort_estimate,
+                        score,
+                        int(patch_id),
+                    ),
+                )
+                conn.commit()
+            except Exception:
+                logger.exception(
+                    "Failed to update patch history with recomputed score"
+                )
+
+        if self.vector_metrics is not None:
+            try:  # pragma: no cover - best effort
+                self.vector_metrics.record_patch_summary(
+                    str(patch_id),
+                    errors=errors,
+                    tests_passed=tests_passed,
+                    lines_changed=metrics.lines_changed,
+                    context_tokens=metrics.context_tokens,
+                    patch_difficulty=patch_difficulty,
+                    start_time=start_time,
+                    time_to_completion=tt_completion,
+                    error_trace_count=err_count,
+                    roi_tag=roi_val.value,
+                    effort_estimate=metrics.effort_estimate,
+                    enhancement_score=score,
+                )
+            except Exception:
+                logger.exception("vector_metrics.record_patch_summary failed")
+
+        return score
+
+    # ------------------------------------------------------------------
     def get_patch_summary(self, patch_id: str | int) -> Mapping[str, Any] | None:
         """Return stored patch metadata for *patch_id* if available."""
         if self.patch_db is None:

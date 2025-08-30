@@ -34,6 +34,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover
     PatchHistoryDB = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from vector_metrics_db import VectorMetricsDB  # type: ignore
+except Exception:  # pragma: no cover
+    VectorMetricsDB = None  # type: ignore
+
 _DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 
 
@@ -497,6 +502,7 @@ class PatchRetriever:
     top_k: int = 5
     metric: str | None = None
     enhancement_weight: float = 1.0
+    vector_metrics: VectorMetricsDB | None = None
 
     def __post_init__(self) -> None:
         if self.vector_service is None:
@@ -529,6 +535,12 @@ class PatchRetriever:
             self.store = create_vector_store(dim or 0, path, backend=backend)
         if not self.metric:
             self.metric = str(metric).lower()
+
+        if self.vector_metrics is None and VectorMetricsDB is not None:
+            try:
+                self.vector_metrics = VectorMetricsDB()
+            except Exception:
+                self.vector_metrics = None
 
     def reload_from_config(self) -> None:
         """Reload configuration for backend and metric."""
@@ -623,6 +635,17 @@ class PatchRetriever:
                     rec = PatchHistoryDB().get(pid)  # type: ignore[operator]
                     if rec is not None:
                         enh = float(getattr(rec, "enhancement_score", 0.0))
+                except Exception:
+                    pass
+            if (enh is None) and self.vector_metrics is not None:
+                try:
+                    cur = self.vector_metrics.conn.execute(
+                        "SELECT enhancement_score FROM patch_metrics WHERE patch_id=?",
+                        (str(vid),),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        enh = float(row[0])
                 except Exception:
                     pass
             if enh is None:

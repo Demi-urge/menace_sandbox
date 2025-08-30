@@ -3,6 +3,7 @@ import types
 import pytest
 
 from vector_service.retriever import PatchRetriever
+from vector_metrics_db import VectorMetricsDB
 
 
 class DummyStore:
@@ -112,3 +113,20 @@ def test_prioritizes_enhancement_score_on_tie():
     results = pr.search("query", top_k=2)
     ids = [r["record_id"] for r in results]
     assert ids == ["1", "0"]
+
+
+def test_uses_vector_metrics_db_for_enhancement_score(tmp_path):
+    vectors = [[1.0, 0.0]]
+    meta = [{"origin_db": "patch", "metadata": {"text": "a"}}]
+    store = DummyStore(vectors, meta)
+
+    def fake_vectorise(kind, record):
+        return [1.0, 0.0]
+
+    vec_service = types.SimpleNamespace(vectorise=fake_vectorise)
+    pr = PatchRetriever(store=store, vector_service=vec_service, enhancement_weight=0.0)
+    pr.vector_metrics = VectorMetricsDB(path=str(tmp_path / "vm.db"))
+    pr.vector_metrics.record_patch_summary("0", enhancement_score=2.0)
+
+    results = pr.search("query", top_k=1)
+    assert results[0]["enhancement_score"] == pytest.approx(2.0)

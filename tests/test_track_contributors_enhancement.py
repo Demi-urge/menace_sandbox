@@ -105,3 +105,22 @@ def test_track_contributors_enhancement_score_and_roi_tag():
     assert vm.kwargs["roi_tag"] == "low-ROI"
     assert pdb.kwargs["enhancement_score"] == pytest.approx(expected)
     assert vm.kwargs["enhancement_score"] == pytest.approx(expected)
+
+
+def test_recompute_enhancement_score_updates_metrics():
+    vm = DummyVectorMetrics()
+    pl = PatchLogger(patch_db=None, vector_metrics=vm)
+    metrics = EnhancementMetrics(
+        lines_changed=5,
+        context_tokens=3,
+        time_to_completion=2.0,
+        tests_passed=1,
+        tests_failed=0,
+        error_traces=0,
+        effort_estimate=1.0,
+    )
+    score = pl.recompute_enhancement_score("42", metrics, roi_tag="high-ROI")
+    expected = compute_enhancement_score(metrics)
+    assert score == pytest.approx(expected)
+    assert vm.kwargs["enhancement_score"] == pytest.approx(expected)
+    assert vm.kwargs["roi_tag"] == "high-ROI"
