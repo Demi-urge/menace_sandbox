@@ -290,11 +290,33 @@ def test_track_contributors_emits_summary_event(monkeypatch):
     assert summary["lines_changed"] == 10
     assert summary["tests_passed"] is False
     assert summary["enhancement_name"] == "feat"
+    assert summary["timestamp"] == pytest.approx(1.23)
     assert summary["roi_deltas"]["db1"] == pytest.approx(0.5)
     assert summary["diff"] == "d"
     assert summary["summary"] == "s"
     assert summary["outcome"] == "fail"
     assert summary["errors"] == [{"info": "boom"}]
+
+
+def test_track_contributors_error_summary(monkeypatch):
+    _, _, _, _, _, _, _ = patch_metrics(monkeypatch)
+    events: list[tuple[str, dict]] = []
+
+    class Bus:
+        def publish(self, topic, payload):
+            events.append((topic, payload))
+
+    pl = PatchLogger(event_bus=Bus())
+    res = pl.track_contributors(
+        ["v1"],
+        False,
+        session_id="s",
+        error_summary="parse fail",
+    )
+    summary = [p for t, p in events if t == "patch:summary"][0]
+    assert summary["errors"] == [{"summary": "parse fail"}]
+    assert summary["error_summary"] == "parse fail"
+    assert res.errors == [{"summary": "parse fail"}]
 
 
 # ---------------------------------------------------------------------------
