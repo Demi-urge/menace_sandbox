@@ -92,3 +92,23 @@ def test_enhancement_score_boost():
     ids = [r["record_id"] for r in results]
     assert ids[0] == "1"
     assert results[0]["score"] > results[1]["score"]
+
+
+def test_prioritizes_enhancement_score_on_tie():
+    vectors = [[1.0, 0.0], [1.0, 0.0]]
+    meta = [
+        {"origin_db": "patch", "metadata": {"text": "a", "enhancement_score": 0.0}},
+        {"origin_db": "patch", "metadata": {"text": "b", "enhancement_score": 2.0}},
+    ]
+    store = DummyStore(vectors, meta)
+
+    def fake_vectorise(kind, record):
+        return [1.0, 0.0]
+
+    vec_service = types.SimpleNamespace(vectorise=fake_vectorise)
+    pr = PatchRetriever(
+        store=store, vector_service=vec_service, enhancement_weight=1.0
+    )
+    results = pr.search("query", top_k=2)
+    ids = [r["record_id"] for r in results]
+    assert ids == ["1", "0"]
