@@ -417,7 +417,20 @@ def _load_initial_synergy_weights() -> None:
             for k in weights:
                 weights[k] = float(data[k])
     except FileNotFoundError:
-        pass
+        logger.info(
+            "synergy weights file %s missing; writing defaults",
+            path,
+            extra=log_record(path=str(path)),
+        )
+        try:
+            _atomic_write(path, json.dumps(weights, indent=2))
+        except OSError as exc:  # pragma: no cover - best effort
+            logger.warning(
+                "failed to write default synergy weights %s",
+                path,
+                extra=log_record(path=str(path)),
+                exc_info=exc,
+            )
     except (OSError, ValueError) as exc:
         logger.warning(
             "failed to load synergy weights %s", path,
