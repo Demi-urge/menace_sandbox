@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Mapping, Any
 import logging
 
 try:
     import pandas as pd  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
+    logging.getLogger(__name__).warning(
+        "pandas is not installed; install with 'pip install pandas' to enable DataFrame support"
+    )
 
 from . import data_bot as db
 from .bot_performance_history_db import BotPerformanceHistoryDB, PerformanceRecord
@@ -88,7 +91,7 @@ class PerformanceAssessmentBot:
                 self.history[bot] = score
 
     @staticmethod
-    def _state_from_row(row: pd.Series) -> Tuple[int, int, int, int]:
+    def _state_from_row(row: Mapping[str, Any]) -> Tuple[int, int, int, int]:
         return (
             int(row["cpu"] // 10),
             int(row["memory"] // 10),
@@ -98,10 +101,16 @@ class PerformanceAssessmentBot:
 
     def self_assess(self, bot_name: str, limit: int = 10) -> float:
         df = self.db.fetch(limit)
-        df = df[df["bot"] == bot_name]
-        if df.empty:
-            return 0.0
-        row = df.iloc[0]
+        if pd is None:
+            rows = [r for r in df if r.get("bot") == bot_name]
+            if not rows:
+                return 0.0
+            row = rows[0]
+        else:
+            df = df[df["bot"] == bot_name]
+            if df.empty:
+                return 0.0
+            row = df.iloc[0]
         state = self._state_from_row(row)
         reward = -(row["cpu"] + row["memory"] + row["errors"] * 10)
         score = self.model.update(state, reward)
@@ -126,7 +135,9 @@ class PerformanceAssessmentBot:
             )
             self.history_db.add(rec)
         except Exception as exc:
-            logger.exception("Failed to add performance record for %s: %s", bot_name, exc)
+            logger.exception(
+                "Failed to add performance record for %s: %s", bot_name, exc
+            )
         return score
 
     def hypothetical_projection(self, kpi: KPI) -> float:

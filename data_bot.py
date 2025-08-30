@@ -25,16 +25,25 @@ try:
     import psutil  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
+    logging.getLogger(__name__).warning(
+        "psutil is not installed; install with 'pip install psutil' to capture system metrics"
+    )
 
 try:
     import pandas as pd  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
+    logging.getLogger(__name__).warning(
+        "pandas is not installed; install with 'pip install pandas' for DataFrame support"
+    )
 
 try:
     from prometheus_client import CollectorRegistry, Gauge  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     CollectorRegistry = Gauge = None  # type: ignore
+    logging.getLogger(__name__).warning(
+        "prometheus_client is not installed; install with 'pip install prometheus-client' for Prometheus metrics"
+    )
 
 try:  # pragma: no cover - optional dependency
     from .vector_metrics_db import VectorMetricsDB
