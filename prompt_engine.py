@@ -315,7 +315,7 @@ class PromptEngine:
 
     # ------------------------------------------------------------------
     def _rank_records(self, records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Return ``records`` ordered by ROI statistics or recency."""
+        """Return ``records`` ordered by the weighted scoring heuristic."""
 
         items = list(records)
         if not items:
@@ -340,30 +340,47 @@ class PromptEngine:
     def _score_snippet(
         self, meta: Dict[str, Any], *, min_ts: float = 0.0, span: float = 1.0
     ) -> float:
-        """Return a ranking score for a snippet ``meta``.
+        """Return a weighted ranking score for a snippet ``meta``.
 
-        ROI deltas are converted into risk-adjusted ROI via
-        :mod:`roi_tracker.calculate_raroi` when a tracker is available.  When no
-        ROI information exists the score falls back to a normalised timestamp
-        so recent patches rank higher.
+        The score combines three components:
+
+        * ``raroi`` (risk-adjusted ROI) scaled by :attr:`roi_weight`.
+        * Recency normalised to ``[0, 1]`` and scaled by :attr:`recency_weight`.
+        * An adjustment based on ``roi_tag`` from :attr:`roi_tag_weights`.
+
+        When ``raroi`` is absent but ``roi_delta`` is available and an ROI
+        tracker is configured, the value is converted using
+        ``roi_tracker.calculate_raroi``.  Missing components simply contribute
+        ``0`` to the final score.
         """
 
         roi_val = meta.get("raroi")
         if roi_val is None and meta.get("roi_delta") is not None:
             try:  # pragma: no cover - best effort
-                _, roi_val, _ = self.roi_tracker.calculate_raroi(
-                    float(meta["roi_delta"])
-                ) if self.roi_tracker else (None, None, None)
+                _, roi_val, _ = (
+                    self.roi_tracker.calculate_raroi(float(meta["roi_delta"]))
+                    if self.roi_tracker
+                    else (None, None, None)
+                )
             except Exception:
                 roi_val = None
-        if roi_val is not None:
-            try:
-                return float(roi_val)
-            except Exception:
-                pass
+
+        try:
+            roi_score = float(roi_val) if roi_val is not None else 0.0
+        except Exception:  # pragma: no cover - defensive
+            roi_score = 0.0
 
         ts = float(meta.get("ts") or 0.0)
-        return (ts - min_ts) / span if span else 0.0
+        recency_score = (ts - min_ts) / span if span else 0.0
+
+        tag = meta.get("roi_tag")
+        tag_score = float(self.roi_tag_weights.get(tag, 0.0))
+
+        return (
+            roi_score * self.roi_weight
+            + recency_score * self.recency_weight
+            + tag_score
+        )
 
     # ------------------------------------------------------------------
     def _trim_tokens(self, text: str, limit: int) -> str:
