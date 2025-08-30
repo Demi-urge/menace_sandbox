@@ -1,4 +1,5 @@
 import logging
+
 from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
 import vector_service.vectorizer as vz
 from vector_service.retriever import PatchRetriever
@@ -29,16 +30,6 @@ def _setup_store(monkeypatch, tmp_path, patches, query_vec):
     return PatchRetriever(store=store, vector_service=vec_service)
 
 
-def _patch_fetcher(pr):
-    def _fetch(goal, top_n):
-        records = pr.search(goal, top_k=top_n)
-        total = sum(r.get("score", 0.0) or 0.0 for r in records)
-        avg = total / len(records) if records else 0.0
-        return records, avg
-
-    return _fetch
-
-
 def test_prompt_engine_retrieves_top_n_snippets(monkeypatch, tmp_path):
     patches = [
         ("1", [1.0, 0.0], {"summary": "A1", "tests_passed": True}),
@@ -46,8 +37,8 @@ def test_prompt_engine_retrieves_top_n_snippets(monkeypatch, tmp_path):
         ("3", [0.0, 1.0], {"summary": "A3", "tests_passed": True}),
     ]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
-    monkeypatch.setattr(PromptEngine, "_fetch_patches", staticmethod(_patch_fetcher(pr)))
-    prompt = PromptEngine.construct_prompt("goal", top_n=2)
+    engine = PromptEngine(retriever=pr, top_n=2)
+    prompt = engine.build_prompt("goal")
     assert "Code summary: A1" in prompt
     assert "Code summary: A2" in prompt
     assert "A3" not in prompt
@@ -61,8 +52,8 @@ def test_prompt_engine_orders_by_roi_and_recency(monkeypatch, tmp_path):
         ("4", [1.0, 0.0], {"summary": "new fail", "tests_passed": False, "ts": 2}),
     ]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
-    monkeypatch.setattr(PromptEngine, "_fetch_patches", staticmethod(_patch_fetcher(pr)))
-    prompt = PromptEngine.construct_prompt("goal", top_n=4)
+    engine = PromptEngine(retriever=pr, top_n=4)
+    prompt = engine.build_prompt("goal")
     assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
     assert prompt.index("Code summary: new fail") < prompt.index("Code summary: old fail")
 
@@ -70,9 +61,9 @@ def test_prompt_engine_orders_by_roi_and_recency(monkeypatch, tmp_path):
 def test_retry_trace_injection(monkeypatch, tmp_path):
     patches = [("1", [1.0, 0.0], {"summary": "foo", "tests_passed": True})]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
-    monkeypatch.setattr(PromptEngine, "_fetch_patches", staticmethod(_patch_fetcher(pr)))
+    engine = PromptEngine(retriever=pr)
     trace = "Traceback: fail"
-    prompt = PromptEngine.construct_prompt("goal", retry_trace=trace)
+    prompt = engine.build_prompt("goal", retry_info=trace)
     expected = f"Previous attempt failed with {trace}; seek alternative solution."
     assert expected in prompt
 
@@ -80,8 +71,9 @@ def test_retry_trace_injection(monkeypatch, tmp_path):
 def test_fallback_when_confidence_low(monkeypatch, tmp_path, caplog):
     patches = [("1", [-1.0, 0.0], {"summary": "bad", "tests_passed": True})]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
-    monkeypatch.setattr(PromptEngine, "_fetch_patches", staticmethod(_patch_fetcher(pr)))
+    engine = PromptEngine(retriever=pr, top_n=1)
+    monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
     with caplog.at_level(logging.INFO):
-        prompt = PromptEngine.construct_prompt("goal", top_n=1)
+        prompt = engine.build_prompt("goal")
     assert prompt == DEFAULT_TEMPLATE
     assert "falling back" in caplog.text.lower()

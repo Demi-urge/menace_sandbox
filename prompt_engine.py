@@ -1,8 +1,12 @@
 """Utilities to assemble prompts for self-coding helpers.
 
-This module queries the vector service for past patches, compresses the
-returned metadata and builds a structured prompt that guides the language
-model towards the current enhancement goal.
+This module now relies on lightweight service objects that can be injected
+from the outside.  ``Retriever`` is used to fetch historical patches while
+``ContextBuilder`` exposes optional helpers such as ROI tracking.  The
+``PromptEngine`` orchestrates snippet retrieval, compression and ranking to
+produce a compact prompt for the language model.  When retrieval fails or the
+average confidence falls below a configurable threshold a static fallback
+template is returned instead of an unhelpful prompt.
 """
 
 from __future__ import annotations
@@ -10,25 +14,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
-
-try:  # pragma: no cover - optional at runtime
-    from .roi_tracker import ROITracker  # type: ignore
-except Exception:  # pragma: no cover - fallback when running in isolation
-    ROITracker = None  # type: ignore
+from typing import Any, Dict, Iterable, List
 
 from snippet_compressor import compress_snippets
 
-try:  # pragma: no cover - optional dependency
+try:  # pragma: no cover - optional dependency at runtime
     from audit_logger import log_event as audit_log_event  # type: ignore
 except Exception:  # pragma: no cover - logging only when available
+
     def audit_log_event(*_a: Any, **_k: Any) -> None:  # type: ignore
-        """Stub when audit logger is unavailable."""
+        """Fallback stub used when the audit logger is unavailable."""
         return
 
-DEFAULT_TEMPLATE = (
-    "No relevant patches were found. Proceed with a fresh implementation."
-)
+
+DEFAULT_TEMPLATE = "No relevant patches were found. Proceed with a fresh implementation."
+
+
+try:  # pragma: no cover - optional heavy imports for type checking
+    from vector_service.retriever import Retriever  # type: ignore
+    from vector_service.context_builder import ContextBuilder  # type: ignore
+except Exception:  # pragma: no cover - allow running tests without service layer
+    Retriever = Any  # type: ignore
+    ContextBuilder = Any  # type: ignore
 
 
 @dataclass
@@ -37,46 +44,131 @@ class PromptEngine:
 
     Parameters
     ----------
+    retriever:
+        Object exposing a ``search(query, top_k)`` method returning patch
+        records.  The default attempts to instantiate
+        :class:`vector_service.retriever.Retriever`.
+    context_builder:
+        Optional :class:`vector_service.context_builder.ContextBuilder`
+        instance.  When supplied the engine will attempt to read the
+        ``roi_tracker`` attribute for risk adjusted ROI calculations.
     roi_tracker:
-        Optional :class:`ROITracker` instance used to calculate risk adjusted
-        ROI values when ``roi_delta`` metadata is available.
+        Optional ROI tracker overriding the tracker from ``context_builder``.
     """
 
-    roi_tracker: ROITracker | None = None
+    retriever: Retriever | None = None
+    context_builder: ContextBuilder | None = None
+    roi_tracker: Any | None = None
     confidence_threshold: float = 0.3
+    top_n: int = 5
+
+    def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
+        if self.retriever is None:
+            try:
+                self.retriever = Retriever()
+            except Exception:
+                self.retriever = None
+        if self.context_builder is None:
+            try:
+                self.context_builder = ContextBuilder(retriever=self.retriever)
+            except Exception:
+                self.context_builder = None
+        if self.roi_tracker is None and self.context_builder is not None:
+            self.roi_tracker = getattr(self.context_builder, "roi_tracker", None)
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def _fetch_patches(goal: str, top_n: int) -> Tuple[List[Dict[str, Any]], float]:
-        """Return ``(records, avg_confidence)`` for ``goal``.
+    def build_snippets(self, patches: Iterable[Dict[str, Any]]) -> List[str]:
+        """Return ranked and formatted snippet lines for *patches*.
 
-        The default implementation queries :class:`PatchRetriever` from the
-        vector service.  The confidence score is the average similarity of the
-        retrieved snippets normalised to the ``[0, 1]`` range.  Test suites
-        monkey patch this helper to isolate the prompt construction logic.
+        Each element in *patches* is expected to be a mapping containing a
+        ``metadata`` field.  The metadata is compressed via
+        :func:`snippet_compressor.compress_snippets` and grouped into
+        successful or failed examples.  Successful examples are ordered by
+        ``roi_delta`` while failures are ordered by ``ts`` (recency).
         """
 
-        try:  # pragma: no cover - heavy dependency optional in tests
-            from .vector_service.retriever import PatchRetriever  # type: ignore
-        except Exception as exc:  # pragma: no cover - vector service unavailable
-            raise RuntimeError("retriever unavailable") from exc
+        successes: List[Dict[str, Any]] = []
+        failures: List[Dict[str, Any]] = []
+        for record in patches:
+            meta = self._compress(record.get("metadata", {}))
+            if meta.get("tests_passed"):
+                successes.append(meta)
+            else:
+                failures.append(meta)
 
-        try:
-            retriever = PatchRetriever(top_k=top_n)
-            records = retriever.search(goal, top_k=top_n) or []
-        except Exception as exc:  # pragma: no cover - retrieval failure
-            raise RuntimeError("retriever search failed") from exc
+        successes.sort(key=lambda m: m.get("roi_delta") or 0.0, reverse=True)
+        failures.sort(key=lambda m: m.get("ts") or 0, reverse=True)
 
-        total = 0.0
-        for rec in records:
-            score = rec.get("score") or rec.get("similarity") or 0.0
-            total += float(score)
-        avg_confidence = total / len(records) if records else 0.0
-        return records, avg_confidence
+        lines: List[str] = []
+        if successes:
+            lines.append("Here's a successful example:")
+            for meta in successes:
+                lines.extend(self._format_record(meta))
+                lines.append("")
+        if failures:
+            lines.append("Avoid these pitfalls:")
+            for meta in failures:
+                lines.extend(self._format_record(meta))
+                lines.append("")
+        return [line for line in lines if line]
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def _compress(meta: Dict[str, Any]) -> Dict[str, Any]:
+    def build_prompt(self, task: str, retry_info: str | None = None) -> str:
+        """Return a prompt for *task* using retrieved patch examples.
+
+        ``retry_info`` is appended to the prompt when provided.  When retrieval
+        fails or the average confidence of returned patches falls below
+        ``confidence_threshold`` a static fallback template is returned.
+        """
+
+        if self.retriever is None:
+            logging.info("No retriever available; falling back to static template")
+            return self._static_prompt()
+
+        try:
+            result = self.retriever.search(task, top_k=self.top_n)
+        except Exception as exc:  # pragma: no cover - best effort
+            logging.exception("Snippet retrieval failed: %s", exc)
+            audit_log_event(
+                "prompt_engine_fallback",
+                {"goal": task, "reason": "retrieval_error", "error": str(exc)},
+            )
+            return self._static_prompt()
+
+        confidence: float
+        if isinstance(result, tuple):
+            records, confidence = result  # type: ignore[assignment]
+        else:
+            records = result
+            total = 0.0
+            for rec in records:
+                total += float(rec.get("score") or rec.get("similarity") or 0.0)
+            confidence = total / len(records) if records else 0.0
+
+        if not records or confidence < self.confidence_threshold:
+            logging.info(
+                "Retrieval confidence %.2f below threshold; falling back", confidence
+            )
+            audit_log_event(
+                "prompt_engine_fallback",
+                {
+                    "goal": task,
+                    "reason": "low_confidence",
+                    "confidence": confidence,
+                },
+            )
+            return self._static_prompt()
+
+        lines = [f"Enhancement goal: {task}", ""]
+        lines.extend(self.build_snippets(records))
+        if retry_info:
+            lines.append(
+                f"Previous attempt failed with {retry_info}; seek alternative solution."
+            )
+        return "\n".join(line for line in lines if line)
+
+    # ------------------------------------------------------------------
+    def _compress(self, meta: Dict[str, Any]) -> Dict[str, Any]:
         """Return a condensed copy of ``meta`` using micro-model helpers."""
 
         out: Dict[str, Any] = {}
@@ -97,7 +189,9 @@ class PromptEngine:
 
         if self.roi_tracker and meta.get("roi_delta") is not None:
             try:  # pragma: no cover - best effort integration
-                _, raroi, _ = self.roi_tracker.calculate_raroi(float(meta["roi_delta"]))
+                _, raroi, _ = self.roi_tracker.calculate_raroi(
+                    float(meta["roi_delta"])
+                )
                 meta["raroi"] = raroi
             except Exception:
                 pass
@@ -119,72 +213,17 @@ class PromptEngine:
         return lines
 
     # ------------------------------------------------------------------
-    def build_prompt(
-        self,
-        goal: str,
-        retry_trace: str | None = None,
-        *,
-        top_n: int = 5,
-    ) -> str:
-        """Assemble a prompt for ``goal``.
+    @staticmethod
+    def _static_prompt() -> str:
+        """Return a generic prompt template used when retrieval fails."""
 
-        When the average retrieval confidence falls below ``confidence_threshold``
-        or snippet retrieval fails, the function falls back to a static template
-        instead of emitting an unhelpful prompt.
-        """
-
-        try:
-            records, confidence = self._fetch_patches(goal, top_n)
-        except Exception as exc:
-            logging.exception("Snippet retrieval failed: %s", exc)
-            audit_log_event(
-                "prompt_engine_fallback",
-                {"goal": goal, "reason": "retrieval_error", "error": str(exc)},
+        try:  # pragma: no cover - optional heavy dependency
+            from bot_development_bot import (
+                DEFAULT_TEMPLATE as BOT_DEV_TEMPLATE,  # type: ignore
             )
-            return self._static_prompt()
-
-        if not records or confidence < self.confidence_threshold:
-            logging.info(
-                "Retrieval confidence %.2f below threshold; falling back", confidence
-            )
-            audit_log_event(
-                "prompt_engine_fallback",
-                {
-                    "goal": goal,
-                    "reason": "low_confidence",
-                    "confidence": confidence,
-                },
-            )
-            return self._static_prompt()
-
-        successes: List[Dict[str, Any]] = []
-        failures: List[Dict[str, Any]] = []
-        for rec in records:
-            meta = self._compress(rec.get("metadata", {}))
-            if meta.get("tests_passed"):
-                successes.append(meta)
-            else:
-                failures.append(meta)
-
-        successes.sort(key=lambda m: m.get("roi_delta") or 0.0, reverse=True)
-        failures.sort(key=lambda m: m.get("ts") or 0, reverse=True)
-
-        lines = [f"Enhancement goal: {goal}", ""]
-        if successes:
-            lines.append("Here's a successful example:")
-            for meta in successes:
-                lines.extend(self._format_record(meta))
-                lines.append("")
-        if failures:
-            lines.append("Avoid these pitfalls:")
-            for meta in failures:
-                lines.extend(self._format_record(meta))
-                lines.append("")
-        if retry_trace:
-            lines.append(
-                f"Previous attempt failed with {retry_trace}; seek alternative solution."
-            )
-        return "\n".join(line for line in lines if line)
+            return Path(BOT_DEV_TEMPLATE).read_text(encoding="utf-8")
+        except Exception:
+            return DEFAULT_TEMPLATE
 
     # Backwards compatibility -------------------------------------------------
     @classmethod
@@ -195,26 +234,20 @@ class PromptEngine:
         *,
         top_n: int = 5,
         confidence_threshold: float = 0.3,
-        roi_tracker: ROITracker | None = None,
+        retriever: Retriever | None = None,
+        context_builder: ContextBuilder | None = None,
+        roi_tracker: Any | None = None,
     ) -> str:
-        """Class method wrapper used by existing tests and callers."""
+        """Class method wrapper used by existing callers and tests."""
 
         engine = cls(
-            roi_tracker=roi_tracker, confidence_threshold=confidence_threshold
+            retriever=retriever,
+            context_builder=context_builder,
+            roi_tracker=roi_tracker,
+            confidence_threshold=confidence_threshold,
+            top_n=top_n,
         )
-        return engine.build_prompt(goal, retry_trace, top_n=top_n)
-
-
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _static_prompt() -> str:
-        """Return a generic prompt template used when retrieval fails."""
-
-        try:  # pragma: no cover - optional heavy dependency
-            from bot_development_bot import DEFAULT_TEMPLATE as BOT_DEV_TEMPLATE
-            return Path(BOT_DEV_TEMPLATE).read_text(encoding="utf-8")
-        except Exception:
-            return DEFAULT_TEMPLATE
+        return engine.build_prompt(goal, retry_trace)
 
 
 def build_prompt(goal: str, retry_trace: str | None = None, *, top_n: int = 5) -> str:
