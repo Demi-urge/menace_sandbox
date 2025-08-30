@@ -38,6 +38,7 @@ from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
 from .error_cluster_predictor import ErrorClusterPredictor
 from .error_parser import FailureCache, ParsedFailure, parse_failure
+from sandbox_runner.environment import create_ephemeral_repo
 try:
     from .sandbox_settings import SandboxSettings
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -1152,10 +1153,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             best: dict[str, object] | None = None
 
             async def _eval_candidate(idx: int, code: str) -> dict[str, object] | None:
-                with tempfile.TemporaryDirectory() as tmp:
-                    tdir = Path(tmp)
-                    repo = tdir / "repo"
-                    shutil.copytree(Path("."), repo, dirs_exist_ok=True)
+                with create_ephemeral_repo(self._settings) as (repo, run):
                     test_path = repo / "test_auto.py"
                     test_path.write_text(code)
                     env = os.environ.copy()
@@ -1192,11 +1190,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                     self._bad_hashes.add(code_hash)
                                     return None
 
-                        subprocess.run(
+                        run(
                             ["pytest", "-q"],
-                            cwd=str(repo),
-                            check=True,
                             env=env,
+                            check=True,
                             timeout=self._test_timeout,
                             capture_output=True,
                             text=True,
