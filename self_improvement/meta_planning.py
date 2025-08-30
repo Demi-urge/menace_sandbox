@@ -21,15 +21,30 @@ from ..roi_results_db import ROIResultsDB
 
 try:  # pragma: no cover - optional dependency
     from ..unified_event_bus import UnifiedEventBus
-except Exception:  # pragma: no cover - fallback when event bus missing
+except ImportError as exc:  # pragma: no cover - fallback when event bus missing
+    get_logger(__name__).warning(
+        "unified event bus unavailable",  # noqa: TRY300
+        extra=log_record(module=__name__, dependency="unified_event_bus"),
+        exc_info=exc,
+    )
     UnifiedEventBus = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from ..meta_workflow_planner import MetaWorkflowPlanner
-except Exception:  # pragma: no cover - gracefully degrade
+except ImportError as exc:  # pragma: no cover - gracefully degrade
+    get_logger(__name__).warning(
+        "meta_workflow_planner import failed",  # noqa: TRY300
+        extra=log_record(module=__name__, dependency="meta_workflow_planner"),
+        exc_info=exc,
+    )
     try:
         from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
-    except Exception:  # pragma: no cover - best effort fallback
+    except ImportError as exc2:  # pragma: no cover - best effort fallback
+        get_logger(__name__).warning(
+            "local meta_workflow_planner import failed",  # noqa: TRY300
+            extra=log_record(module=__name__, dependency="meta_workflow_planner"),
+            exc_info=exc2,
+        )
         MetaWorkflowPlanner = None  # type: ignore
 
 
@@ -39,11 +54,21 @@ class _FallbackPlanner:
     def __init__(self) -> None:
         try:
             self.roi_db: ROIResultsDB | None = ROIResultsDB()
-        except Exception:  # pragma: no cover - best effort
+        except (OSError, RuntimeError) as exc:  # pragma: no cover - best effort
+            get_logger(__name__).warning(
+                "ROIResultsDB unavailable",
+                extra=log_record(module=__name__),
+                exc_info=exc,
+            )
             self.roi_db = None
         try:
             self.stability_db: WorkflowStabilityDB | None = WorkflowStabilityDB()
-        except Exception:  # pragma: no cover - best effort
+        except (OSError, RuntimeError) as exc:  # pragma: no cover - best effort
+            get_logger(__name__).warning(
+                "WorkflowStabilityDB unavailable",
+                extra=log_record(module=__name__),
+                exc_info=exc,
+            )
             self.stability_db = None
 
         self.logger = get_logger("FallbackPlanner")
@@ -60,7 +85,12 @@ class _FallbackPlanner:
         try:
             data = json.loads(self.state_path.read_text())
             self.cluster_map = {tuple(k.split("|")): v for k, v in data.items()}
-        except Exception:
+        except (OSError, json.JSONDecodeError) as exc:
+            get_logger(__name__).debug(
+                "failed to load fallback planner state",
+                extra=log_record(path=str(self.state_path)),
+                exc_info=exc,
+            )
             self.cluster_map = {}
 
     def _save_state(self) -> None:
@@ -68,8 +98,12 @@ class _FallbackPlanner:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
             data = {"|".join(k): v for k, v in self.cluster_map.items()}
             self.state_path.write_text(json.dumps(data, indent=2))
-        except Exception:  # pragma: no cover - best effort
-            self.logger.debug("failed to persist fallback planner state")
+        except OSError as exc:  # pragma: no cover - best effort
+            self.logger.debug(
+                "failed to persist fallback planner state",
+                extra=log_record(path=str(self.state_path)),
+                exc_info=exc,
+            )
 
     # ------------------------------------------------------------------
     def begin_run(self, workflow_id: str, run_id: str) -> None:  # pragma: no cover - no-op

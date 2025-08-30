@@ -20,7 +20,7 @@ if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
 
     setup_logging()
 
-from logging_utils import get_logger
+from logging_utils import get_logger, log_record
 from alert_dispatcher import dispatch_alert
 import re
 
@@ -389,8 +389,12 @@ def save_coverage_data() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
             json.dump(COVERAGE_TRACKER, fh, indent=2, sort_keys=True)
-    except Exception as exc:  # pragma: no cover - best effort only
-        logger.exception("failed to save coverage data: %s", exc)
+    except OSError as exc:  # pragma: no cover - best effort only
+        logger.exception(
+            "failed to save coverage data",
+            extra=log_record(path=str(path)),
+            exc_info=exc,
+        )
 
     summary_path = Path(
         os.getenv(
@@ -403,8 +407,12 @@ def save_coverage_data() -> None:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         with summary_path.open("w", encoding="utf-8") as fh:
             json.dump(summary, fh, indent=2, sort_keys=True)
-    except Exception as exc:
-        logger.exception("failed to save coverage summary: %s", exc)
+    except OSError as exc:
+        logger.exception(
+            "failed to save coverage summary",
+            extra=log_record(path=str(summary_path)),
+            exc_info=exc,
+        )
 
 
 def _scenario_summary_path() -> Path:
@@ -495,7 +503,12 @@ def _get_history_db() -> InputHistoryDB:
 if DiagnosticManager is not None:
     try:
         _DIAGNOSTIC = DiagnosticManager()
-    except Exception:  # pragma: no cover - diagnostics optional
+    except (OSError, RuntimeError) as exc:  # pragma: no cover - diagnostics optional
+        logger.warning(
+            "diagnostic manager unavailable",
+            extra=log_record(module=__name__),
+            exc_info=exc,
+        )
         _DIAGNOSTIC = None
 else:
     _DIAGNOSTIC = None
@@ -509,8 +522,12 @@ def _log_diagnostic(issue: str, success: bool) -> None:
         _DIAGNOSTIC.log.add(ResolutionRecord(issue, "retry", success))
         if not success:
             _DIAGNOSTIC.error_bot.handle_error(issue)
-    except Exception as exc:
-        logger.exception("diagnostic logging failed: %s", exc)
+    except (OSError, AttributeError) as exc:
+        logger.exception(
+            "diagnostic logging failed",
+            extra=log_record(issue=issue, success=success),
+            exc_info=exc,
+        )
 
 
 # ----------------------------------------------------------------------
