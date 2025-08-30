@@ -1342,6 +1342,9 @@ class SelfTestService:
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to create pytest stub for %s", mod)
 
+        target_path = Path(target)
+        if not target_path.exists():
+            raise ValueError(f"invalid target {target}")
         cmd = [
             sys.executable,
             "-m",
@@ -1349,15 +1352,21 @@ class SelfTestService:
             "-q",
             "--json-report",
             "--json-report-file=-",
-            target,
+            target_path.as_posix(),
         ]
 
         passed = False
         warnings: list[Any] = []
         metrics: dict[str, Any] = {}
         try:
-            proc = subprocess.run(cmd, capture_output=True)
-            out = proc.stdout.decode() if isinstance(proc.stdout, bytes) else proc.stdout
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=self.container_timeout,
+            )
+            out = proc.stdout
             report: dict[str, Any] = {}
             try:
                 report = json.loads(out or "{}")
@@ -1386,7 +1395,19 @@ class SelfTestService:
                 categories.append("error")
 
             metrics = {"coverage": cov, "runtime": runtime, "categories": categories}
-            passed = proc.returncode == 0
+            passed = True
+        except subprocess.CalledProcessError as exc:
+            self.logger.error(
+                "module harness failed",
+                extra=log_record(cmd=exc.cmd, rc=exc.returncode, output=exc.stderr),
+            )
+            passed = False
+        except subprocess.TimeoutExpired as exc:
+            self.logger.error(
+                "module harness timed out",
+                extra=log_record(cmd=exc.cmd, timeout=exc.timeout, output=exc.stderr),
+            )
+            passed = False
         except Exception:  # pragma: no cover - best effort
             passed = False
         finally:
