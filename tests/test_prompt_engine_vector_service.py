@@ -66,7 +66,7 @@ def test_retry_trace_injection(monkeypatch, tmp_path):
     engine = PromptEngine(retriever=pr)
     trace = "Traceback: fail"
     prompt = engine.build_prompt("goal", retry_info=trace)
-    expected = f"Previous attempt failed with {trace}; seek alternative solution."
+    expected = "Previous attempt failed with:\nTraceback: fail\nTry a different approach."
     assert expected in prompt
 
 

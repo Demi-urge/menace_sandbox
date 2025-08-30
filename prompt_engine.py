@@ -160,9 +160,12 @@ class PromptEngine:
     def build_prompt(self, task: str, retry_info: str | None = None) -> str:
         """Return a prompt for *task* using retrieved patch examples.
 
-        ``retry_info`` is appended to the prompt when provided.  When retrieval
-        fails or the average confidence of returned patches falls below
-        ``confidence_threshold`` a static fallback template is returned.
+        ``retry_info`` may contain failure logs or tracebacks from a prior
+        attempt.  When supplied a "Previous attempt failed with" section is
+        appended and the details are de-duplicated so repeated retries do not
+        accumulate duplicate traces.  When retrieval fails or the average
+        confidence of returned patches falls below ``confidence_threshold`` a
+        static fallback template is returned.
         """
 
         if self.retriever is None:
@@ -204,10 +207,40 @@ class PromptEngine:
         lines = [f"Enhancement goal: {task}", ""]
         lines.extend(self.build_snippets(ranked))
         if retry_info:
-            lines.append(
-                f"Previous attempt failed with {retry_info}; seek alternative solution."
-            )
+            lines.extend(self._format_retry_info(retry_info))
         return "\n".join(line for line in lines if line)
+
+    # ------------------------------------------------------------------
+    def _format_retry_info(self, retry_info: str) -> List[str]:
+        """Return formatted ``retry_info`` lines without duplicates.
+
+        The helper removes any existing "Previous attempt failed with" headers
+        or concluding guidance so that repeated invocations remain idempotent.
+        """
+
+        skip_prefix = "previous attempt failed with"
+        skip_suffixes = {
+            "seek alternative solution.",
+            "try a different approach.",
+        }
+        cleaned: List[str] = []
+        for line in retry_info.strip().splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            lower = stripped.lower()
+            if lower.startswith(skip_prefix):
+                continue
+            if lower in skip_suffixes:
+                continue
+            cleaned.append(line)
+        if not cleaned:
+            return []
+        return [
+            "Previous attempt failed with:",
+            *cleaned,
+            "Try a different approach.",
+        ]
 
     # ------------------------------------------------------------------
     def _rank_records(self, records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:

@@ -24,7 +24,9 @@ Given the following pattern...
 - Code summary: handle edge case
   Diff summary: adjust parsing
   Outcome: works (tests passed)
-Previous attempt failed with Traceback: ValueError; seek alternative solution.
+Previous attempt failed with:
+Traceback: ValueError
+Try a different approach.
 ```
 
 ## Configuration
@@ -34,4 +36,9 @@ Previous attempt failed with Traceback: ValueError; seek alternative solution.
 * `CONFIDENCE_THRESHOLD` – minimum confidence before using the fallback
   template.
 * `retry_trace` – when provided, the prompt includes:
-  `Previous attempt failed with <trace>; seek alternative solution.`
+
+  ```
+  Previous attempt failed with:
+  <trace>
+  Try a different approach.
+  ```
