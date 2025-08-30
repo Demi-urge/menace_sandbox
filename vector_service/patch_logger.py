@@ -968,7 +968,7 @@ class PatchLogger:
 
         if self.weight_adjuster is not None:
             try:
-                self.weight_adjuster.adjust(pairs, enhancement_score, roi_tag_val.value)
+                self.weight_adjuster.adjust(detailed, enhancement_score, roi_tag_val.value)
             except Exception:
                 logger.exception("Failed to adjust ranking weights")
 
