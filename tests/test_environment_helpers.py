@@ -20,6 +20,7 @@ if "pyroute2" not in sys.modules:
     pr2 = types.ModuleType("pyroute2")
     pr2.IPRoute = pr2.NSPopen = pr2.netns = object
     sys.modules["pyroute2"] = pr2
+sys.modules.pop("sandbox_runner", None)
 import sandbox_runner.environment as env  # noqa: E402
 
 
@@ -212,9 +213,9 @@ def test_generative_load_default(monkeypatch):
 
     called = {}
 
-    def dummy_pipeline(task, model):
+    def dummy_pipeline(task, **kwargs):
         called["task"] = task
-        called["model"] = model
+        called.update(kwargs)
 
         class Gen:
             pass
@@ -255,7 +256,7 @@ def test_generate_input_stubs_synthetic_fallback(monkeypatch, tmp_path):
         pass
 
     stubs = env.generate_input_stubs(1, target=target)
-    assert stubs == [{"a": 0}]
+    assert stubs == [{"a": 1}]
 
 
 def test_generate_input_stubs_history_db(monkeypatch, tmp_path):

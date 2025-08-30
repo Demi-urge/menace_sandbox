@@ -10,10 +10,11 @@ import logging
 import os
 import re
 from pathlib import Path
-from collections import Counter
+from collections import Counter, OrderedDict
 import atexit
 import importlib
 import random
+from typing import get_origin, get_args, Union
 
 from .input_history_db import InputHistoryDB
 
@@ -31,7 +32,8 @@ openai = None  # type: ignore
 logger = logging.getLogger(__name__)
 
 _GENERATOR = None
-_CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
+# use OrderedDict for LRU eviction semantics
+_CACHE: "OrderedDict[Tuple[str, str], Dict[str, Any]]" = OrderedDict()
 
 _SAVE_TASKS: set[asyncio.Task[None]] = set()
 
@@ -47,6 +49,7 @@ _GEN_TIMEOUT = 10.0
 _GEN_RETRIES = 2
 _RETRY_BASE = 0.5
 _RETRY_MAX = 30.0
+_CACHE_MAX = 1024
 
 
 def _validate_env() -> None:
@@ -78,11 +81,12 @@ def _validate_env() -> None:
             logger.warning("invalid %s=%r; using default %s", name, val, default)
             return default
 
-    global _GEN_TIMEOUT, _GEN_RETRIES, _RETRY_BASE, _RETRY_MAX
+    global _GEN_TIMEOUT, _GEN_RETRIES, _RETRY_BASE, _RETRY_MAX, _CACHE_MAX
     _GEN_TIMEOUT = _float_env("SANDBOX_STUB_TIMEOUT", 10.0)
     _GEN_RETRIES = _int_env("SANDBOX_STUB_RETRIES", 2)
     _RETRY_BASE = _float_env("SANDBOX_STUB_RETRY_BASE", 0.5)
     _RETRY_MAX = _float_env("SANDBOX_STUB_RETRY_MAX", 30.0)
+    _CACHE_MAX = _int_env("SANDBOX_STUB_CACHE_MAX", 1024)
 
     model = os.getenv("SANDBOX_STUB_MODEL")
     if model and model not in {"openai", "gpt2-large", "distilgpt2"}:
@@ -107,45 +111,97 @@ async def _call_with_retry(func: Callable[[], Awaitable[Any]]) -> Any:
             delay = min(delay * 2, _RETRY_MAX)
 
 
-def _deterministic_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
-    """Fill missing fields in *stub* using simple deterministic defaults."""
+def _rule_based_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
+    """Fill missing fields using simple deterministic, context aware rules."""
     if func is None:
         return dict(stub)
     try:
         sig = inspect.signature(func)
     except Exception:
         return dict(stub)
-    result: Dict[str, Any] = {}
+    result = dict(stub)
     for name, param in sig.parameters.items():
+        if name in result and result[name] is not None:
+            continue
         ann = param.annotation
+        lname = name.lower()
         if ann in (int, "int"):
-            val: Any = 0
+            val = 1
         elif ann in (float, "float"):
-            val = 0.0
+            val = 1.0
         elif ann in (bool, "bool"):
-            val = False
+            val = True
         elif ann in (str, "str"):
-            val = ""
+            if any(token in lname for token in ["name", "title", "id"]):
+                val = "example"
+            else:
+                val = "value"
         else:
             val = None
         result[name] = val
-    result.update(stub)
     return result
 
 
-def _load_cache() -> Dict[Tuple[str, str], Dict[str, Any]]:
+def _type_matches(value: Any, annotation: Any) -> bool:
+    """Return True if *value* conforms to *annotation* (best effort)."""
+    if annotation in (inspect._empty, Any):
+        return True
+    origin = get_origin(annotation)
+    if origin is None:
+        if annotation in (int, "int"):
+            return isinstance(value, int) and not isinstance(value, bool)
+        if annotation in (float, "float"):
+            return isinstance(value, (float, int)) and not isinstance(value, bool)
+        if annotation in (bool, "bool"):
+            return isinstance(value, bool)
+        if annotation in (str, "str"):
+            return isinstance(value, str)
+        return True
+    if origin is list:
+        (arg,) = get_args(annotation) or (Any,)
+        return isinstance(value, list) and all(_type_matches(v, arg) for v in value)
+    if origin is dict:
+        key_type, val_type = get_args(annotation) or (Any, Any)
+        return isinstance(value, dict) and all(
+            _type_matches(k, key_type) and _type_matches(v, val_type)
+            for k, v in value.items()
+        )
+    if origin is tuple:
+        args = get_args(annotation)
+        if ... in args:
+            elem_type = args[0]
+            return isinstance(value, tuple) and all(
+                _type_matches(v, elem_type) for v in value
+            )
+        return isinstance(value, tuple) and len(value) == len(args) and all(
+            _type_matches(v, t) for v, t in zip(value, args)
+        )
+    if origin is set:
+        (arg,) = get_args(annotation) or (Any,)
+        return isinstance(value, set) and all(_type_matches(v, arg) for v in value)
+    if origin is Union:
+        return any(_type_matches(value, arg) for arg in get_args(annotation))
+    return True
+
+
+def _load_cache() -> "OrderedDict[Tuple[str, str], Dict[str, Any]]":
     try:
         if _STUB_CACHE_PATH.exists():
             with open(_STUB_CACHE_PATH, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
-            if isinstance(data, dict):
-                cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
-                for k, v in data.items():
-                    if not isinstance(k, str) or not isinstance(v, dict):
+            if isinstance(data, list):
+                cache: "OrderedDict[Tuple[str, str], Dict[str, Any]]" = OrderedDict()
+                for item in data:
+                    if not (
+                        isinstance(item, list)
+                        and len(item) == 2
+                        and isinstance(item[0], str)
+                        and isinstance(item[1], dict)
+                    ):
                         continue
-                    parts = k.split("::", 1)
+                    parts = item[0].split("::", 1)
                     if len(parts) == 2:
-                        cache[(parts[0], parts[1])] = v
+                        cache[(parts[0], parts[1])] = item[1]
                 return cache
     except Exception:
         logger.exception("failed to load stub cache")
@@ -154,16 +210,18 @@ def _load_cache() -> Dict[Tuple[str, str], Dict[str, Any]]:
             _STUB_CACHE_PATH.replace(backup)
         except Exception:
             logger.exception("failed to back up corrupt cache")
-    return {}
+    return OrderedDict()
 
 
 def _save_cache() -> None:
     try:
         _STUB_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        data = {f"{k[0]}::{k[1]}": v for k, v in _CACHE.items()}
+        data = [[f"{k[0]}::{k[1]}", v] for k, v in _CACHE.items()]
         tmp = _STUB_CACHE_PATH.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
         tmp.replace(_STUB_CACHE_PATH)
     except Exception:
         logger.exception("failed to save stub cache")
@@ -177,6 +235,15 @@ async def _aload_cache() -> Dict[Tuple[str, str], Dict[str, Any]]:
 async def _asave_cache() -> None:
     """Asynchronously persist stub cache to disk."""
     await asyncio.to_thread(_save_cache)
+
+
+def _cache_evict() -> None:
+    """Evict least recently used cache entries when exceeding limit."""
+    while len(_CACHE) > _CACHE_MAX:
+        try:
+            _CACHE.popitem(last=False)
+        except Exception:
+            break
 
 
 def _schedule_cache_persist() -> None:
@@ -195,6 +262,7 @@ def _schedule_cache_persist() -> None:
 
 # load persistent cache at import time
 _CACHE.update(_load_cache())
+_cache_evict()
 
 
 def _atexit_save_cache() -> None:
@@ -280,9 +348,15 @@ async def _aload_generator():
         return None
 
     candidates = ["gpt2-large", "distilgpt2"] if model is None else [model]
+    hf_token = os.getenv("HUGGINGFACE_API_TOKEN") or os.getenv("HF_TOKEN")
     for name in candidates:
         try:
-            _GENERATOR = await asyncio.to_thread(pipeline, "text-generation", model=name)
+            kwargs = {"model": name}
+            if hf_token:
+                kwargs["use_auth_token"] = hf_token
+            _GENERATOR = await asyncio.to_thread(
+                pipeline, "text-generation", **kwargs
+            )
             break
         except Exception:  # pragma: no cover - model load failures
             logger.exception("failed to load model %s", name)
@@ -346,7 +420,7 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
     if gen is None:
         func = ctx.get("target")
         base = stubs or [{}]
-        return [_deterministic_stub(s, func) for s in base]
+        return [_rule_based_stub(s, func) for s in base]
 
     template: str = ctx.get(
         "prompt_template",
@@ -367,6 +441,10 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
         key = _cache_key(name, stub)
         cached = _CACHE.get(key)
         if cached is not None:
+            try:
+                _CACHE.move_to_end(key)
+            except Exception:
+                pass
             new_stubs.append(dict(cached))
             continue
         args = ", ".join(f"{k}={v!r}" for k, v in stub.items())
@@ -411,12 +489,12 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
                 data = json.loads(match.group(0))
                 if isinstance(data, dict):
                     func = ctx.get("target")
-                    params: List[str] = []
+                    params: List[Tuple[str, inspect.Parameter]] = []
                     if func is not None:
                         try:
                             sig = inspect.signature(func)
                             params = [
-                                n
+                                (n, p)
                                 for n, p in sig.parameters.items()
                                 if p.kind
                                 in (
@@ -427,16 +505,17 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
                             ]
                         except Exception:
                             params = []
-                    for p_name in params:
+                    for p_name, param in params:
                         if p_name not in data:
                             raise ValueError("missing field")
-                        if (
-                            p_name in stub
-                            and stub[p_name] is not None
-                            and not isinstance(data[p_name], type(stub[p_name]))
-                        ):
+                        if not _type_matches(data[p_name], param.annotation):
                             raise ValueError("type mismatch")
                     _CACHE[key] = data
+                    try:
+                        _CACHE.move_to_end(key)
+                    except Exception:
+                        pass
+                    _cache_evict()
                     changed = True
                     new_stubs.append(dict(data))
                     continue
