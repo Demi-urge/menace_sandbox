@@ -806,14 +806,22 @@ def full_autonomous_run(
         try:
             roi_cycles = int(env_val)
         except Exception:
-            pass
+            logger.warning(
+                "invalid ROI_CYCLES %r, using %s",
+                env_val,
+                roi_cycles,
+            )
     synergy_cycles = getattr(args, "synergy_cycles", 3)
     env_val = os.getenv("SYNERGY_CYCLES")
     if env_val is not None:
         try:
             synergy_cycles = int(env_val)
         except Exception:
-            pass
+            logger.warning(
+                "invalid SYNERGY_CYCLES %r, using %s",
+                env_val,
+                synergy_cycles,
+            )
     if synergy_threshold_window is None:
         synergy_threshold_window = synergy_cycles
     if synergy_threshold_weight is None:

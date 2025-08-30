@@ -43,11 +43,17 @@ def _load_module(monkeypatch):
     shd_mod.connect_locked = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "menace.synergy_history_db", shd_mod)
     sym_mon = types.ModuleType("synergy_monitor")
-    sym_mon.ExporterMonitor = lambda *a, **k: types.SimpleNamespace(start=lambda: None, stop=lambda: None, restart_count=0)
-    sym_mon.AutoTrainerMonitor = lambda *a, **k: types.SimpleNamespace(start=lambda: None, stop=lambda: None, restart_count=0)
+    sym_mon.ExporterMonitor = lambda *a, **k: types.SimpleNamespace(
+        start=lambda: None, stop=lambda: None, restart_count=0
+    )
+    sym_mon.AutoTrainerMonitor = lambda *a, **k: types.SimpleNamespace(
+        start=lambda: None, stop=lambda: None, restart_count=0
+    )
     monkeypatch.setitem(sys.modules, "synergy_monitor", sym_mon)
     srm = types.ModuleType("sandbox_recovery_manager")
-    srm.SandboxRecoveryManager = lambda *a, **k: types.SimpleNamespace(run=lambda *a, **k: None, sandbox_main=None)
+    srm.SandboxRecoveryManager = lambda *a, **k: types.SimpleNamespace(
+        run=lambda *a, **k: None, sandbox_main=None
+    )
     monkeypatch.setitem(sys.modules, "sandbox_recovery_manager", srm)
 
     sr_mod = types.ModuleType("sandbox_runner")
@@ -81,6 +87,7 @@ def _load_module(monkeypatch):
     if "pydantic" not in sys.modules:
         pyd = types.ModuleType("pydantic")
         pyd.BaseModel = object
+
         class _Root(object):
             @classmethod
             def __class_getitem__(cls, item):
@@ -139,26 +146,30 @@ def _load_module_capture(monkeypatch, capture):
     return mod
 
 
-def test_invalid_roi_cycles_warns(monkeypatch, tmp_path, caplog):
-    mod = _load_module(monkeypatch)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+def test_invalid_roi_cycles_warns(monkeypatch, caplog):
+    stub_env = types.ModuleType("sandbox_runner.environment")
+    stub_env.SANDBOX_ENV_PRESETS = [{}]
+    stub_env.simulate_full_environment = lambda preset: None
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", stub_env)
+    from sandbox_runner.cli import full_autonomous_run
+    args = argparse.Namespace(max_iterations=0)
     monkeypatch.setenv("ROI_CYCLES", "foo")
-    caplog.set_level(logging.WARNING)
-    mod.main(["--runs", "0", "--check-settings"])
+    caplog.set_level(logging.WARNING, logger="sandbox_runner.cli")
+    full_autonomous_run(args)
+    assert "invalid ROI_CYCLES" in caplog.text
 
 
-def test_invalid_synergy_cycles_warns(monkeypatch, tmp_path, caplog):
-    mod = _load_module(monkeypatch)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+def test_invalid_synergy_cycles_warns(monkeypatch, caplog):
+    stub_env = types.ModuleType("sandbox_runner.environment")
+    stub_env.SANDBOX_ENV_PRESETS = [{}]
+    stub_env.simulate_full_environment = lambda preset: None
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", stub_env)
+    from sandbox_runner.cli import full_autonomous_run
+    args = argparse.Namespace(max_iterations=0)
     monkeypatch.setenv("SYNERGY_CYCLES", "bar")
-    caplog.set_level(logging.WARNING)
-    mod.main(["--runs", "0", "--check-settings"])
+    caplog.set_level(logging.WARNING, logger="sandbox_runner.cli")
+    full_autonomous_run(args)
+    assert "invalid SYNERGY_CYCLES" in caplog.text
 
 
 def test_main_exits_when_required_env_missing(monkeypatch, tmp_path):
