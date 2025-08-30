@@ -11,12 +11,15 @@ import yaml
 
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
+
     PYDANTIC_V2 = True
 except Exception:  # pragma: no cover - fallback for pydantic<2
     from pydantic import BaseSettings  # type: ignore
+
     PYDANTIC_V2 = False
     SettingsConfigDict = dict  # type: ignore[misc]
 from pydantic import BaseModel, Field
+
 try:  # pragma: no cover - compatibility shim
     from pydantic import field_validator
 except Exception:  # pragma: no cover
@@ -189,28 +192,22 @@ class SandboxSettings(BaseSettings):
         "./shared/global.db", env="MENACE_SHARED_DB_PATH"
     )
     visual_agent_token: str = Field("", env="VISUAL_AGENT_TOKEN")
-    visual_agent_token_rotate: str | None = Field(
-        None, env="VISUAL_AGENT_TOKEN_ROTATE"
-    )
-    sandbox_volatility_threshold: float = Field(
-        1.0, env="SANDBOX_VOLATILITY_THRESHOLD"
-    )
+    visual_agent_token_rotate: str | None = Field(None, env="VISUAL_AGENT_TOKEN_ROTATE")
+    sandbox_volatility_threshold: float = Field(1.0, env="SANDBOX_VOLATILITY_THRESHOLD")
     gpt_memory_compact_interval: float | None = Field(
         None, env="GPT_MEMORY_COMPACT_INTERVAL"
     )
     export_synergy_metrics: bool = Field(False, env="EXPORT_SYNERGY_METRICS")
     synergy_metrics_port: int = Field(8003, env="SYNERGY_METRICS_PORT")
     metrics_port: int | None = Field(None, env="METRICS_PORT")
-    relevancy_radar_interval: float | None = Field(
-        None, env="RELEVANCY_RADAR_INTERVAL"
-    )
+    relevancy_radar_interval: float | None = Field(None, env="RELEVANCY_RADAR_INTERVAL")
     sandbox_generate_presets: bool = Field(True, env="SANDBOX_GENERATE_PRESETS")
     sandbox_module_algo: str | None = Field(None, env="SANDBOX_MODULE_ALGO")
-    sandbox_module_threshold: float | None = Field(
-        None, env="SANDBOX_MODULE_THRESHOLD"
-    )
-    sandbox_semantic_modules: bool = Field(
-        False, env="SANDBOX_SEMANTIC_MODULES"
+    sandbox_module_threshold: float | None = Field(None, env="SANDBOX_MODULE_THRESHOLD")
+    sandbox_semantic_modules: bool = Field(False, env="SANDBOX_SEMANTIC_MODULES")
+    sandbox_stub_model: str | None = Field(None, env="SANDBOX_STUB_MODEL")
+    huggingface_token: str | None = Field(
+        None, env=["HUGGINGFACE_API_TOKEN", "HF_TOKEN"]
     )
     sandbox_max_recursion_depth: int | None = Field(
         None, env="SANDBOX_MAX_RECURSION_DEPTH"
@@ -299,12 +296,15 @@ class SandboxSettings(BaseSettings):
         description="Comma-separated stub provider names to disable.",
     )
     if PYDANTIC_V2:
+
         @field_validator("stub_providers", "disabled_stub_providers", mode="before")
         def _split_stub_providers(cls, v: Any) -> Any:
             if isinstance(v, str):
                 return [s.strip() for s in v.split(",") if s.strip()]
             return v
+
     else:  # pragma: no cover - pydantic<2
+
         @field_validator("stub_providers", "disabled_stub_providers", pre=True)
         def _split_stub_providers(cls, v: Any) -> Any:  # type: ignore[override]
             if isinstance(v, str):
@@ -347,6 +347,7 @@ class SandboxSettings(BaseSettings):
         description="Append misuse stubs to generated inputs when true.",
     )
     if PYDANTIC_V2:
+
         @field_validator("stub_strategy_order", mode="before")
         def _split_stub_strategy_order(cls, v: Any) -> Any:
             if isinstance(v, str):
@@ -361,12 +362,15 @@ class SandboxSettings(BaseSettings):
                 except Exception:
                     return {}
             return v
+
         @field_validator("input_history", mode="before")
         def _empty_history(cls, v: Any) -> Any:
             if isinstance(v, str) and not v.strip():
                 return None
             return v
+
     else:  # pragma: no cover - pydantic<2
+
         @field_validator("stub_strategy_order", pre=True)
         def _split_stub_strategy_order(cls, v: Any) -> Any:  # type: ignore[override]
             if isinstance(v, str):
@@ -381,11 +385,13 @@ class SandboxSettings(BaseSettings):
                 except Exception:
                     return {}
             return v
+
         @field_validator("input_history", pre=True)
         def _empty_history(cls, v: Any) -> Any:  # type: ignore[override]
             if isinstance(v, str) and not v.strip():
                 return None
             return v
+
     suggestion_sources: list[str] = Field(
         default_factory=lambda: ["cache", "knowledge", "heuristic"],
         env="SANDBOX_SUGGESTION_SOURCES",
@@ -394,17 +400,21 @@ class SandboxSettings(BaseSettings):
         ),
     )
     if PYDANTIC_V2:
+
         @field_validator("suggestion_sources", mode="before")
         def _split_suggestion_sources(cls, v: Any) -> Any:
             if isinstance(v, str):
                 return [s.strip() for s in v.split(",") if s.strip()]
             return v
+
     else:  # pragma: no cover - pydantic<2
+
         @field_validator("suggestion_sources", pre=True)
         def _split_suggestion_sources(cls, v: Any) -> Any:  # type: ignore[override]
             if isinstance(v, str):
                 return [s.strip() for s in v.split(",") if s.strip()]
             return v
+
     meta_planning_interval: int = Field(
         10,
         env="META_PLANNING_INTERVAL",
@@ -606,13 +616,9 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_EXCLUDE_DIRS",
         description="Comma-separated directories to exclude during scans.",
     )
-    exploration_strategy: str = Field(
-        "epsilon_greedy", env="EXPLORATION_STRATEGY"
-    )
+    exploration_strategy: str = Field("epsilon_greedy", env="EXPLORATION_STRATEGY")
     exploration_epsilon: float = Field(0.1, env="EXPLORATION_EPSILON")
-    exploration_temperature: float = Field(
-        1.0, env="EXPLORATION_TEMPERATURE"
-    )
+    exploration_temperature: float = Field(1.0, env="EXPLORATION_TEMPERATURE")
     default_module_timeout: float | None = Field(
         None,
         env="SANDBOX_TIMEOUT",
@@ -660,9 +666,7 @@ class SandboxSettings(BaseSettings):
         return v
 
     @field_validator("meta_entropy_threshold")
-    def _validate_meta_entropy_threshold(
-        cls, v: float | None
-    ) -> float | None:
+    def _validate_meta_entropy_threshold(cls, v: float | None) -> float | None:
         if v is not None and not 0 <= v <= 1:
             raise ValueError("meta_entropy_threshold must be between 0 and 1")
         return v
@@ -712,6 +716,7 @@ class SandboxSettings(BaseSettings):
         if v <= 0:
             raise ValueError(f"{info.field_name} must be positive")
         return v
+
     test_redundant_modules: bool = Field(
         True,
         env="SANDBOX_TEST_REDUNDANT",
@@ -879,9 +884,7 @@ class SandboxSettings(BaseSettings):
     synergy_stationarity_confidence: float | None = Field(
         None, env="SYNERGY_STATIONARITY_CONFIDENCE"
     )
-    synergy_std_threshold: float | None = Field(
-        None, env="SYNERGY_STD_THRESHOLD"
-    )
+    synergy_std_threshold: float | None = Field(None, env="SYNERGY_STD_THRESHOLD")
     synergy_variance_confidence: float | None = Field(
         None, env="SYNERGY_VARIANCE_CONFIDENCE"
     )
@@ -948,7 +951,9 @@ class SandboxSettings(BaseSettings):
     synergy_weight_resilience: float = Field(1.0, env="SYNERGY_WEIGHT_RESILIENCE")
     synergy_weight_antifragility: float = Field(1.0, env="SYNERGY_WEIGHT_ANTIFRAGILITY")
     synergy_weight_reliability: float = Field(1.0, env="SYNERGY_WEIGHT_RELIABILITY")
-    synergy_weight_maintainability: float = Field(1.0, env="SYNERGY_WEIGHT_MAINTAINABILITY")
+    synergy_weight_maintainability: float = Field(
+        1.0, env="SYNERGY_WEIGHT_MAINTAINABILITY"
+    )
     synergy_weight_throughput: float = Field(1.0, env="SYNERGY_WEIGHT_THROUGHPUT")
     roi_ema_alpha: float = Field(0.1, env="ROI_EMA_ALPHA")
     roi_compounding_weight: float = Field(1.0, env="ROI_COMPOUNDING_WEIGHT")
@@ -1109,10 +1114,16 @@ class SandboxSettings(BaseSettings):
         "score_weights",
         **({"mode": "before"} if PYDANTIC_V2 else {"pre": True}),
     )
-    def _parse_score_weights(cls, v: Any) -> tuple[float, float, float, float, float, float]:
+    def _parse_score_weights(
+        cls, v: Any
+    ) -> tuple[float, float, float, float, float, float]:
         if isinstance(v, str):
             try:
-                v = json.loads(v) if v.strip().startswith("[") else [float(x) for x in v.split(",")]
+                v = (
+                    json.loads(v)
+                    if v.strip().startswith("[")
+                    else [float(x) for x in v.split(",")]
+                )
             except Exception as e:  # pragma: no cover - defensive
                 raise ValueError("score_weights must be a list of floats") from e
         return tuple(v)
@@ -1148,7 +1159,9 @@ class SandboxSettings(BaseSettings):
     # Grouped settings
     roi: ROISettings = Field(default_factory=ROISettings, exclude=True)
     synergy: SynergySettings = Field(default_factory=SynergySettings, exclude=True)
-    alignment: AlignmentSettings = Field(default_factory=AlignmentSettings, exclude=True)
+    alignment: AlignmentSettings = Field(
+        default_factory=AlignmentSettings, exclude=True
+    )
 
     def __init__(self, **data: Any) -> None:  # pragma: no cover - simple wiring
         super().__init__(**data)
@@ -1200,6 +1213,7 @@ class SandboxSettings(BaseSettings):
     )
 
     if not PYDANTIC_V2:
+
         class Config:  # pragma: no cover - fallback for pydantic<2
             env_file = os.getenv("MENACE_ENV_FILE", ".env")
             extra = "ignore"
