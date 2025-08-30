@@ -183,7 +183,7 @@ except ImportError:  # pragma: no cover - optional dependency
 _FAKER = Faker() if Faker is not None else None
 
 from . import config as sandbox_config
-from .input_history_db import InputHistoryDB
+from .input_history_db import InputHistoryDB, router as history_router
 from collections import Counter
 try:
     from error_logger import ErrorLogger
@@ -4875,9 +4875,8 @@ def _load_history(path: str | None) -> List[Dict[str, Any]]:
 def aggregate_history_stubs() -> Dict[str, Any]:
     """Return aggregated example values from the entire history database."""
     try:
-        db = _get_history_db()
-        router = GLOBAL_ROUTER or init_db_router("default")
-        conn = router.get_connection("history")
+        _get_history_db()
+        conn = history_router.get_connection("history")
         rows = conn.execute("SELECT data FROM history").fetchall()
     except Exception:
         logger.exception("failed to aggregate input history")
@@ -4910,6 +4909,30 @@ def aggregate_history_stubs() -> Dict[str, Any]:
         else:
             result[key] = Counter(vals).most_common(1)[0][0]
     return result
+
+
+def recent_failure_stubs(limit: int = 10) -> List[Dict[str, Any]]:
+    """Return input-like feature dictionaries from recent failure records."""
+    try:
+        router = GLOBAL_ROUTER or init_db_router("default")
+        conn = router.get_connection("failures")
+        rows = conn.execute(
+            "SELECT features FROM failures ORDER BY rowid DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+    except Exception:
+        logger.exception("failed to load recent failure stubs")
+        return []
+
+    stubs: List[Dict[str, Any]] = []
+    for row in rows:
+        try:
+            obj = json.loads(row[0])
+            if isinstance(obj, dict):
+                stubs.append(dict(obj))
+        except Exception:
+            continue
+    return stubs
 
 
 def _load_strategy_hook(env_var: str) -> Callable[..., Any] | None:
@@ -5237,7 +5260,7 @@ def generate_input_stubs(
 
     ``SANDBOX_INPUT_STUBS`` overrides all other behaviour. When unset the
     generator consults ``providers`` discovered via ``SANDBOX_STUB_PLUGINS``.
-    The built-in strategies ``templates``, ``history``, ``random``, ``smart``,
+    The built-in strategies ``templates``, ``history``, ``failures``, ``random``, ``smart``,
     ``synthetic``, ``hostile`` and ``misuse`` can be selected via ``strategy``
     or the ``SANDBOX_STUB_STRATEGY`` environment variable. ``strategy_order``
     (or ``SANDBOX_STUB_STRATEGY_ORDER``) controls the fallback sequence when
@@ -5287,6 +5310,7 @@ def generate_input_stubs(
         else:
             strategy_order = [
                 "history",
+                "failures",
                 "signature",
                 "templates",
                 "smart",
@@ -5312,6 +5336,12 @@ def generate_input_stubs(
                     stubs = [dict(agg) for _ in range(num)]
             if stubs is not None:
                 chosen = "history"
+                break
+        elif strat == "failures":
+            failures = recent_failure_stubs()
+            if failures:
+                stubs = [dict(random.choice(failures)) for _ in range(num)]
+                chosen = "failures"
                 break
         elif strat == "signature" and target is not None:
             base = _stub_from_signature(target, smart=False)
@@ -5359,13 +5389,15 @@ def generate_input_stubs(
             chosen = "random"
             break
 
-    if chosen == "history" or (templates_checked and (templates is None or not templates)):
+    if chosen in {"history", "failures"} or (
+        templates_checked and (templates is None or not templates)
+    ):
         try:
             from . import generative_stub_provider as gsp  # local import
 
-            stubs = gsp.generate_stubs(stubs, {"strategy": "history", "target": target})
+            stubs = gsp.generate_stubs(stubs, {"strategy": chosen, "target": target})
         except Exception:
-            logger.exception("history stub generation failed")
+            logger.exception("%s stub generation failed", chosen)
 
     for prov in providers:
         try:
