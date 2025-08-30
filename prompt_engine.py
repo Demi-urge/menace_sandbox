@@ -80,6 +80,13 @@ except Exception:  # pragma: no cover - allow running tests without service laye
 class PromptEngine:
     """Build prompts for the :class:`SelfCodingEngine`.
 
+    Retrieved patches are ranked by a weighted heuristic combining
+    risk-adjusted ROI, recency and ROI tag weights.  Snippets are then
+    grouped into successful or failed examples before being assembled into
+    the final prompt.  When no snippet clears ``confidence_threshold`` the
+    engine falls back to a static template instead of emitting a low
+    confidence prompt.
+
     Parameters
     ----------
     retriever:
@@ -170,14 +177,15 @@ class PromptEngine:
 
     # ------------------------------------------------------------------
     def build_snippets(self, patches: Iterable[Dict[str, Any]]) -> List[str]:
-        """Return formatted snippet lines sorted by ROI tag and age.
+        """Return formatted snippet lines ordered by weighted scoring.
 
-        Each element in *patches* is expected to be a mapping containing a
-        ``metadata`` field.  The metadata is compressed via
-        :func:`snippet_compressor.compress_snippets` and grouped into
-        successful or failed examples.  The groups are sorted by the internal
-        :meth:`_score_snippet` helper so callers receive the most relevant
-        examples first.
+        Each entry in *patches* must provide a ``metadata`` mapping.  The
+        metadata is compressed via :func:`snippet_compressor.compress_snippets`
+        before snippets are grouped into successful and failed examples.  The
+        groups are sorted by :meth:`_score_snippet`, which combines
+        risk-adjusted ROI, recency and ROI tag weights.  Records that score
+        below ``confidence_threshold`` are ignored so that upstream callers can
+        fall back to static templates when no confident snippets remain.
         """
 
         records = list(patches)
