@@ -22,43 +22,26 @@ from sandbox_settings import SandboxSettings
 from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT, ERROR_FIX
 from memory_logging import log_with_tags
 from memory_aware_gpt_client import ask_with_memory
-from vector_service import Retriever, FallbackResult
 from foresight_tracker import ForesightTracker
 from db_router import GLOBAL_ROUTER, init_db_router
 
 
+try:  # pragma: no cover - vector_service is a required dependency
+    from vector_service import (
+        Retriever,
+        FallbackResult,
+        ErrorResult,
+        PatchLogger,
+        VectorServiceError,
+    )
+except ImportError as exc:  # pragma: no cover - provide actionable guidance
+    raise RuntimeError(
+        "The 'vector_service' package is required for sandbox operation. "
+        "Install or enable the 'vector_service' dependency before running the sandbox."
+    ) from exc
+
 
 router = GLOBAL_ROUTER or init_db_router("sandbox_cycle")
-try:  # pragma: no cover - optional dependency
-    from vector_service import ErrorResult  # type: ignore
-except ImportError as exc:  # pragma: no cover - fallback when unavailable
-    get_logger(__name__).warning(
-        "using fallback ErrorResult",  # noqa: TRY300
-        extra=log_record(
-            module=__name__, dependency="vector_service.ErrorResult"
-        ),
-        exc_info=exc,
-    )
-
-    class ErrorResult(Exception):
-        """Fallback ErrorResult when vector service lacks explicit class."""
-
-        pass
-
-try:  # pragma: no cover - optional dependency
-    from vector_service import PatchLogger, VectorServiceError  # type: ignore
-except ImportError as exc:  # pragma: no cover - fallback when unavailable
-    get_logger(__name__).warning(
-        "vector service components unavailable",  # noqa: TRY300
-        extra=log_record(module=__name__, dependency="vector_service"),
-        exc_info=exc,
-    )
-    PatchLogger = object  # type: ignore
-
-    class VectorServiceError(Exception):
-        """Fallback VectorServiceError when vector service is unavailable."""
-
-        pass
 
 if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
     from sandbox_runner import SandboxContext
