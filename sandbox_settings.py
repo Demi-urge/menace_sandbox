@@ -98,6 +98,10 @@ class SynergySettings(BaseModel):
     weights_lr: float = 0.1
     train_interval: int = 10
     replay_size: int = 100
+    hidden_size: int = 32
+    layers: int = 1
+    optimizer: str = "adam"
+    checkpoint_interval: int = 50
 
     @field_validator(
         "threshold",
@@ -112,7 +116,15 @@ class SynergySettings(BaseModel):
             raise ValueError(f"{info.field_name} must be between 0 and 1")
         return v
 
-    @field_validator("threshold_window", "ma_window", "train_interval", "replay_size")
+    @field_validator(
+        "threshold_window",
+        "ma_window",
+        "train_interval",
+        "replay_size",
+        "hidden_size",
+        "layers",
+        "checkpoint_interval",
+    )
     def _synergy_positive_int(cls, v: int | None, info: Any) -> int | None:
         if v is not None and v <= 0:
             raise ValueError(f"{info.field_name} must be a positive integer")
@@ -961,6 +973,10 @@ class SandboxSettings(BaseSettings):
     synergy_weights_lr: float = Field(0.1, env="SYNERGY_WEIGHTS_LR")
     synergy_train_interval: int = Field(10, env="SYNERGY_TRAIN_INTERVAL")
     synergy_replay_size: int = Field(100, env="SYNERGY_REPLAY_SIZE")
+    synergy_hidden_size: int = Field(32, env="SYNERGY_HIDDEN_SIZE")
+    synergy_layers: int = Field(1, env="SYNERGY_LAYERS")
+    synergy_optimizer: str = Field("adam", env="SYNERGY_OPTIMIZER")
+    synergy_checkpoint_interval: int = Field(50, env="SYNERGY_CHECKPOINT_INTERVAL")
     adaptive_roi_retrain_interval: int = Field(
         20,
         env="ADAPTIVE_ROI_RETRAIN_INTERVAL",
@@ -1196,6 +1212,10 @@ class SandboxSettings(BaseSettings):
             weights_lr=self.synergy_weights_lr,
             train_interval=self.synergy_train_interval,
             replay_size=self.synergy_replay_size,
+            hidden_size=self.synergy_hidden_size,
+            layers=self.synergy_layers,
+            optimizer=self.synergy_optimizer,
+            checkpoint_interval=self.synergy_checkpoint_interval,
         )
         self.alignment = AlignmentSettings(
             rules=self.alignment_rules,
