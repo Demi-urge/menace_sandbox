@@ -1,4 +1,5 @@
 import ast
+import ast
 import importlib
 import logging
 import time
@@ -10,6 +11,8 @@ import asyncio
 import random
 import inspect
 from dataclasses import dataclass
+import subprocess
+import sys
 
 import pytest
 
@@ -27,6 +30,7 @@ def _load_utils():
             self.retry_optional_dependencies = False
             self.sandbox_retry_delay = 0
             self.sandbox_max_retries = 0
+            self.menace_offline_install = False
 
     ns = {
         "importlib": importlib,
@@ -41,6 +45,8 @@ def _load_utils():
         "self_improvement_failure_total": counter,
         "SandboxSettings": _StubSettings,
         "dataclass": dataclass,
+        "subprocess": subprocess,
+        "sys": sys,
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns
@@ -48,7 +54,9 @@ def _load_utils():
 
 def test_missing_dependency_returns_stub():
     utils = _load_utils()
-    with patch("importlib.import_module", side_effect=ModuleNotFoundError):
+    with patch("subprocess.check_call", side_effect=Exception), patch(
+        "importlib.import_module", side_effect=ModuleNotFoundError
+    ):
         fn = utils["_load_callable"]("mod", "attr")
         with pytest.raises(RuntimeError):
             fn()
@@ -81,11 +89,14 @@ def test_load_callable_retry_when_enabled():
             raise ModuleNotFoundError
         return types.SimpleNamespace(attr=lambda: "ok")
 
-    with patch("importlib.import_module", side_effect=side_effect):
+    with patch("subprocess.check_call", side_effect=Exception), patch(
+        "importlib.import_module", side_effect=side_effect
+    ):
         utils["SandboxSettings"] = lambda: types.SimpleNamespace(
             retry_optional_dependencies=True,
             sandbox_retry_delay=0,
             sandbox_max_retries=3,
+            menace_offline_install=False,
         )
         fn = utils["_load_callable"]("mod", "attr")
         assert fn() == "ok"
