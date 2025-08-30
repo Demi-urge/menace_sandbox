@@ -38,6 +38,7 @@ class DummyVectorMetricsDB:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
         self.fb_calls: list[dict[str, Any]] = []
+        self.summary_calls: list[dict[str, Any]] = []
 
     def update_outcome(
         self,
@@ -63,6 +64,19 @@ class DummyVectorMetricsDB:
     def log_retrieval_feedback(self, db, *, win=False, regret=False, roi=0.0):
         self.fb_calls.append({"db": db, "win": win, "regret": regret, "roi": roi})
 
+    def record_patch_summary(self, patch_id, *, errors=None, tests_passed=None, lines_changed=None):
+        self.summary_calls.append(
+            {
+                "patch_id": patch_id,
+                "errors": errors,
+                "tests_passed": tests_passed,
+                "lines_changed": lines_changed,
+            }
+        )
+
+    def record_patch_ancestry(self, *a, **k):
+        pass
+
 
 class DummyROITracker:
     def __init__(self) -> None:
@@ -82,6 +96,18 @@ class DummyPatchDB:
     def __init__(self) -> None:
         self.kwargs: dict[str, Any] | None = None
 
+    def record_provenance(self, *a, **k):
+        pass
+
+    def log_ancestry(self, *a, **k):
+        pass
+
+    def log_contributors(self, *a, **k):
+        pass
+
+    def get(self, *a, **k):
+        return None
+
     def record_vector_metrics(
         self,
         session_id,
@@ -96,6 +122,7 @@ class DummyPatchDB:
         enhancement_name=None,
         timestamp=None,
         roi_deltas=None,
+        errors=None,
         diff=None,
         summary=None,
         outcome=None,
@@ -112,6 +139,7 @@ class DummyPatchDB:
             "enhancement_name": enhancement_name,
             "timestamp": timestamp,
             "roi_deltas": roi_deltas,
+            "errors": errors,
             "diff": diff,
             "summary": summary,
             "outcome": outcome,
@@ -209,6 +237,7 @@ def test_track_contributors_forwards_contribution_patch_db(monkeypatch):
     assert pdb.kwargs["enhancement_name"] == "feat"
     assert pdb.kwargs["timestamp"] == 123.0
     assert pdb.kwargs["roi_deltas"] == {}
+    assert pdb.kwargs["errors"] == []
     assert pdb.kwargs["diff"] == "diff"
     assert pdb.kwargs["summary"] == "summary"
     assert pdb.kwargs["outcome"] == "failed"
@@ -320,6 +349,66 @@ def test_track_contributors_error_summary(monkeypatch):
     assert summary["errors"] == [{"summary": "parse fail"}]
     assert summary["error_summary"] == "parse fail"
     assert res.errors == [{"summary": "parse fail"}]
+
+
+def test_track_contributors_persists_errors_and_results(monkeypatch):
+    _, _, _, _, _, _, _ = patch_metrics(monkeypatch)
+
+    class MultiGauge:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, float]] = []
+            self.label = ""
+
+        def labels(self, *labels: str):
+            self.label = labels[0] if labels else ""
+            return self
+
+        def inc(self, amount: float = 1.0) -> None:
+            self.calls.append(("inc", self.label, amount))
+
+    fail_gauge = DummyGauge()
+    test_gauge = MultiGauge()
+    import vector_service.patch_logger as pl_mod
+
+    monkeypatch.setattr(pl_mod, "_TRACK_FAILURES", fail_gauge)
+    monkeypatch.setattr(pl_mod, "_TRACK_TESTS", test_gauge)
+
+    class VM(DummyVectorMetricsDB):
+        def __init__(self) -> None:
+            super().__init__()
+            self.summary_calls: list[dict[str, Any]] = []
+
+        def record_patch_summary(self, patch_id, *, errors=None, tests_passed=None, lines_changed=None):
+            self.summary_calls.append(
+                {
+                    "patch_id": patch_id,
+                    "errors": errors,
+                    "tests_passed": tests_passed,
+                    "lines_changed": lines_changed,
+                }
+            )
+
+    vm = VM()
+    pdb = DummyPatchDB()
+    pl = PatchLogger(patch_db=pdb, vector_metrics=vm)
+    res = pl.track_contributors(
+        ["v1"],
+        False,
+        patch_id="1",
+        session_id="s",
+        lines_changed=2,
+        tests_passed=True,
+        retrieval_metadata={"error": {"msg": "boom"}},
+    )
+    assert pdb.kwargs["errors"] == [{"msg": "boom"}]
+    assert vm.summary_calls and vm.summary_calls[0]["errors"] == [{"msg": "boom"}]
+    assert vm.summary_calls[0]["tests_passed"] is True
+    assert vm.summary_calls[0]["lines_changed"] == 2
+    assert ("inc", "", 1.0) in fail_gauge.calls
+    assert ("inc", "passed", 1.0) in test_gauge.calls
+    assert res.tests_passed is True
+    assert res.lines_changed == 2
+    assert res.errors == [{"msg": "boom"}]
 
 
 # ---------------------------------------------------------------------------

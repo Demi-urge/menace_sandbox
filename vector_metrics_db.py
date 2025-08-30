@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Mapping, Sequence
 import json
 import sqlite3
+import logging
 
 from db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
@@ -112,6 +113,16 @@ class VectorMetricsDB:
                 semantic_alerts TEXT,
                 alignment_severity REAL,
                 risk_score REAL
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS patch_metrics(
+                patch_id TEXT PRIMARY KEY,
+                errors TEXT,
+                tests_passed INTEGER,
+                lines_changed INTEGER
             )
             """
         )
@@ -586,6 +597,28 @@ class VectorMetricsDB:
                 ),
             )
         self.conn.commit()
+
+    def record_patch_summary(
+        self,
+        patch_id: str,
+        *,
+        errors: Sequence[Mapping[str, Any]] | None = None,
+        tests_passed: bool | None = None,
+        lines_changed: int | None = None,
+    ) -> None:
+        try:
+            self.conn.execute(
+                "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, lines_changed) VALUES(?,?,?,?)",
+                (
+                    patch_id,
+                    json.dumps(list(errors or [])),
+                    None if tests_passed is None else int(bool(tests_passed)),
+                    lines_changed,
+                ),
+            )
+            self.conn.commit()
+        except Exception:
+            logging.getLogger(__name__).exception("failed to record patch summary")
 
     # ------------------------------------------------------------------
     def _update_retrieval_hit_rate(self) -> None:
