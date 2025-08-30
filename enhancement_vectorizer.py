@@ -5,7 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List
 
+from governed_embeddings import governed_embed
 from vector_utils import persist_embedding
+
+try:  # pragma: no cover - optional dependency
+    from sentence_transformers import SentenceTransformer  # type: ignore
+except Exception:  # pragma: no cover - sentence-transformers optional
+    SentenceTransformer = None  # type: ignore
 
 _DEFAULT_BOUNDS = {
     "score": 100.0,
@@ -13,11 +19,13 @@ _DEFAULT_BOUNDS = {
     "num_tags": 20.0,
 }
 
+
 def _one_hot(idx: int, length: int) -> List[float]:
     vec = [0.0] * length
     if 0 <= idx < length:
         vec[idx] = 1.0
     return vec
+
 
 def _get_index(value: Any, mapping: Dict[str, int], max_size: int) -> int:
     val = str(value).lower().strip() or "other"
@@ -28,6 +36,7 @@ def _get_index(value: Any, mapping: Dict[str, int], max_size: int) -> int:
         return mapping[val]
     return mapping["other"]
 
+
 def _scale(value: Any, bound: float) -> float:
     try:
         f = float(value)
@@ -35,6 +44,7 @@ def _scale(value: Any, bound: float) -> float:
         return 0.0
     f = max(-bound, min(bound, f))
     return f / bound if bound else 0.0
+
 
 @dataclass
 class EnhancementVectorizer:
@@ -44,6 +54,7 @@ class EnhancementVectorizer:
     max_categories: int = 20
     type_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
     category_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
+    _model: SentenceTransformer | None = field(default=None, init=False, repr=False)
 
     def fit(self, enhancements: Iterable[Dict[str, Any]]) -> "EnhancementVectorizer":
         for enh in enhancements:
@@ -53,7 +64,8 @@ class EnhancementVectorizer:
 
     @property
     def dim(self) -> int:
-        return self.max_types + self.max_categories + 3
+        embed_dim = 384 if SentenceTransformer is not None else 0
+        return self.max_types + self.max_categories + 3 + embed_dim
 
     def transform(self, enh: Dict[str, Any]) -> List[float]:
         t_idx = _get_index(enh.get("type") or enh.get("type_"), self.type_index, self.max_types)
@@ -65,6 +77,12 @@ class EnhancementVectorizer:
         vec.append(_scale(enh.get("score", 0.0), _DEFAULT_BOUNDS["score"]))
         vec.append(_scale(enh.get("cost_estimate", 0.0), _DEFAULT_BOUNDS["cost_estimate"]))
         vec.append(_scale(len(tags), _DEFAULT_BOUNDS["num_tags"]))
+        desc = str(enh.get("description", ""))
+        if SentenceTransformer is not None:
+            if self._model is None:
+                self._model = SentenceTransformer("all-MiniLM-L6-v2")
+            emb = governed_embed(desc, self._model) or []
+            vec.extend(float(x) for x in emb)
         return vec
 
 
