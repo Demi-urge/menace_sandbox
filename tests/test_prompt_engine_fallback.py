@@ -1,5 +1,6 @@
-from typing import Any, Dict, List, Tuple
+import json
 import logging
+from typing import Any, Dict, List, Tuple
 
 from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
 from vector_service.roi_tags import RoiTag
@@ -56,3 +57,15 @@ def test_construct_prompt_fallback_on_retrieval_error(monkeypatch, caplog):
     assert prompt == DEFAULT_TEMPLATE
     assert "boom" in caplog.text.lower()
     assert events and events[0][1]["reason"] == "retrieval_error"
+
+
+def test_static_prompt_uses_config(tmp_path):
+    data = {"templates": {"a": ["A1", "A2"], "b": ["B1"]}}
+    cfg = tmp_path / "prompts.json"
+    cfg.write_text(json.dumps(data))
+    engine = PromptEngine(
+        retriever=DummyRetriever([]),
+        template_path=cfg,
+        template_sections=["a"],
+    )
+    assert engine._static_prompt() == "A1\nA2"
