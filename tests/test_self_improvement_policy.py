@@ -1,6 +1,10 @@
 import pytest
 
-from self_improvement_policy import SelfImprovementPolicy, torch as policy_torch
+from self_improvement_policy import (
+    PolicyConfig,
+    SelfImprovementPolicy,
+    torch as policy_torch,
+)
 from sandbox_settings import SandboxSettings
 
 
@@ -46,3 +50,20 @@ def test_action_selection_from_settings():
     policy.values[state] = {0: 1.0, 1: -1.0}
     actions = {policy.select_action(state) for _ in range(5)}
     assert actions == {0}
+
+
+def test_convergence_simple_task():
+    policy = SelfImprovementPolicy(epsilon=0.0)
+    state = (0,)
+    for _ in range(50):
+        policy.update(state, reward=1.0, next_state=state, action=1)
+    assert policy.score(state) == pytest.approx(10.0, rel=0.1)
+
+
+def test_policy_config_serialization(tmp_path):
+    cfg = PolicyConfig(alpha=0.3, gamma=0.8, epsilon=0.2, temperature=1.5, exploration="softmax", adaptive=True)
+    policy = SelfImprovementPolicy(config=cfg)
+    path = tmp_path / "policy.json"
+    policy.save_model(str(path))
+    loaded = SelfImprovementPolicy.load_model(str(path))
+    assert loaded.get_config() == cfg
