@@ -18,6 +18,7 @@ from ..logging_utils import get_logger, log_record
 from ..sandbox_settings import SandboxSettings, load_sandbox_settings
 from ..workflow_stability_db import WorkflowStabilityDB
 from ..roi_results_db import ROIResultsDB
+from ..lock_utils import SandboxLock
 
 try:  # pragma: no cover - optional dependency
     from ..unified_event_bus import UnifiedEventBus
@@ -52,8 +53,10 @@ class _FallbackPlanner:
     """Lightweight planner with basic mutation and persistence."""
 
     def __init__(self) -> None:
+        cfg = load_sandbox_settings()
+        roi_window = int(getattr(cfg, "roi_window", getattr(cfg, "roi_cycles", 5) or 5))
         try:
-            self.roi_db: ROIResultsDB | None = ROIResultsDB()
+            self.roi_db: ROIResultsDB | None = ROIResultsDB(window=roi_window)
         except (OSError, RuntimeError) as exc:  # pragma: no cover - best effort
             get_logger(__name__).warning(
                 "ROIResultsDB unavailable",
@@ -73,17 +76,22 @@ class _FallbackPlanner:
 
         self.logger = get_logger("FallbackPlanner")
         self.state_path = Path("sandbox_data/fallback_planner.json")
+        self.state_lock = SandboxLock(str(self.state_path.with_suffix(self.state_path.suffix + ".lock")))
         self.cluster_map: dict[tuple[str, ...], dict[str, Any]] = {}
-        self.mutation_rate = 1.0
-        self.roi_weight = 1.0
-        self.domain_transition_penalty = 1.0
-        self.roi_window = 5
+        self.mutation_rate = getattr(cfg, "mutation_rate", getattr(cfg, "meta_mutation_rate", 1.0))
+        self.roi_weight = getattr(cfg, "roi_weight", getattr(cfg, "meta_roi_weight", 1.0))
+        self.domain_transition_penalty = getattr(
+            cfg, "domain_transition_penalty", getattr(cfg, "meta_domain_penalty", 1.0)
+        )
+        self.roi_window = roi_window
         self._load_state()
 
     # ------------------------------------------------------------------
     def _load_state(self) -> None:
         try:
-            data = json.loads(self.state_path.read_text())
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.state_lock:
+                data = json.loads(self.state_path.read_text())
             self.cluster_map = {tuple(k.split("|")): v for k, v in data.items()}
         except (OSError, json.JSONDecodeError) as exc:
             get_logger(__name__).debug(
@@ -97,7 +105,8 @@ class _FallbackPlanner:
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
             data = {"|".join(k): v for k, v in self.cluster_map.items()}
-            self.state_path.write_text(json.dumps(data, indent=2))
+            with self.state_lock:
+                self.state_path.write_text(json.dumps(data, indent=2))
         except OSError as exc:  # pragma: no cover - best effort
             self.logger.debug(
                 "failed to persist fallback planner state",
@@ -106,8 +115,40 @@ class _FallbackPlanner:
             )
 
     # ------------------------------------------------------------------
-    def begin_run(self, workflow_id: str, run_id: str) -> None:  # pragma: no cover - no-op
-        """Compatibility stub for :class:`MetaWorkflowPlanner`."""
+    def begin_run(self, workflow_id: str, run_id: str) -> None:
+        """Record the start of a workflow run.
+
+        The fallback planner lacks advanced tracking, but we still persist a
+        minimal record so ROI and stability metrics capture the run context.
+        """
+
+        self.logger.info(
+            "begin run %s/%s", workflow_id, run_id, extra=log_record(workflow_id=workflow_id, run_id=run_id)
+        )
+        if self.roi_db is not None:
+            try:
+                self.roi_db.log_result(
+                    workflow_id=workflow_id,
+                    run_id=run_id,
+                    runtime=0.0,
+                    success_rate=0.0,
+                    roi_gain=0.0,
+                    workflow_synergy_score=0.0,
+                    bottleneck_index=0.0,
+                    patchability_score=0.0,
+                    module_deltas={},
+                )
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "ROI logging failed", extra=log_record(workflow_id=workflow_id, run_id=run_id)
+                )
+        if self.stability_db is not None:
+            try:
+                self.stability_db.record_metrics(workflow_id, 0.0, 0.0, 0.0, roi_delta=0.0)
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "stability logging failed", extra=log_record(workflow_id=workflow_id, run_id=run_id)
+                )
 
     # ------------------------------------------------------------------
     def _domain(self, wid: str) -> str:
