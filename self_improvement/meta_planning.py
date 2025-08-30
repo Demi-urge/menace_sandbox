@@ -26,6 +26,22 @@ except Exception:  # pragma: no cover - gracefully degrade
     except Exception:  # pragma: no cover - best effort fallback
         MetaWorkflowPlanner = None  # type: ignore
 
+
+class _FallbackPlanner:
+    """Minimal no-op planner used when :class:`MetaWorkflowPlanner` is missing."""
+
+    roi_db = None
+    stability_db = None
+
+    def __init__(self) -> None:  # pragma: no cover - trivial
+        self.cluster_map: dict[tuple[str, ...], Any] = {}
+
+    def discover_and_persist(
+        self, workflows: Mapping[str, Callable[[], Any]]
+    ) -> list[Mapping[str, Any]]:  # pragma: no cover - trivial
+        return []
+
+
 settings = load_sandbox_settings()
 
 
@@ -80,16 +96,18 @@ async def self_improvement_cycle(
     *,
     interval: float = PLANNER_INTERVAL,
     event_bus: UnifiedEventBus | None = None,
- ) -> None:
+) -> None:
     """Background loop evolving ``workflows`` using the meta planner."""
     logger = get_logger("SelfImprovementCycle")
-    if MetaWorkflowPlanner is None:
-        logger.warning("MetaWorkflowPlanner unavailable; skipping cycle")
-        return
-
-    planner = MetaWorkflowPlanner()
-
     cfg = load_sandbox_settings()
+    if MetaWorkflowPlanner is None:
+        if getattr(cfg, "enable_meta_planner", False):
+            raise RuntimeError("MetaWorkflowPlanner required but not installed")
+        logger.warning("MetaWorkflowPlanner unavailable; using fallback planner")
+        planner = _FallbackPlanner()
+    else:
+        planner = MetaWorkflowPlanner()
+
     mutation_rate = cfg.meta_mutation_rate
     roi_weight = cfg.meta_roi_weight
     domain_penalty = cfg.meta_domain_penalty

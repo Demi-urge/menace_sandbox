@@ -63,26 +63,71 @@ def test_should_encode_requires_positive_roi_and_low_entropy():
     assert not should_encode({"roi_gain": 0.1, "entropy": 0.3}, entropy_threshold=0.2)
 
 
-def test_cycle_logs_when_planner_missing():
+def test_cycle_uses_fallback_planner_when_missing():
     meta = _load_meta_planning()
 
-    messages: list[str] = []
+    calls = {"count": 0}
+
+    class DummyPlanner:
+        roi_db = None
+        stability_db = None
+
+        def __init__(self):
+            self.cluster_map = {}
+
+        def discover_and_persist(self, workflows):
+            calls["count"] += 1
+            return []
+
     meta.update(
         {
             "MetaWorkflowPlanner": None,
+            "_FallbackPlanner": DummyPlanner,
             "get_logger": lambda name: types.SimpleNamespace(
-                warning=lambda msg: messages.append(msg)
+                warning=lambda *a, **k: None, exception=lambda *a, **k: None
             ),
             "log_record": lambda **kw: kw,
-            "SandboxSettings": lambda: types.SimpleNamespace(
-                meta_mutation_rate=None,
-                meta_roi_weight=None,
-                meta_domain_penalty=None,
+            "load_sandbox_settings": lambda: types.SimpleNamespace(
+                meta_mutation_rate=0.0,
+                meta_roi_weight=0.0,
+                meta_domain_penalty=0.0,
                 meta_entropy_threshold=0.2,
+                enable_meta_planner=False,
             ),
             "STABLE_WORKFLOWS": types.SimpleNamespace(),
         }
     )
 
-    asyncio.run(meta["self_improvement_cycle"]({}))
-    assert any("MetaWorkflowPlanner unavailable" in m for m in messages)
+    async def run():
+        task = asyncio.create_task(meta["self_improvement_cycle"]({}, interval=0))
+        await asyncio.sleep(0.05)
+        assert calls["count"] > 0
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+
+
+def test_cycle_fails_when_enabled_but_missing():
+    meta = _load_meta_planning()
+
+    meta.update(
+        {
+            "MetaWorkflowPlanner": None,
+            "get_logger": lambda name: types.SimpleNamespace(),
+            "log_record": lambda **kw: kw,
+            "load_sandbox_settings": lambda: types.SimpleNamespace(
+                meta_mutation_rate=0.0,
+                meta_roi_weight=0.0,
+                meta_domain_penalty=0.0,
+                meta_entropy_threshold=0.2,
+                enable_meta_planner=True,
+            ),
+            "STABLE_WORKFLOWS": types.SimpleNamespace(),
+            "_FallbackPlanner": object,
+        }
+    )
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(meta["self_improvement_cycle"]({}))
