@@ -6,18 +6,13 @@ import os
 import uuid
 
 from db_router import init_db_router
-
-MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
-GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
-
 from pathlib import Path
-from typing import List
+from typing import List, Callable, TYPE_CHECKING
 import json
 
-from flask import jsonify, render_template_string
-import logging
+from flask import jsonify, render_template, request
+if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
+    from flask import Request
 
 from .metrics_dashboard import MetricsDashboard
 from .roi_tracker import ROITracker
@@ -26,82 +21,10 @@ from .alignment_dashboard import load_alignment_flag_records
 from .readiness_index import military_grade_readiness
 
 
-_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-</head>
-<body>
-<h1>Sandbox Dashboard</h1>
-{% if error %}<p style="color:red">{{ error }}</p>{% endif %}
-<canvas id="roi" width="400" height="200"></canvas>
-<canvas id="security" width="400" height="200"></canvas>
-<canvas id="readiness" width="400" height="200"></canvas>
-<canvas id="weights" width="400" height="200"></canvas>
-<canvas id="scenarios" width="400" height="200"></canvas>
-<canvas id="relevancy" width="400" height="200"></canvas>
-<canvas id="workflow_mae" width="400" height="200"></canvas>
-<canvas id="workflow_variance" width="400" height="200"></canvas>
-<canvas id="workflow_confidence" width="400" height="200"></canvas>
-<canvas id="health" width="400" height="200"></canvas>
-<div id="warnings"></div>
-<script>
-async function load() {
-  const data = await fetch('/roi_data').then(r => r.json());
-  new Chart(document.getElementById('roi'), {type:'line',data:{labels:data.labels,datasets:[{label:'ROI delta',data:data.roi}]}});
-  if (data.security.length) {
-    new Chart(document.getElementById('security'), {type:'line',data:{labels:data.labels.slice(0,data.security.length),datasets:[{label:'Security score',data:data.security}]}});
-  }
-  if (data.readiness.length) {
-    new Chart(document.getElementById('readiness'), {type:'line',data:{labels:data.labels.slice(0,data.readiness.length),datasets:[{label:'Readiness',data:data.readiness}]}});
-  }
-  const wdata = await fetch('/weights').then(r => r.json());
-  const ds = [];
-  for (const k in wdata.weights) {
-    ds.push({label:k,data:wdata.weights[k]});
-  }
-  if (ds.length) {
-    new Chart(document.getElementById('weights'), {type:'line',data:{labels:wdata.labels,datasets:ds}});
-  }
-  const sdata = await fetch('/scenario_summary').then(r => r.json());
-  if (!sdata.error && sdata.labels.length) {
-    new Chart(document.getElementById('scenarios'), {type:'bar',data:{labels:sdata.labels,datasets:[{label:'ROI',data:sdata.roi},{label:'Failures',data:sdata.failures}]}});
-  }
-    const rdata = await fetch('/relevancy').then(r => r.json());
-    const rlabels = Object.keys(rdata.counts || {});
-    if (rlabels.length) {
-      const rvalues = rlabels.map(k => rdata.counts[k]);
-      new Chart(document.getElementById('relevancy'), {type:'bar',data:{labels:rlabels,datasets:[{label:'Flagged modules',data:rvalues}]}});
-    }
-    const wfids = Object.keys(data.workflows || {});
-    if (wfids.length) {
-      const maeVals = wfids.map(id => data.workflows[id].mae);
-      const varVals = wfids.map(id => data.workflows[id].variance);
-      const confVals = wfids.map(id => data.workflows[id].confidence);
-      new Chart(document.getElementById('workflow_mae'), {type:'bar',data:{labels:wfids,datasets:[{label:'MAE',data:maeVals}]}});
-      new Chart(document.getElementById('workflow_variance'), {type:'bar',data:{labels:wfids,datasets:[{label:'Variance',data:varVals}]}});
-      new Chart(document.getElementById('workflow_confidence'), {type:'bar',data:{labels:wfids,datasets:[{label:'Confidence',data:confVals}]}});
-    }
-    const m = await fetch('/metrics').then(r => r.json());
-    new Chart(document.getElementById('health'), {
-      type:'bar',
-      data:{labels:['CPU %','Memory MB','Crashes'],datasets:[{label:'Sandbox',data:[m.sandbox_cpu_percent||0,m.sandbox_memory_mb||0,m.sandbox_crashes_total||0]}]}
-    });
-    if (data.warnings && data.warnings.some(w => w)) {
-      let html = '<h2>Alignment Warnings</h2><table><tr><th>Cycle</th><th>ROI delta</th><th>Warning</th></tr>';
-      for (let i = 0; i < data.roi.length; i++) {
-        html += `<tr><td>${i}</td><td>${data.roi[i]}</td><td>${data.warnings[i] || ''}</td></tr>`;
-      }
-    html += '</table>';
-    document.getElementById('warnings').innerHTML = html;
-  }
-}
-load();
-</script>
-</body>
-</html>
-"""
+MENACE_ID = uuid.uuid4().hex
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 
 class SandboxDashboard(MetricsDashboard):
@@ -113,12 +36,16 @@ class SandboxDashboard(MetricsDashboard):
         weights_log: str | Path = synergy_weight_cli.LOG_PATH,
         summary_file: str | Path = Path("sandbox_data") / "scenario_summary.json",
         alignment_flags_file: str | Path = Path("sandbox_data") / "alignment_flags.jsonl",
+        auth: Callable[[Request], bool] | None = None,
     ) -> None:
         super().__init__(history_file)
         self.load_error = ""
         self.weights_log = Path(weights_log)
         self.summary_file = Path(summary_file)
         self.alignment_flags_file = Path(alignment_flags_file)
+        self._auth = auth
+        if auth is not None:
+            self.app.before_request(self._check_auth)
         self.app.add_url_rule('/', 'index', self.index)
         self.app.add_url_rule('/roi_data', 'roi_data', self.roi_data)
         self.app.add_url_rule('/weights', 'weights', self.weights_data)
@@ -139,9 +66,14 @@ class SandboxDashboard(MetricsDashboard):
         return tracker
 
     # ------------------------------------------------------------------
+    def _check_auth(self):
+        if self._auth is not None and not self._auth(request):
+            return "Forbidden", 403
+
+    # ------------------------------------------------------------------
     def index(self) -> tuple[str, int]:
         self._load_tracker()
-        return render_template_string(_TEMPLATE, error=self.load_error), 200
+        return render_template('sandbox_dashboard.html', error=self.load_error), 200
 
     def roi_data(self) -> tuple[str, int]:
         tracker = self._load_tracker()
@@ -231,7 +163,17 @@ class SandboxDashboard(MetricsDashboard):
         roi = [float(scen_map[k].get('roi', 0.0)) for k in labels]
         failures = [float(scen_map[k].get('failures', 0)) for k in labels]
         successes = [float(scen_map[k].get('successes', 0)) for k in labels]
-        return jsonify({'labels': labels, 'roi': roi, 'failures': failures, 'successes': successes}), 200
+        return (
+            jsonify(
+                {
+                    'labels': labels,
+                    'roi': roi,
+                    'failures': failures,
+                    'successes': successes,
+                }
+            ),
+            200,
+        )
 
     def relevancy_data(self) -> tuple[str, int]:
         from relevancy_radar import flagged_modules

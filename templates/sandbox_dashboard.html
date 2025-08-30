@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="{{ url_for('static', filename='chart.min.js') }}"></script>
+</head>
+<body>
+<h1>Sandbox Dashboard</h1>
+{% if error %}<p style="color:red">{{ error }}</p>{% endif %}
+<canvas id="roi" width="400" height="200"></canvas>
+<canvas id="security" width="400" height="200"></canvas>
+<canvas id="readiness" width="400" height="200"></canvas>
+<canvas id="weights" width="400" height="200"></canvas>
+<canvas id="scenarios" width="400" height="200"></canvas>
+<canvas id="relevancy" width="400" height="200"></canvas>
+<canvas id="workflow_mae" width="400" height="200"></canvas>
+<canvas id="workflow_variance" width="400" height="200"></canvas>
+<canvas id="workflow_confidence" width="400" height="200"></canvas>
+<canvas id="health" width="400" height="200"></canvas>
+<div id="warnings"></div>
+<script>
+async function load() {
+  const data = await fetch('/roi_data').then(r => r.json());
+  new Chart(document.getElementById('roi'), {type:'line',data:{labels:data.labels,datasets:[{label:'ROI delta',data:data.roi}]}});
+  if (data.security.length) {
+    new Chart(document.getElementById('security'), {type:'line',data:{labels:data.labels.slice(0,data.security.length),datasets:[{label:'Security score',data:data.security}]}});
+  }
+  if (data.readiness.length) {
+    new Chart(document.getElementById('readiness'), {type:'line',data:{labels:data.labels.slice(0,data.readiness.length),datasets:[{label:'Readiness',data:data.readiness}]}});
+  }
+  const wdata = await fetch('/weights').then(r => r.json());
+  const ds = [];
+  for (const k in wdata.weights) {
+    ds.push({label:k,data:wdata.weights[k]});
+  }
+  if (ds.length) {
+    new Chart(document.getElementById('weights'), {type:'line',data:{labels:wdata.labels,datasets:ds}});
+  }
+  const sdata = await fetch('/scenario_summary').then(r => r.json());
+  if (!sdata.error && sdata.labels.length) {
+    new Chart(document.getElementById('scenarios'), {type:'bar',data:{labels:sdata.labels,datasets:[{label:'ROI',data:sdata.roi},{label:'Failures',data:sdata.failures}]}});
+  }
+  const rdata = await fetch('/relevancy').then(r => r.json());
+  const rlabels = Object.keys(rdata.counts || {});
+  if (rlabels.length) {
+    const rvalues = rlabels.map(k => rdata.counts[k]);
+    new Chart(document.getElementById('relevancy'), {type:'bar',data:{labels:rlabels,datasets:[{label:'Flagged modules',data:rvalues}]}});
+  }
+  const wfids = Object.keys(data.workflows || {});
+  if (wfids.length) {
+    const maeVals = wfids.map(id => data.workflows[id].mae);
+    const varVals = wfids.map(id => data.workflows[id].variance);
+    const confVals = wfids.map(id => data.workflows[id].confidence);
+    new Chart(document.getElementById('workflow_mae'), {type:'bar',data:{labels:wfids,datasets:[{label:'MAE',data:maeVals}]}});
+    new Chart(document.getElementById('workflow_variance'), {type:'bar',data:{labels:wfids,datasets:[{label:'Variance',data:varVals}]}});
+    new Chart(document.getElementById('workflow_confidence'), {type:'bar',data:{labels:wfids,datasets:[{label:'Confidence',data:confVals}]}});
+  }
+  const m = await fetch('/metrics').then(r => r.json());
+  new Chart(document.getElementById('health'), {
+    type:'bar',
+    data:{labels:['CPU %','Memory MB','Crashes'],datasets:[{label:'Sandbox',data:[m.sandbox_cpu_percent||0,m.sandbox_memory_mb||0,m.sandbox_crashes_total||0]}]}
+  });
+  if (data.warnings && data.warnings.some(w => w)) {
+    let html = '<h2>Alignment Warnings</h2><table><tr><th>Cycle</th><th>ROI delta</th><th>Warning</th></tr>';
+    for (let i = 0; i < data.roi.length; i++) {
+      html += `<tr><td>${i}</td><td>${data.roi[i]}</td><td>${data.warnings[i] || ''}</td></tr>`;
+    }
+    html += '</table>';
+    document.getElementById('warnings').innerHTML = html;
+  }
+}
+load();
+</script>
+</body>
+</html>
