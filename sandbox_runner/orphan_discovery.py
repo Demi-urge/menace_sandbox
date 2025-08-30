@@ -31,140 +31,131 @@ def _resolve_assignment(
     return candidate
 
 
+SAFE_CALLS: dict[tuple[str, ...], Any] = {
+    ("os", "getenv"): os.getenv,
+    ("os", "environ", "get"): os.environ.get,
+}
+
+
+def _log_unresolved(node: ast.AST, lineno: int) -> None:
+    logger.debug(
+        "Unresolved expression at line %s: %s",
+        lineno,
+        ast.dump(node, include_attributes=False),
+    )
+
+
 def _eval_simple(
     node: ast.AST, assignments: Mapping[str, Sequence[Tuple[int, ast.AST]]], lineno: int
 ) -> str | List[str] | None:
     """Evaluate *node* to a string or list of strings if possible."""
 
-    if isinstance(node, ast.Str):
-        return node.s
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
+    try:
+        value = ast.literal_eval(node)
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+            return list(value)
+    except Exception:
+        pass
+
     if isinstance(node, ast.Name):
         assigned = _resolve_assignment(assignments, node.id, lineno)
         if assigned is not None:
             return _eval_simple(assigned, assignments, lineno)
+        _log_unresolved(node, lineno)
         return None
-    if isinstance(node, (ast.Tuple, ast.List)):
+
+    if isinstance(node, (ast.List, ast.Tuple)):
         items: List[str] = []
         for elt in node.elts:
             val = _eval_simple(elt, assignments, lineno)
             if not isinstance(val, str):
-                return None
+                return _log_unresolved(node, lineno)
             items.append(val)
         return items
+
     if isinstance(node, ast.JoinedStr):  # f-string
         parts: list[str] = []
         for value in node.values:
-            if isinstance(value, ast.FormattedValue):
-                part = _eval_simple(value.value, assignments, lineno)
-            else:
-                part = _eval_simple(value, assignments, lineno)
+            part = _eval_simple(
+                value.value if isinstance(value, ast.FormattedValue) else value,
+                assignments,
+                lineno,
+            )
             if part is None:
-                return None
+                return _log_unresolved(node, lineno)
             parts.append(part)
         return "".join(parts)
+
     if isinstance(node, ast.BinOp):
-        if isinstance(node.op, ast.Add):
-            left = _eval_simple(node.left, assignments, lineno)
-            right = _eval_simple(node.right, assignments, lineno)
-            if left is not None and right is not None:
+        left = _eval_simple(node.left, assignments, lineno)
+        right = _eval_simple(node.right, assignments, lineno)
+        if left is None or right is None:
+            return _log_unresolved(node, lineno)
+        try:
+            if isinstance(node.op, ast.Add):
                 return left + right
-            return None
-        if isinstance(node.op, ast.Mod):
-            left = _eval_simple(node.left, assignments, lineno)
-            right = _eval_simple(node.right, assignments, lineno)
-            if not isinstance(left, str) or right is None:
-                return None
-            try:
+            if isinstance(node.op, ast.Mod):
                 if isinstance(right, list):
                     return left % tuple(right)
                 return left % right
-            except Exception:  # pragma: no cover - best effort
-                return None
+        except Exception:
+            return _log_unresolved(node, lineno)
+        return _log_unresolved(node, lineno)
+
     if isinstance(node, ast.Call):
+        args: List[Any] = []
+        for arg in node.args:
+            val = _eval_simple(arg, assignments, lineno)
+            if val is None:
+                return _log_unresolved(node, lineno)
+            args.append(val)
+        kwargs: Dict[str, Any] = {}
+        for kw in node.keywords:
+            if kw.arg is None:
+                return _log_unresolved(node, lineno)
+            val = _eval_simple(kw.value, assignments, lineno)
+            if val is None:
+                return _log_unresolved(node, lineno)
+            kwargs[kw.arg] = val
+
         func = node.func
         if isinstance(func, ast.Attribute):
-            base = _eval_simple(func.value, assignments, lineno)
-            # Handle environment variable lookups like os.getenv("KEY", "default")
-            if (
-                isinstance(func.value, ast.Name)
-                and func.value.id == "os"
-                and func.attr == "getenv"
-                and not node.keywords
-                and node.args
-                and len(node.args) <= 2
-            ):
-                key = _eval_simple(node.args[0], assignments, lineno)
-                if not isinstance(key, str):
-                    return None
-                default: str | None = None
-                if len(node.args) == 2:
-                    default_val = _eval_simple(node.args[1], assignments, lineno)
-                    if not isinstance(default_val, str):
-                        return None
-                    default = default_val
-                return os.getenv(key, default)
-            # Handle os.environ.get("KEY", "default")
-            if (
-                isinstance(func.value, ast.Attribute)
-                and isinstance(func.value.value, ast.Name)
-                and func.value.value.id == "os"
-                and func.value.attr == "environ"
-                and func.attr == "get"
-                and not node.keywords
-                and node.args
-                and len(node.args) <= 2
-            ):
-                key = _eval_simple(node.args[0], assignments, lineno)
-                if not isinstance(key, str):
-                    return None
-                default: str | None = None
-                if len(node.args) == 2:
-                    default_val = _eval_simple(node.args[1], assignments, lineno)
-                    if not isinstance(default_val, str):
-                        return None
-                    default = default_val
-                return os.environ.get(key, default)
-            if func.attr == "format" and not any(
-                isinstance(a, ast.Starred) for a in node.args
-            ):
-                if not isinstance(base, str):
-                    return None
-                args: List[str] = []
-                for arg in node.args:
-                    val = _eval_simple(arg, assignments, lineno)
-                    if not isinstance(val, str):
-                        return None
-                    args.append(val)
-                kwargs: Dict[str, str] = {}
-                for kw in node.keywords:
-                    if kw.arg is None:
-                        return None
-                    val = _eval_simple(kw.value, assignments, lineno)
-                    if not isinstance(val, str):
-                        return None
-                    kwargs[kw.arg] = val
+            # method on evaluated base value (e.g. str.lower, str.format)
+            base_val = _eval_simple(func.value, assignments, lineno)
+            if isinstance(base_val, str) and hasattr(base_val, func.attr):
                 try:
-                    return base.format(*args, **kwargs)
-                except Exception:  # pragma: no cover - best effort
-                    return None
-            if isinstance(base, str):
-                if func.attr in {"lower", "upper", "strip", "lstrip", "rstrip"} and not node.args and not node.keywords:
-                    return getattr(base, func.attr)()
-                if func.attr == "replace" and not node.keywords and 2 <= len(node.args) <= 3:
-                    old = _eval_simple(node.args[0], assignments, lineno)
-                    new = _eval_simple(node.args[1], assignments, lineno)
-                    if not isinstance(old, str) or not isinstance(new, str):
-                        return None
-                    if len(node.args) == 3:
-                        count = _eval_simple(node.args[2], assignments, lineno)
-                        if not isinstance(count, int):
-                            return None
-                        return base.replace(old, new, count)
-                    return base.replace(old, new)
-        return None
-    return None
+                    return getattr(base_val, func.attr)(*args, **kwargs)
+                except Exception:
+                    return _log_unresolved(node, lineno)
+
+            # walk attribute chain to lookup in SAFE_CALLS
+            path: List[str] = [func.attr]
+            cur = func.value
+            while isinstance(cur, ast.Attribute):
+                path.append(cur.attr)
+                cur = cur.value
+            if isinstance(cur, ast.Name):
+                path.append(cur.id)
+                key = tuple(reversed(path))
+                target = SAFE_CALLS.get(key)
+                if target is not None:
+                    try:
+                        return target(*args, **kwargs)
+                    except Exception:
+                        return _log_unresolved(node, lineno)
+        elif isinstance(func, ast.Name):
+            key = (func.id,)
+            target = SAFE_CALLS.get(key)
+            if target is not None:
+                try:
+                    return target(*args, **kwargs)
+                except Exception:
+                    return _log_unresolved(node, lineno)
+        return _log_unresolved(node, lineno)
+
+    return _log_unresolved(node, lineno)
 
 
 def _extract_module_from_call(
