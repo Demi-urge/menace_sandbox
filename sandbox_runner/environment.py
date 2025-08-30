@@ -4815,10 +4815,15 @@ except Exception:
 
 # Default stub generation strategy. Exposed for callers that wish to
 # introspect or override the behaviour programmatically.
-SANDBOX_STUB_STRATEGY = os.getenv("SANDBOX_STUB_STRATEGY", "templates")
+from sandbox_settings import SandboxSettings
+_STUB_SETTINGS = SandboxSettings()
+
+# Default stub generation strategy. Exposed for callers that wish to
+# introspect or override the behaviour programmatically.
+SANDBOX_STUB_STRATEGY = _STUB_SETTINGS.stub_strategy or "templates"
 
 # When true, append adversarial "misuse" stubs to the generated inputs
-SANDBOX_MISUSE_STUBS = os.getenv("SANDBOX_MISUSE_STUBS", "0") not in {"", "0", None}
+SANDBOX_MISUSE_STUBS = bool(_STUB_SETTINGS.misuse_stubs)
 
 from .stub_providers import discover_stub_providers, StubProvider
 
@@ -4907,7 +4912,11 @@ def aggregate_history_stubs() -> Dict[str, Any]:
                 avg = int(round(avg))
             result[key] = avg
         else:
-            result[key] = Counter(vals).most_common(1)[0][0]
+            try:
+                result[key] = Counter(vals).most_common(1)[0][0]
+            except TypeError:
+                # Skip unhashable entries such as lists or dicts
+                continue
     return result
 
 
@@ -5255,23 +5264,33 @@ def generate_input_stubs(
     providers: List[StubProvider] | None = None,
     strategy_order: Sequence[str] | None = None,
     seed: int | None = None,
+    settings: "SandboxSettings" | None = None,
 ) -> List[Dict[str, Any]]:
     """Return example input dictionaries.
 
     ``SANDBOX_INPUT_STUBS`` overrides all other behaviour. When unset the
     generator consults ``providers`` discovered via ``SANDBOX_STUB_PLUGINS``.
-    The built-in strategies ``templates``, ``history``, ``failures``, ``random``, ``smart``,
-    ``synthetic``, ``hostile`` and ``misuse`` can be selected via ``strategy``
-    or the ``SANDBOX_STUB_STRATEGY`` environment variable. ``strategy_order``
-    (or ``SANDBOX_STUB_STRATEGY_ORDER``) controls the fallback sequence when
-    ``strategy`` is not specified. The ``hostile`` strategy crafts adversarial
-    payloads such as SQL injection strings, oversized buffers and malformed
-    JSON. The ``misuse`` strategy omits fields or supplies values of incorrect
-    types to mimic common user errors. The ``smart`` strategy attempts to
-    generate realistic values using ``faker`` or ``hypothesis`` when available.
-    The ``synthetic`` strategy mirrors ``smart`` but is intended for language
-    model based stub providers.
+    Strategy selection and template paths are resolved from ``SandboxSettings``
+    when ``settings`` is not supplied.  The default fallback sequence is a
+    deterministic pipeline that consults history and failure records, applies
+    smart generation and model providers, and only then considers adversarial
+    modes. ``strategy_order`` controls the fallback sequence when ``strategy``
+    is not specified. The ``hostile`` strategy crafts adversarial payloads such
+    as SQL injection strings, oversized buffers and malformed JSON. The
+    ``misuse`` strategy omits fields or supplies values of incorrect types to
+    mimic common user errors. The ``smart`` strategy attempts to generate
+    realistic values using ``faker`` or ``hypothesis`` when available. The
+    ``synthetic`` strategy mirrors ``smart`` but is intended for language model
+    based stub providers.
     """
+
+    if settings is None:
+        from sandbox_settings import SandboxSettings
+
+        settings = SandboxSettings()
+
+    if strategy is None:
+        strategy = settings.stub_strategy
 
     if SANDBOX_INPUT_STUBS:
         stubs = [dict(s) for s in SANDBOX_INPUT_STUBS]
@@ -5288,49 +5307,44 @@ def generate_input_stubs(
         return stubs
 
     if seed is None:
-        seed_env = os.getenv("SANDBOX_STUB_SEED")
-        seed = int(seed_env) if seed_env else None
+        seed = settings.stub_seed
     if seed is not None:
         random.seed(seed)
 
     num = 2 if count is None else max(0, count)
 
     providers = providers or discover_stub_providers()
-    if SANDBOX_MISUSE_STUBS and _misuse_provider not in providers:
+    if settings.misuse_stubs and _misuse_provider not in providers:
         providers = list(providers) + [_misuse_provider]
 
-    history = _load_history(os.getenv("SANDBOX_INPUT_HISTORY"))
+    history = _load_history(settings.input_history)
     templates: List[Dict[str, Any]] | None = None
     stubs: List[Dict[str, Any]] | None = None
 
-    order_env = os.getenv("SANDBOX_STUB_STRATEGY_ORDER")
     if strategy_order is None:
-        if order_env:
-            strategy_order = [s.strip() for s in order_env.split(",") if s.strip()]
+        if settings.stub_strategy_order:
+            strategy_order = list(settings.stub_strategy_order)
         else:
             strategy_order = [
                 "history",
                 "failures",
-                "signature",
-                "templates",
                 "smart",
                 "synthetic",
                 "hostile",
                 "misuse",
-                "random",
             ]
 
     if strategy:
         strategy_order = [strategy] + [s for s in strategy_order if s != strategy]
 
-    chosen = "random"
+    chosen = ""
     templates_checked = False
 
     for strat in strategy_order:
         if strat == "history":
             if history:
                 stubs = [dict(random.choice(history)) for _ in range(num)]
-            else:
+            elif settings.input_history:
                 agg = aggregate_history_stubs()
                 if agg:
                     stubs = [dict(agg) for _ in range(num)]
@@ -5351,12 +5365,7 @@ def generate_input_stubs(
         elif strat == "templates":
             templates_checked = True
             if templates is None:
-                templates = _load_templates(
-                    os.getenv(
-                        "SANDBOX_INPUT_TEMPLATES_FILE",
-                        str(ROOT / "sandbox_data" / "input_stub_templates.json"),
-                    )
-                )
+                templates = _load_templates(settings.input_templates_file)
             if templates:
                 stubs = [dict(random.choice(templates)) for _ in range(num)]
                 chosen = "templates"
@@ -5380,16 +5389,15 @@ def generate_input_stubs(
             chosen = "misuse"
             break
         elif strat == "random":
-            conf_env = os.getenv("SANDBOX_STUB_RANDOM_CONFIG", "")
-            try:
-                conf = json.loads(conf_env) if conf_env else {}
-            except Exception:
-                conf = {}
+            conf = settings.stub_random_config
             stubs = _random_strategy(num, conf) or [{}]
             chosen = "random"
             break
 
-    if chosen in {"history", "failures"} or (
+    if stubs is None:
+        raise RuntimeError("no input stubs could be generated")
+
+    if chosen in {"history", "failures", "smart"} or (
         templates_checked and (templates is None or not templates)
     ):
         try:
@@ -5408,6 +5416,8 @@ def generate_input_stubs(
             logger.exception("stub provider %s failed", getattr(prov, "__name__", "?"))
 
     stubs = _validate_stubs(stubs, target)
+    if not stubs:
+        raise RuntimeError("input stub strategies yielded no valid stubs")
     return stubs
 
 

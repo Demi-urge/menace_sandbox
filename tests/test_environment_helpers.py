@@ -130,7 +130,7 @@ def test_generate_input_stubs_templates(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
     import importlib
     importlib.reload(env)
-    stubs = env.generate_input_stubs(1, strategy="hostile")
+    stubs = env.generate_input_stubs(1)
     assert stubs == [{"mode": "x", "level": 9}]
 
 
