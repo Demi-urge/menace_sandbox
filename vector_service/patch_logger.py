@@ -947,10 +947,12 @@ class PatchLogger:
 
         if self.weight_adjuster is not None:
             try:
+                vector_details = [
+                    (o, vid, enhancement_score, roi_tag_val.value)
+                    for o, vid, _ in detailed
+                ]
                 self.weight_adjuster.adjust(
-                    detailed,
-                    enhancement_score,
-                    roi_tag_val.value,
+                    vector_details,
                     error_trace_count=error_trace_count,
                     tests_passed=tests_passed,
                 )

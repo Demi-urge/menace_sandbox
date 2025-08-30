@@ -77,27 +77,21 @@ class WeightAdjuster:
     # ------------------------------------------------------------------
     def adjust(
         self,
-        vector_ids: Iterable[str | Tuple[str, str] | Tuple[str, str, float]],
-        enhancement_score: float | None,
-        roi_tag: RoiTag | str | None,
+        vectors: Iterable[Tuple[str, str, float, RoiTag | str | None]],
         *,
         error_trace_count: int | None = None,
         tests_passed: bool | None = None,
     ) -> Dict[str, float]:
-        """Update ranking weights using patch quality metrics.
+        """Update ranking weights using per-vector patch metrics.
 
         Parameters
         ----------
-        vector_ids:
-            Iterable containing ``origin:vector`` identifiers or tuples of
-            ``(origin, vector, score)``.  ``score`` scales the per-vector
-            adjustment.
-        enhancement_score:
-            Numeric patch enhancement score used to scale the base weight
-            delta.
-        roi_tag:
-            ROI tag describing the patch outcome.  The tag's numeric sentiment
-            controls the sign of the weight update.
+        vectors:
+            Iterable of ``(origin, vector_id, enhancement_score, roi_tag)``
+            tuples describing the vectors contributing to a patch.  ``origin``
+            may be an empty string when unknown.  ``enhancement_score`` and
+            ``roi_tag`` are used to scale the adjustment applied to the
+            vector's ranking weight.
         error_trace_count:
             Number of error traces observed.  Higher counts reduce the
             magnitude of adjustments.
@@ -109,38 +103,45 @@ class WeightAdjuster:
         if self.vector_metrics is None:
             return {}
 
-        entries = list(self._iter_ids(vector_ids))
+        entries: list[Tuple[str, str, float, RoiTag]] = []
+        for origin, rid, enh, tag in vectors:
+            entries.append(
+                (
+                    str(origin or ""),
+                    str(rid),
+                    float(enh or 0.0),
+                    RoiTag.validate(tag),
+                )
+            )
         if not entries:
             return {}
 
-        origins = {origin for origin, _, _ in entries if origin}
+        origins: Dict[str, float] = {}
+        for origin, rid, enh, tag in entries:
+            sentiment = self.tag_sentiment.get(tag, 1.0)
+            factor = float(enh or 1.0) * sentiment
+            if tests_passed is not None:
+                factor *= 1.0 if tests_passed else -1.0
+            if error_trace_count:
+                factor /= 1.0 + float(error_trace_count)
 
-        roi_tag_val = RoiTag.validate(roi_tag) if roi_tag is not None else None
-        sentiment = self.tag_sentiment.get(roi_tag_val, 1.0)
-
-        factor = float(enhancement_score or 1.0) * sentiment
-        if tests_passed is not None:
-            factor *= 1.0 if tests_passed else -1.0
-        if error_trace_count:
-            factor /= 1.0 + float(error_trace_count)
-
-        # update individual vector weights
-        for origin, rid, vscore in entries:
-            vfactor = factor * (vscore or 1.0)
             base = (
-                self.vector_success_delta if vfactor >= 0 else -self.vector_failure_delta
+                self.vector_success_delta if factor >= 0 else -self.vector_failure_delta
             )
-            delta = base * abs(vfactor)
+            delta = base * abs(factor)
             key = f"{origin}:{rid}" if origin else rid
             try:
                 self.vector_metrics.update_vector_weight(key, delta)
             except Exception:
                 pass
 
-        db_base = self.db_success_delta if factor >= 0 else -self.db_failure_delta
-        db_delta = db_base * abs(factor)
+            if origin and origin not in origins:
+                origins[origin] = factor
+
         updates: Dict[str, float] = {}
-        for origin in origins:
+        for origin, factor in origins.items():
+            db_base = self.db_success_delta if factor >= 0 else -self.db_failure_delta
+            db_delta = db_base * abs(factor)
             try:
                 weight = self.vector_metrics.update_db_weight(origin, db_delta)
                 updates[origin] = weight
@@ -154,35 +155,6 @@ class WeightAdjuster:
                 pass
         return updates
 
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _iter_ids(
-        vector_ids: Iterable[str | Tuple[str, str] | Tuple[str, str, float]]
-    ) -> Iterable[Tuple[str, str, float]]:
-        for item in vector_ids:
-            origin: str
-            rid: str
-            score: float = 1.0
-            if isinstance(item, tuple):
-                if len(item) >= 3:
-                    origin, rid, score = item[0], item[1], float(item[2])
-                elif len(item) == 2:
-                    origin, rid = item
-                else:
-                    origin, rid = item[0], item[1] if len(item) > 1 else ""
-            else:
-                text = str(item)
-                parts = text.split(":")
-                if len(parts) >= 2:
-                    origin, rid = parts[0], parts[1]
-                    if len(parts) > 2:
-                        try:
-                            score = float(parts[2])
-                        except Exception:
-                            score = 1.0
-                else:
-                    origin, rid = "", text
-            yield str(origin or ""), str(rid), float(score or 1.0)
         
 
 __all__ = ["WeightAdjuster"]
