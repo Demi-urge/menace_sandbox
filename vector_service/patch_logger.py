@@ -173,6 +173,7 @@ class TrackResult(dict):
         lines_changed: int | None = None,
         context_tokens: int | None = None,
         patch_difficulty: int | None = None,
+        effort_estimate: float | None = None,
         roi_deltas: Mapping[str, float] | None = None,
     ) -> None:
         super().__init__(mapping or {})
@@ -181,6 +182,7 @@ class TrackResult(dict):
         self.lines_changed = lines_changed
         self.context_tokens = context_tokens
         self.patch_difficulty = patch_difficulty
+        self.effort_estimate = effort_estimate
         # ``roi_deltas`` allows callers to retrieve per-origin ROI changes
         # computed during :meth:`track_contributors`.  It defaults to an empty
         # mapping for backwards compatibility so existing callers treating the
@@ -283,6 +285,7 @@ class PatchLogger:
         outcome: str | None = None,
         error_summary: str | None = None,
         roi_tag: str | None = None,
+        effort_estimate: float | None = None,
     ) -> dict[str, float]:
         """Log patch outcome for vectors contributing to a patch.
 
@@ -299,6 +302,7 @@ class PatchLogger:
         roi_deltas: dict[str, float] = {}
         context_tokens = 0
         patch_difficulty = (lines_changed or 0)
+        effort_estimate_val = effort_estimate
         time_to_completion = (
             None
             if start_time is None or timestamp is None
@@ -669,6 +673,7 @@ class PatchLogger:
                             tests_passed=tests_passed,
                             context_tokens=context_tokens,
                             patch_difficulty=patch_difficulty,
+                            effort_estimate=effort_estimate_val,
                             enhancement_name=enhancement_name,
                             start_time=start_time,
                             time_to_completion=time_to_completion,
@@ -802,6 +807,7 @@ class PatchLogger:
             "lines_changed": lines_changed,
             "context_tokens": context_tokens,
             "patch_difficulty": patch_difficulty,
+            "effort_estimate": effort_estimate_val,
             "tests_passed": tests_passed,
             "enhancement_name": enhancement_name,
             "timestamp": timestamp,
@@ -840,6 +846,7 @@ class PatchLogger:
                     time_to_completion=time_to_completion,
                     error_trace_count=error_trace_count,
                     roi_tag=roi_tag,
+                    effort_estimate=effort_estimate_val,
                 )
             except Exception:
                 logger.exception("vector_metrics.record_patch_summary failed")
@@ -862,6 +869,7 @@ class PatchLogger:
             context_tokens=context_tokens,
             patch_difficulty=patch_difficulty,
             roi_deltas=roi_deltas,
+            effort_estimate=effort_estimate_val,
         )
 
     # ------------------------------------------------------------------
@@ -872,7 +880,7 @@ class PatchLogger:
         try:
             conn = self.patch_db.router.get_connection("patch_history")
             row = conn.execute(
-                "SELECT diff, summary, outcome, lines_changed, tests_passed, context_tokens, patch_difficulty, enhancement_name, start_time, time_to_completion, timestamp, roi_deltas, errors, error_trace_count, roi_tag FROM patch_history WHERE id=?",
+                "SELECT diff, summary, outcome, lines_changed, tests_passed, context_tokens, patch_difficulty, effort_estimate, enhancement_name, start_time, time_to_completion, timestamp, roi_deltas, errors, error_trace_count, roi_tag FROM patch_history WHERE id=?",
                 (int(patch_id),),
             ).fetchone()
             if row is None:
@@ -885,6 +893,7 @@ class PatchLogger:
                 tests_passed,
                 context_tokens,
                 patch_difficulty,
+                effort_estimate,
                 enhancement_name,
                 start_ts,
                 duration,
@@ -912,6 +921,7 @@ class PatchLogger:
                 "context_tokens": context_tokens,
                 "patch_difficulty": patch_difficulty,
                 "enhancement_name": enhancement_name,
+                "effort_estimate": effort_estimate,
                 "start_time": start_ts,
                 "time_to_completion": duration,
                 "timestamp": ts,
@@ -946,6 +956,7 @@ class PatchLogger:
         outcome: str | None = None,
         error_summary: str | None = None,
         roi_tag: str | None = None,
+        effort_estimate: float | None = None,
     ) -> dict[str, float]:
         """Asynchronous wrapper for :meth:`track_contributors`."""
 
@@ -969,6 +980,7 @@ class PatchLogger:
             outcome=outcome,
             error_summary=error_summary,
             roi_tag=roi_tag,
+            effort_estimate=effort_estimate,
         )
 
 

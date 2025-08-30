@@ -1062,6 +1062,7 @@ class PatchHistoryDB:
                 tests_passed INTEGER DEFAULT 0,
                 context_tokens INTEGER DEFAULT 0,
                 patch_difficulty INTEGER DEFAULT 0,
+                effort_estimate REAL,
                 enhancement_name TEXT,
                 start_time REAL,
                 time_to_completion REAL,
@@ -1167,6 +1168,7 @@ class PatchHistoryDB:
             "tests_passed": "ALTER TABLE patch_history ADD COLUMN tests_passed INTEGER DEFAULT 0",
             "context_tokens": "ALTER TABLE patch_history ADD COLUMN context_tokens INTEGER DEFAULT 0",
             "patch_difficulty": "ALTER TABLE patch_history ADD COLUMN patch_difficulty INTEGER DEFAULT 0",
+            "effort_estimate": "ALTER TABLE patch_history ADD COLUMN effort_estimate REAL",
             "enhancement_name": "ALTER TABLE patch_history ADD COLUMN enhancement_name TEXT",
             "start_time": "ALTER TABLE patch_history ADD COLUMN start_time REAL",
             "time_to_completion": "ALTER TABLE patch_history ADD COLUMN time_to_completion REAL",
@@ -1500,6 +1502,7 @@ class PatchHistoryDB:
         tests_passed: bool | None = None,
         context_tokens: int | None = None,
         patch_difficulty: int | None = None,
+        effort_estimate: float | None = None,
         enhancement_name: str | None = None,
         timestamp: float | None = None,
         start_time: float | None = None,
@@ -1543,12 +1546,13 @@ class PatchHistoryDB:
                 except Exception:
                     logger.exception("failed to serialise errors")
             conn.execute(
-                "UPDATE patch_history SET lines_changed=?, tests_passed=?, context_tokens=?, patch_difficulty=?, enhancement_name=?, start_time=?, time_to_completion=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary), outcome=COALESCE(?, outcome), roi_deltas=COALESCE(?, roi_deltas), errors=COALESCE(?, errors), error_trace_count=COALESCE(?, error_trace_count), roi_tag=COALESCE(?, roi_tag) WHERE id=?",
+                "UPDATE patch_history SET lines_changed=?, tests_passed=?, context_tokens=?, patch_difficulty=?, effort_estimate=?, enhancement_name=?, start_time=?, time_to_completion=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary), outcome=COALESCE(?, outcome), roi_deltas=COALESCE(?, roi_deltas), errors=COALESCE(?, errors), error_trace_count=COALESCE(?, error_trace_count), roi_tag=COALESCE(?, roi_tag) WHERE id=?",
                 (
                     lines_changed,
                     None if tests_passed is None else int(bool(tests_passed)),
                     context_tokens,
                     patch_difficulty,
+                    effort_estimate,
                     enhancement_name,
                     start_time,
                     time_to_completion,
@@ -1576,6 +1580,7 @@ class PatchHistoryDB:
                     lines_changed=lines_changed,
                     context_tokens=context_tokens,
                     patch_difficulty=patch_difficulty,
+                    effort_estimate=effort_estimate,
                     start_time=start_time,
                     time_to_completion=time_to_completion,
                     error_trace_count=error_trace_count,

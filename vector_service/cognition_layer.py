@@ -689,6 +689,7 @@ class CognitionLayer:
         enhancement_name: str | None = None,
         start_time: float | None = None,
         timestamp: float | None = None,
+        effort_estimate: float | None = None,
         async_mode: bool = False,
     ) -> None:
         """Shared implementation for patch outcome recording."""
@@ -747,6 +748,7 @@ class CognitionLayer:
             "enhancement_name": enhancement_name,
             "start_time": start_time,
             "timestamp": timestamp,
+            "effort_estimate": effort_estimate,
         }
         import inspect
 
@@ -943,6 +945,7 @@ class CognitionLayer:
         enhancement_name: str | None = None,
         start_time: float | None = None,
         timestamp: float | None = None,
+        effort_estimate: float | None = None,
     ) -> None:
         """Forward patch outcome to :class:`PatchLogger`."""
 
@@ -957,6 +960,7 @@ class CognitionLayer:
                 enhancement_name=enhancement_name,
                 start_time=start_time,
                 timestamp=timestamp,
+                effort_estimate=effort_estimate,
                 async_mode=False,
             )
         )
@@ -974,6 +978,7 @@ class CognitionLayer:
         enhancement_name: str | None = None,
         start_time: float | None = None,
         timestamp: float | None = None,
+        effort_estimate: float | None = None,
     ) -> None:
         """Asynchronous wrapper for :meth:`record_patch_outcome`."""
 
@@ -987,6 +992,7 @@ class CognitionLayer:
             enhancement_name=enhancement_name,
             start_time=start_time,
             timestamp=timestamp,
+            effort_estimate=effort_estimate,
             async_mode=True,
         )
 

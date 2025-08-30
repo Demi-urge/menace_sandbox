@@ -652,6 +652,7 @@ class SelfCodingEngine:
         trigger: str | None = None,
         requesting_bot: str | None = None,
         context_meta: Dict[str, Any] | None = None,
+        effort_estimate: float | None = None,
     ) -> tuple[int | None, bool, float]:
         """Patch file, run CI and benchmark a workflow.
 
@@ -805,14 +806,15 @@ class SelfCodingEngine:
             self._store_patch_memory(path, description, generated_code, False, roi_delta)
             if self.patch_db and session_id and vectors and patch_id is not None:
                 try:
-                    self.patch_db.record_vector_metrics(
-                        session_id,
-                        [(o, v) for o, v, _ in vectors],
-                        patch_id=patch_id,
-                        contribution=0.0,
-                        win=False,
-                        regret=True,
-                    )
+                self.patch_db.record_vector_metrics(
+                    session_id,
+                    [(o, v) for o, v, _ in vectors],
+                    patch_id=patch_id,
+                    contribution=0.0,
+                    win=False,
+                    regret=True,
+                    effort_estimate=effort_estimate,
+                )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             if self.data_bot:
@@ -841,14 +843,15 @@ class SelfCodingEngine:
             self._store_patch_memory(path, description, generated_code, False, 0.0)
             if self.patch_db and session_id and vectors:
                 try:
-                    self.patch_db.record_vector_metrics(
-                        session_id,
-                        [(o, v) for o, v, _ in vectors],
-                        patch_id=0,
-                        contribution=0.0,
-                        win=False,
-                        regret=True,
-                    )
+                self.patch_db.record_vector_metrics(
+                    session_id,
+                    [(o, v) for o, v, _ in vectors],
+                    patch_id=0,
+                    contribution=0.0,
+                    win=False,
+                    regret=True,
+                    effort_estimate=effort_estimate,
+                )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             if self.data_bot:
@@ -876,14 +879,15 @@ class SelfCodingEngine:
             self._store_patch_memory(path, description, generated_code, False, 0.0)
             if self.patch_db and session_id and vectors:
                 try:
-                    self.patch_db.record_vector_metrics(
-                        session_id,
-                        [(o, v) for o, v, _ in vectors],
-                        patch_id=0,
-                        contribution=0.0,
-                        win=False,
-                        regret=True,
-                    )
+                self.patch_db.record_vector_metrics(
+                    session_id,
+                    [(o, v) for o, v, _ in vectors],
+                    patch_id=0,
+                    contribution=0.0,
+                    win=False,
+                    regret=True,
+                    effort_estimate=effort_estimate,
+                )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             if self.data_bot:
@@ -1051,6 +1055,7 @@ class SelfCodingEngine:
                     contribution=roi_delta,
                     win=win_flag,
                     regret=regret_flag,
+                    effort_estimate=effort_estimate,
                 )
             if self.data_bot and self.patch_db and patch_id is not None:
                 rec = self.patch_db.get(patch_id)
@@ -1075,6 +1080,7 @@ class SelfCodingEngine:
                     not reverted,
                     patch_id=str(patch_id or ""),
                     contribution=roi_delta,
+                    effort_estimate=effort_estimate,
                 )
             except Exception:
                 self.logger.exception("failed to record patch outcome")

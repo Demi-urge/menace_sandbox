@@ -138,6 +138,7 @@ def handle_patch(args: argparse.Namespace) -> int:
         description=args.desc,
         patch_logger=patch_logger,
         context=ctx,
+        effort_estimate=args.effort_estimate,
     )
     if not patch_id:
         return 1
@@ -277,6 +278,7 @@ def main(argv: list[str] | None = None) -> int:
     p_quick.add_argument("module")
     p_quick.add_argument("--desc", required=True, help="Patch description")
     p_quick.add_argument("--context", help="JSON encoded context", default=None)
+    p_quick.add_argument("--effort-estimate", type=float, default=None, help="Estimated effort for patch")
     p_quick.set_defaults(func=handle_patch)
 
     p_patch = sub.add_parser("patches", help="Patch provenance helpers")

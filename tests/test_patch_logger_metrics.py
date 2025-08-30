@@ -140,6 +140,7 @@ class DummyPatchDB:
         tests_passed=None,
         context_tokens=None,
         patch_difficulty=None,
+        effort_estimate=None,
         enhancement_name=None,
         start_time=None,
         time_to_completion=None,
@@ -163,6 +164,7 @@ class DummyPatchDB:
             "tests_passed": tests_passed,
             "context_tokens": context_tokens,
             "patch_difficulty": patch_difficulty,
+            "effort_estimate": effort_estimate,
             "enhancement_name": enhancement_name,
             "start_time": start_time,
             "time_to_completion": time_to_completion,
@@ -431,6 +433,7 @@ def test_track_contributors_persists_errors_and_results(monkeypatch):
             time_to_completion=None,
             error_trace_count=None,
             roi_tag=None,
+            effort_estimate=None,
         ):
             self.summary_calls.append(
                 {
@@ -444,6 +447,7 @@ def test_track_contributors_persists_errors_and_results(monkeypatch):
                     "time_to_completion": time_to_completion,
                     "error_trace_count": error_trace_count,
                     "roi_tag": roi_tag,
+                    "effort_estimate": effort_estimate,
                 }
             )
 
