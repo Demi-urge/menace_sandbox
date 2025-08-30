@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Sequence
 import json
 import math
+import os
 
 from logging_utils import get_logger, log_record
 from audit_trail import AuditTrail
@@ -16,8 +17,15 @@ except Exception:  # pragma: no cover - optional
 try:  # avoid heavy dependency during light imports
     from .cycle import _async_track_usage
 except Exception:  # pragma: no cover - best effort stub
+    _SUPPRESS_TELEMETRY_WARNING = os.getenv("SANDBOX_SUPPRESS_TELEMETRY_WARNING") == "1"
+
     def _async_track_usage(*_a, **_k) -> None:  # type: ignore
-        pass
+        if _SUPPRESS_TELEMETRY_WARNING or getattr(_async_track_usage, "_warned", False):
+            return
+        logger.warning(
+            "relevancy radar unavailable; telemetry tracking disabled"
+        )
+        _async_track_usage._warned = True  # type: ignore
 
 logger = get_logger(__name__)
 
