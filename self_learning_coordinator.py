@@ -2,9 +2,12 @@ from __future__ import annotations
 
 """Coordinate incremental training from event bus activity."""
 
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple, Awaitable
 import logging
 import asyncio
+import json
+from pathlib import Path
+from datetime import datetime
 
 from pydantic import BaseModel, ValidationError
 from sandbox_settings import SandboxSettings
@@ -63,11 +66,49 @@ class SelfLearningCoordinator:
         self.curriculum_builder = curriculum_builder
         self._summary_count = 0
         self._train_count = 0
+        self._last_eval_ts: str | None = None
+        data_dir = getattr(settings, "sandbox_data_dir", ".") if settings else "."
+        self._state_path = Path(data_dir) / "self_learning_state.json"
+        self._load_state()
         self.evaluation_manager = EvaluationManager(
             learning_engine, unified_engine, action_engine
         )
         self.best_engine: Optional[object] = None
-        self._subs: List[Tuple[str, Callable[[str, object], None]]] = []
+        self._subs: List[Tuple[str, Callable[[str, object], Awaitable[None]]]] = []
+
+    # --------------------------------------------------------------
+    def _load_state(self) -> None:
+        try:
+            data = json.loads(self._state_path.read_text())
+            self._train_count = int(data.get("train_count", 0))
+            self._summary_count = int(data.get("summary_count", 0))
+            self._last_eval_ts = data.get("last_eval_ts")
+        except Exception:
+            pass
+
+    def _save_state(self) -> None:
+        try:
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "train_count": self._train_count,
+                "summary_count": self._summary_count,
+                "last_eval_ts": self._last_eval_ts,
+            }
+            self._state_path.write_text(json.dumps(payload))
+        except Exception as exc:
+            logger.warning("failed to persist self-learning state: %s", exc)
+
+    def _reload_intervals(self) -> None:
+        try:
+            settings = SandboxSettings()
+        except Exception:
+            return
+        self.eval_interval = getattr(
+            settings, "self_learning_eval_interval", self.eval_interval
+        )
+        self.summary_interval = getattr(
+            settings, "self_learning_summary_interval", self.summary_interval
+        )
 
     # --------------------------------------------------------------
     class MemoryEvent(BaseModel):
@@ -143,7 +184,7 @@ class SelfLearningCoordinator:
         self._subs = []
         for topic, cb in topics:
             try:
-                self.event_bus.subscribe(topic, cb)
+                self.event_bus.subscribe_async(topic, cb)
                 self._subs.append((topic, cb))
             except Exception as exc:
                 log = getattr(self.error_bot, "logger", logger)
@@ -164,7 +205,7 @@ class SelfLearningCoordinator:
         self.running = False
 
     # --------------------------------------------------------------
-    def _on_memory(self, topic: str, payload: object) -> None:
+    async def _on_memory(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
         try:
@@ -182,9 +223,9 @@ class SelfLearningCoordinator:
             outcome=Outcome.SUCCESS,
             roi=0.0,
         )
-        self._train_all(rec, source="memory")
+        await self._train_all(rec, source="memory")
 
-    def _on_code(self, topic: str, payload: object) -> None:
+    async def _on_code(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
         try:
@@ -202,9 +243,9 @@ class SelfLearningCoordinator:
             outcome=Outcome.SUCCESS,
             roi=float(ev.complexity_score or 0.0),
         )
-        self._train_all(rec, source="code")
+        await self._train_all(rec, source="code")
 
-    def _on_workflow(self, topic: str, payload: object) -> None:
+    async def _on_workflow(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
         try:
@@ -227,9 +268,9 @@ class SelfLearningCoordinator:
             outcome=oc,
             roi=float(ev.estimated_profit_per_bot or 0.0),
         )
-        self._train_all(rec, source="workflow")
+        await self._train_all(rec, source="workflow")
 
-    def _on_pathway(self, topic: str, payload: object) -> None:
+    async def _on_pathway(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
         try:
@@ -251,9 +292,9 @@ class SelfLearningCoordinator:
         except Exception:
             logger.warning("failed to build pathway record from payload")
             return
-        self._train_all(rec, source="pathway")
+        await self._train_all(rec, source="pathway")
 
-    def _on_error(self, topic: str, payload: object) -> None:
+    async def _on_error(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
         try:
@@ -271,9 +312,9 @@ class SelfLearningCoordinator:
             outcome=Outcome.FAILURE,
             roi=0.0,
         )
-        self._train_all(rec, source="error")
+        await self._train_all(rec, source="error")
 
-    def _on_telemetry(self, topic: str, payload: object) -> None:
+    async def _on_telemetry(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
         try:
@@ -291,9 +332,9 @@ class SelfLearningCoordinator:
             outcome=Outcome.FAILURE,
             roi=0.0,
         )
-        self._train_all(rec, source="telemetry")
+        await self._train_all(rec, source="telemetry")
 
-    def _on_metrics(self, topic: str, payload: object) -> None:
+    async def _on_metrics(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
         try:
@@ -320,9 +361,9 @@ class SelfLearningCoordinator:
             roi=roi,
             ts=str(ev.ts or ""),
         )
-        self._train_all(rec, source="metrics")
+        await self._train_all(rec, source="metrics")
 
-    def _on_transaction(self, topic: str, payload: object) -> None:
+    async def _on_transaction(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
         try:
@@ -341,9 +382,9 @@ class SelfLearningCoordinator:
             outcome=oc,
             roi=amount,
         )
-        self._train_all(rec, source="transaction")
+        await self._train_all(rec, source="transaction")
 
-    def _on_curriculum(self, topic: str, payload: object) -> None:
+    async def _on_curriculum(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
             return
         try:
@@ -363,11 +404,11 @@ class SelfLearningCoordinator:
             outcome=Outcome.FAILURE,
             roi=0.0,
         )
-        self._train_all(rec, source="curriculum")
+        await self._train_all(rec, source="curriculum")
 
     # --------------------------------------------------------------
-    def _train_all(self, rec: PathwayRecord, *, source: str = "unknown") -> None:
-        asyncio.run(self._train_record(rec))
+    async def _train_all(self, rec: PathwayRecord, *, source: str = "unknown") -> None:
+        await self._train_record(rec)
         self._train_count += 1
         logger.info(
             "processed training record %s from %s (count=%d)",
@@ -380,14 +421,17 @@ class SelfLearningCoordinator:
                 self.metrics_db.log_training_stat(source, True)
             except Exception as exc:
                 logger.exception("metrics_db failed during log_training_stat: %s", exc)
+        self._reload_intervals()
         if self.eval_interval and self._train_count >= self.eval_interval:
             self._evaluate_all()
             self._train_count = 0
+            self._last_eval_ts = datetime.utcnow().isoformat()
         if self.summary_interval and self.error_bot:
             self._summary_count += 1
             if self._summary_count >= self.summary_interval:
-                self._train_from_summary()
+                await self._train_from_summary()
                 self._summary_count = 0
+        self._save_state()
 
     async def _train_record(self, rec: PathwayRecord) -> None:
         async with asyncio.TaskGroup() as tg:
@@ -404,7 +448,7 @@ class SelfLearningCoordinator:
         except Exception as exc:
             logger.exception("%s failed during partial_train: %s", name, exc)
 
-    def _train_from_summary(self) -> None:
+    async def _train_from_summary(self) -> None:
         if self.curriculum_builder:
             items = self.curriculum_builder.publish()
             logger.info(
@@ -432,7 +476,7 @@ class SelfLearningCoordinator:
                 else Outcome.SUCCESS,
                 roi=0.0,
             )
-            asyncio.run(self._train_record(rec))
+            await self._train_record(rec)
             logger.info(
                 "processed summary training record %s (%d/%d)",
                 getattr(rec, "ts", ""),

@@ -1,13 +1,22 @@
 import ast
-from pathlib import Path
+import asyncio
 
 
 def _build_coordinator():
+    from pathlib import Path
     src = Path("self_learning_coordinator.py").read_text()
     tree = ast.parse(src)
-    class_node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SelfLearningCoordinator")
+    class_node = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.ClassDef) and n.name == "SelfLearningCoordinator"
+    )
     wanted = {"__init__", "start", "stop", "_on_memory"}
-    methods = [m for m in class_node.body if isinstance(m, ast.FunctionDef) and m.name in wanted]
+    methods = [
+        m
+        for m in class_node.body
+        if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name in wanted
+    ]
     inner = [n for n in class_node.body if isinstance(n, ast.ClassDef) and n.name == "MemoryEvent"]
     new_class = ast.ClassDef("SelfLearningCoordinator", [], [], inner + methods, [])
     module = ast.Module([new_class], type_ignores=[])
@@ -57,9 +66,18 @@ def _build_coordinator():
     }
     exec(compile(module, "<ast>", "exec"), ns)
     cls = ns["SelfLearningCoordinator"]
+    # simple __init__
 
+    def __init__(self, event_bus):
+        self.event_bus = event_bus
+        self.running = False
+        self._train_count = 0
+        self._subs = []
+
+    cls.__init__ = __init__
     # simplify training to just count calls
-    def _train_all(self, rec, *, source="unknown"):
+
+    async def _train_all(self, rec, *, source="unknown"):
         self._train_count += 1
         self.last_record = rec
 
@@ -74,20 +92,24 @@ def _build_coordinator():
         "_on_transaction",
         "_on_curriculum",
     ]:
-        setattr(cls, name, lambda self, t, p: None)
+        async def _noop(self, t, p):
+            return None
+
+        setattr(cls, name, _noop)
     return cls
 
 
 class DummyBus:
     def __init__(self):
         self.subs = {}
+        self.loop = asyncio.new_event_loop()
 
-    def subscribe(self, topic, cb):
+    def subscribe_async(self, topic, cb):
         self.subs.setdefault(topic, []).append(cb)
 
     def publish(self, topic, payload):
         for cb in list(self.subs.get(topic, [])):
-            cb(topic, payload)
+            self.loop.run_until_complete(cb(topic, payload))
 
     def unsubscribe(self, topic, cb):
         lst = self.subs.get(topic, [])
@@ -116,4 +138,3 @@ def test_stop_unsubscribes():
     assert Bus.subs == {}
     Bus.publish("memory:new", {"key": "y"})
     assert coord._train_count == 0
-

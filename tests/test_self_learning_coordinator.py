@@ -7,8 +7,12 @@ sys.modules.setdefault("pulp", types.ModuleType("pulp"))
 sys.modules.setdefault("pandas", types.ModuleType("pandas"))
 sqlalchemy_mod = types.ModuleType("sqlalchemy")
 engine_mod = types.ModuleType("sqlalchemy.engine")
+
+
 class DummyEngine:
     pass
+
+
 engine_mod.Engine = DummyEngine
 sqlalchemy_mod.engine = engine_mod
 sys.modules.setdefault("sqlalchemy", sqlalchemy_mod)
@@ -26,10 +30,34 @@ stub_err.ErrorBot = object
 stub_err.ErrorDB = object
 sys.modules.setdefault("menace.error_bot", stub_err)
 
-from menace.unified_event_bus import UnifiedEventBus
-from menace.data_bot import MetricsDB
-from menace.self_learning_coordinator import SelfLearningCoordinator
-from unittest.mock import MagicMock
+# Stub MetricsDB to avoid heavy imports
+stub_db = types.ModuleType("menace.data_bot")
+
+
+class MetricsDB:  # noqa: D401 - simple stub
+    def __init__(self, *a, **k):
+        pass
+
+    def log_training_stat(self, *a, **k):
+        pass
+
+
+stub_db.MetricsDB = MetricsDB
+sys.modules.setdefault("menace.data_bot", stub_db)
+
+# Stub learning engine modules to avoid heavy imports
+ule = types.ModuleType("menace.unified_learning_engine")
+ule.UnifiedLearningEngine = object
+sys.modules.setdefault("menace.unified_learning_engine", ule)
+ale = types.ModuleType("menace.action_learning_engine")
+ale.ActionLearningEngine = object
+sys.modules.setdefault("menace.action_learning_engine", ale)
+
+from menace.unified_event_bus import UnifiedEventBus  # noqa: E402
+from menace.data_bot import MetricsDB  # noqa: E402
+from menace.self_learning_coordinator import SelfLearningCoordinator  # noqa: E402
+from unittest.mock import AsyncMock  # noqa: E402
+import asyncio  # noqa: E402
 
 # Cleanup stubs so they don't affect other tests
 for mod in [
@@ -75,6 +103,7 @@ def test_coordinator_trains_on_workflow(tmp_path):
             "estimated_profit_per_bot": 2.0,
         },
     )
+    bus._loop.run_until_complete(asyncio.sleep(0.1))
     assert engine.records
     assert engine.records[0].actions == "a->b"
 
@@ -85,6 +114,7 @@ def test_coordinator_trains_on_memory(tmp_path):
     coord = SelfLearningCoordinator(bus, learning_engine=engine)
     coord.start()
     bus.publish("memory:new", {"key": "X"})
+    bus._loop.run_until_complete(asyncio.sleep(0.1))
     assert engine.records
     assert engine.records[0].actions == "X"
 
@@ -95,6 +125,7 @@ def test_coordinator_trains_on_code(tmp_path):
     coord = SelfLearningCoordinator(bus, learning_engine=engine)
     coord.start()
     bus.publish("code:new", {"summary": "Y"})
+    bus._loop.run_until_complete(asyncio.sleep(0.1))
     assert engine.records
     assert engine.records[0].actions == "Y"
 
@@ -105,6 +136,7 @@ def test_coordinator_trains_on_error(tmp_path):
     coord = SelfLearningCoordinator(bus, learning_engine=engine)
     coord.start()
     bus.publish("errors:new", {"message": "boom"})
+    bus._loop.run_until_complete(asyncio.sleep(0.1))
     assert engine.records
     assert engine.records[0].actions == "boom"
 
@@ -112,9 +144,12 @@ def test_coordinator_trains_on_error(tmp_path):
 def test_coordinator_evaluates_interval(tmp_path):
     bus = UnifiedEventBus()
     engine = DummyEngine()
+    import os
+    os.environ["SELF_LEARNING_EVAL_INTERVAL"] = "1"
     coord = SelfLearningCoordinator(bus, learning_engine=engine, eval_interval=1)
     coord.start()
     bus.publish("memory:new", {"key": "A"})
+    bus._loop.run_until_complete(asyncio.sleep(0.1))
     assert engine.evaluated == 1
 
 
@@ -138,6 +173,7 @@ def test_coordinator_trains_on_metrics(tmp_path):
             "expense": 0.5,
         },
     )
+    bus._loop.run_until_complete(asyncio.sleep(0.1))
     assert engine.records
     assert engine.records[0].actions == "b"
 
@@ -148,6 +184,7 @@ def test_coordinator_trains_on_transaction(tmp_path):
     coord = SelfLearningCoordinator(bus, learning_engine=engine)
     coord.start()
     bus.publish("transactions:new", {"model_id": "M1", "amount": 5.0, "result": "success"})
+    bus._loop.run_until_complete(asyncio.sleep(0.1))
     assert engine.records
     assert engine.records[0].actions == "M1"
     assert engine.records[0].roi == 5.0
@@ -190,6 +227,8 @@ def test_telemetry_summary_updates_training(tmp_path):
     mdb = MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db", event_bus=bus)
     err_bot = eb.ErrorBot(edb, mdb)
+    import os
+    os.environ["SELF_LEARNING_SUMMARY_INTERVAL"] = "1"
     coord = SelfLearningCoordinator(
         bus,
         learning_engine=engine,
@@ -203,6 +242,7 @@ def test_telemetry_summary_updates_training(tmp_path):
             resolution_status="fatal",
         )
     )
+    bus._loop.run_until_complete(asyncio.sleep(0.1))
     assert len(engine.records) >= 2
 
 
@@ -210,8 +250,9 @@ def test_stop_unsubscribes_callbacks():
     class DummyBus:
         def __init__(self) -> None:
             self.subs: dict[str, list] = {}
+            self.loop = asyncio.new_event_loop()
 
-        def subscribe(self, topic, callback):
+        def subscribe_async(self, topic, callback):
             self.subs.setdefault(topic, []).append(callback)
 
         def unsubscribe(self, topic, callback):
@@ -222,19 +263,18 @@ def test_stop_unsubscribes_callbacks():
 
         def publish(self, topic, event):
             for cb in list(self.subs.get(topic, [])):
-                cb(topic, event)
+                self.loop.run_until_complete(cb(topic, event))
 
     bus = DummyBus()
     coord = SelfLearningCoordinator(bus)
     orig = coord._on_memory
-    mem_cb = MagicMock(side_effect=orig)
+    mem_cb = AsyncMock(side_effect=orig)
     coord._on_memory = mem_cb
-    coord._train_all = MagicMock()
+    coord._train_all = AsyncMock()
     coord.start()
     bus.publish("memory:new", {"key": "A"})
-    assert mem_cb.call_count == 1
+    assert mem_cb.await_count == 1
     coord.stop()
     bus.publish("memory:new", {"key": "B"})
-    assert mem_cb.call_count == 1
+    assert mem_cb.await_count == 1
     assert "memory:new" not in bus.subs
-
