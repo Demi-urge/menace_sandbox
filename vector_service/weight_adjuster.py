@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Tuple, Dict
+from typing import Dict, Iterable, Tuple
 
 import yaml
 
@@ -12,24 +12,26 @@ from vector_metrics_db import VectorMetricsDB
 from .roi_tags import RoiTag
 
 
-def _load_tag_outcomes() -> Dict[RoiTag, bool]:
-    """Load ROI tag outcome mapping from YAML config.
+def _load_tag_sentiment() -> Dict[RoiTag, float]:
+    """Load ROI tag sentiment mapping from YAML config.
 
-    The default mapping treats ``success`` and ``high-ROI`` as positive while
-    the remaining tags are negative.  A ``config/roi_tag_outcomes.yaml`` file
-    can override these defaults with a simple ``tag: bool`` mapping.
+    The default mapping assigns ``1.0`` to positive tags and ``-1.0`` to
+    negative ones.  ``config/roi_tag_sentiment.yaml`` can override these
+    defaults with a simple ``tag: float`` mapping.
     """
 
-    mapping: Dict[RoiTag, bool] = {
-        RoiTag.SUCCESS: True,
-        RoiTag.HIGH_ROI: True,
-        RoiTag.LOW_ROI: False,
-        RoiTag.BUG_INTRODUCED: False,
-        RoiTag.NEEDS_REVIEW: False,
-        RoiTag.BLOCKED: False,
+    mapping: Dict[RoiTag, float] = {
+        RoiTag.SUCCESS: 1.0,
+        RoiTag.HIGH_ROI: 1.0,
+        RoiTag.LOW_ROI: -1.0,
+        RoiTag.BUG_INTRODUCED: -1.0,
+        RoiTag.NEEDS_REVIEW: -1.0,
+        RoiTag.BLOCKED: -1.0,
     }
 
-    cfg_path = Path(__file__).resolve().parent.parent / "config" / "roi_tag_outcomes.yaml"
+    cfg_path = (
+        Path(__file__).resolve().parent.parent / "config" / "roi_tag_sentiment.yaml"
+    )
     if cfg_path.exists():
         try:  # pragma: no cover - configuration loading is best effort
             data = yaml.safe_load(cfg_path.read_text()) or {}
@@ -39,36 +41,30 @@ def _load_tag_outcomes() -> Dict[RoiTag, bool]:
                         tag = RoiTag(key)
                     except ValueError:
                         continue
-                    mapping[tag] = bool(val)
+                    try:
+                        mapping[tag] = float(val)
+                    except Exception:
+                        continue
         except Exception:
             pass
 
     return mapping
 
 
-ROI_TAG_OUTCOMES = _load_tag_outcomes()
+ROI_TAG_SENTIMENT = _load_tag_sentiment()
 
 
 @dataclass
 class WeightAdjuster:
-    """Adjust per-database ranking weights using patch metrics.
-
-    Parameters
-    ----------
-    vector_metrics:
-        Optional :class:`vector_metrics_db.VectorMetricsDB` instance used to
-        persist weight updates.
-    success_delta:
-        Base amount by which to increase weights for positive patches.
-    failure_delta:
-        Base amount by which to decrease weights for noisy or failing patches.
-    """
+    """Adjust ranking weights for vector origins and individual vectors."""
 
     vector_metrics: VectorMetricsDB | None = None
-    success_delta: float = 0.1
-    failure_delta: float = 0.1
-    tag_outcomes: Dict[RoiTag, bool] = field(
-        default_factory=lambda: ROI_TAG_OUTCOMES.copy()
+    db_success_delta: float = 0.1
+    db_failure_delta: float = 0.1
+    vector_success_delta: float = 0.1
+    vector_failure_delta: float = 0.1
+    tag_sentiment: Dict[RoiTag, float] = field(
+        default_factory=lambda: ROI_TAG_SENTIMENT.copy()
     )
 
     def __post_init__(self) -> None:  # pragma: no cover - best effort init
@@ -84,41 +80,65 @@ class WeightAdjuster:
         vector_ids: Iterable[str | Tuple[str, str] | Tuple[str, str, float]],
         enhancement_score: float | None,
         roi_tag: RoiTag | str | None,
+        *,
+        error_trace_count: int | None = None,
+        tests_passed: bool | None = None,
     ) -> Dict[str, float]:
-        """Update ranking weights for origins and individual vectors.
+        """Update ranking weights using patch quality metrics.
 
-        Returns a mapping of origin database to its new weight after the
-        adjustment.  When neither ``enhancement_score`` nor ``roi_tag`` is
-        provided no adjustments are made.  ``vector_ids`` may contain plain
-        ``"origin:vector"`` strings, ``(origin, vector_id)`` tuples or
-        ``(origin, vector_id, score)`` tuples.  When a score is provided it is
-        used to scale the per-vector adjustment.
+        Parameters
+        ----------
+        vector_ids:
+            Iterable containing ``origin:vector`` identifiers or tuples of
+            ``(origin, vector, score)``.  ``score`` scales the per-vector
+            adjustment.
+        enhancement_score:
+            Numeric patch enhancement score used to scale the base weight
+            delta.
+        roi_tag:
+            ROI tag describing the patch outcome.  The tag's numeric sentiment
+            controls the sign of the weight update.
+        error_trace_count:
+            Number of error traces observed.  Higher counts reduce the
+            magnitude of adjustments.
+        tests_passed:
+            Optional boolean indicating whether tests passed.  Failed tests
+            invert the sign of the adjustment.
         """
 
         if self.vector_metrics is None:
             return {}
-        if (enhancement_score in (None, 0.0)) and not roi_tag:
-            return {}
 
         entries = list(self._iter_ids(vector_ids))
+        if not entries:
+            return {}
+
         origins = {origin for origin, _, _ in entries if origin}
-        score = float(enhancement_score or 0.0)
-        roi_tag_val: RoiTag | None = (
-            RoiTag.validate(roi_tag) if roi_tag is not None else None
-        )
-        success = self._is_positive(score, roi_tag_val)
-        base = self.success_delta if success else -self.failure_delta
-        db_delta = base * (score or 1.0)
+
+        roi_tag_val = RoiTag.validate(roi_tag) if roi_tag is not None else None
+        sentiment = self.tag_sentiment.get(roi_tag_val, 1.0)
+
+        factor = float(enhancement_score or 1.0) * sentiment
+        if tests_passed is not None:
+            factor *= 1.0 if tests_passed else -1.0
+        if error_trace_count:
+            factor /= 1.0 + float(error_trace_count)
 
         # update individual vector weights
         for origin, rid, vscore in entries:
+            vfactor = factor * (vscore or 1.0)
+            base = (
+                self.vector_success_delta if vfactor >= 0 else -self.vector_failure_delta
+            )
+            delta = base * abs(vfactor)
             key = f"{origin}:{rid}" if origin else rid
-            delta = base * (vscore or 1.0)
             try:
                 self.vector_metrics.update_vector_weight(key, delta)
             except Exception:
                 pass
 
+        db_base = self.db_success_delta if factor >= 0 else -self.db_failure_delta
+        db_delta = db_base * abs(factor)
         updates: Dict[str, float] = {}
         for origin in origins:
             try:
@@ -163,13 +183,6 @@ class WeightAdjuster:
                 else:
                     origin, rid = "", text
             yield str(origin or ""), str(rid), float(score or 1.0)
-
-    def _is_positive(self, enhancement_score: float, roi_tag: RoiTag | None) -> bool:
-        """Return ``True`` when the tag or score indicates a positive outcome."""
-
-        if roi_tag is not None:
-            return self.tag_outcomes.get(roi_tag, enhancement_score >= 0.5)
-        return enhancement_score >= 0.5
-
+        
 
 __all__ = ["WeightAdjuster"]
