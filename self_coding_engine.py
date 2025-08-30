@@ -324,7 +324,7 @@ class SelfCodingEngine:
             description,
             context="\n".join([p for p in (context.strip(), repo_layout) if p]),
             retrieval_context=retrieval_context or "",
-            retry_info=retry_trace,
+            retry_trace=retry_trace,
         )
         if VA_PROMPT_TEMPLATE:
             try:
@@ -424,7 +424,7 @@ class SelfCodingEngine:
                 description,
                 context="\n".join([p for p in (context, repo_layout) if p]),
                 retrieval_context=retrieval_context,
-                retry_info=retry_trace,
+                retry_trace=retry_trace,
             )
         except Exception as exc:
             self._last_retry_trace = str(exc)

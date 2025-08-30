@@ -48,11 +48,11 @@ def test_prompt_engine_includes_failure_trace():
     records = [_record(1.0, summary="foo", tests_passed=True, raroi=0.5)]
     engine = PromptEngine(retriever=DummyRetriever(records))
     trace = "Traceback: fail"
-    prompt = engine.build_prompt("goal", retry_info=trace)
+    prompt = engine.build_prompt("goal", retry_trace=trace)
     expected = (
-        "Previous attempt failed with:\n"
+        "Previous failure:\n"
         "Traceback: fail\n"
-        "Try a different approach."
+        "Please attempt a different solution."
     )
     assert expected in prompt
 

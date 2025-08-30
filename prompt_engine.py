@@ -204,15 +204,15 @@ class PromptEngine:
         *,
         context: str | None = None,
         retrieval_context: str | None = None,
-        retry_info: str | None = None,
+        retry_trace: str | None = None,
     ) -> str:
         """Return a prompt for *task* using retrieved patch examples.
 
         ``context`` and ``retrieval_context`` allow callers to prepend
         additional information such as the snippet body, repository layout or
-        metadata from vector retrieval.  ``retry_info`` may contain failure logs
-        or tracebacks from a prior attempt.  When supplied a "Previous attempt
-        failed with" section is appended and the details are de-duplicated so
+        metadata from vector retrieval.  ``retry_trace`` may contain failure
+        logs or tracebacks from a prior attempt.  When supplied a "Previous
+        failure" section is appended and the details are de-duplicated so
         repeated retries do not accumulate duplicate traces.  When retrieval
         fails or the average confidence of returned patches falls below
         ``confidence_threshold`` a static fallback template is returned.
@@ -280,25 +280,22 @@ class PromptEngine:
         lines.append(f"Enhancement goal: {task}")
         lines.append("")
         lines.extend(self.build_snippets(ranked))
-        if retry_info:
-            lines.extend(self._format_retry_info(retry_info))
+        if retry_trace:
+            lines.extend(self._format_retry_trace(retry_trace))
         return "\n".join(line for line in lines if line)
 
     # ------------------------------------------------------------------
-    def _format_retry_info(self, retry_info: str) -> List[str]:
-        """Return formatted ``retry_info`` lines without duplicates.
+    def _format_retry_trace(self, retry_trace: str) -> List[str]:
+        """Return formatted ``retry_trace`` lines without duplicates.
 
-        The helper removes any existing "Previous attempt failed with" headers
-        or concluding guidance so that repeated invocations remain idempotent.
+        The helper removes any existing "Previous failure" headers or concluding
+        guidance so that repeated invocations remain idempotent.
         """
 
-        skip_prefix = "previous attempt failed with"
-        skip_suffixes = {
-            "seek alternative solution.",
-            "try a different approach.",
-        }
+        skip_prefix = "previous failure:"
+        skip_suffixes = {"please attempt a different solution."}
         cleaned: List[str] = []
-        for line in retry_info.strip().splitlines():
+        for line in retry_trace.strip().splitlines():
             stripped = line.strip()
             if not stripped:
                 continue
@@ -311,9 +308,9 @@ class PromptEngine:
         if not cleaned:
             return []
         return [
-            "Previous attempt failed with:",
+            "Previous failure:",
             *cleaned,
-            "Try a different approach.",
+            "Please attempt a different solution.",
         ]
 
     # ------------------------------------------------------------------
@@ -522,7 +519,7 @@ class PromptEngine:
             goal,
             context=context,
             retrieval_context=retrieval_context,
-            retry_info=retry_trace,
+            retry_trace=retry_trace,
         )
 
 
