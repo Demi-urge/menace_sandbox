@@ -2,7 +2,18 @@ from __future__ import annotations
 
 """Helper for recording patch outcomes for contributing vectors."""
 
-from typing import Any, Callable, Iterable, List, Mapping, Sequence, Tuple, Union, TYPE_CHECKING
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    List,
+    Mapping,
+    Sequence,
+    Tuple,
+    Union,
+    TYPE_CHECKING,
+    Literal,
+)
 
 import asyncio
 import logging
@@ -97,6 +108,14 @@ try:  # pragma: no cover - optional dependency
     from roi_tracker import ROITracker  # type: ignore
 except Exception:  # pragma: no cover
     ROITracker = None  # type: ignore
+
+try:  # pragma: no cover - optional patch score logging
+    from patch_score_backend import _log_outcome as _ps_log_outcome  # type: ignore
+except Exception:  # pragma: no cover
+    _ps_log_outcome = None  # type: ignore
+
+# Restricted set of ROI tags used to annotate patch outcomes.
+RoiTag = Literal["success", "low-ROI", "bug-introduced", "needs-review", "blocked"]
 
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken
@@ -325,7 +344,7 @@ class PatchLogger:
         summary: str | None = None,
         outcome: str | None = None,
         error_summary: str | None = None,
-        roi_tag: str | None = None,
+        roi_tag: RoiTag | None = None,
         effort_estimate: float | None = None,
     ) -> dict[str, float]:
         """Log patch outcome for vectors contributing to a patch.
@@ -476,9 +495,18 @@ class PatchLogger:
 
             if self.metrics_db is not None:
                 try:  # pragma: no cover - legacy path
-                    self.metrics_db.log_patch_outcome(
-                        patch_id or "", result, pairs, session_id=session_id
-                    )
+                    try:
+                        self.metrics_db.log_patch_outcome(
+                            patch_id or "",
+                            result,
+                            pairs,
+                            session_id=session_id,
+                            roi_tag=roi_tag,
+                        )
+                    except TypeError:
+                        self.metrics_db.log_patch_outcome(
+                            patch_id or "", result, pairs, session_id=session_id
+                        )
                 except Exception:
                     logger.exception("metrics_db.log_patch_outcome failed")
             else:
@@ -886,6 +914,20 @@ class PatchLogger:
             except Exception:
                 logger.exception("UnifiedEventBus patch summary publish failed")
 
+        if _ps_log_outcome is not None and patch_id:
+            try:
+                _ps_log_outcome(
+                    {
+                        "patch_id": patch_id,
+                        "result": "ok" if result else "failed",
+                        "vectors": [(o or "", vid, s) for o, vid, s in detailed],
+                        "retrieval_session_id": session_id,
+                        "roi_tag": roi_tag,
+                    }
+                )
+            except Exception:
+                logger.exception("patch score outcome log failed")
+
         if self.vector_metrics is not None and patch_id:
             try:  # pragma: no cover - best effort
                 self.vector_metrics.record_patch_summary(
@@ -1017,7 +1059,7 @@ class PatchLogger:
         summary: str | None = None,
         outcome: str | None = None,
         error_summary: str | None = None,
-        roi_tag: str | None = None,
+        roi_tag: RoiTag | None = None,
         effort_estimate: float | None = None,
     ) -> dict[str, float]:
         """Asynchronous wrapper for :meth:`track_contributors`."""
@@ -1046,4 +1088,4 @@ class PatchLogger:
         )
 
 
-__all__ = ["PatchLogger"]
+__all__ = ["PatchLogger", "RoiTag"]

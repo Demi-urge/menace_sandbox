@@ -470,19 +470,20 @@ def test_track_contributors_persists_errors_and_results(monkeypatch):
         lines_changed=2,
         tests_passed=True,
         retrieval_metadata={"error": {"msg": "boom"}},
+        roi_tag="low-ROI",
     )
     assert pdb.kwargs["errors"] == [{"msg": "boom"}]
     assert pdb.kwargs["context_tokens"] == 0
     assert pdb.kwargs["patch_difficulty"] == 2
     assert pdb.kwargs["error_trace_count"] == 1
-    assert pdb.kwargs.get("roi_tag") is None
+    assert pdb.kwargs.get("roi_tag") == "low-ROI"
     assert vm.summary_calls and vm.summary_calls[0]["errors"] == [{"msg": "boom"}]
     assert vm.summary_calls[0]["tests_passed"] is True
     assert vm.summary_calls[0]["lines_changed"] == 2
     assert vm.summary_calls[0]["context_tokens"] == 0
     assert vm.summary_calls[0]["patch_difficulty"] == 2
     assert vm.summary_calls[0]["error_trace_count"] == 1
-    assert vm.summary_calls[0]["roi_tag"] is None
+    assert vm.summary_calls[0]["roi_tag"] == "low-ROI"
     assert ("inc", "", 1.0) in fail_gauge.calls
     assert ("inc", "passed", 1.0) in test_gauge.calls
     assert res.tests_passed is True
