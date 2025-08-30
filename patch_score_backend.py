@@ -105,14 +105,25 @@ def _log_outcome(record: Dict[str, object]) -> None:
     success = result_str == "ok"
     reverted = result_str == "reverted"
     session_id = record.get("retrieval_session_id") or ""
+    roi_tag = record.get("roi_tag")
     try:  # pragma: no cover - best effort
-        MetricsDB().log_patch_outcome(
-            str(patch_id),
-            success,
-            norm_vectors,
-            session_id=str(session_id),
-            reverted=reverted,
-        )
+        try:
+            MetricsDB().log_patch_outcome(
+                str(patch_id),
+                success,
+                norm_vectors,
+                session_id=str(session_id),
+                reverted=reverted,
+                roi_tag=roi_tag,
+            )
+        except TypeError:
+            MetricsDB().log_patch_outcome(
+                str(patch_id),
+                success,
+                norm_vectors,
+                session_id=str(session_id),
+                reverted=reverted,
+            )
     except Exception:
         logger.exception("failed to log patch outcome")
 

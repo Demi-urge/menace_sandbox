@@ -282,6 +282,7 @@ class PatchLogger:
         summary: str | None = None,
         outcome: str | None = None,
         error_summary: str | None = None,
+        roi_tag: str | None = None,
     ) -> dict[str, float]:
         """Log patch outcome for vectors contributing to a patch.
 
@@ -654,6 +655,7 @@ class PatchLogger:
                                 logger.exception(
                                     "UnifiedEventBus embedding backfill publish failed"
                                 )
+                error_trace_count = len(errors)
                 if self.patch_db is not None and patch_id:
                     try:  # pragma: no cover - best effort
                         self.patch_db.record_vector_metrics(
@@ -672,6 +674,8 @@ class PatchLogger:
                             time_to_completion=time_to_completion,
                             timestamp=timestamp,
                             errors=errors,
+                            error_trace_count=error_trace_count,
+                            roi_tag=roi_tag,
                             diff=diff,
                             summary=summary_arg,
                             outcome=outcome,
@@ -807,6 +811,8 @@ class PatchLogger:
             "summary": summary,
             "outcome": outcome,
             "errors": errors,
+            "error_trace_count": error_trace_count,
+            "roi_tag": roi_tag,
         }
         if error_summary is not None:
             summary_payload["error_summary"] = error_summary
@@ -832,6 +838,8 @@ class PatchLogger:
                     patch_difficulty=patch_difficulty,
                     start_time=start_time,
                     time_to_completion=time_to_completion,
+                    error_trace_count=error_trace_count,
+                    roi_tag=roi_tag,
                 )
             except Exception:
                 logger.exception("vector_metrics.record_patch_summary failed")
@@ -842,7 +850,7 @@ class PatchLogger:
             except Exception:
                 logger.exception("risk callback failed")
 
-        _TRACK_FAILURES.inc(len(errors))
+        _TRACK_FAILURES.inc(error_trace_count)
         if tests_passed is not None:
             _TRACK_TESTS.labels("passed" if tests_passed else "failed").inc()
 
@@ -864,7 +872,7 @@ class PatchLogger:
         try:
             conn = self.patch_db.router.get_connection("patch_history")
             row = conn.execute(
-                "SELECT diff, summary, outcome, lines_changed, tests_passed, context_tokens, patch_difficulty, enhancement_name, start_time, time_to_completion, timestamp, roi_deltas, errors FROM patch_history WHERE id=?",
+                "SELECT diff, summary, outcome, lines_changed, tests_passed, context_tokens, patch_difficulty, enhancement_name, start_time, time_to_completion, timestamp, roi_deltas, errors, error_trace_count, roi_tag FROM patch_history WHERE id=?",
                 (int(patch_id),),
             ).fetchone()
             if row is None:
@@ -883,6 +891,8 @@ class PatchLogger:
                 ts,
                 roi_json,
                 err_json,
+                err_count,
+                roi_tag,
             ) = row
             try:
                 roi_data = json.loads(roi_json) if roi_json else {}
@@ -907,6 +917,8 @@ class PatchLogger:
                 "timestamp": ts,
                 "roi_deltas": roi_data,
                 "errors": err_data,
+                "error_trace_count": err_count,
+                "roi_tag": roi_tag,
             }
         except Exception:
             logger.exception("Failed to retrieve patch summary")
@@ -933,6 +945,7 @@ class PatchLogger:
         summary: str | None = None,
         outcome: str | None = None,
         error_summary: str | None = None,
+        roi_tag: str | None = None,
     ) -> dict[str, float]:
         """Asynchronous wrapper for :meth:`track_contributors`."""
 
@@ -955,6 +968,7 @@ class PatchLogger:
             summary=summary,
             outcome=outcome,
             error_summary=error_summary,
+            roi_tag=roi_tag,
         )
 
 
