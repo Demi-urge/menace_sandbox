@@ -13,9 +13,9 @@ def test_adjust_updates_weights(tmp_path):
         vector_success_delta=0.2,
         vector_failure_delta=0.1,
     )
-    adj.adjust([("db", "v1", 0.5)], 0.8, RoiTag.HIGH_ROI)
+    adj.adjust([("db", "v1", 0.8, RoiTag.HIGH_ROI)])
     assert vm.get_db_weights()["db"] == pytest.approx(0.16)
-    assert vm.get_vector_weight("db:v1") == pytest.approx(0.08)
+    assert vm.get_vector_weight("db:v1") == pytest.approx(0.16)
 
 
 def test_adjust_decreases_on_failure(tmp_path):
@@ -29,7 +29,7 @@ def test_adjust_decreases_on_failure(tmp_path):
         vector_success_delta=0.2,
         vector_failure_delta=0.1,
     )
-    adj.adjust([("db", "v1", 1.0)], 0.8, RoiTag.LOW_ROI)
+    adj.adjust([("db", "v1", 0.8, RoiTag.LOW_ROI)])
     assert vm.get_db_weights()["db"] == pytest.approx(0.42)
     assert vm.get_vector_weight("db:v1") == pytest.approx(0.42)
 

@@ -1,5 +1,7 @@
 import pytest
 
+import pytest
+
 from vector_service.weight_adjuster import WeightAdjuster, RoiTag
 
 
@@ -31,9 +33,9 @@ def test_roi_tag_positive_overrides_score():
         vector_success_delta=0.2,
         vector_failure_delta=0.2,
     )
-    adj.adjust([("db", "v1", 0.5)], 0.1, RoiTag.SUCCESS)
+    adj.adjust([("db", "v1", 0.1, RoiTag.SUCCESS)])
     assert vm.weights["db"] == pytest.approx(1.02)
-    assert vm.vector_weights["db:v1"] == pytest.approx(0.01)
+    assert vm.vector_weights["db:v1"] == pytest.approx(0.02)
 
 
 def test_roi_tag_negative_overrides_score():
@@ -45,6 +47,6 @@ def test_roi_tag_negative_overrides_score():
         vector_success_delta=0.2,
         vector_failure_delta=0.2,
     )
-    adj.adjust([("db", "v1", 0.5)], 0.9, RoiTag.BUG_INTRODUCED)
+    adj.adjust([("db", "v1", 0.9, RoiTag.BUG_INTRODUCED)])
     assert vm.weights["db"] == pytest.approx(0.82)
     assert vm.vector_weights["db:v1"] == pytest.approx(0.0)
