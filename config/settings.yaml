@@ -23,3 +23,9 @@ context_builder:
   db_weights: {}
   ranking_weight: 1.0
   roi_weight: 1.0
+  roi_tag_penalties:
+    high-ROI: -0.1
+    low-ROI: 0.2
+    bug-introduced: 0.5
+    needs-review: 0.3
+    blocked: 1.0
