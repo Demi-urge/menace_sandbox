@@ -428,7 +428,7 @@ class SelfTestService:
             try:
                 with open(self.state_path, "r", encoding="utf-8") as fh:
                     self._state = json.load(fh) or None
-            except Exception:
+            except (OSError, json.JSONDecodeError):
                 self.logger.exception("failed to load state file")
         if self.history_path and self.history_path.suffix == ".db":
             self._history_db = router.get_connection("test_history")
