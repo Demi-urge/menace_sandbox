@@ -3,7 +3,10 @@ from __future__ import annotations
 """Execute Menace patches in a controlled sandbox environment.
 
 The module initialises :data:`GLOBAL_ROUTER` early via :func:`init_db_router`
-so that subsequent imports can perform database operations safely.
+so that subsequent imports can perform database operations safely. Repository
+location and related settings are provided by :mod:`sandbox_runner.config`,
+which reads ``SANDBOX_REPO_URL`` and ``SANDBOX_REPO_PATH`` from environment
+variables or a ``SandboxSettings`` instance.
 """
 
 import importlib.util
@@ -281,7 +284,7 @@ _local_knowledge_refresh_counter = 0
 
 ROOT = Path(__file__).resolve().parent
 
-from sandbox_runner.config import SANDBOX_REPO_URL, SANDBOX_REPO_PATH
+import sandbox_runner.config as sandbox_config
 
 _TPL_PATH = Path(
     os.getenv("GPT_SECTION_TEMPLATE", ROOT / "templates" / "gpt_section_prompt.j2")
@@ -776,7 +779,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
 
     tmp = tempfile.mkdtemp(prefix="menace_sandbox_")
     logger.info("sandbox temporary directory", extra=log_record(path=tmp))
-    repo = SANDBOX_REPO_PATH
+    repo = sandbox_config.get_sandbox_repo_path()
     orig_cwd = Path.cwd()
 
     data_dir = Path(
