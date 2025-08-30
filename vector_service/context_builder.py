@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import logging
 import asyncio
 import uuid
@@ -52,50 +52,10 @@ except Exception:  # pragma: no cover - fallback when undefined
 
         pass
 
-# Optional summariser -------------------------------------------------------
 try:  # pragma: no cover - heavy dependency
-    from menace_memory_manager import MenaceMemoryManager, _summarise_text
-except Exception:  # pragma: no cover - tiny fallback helper
+    from menace_memory_manager import MenaceMemoryManager
+except Exception:  # pragma: no cover
     MenaceMemoryManager = None  # type: ignore
-
-    try:  # pragma: no cover - optional local summariser
-        from gensim.summarization import summarize as _gs  # type: ignore
-    except Exception:  # pragma: no cover - dependency missing
-        _gs = None  # type: ignore
-
-    _MAX_INPUT_TOKENS = 2048
-    _MAX_SUMMARY_TOKENS = 128
-
-    def _trim_to_tokens(text: str, limit: int) -> str:
-        if _FALLBACK_ENCODER is not None:
-            tokens = _FALLBACK_ENCODER.encode(text)
-            if len(tokens) > limit:
-                return _FALLBACK_ENCODER.decode(tokens[:limit])
-            return text
-        # Rough character based fallback when tokenizer unavailable
-        if len(text) > limit * 4:
-            return text[: limit * 4]
-        return text
-
-    def _summarise_text(text: str, ratio: float = 0.3) -> str:
-        text = text.strip().replace("\n", " ")
-        if not text:
-            return ""
-        text = _trim_to_tokens(text, _MAX_INPUT_TOKENS)
-        summary = ""
-        if _gs is not None:
-            try:
-                summary = _gs(text, ratio=ratio)
-            except Exception:
-                summary = ""
-        if not summary:
-            sentences = [s.strip() for s in text.split(".") if s.strip()]
-            if not sentences:
-                summary = text
-            else:
-                count = max(1, int(len(sentences) * ratio))
-                summary = ". ".join(sentences[:count]) + "."
-        return _trim_to_tokens(summary, _MAX_SUMMARY_TOKENS)
 
 # Optional patch history ----------------------------------------------------
 try:  # pragma: no cover - optional dependency
@@ -124,6 +84,7 @@ class ContextBuilder:
         ranking_model: Any | None = None,
         roi_tracker: Any | None = None,
         memory_manager: Optional[MenaceMemoryManager] = None,
+        summariser: Callable[[str], str] | None = None,
         db_weights: Dict[str, float] | None = None,
         ranking_weight: float = ContextBuilderConfig().ranking_weight,
         roi_weight: float = ContextBuilderConfig().roi_weight,
@@ -143,6 +104,7 @@ class ContextBuilder:
         precise_token_count: bool = getattr(
             ContextBuilderConfig(), "precise_token_count", True
         ),
+        max_diff_lines: int = getattr(ContextBuilderConfig(), "max_diff_lines", 200),
         patch_safety: PatchSafety | None = None,
         similarity_metric: str = getattr(ContextBuilderConfig(), "similarity_metric", "cosine"),
     ) -> None:
@@ -185,7 +147,9 @@ class ContextBuilder:
         self.max_alerts = max_alerts
         self.license_denylist = set(license_denylist or ())
         self.memory = memory_manager
+        self.summariser = summariser or (lambda text: text)
         self._cache: Dict[Tuple[str, int], str] = {}
+        self._summary_cache: Dict[int, Dict[str, str]] = {}
         self.db_weights = db_weights or {}
         if not self.db_weights:
             try:
@@ -194,6 +158,7 @@ class ContextBuilder:
                 pass
         self.max_tokens = max_tokens
         self.precise_token_count = precise_token_count
+        self.max_diff_lines = max_diff_lines
         self.patch_safety = patch_safety or PatchSafety()
         self.patch_safety.max_alert_severity = max_alignment_severity
         self.patch_safety.max_alerts = max_alerts
@@ -204,6 +169,10 @@ class ContextBuilder:
         if tok is None:
             tok = getattr(getattr(self.retriever, "embedder", None), "tokenizer", None)
         self._tokenizer = tok
+        if self.precise_token_count and self._tokenizer is None and _FALLBACK_ENCODER is None:
+            raise RuntimeError(
+                "precise token counting requires the 'tiktoken' package"
+            )
         self._fallback_tokenizer = (
             _FALLBACK_ENCODER if self.precise_token_count else None
         )
@@ -262,12 +231,23 @@ class ContextBuilder:
 
     # ------------------------------------------------------------------
     def _summarise(self, text: str) -> str:
+        try:
+            return self.summariser(text)
+        except Exception:  # pragma: no cover - summariser failure
+            pass
         if self.memory and hasattr(self.memory, "_summarise_text"):
             try:
                 return self.memory._summarise_text(text)  # type: ignore[attr-defined]
             except Exception:  # pragma: no cover - fallback
                 pass
-        return _summarise_text(text)
+        return text
+
+    def _truncate_diff(self, diff: str) -> str:
+        if self.max_diff_lines and self.max_diff_lines > 0:
+            lines = diff.splitlines()
+            if len(lines) > self.max_diff_lines:
+                return "\n".join(lines[: self.max_diff_lines])
+        return diff
 
     # ------------------------------------------------------------------
     def _count_tokens(self, text: str) -> int:
@@ -286,11 +266,12 @@ class ContextBuilder:
                 return len(self._tokenizer.encode(text))
             except Exception:
                 pass
-        if self.precise_token_count and self._fallback_tokenizer is not None:
-            try:  # pragma: no cover - fallback tokenizer
-                return len(self._fallback_tokenizer.encode(text))
-            except Exception:
-                pass
+        if self.precise_token_count:
+            if self._fallback_tokenizer is None:
+                raise RuntimeError(
+                    "tiktoken encoding not available for precise token counting"
+                )
+            return len(self._fallback_tokenizer.encode(text))
         return len(re.findall(r"\w+", text))
 
     # ------------------------------------------------------------------
@@ -731,6 +712,13 @@ class ContextBuilder:
         meta = scored.metadata or {}
         full.update(meta)
 
+        patch_id = meta.get("patch_id") if isinstance(meta, dict) else None
+        try:
+            patch_id = int(patch_id) if patch_id is not None else None
+        except Exception:
+            patch_id = None
+        cache = self._summary_cache.get(patch_id) if patch_id is not None else None
+
         # Normalise patch-specific fields from retrieval metadata when present.
         summary = meta.get("summary") or meta.get("description")
         diff = meta.get("diff")
@@ -739,14 +727,30 @@ class ContextBuilder:
         lines_changed = meta.get("lines_changed")
         tests_passed = meta.get("tests_passed")
         if summary:
-            summary = _summarise_text(str(summary))
+            if cache and "summary" in cache:
+                summary = cache["summary"]
+            else:
+                summary = self._summarise(str(summary))
+                if patch_id is not None:
+                    self._summary_cache.setdefault(patch_id, {})["summary"] = summary
             full.setdefault("desc", summary)
             full["summary"] = summary
         if diff:
-            diff = _summarise_text(str(diff))
+            if cache and "diff" in cache:
+                diff = cache["diff"]
+            else:
+                diff = self._truncate_diff(str(diff))
+                diff = self._summarise(diff)
+                if patch_id is not None:
+                    self._summary_cache.setdefault(patch_id, {})["diff"] = diff
             full["diff"] = diff
         if outcome:
-            outcome = self._summarise(str(outcome))
+            if cache and "outcome" in cache:
+                outcome = cache["outcome"]
+            else:
+                outcome = self._summarise(str(outcome))
+                if patch_id is not None:
+                    self._summary_cache.setdefault(patch_id, {})["outcome"] = outcome
             full["outcome"] = outcome
         if roi_delta is not None:
             full["roi_delta"] = roi_delta
@@ -755,13 +759,8 @@ class ContextBuilder:
         if tests_passed is not None:
             full["tests_passed"] = tests_passed
 
-        patch_id = meta.get("patch_id") if isinstance(meta, dict) else None
-        try:
-            patch_id = int(patch_id) if patch_id is not None else None
-        except Exception:
-            patch_id = None
-
         if patch_id and PatchHistoryDB is not None:
+            cache = self._summary_cache.get(patch_id)
             try:
                 rec = PatchHistoryDB().get(patch_id)  # type: ignore[operator]
             except Exception:
@@ -775,14 +774,27 @@ class ContextBuilder:
                 lines_changed = rec_dict.get("lines_changed")
                 tests_passed = rec_dict.get("tests_passed")
                 if desc and "summary" not in full:
-                    desc = _summarise_text(str(desc))
+                    if cache and "summary" in cache:
+                        desc = cache["summary"]
+                    else:
+                        desc = self._summarise(str(desc))
+                        self._summary_cache.setdefault(patch_id, {})["summary"] = desc
                     full.setdefault("desc", desc)
                     full["summary"] = desc
                 if diff and "diff" not in full:
-                    diff = _summarise_text(str(diff))
+                    if cache and "diff" in cache:
+                        diff = cache["diff"]
+                    else:
+                        diff = self._truncate_diff(str(diff))
+                        diff = self._summarise(diff)
+                        self._summary_cache.setdefault(patch_id, {})["diff"] = diff
                     full["diff"] = diff
                 if outcome:
-                    outcome = self._summarise(str(outcome))
+                    if cache and "outcome" in cache:
+                        outcome = cache["outcome"]
+                    else:
+                        outcome = self._summarise(str(outcome))
+                        self._summary_cache.setdefault(patch_id, {})["outcome"] = outcome
                     full["outcome"] = outcome
                 if roi_delta is not None and "roi_delta" not in full:
                     full["roi_delta"] = roi_delta
