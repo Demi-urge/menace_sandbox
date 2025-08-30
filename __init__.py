@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING
 
 from .roi_calculator import ROICalculator
+from .error_parser import ErrorParser
 from .truth_adapter import TruthAdapter
 from .foresight_tracker import ForesightTracker
 from .upgrade_forecaster import UpgradeForecaster
@@ -196,6 +197,8 @@ __all__ = [
     "__version__",
     "ROICalculator",
     "roi_calculator",
+    "ErrorParser",
+    "error_parser",
     "TruthAdapter",
     "truth_adapter",
     "ForesightTracker",
