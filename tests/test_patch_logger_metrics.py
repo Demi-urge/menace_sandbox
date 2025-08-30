@@ -97,6 +97,7 @@ class DummyPatchDB:
         timestamp=None,
         diff=None,
         summary=None,
+        outcome=None,
     ):
         self.kwargs = {
             "session_id": session_id,
@@ -111,6 +112,7 @@ class DummyPatchDB:
             "timestamp": timestamp,
             "diff": diff,
             "summary": summary,
+            "outcome": outcome,
         }
 
 
@@ -195,12 +197,18 @@ def test_track_contributors_forwards_contribution_patch_db(monkeypatch):
         tests_passed=True,
         enhancement_name="feat",
         timestamp=123.0,
+        diff="diff",
+        summary="summary",
+        outcome="failed",
     )
     assert pdb.kwargs and pdb.kwargs["contribution"] == 0.8
     assert pdb.kwargs["lines_changed"] == 5
     assert pdb.kwargs["tests_passed"] is True
     assert pdb.kwargs["enhancement_name"] == "feat"
     assert pdb.kwargs["timestamp"] == 123.0
+    assert pdb.kwargs["diff"] == "diff"
+    assert pdb.kwargs["summary"] == "summary"
+    assert pdb.kwargs["outcome"] == "failed"
 
 
 def test_track_contributors_forwards_roi_feedback(monkeypatch):
@@ -266,19 +274,27 @@ def test_track_contributors_emits_summary_event(monkeypatch):
     pl = PatchLogger(roi_tracker=rt, event_bus=Bus())
     pl.track_contributors(
         ["db1:v1"],
-        True,
+        False,
         session_id="s",
         contribution=0.5,
         lines_changed=10,
-        tests_passed=True,
+        tests_passed=False,
         enhancement_name="feat",
         timestamp=1.23,
+        diff="d",
+        summary="s",
+        outcome="fail",
+        retrieval_metadata={"error": {"info": "boom"}},
     )
     summary = [p for t, p in events if t == "patch:summary"][0]
     assert summary["lines_changed"] == 10
-    assert summary["tests_passed"] is True
+    assert summary["tests_passed"] is False
     assert summary["enhancement_name"] == "feat"
     assert summary["roi_deltas"]["db1"] == pytest.approx(0.5)
+    assert summary["diff"] == "d"
+    assert summary["summary"] == "s"
+    assert summary["outcome"] == "fail"
+    assert summary["errors"] == [{"info": "boom"}]
 
 
 # ---------------------------------------------------------------------------

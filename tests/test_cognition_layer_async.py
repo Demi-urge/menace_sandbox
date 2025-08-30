@@ -5,7 +5,16 @@ from vector_service.cognition_layer import CognitionLayer
 
 
 class DummyContextBuilder:
-    def build_context(self, prompt, *, top_k=5, include_vectors=False, session_id="", return_stats=False, return_metadata=False):
+    def build_context(
+        self,
+        prompt,
+        *,
+        top_k=5,
+        include_vectors=False,
+        session_id="",
+        return_stats=False,
+        return_metadata=False,
+    ):
         vectors = [(prompt, "v1", 0.5)]
         stats = {"tokens": 1, "wall_time_ms": 1.0, "prompt_tokens": len(prompt.split())}
         meta = {
@@ -34,7 +43,16 @@ class DummyContextBuilder:
             return "ctx", stats
         return "ctx"
 
-    async def build_async(self, prompt, *, top_k=5, include_vectors=False, session_id="", return_stats=False, return_metadata=False):
+    async def build_async(
+        self,
+        prompt,
+        *,
+        top_k=5,
+        include_vectors=False,
+        session_id="",
+        return_stats=False,
+        return_metadata=False,
+    ):
         await asyncio.sleep(0.05)
         return self.build_context(
             prompt,
@@ -68,6 +86,9 @@ class DummyPatchLogger:
         tests_passed=None,
         enhancement_name=None,
         timestamp=None,
+        diff=None,
+        summary=None,
+        outcome=None,
     ):
         await asyncio.sleep(0.05)
         self.sessions.append(
@@ -103,6 +124,7 @@ def test_concurrent_async_usage():
     )
 
     start = time.time()
+
     async def runner():
         return await asyncio.gather(
             _run_session(layer, "a"),

@@ -63,6 +63,13 @@ class DualPatchLogger:
         session_id="",
         contribution=None,
         retrieval_metadata=None,
+        lines_changed=None,
+        tests_passed=None,
+        enhancement_name=None,
+        timestamp=None,
+        diff=None,
+        summary=None,
+        outcome=None,
     ):
         self.sync_calls.append(
             {
@@ -72,6 +79,13 @@ class DualPatchLogger:
                 "session_id": session_id,
                 "contribution": contribution,
                 "retrieval_metadata": retrieval_metadata,
+                "lines_changed": lines_changed,
+                "tests_passed": tests_passed,
+                "enhancement_name": enhancement_name,
+                "timestamp": timestamp,
+                "diff": diff,
+                "summary": summary,
+                "outcome": outcome,
             }
         )
         return {}
@@ -85,6 +99,13 @@ class DualPatchLogger:
         session_id="",
         contribution=None,
         retrieval_metadata=None,
+        lines_changed=None,
+        tests_passed=None,
+        enhancement_name=None,
+        timestamp=None,
+        diff=None,
+        summary=None,
+        outcome=None,
     ):
         self.async_calls.append(
             {
@@ -94,6 +115,13 @@ class DualPatchLogger:
                 "session_id": session_id,
                 "contribution": contribution,
                 "retrieval_metadata": retrieval_metadata,
+                "lines_changed": lines_changed,
+                "tests_passed": tests_passed,
+                "enhancement_name": enhancement_name,
+                "timestamp": timestamp,
+                "diff": diff,
+                "summary": summary,
+                "outcome": outcome,
             }
         )
         return {}
