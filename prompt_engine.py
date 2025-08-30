@@ -1,21 +1,34 @@
 from __future__ import annotations
 
-from typing import Any, List, Dict, Optional
+import logging
+from typing import Any, List, Dict, Optional, Tuple
 
 from vector_service.retriever import Retriever, FallbackResult
+
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_TEMPLATE = "No relevant patch examples available."
+CONFIDENCE_THRESHOLD = 0.2
 
 
 class PromptEngine:
     """Construct prompts from historical patch examples."""
 
     @staticmethod
-    def _fetch_patches(query: str, top_n: int) -> List[Dict[str, Any]]:
-        """Return patch records for ``query`` using the vector service."""
+    def _fetch_patches(query: str, top_n: int) -> Tuple[List[Dict[str, Any]], float]:
+        """Return patch records and confidence for ``query``."""
         retriever = Retriever()
         results = retriever.search(query, top_k=top_n, dbs=["patch"])
+        confidence = 1.0
         if isinstance(results, FallbackResult):
-            return list(results)
-        return list(results)
+            confidence = results.confidence
+            return list(results), confidence
+        try:
+            confidence = max(r.get("score", 0.0) for r in results) if results else 0.0
+        except Exception:
+            confidence = 0.0
+        return list(results), confidence
 
     @staticmethod
     def _format_snippet(meta: Dict[str, Any]) -> str:
@@ -60,7 +73,34 @@ class PromptEngine:
         cls, description: str, retry_trace: Optional[str] = None, top_n: int = 5
     ) -> str:
         """Return a structured prompt with patch examples for ``description``."""
-        records = cls._fetch_patches(description, top_n)
+        records, confidence = cls._fetch_patches(description, top_n)
+        if confidence < CONFIDENCE_THRESHOLD:
+            logger.info(
+                "PromptEngine falling back to default template: confidence %.3f",
+                confidence,
+            )
+            if retry_trace:
+                return f"{DEFAULT_TEMPLATE}\n{retry_trace}"
+            return DEFAULT_TEMPLATE
+
+        # Rank records by ROI delta when available, otherwise by recency
+        def _score(rec: Dict[str, Any]) -> Tuple[int, float]:
+            meta = rec.get("metadata", {}) if isinstance(rec, dict) else {}
+            roi = meta.get("roi_delta")
+            ts = (
+                meta.get("ts")
+                or meta.get("timestamp")
+                or meta.get("created_at")
+                or 0.0
+            )
+            try:
+                if roi is not None:
+                    return 1, float(roi)
+                return 0, float(ts)
+            except Exception:
+                return 0, 0.0
+
+        records.sort(key=_score, reverse=True)
         positives: List[str] = []
         negatives: List[str] = []
         for rec in records:
@@ -82,8 +122,13 @@ class PromptEngine:
                 sections.append("\n")
             sections.append("Avoid...\n")
             sections.append("\n".join(negatives))
+        if sections:
+            if retry_trace:
+                sections.append("\n" if sections else "")
+                sections.append(f"{retry_trace}\nPlease try a different approach.")
+            return "".join(sections).strip()
+
+        logger.info("PromptEngine falling back to default template: no snippets")
         if retry_trace:
-            if sections:
-                sections.append("\n")
-            sections.append(f"{retry_trace}\nPlease try a different approach.")
-        return "".join(sections).strip()
+            return f"{DEFAULT_TEMPLATE}\n{retry_trace}"
+        return DEFAULT_TEMPLATE
