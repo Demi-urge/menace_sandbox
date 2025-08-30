@@ -24,6 +24,7 @@ from memory_logging import log_with_tags
 from memory_aware_gpt_client import ask_with_memory
 from foresight_tracker import ForesightTracker
 from db_router import GLOBAL_ROUTER, init_db_router
+from alert_dispatcher import dispatch_alert
 
 
 try:  # pragma: no cover - vector_service is a required dependency
@@ -126,53 +127,70 @@ from .orphan_discovery import (
 
 _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
 
-_usage_queue: "queue.Queue[tuple[str, float]]" = queue.Queue()
+_USAGE_QUEUE_MAXSIZE = 256
+_usage_queue: "queue.Queue[tuple[str, float]]" = queue.Queue(maxsize=_USAGE_QUEUE_MAXSIZE)
 _usage_thread: threading.Thread | None = None
 
 
 def _usage_worker() -> None:
     while True:
         item = _usage_queue.get()
-        if item is None:
-            _usage_queue.task_done()
-            break
-        module, impact = item
-        delay = 0.1
-        for attempt in range(5):
-            try:
-                _radar_track_usage(module, impact)
-                record_output_impact(module, impact)
-                break
-            except OSError:  # pragma: no cover - network/IO errors
-                logger.exception(
-                    "relevancy radar usage tracking failed",
-                    extra=log_record(module=module, attempt=attempt + 1),
-                )
-                if attempt == 4:
-                    logger.error(
-                        "relevancy radar usage tracking persistent failure",
-                        extra=log_record(module=module, attempts=attempt + 1),
+        try:
+            if item is None:
+                return
+            module, impact = item
+            delay = 0.1
+            for attempt in range(5):
+                try:
+                    _radar_track_usage(module, impact)
+                    record_output_impact(module, impact)
+                    break
+                except Exception as exc:  # pragma: no cover - network/IO errors
+                    logger.exception(
+                        "relevancy radar usage tracking failed",
+                        extra=log_record(module=module, attempt=attempt + 1),
+                        exc_info=exc,
                     )
-                else:
-                    time.sleep(delay)
-                    delay *= 2
-        _usage_queue.task_done()
+                    if attempt == 4:
+                        logger.error(
+                            "relevancy radar usage tracking persistent failure",
+                            extra=log_record(module=module, attempts=attempt + 1),
+                        )
+                        try:
+                            dispatch_alert(
+                                "radar_usage_failure",
+                                2,
+                                "relevancy radar usage tracking persistent failure",
+                                {"module": module, "attempts": attempt + 1},
+                            )
+                        except Exception:  # pragma: no cover - alert failures
+                            logger.exception(
+                                "failed to dispatch usage tracking alert",
+                                extra=log_record(module=module),
+                            )
+                    else:
+                        time.sleep(delay)
+                        delay *= 2
+        finally:
+            _usage_queue.task_done()
 
 
 def _flush_usage_queue() -> None:
     if not _ENABLE_RELEVANCY_RADAR:
         return
+    thread = _usage_thread
     try:
-        _usage_queue.put(None)
+        _usage_queue.put(None, block=True)
         _usage_queue.join()
-        if _usage_thread and _usage_thread.is_alive():
-            _usage_thread.join(timeout=1.0)
-    except (queue.Full, RuntimeError) as exc:  # pragma: no cover - best effort
+    except Exception as exc:  # pragma: no cover - best effort
         logger.exception(
             "failed to flush usage tracking queue",
             extra=log_record(module=__name__),
             exc_info=exc,
         )
+    finally:
+        if thread and thread.is_alive():
+            thread.join(timeout=1.0)
 
 
 if _ENABLE_RELEVANCY_RADAR:
@@ -191,15 +209,7 @@ def _async_track_usage(module: str, impact: float | None = None) -> None:
         return
 
     impact_val = 0.0 if impact is None else float(impact)
-    try:
-        _usage_queue.put((module, impact_val))
-    except queue.Full as exc:  # pragma: no cover - queue failures
-        logger.exception(
-            "failed to enqueue usage tracking",
-            extra=log_record(module=module),
-            exc_info=exc,
-        )
-        raise
+    _usage_queue.put((module, impact_val), block=True)
 
 
 def map_module_identifier(
