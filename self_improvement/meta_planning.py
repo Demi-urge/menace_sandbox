@@ -9,6 +9,9 @@ from typing import Any, Callable, Mapping, Sequence
 
 from statistics import fmean
 import asyncio
+import json
+import time
+from pathlib import Path
 
 from ..logging_utils import get_logger, log_record
 from ..sandbox_settings import SandboxSettings, load_sandbox_settings
@@ -30,7 +33,7 @@ except Exception:  # pragma: no cover - gracefully degrade
 
 
 class _FallbackPlanner:
-    """Simplified planner leveraging ROI and stability metrics."""
+    """Lightweight planner with basic mutation and persistence."""
 
     def __init__(self) -> None:
         try:
@@ -43,11 +46,29 @@ class _FallbackPlanner:
             self.stability_db = None
 
         self.logger = get_logger("FallbackPlanner")
+        self.state_path = Path("sandbox_data/fallback_planner.json")
         self.cluster_map: dict[tuple[str, ...], dict[str, Any]] = {}
         self.mutation_rate = 1.0
         self.roi_weight = 1.0
         self.domain_transition_penalty = 1.0
         self.roi_window = 5
+        self._load_state()
+
+    # ------------------------------------------------------------------
+    def _load_state(self) -> None:
+        try:
+            data = json.loads(self.state_path.read_text())
+            self.cluster_map = {tuple(k.split("|")): v for k, v in data.items()}
+        except Exception:
+            self.cluster_map = {}
+
+    def _save_state(self) -> None:
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {"|".join(k): v for k, v in self.cluster_map.items()}
+            self.state_path.write_text(json.dumps(data, indent=2))
+        except Exception:  # pragma: no cover - best effort
+            self.logger.debug("failed to persist fallback planner state")
 
     # ------------------------------------------------------------------
     def begin_run(self, workflow_id: str, run_id: str) -> None:  # pragma: no cover - no-op
@@ -69,16 +90,44 @@ class _FallbackPlanner:
     def discover_and_persist(
         self, workflows: Mapping[str, Callable[[], Any]]
     ) -> list[Mapping[str, Any]]:
-        """Return stable workflows ordered by score."""
+        """Explore pipelines via mutation, splitting and merging."""
 
+        evaluated: set[tuple[str, ...]] = set()
         records: list[dict[str, Any]] = []
-        for wid in workflows:
-            rec = self._evaluate_chain([wid])
+
+        for chain_key in list(self.cluster_map):
+            rec = self._evaluate_chain(list(chain_key))
             if rec:
                 records.append(rec)
+                evaluated.add(tuple(rec["chain"]))
 
-        records.sort(key=lambda r: r["score"], reverse=True)
-        return records
+        for wid in workflows:
+            chain = (wid,)
+            if chain in evaluated:
+                continue
+            rec = self._evaluate_chain(list(chain))
+            if rec:
+                records.append(rec)
+                evaluated.add(chain)
+
+        candidates = list(records)
+        for rec in list(records):
+            candidates.extend(self.mutate_pipeline(rec["chain"], workflows))
+            if len(rec["chain"]) > 1:
+                candidates.extend(self.split_pipeline(rec["chain"], workflows))
+
+        pipelines = [c["chain"] for c in candidates][:5]
+        candidates.extend(self.remerge_pipelines(pipelines, workflows))
+
+        dedup: dict[tuple[str, ...], dict[str, Any]] = {}
+        for rec in candidates:
+            key = tuple(rec["chain"])
+            if key not in dedup or rec["score"] > dedup[key]["score"]:
+                dedup[key] = rec
+
+        results = sorted(dedup.values(), key=lambda r: r["score"], reverse=True)
+        self._save_state()
+        return results
 
     # ------------------------------------------------------------------
     def _evaluate_chain(self, chain: Sequence[str]) -> dict[str, Any] | None:
@@ -137,7 +186,12 @@ class _FallbackPlanner:
             "entropy": chain_entropy,
             "score": score,
         }
-        self.cluster_map[tuple(chain)] = {"last_roi": chain_roi, "score": score}
+        self.cluster_map[tuple(chain)] = {
+            "last_roi": chain_roi,
+            "last_entropy": chain_entropy,
+            "score": score,
+            "ts": time.time(),
+        }
         self.logger.debug(
             "evaluated chain %s score %.3f",
             "->".join(chain),
