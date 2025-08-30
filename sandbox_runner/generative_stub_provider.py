@@ -13,6 +13,7 @@ from pathlib import Path
 from collections import Counter
 import atexit
 import importlib
+import random
 
 from .input_history_db import InputHistoryDB
 
@@ -42,12 +43,58 @@ def _feature_enabled(name: str) -> bool:
 
 
 _RATE_LIMIT = asyncio.Semaphore(int(os.getenv("SANDBOX_STUB_MAX_CONCURRENCY", "1")))
-_GEN_TIMEOUT = float(os.getenv("SANDBOX_STUB_TIMEOUT", "10"))
-_GEN_RETRIES = int(os.getenv("SANDBOX_STUB_RETRIES", "2"))
+_GEN_TIMEOUT = 10.0
+_GEN_RETRIES = 2
+_RETRY_BASE = 0.5
+_RETRY_MAX = 30.0
+
+
+def _validate_env() -> None:
+    """Validate environment configuration and log warnings."""
+
+    def _float_env(name: str, default: float) -> float:
+        val = os.getenv(name)
+        if val is None:
+            return default
+        try:
+            f = float(val)
+            if f <= 0:
+                raise ValueError
+            return f
+        except Exception:
+            logger.warning("invalid %s=%r; using default %s", name, val, default)
+            return default
+
+    def _int_env(name: str, default: int) -> int:
+        val = os.getenv(name)
+        if val is None:
+            return default
+        try:
+            i = int(val)
+            if i < 1:
+                raise ValueError
+            return i
+        except Exception:
+            logger.warning("invalid %s=%r; using default %s", name, val, default)
+            return default
+
+    global _GEN_TIMEOUT, _GEN_RETRIES, _RETRY_BASE, _RETRY_MAX
+    _GEN_TIMEOUT = _float_env("SANDBOX_STUB_TIMEOUT", 10.0)
+    _GEN_RETRIES = _int_env("SANDBOX_STUB_RETRIES", 2)
+    _RETRY_BASE = _float_env("SANDBOX_STUB_RETRY_BASE", 0.5)
+    _RETRY_MAX = _float_env("SANDBOX_STUB_RETRY_MAX", 30.0)
+
+    model = os.getenv("SANDBOX_STUB_MODEL")
+    if model and model not in {"openai", "gpt2-large", "distilgpt2"}:
+        logger.warning("unknown SANDBOX_STUB_MODEL %s", model)
+
+
+_validate_env()
 
 
 async def _call_with_retry(func: Callable[[], Awaitable[Any]]) -> Any:
     """Invoke *func* with retry, timeout and rate limiting."""
+    delay = _RETRY_BASE
     for attempt in range(_GEN_RETRIES):
         try:
             async with _RATE_LIMIT:
@@ -55,7 +102,9 @@ async def _call_with_retry(func: Callable[[], Awaitable[Any]]) -> Any:
         except Exception:
             if attempt == _GEN_RETRIES - 1:
                 raise
-            await asyncio.sleep(0.5 * (attempt + 1))
+            jitter = random.uniform(0, delay)
+            await asyncio.sleep(jitter)
+            delay = min(delay * 2, _RETRY_MAX)
 
 
 def _deterministic_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
@@ -135,7 +184,7 @@ def _schedule_cache_persist() -> None:
 
     async def _runner() -> None:
         try:
-            await _asave_cache()
+            await asyncio.shield(_asave_cache())
         except Exception:
             logger.exception("failed to save stub cache")
 
@@ -150,16 +199,32 @@ _CACHE.update(_load_cache())
 
 def _atexit_save_cache() -> None:
     """Persist the cache on shutdown without blocking the event loop."""
+
+    async def _wait_and_save() -> None:
+        if _SAVE_TASKS:
+            await asyncio.gather(
+                *(asyncio.shield(t) for t in list(_SAVE_TASKS)),
+                return_exceptions=True,
+            )
+        await asyncio.to_thread(_save_cache)
+
     try:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
+        loop: asyncio.AbstractEventLoop | None = None
+        if _SAVE_TASKS:
+            try:
+                loop = next(iter(_SAVE_TASKS)).get_loop()
+            except Exception:
+                loop = None
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
 
         if loop is None or loop.is_closed():
-            _save_cache()
+            asyncio.run(_wait_and_save())
         else:
-            loop.run_until_complete(asyncio.to_thread(_save_cache))
+            loop.run_until_complete(_wait_and_save())
     except Exception:
         logger.exception("cache save failed")
 
