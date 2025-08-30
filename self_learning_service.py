@@ -8,6 +8,8 @@ import logging
 from typing import Optional
 from threading import Event, Thread
 
+from sandbox_settings import SandboxSettings
+
 from .unified_event_bus import UnifiedEventBus
 from .neuroplasticity import PathwayDB
 from .menace_memory_manager import MenaceMemoryManager
@@ -20,11 +22,7 @@ from .self_learning_coordinator import SelfLearningCoordinator
 from .local_knowledge_module import init_local_knowledge
 
 logger = logging.getLogger(__name__)
-
-# Default number of interactions added to GPT memory before a compaction is
-# triggered.  This value can be overridden at runtime via the ``prune_interval``
-# parameter or the ``PRUNE_INTERVAL`` environment variable.
-DEFAULT_PRUNE_INTERVAL = 50
+settings = SandboxSettings()
 
 
 def main(
@@ -72,13 +70,9 @@ def main(
     )
     coord.start()
 
-    # Determine the effective prune interval from argument or environment.
+    # Determine the effective prune interval from argument or settings.
     if prune_interval is None:
-        env_value = os.getenv("PRUNE_INTERVAL", str(DEFAULT_PRUNE_INTERVAL))
-        try:
-            prune_interval = int(env_value)
-        except ValueError as exc:  # pragma: no cover - validation
-            raise ValueError("prune_interval must be an integer") from exc
+        prune_interval = int(getattr(settings, "prune_interval", 50))
     if prune_interval <= 0:
         raise ValueError("prune_interval must be positive")
 

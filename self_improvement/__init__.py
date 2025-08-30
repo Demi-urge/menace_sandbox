@@ -1121,7 +1121,7 @@ class SelfImprovementEngine:
             "linear": getattr(settings, "growth_multiplier_linear", 2.0),
             "marginal": getattr(settings, "growth_multiplier_marginal", 1.0),
         }
-        default_path = Path(settings.sandbox_data_dir) / "synergy_weights.json"
+        default_path = Path(settings.synergy_weights_path)
         self.synergy_weights_path = (
             Path(synergy_weights_path)
             if synergy_weights_path is not None
@@ -2390,8 +2390,7 @@ class SelfImprovementEngine:
                 except Exception:
                     self.logger.exception("alignment event publish failed")
             try:
-                path = Path("sandbox_data") / "alignment_flags.jsonl"
-                path.parent.mkdir(parents=True, exist_ok=True)
+                path = Path(settings.alignment_flags_path)
                 with path.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(record) + "\n")
             except Exception:
@@ -3720,7 +3719,9 @@ class SelfImprovementEngine:
                 from module_synergy_grapher import ModuleSynergyGrapher
 
                 grapher = ModuleSynergyGrapher(root=repo)
-                graph_path = repo / "sandbox_data" / "module_synergy_graph.json"
+                graph_path = Path(settings.module_synergy_graph_path)
+                if not graph_path.is_absolute():
+                    graph_path = repo / graph_path
                 try:
                     grapher.load(graph_path)
                 except Exception:
@@ -3735,7 +3736,9 @@ class SelfImprovementEngine:
             if clusterer is None:
                 from intent_clusterer import IntentClusterer
 
-                data_dir = repo / "sandbox_data"
+                data_dir = Path(settings.sandbox_data_dir)
+                if not data_dir.is_absolute():
+                    data_dir = repo / data_dir
                 clusterer = IntentClusterer(
                     local_db_path=data_dir / "intent.db",
                     shared_db_path=data_dir / "intent.db",
@@ -5720,9 +5723,9 @@ class SelfImprovementEngine:
         except Exception:
             self.logger.exception("relevancy evaluation failed")
         try:
-            metrics_db = (
-                Path(__file__).resolve().parent / "sandbox_data" / "relevancy_metrics.db"
-            )
+            metrics_db = Path(settings.relevancy_metrics_db_path)
+            if not metrics_db.is_absolute():
+                metrics_db = _repo_path() / metrics_db
             scan_flags = radar_scan(metrics_db)
             if scan_flags:
                 flags.update(scan_flags)

@@ -965,6 +965,15 @@ missing. Notable defaults include:
 - `SANDBOX_ROI_TOLERANCE=0.01`
 - `SANDBOX_CYCLES=5`
 - `SANDBOX_DATA_DIR=sandbox_data`
+- `PRUNE_INTERVAL=50`
+- `SELF_LEARNING_EVAL_INTERVAL=0`
+- `SELF_LEARNING_SUMMARY_INTERVAL=0`
+- `SELF_TEST_LOCK_FILE=sandbox_data/self_test.lock`
+- `SELF_TEST_REPORT_DIR=sandbox_data/self_test_reports`
+- `SYNERGY_WEIGHTS_PATH=sandbox_data/synergy_weights.json`
+- `ALIGNMENT_FLAGS_PATH=sandbox_data/alignment_flags.jsonl`
+- `MODULE_SYNERGY_GRAPH_PATH=sandbox_data/module_synergy_graph.json`
+- `RELEVANCY_METRICS_DB_PATH=sandbox_data/relevancy_metrics.db`
 - `RUN_CYCLES=0`
 - `RUN_UNTIL=`
  - `METRICS_PORT=8001`  # same as `--metrics-port`

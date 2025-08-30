@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Any
+from pathlib import Path
 
 import yaml
 
@@ -220,6 +221,51 @@ class SandboxSettings(BaseSettings):
         "gpt_memory.db",
         env="GPT_MEMORY_DB",
         description="Path to GPT memory database file.",
+    )
+    prune_interval: int = Field(
+        50,
+        env="PRUNE_INTERVAL",
+        description="Number of GPT memory interactions before compaction.",
+    )
+    self_learning_eval_interval: int = Field(
+        0,
+        env="SELF_LEARNING_EVAL_INTERVAL",
+        description="Training steps between evaluation passes.",
+    )
+    self_learning_summary_interval: int = Field(
+        0,
+        env="SELF_LEARNING_SUMMARY_INTERVAL",
+        description="Training steps between summary logs.",
+    )
+    self_test_lock_file: str = Field(
+        "sandbox_data/self_test.lock",
+        env="SELF_TEST_LOCK_FILE",
+        description="File used to serialise self-test runs.",
+    )
+    self_test_report_dir: str = Field(
+        "sandbox_data/self_test_reports",
+        env="SELF_TEST_REPORT_DIR",
+        description="Directory storing self-test reports.",
+    )
+    synergy_weights_path: str = Field(
+        "sandbox_data/synergy_weights.json",
+        env="SYNERGY_WEIGHTS_PATH",
+        description="Persisted synergy weight JSON file.",
+    )
+    alignment_flags_path: str = Field(
+        "sandbox_data/alignment_flags.jsonl",
+        env="ALIGNMENT_FLAGS_PATH",
+        description="Path for persisted alignment flag reports.",
+    )
+    module_synergy_graph_path: str = Field(
+        "sandbox_data/module_synergy_graph.json",
+        env="MODULE_SYNERGY_GRAPH_PATH",
+        description="Synergy graph persistence path.",
+    )
+    relevancy_metrics_db_path: str = Field(
+        "sandbox_data/relevancy_metrics.db",
+        env="RELEVANCY_METRICS_DB_PATH",
+        description="Database for relevancy metrics.",
     )
     synergy_learner: str = Field(
         "",
@@ -718,6 +764,22 @@ class SandboxSettings(BaseSettings):
             raise ValueError("score_weights must contain six values")
         if any(w < 0 for w in v):
             raise ValueError("score_weights values must be non-negative")
+        return v
+
+    @field_validator("sandbox_data_dir", "self_test_report_dir")
+    def _ensure_dirs(cls, v: str) -> str:
+        Path(v).mkdir(parents=True, exist_ok=True)
+        return v
+
+    @field_validator(
+        "self_test_lock_file",
+        "synergy_weights_path",
+        "alignment_flags_path",
+        "module_synergy_graph_path",
+        "relevancy_metrics_db_path",
+    )
+    def _ensure_parent_dirs(cls, v: str) -> str:
+        Path(v).parent.mkdir(parents=True, exist_ok=True)
         return v
 
     # Grouped settings

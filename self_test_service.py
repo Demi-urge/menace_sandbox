@@ -73,6 +73,8 @@ orphan_modules_legacy_total = _me.orphan_modules_legacy_total
 
 router = GLOBAL_ROUTER
 
+settings = SandboxSettings()
+
 self_test_passed_total = _me.Gauge(
     "self_test_passed_total", "Total number of passed self tests"
 )
@@ -100,7 +102,7 @@ setattr(_me, "self_test_container_failures_total", self_test_container_failures_
 setattr(_me, "self_test_container_timeouts_total", self_test_container_timeouts_total)
 
 _container_lock = Lock()
-_file_lock = FileLock(os.getenv("SELF_TEST_LOCK_FILE", "sandbox_data/self_test.lock"))
+_file_lock = FileLock(settings.self_test_lock_file)
 
 # ---------------------------------------------------------------------------
 # Track failing critical test suites across runs
@@ -345,7 +347,7 @@ class SelfTestService:
         recursive_isolated: bool = SandboxSettings().recursive_isolated,
         clean_orphans: bool = False,
         include_redundant: bool = SandboxSettings().test_redundant_modules,
-        report_dir: str | Path = Path("sandbox_data/self_test_reports"),
+        report_dir: str | Path = Path(settings.self_test_report_dir),
         stub_scenarios: Mapping[str, Any] | None = None,
     ) -> None:
         """Create a new service instance.
@@ -585,7 +587,7 @@ class SelfTestService:
                 rel = p
             paths.append(rel.as_posix())
         paths = sorted(set(paths))
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        data_dir = Path(settings.sandbox_data_dir)
         map_file = data_dir / "module_map.json"
 
         # Ensure the module map knows about the modules before integration.
@@ -927,7 +929,7 @@ class SelfTestService:
 
         trace = _discover(
             str(Path.cwd()),
-            module_map=str(Path("sandbox_data") / "module_map.json"),
+            module_map=str(Path(settings.sandbox_data_dir) / "module_map.json"),
         )
         self.orphan_traces = {}
         for k, v in trace.items():
@@ -1223,7 +1225,10 @@ class SelfTestService:
         """
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
-        stub_root = repo / "sandbox_data" / "selftest_stubs"
+        stub_root = Path(settings.sandbox_data_dir)
+        if not stub_root.is_absolute():
+            stub_root = repo / stub_root
+        stub_root = stub_root / "selftest_stubs"
         stub_root.mkdir(parents=True, exist_ok=True)
         tmp_dir = Path(tempfile.mkdtemp(prefix="stub_", dir=stub_root))
 
@@ -1515,7 +1520,7 @@ class SelfTestService:
             self.module_metrics = {}
     
             cache_repo = Path.cwd()
-            path = cache_repo / "sandbox_data" / "orphan_modules.json"
+            path = cache_repo / Path(settings.sandbox_data_dir) / "orphan_modules.json"
             existing_map = {} if refresh_orphans else load_orphan_cache(cache_repo)
             existing = list(existing_map.keys())
     
@@ -2285,7 +2290,7 @@ class SelfTestService:
             return
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        data_dir = Path(settings.sandbox_data_dir)
         if not data_dir.is_absolute():
             data_dir = repo / data_dir
         result_path = data_dir / "orphan_results.json"
@@ -2337,7 +2342,7 @@ class SelfTestService:
         """Return stored orphan testing metrics."""
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        data_dir = Path(settings.sandbox_data_dir)
         if not data_dir.is_absolute():
             data_dir = repo / data_dir
         target = Path(path) if path else data_dir / "orphan_results.json"
@@ -2509,13 +2514,16 @@ def cli(argv: list[str] | None = None) -> int:
     )
     run.add_argument(
         "--report-dir",
-        default="sandbox_data/self_test_reports",
+        default=settings.self_test_report_dir,
         help="Directory to store failure reports",
     )
     run.add_argument(
         "--include-orphans",
         action="store_true",
-        help="Also test modules listed in sandbox_data/orphan_modules.json",
+        help=(
+            f"Also test modules listed in "
+            f"{Path(settings.sandbox_data_dir) / 'orphan_modules.json'}"
+        ),
     )
     run.add_argument(
         "--discover-orphans",
@@ -2637,13 +2645,16 @@ def cli(argv: list[str] | None = None) -> int:
     )
     sched.add_argument(
         "--report-dir",
-        default="sandbox_data/self_test_reports",
+        default=settings.self_test_report_dir,
         help="Directory to store failure reports",
     )
     sched.add_argument(
         "--include-orphans",
         action="store_true",
-        help="Also test modules listed in sandbox_data/orphan_modules.json",
+        help=(
+            f"Also test modules listed in "
+            f"{Path(settings.sandbox_data_dir) / 'orphan_modules.json'}"
+        ),
     )
     sched.add_argument(
         "--discover-orphans",
@@ -2716,7 +2727,7 @@ def cli(argv: list[str] | None = None) -> int:
     rep = sub.add_parser("report", help="Show last self test report")
     rep.add_argument(
         "--report-dir",
-        default="sandbox_data/self_test_reports",
+        default=settings.self_test_report_dir,
         help="Directory containing failure reports",
     )
 
