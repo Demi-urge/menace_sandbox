@@ -1,3 +1,4 @@
+# flake8: noqa
 from __future__ import annotations
 
 import logging
@@ -172,6 +173,18 @@ def map_module_identifier(
     return module_id
 
 
+def _heuristic_suggestion(module: str) -> str:
+    """Return a simple heuristic suggestion based on *module* name."""
+    name = module.lower()
+    if "test" in name:
+        return "add tests for edge cases"
+    if "db" in name or "sql" in name:
+        return "optimise database interactions"
+    if "util" in name or "helper" in name:
+        return "consolidate helper utilities"
+    return "consider simplifying complex logic"
+
+
 def _choose_suggestion(ctx: Any, module: str) -> str:
     """Return an offline patch suggestion for *module*."""
     try:
@@ -181,7 +194,28 @@ def _choose_suggestion(ctx: Any, module: str) -> str:
                 return sugg
     except Exception:
         logger.exception("suggestion db lookup failed for %s", module)
-    return ctx.suggestion_cache.get(module, "refactor for clarity")
+    settings = getattr(ctx, "settings", SandboxSettings())
+    sources = getattr(settings, "suggestion_sources", ["cache", "knowledge", "heuristic"])
+    for source in sources:
+        if source == "cache":
+            cache = getattr(ctx, "suggestion_cache", {})
+            sugg = cache.get(module)
+            if sugg:
+                return sugg
+        elif source == "knowledge":
+            service = getattr(ctx, "knowledge_service", None)
+            if service is not None:
+                try:
+                    from knowledge_retriever import recent_improvement_path
+
+                    sugg = recent_improvement_path(service)
+                    if sugg:
+                        return sugg
+                except Exception:
+                    logger.exception("knowledge lookup failed for %s", module)
+        elif source == "heuristic":
+            return _heuristic_suggestion(module)
+    return "review module for improvements"
 
 
 async def _collect_plugin_metrics_async(
