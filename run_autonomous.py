@@ -2044,5 +2044,48 @@ def main(argv: List[str] | None = None) -> None:
     logger.info("run_autonomous exiting")
 
 
+
+def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
+    """Bootstrap the autonomous sandbox using configuration from ``config_path``.
+
+    The helper loads :class:`SandboxSettings`, initialises core databases and the
+    optional event bus, starts the self improvement cycle in a background
+    daemon thread and finally launches the sandbox runner.
+    """
+    from pydantic import ValidationError
+    from sandbox_settings import load_sandbox_settings
+    from self_improvement.meta_planning import start_self_improvement_cycle
+    from unified_event_bus import UnifiedEventBus
+    from roi_results_db import ROIResultsDB
+    from workflow_stability_db import WorkflowStabilityDB
+    from sandbox_runner import launch_sandbox
+
+    try:
+        settings = load_sandbox_settings(config_path)
+    except ValidationError as exc:
+        raise SystemExit(f"Invalid bootstrap configuration: {exc}") from exc
+
+    os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
+    os.environ.setdefault("SANDBOX_DATA_DIR", settings.sandbox_data_dir)
+
+    try:
+        ROIResultsDB()
+        WorkflowStabilityDB()
+    except Exception:
+        logger.warning("database initialisation failed", exc_info=True)
+
+    try:
+        bus = UnifiedEventBus()
+    except Exception:
+        bus = None
+        logger.warning("UnifiedEventBus unavailable")
+
+    def _noop():
+        return None
+
+    start_self_improvement_cycle({"bootstrap": _noop}, event_bus=bus)
+    launch_sandbox(settings=settings)
+
+
 if __name__ == "__main__":
     main()

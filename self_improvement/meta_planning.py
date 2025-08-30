@@ -11,6 +11,7 @@ from statistics import fmean
 import asyncio
 import json
 import time
+import threading
 from pathlib import Path
 
 from ..logging_utils import get_logger, log_record
@@ -472,8 +473,38 @@ async def self_improvement_cycle(
         await asyncio.sleep(interval)
 
 
+
+
+def start_self_improvement_cycle(
+    workflows: Mapping[str, Callable[[], Any]],
+    *,
+    event_bus: UnifiedEventBus | None = None,
+    interval: float = PLANNER_INTERVAL,
+) -> threading.Thread:
+    """Launch `self_improvement_cycle` in a background thread.
+
+    Sandbox settings are loaded to validate configuration and ensure required
+    databases are initialised. The returned thread runs indefinitely as a
+    daemon.
+    """
+    load_sandbox_settings()
+    try:
+        ROIResultsDB()
+        WorkflowStabilityDB()
+    except Exception:
+        pass
+
+    def _runner() -> None:
+        asyncio.run(self_improvement_cycle(workflows, interval=interval, event_bus=event_bus))
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    return thread
+
+
 __all__ = [
     "self_improvement_cycle",
+    "start_self_improvement_cycle",
     "PLANNER_INTERVAL",
     "MUTATION_RATE",
     "ROI_WEIGHT",

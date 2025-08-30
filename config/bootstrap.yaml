@@ -1,0 +1,7 @@
+# Sample configuration for run_autonomous.bootstrap
+menace_mode: test
+sandbox_repo_path: .
+sandbox_data_dir: sandbox_data
+meta_mutation_rate: 1.0
+meta_roi_weight: 1.0
+meta_domain_penalty: 1.0
