@@ -189,6 +189,10 @@ class ContextBuilderConfig(BaseModel):
         1.0,
         description="Penalty multiplier applied to risk scores from patch safety checks",
     )
+    enhancement_weight: float = Field(
+        1.0,
+        description="Multiplier applied to enhancement_score when ranking patches",
+    )
     max_alignment_severity: float = Field(
         1.0, description="Skip vectors with alignment severity above this value",
     )

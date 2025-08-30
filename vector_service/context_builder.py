@@ -94,6 +94,7 @@ class ContextBuilder:
         alignment_penalty: float = ContextBuilderConfig().alignment_penalty,
         alert_penalty: float = ContextBuilderConfig().alert_penalty,
         risk_penalty: float = ContextBuilderConfig().risk_penalty,
+        enhancement_weight: float = ContextBuilderConfig().enhancement_weight,
         max_alignment_severity: float = getattr(
             ContextBuilderConfig(), "max_alignment_severity", 1.0
         ),
@@ -109,8 +110,18 @@ class ContextBuilder:
         similarity_metric: str = getattr(ContextBuilderConfig(), "similarity_metric", "cosine"),
     ) -> None:
         self.retriever = retriever or Retriever()
-        self.patch_retriever = patch_retriever or PatchRetriever(metric=similarity_metric)
+        if patch_retriever is None:
+            self.patch_retriever = PatchRetriever(
+                metric=similarity_metric, enhancement_weight=enhancement_weight
+            )
+        else:
+            self.patch_retriever = patch_retriever
+            try:
+                self.patch_retriever.enhancement_weight = enhancement_weight
+            except Exception:
+                pass
         self.similarity_metric = similarity_metric
+        self.enhancement_weight = enhancement_weight
 
         if ranking_model is None:
             try:  # pragma: no cover - best effort model load

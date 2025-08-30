@@ -70,3 +70,25 @@ def test_search_top_n_accuracy(metric, expected):
     assert ids == expected
     scores = [r["score"] for r in results]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_enhancement_score_boost():
+    vectors = [[1.0, 0.0], [0.8, 0.2], [0.0, 1.0]]
+    meta = [
+        {"origin_db": "patch", "metadata": {"text": "a", "enhancement_score": 0.0}},
+        {"origin_db": "patch", "metadata": {"text": "b", "enhancement_score": 1.0}},
+        {"origin_db": "patch", "metadata": {"text": "c", "enhancement_score": 0.0}},
+    ]
+    store = DummyStore(vectors, meta)
+
+    def fake_vectorise(kind, record):
+        return [1.0, 0.0]
+
+    vec_service = types.SimpleNamespace(vectorise=fake_vectorise)
+    pr = PatchRetriever(
+        store=store, vector_service=vec_service, enhancement_weight=1.0
+    )
+    results = pr.search("query", top_k=3)
+    ids = [r["record_id"] for r in results]
+    assert ids[0] == "1"
+    assert results[0]["score"] > results[1]["score"]
