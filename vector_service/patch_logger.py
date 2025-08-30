@@ -276,6 +276,7 @@ class PatchLogger:
         lines_changed: int | None = None,
         tests_passed: bool | None = None,
         enhancement_name: str | None = None,
+        start_time: float | None = None,
         timestamp: float | None = None,
         diff: str | None = None,
         summary: str | None = None,
@@ -297,6 +298,11 @@ class PatchLogger:
         roi_deltas: dict[str, float] = {}
         context_tokens = 0
         patch_difficulty = (lines_changed or 0)
+        time_to_completion = (
+            None
+            if start_time is None or timestamp is None
+            else float(timestamp) - float(start_time)
+        )
         try:
             detailed = self._parse_vectors(vector_ids)
             detailed.sort(key=lambda t: t[2], reverse=True)
@@ -662,6 +668,8 @@ class PatchLogger:
                             context_tokens=context_tokens,
                             patch_difficulty=patch_difficulty,
                             enhancement_name=enhancement_name,
+                            start_time=start_time,
+                            time_to_completion=time_to_completion,
                             timestamp=timestamp,
                             errors=errors,
                             diff=diff,
@@ -793,6 +801,8 @@ class PatchLogger:
             "tests_passed": tests_passed,
             "enhancement_name": enhancement_name,
             "timestamp": timestamp,
+            "start_time": start_time,
+            "time_to_completion": time_to_completion,
             "diff": diff,
             "summary": summary,
             "outcome": outcome,
@@ -820,6 +830,8 @@ class PatchLogger:
                     lines_changed=lines_changed,
                     context_tokens=context_tokens,
                     patch_difficulty=patch_difficulty,
+                    start_time=start_time,
+                    time_to_completion=time_to_completion,
                 )
             except Exception:
                 logger.exception("vector_metrics.record_patch_summary failed")
@@ -852,7 +864,7 @@ class PatchLogger:
         try:
             conn = self.patch_db.router.get_connection("patch_history")
             row = conn.execute(
-                "SELECT diff, summary, outcome, lines_changed, tests_passed, context_tokens, patch_difficulty, enhancement_name, timestamp, roi_deltas, errors FROM patch_history WHERE id=?",
+                "SELECT diff, summary, outcome, lines_changed, tests_passed, context_tokens, patch_difficulty, enhancement_name, start_time, time_to_completion, timestamp, roi_deltas, errors FROM patch_history WHERE id=?",
                 (int(patch_id),),
             ).fetchone()
             if row is None:
@@ -866,6 +878,8 @@ class PatchLogger:
                 context_tokens,
                 patch_difficulty,
                 enhancement_name,
+                start_ts,
+                duration,
                 ts,
                 roi_json,
                 err_json,
@@ -888,6 +902,8 @@ class PatchLogger:
                 "context_tokens": context_tokens,
                 "patch_difficulty": patch_difficulty,
                 "enhancement_name": enhancement_name,
+                "start_time": start_ts,
+                "time_to_completion": duration,
                 "timestamp": ts,
                 "roi_deltas": roi_data,
                 "errors": err_data,
@@ -911,6 +927,7 @@ class PatchLogger:
         lines_changed: int | None = None,
         tests_passed: bool | None = None,
         enhancement_name: str | None = None,
+        start_time: float | None = None,
         timestamp: float | None = None,
         diff: str | None = None,
         summary: str | None = None,
@@ -932,6 +949,7 @@ class PatchLogger:
             lines_changed=lines_changed,
             tests_passed=tests_passed,
             enhancement_name=enhancement_name,
+            start_time=start_time,
             timestamp=timestamp,
             diff=diff,
             summary=summary,

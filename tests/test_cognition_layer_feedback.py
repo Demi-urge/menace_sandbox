@@ -126,10 +126,12 @@ class DummyPatchLogger:
         lines_changed=None,
         tests_passed=None,
         enhancement_name=None,
+        start_time=None,
         timestamp=None,
         diff=None,
         summary=None,
         outcome=None,
+        error_summary=None,
     ):
         self.calls.append(
             {
@@ -142,6 +144,7 @@ class DummyPatchLogger:
                 "lines_changed": lines_changed,
                 "tests_passed": tests_passed,
                 "enhancement_name": enhancement_name,
+                "start_time": start_time,
                 "timestamp": timestamp,
                 "diff": diff,
                 "summary": summary,
