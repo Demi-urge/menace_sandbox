@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
 import logging
 import asyncio
 import uuid
@@ -171,7 +171,7 @@ class ContextBuilder:
         self.license_denylist = set(license_denylist or ())
         self.memory = memory_manager
         self.summariser = summariser or (lambda text: text)
-        self._cache: Dict[Tuple[str, int], str] = {}
+        self._cache: Dict[Tuple[str, int, Tuple[str, ...]], str] = {}
         self._summary_cache: Dict[int, Dict[str, str]] = {}
         self.db_weights = db_weights or {}
         if not self.db_weights:
@@ -892,6 +892,7 @@ class ContextBuilder:
         session_id: str | None = None,
         return_stats: bool = False,
         prioritise: str | None = None,
+        exclude_tags: Iterable[str] | None = None,
         **_: Any,
     ) -> Any:
         """Return a compact JSON context for ``query``.
@@ -910,6 +911,9 @@ class ContextBuilder:
         prioritise:
             Optional trimming strategy. ``"newest"`` prefers more recent
             entries while ``"roi"`` favours higher ROI vectors.
+        exclude_tags:
+            Optional iterable of tag strings. Any retrieved vector containing
+            one of these tags in its metadata is discarded before ranking.
 
         When ``include_vectors`` is True, the return value is a tuple of
         ``(context_json, session_id, vectors)`` where *vectors* is a list of
@@ -933,7 +937,8 @@ class ContextBuilder:
 
         prompt_tokens = len(query.split())
         query = redact_text(query)
-        cache_key = (query, top_k)
+        exclude = set(exclude_tags or [])
+        cache_key = (query, top_k, tuple(sorted(exclude)))
         if not include_vectors and not return_metadata and cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -988,6 +993,15 @@ class ContextBuilder:
         }
 
         for bundle in hits:
+            meta = bundle.get("metadata", {}) or {}
+            tags = ()
+            try:
+                tags = meta.get("tags") or bundle.get("tags") or ()
+            except Exception:
+                tags = ()
+            tag_set = {str(t) for t in tags} if isinstance(tags, (list, tuple, set)) else {str(tags)} if tags else set()
+            if exclude and tag_set & exclude:
+                continue
             bucket, scored = self._bundle_to_entry(bundle, query)
             if bucket:
                 buckets[bucket].append(scored)
@@ -1005,6 +1019,7 @@ class ContextBuilder:
                 similarity_weight=self.ranking_weight,
                 roi_weight=self.roi_weight,
                 recency_weight=self.recency_weight,
+                exclude_tags=exclude,
             )
             buckets["patches"] = ranked
 
@@ -1134,6 +1149,34 @@ class ContextBuilder:
         """
 
         return self.build_context(query, **kwargs)
+
+    # ------------------------------------------------------------------
+    @log_and_measure
+    def query(
+        self,
+        query: str,
+        top_k: int = 5,
+        *,
+        include_vectors: bool = False,
+        return_metadata: bool = False,
+        session_id: str | None = None,
+        return_stats: bool = False,
+        prioritise: str | None = None,
+        exclude_tags: Iterable[str] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Alias for :meth:`build_context` with optional tag exclusion."""
+
+        params = {
+            "include_vectors": include_vectors,
+            "return_metadata": return_metadata,
+            "session_id": session_id,
+            "return_stats": return_stats,
+            "prioritise": prioritise,
+            "exclude_tags": exclude_tags,
+        }
+        params.update(kwargs)
+        return self.build_context(query, top_k=top_k, **params)
 
     # ------------------------------------------------------------------
     @log_and_measure

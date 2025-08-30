@@ -27,7 +27,7 @@ builder = ContextBuilder(
     max_tokens=800,  # overall budget
 )
 
-context_json = builder.build_context("upload failed", top_k=5)
+context_json = builder.build_context("upload failed", top_k=5, exclude_tags=["failure"])
 ```
 
 - `top_k` caps how many entries are returned for each origin.
@@ -35,6 +35,7 @@ context_json = builder.build_context("upload failed", top_k=5)
   `builder.retriever` (for example `link_multiplier`) to emphasise connectivity
   or adjust ranking.  Per-database weights can be supplied via ``db_weights`` or
   configuration to bias towards certain sources.
+- `exclude_tags` skips any vectors tagged with the specified values.
 
 `ContextBuilder` can bias ranking toward specific sources and adjust the
 overall token budget via optional configuration.  Token usage is estimated for

@@ -53,6 +53,7 @@ def rank_patches(
     similarity_weight: float = 1.0,
     roi_weight: float = 1.0,
     recency_weight: float = 1.0,
+    exclude_tags: Iterable[str] | None = None,
 ) -> Tuple[List[Any], float]:
     """Return ranked entries with a confidence score.
 
@@ -67,6 +68,8 @@ def rank_patches(
         Optional :class:`PatchHistoryDB` instance for ROI/recency lookup.
     similarity_weight, roi_weight, recency_weight:
         Multipliers applied to similarity, ROI and recency respectively.
+    exclude_tags:
+        Iterable of tags; any entry containing one of these is skipped.
 
     Returns
     -------
@@ -84,7 +87,19 @@ def rank_patches(
             db = None
     ranked: List[Any] = []
     best = 0.0
+    excluded = set(exclude_tags or [])
     for item in entries:
+        if excluded:
+            meta = getattr(item, "metadata", None)
+            if isinstance(meta, dict):
+                tags = meta.get("tags") or []
+                tag_set = (
+                    {str(t) for t in tags}
+                    if isinstance(tags, (list, tuple, set))
+                    else {str(tags)} if tags else set()
+                )
+                if tag_set & excluded:
+                    continue
         sim = float(getattr(item.entry, "get", lambda k, d=None: d)("similarity", getattr(item, "score", 0.0)))
         roi = item.entry.get("roi") if isinstance(item.entry, dict) else None
         recency = item.entry.get("recency") if isinstance(item.entry, dict) else None
