@@ -318,72 +318,42 @@ class SelfCodingEngine:
     ) -> str:
         """Return a prompt formatted for :class:`VisualAgentClient`."""
         func = f"auto_{description.replace(' ', '_')}"
-
+        repo_layout = repo_layout or self._get_repo_layout(VA_REPO_LAYOUT_LINES)
+        retry_trace = self._last_retry_trace
+        body = self.prompt_engine.build_prompt(
+            description,
+            context="\n".join([p for p in (context.strip(), repo_layout) if p]),
+            retrieval_context=retrieval_context or "",
+            retry_info=retry_trace,
+        )
         if VA_PROMPT_TEMPLATE:
             try:
                 text = Path(VA_PROMPT_TEMPLATE).read_text()
             except Exception:
                 text = VA_PROMPT_TEMPLATE
+            data = {
+                "path": path or "unknown file",
+                "description": description,
+                "context": context.strip(),
+                "retrieval_context": retrieval_context or "",
+                "func": func,
+                "prompt": body,
+            }
             try:
-                body = text.format(
-                    path=path or "unknown file",
-                    description=description,
-                    context=context.strip(),
-                    retrieval_context=(retrieval_context or ""),
-                    func=func,
-                )
+                rendered = text.format(**data)
             except Exception:
-                body = text
-        else:
-            lines = [
-                "### Introduction",
-                f"Add a Python helper to `{path or 'unknown file'}` that {description}.",
-                "",
-                "### Functions",
-                f"- `{func}(*args, **kwargs)`",
-                "",
-                "### Dependencies",
-                "standard library",
-                "",
-                "### Coding standards",
-                (
-                    "Follow PEP8 with 4-space indents and <79 character lines. "
-                    "Use Google style docstrings and inline comments for complex logic."
-                ),
-                "",
-                "### Repository layout",
-                repo_layout or self._get_repo_layout(VA_REPO_LAYOUT_LINES),
-                "",
-                "### Environment",
-                sys.version.split()[0],
-                "",
-                "### Metadata",
-                f"description: {description}",
-                "",
-                "### Version control",
-                "commit all changes to git using descriptive commit messages",
-                "",
-                "### Testing",
-                (
-                    "Run `scripts/setup_tests.sh` then execute `pytest --cov`. "
-                    "Report any failures."
-                ),
-            ]
-            if retrieval_context:
-                try:
-                    pretty_ctx = json.dumps(json.loads(retrieval_context), indent=2)
-                except Exception:
-                    pretty_ctx = retrieval_context
-                lines.extend(["", "### Retrieval context", pretty_ctx])
-            lines.extend(["", "### Snippet context", context.strip()])
-            body = "\n".join(lines).strip() + "\n"
-
+                rendered = text
+            if "prompt" in text:
+                body = rendered
+            else:
+                if not rendered.endswith("\n"):
+                    rendered += "\n"
+                body = rendered + body
         prefix = VA_PROMPT_PREFIX
         if prefix:
             if not prefix.endswith("\n"):
                 prefix += "\n"
             body = prefix + body
-
         return body
 
     def generate_helper(
@@ -449,19 +419,16 @@ class SelfCodingEngine:
         if metadata:
             retrieval_context = str(metadata.get("retrieval_context", ""))
         retry_trace = self._fetch_retry_trace(metadata)
-        retrieval_data = "\n".join(
-            [p for p in (context, retrieval_context, repo_layout) if p]
-        )
         try:
-            prompt = self.prompt_engine.construct_prompt(
+            prompt = self.prompt_engine.build_prompt(
                 description,
-                retry_trace=retry_trace,
+                context="\n".join([p for p in (context, repo_layout) if p]),
+                retrieval_context=retrieval_context,
+                retry_info=retry_trace,
             )
         except Exception as exc:
             self._last_retry_trace = str(exc)
             return _fallback()
-        if retrieval_data:
-            prompt = retrieval_data + "\n\n" + prompt
 
         # Incorporate past patch outcomes from memory
         history = ""
