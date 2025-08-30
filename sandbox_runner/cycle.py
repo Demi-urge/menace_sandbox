@@ -13,6 +13,8 @@ import time
 import asyncio
 import sys
 import threading
+import queue
+import atexit
 import uuid
 from typing import Any, Dict, Mapping, TYPE_CHECKING
 from types import SimpleNamespace
@@ -117,6 +119,56 @@ from .orphan_discovery import (
 
 _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
 
+_usage_queue: "queue.Queue[tuple[str, float]]" = queue.Queue()
+_usage_thread: threading.Thread | None = None
+
+
+def _usage_worker() -> None:
+    while True:
+        item = _usage_queue.get()
+        if item is None:
+            _usage_queue.task_done()
+            break
+        module, impact = item
+        delay = 0.1
+        for attempt in range(5):
+            try:
+                _radar_track_usage(module, impact)
+                record_output_impact(module, impact)
+                break
+            except Exception:  # pragma: no cover - network/IO errors
+                logger.exception(
+                    "relevancy radar usage tracking failed",
+                    extra=log_record(module=module, attempt=attempt + 1),
+                )
+                if attempt == 4:
+                    logger.error(
+                        "relevancy radar usage tracking persistent failure",
+                        extra=log_record(module=module, attempts=attempt + 1),
+                    )
+                else:
+                    time.sleep(delay)
+                    delay *= 2
+        _usage_queue.task_done()
+
+
+def _flush_usage_queue() -> None:
+    if not _ENABLE_RELEVANCY_RADAR:
+        return
+    try:
+        _usage_queue.put(None)
+        _usage_queue.join()
+        if _usage_thread and _usage_thread.is_alive():
+            _usage_thread.join(timeout=1.0)
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to flush usage tracking queue")
+
+
+if _ENABLE_RELEVANCY_RADAR:
+    _usage_thread = threading.Thread(target=_usage_worker, daemon=True)
+    _usage_thread.start()
+    atexit.register(_flush_usage_queue)
+
 
 def _async_track_usage(module: str, impact: float | None = None) -> None:
     """Record ``module`` usage asynchronously if radar is enabled.
@@ -128,31 +180,13 @@ def _async_track_usage(module: str, impact: float | None = None) -> None:
         return
 
     impact_val = 0.0 if impact is None else float(impact)
-
-    def _track() -> None:
-        """Best effort tracking with simple retry and logging."""
-        # try a few times in case the radar service is temporarily unavailable
-        for attempt in range(3):
-            try:
-                _radar_track_usage(module, impact_val)
-                record_output_impact(module, impact_val)
-                return
-            except Exception:  # pragma: no cover - network/IO errors
-                logger.exception(
-                    "relevancy radar usage tracking failed",
-                    extra=log_record(module=module, attempt=attempt + 1),
-                )
-                # small delay before retrying to avoid hot looping
-                time.sleep(0.1)
-
     try:
-        threading.Thread(target=_track, daemon=True).start()
-    except Exception:  # pragma: no cover - thread creation failures
+        _usage_queue.put((module, impact_val))
+    except Exception:  # pragma: no cover - queue failures
         logger.exception(
-            "failed to start usage tracking thread",
+            "failed to enqueue usage tracking",
             extra=log_record(module=module),
         )
-        raise
 
 
 def map_module_identifier(

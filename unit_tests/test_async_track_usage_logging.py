@@ -8,44 +8,56 @@ class DummyLogger:
         self.records = []
 
     def exception(self, msg, *args, **kwargs):
-        self.records.append((msg % args if args else msg, kwargs.get("extra")))
+        self.records.append(("exception", kwargs.get("extra")))
+
+    def error(self, msg, *args, **kwargs):
+        self.records.append(("error", kwargs.get("extra")))
+
+
+class DummyQueue:
+    def __init__(self):
+        self.items = []
+
+    def put(self, item):
+        self.items.append(item)
+
+    def get(self):
+        return self.items.pop(0)
+
+    def task_done(self):
+        pass
 
 
 def _load_async_track_usage():
     src = Path("sandbox_runner/cycle.py").read_text()
     tree = ast.parse(src)
-    func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_async_track_usage")
-    module = ast.Module([func], type_ignores=[])
-    module = ast.fix_missing_locations(module)
-    ns: dict[str, object] = {}
-
-    class DummyThread:
-        def __init__(self, target, daemon=True):
-            self.target = target
-            self.daemon = daemon
-
-        def start(self):
-            self.target()
-
-    ns.update(
-        {
-            "_ENABLE_RELEVANCY_RADAR": True,
-            "_radar_track_usage": lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
-            "record_output_impact": lambda *a, **k: None,
-            "logger": DummyLogger(),
-            "threading": types.SimpleNamespace(Thread=DummyThread),
-            "time": types.SimpleNamespace(sleep=lambda *a, **k: None),
-            "log_record": lambda **kw: kw,
-        }
+    async_fn = next(
+        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_async_track_usage"
     )
-
+    worker_fn = next(
+        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_usage_worker"
+    )
+    module = ast.Module([async_fn, worker_fn], type_ignores=[])
+    module = ast.fix_missing_locations(module)
+    ns: dict[str, object] = {
+        "_ENABLE_RELEVANCY_RADAR": True,
+        "_radar_track_usage": lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+        "record_output_impact": lambda *a, **k: None,
+        "logger": DummyLogger(),
+        "_usage_queue": DummyQueue(),
+        "time": types.SimpleNamespace(sleep=lambda *a, **k: None),
+        "log_record": lambda **kw: kw,
+    }
     exec(compile(module, "<ast>", "exec"), ns)
-    return ns["_async_track_usage"], ns["logger"]
+    return ns["_async_track_usage"], ns["_usage_worker"], ns["_usage_queue"], ns["logger"]
 
 
 def test_async_track_usage_logs_failure():
-    fn, logger = _load_async_track_usage()
-    fn("test.mod", 1.0)
-    assert len(logger.records) == 3
-    assert all(r[1].get("module") == "test.mod" for r in logger.records)
-    assert [r[1].get("attempt") for r in logger.records] == [1, 2, 3]
+    track, worker, q, logger = _load_async_track_usage()
+    track("test.mod", 1.0)
+    q.put(None)
+    worker()
+    exceptions = [r for r in logger.records if r[0] == "exception"]
+    assert [r[1]["attempt"] for r in exceptions] == [1, 2, 3, 4, 5]
+    errors = [r for r in logger.records if r[0] == "error"]
+    assert errors and errors[0][1]["attempts"] == 5
