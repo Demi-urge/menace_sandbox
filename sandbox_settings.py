@@ -177,6 +177,19 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_CENTRAL_LOGGING",
         description="Enable centralised logging output.",
     )
+    openai_api_key: str | None = Field(
+        None, env="OPENAI_API_KEY", description="API key for OpenAI access."
+    )
+    audit_log_path: str = Field(
+        "audit.log",
+        env="AUDIT_LOG_PATH",
+        description="Path where the audit trail is written.",
+    )
+    audit_privkey: str | None = Field(
+        None,
+        env="AUDIT_PRIVKEY",
+        description="Base64-encoded private key for signing audit entries.",
+    )
     stub_timeout: float = Field(
         10.0,
         env="SANDBOX_STUB_TIMEOUT",
@@ -322,6 +335,31 @@ class SandboxSettings(BaseSettings):
         env="PATCH_SCORE_BACKEND_URL",
         description="URL to patch score backend service.",
     )
+    patch_score_backend: str | None = Field(
+        None,
+        env="PATCH_SCORE_BACKEND",
+        description="Module path to patch score backend implementation.",
+    )
+    flakiness_runs: int = Field(
+        5,
+        env="FLAKINESS_RUNS",
+        description="Number of runs used to estimate test flakiness.",
+    )
+    weight_update_interval: float = Field(
+        60.0,
+        env="WEIGHT_UPDATE_INTERVAL",
+        description="Minimum seconds between score weight recalculations.",
+    )
+    test_run_timeout: float = Field(
+        300.0,
+        env="TEST_RUN_TIMEOUT",
+        description="Timeout in seconds for individual test runs.",
+    )
+    test_run_retries: int = Field(
+        2,
+        env="TEST_RUN_RETRIES",
+        description="Retry attempts for failing test runs.",
+    )
     orphan_reuse_threshold: float = Field(
         0.0,
         env="ORPHAN_REUSE_THRESHOLD",
@@ -331,6 +369,16 @@ class SandboxSettings(BaseSettings):
         False,
         env="SANDBOX_CLEAN_ORPHANS",
         description="Remove failing orphans from tracking file.",
+    )
+    disable_orphans: bool = Field(
+        False,
+        env="SANDBOX_DISABLE_ORPHANS",
+        description="Disable orphan testing entirely.",
+    )
+    include_orphans: bool | None = Field(
+        None,
+        env="SANDBOX_INCLUDE_ORPHANS",
+        description="Include orphan modules during testing when set.",
     )
     exclude_dirs: str | None = Field(
         None,
@@ -420,6 +468,18 @@ class SandboxSettings(BaseSettings):
     def _validate_auto_train_interval(cls, v: float) -> float:
         if v <= 0:
             raise ValueError("auto_train_interval must be positive")
+        return v
+
+    @field_validator("flakiness_runs", "test_run_retries")
+    def _validate_positive_int(cls, v: int, info: Any) -> int:
+        if v <= 0:
+            raise ValueError(f"{info.field_name} must be a positive integer")
+        return v
+
+    @field_validator("weight_update_interval", "test_run_timeout")
+    def _validate_positive_float(cls, v: float, info: Any) -> float:
+        if v <= 0:
+            raise ValueError(f"{info.field_name} must be positive")
         return v
     test_redundant_modules: bool = Field(
         True,

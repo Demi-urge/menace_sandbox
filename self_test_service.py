@@ -36,21 +36,77 @@ from contextlib import AsyncExitStack
 from db_router import init_db_router
 
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+
+try:  # pragma: no cover - compatibility with pydantic v1/v2
+    from pydantic_settings import BaseSettings
+except Exception:  # pragma: no cover
+    from pydantic import BaseSettings  # type: ignore
+from pydantic import Field
+from sandbox_settings import SandboxSettings
+
+
+class SelfTestEnvSettings(BaseSettings):
+    """Environment configuration for :mod:`self_test_service`."""
+
+    menace_local_db_path: str = Field(
+        default_factory=lambda: f"./menace_{MENACE_ID}_local.db",
+        validation_alias="MENACE_LOCAL_DB_PATH",
+    )
+    menace_shared_db_path: str = Field(
+        "./shared/global.db", validation_alias="MENACE_SHARED_DB_PATH"
+    )
+    self_test_retries: int | None = Field(None, validation_alias="SELF_TEST_RETRIES")
+    self_test_timeout: float | None = Field(None, validation_alias="SELF_TEST_TIMEOUT")
+    menace_self_test_image_tar: str | None = Field(
+        None, validation_alias="MENACE_SELF_TEST_IMAGE_TAR"
+    )
+    self_test_state: str | None = Field(None, validation_alias="SELF_TEST_STATE")
+    self_test_metrics_port: int | None = Field(
+        None, validation_alias="SELF_TEST_METRICS_PORT"
+    )
+    self_test_args: str | None = Field(None, validation_alias="SELF_TEST_ARGS")
+    self_test_workers: int | None = Field(None, validation_alias="SELF_TEST_WORKERS")
+    self_test_runner: str = Field("pytest", validation_alias="SELF_TEST_RUNNER")
+    self_test_disable_orphans: bool | None = Field(
+        None, validation_alias="SELF_TEST_DISABLE_ORPHANS"
+    )
+    self_test_include_orphans: bool | None = Field(
+        None, validation_alias="SELF_TEST_INCLUDE_ORPHANS"
+    )
+    self_test_discover_orphans: bool | None = Field(
+        None, validation_alias="SELF_TEST_DISCOVER_ORPHANS"
+    )
+    self_test_recursive_orphans: bool | None = Field(
+        None, validation_alias="SELF_TEST_RECURSIVE_ORPHANS"
+    )
+    self_test_include_redundant: bool | None = Field(
+        None, validation_alias="SELF_TEST_INCLUDE_REDUNDANT"
+    )
+    self_test_disable_auto_integration: bool | None = Field(
+        None, validation_alias="SELF_TEST_DISABLE_AUTO_INTEGRATION"
+    )
+    self_test_fixture_hook: str | None = Field(
+        None, validation_alias="SELF_TEST_FIXTURE_HOOK"
+    )
+
+
+env_settings = SelfTestEnvSettings()
+settings = SandboxSettings()
+
+if settings.sandbox_central_logging:
+    from logging_utils import setup_logging
+
+    setup_logging()
+
+LOCAL_DB_PATH = env_settings.menace_local_db_path
+SHARED_DB_PATH = env_settings.menace_shared_db_path
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from orphan_analyzer import classify_module
-from sandbox_settings import SandboxSettings
 from logging_utils import log_record, get_logger
 from pydantic import ValidationError
 
 from .self_services_config import SelfTestConfig
-
-if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
-    from logging_utils import setup_logging
-
-    setup_logging()
 
 try:
     from .data_bot import DataBot
@@ -85,8 +141,6 @@ orphan_modules_redundant_total = _me.orphan_modules_redundant_total
 orphan_modules_legacy_total = _me.orphan_modules_legacy_total
 
 router = GLOBAL_ROUTER
-
-settings = SandboxSettings()
 try:  # Validate early so misconfiguration is reported immediately
     test_config = SelfTestConfig()
 except ValidationError as exc:  # pragma: no cover - import time validation
@@ -165,7 +219,7 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
             determined.
         """
 
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        repo = Path(settings.sandbox_repo_path).resolve()
         logger = get_logger(__name__)
 
         def _iter_package(pkg: Path) -> Iterable[Path]:
@@ -473,17 +527,24 @@ class SelfTestService:
         self._history_db: sqlite3.Connection | None = None
         self.container_runtime = container_runtime
         self.docker_host = docker_host
-        self.container_retries = int(os.getenv("SELF_TEST_RETRIES", container_retries))
-        try:
-            self.container_timeout = float(os.getenv("SELF_TEST_TIMEOUT", str(container_timeout)))
-        except ValueError:
-            self.container_timeout = container_timeout
-        self.offline_install = os.getenv("MENACE_OFFLINE_INSTALL", "0") == "1"
+        self.container_retries = int(
+            env_settings.self_test_retries
+            if env_settings.self_test_retries is not None
+            else container_retries
+        )
+        self.container_timeout = float(
+            env_settings.self_test_timeout
+            if env_settings.self_test_timeout is not None
+            else container_timeout
+        )
+        self.offline_install = settings.menace_offline_install
         self.report_dir = Path(report_dir)
-        self.image_tar_path = os.getenv("MENACE_SELF_TEST_IMAGE_TAR")
-        state_env = os.getenv("SELF_TEST_STATE")
-        self.state_path = Path(state_path or state_env) if (state_path or state_env) else None
-        env_port = os.getenv("SELF_TEST_METRICS_PORT") if metrics_port is None else None
+        self.image_tar_path = env_settings.menace_self_test_image_tar
+        state_env = env_settings.self_test_state
+        self.state_path = (
+            Path(state_path or state_env) if (state_path or state_env) else None
+        )
+        env_port = env_settings.self_test_metrics_port if metrics_port is None else None
         if metrics_port is None and env_port is not None:
             try:
                 self.metrics_port = int(env_port)
@@ -519,9 +580,9 @@ class SelfTestService:
         self._health_server: 'HTTPServer' | None = None
         self._health_thread: threading.Thread | None = None
         self.health_port: int | None = None
-        env_args = os.getenv("SELF_TEST_ARGS") if pytest_args is None else pytest_args
+        env_args = env_settings.self_test_args if pytest_args is None else pytest_args
         self.pytest_args = shlex.split(env_args) if env_args else []
-        env_workers = os.getenv("SELF_TEST_WORKERS") if workers is None else workers
+        env_workers = env_settings.self_test_workers if workers is None else workers
         try:
             self.workers = int(env_workers) if env_workers is not None else 1
         except ValueError:
@@ -531,18 +592,20 @@ class SelfTestService:
         self.stub_scenarios = dict(stub_scenarios or {})
 
         # Optional hook supplying custom fixture values in generated stubs.
-        self.fixture_hook = fixture_hook
+        self.fixture_hook = fixture_hook or env_settings.self_test_fixture_hook
 
         # Allow the test runner to be customised via environment variable.  This
         # defaults to ``pytest`` to preserve historical behaviour but can be
         # overridden by setting ``SELF_TEST_RUNNER``.  All discovered modules are
         # executed using this runner within :meth:`_run_once`.
-        self.test_runner = os.getenv("SELF_TEST_RUNNER", "pytest")
+        self.test_runner = env_settings.self_test_runner
 
-        disable_env = os.getenv("SELF_TEST_DISABLE_ORPHANS")
-        if disable_env is None:
-            disable_env = os.getenv("SANDBOX_DISABLE_ORPHANS")
-        disable_all = disable_env and disable_env.lower() in ("1", "true", "yes")
+        disable_env = (
+            env_settings.self_test_disable_orphans
+            if env_settings.self_test_disable_orphans is not None
+            else settings.disable_orphans
+        )
+        disable_all = bool(disable_env)
 
         self.include_orphans = bool(include_orphans)
         self.discover_orphans = bool(discover_orphans)
@@ -553,19 +616,19 @@ class SelfTestService:
             self.discover_orphans = False
             self.recursive_orphans = False
         else:
-            env_orphans = os.getenv("SELF_TEST_INCLUDE_ORPHANS")
-            if env_orphans is None:
-                env_orphans = os.getenv("SANDBOX_INCLUDE_ORPHANS")
+            env_orphans = env_settings.self_test_include_orphans
             if env_orphans is not None:
-                self.include_orphans = env_orphans.lower() in ("1", "true", "yes")
+                self.include_orphans = bool(env_orphans)
+            elif settings.include_orphans is not None:
+                self.include_orphans = bool(settings.include_orphans)
 
-            env_discover = os.getenv("SELF_TEST_DISCOVER_ORPHANS")
+            env_discover = env_settings.self_test_discover_orphans
             if env_discover is not None:
-                self.discover_orphans = env_discover.lower() in ("1", "true", "yes")
+                self.discover_orphans = bool(env_discover)
 
-            env_recursive = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
+            env_recursive = env_settings.self_test_recursive_orphans
             if env_recursive is not None:
-                self.recursive_orphans = env_recursive.lower() in ("1", "true", "yes")
+                self.recursive_orphans = bool(env_recursive)
 
         self.discover_isolated = bool(discover_isolated)
         self.recursive_isolated = bool(recursive_isolated)
@@ -575,20 +638,20 @@ class SelfTestService:
             self.recursive_isolated = True
 
         self.clean_orphans = bool(clean_orphans)
-        env_clean = os.getenv("SANDBOX_CLEAN_ORPHANS")
+        env_clean = settings.clean_orphans
         if env_clean is not None:
-            self.clean_orphans = env_clean.lower() in ("1", "true", "yes")
+            self.clean_orphans = bool(env_clean)
 
         self.include_redundant = bool(include_redundant)
-        env_redundant = os.getenv("SELF_TEST_INCLUDE_REDUNDANT")
+        env_redundant = env_settings.self_test_include_redundant
         if env_redundant is None:
-            env_redundant = os.getenv("SANDBOX_TEST_REDUNDANT")
+            env_redundant = settings.test_redundant_modules
         if env_redundant is not None:
-            self.include_redundant = env_redundant.lower() in ("1", "true", "yes")
+            self.include_redundant = bool(env_redundant)
 
-        auto_disable_env = os.getenv("SELF_TEST_DISABLE_AUTO_INTEGRATION")
+        auto_disable_env = env_settings.self_test_disable_auto_integration
         if auto_disable_env is not None:
-            disable_auto_integration = auto_disable_env.lower() in ("1", "true", "yes")
+            disable_auto_integration = bool(auto_disable_env)
 
         if integration_callback is not None:
             self.integration_callback = integration_callback
@@ -632,7 +695,6 @@ class SelfTestService:
             Mapping containing ``integrated`` and ``redundant`` module lists.
         """
 
-        settings = SandboxSettings()
         if metrics:
             def _score(m: str) -> float:
                 data = metrics.get(m, {})
@@ -647,7 +709,7 @@ class SelfTestService:
 
             mods = [m for m in mods if _score(m) >= settings.integration_score_threshold]
 
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        repo = Path(settings.sandbox_repo_path).resolve()
         paths: list[str] = []
         for m in mods:
             p = Path(m)
@@ -1192,7 +1254,7 @@ class SelfTestService:
         Entries marked ``{"redundant": true}`` are preserved for later
         auditing.
         """
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        repo = Path(settings.sandbox_repo_path).resolve()
 
         def _norm(p: str) -> str:
             q = Path(p)
@@ -1246,7 +1308,7 @@ class SelfTestService:
 
         path = Path(mod)
         stem = path.stem
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        repo = Path(settings.sandbox_repo_path).resolve()
         candidates = [
             path.parent / f"test_{stem}.py",
             repo / "tests" / f"test_{stem}.py",
@@ -1275,7 +1337,7 @@ class SelfTestService:
             fixtures via ``{"fixture": "name"}`` entries.
         """
 
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        repo = Path(settings.sandbox_repo_path).resolve()
         stub_root = Path(settings.sandbox_data_dir)
         if not stub_root.is_absolute():
             stub_root = repo / stub_root
@@ -1304,7 +1366,7 @@ class SelfTestService:
 
             stub_path = tmp_dir / f"test_{Path(mod).stem}_stub.py"
             hook_line = (
-                f"HOOK_PATH = '{self.fixture_hook}'\n" if self.fixture_hook else "HOOK_PATH = os.getenv('SELF_TEST_FIXTURE_HOOK')\n"
+                f"HOOK_PATH = '{self.fixture_hook}'\n" if self.fixture_hook else "HOOK_PATH = ''\n"
             )
             stub_code = (
                 "import importlib, inspect, json, os, dataclasses, enum, typing\n\n"
@@ -2410,7 +2472,7 @@ class SelfTestService:
         if not modules:
             return
 
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        repo = Path(settings.sandbox_repo_path)
         data_dir = Path(settings.sandbox_data_dir)
         if not data_dir.is_absolute():
             data_dir = repo / data_dir
@@ -2465,7 +2527,7 @@ class SelfTestService:
     def orphan_summary(path: str | Path | None = None) -> dict[str, dict[str, Any]]:
         """Return stored orphan testing metrics."""
 
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        repo = Path(settings.sandbox_repo_path)
         data_dir = Path(settings.sandbox_data_dir)
         if not data_dir.is_absolute():
             data_dir = repo / data_dir

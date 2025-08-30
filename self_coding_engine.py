@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping
+from typing import Iterable, Optional, Dict, List, Any, Tuple
 import subprocess
-import os
 import sys
 import json
 import base64
@@ -124,9 +123,9 @@ class SelfCodingEngine:
         self.trend_predictor = trend_predictor
         self.bot_name = bot_name
         self.safety_monitor = safety_monitor
-        if llm_client is None and os.getenv("OPENAI_API_KEY"):
+        if llm_client is None and _settings.openai_api_key:
             llm_client = ChatGPTClient(
-                os.getenv("OPENAI_API_KEY", ""), gpt_memory=self.gpt_memory
+                _settings.openai_api_key, gpt_memory=self.gpt_memory
             )
         self.llm_client = llm_client
         if self.llm_client:
@@ -142,8 +141,8 @@ class SelfCodingEngine:
             str, tuple[Path, str, str, List[Tuple[str, str, float]]]
         ] = {}
         self.bot_roles: Dict[str, str] = bot_roles or {}
-        path = audit_trail_path or os.getenv("AUDIT_LOG_PATH", "audit.log")
-        key_b64 = audit_privkey or os.getenv("AUDIT_PRIVKEY")
+        path = audit_trail_path or _settings.audit_log_path
+        key_b64 = audit_privkey or _settings.audit_privkey
         # Fallback to unsigned logging when no key is provided
         if key_b64:
             priv = base64.b64decode(key_b64) if isinstance(key_b64, str) else key_b64
@@ -371,6 +370,7 @@ class SelfCodingEngine:
         """Create helper text by asking an LLM using snippet context and retrieval context."""
         snippets = self.suggest_snippets(description, limit=3)
         context = "\n\n".join(s.code for s in snippets)
+
         def _fallback() -> str:
             """Return a minimal helper implementation."""
             func = f"auto_{description.replace(' ', '_')}"
@@ -507,9 +507,10 @@ class SelfCodingEngine:
             prompt += "\n\n### Patch history\n" + combined_history
 
         try:
+            run_id = path.name if path else description.replace(" ", "_")
             data = ask_with_memory(
                 self.llm_client,
-                f"self_coding_engine.generate_helper.{path.name if path else description.replace(' ', '_')}",
+                f"self_coding_engine.generate_helper.{run_id}",
                 prompt,
                 memory=self.gpt_memory,
                 tags=[ERROR_FIX, IMPROVEMENT_PATH],
@@ -860,7 +861,9 @@ class SelfCodingEngine:
                     )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
-            self._track_contributors(session_id, vectors, False, retrieval_metadata=retrieval_metadata)
+            self._track_contributors(
+                session_id, vectors, False, retrieval_metadata=retrieval_metadata
+            )
             self._log_attempt(
                 requesting_bot,
                 "apply_patch_result",
@@ -893,7 +896,9 @@ class SelfCodingEngine:
                     )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
-            self._track_contributors(session_id, vectors, False, retrieval_metadata=retrieval_metadata)
+            self._track_contributors(
+                session_id, vectors, False, retrieval_metadata=retrieval_metadata
+            )
             self._log_attempt(
                 requesting_bot,
                 "apply_patch_result",
@@ -1073,7 +1078,13 @@ class SelfCodingEngine:
                 )
             except Exception:
                 self.logger.exception("failed to record patch outcome")
-        self._track_contributors(session_id, vectors, bool(patch_id) and not reverted, patch_id, retrieval_metadata)
+        self._track_contributors(
+            session_id,
+            vectors,
+            bool(patch_id) and not reverted,
+            patch_id,
+            retrieval_metadata,
+        )
         self._log_attempt(
             requesting_bot,
             "apply_patch_result",

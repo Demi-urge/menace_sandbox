@@ -89,7 +89,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         *,
         score_threshold: float | None = None,
         score_weights: tuple[float, float, float, float, float, float] | None = None,
-        flakiness_runs: int = 5,
+        flakiness_runs: int | None = None,
         smoothing_factor: float = 0.5,
         weight_update_interval: float | None = None,
         settings: SandboxSettings | None = None,
@@ -100,29 +100,19 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.state_getter = state_getter
         self.error_predictor = error_predictor
         self._bad_hashes: set[str] = set()
-        settings = settings or SandboxSettings()
+        self._settings = settings or SandboxSettings()
         if score_threshold is None:
-            score_threshold = settings.score_threshold
+            score_threshold = self._settings.score_threshold
         if score_weights is None:
-            score_weights = tuple(settings.score_weights)
+            score_weights = tuple(self._settings.score_weights)
         self.score_threshold = float(score_threshold)
         self.score_weights = tuple(score_weights)
-        env_runs = os.getenv("FLAKINESS_RUNS")
-        if env_runs is not None:
-            try:
-                flakiness_runs = int(env_runs)
-            except (TypeError, ValueError):
-                self.logger.exception("invalid FLAKINESS_RUNS value")
+        if flakiness_runs is None:
+            flakiness_runs = self._settings.flakiness_runs
         self.flakiness_runs = max(1, int(flakiness_runs))
         self.smoothing_factor = max(0.0, min(1.0, float(smoothing_factor))) or 0.5
-        env_interval = os.getenv("WEIGHT_UPDATE_INTERVAL")
-        if weight_update_interval is None and env_interval is not None:
-            try:
-                weight_update_interval = float(env_interval)
-            except (TypeError, ValueError):
-                self.logger.exception("invalid WEIGHT_UPDATE_INTERVAL value")
         if weight_update_interval is None:
-            weight_update_interval = 60.0
+            weight_update_interval = self._settings.weight_update_interval
         self._last_weights_update = 0.0
         self._weight_update_interval = max(0.0, float(weight_update_interval))
         self._score_db: PatchHistoryDB | None = None
@@ -187,11 +177,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         except Exception:
             self.logger.exception("score history init failed")
             self._history_conn = None
-        self._test_timeout = float(os.getenv("TEST_RUN_TIMEOUT", "300"))
-        self._test_retries = int(os.getenv("TEST_RUN_RETRIES", "2"))
+        self._test_timeout = float(self._settings.test_run_timeout)
+        self._test_retries = int(self._settings.test_run_retries)
         self._score_backend = None
-        backend_spec = os.getenv("PATCH_SCORE_BACKEND") or os.getenv(
-            "PATCH_SCORE_BACKEND_URL"
+        backend_spec = (
+            self._settings.patch_score_backend or self._settings.patch_score_backend_url
         )
         if backend_spec:
             try:
@@ -434,7 +424,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         test_paths = [path]
         tmp: Path | None = None
         self._last_test_log = None
-        sandbox_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        sandbox_dir = Path(self._settings.sandbox_data_dir)
         sandbox_dir.mkdir(parents=True, exist_ok=True)
         try:
             logs = list(self._recent_logs())
@@ -1106,7 +1096,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 None if synergy_roi is None else float(synergy_roi),
                                 None if synergy_efficiency is None else float(synergy_efficiency),
                                 None if synergy_resilience is None else float(synergy_resilience),
-                                None if synergy_antifragility is None else float(synergy_antifragility),
+                                None
+                                if synergy_antifragility is None
+                                else float(synergy_antifragility),
                                 None if flakiness is None else float(flakiness),
                                 None if runtime_impact is None else float(runtime_impact),
                                 None if score is None else float(score),
