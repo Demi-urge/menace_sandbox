@@ -2059,12 +2059,14 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
     from roi_results_db import ROIResultsDB
     from workflow_stability_db import WorkflowStabilityDB
     from sandbox_runner import launch_sandbox
+    from sandbox_runner.bootstrap import initialize_autonomous_sandbox
 
     try:
         settings = load_sandbox_settings(config_path)
     except ValidationError as exc:
         raise SystemExit(f"Invalid bootstrap configuration: {exc}") from exc
 
+    initialize_autonomous_sandbox(settings)
     os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
     os.environ.setdefault("SANDBOX_DATA_DIR", settings.sandbox_data_dir)
 
