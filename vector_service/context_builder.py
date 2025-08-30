@@ -6,6 +6,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
+from error_parser import ParsedFailure
 import logging
 import asyncio
 import uuid
@@ -893,6 +894,7 @@ class ContextBuilder:
         return_stats: bool = False,
         prioritise: str | None = None,
         exclude_tags: Iterable[str] | None = None,
+        failure: ParsedFailure | None = None,
         **_: Any,
     ) -> Any:
         """Return a compact JSON context for ``query``.
@@ -914,6 +916,10 @@ class ContextBuilder:
         exclude_tags:
             Optional iterable of tag strings. Any retrieved vector containing
             one of these tags in its metadata is discarded before ranking.
+        failure:
+            Optional parsed failure metadata. When provided the error details
+            are appended to the retrieval query to help surface relevant
+            context for remediation.
 
         When ``include_vectors`` is True, the return value is a tuple of
         ``(context_json, session_id, vectors)`` where *vectors* is a list of
@@ -936,6 +942,12 @@ class ContextBuilder:
             pass
 
         prompt_tokens = len(query.split())
+        if failure:
+            parts = [query]
+            if failure.error_type:
+                parts.append(failure.error_type)
+            parts.extend(failure.reproduction_steps)
+            query = " ".join(parts)
         query = redact_text(query)
         exclude = set(exclude_tags or [])
         cache_key = (query, top_k, tuple(sorted(exclude)))
@@ -999,7 +1011,13 @@ class ContextBuilder:
                 tags = meta.get("tags") or bundle.get("tags") or ()
             except Exception:
                 tags = ()
-            tag_set = {str(t) for t in tags} if isinstance(tags, (list, tuple, set)) else {str(tags)} if tags else set()
+            tag_set = (
+                {str(t) for t in tags}
+                if isinstance(tags, (list, tuple, set))
+                else {str(tags)}
+                if tags
+                else set()
+            )
             if exclude and tag_set & exclude:
                 continue
             bucket, scored = self._bundle_to_entry(bundle, query)
@@ -1163,6 +1181,7 @@ class ContextBuilder:
         return_stats: bool = False,
         prioritise: str | None = None,
         exclude_tags: Iterable[str] | None = None,
+        failure: ParsedFailure | None = None,
         **kwargs: Any,
     ) -> Any:
         """Alias for :meth:`build_context` with optional tag exclusion."""
@@ -1174,6 +1193,7 @@ class ContextBuilder:
             "return_stats": return_stats,
             "prioritise": prioritise,
             "exclude_tags": exclude_tags,
+            "failure": failure,
         }
         params.update(kwargs)
         return self.build_context(query, top_k=top_k, **params)

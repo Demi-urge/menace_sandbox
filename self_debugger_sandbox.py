@@ -37,6 +37,7 @@ from .code_database import PatchHistoryDB, _hash_code
 from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
 from .error_cluster_predictor import ErrorClusterPredictor
+from .error_parser import FailureCache, ParsedFailure, parse_failure
 try:
     from .sandbox_settings import SandboxSettings
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -205,6 +206,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             "synergy_resilience": (0.0, 1.0),
             "synergy_antifragility": (0.0, 1.0),
         }
+        self._failure_cache = FailureCache()
         self._last_test_log: Path | None = None
         self.graph = KnowledgeGraph()
         self.error_logger = ErrorLogger(knowledge_graph=self.graph)
@@ -419,8 +421,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     # ------------------------------------------------------------------
     def _run_tests(
         self, path: Path, env: dict[str, str] | None = None
-    ) -> tuple[float, float]:
-        """Return coverage percentage and runtime for tests at *path* with telemetry tests."""
+    ) -> tuple[float, float] | tuple[float, float, ParsedFailure]:
+        """Return coverage and runtime and optionally a :class:`ParsedFailure`."""
         test_paths = [path]
         tmp: Path | None = None
         self._last_test_log = None
@@ -439,6 +441,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             self.logger.exception("failed to create telemetry tests")
 
         start = time.perf_counter()
+        failure: ParsedFailure | None = None
         try:
             percent = with_retry(
                 lambda: asyncio.run(self._coverage_percent(test_paths, env)),
@@ -448,26 +451,38 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             )
         except CoverageSubprocessError as exc:
             runtime = time.perf_counter() - start
+            output = str(exc.output)
             log_file = sandbox_dir / f"fail_{int(time.time()*1000)}.log"
             try:
-                log_file.write_text(str(exc.output))
+                log_file.write_text(output)
                 self._last_test_log = log_file
             except Exception:
                 self.logger.exception("failed to write test log")
+            failure = parse_failure(output)
+            if not self._failure_cache.seen(failure.signature):
+                self._failure_cache.add(failure)
             self._record_exception(exc)
-            raise RuntimeError("test subprocess failed") from exc
-        except Exception as exc:
             percent = 0.0
+        except Exception as exc:
             runtime = time.perf_counter() - start
+            output = str(exc)
+            failure = parse_failure(output)
+            if not self._failure_cache.seen(failure.signature):
+                self._failure_cache.add(failure)
+            percent = 0.0
             self._record_exception(exc)
             self.logger.exception("coverage generation failed")
         else:
             runtime = time.perf_counter() - start
+            percent = float(percent or 0.0)
 
         if tmp:
             tmp.unlink(missing_ok=True)
 
-        return float(percent or 0.0), runtime
+        result = (float(percent or 0.0), runtime)
+        if failure is not None:
+            result = result + (failure,)
+        return result
 
     # ------------------------------------------------------------------
     def _test_flakiness(
@@ -484,7 +499,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
         for i in range(n):
             try:
-                cov, _ = self._run_tests(path, env)
+                res = self._run_tests(path, env)
+                cov = res[0]
                 self.logger.info(
                     "flakiness run",
                     extra=log_record(
@@ -1214,9 +1230,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     runtime_delta = 0.0
                     reason = None
                     try:
-                        before_cov, before_runtime = await asyncio.to_thread(
-                            self._run_tests, root_test
-                        )
+                        res = await asyncio.to_thread(self._run_tests, root_test)
+                        before_cov, before_runtime = res[:2]
                         before_err = getattr(
                             self.engine, "_current_errors", lambda: 0
                         )()
@@ -1234,9 +1249,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             self.logger.exception(
                                 "post_round_orphan_scan after apply_patch failed"
                             )
-                        after_cov, after_runtime = await asyncio.to_thread(
-                            self._run_tests, root_test
-                        )
+                        res = await asyncio.to_thread(self._run_tests, root_test)
+                        after_cov, after_runtime = res[:2]
                         after_err = getattr(self.engine, "_current_errors", lambda: 0)()
                         coverage_delta = (
                             (after_cov - before_cov)
@@ -1399,7 +1413,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             runtime_delta = 0.0
             reason = None
             try:
-                before_cov, before_runtime = self._run_tests(root_test)
+                res = self._run_tests(root_test)
+                before_cov, before_runtime = res[:2]
                 before_err = getattr(self.engine, "_current_errors", lambda: 0)()
                 pid, reverted, roi_delta = self.engine.apply_patch(
                     root_test,
@@ -1421,7 +1436,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         self.policy.update(state, roi_delta)
                     except Exception as exc:
                         self.logger.exception("policy patch update failed", exc)
-                after_cov, after_runtime = self._run_tests(root_test)
+                res = self._run_tests(root_test)
+                after_cov, after_runtime = res[:2]
                 after_err = getattr(self.engine, "_current_errors", lambda: 0)()
                 coverage_delta = (
                     (after_cov - before_cov)
