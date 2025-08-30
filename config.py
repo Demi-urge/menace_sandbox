@@ -189,6 +189,10 @@ class ContextBuilderConfig(BaseModel):
         1.0,
         description="Penalty multiplier applied to risk scores from patch safety checks",
     )
+    roi_tag_penalties: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Score adjustments applied based on ROI tags",
+    )
     enhancement_weight: float = Field(
         1.0,
         description="Multiplier applied to enhancement_score when ranking patches",

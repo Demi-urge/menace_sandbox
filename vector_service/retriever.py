@@ -94,6 +94,16 @@ class Retriever:
     )
     patch_safety: PatchSafety = field(default_factory=PatchSafety)
     risk_penalty: float = 1.0
+    roi_tag_weights: Dict[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        try:
+            from config import CONFIG
+            cfg = getattr(CONFIG, "context_builder", None)
+            if cfg is not None and not self.roi_tag_weights:
+                self.roi_tag_weights = getattr(cfg, "roi_tag_penalties", {})
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def _get_retriever(self) -> UniversalRetriever:
@@ -191,7 +201,12 @@ class Retriever:
             if lic in denylist or _LICENSE_DENYLIST.get(fp) in denylist:
                 penalty += 1.0
             total_penalty = penalty + risk_score * self.risk_penalty
-            item["score"] = max(float(item.get("score", 0.0)) - total_penalty, 0.0)
+            score = max(float(item.get("score", 0.0)) - total_penalty, 0.0)
+            roi_tag = meta.get("roi_tag")
+            if roi_tag is not None:
+                score = max(score - self.roi_tag_weights.get(str(roi_tag), 0.0), 0.0)
+                item["roi_tag"] = roi_tag
+            item["score"] = score
             results.append(item)
         if filtered:
             try:
@@ -503,6 +518,7 @@ class PatchRetriever:
     metric: str | None = None
     enhancement_weight: float = 1.0
     vector_metrics: VectorMetricsDB | None = None
+    roi_tag_weights: Dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.vector_service is None:
@@ -541,6 +557,14 @@ class PatchRetriever:
                 self.vector_metrics = VectorMetricsDB()
             except Exception:
                 self.vector_metrics = None
+        if not self.roi_tag_weights:
+            try:
+                from config import CONFIG
+                cfg = getattr(CONFIG, "context_builder", None)
+                if cfg is not None:
+                    self.roi_tag_weights = getattr(cfg, "roi_tag_penalties", {})
+            except Exception:
+                pass
 
     def reload_from_config(self) -> None:
         """Reload configuration for backend and metric."""
@@ -654,6 +678,9 @@ class PatchRetriever:
             score = similarity
             if self.enhancement_weight:
                 score *= 1.0 + max(0.0, enh) * self.enhancement_weight
+            roi_tag = md.get("roi_tag") if isinstance(md, dict) else None
+            if roi_tag is not None:
+                score = max(score - self.roi_tag_weights.get(str(roi_tag), 0.0), 0.0)
 
             item = {
                 "origin_db": origin,
@@ -663,6 +690,8 @@ class PatchRetriever:
                 "text": text_val,
                 "metadata": md,
             }
+            if roi_tag is not None:
+                item["roi_tag"] = roi_tag
             if enh:
                 item["enhancement_score"] = enh
             results.append(item)
