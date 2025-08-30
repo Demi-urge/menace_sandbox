@@ -61,6 +61,8 @@ colorama==0.4.6
     # via radon
 contourpy==1.3.2
     # via matplotlib
+croniter==6.0.0
+    # via menace (pyproject.toml)
 cryptography==45.0.5
     # via menace (pyproject.toml)
 cycler==0.12.1

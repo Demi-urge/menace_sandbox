@@ -172,7 +172,6 @@ self_test_container_timeouts_total = _me.Gauge(
 setattr(_me, "self_test_container_failures_total", self_test_container_failures_total)
 setattr(_me, "self_test_container_timeouts_total", self_test_container_timeouts_total)
 
-_container_lock = Lock()
 _file_lock = FileLock(test_config.lock_file)
 
 # ---------------------------------------------------------------------------
@@ -679,6 +678,11 @@ class SelfTestService:
         # captured metrics for modules during the most recent run
         self.module_metrics: dict[str, dict[str, Any]] = {}
 
+        # internal lock guarding container operations
+        self._container_lock = Lock()
+        # track active container IDs for cleanup
+        self._active_containers: set[str] = set()
+
     def _default_integration(
         self,
         mods: list[str],
@@ -1015,13 +1019,23 @@ class SelfTestService:
             cid = cid.strip()
             if cid and all(ch in "0123456789abcdef" for ch in cid.lower()):
                 await self._force_remove_container(cid)
+    async def _cleanup_active_containers(self) -> None:
+        """Remove any containers spawned during the current run."""
+        to_remove = list(self._active_containers)
+        self._active_containers.clear()
+        for cid in to_remove:
+            try:
+                await self._force_remove_container(cid)
+            except Exception:
+                self.logger.exception("failed to remove active container %s", cid)
 
     async def _cleanup_containers(self) -> None:
         """Remove containers labelled for self tests and exit."""
         try:
-            with _file_lock:
-                async with _container_lock:
+            async with self._container_lock:
+                with _file_lock:
                     if await self._docker_available():
+                        await self._cleanup_active_containers()
                         await self._remove_stale_containers()
         except Exception:
             self.logger.exception("container cleanup failed")
@@ -1879,13 +1893,15 @@ class SelfTestService:
             _restore_env()
             raise
 
+        self._active_containers.clear()
 
         try:
             async with AsyncExitStack() as stack:
                 if self.use_container:
                     try:
                         stack.enter_context(_file_lock)
-                        await stack.enter_async_context(_container_lock)
+                        await stack.enter_async_context(self._container_lock)
+                        stack.push_async_callback(self._cleanup_active_containers)
                     except Exception:
                         self.logger.exception("failed to acquire self-test locks")
                         raise
@@ -1999,6 +2015,9 @@ class SelfTestService:
                     delay = 0.1
                     records: list[dict[str, Any]] = []
                     tmp_name = tmp
+                    timeout_flag = False
+                    if is_container and name:
+                        self._active_containers.add(name)
                     try:
                         for attempt in range(attempts):
                             proc = await asyncio.create_subprocess_exec(
@@ -2011,9 +2030,10 @@ class SelfTestService:
                                     proc.communicate(),
                                     timeout=self.container_timeout if is_container else None,
                                 )
-                            except asyncio.TimeoutError as exc:
+                            except asyncio.TimeoutError:
+                                timeout_flag = True
                                 proc.kill()
-                                await proc.wait()
+                                out, err = await proc.communicate()
                                 if is_container and name:
                                     await self._force_remove_container(name)
                                 try:
@@ -2085,13 +2105,15 @@ class SelfTestService:
                                     "failed to remove temp file",
                                     extra=log_record(path=tmp_name, error=exc),
                                 )
+                        if is_container and name:
+                            self._active_containers.discard(name)
 
                     summary = report.get("summary", {})
                     pcount = int(summary.get("passed", 0))
                     fcount = int(summary.get("failed", 0))
                     cov = float(summary.get("coverage", 0.0))
                     runtime = float(summary.get("duration", 0.0))
-                    failed_flag = report.get("exitcode", 0) != 0
+                    failed_flag = timeout_flag or report.get("exitcode", 0) != 0
                     out_snip = out.decode(errors="ignore")[:1000]
                     err_snip = err.decode(errors="ignore")[:1000]
                     log_snip = ""
@@ -2115,6 +2137,15 @@ class SelfTestService:
                             log_snip = (lout.decode(errors="ignore") if lout else "")[:1000]
                         except Exception:
                             log_snip = ""
+                    if failed_flag:
+                        if out_snip:
+                            self.logger.warning(
+                                "container %s stdout: %s", name or cmd[0], out_snip
+                            )
+                        if err_snip:
+                            self.logger.warning(
+                                "container %s stderr: %s", name or cmd[0], err_snip
+                            )
                     return (
                         pcount,
                         fcount,
@@ -2380,8 +2411,23 @@ class SelfTestService:
                 raise RuntimeError("self tests failed")
         finally:
             _restore_env()
-    async def _schedule_loop(self, interval: float, *, refresh_orphans: bool = False) -> None:
+    async def _schedule_loop(
+        self,
+        interval: float | None = None,
+        *,
+        cron: str | None = None,
+        refresh_orphans: bool = False,
+    ) -> None:
         assert self._async_stop is not None
+        cron_iter = None
+        if cron:
+            try:
+                from croniter import croniter
+
+                cron_iter = croniter(cron, datetime.now())
+            except Exception:
+                self.logger.exception("invalid cron expression: %s", cron)
+                return
         while not self._async_stop.is_set():
             try:
                 if refresh_orphans:
@@ -2390,8 +2436,13 @@ class SelfTestService:
                     await self._run_once()
             except Exception:
                 self.logger.exception("self test run failed")
+            if cron_iter:
+                next_time = cron_iter.get_next(datetime)
+                wait_time = max((next_time - datetime.now()).total_seconds(), 0)
+            else:
+                wait_time = interval or 0
             try:
-                await asyncio.wait_for(self._async_stop.wait(), timeout=interval)
+                await asyncio.wait_for(self._async_stop.wait(), timeout=wait_time)
             except asyncio.TimeoutError:
                 self.logger.debug("self test interval wait elapsed")
 
@@ -2549,6 +2600,7 @@ class SelfTestService:
         self,
         interval: float = 86400.0,
         *,
+        cron: str | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
         health_port: int | None = None,
         refresh_orphans: bool = False,
@@ -2570,7 +2622,13 @@ class SelfTestService:
                 self._metrics_started = True
             except Exception:
                 self.logger.exception("failed to start metrics server")
-        self._task = self._loop.create_task(self._schedule_loop(interval, refresh_orphans=refresh_orphans))
+        self._task = self._loop.create_task(
+            self._schedule_loop(
+                None if cron else interval,
+                cron=cron,
+                refresh_orphans=refresh_orphans,
+            )
+        )
         return self._task
 
     # ------------------------------------------------------------------
@@ -2578,6 +2636,7 @@ class SelfTestService:
         self,
         interval: float = 86400.0,
         *,
+        cron: str | None = None,
         runs: int | None = None,
         refresh_orphans: bool = False,
     ) -> None:
@@ -2590,6 +2649,15 @@ class SelfTestService:
             except Exception:
                 self.logger.exception("failed to start metrics server")
         count = 0
+        cron_iter = None
+        if cron:
+            try:
+                from croniter import croniter
+
+                cron_iter = croniter(cron, datetime.now())
+            except Exception:
+                self.logger.exception("invalid cron expression: %s", cron)
+                return
         while True:
             try:
                 sig = inspect.signature(self._run_once)
@@ -2604,10 +2672,16 @@ class SelfTestService:
             count += 1
             if runs is not None and count >= runs:
                 break
-            time.sleep(interval)
+            if cron_iter:
+                next_time = cron_iter.get_next(datetime)
+                sleep_time = max((next_time - datetime.now()).total_seconds(), 0)
+            else:
+                sleep_time = interval
+            time.sleep(sleep_time)
         if self._metrics_started:
             _me.stop_metrics_server()
             self._metrics_started = False
+        asyncio.run(self._cleanup_containers())
 
     # ------------------------------------------------------------------
     async def stop(self) -> None:
@@ -2623,6 +2697,7 @@ class SelfTestService:
         except asyncio.CancelledError:
             self.logger.debug("self test task cancelled")
         finally:
+            await self._cleanup_containers()
             self._task = None
             self._stop_health_server()
             if self._metrics_started:
@@ -2788,6 +2863,7 @@ def cli(argv: list[str] | None = None) -> int:
     sched = sub.add_parser("run-scheduled", help="Run self tests on an interval")
     sched.add_argument("paths", nargs="*", help="Test paths or patterns")
     sched.add_argument("--interval", type=float, default=86400.0, help="Run interval in seconds")
+    sched.add_argument("--cron", help="Cron expression for scheduling runs")
     sched.add_argument("--workers", type=int, default=1, help="Number of pytest workers")
     sched.add_argument(
         "--container-image",
@@ -3045,7 +3121,9 @@ def cli(argv: list[str] | None = None) -> int:
         )
         try:
             service.run_scheduled(
-                interval=args.interval, refresh_orphans=args.refresh_orphans
+                interval=args.interval,
+                cron=args.cron,
+                refresh_orphans=args.refresh_orphans,
             )
         except KeyboardInterrupt as exc:
             logger = get_logger(__name__)

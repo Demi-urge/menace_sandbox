@@ -52,6 +52,10 @@ sys.modules.setdefault("orphan_discovery", orphan_stub)
 def load_self_test_service():
     if "menace" in sys.modules:
         del sys.modules["menace"]
+    sys.modules.setdefault('data_bot', types.SimpleNamespace(DataBot=object))
+    sys.modules.setdefault('error_bot', types.SimpleNamespace(ErrorDB=object))
+    sys.modules.setdefault('error_logger', types.SimpleNamespace(ErrorLogger=object))
+    sys.modules.setdefault('knowledge_graph', types.SimpleNamespace(KnowledgeGraph=object))
     pkg = types.ModuleType("menace")
     pkg.__path__ = [str(ROOT)]
     pkg.__spec__ = importlib.machinery.ModuleSpec("menace", loader=None, is_package=True)
@@ -67,7 +71,6 @@ def load_self_test_service():
 
 sts = load_self_test_service()
 SelfTestService = sts.SelfTestService
-_container_lock = sts._container_lock
 
 
 def test_cleanup_lock_stress(monkeypatch):
@@ -126,4 +129,5 @@ def test_cleanup_lock_stress(monkeypatch):
     asyncio.run(run())
     assert max_concurrent == 1
     assert calls == 3
-    assert not _container_lock.locked()
+    assert not svc1._container_lock.locked()
+    assert not svc2._container_lock.locked()
