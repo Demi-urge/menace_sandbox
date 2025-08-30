@@ -102,13 +102,88 @@ class _FallbackPlanner:
         return records
 
     # ------------------------------------------------------------------
+    def _evaluate_chain(self, chain: Sequence[str]) -> dict[str, Any] | None:
+        """Compute aggregated metrics for ``chain``.
+
+        Each workflow in ``chain`` must exhibit a positive average ROI and be
+        considered stable by :class:`WorkflowStabilityDB`.  The resulting
+        record mirrors the structure produced by :meth:`discover_and_persist`.
+        ``None`` is returned when any workflow fails the checks.
+        """
+
+        roi_values: list[float] = []
+        entropies: list[float] = []
+        failures = 0
+
+        for wid in chain:
+            roi = 0.0
+            if self.roi_db is not None:
+                try:
+                    results = self.roi_db.fetch_results(wid)
+                    recent = [r.roi_gain for r in results[-self.roi_window :]]
+                    roi = fmean(recent) if recent else 0.0
+                except Exception:  # pragma: no cover - best effort
+                    roi = 0.0
+
+            stable = True
+            entropy = 0.0
+            if self.stability_db is not None:
+                try:
+                    entry = self.stability_db.data.get(wid, {})
+                    failures += int(entry.get("failures", 0))
+                    entropy = float(entry.get("entropy", 0.0))
+                    stable = self.stability_db.is_stable(
+                        wid, current_roi=roi, threshold=1.0
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    stable = True
+
+            if roi <= 0.0 or not stable:
+                return None
+
+            roi_values.append(roi)
+            entropies.append(entropy)
+
+        if not roi_values:
+            return None
+
+        chain_roi = fmean(roi_values)
+        chain_entropy = fmean(entropies) if entropies else 0.0
+        record = {
+            "chain": list(chain),
+            "roi_gain": chain_roi,
+            "failures": failures,
+            "entropy": chain_entropy,
+        }
+        self.cluster_map[tuple(chain)] = {"last_roi": chain_roi}
+        return record
+
+    # ------------------------------------------------------------------
     def mutate_pipeline(
         self,
         chain: Sequence[str],
         workflows: Mapping[str, Callable[[], Any]],
         **_: Any,
-    ) -> list[Mapping[str, Any]]:  # pragma: no cover - interface stub
-        return []
+    ) -> list[Mapping[str, Any]]:
+        """Create simple mutations by appending alternative workflows.
+
+        For every workflow in ``workflows`` that is not already part of
+        ``chain`` a new candidate chain is formed by appending the workflow.  A
+        candidate is only returned when all steps have positive ROI and are
+        stable according to the databases available to the planner.
+        """
+
+        results: list[Mapping[str, Any]] = []
+        for wid in workflows:
+            if wid in chain:
+                continue
+            mutated = list(chain) + [wid]
+            rec = self._evaluate_chain(mutated)
+            if rec:
+                results.append(rec)
+
+        results.sort(key=lambda r: r["roi_gain"], reverse=True)
+        return results
 
     # ------------------------------------------------------------------
     def split_pipeline(
@@ -116,8 +191,22 @@ class _FallbackPlanner:
         chain: Sequence[str],
         workflows: Mapping[str, Callable[[], Any]],
         **_: Any,
-    ) -> list[Mapping[str, Any]]:  # pragma: no cover - interface stub
-        return []
+    ) -> list[Mapping[str, Any]]:
+        """Split ``chain`` into two halves and score each half."""
+
+        if len(chain) <= 1:
+            return []
+
+        mid = len(chain) // 2
+        segments = [chain[:mid], chain[mid:]]
+        results: list[Mapping[str, Any]] = []
+        for seg in segments:
+            rec = self._evaluate_chain(seg)
+            if rec:
+                results.append(rec)
+
+        results.sort(key=lambda r: r["roi_gain"], reverse=True)
+        return results
 
     # ------------------------------------------------------------------
     def remerge_pipelines(
@@ -125,8 +214,21 @@ class _FallbackPlanner:
         pipelines: Sequence[Sequence[str]],
         workflows: Mapping[str, Callable[[], Any]],
         **_: Any,
-    ) -> list[Mapping[str, Any]]:  # pragma: no cover - interface stub
-        return []
+    ) -> list[Mapping[str, Any]]:
+        """Combine pipelines pairwise and score merged candidates."""
+
+        results: list[Mapping[str, Any]] = []
+        for i in range(len(pipelines)):
+            for j in range(i + 1, len(pipelines)):
+                merged = list(pipelines[i]) + [
+                    w for w in pipelines[j] if w not in pipelines[i]
+                ]
+                rec = self._evaluate_chain(merged)
+                if rec:
+                    results.append(rec)
+
+        results.sort(key=lambda r: r["roi_gain"], reverse=True)
+        return results
 
 
 settings = load_sandbox_settings()

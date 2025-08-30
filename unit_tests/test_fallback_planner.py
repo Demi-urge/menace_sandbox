@@ -67,3 +67,97 @@ def test_fallback_planner_uses_roi_and_stability():
         }
     ]
 
+
+def test_mutate_pipeline_appends_positive_workflow():
+    Fallback = _load_fallback_planner()
+    planner = Fallback()
+    planner.roi_db = DummyROI({"a": [0.2, 0.3], "b": [0.5], "c": [-0.1]})
+    planner.stability_db = DummyStability(
+        {
+            "a": {"failures": 1, "entropy": 0.1},
+            "b": {"failures": 0, "entropy": 0.2},
+            "c": {"failures": 0, "entropy": 0.3},
+        }
+    )
+
+    results = planner.mutate_pipeline(
+        ["a"], {"a": lambda: None, "b": lambda: None, "c": lambda: None}
+    )
+
+    assert results == [
+        {
+            "chain": ["a", "b"],
+            "roi_gain": pytest.approx(0.375),
+            "failures": 1,
+            "entropy": pytest.approx(0.15),
+        }
+    ]
+
+
+def test_split_pipeline_scores_segments():
+    Fallback = _load_fallback_planner()
+    planner = Fallback()
+    planner.roi_db = DummyROI(
+        {
+            "a": [0.2],
+            "b": [0.4],
+            "c": [0.3],
+            "d": [0.1],
+        }
+    )
+    planner.stability_db = DummyStability(
+        {
+            "a": {"failures": 0, "entropy": 0.0},
+            "b": {"failures": 0, "entropy": 0.0},
+            "c": {"failures": 0, "entropy": 0.0},
+            "d": {"failures": 0, "entropy": 0.0},
+        }
+    )
+
+    records = planner.split_pipeline(
+        ["a", "b", "c", "d"],
+        {"a": lambda: None, "b": lambda: None, "c": lambda: None, "d": lambda: None},
+    )
+
+    assert records == [
+        {
+            "chain": ["a", "b"],
+            "roi_gain": pytest.approx(0.3),
+            "failures": 0,
+            "entropy": 0.0,
+        },
+        {
+            "chain": ["c", "d"],
+            "roi_gain": pytest.approx(0.2),
+            "failures": 0,
+            "entropy": 0.0,
+        },
+    ]
+
+
+def test_remerge_pipelines_combines_positive_pairs():
+    Fallback = _load_fallback_planner()
+    planner = Fallback()
+    planner.roi_db = DummyROI({"a": [0.4], "b": [0.5], "c": [-0.2]})
+    planner.stability_db = DummyStability(
+        {
+            "a": {"failures": 0, "entropy": 0.0},
+            "b": {"failures": 0, "entropy": 0.0},
+            "c": {"failures": 0, "entropy": 0.0},
+        }
+    )
+
+    results = planner.remerge_pipelines(
+        [["a"], ["b"], ["c"]],
+        {"a": lambda: None, "b": lambda: None, "c": lambda: None},
+    )
+
+    assert results == [
+        {
+            "chain": ["a", "b"],
+            "roi_gain": pytest.approx(0.45),
+            "failures": 0,
+            "entropy": 0.0,
+        }
+    ]
+
