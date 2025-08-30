@@ -11,6 +11,7 @@ heuristic fallbacks used across the code base.
 from dataclasses import dataclass, field
 import time
 import asyncio
+import math
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Sequence
 
 from retrieval_cache import RetrievalCache
@@ -267,6 +268,7 @@ class Retriever:
         return results
 
     # ------------------------------------------------------------------
+
     @log_and_measure
     def search(
         self,
@@ -383,6 +385,7 @@ class Retriever:
         return FallbackResult(reason, merged, confidence)
 
     # ------------------------------------------------------------------
+
     @log_and_measure
     async def search_async(
         self,
@@ -496,23 +499,51 @@ class PatchRetriever:
             except Exception:  # pragma: no cover - fallback to absolute import
                 from vector_service.vectorizer import SharedVectorService  # type: ignore
             self.vector_service = SharedVectorService()
+        backend = "annoy"
+        path = "vectors.index"
+        dim = 0
+        metric = "cosine"
+        try:  # pragma: no cover - configuration optional in tests
+            from config import CONFIG
+            cfg = getattr(CONFIG, "vector_store", None)
+            vec_cfg = getattr(CONFIG, "vector", None)
+            if cfg is not None:
+                backend = getattr(cfg, "backend", backend)
+                path = getattr(cfg, "path", path)
+                metric = getattr(cfg, "metric", metric)
+            if vec_cfg is not None:
+                dim = getattr(vec_cfg, "dimensions", dim)
+        except Exception:
+            pass
         if self.store is None:
             try:
-                from .vector_store import get_default_vector_store  # type: ignore
+                from .vector_store import create_vector_store  # type: ignore
             except Exception:  # pragma: no cover - fallback
-                from vector_service.vector_store import get_default_vector_store  # type: ignore
-            self.store = get_default_vector_store()
+                from vector_service.vector_store import create_vector_store  # type: ignore
+            self.store = create_vector_store(dim or 0, path, backend=backend)
         if not self.metric:
-            # Pull similarity metric from configuration when available.  The
-            # global ``vector.distance_metric`` field supports ``"cosine"`` or
-            # ``"inner_product"`` and defaults to cosine when unspecified.
-            metric = "cosine"
-            try:  # pragma: no cover - configuration optional in tests
-                from config import CONFIG
+            self.metric = str(metric).lower()
 
-                metric = getattr(getattr(CONFIG, "vector", None), "distance_metric", metric)
-            except Exception:
-                pass
+    def reload_from_config(self) -> None:
+        """Reload configuration for backend and metric."""
+        try:
+            from config import CONFIG
+            cfg = getattr(CONFIG, "vector_store", None)
+            vec_cfg = getattr(CONFIG, "vector", None)
+        except Exception:
+            return
+        if cfg is None or vec_cfg is None:
+            return
+        backend = getattr(cfg, "backend", None)
+        path = getattr(cfg, "path", None)
+        metric = getattr(cfg, "metric", None)
+        try:
+            from .vector_store import create_vector_store  # type: ignore
+        except Exception:  # pragma: no cover - fallback
+            from vector_service.vector_store import create_vector_store  # type: ignore
+        if backend and path:
+            self.store = create_vector_store(vec_cfg.dimensions, path, backend=backend)
+        if metric:
             self.metric = str(metric).lower()
 
     # ------------------------------------------------------------------
@@ -535,7 +566,18 @@ class PatchRetriever:
             return float(sum(x * y for x, y in zip(a, b)) / (na * nb))
         raise ValueError(f"unsupported metric: {self.metric}")
 
+    def _to_unit_interval(self, score: float) -> float:
+        if (self.metric or "cosine").lower() == "cosine":
+            return (score + 1.0) / 2.0
+        return 1.0 / (1.0 + math.exp(-score))
+
+    def _normalise_distance(self, dist: float, backend: str) -> float:
+        if "qdrant" in backend:
+            return max(0.0, min(1.0, float(dist)))
+        return 1.0 / (1.0 + float(dist))
+
     # ------------------------------------------------------------------
+
     @log_and_measure
     def search(self, query: str, *, top_k: int | None = None) -> List[Dict[str, Any]]:
         if self.store is None or self.vector_service is None:
@@ -544,26 +586,31 @@ class PatchRetriever:
         ids = getattr(self.store, "ids", [])
         vectors = getattr(self.store, "vectors", [])
         meta = getattr(self.store, "meta", [])
+        backend = self.store.__class__.__name__.lower()
         results: List[Dict[str, Any]] = []
-        for vid, _dist in self.store.query(vec, top_k=top_k or self.top_k):
-            try:
+        for vid, dist in self.store.query(vec, top_k=top_k or self.top_k):
+            md: Dict[str, Any] = {}
+            text_val = ""
+            origin = "patch"
+            score: float
+            if vid in ids:
                 idx = ids.index(vid)
-            except ValueError:
-                continue
-            vec2 = vectors[idx] if idx < len(vectors) else []
-            score = self._similarity(vec, vec2)
-            m = meta[idx] if idx < len(meta) else {}
-            md = m.get("metadata", {}) if isinstance(m, dict) else {}
-            text = md.get("diff") or md.get("text") or ""
-            results.append(
-                {
-                    "origin_db": m.get("origin_db", "patch"),
-                    "record_id": str(vid),
-                    "score": score,
-                    "text": text,
-                    "metadata": md,
-                }
-            )
+                vec2 = vectors[idx] if idx < len(vectors) else []
+                raw = self._similarity(vec, vec2)
+                score = self._to_unit_interval(raw)
+                m = meta[idx] if idx < len(meta) else {}
+                md = m.get("metadata", {}) if isinstance(m, dict) else {}
+                text_val = md.get("diff") or md.get("text") or ""
+                origin = m.get("origin_db", "patch")
+            else:
+                score = self._normalise_distance(dist, backend)
+            results.append({
+                "origin_db": origin,
+                "record_id": str(vid),
+                "score": score,
+                "text": text_val,
+                "metadata": md,
+            })
         return results
 
 
@@ -571,23 +618,11 @@ _patch_retriever: PatchRetriever | None = None
 
 
 def _get_patch_retriever() -> PatchRetriever:
-    """Return a configured :class:`PatchRetriever` instance.
-
-    The retriever is created lazily on first use and draws its similarity
-    metric and vector store backend from the global configuration.  Reusing a
-    single instance keeps the in-memory vector store loaded between calls.
-    """
+    """Return a configured :class:`PatchRetriever` instance."""
 
     global _patch_retriever
     if _patch_retriever is None:
-        metric = "cosine"
-        try:  # pragma: no cover - configuration optional in tests
-            from config import CONFIG
-
-            metric = getattr(getattr(CONFIG, "vector", None), "distance_metric", metric)
-        except Exception:
-            pass
-        _patch_retriever = PatchRetriever(metric=str(metric).lower())
+        _patch_retriever = PatchRetriever()
     return _patch_retriever
 
 
