@@ -1,5 +1,8 @@
 import logging
 import os
+
+import pytest
+
 from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
 
@@ -10,8 +13,6 @@ def test_run_logs_stat_error(caplog):
         os.stat("/definitely/missing/path")
 
     with caplog.at_level(logging.ERROR):
-        try:
+        with pytest.raises(FileNotFoundError):
             runner.run(wf)
-        except Exception:
-            pass
-    assert any("unexpected error" in r.message for r in caplog.records)
+    assert any("/definitely/missing/path" in r.message for r in caplog.records)
