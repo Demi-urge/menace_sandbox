@@ -64,6 +64,12 @@ except Exception:  # pragma: no cover - tiny fallback helper
             return text
         return text[:117] + "..."
 
+# Optional patch history ----------------------------------------------------
+try:  # pragma: no cover - optional dependency
+    from code_database import PatchHistoryDB  # type: ignore
+except Exception:  # pragma: no cover
+    PatchHistoryDB = None  # type: ignore
+
 
 @dataclass
 class _ScoredEntry:
@@ -661,6 +667,69 @@ class ContextBuilder:
         return key_map.get(origin, ""), _ScoredEntry(entry, score, origin, vec_id, meta)
 
     # ------------------------------------------------------------------
+    def _format_entry(self, scored: _ScoredEntry, bucket: str) -> Dict[str, Any]:
+        """Merge metadata and inject patch history details.
+
+        Parameters
+        ----------
+        scored:
+            Entry produced by :meth:`_bundle_to_entry`.
+        bucket:
+            Target bucket name used for final context payload.
+        """
+
+        full: Dict[str, Any] = dict(scored.entry)
+        meta = scored.metadata or {}
+        full.update(meta)
+
+        patch_id = meta.get("patch_id") if isinstance(meta, dict) else None
+        try:
+            patch_id = int(patch_id) if patch_id is not None else None
+        except Exception:
+            patch_id = None
+
+        if patch_id and PatchHistoryDB is not None:
+            try:
+                rec = PatchHistoryDB().get(patch_id)  # type: ignore[operator]
+            except Exception:
+                rec = None
+            if rec is not None:
+                rec_dict = rec.__dict__ if hasattr(rec, "__dict__") else dict(rec)
+                desc = rec_dict.get("description") or rec_dict.get("summary") or ""
+                diff = rec_dict.get("diff") or ""
+                outcome = rec_dict.get("outcome") or ""
+                if desc:
+                    desc = self._summarise(str(desc))
+                    full.setdefault("desc", desc)
+                    full["summary"] = desc
+                if diff:
+                    diff = self._summarise(str(diff))
+                    full["diff"] = diff
+                if outcome:
+                    outcome = self._summarise(str(outcome))
+                    full["outcome"] = outcome
+
+        summary = {
+            k: v
+            for k, v in full.items()
+            if k not in {"win_rate", "regret_rate", "flags"}
+        }
+        cand = {
+            "bucket": bucket,
+            "summary": summary,
+            "meta": full,
+            "raw": meta,
+            "score": scored.score,
+            "origin": scored.origin,
+            "vector_id": scored.vector_id,
+            "summarised": False,
+        }
+        cand["tokens"] = self._count_tokens(
+            json.dumps(summary, separators=(",", ":"))
+        )
+        return cand
+
+    # ------------------------------------------------------------------
     @log_and_measure
     def build_context(
         self,
@@ -770,23 +839,7 @@ class ContextBuilder:
                 continue
             items.sort(key=lambda e: e.score, reverse=True)
             for e in items[:top_k]:
-                full = e.entry
-                summary = {
-                    k: v for k, v in full.items() if k not in {"win_rate", "regret_rate", "flags"}
-                }
-                cand = {
-                    "bucket": key,
-                    "summary": summary,
-                    "meta": full,
-                    "raw": e.metadata,
-                    "score": e.score,
-                    "origin": e.origin,
-                    "vector_id": e.vector_id,
-                    "summarised": False,
-                }
-                cand["tokens"] = self._count_tokens(
-                    json.dumps(summary, separators=(",", ":"))
-                )
+                cand = self._format_entry(e, key)
                 candidates.append(cand)
 
         def estimate_tokens(cands: List[Dict[str, Any]]) -> int:
@@ -911,4 +964,3 @@ class ContextBuilder:
 
 
 __all__ = ["ContextBuilder"]
-

@@ -21,9 +21,36 @@ sys.modules.setdefault(
     types.SimpleNamespace(send_discord_alert=lambda *a, **k: None, CONFIG={}),
 )
 
-from vector_service.context_builder import ContextBuilder
-from vector_service import EmbeddableDBMixin
-from code_database import CodeDB, CodeRecord
+
+class _CodeRecord:
+    def __init__(self, code: str = "", summary: str = ""):
+        self.code = code
+        self.summary = summary
+
+
+class _CodeDB:
+    def __init__(self, path=None):
+        self._rows = []
+
+    def add(self, record: _CodeRecord) -> int:  # pragma: no cover - simple stub
+        self._rows.append({"id": 1, "code": record.code, "summary": record.summary})
+        return 1
+
+    def encode_text(self, text: str):  # pragma: no cover - simple stub
+        return [float(len(text))]
+
+    def search_by_vector(self, _vec, _k):  # pragma: no cover - simple stub
+        return self._rows
+
+
+sys.modules.setdefault(
+    "code_database", types.SimpleNamespace(CodeDB=_CodeDB, CodeRecord=_CodeRecord)
+)
+
+from vector_service.context_builder import ContextBuilder  # noqa: E402
+import vector_service.context_builder as cb  # noqa: E402
+from vector_service import EmbeddableDBMixin  # noqa: E402
+from code_database import CodeDB, CodeRecord  # noqa: E402
 
 
 class _CodeRetriever:
@@ -63,3 +90,31 @@ def test_context_builder_returns_code_record(tmp_path, monkeypatch):
     assert data["code"][0]["id"] == cid
     assert data["code"][0]["desc"]
 
+
+def test_context_builder_includes_patch_details(monkeypatch):
+    class DummyPatchDB:
+        def get(self, pid):  # pragma: no cover - simple stub
+            return types.SimpleNamespace(
+                description="patched", diff="diff", outcome="win"
+            )
+
+    monkeypatch.setattr(cb, "PatchHistoryDB", DummyPatchDB)
+
+    class DummyRetriever:
+        def search(self, *_a, **_k):
+            return [
+                {
+                    "origin_db": "code",
+                    "record_id": 1,
+                    "score": 1.0,
+                    "text": "",
+                    "metadata": {"patch_id": 1},
+                }
+            ]
+
+    builder = ContextBuilder(retriever=DummyRetriever())
+    data = json.loads(builder.build_context("q"))
+    entry = data["code"][0]
+    assert entry["summary"] == "patched"
+    assert entry["diff"] == "diff"
+    assert entry["outcome"] == "win"
