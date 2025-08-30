@@ -13,6 +13,7 @@ import asyncio
 import json
 import os
 import sys
+import yaml
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     from logging_utils import setup_logging
@@ -4942,7 +4943,13 @@ def _random_strategy(
 def _hostile_strategy(
     count: int, target: Callable[..., Any] | None = None
 ) -> List[Dict[str, Any]]:
-    """Return adversarial input dictionaries."""
+    """Return adversarial input dictionaries.
+
+    Payloads can be customised via the ``SANDBOX_HOSTILE_PAYLOADS``
+    environment variable or ``SANDBOX_HOSTILE_PAYLOADS_FILE`` pointing to a
+    YAML/JSON file.  When unset, a built-in list of common adversarial
+    payloads is used.
+    """
     hook = _load_strategy_hook("SANDBOX_HOSTILE_STRATEGY_HOOK")
     if hook:
         try:
@@ -4952,7 +4959,42 @@ def _hostile_strategy(
         except Exception:
             logger.exception("hostile strategy hook failed")
 
+    def _parse_payloads(data: str, source: str) -> List[Any]:
+        try:
+            obj = json.loads(data)
+        except Exception:
+            try:
+                obj = yaml.safe_load(data)
+            except Exception:
+                logger.warning("could not parse hostile payloads from %s", source)
+                return []
+        if not isinstance(obj, list):
+            logger.warning("hostile payloads from %s not a list", source)
+            return []
+        valid: List[Any] = []
+        for item in obj:
+            if isinstance(item, (str, int, float)):
+                valid.append(item)
+            else:
+                logger.warning("ignoring invalid hostile payload %r from %s", item, source)
+        return valid
+
     payloads: List[Any] = []
+    raw_env = os.getenv("SANDBOX_HOSTILE_PAYLOADS")
+    if raw_env:
+        payloads += _parse_payloads(raw_env, "environment")
+
+    file_path = os.getenv("SANDBOX_HOSTILE_PAYLOADS_FILE")
+    if file_path:
+        p = Path(file_path)
+        if p.exists():
+            try:
+                payloads += _parse_payloads(p.read_text(encoding="utf-8"), str(p))
+            except Exception:
+                logger.exception("failed to read hostile payloads file: %s", p)
+        else:
+            logger.warning("hostile payloads file missing: %s", p)
+
     history = _load_history(os.getenv("SANDBOX_INPUT_HISTORY"))
     for rec in history:
         for val in rec.values():
@@ -4990,7 +5032,7 @@ def _hostile_strategy(
                     data = json.load(fh)
                 extras = data.get("hostile") if isinstance(data, dict) else None
                 if isinstance(extras, list):
-                    payloads = [str(e) for e in extras if isinstance(e, str)] + payloads
+                    payloads += [str(e) for e in extras if isinstance(e, str)]
             except Exception:
                 logger.exception("failed to load hostile templates: %s", p)
 
