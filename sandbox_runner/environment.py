@@ -197,6 +197,16 @@ def _patched_imports() -> Iterable[None]:
 
 logger = get_logger(__name__)
 
+
+def _fallback_logger() -> logging.Logger:
+    """Return a minimal logger when the main logger is unavailable."""
+    fb = logging.getLogger("sandbox_runner.environment.fallback")
+    if not fb.handlers:
+        handler = logging.StreamHandler()
+        fb.addHandler(handler)
+        fb.setLevel(logging.INFO)
+    return fb
+
 if os.name == "nt" and "fcntl" not in sys.modules:
     try:
         import fcntl_compat as _fcntl
@@ -2004,13 +2014,22 @@ def ensure_docker_client() -> None:
             try:
                 logger.warning("docker client ping failed: %s", exc)
             except Exception as log_exc:
-                print(f"docker client ping failed: {exc} (logging failed: {log_exc})")
+                _fallback_logger().warning(
+                    "docker client ping failed: %s (logging failed: %s)",
+                    exc,
+                    log_exc,
+                    exc_info=True,
+                )
     if not reconnect:
         return
     try:
         logger.info("reconnecting docker client")
     except Exception as log_exc:
-        print(f"reconnecting docker client (logging failed: {log_exc})")
+        _fallback_logger().warning(
+            "reconnecting docker client (logging failed: %s)",
+            log_exc,
+            exc_info=True,
+        )
     try:
         _DOCKER_CLIENT = docker.from_env()
         _DOCKER_CLIENT.ping()
@@ -2601,7 +2620,12 @@ def report_failed_cleanup(
         try:
             logger.error("failed cleanup items: %s", list(stale.keys()))
         except Exception as exc:
-            print(f"failed cleanup items {list(stale.keys())} (logging failed: {exc})")
+            _fallback_logger().error(
+                "failed cleanup items %s (logging failed: %s)",
+                list(stale.keys()),
+                exc,
+                exc_info=True,
+            )
         _log_diagnostic("failed_cleanup", False)
     return stale
 
@@ -2879,7 +2903,12 @@ def retry_failed_cleanup() -> tuple[int, int]:
         try:
             logger.warning("persistent cleanup failures: %s", list(stale.keys()))
         except Exception as exc:
-            print(f"persistent cleanup failures {list(stale.keys())} (logging failed: {exc})")
+            _fallback_logger().warning(
+                "persistent cleanup failures %s (logging failed: %s)",
+                list(stale.keys()),
+                exc,
+                exc_info=True,
+            )
         _log_diagnostic("cleanup_retry_failure", False)
         _CONSECUTIVE_CLEANUP_FAILURES += 1
         if _CONSECUTIVE_CLEANUP_FAILURES > _CLEANUP_ALERT_THRESHOLD:
@@ -2889,7 +2918,12 @@ def retry_failed_cleanup() -> tuple[int, int]:
                     _CONSECUTIVE_CLEANUP_FAILURES,
                 )
             except Exception as exc:
-                print(f"cleanup retries failing {_CONSECUTIVE_CLEANUP_FAILURES} times (logging failed: {exc})")
+                _fallback_logger().error(
+                    "cleanup retries failing %s times (logging failed: %s)",
+                    _CONSECUTIVE_CLEANUP_FAILURES,
+                    exc,
+                    exc_info=True,
+                )
             _log_diagnostic("persistent_cleanup_failure", False)
     else:
         _CONSECUTIVE_CLEANUP_FAILURES = 0
