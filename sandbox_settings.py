@@ -177,6 +177,26 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_CENTRAL_LOGGING",
         description="Enable centralised logging output.",
     )
+    sandbox_retry_delay: float = Field(
+        1.0,
+        env="SANDBOX_RETRY_DELAY",
+        description="Initial delay between restart attempts in seconds.",
+    )
+    sandbox_max_retries: int | None = Field(
+        None,
+        env="SANDBOX_MAX_RETRIES",
+        description="Maximum number of restart attempts before giving up.",
+    )
+    sandbox_circuit_max_failures: int = Field(
+        5,
+        env="SANDBOX_CIRCUIT_MAX_FAILURES",
+        description="Consecutive failures allowed before opening the circuit breaker.",
+    )
+    sandbox_circuit_reset_timeout: float = Field(
+        60.0,
+        env="SANDBOX_CIRCUIT_RESET_TIMEOUT",
+        description="Time in seconds before a tripped circuit resets.",
+    )
     openai_api_key: str | None = Field(
         None, env="OPENAI_API_KEY", description="API key for OpenAI access."
     )

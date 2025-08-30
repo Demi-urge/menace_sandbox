@@ -45,6 +45,14 @@ except ImportError as exc:  # pragma: no cover - module may not be a package
     )
     from metrics_exporter import CollectorRegistry, Gauge  # type: ignore
 
+try:
+    from .sandbox_settings import SandboxSettings
+except ImportError as exc:  # pragma: no cover - module may not be a package
+    logging.getLogger(__name__).debug(
+        "fallback to top-level sandbox_settings due to import error", exc_info=exc
+    )
+    from sandbox_settings import SandboxSettings  # type: ignore
+
 recovery_failure_total = Gauge(
     "sandbox_recovery_failure_total",
     "Total number of sandbox recovery failures by severity",
@@ -87,11 +95,16 @@ class RecoveryMetricsRecorder:
         restart_count: int,
         last_failure_ts: float | None,
         data_dir: Path,
+        *,
+        service_name: str,
+        reason: str,
     ) -> None:
         ts = float(last_failure_ts) if last_failure_ts is not None else 0.0
         if self._using_exporter and self._restart_gauge and self._failure_gauge:
             try:
-                self._restart_gauge.set(float(restart_count))
+                self._restart_gauge.labels(service=service_name, reason=reason).set(
+                    float(restart_count)
+                )
                 self._failure_gauge.set(ts)
             except (ValueError, RuntimeError) as exc:  # pragma: no cover - runtime issues
                 logger.exception("failed to update metrics", exc_info=exc)
@@ -100,6 +113,8 @@ class RecoveryMetricsRecorder:
         payload = {
             "sandbox_restart_total": float(restart_count),
             "sandbox_last_failure_ts": ts,
+            "service": service_name,
+            "reason": reason,
         }
         try:
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -121,20 +136,42 @@ class SandboxRecoveryManager:
         self,
         sandbox_main: Callable[[Dict[str, Any], argparse.Namespace], Any],
         *,
-        retry_delay: float = 1.0,
+        retry_delay: float | None = None,
         max_retries: int | None = None,
         on_retry: Callable[[Exception, float], None] | None = None,
         registry: "CollectorRegistry" | None = None,
-        circuit_max_failures: int = 5,
-        circuit_reset_timeout: float = 60.0,
+        circuit_max_failures: int | None = None,
+        circuit_reset_timeout: float | None = None,
+        settings: SandboxSettings | None = None,
+        service_name: str | None = None,
     ) -> None:
         self.sandbox_main = sandbox_main
-        self.retry_delay = retry_delay
-        self.max_retries = max_retries
         self.logger = logging.getLogger(self.__class__.__name__)
         self.on_retry = on_retry
         self.restart_count = 0
         self.last_failure_time: float | None = None
+        self.settings = settings or SandboxSettings()
+        self.retry_delay = (
+            retry_delay
+            if retry_delay is not None
+            else self.settings.sandbox_retry_delay
+        )
+        self.max_retries = (
+            max_retries
+            if max_retries is not None
+            else self.settings.sandbox_max_retries
+        )
+        circuit_max_failures = (
+            circuit_max_failures
+            if circuit_max_failures is not None
+            else self.settings.sandbox_circuit_max_failures
+        )
+        circuit_reset_timeout = (
+            circuit_reset_timeout
+            if circuit_reset_timeout is not None
+            else self.settings.sandbox_circuit_reset_timeout
+        )
+        self.service_name = service_name or sandbox_main.__name__
         self._circuit = CircuitBreaker(
             max_failures=circuit_max_failures, reset_timeout=circuit_reset_timeout
         )
@@ -225,7 +262,11 @@ class SandboxRecoveryManager:
                     except Exception as cb_exc:
                         self.logger.exception("on_retry callback failed", exc_info=cb_exc)
                 self._metrics_recorder.record(
-                    self.restart_count, self.last_failure_time, log_dir
+                    self.restart_count,
+                    self.last_failure_time,
+                    log_dir,
+                    service_name=self.service_name,
+                    reason=exc.__class__.__name__,
                 )
 
                 if self.max_retries is not None and attempts >= self.max_retries:

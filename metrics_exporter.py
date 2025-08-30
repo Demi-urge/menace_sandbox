@@ -678,7 +678,9 @@ isolated_modules_integrated_total = Gauge(
     "Total number of isolated modules successfully integrated",
 )
 sandbox_restart_total = Gauge(
-    "sandbox_restart_total", "Total number of sandbox restarts"
+    "sandbox_restart_total",
+    "Total number of sandbox restarts",
+    labelnames=["service", "reason"],
 )
 sandbox_last_failure_ts = Gauge(
     "sandbox_last_failure_ts", "Timestamp of last sandbox failure"
