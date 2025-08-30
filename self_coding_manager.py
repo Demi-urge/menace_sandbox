@@ -87,17 +87,24 @@ class SelfCodingManager:
         *,
         context_meta: Dict[str, Any] | None = None,
         max_attempts: int = 3,
+        confidence_threshold: float = 0.5,
     ) -> AutomationResult:
         """Patch *path* then deploy using the automation pipeline.
 
         ``max_attempts`` controls how many times the patch is retried when tests
         fail.  Context will be rebuilt for each retry excluding tags extracted
-        from the failing traceback.
+        from the failing traceback.  After a successful patch the change is
+        committed in a sandbox clone and pushed to ``review/<patch_id>`` when
+        the ROI confidence falls below ``confidence_threshold`` otherwise it is
+        merged directly into ``main``.
         """
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
         before_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
         repo_root = Path.cwd().resolve()
+        result: AutomationResult | None = None
+        after_roi = before_roi
+        roi_delta = 0.0
         with tempfile.TemporaryDirectory() as tmp:
             subprocess.run(["git", "clone", str(repo_root), tmp], check=True)
             clone_root = Path(tmp)
@@ -157,9 +164,61 @@ class SelfCodingManager:
                     raise RuntimeError("patch tests failed")
 
             path.write_text(cloned_path.read_text(encoding="utf-8"), encoding="utf-8")
-        result = self.pipeline.run(self.bot_name, energy=energy)
-        after_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
-        roi_delta = after_roi - before_roi
+            try:
+                subprocess.run(
+                    ["git", "config", "user.email", "bot@example.com"],
+                    check=True,
+                    cwd=str(clone_root),
+                )
+                subprocess.run(
+                    ["git", "config", "user.name", "bot"],
+                    check=True,
+                    cwd=str(clone_root),
+                )
+                subprocess.run(["git", "add", "-A"], check=True, cwd=str(clone_root))
+                subprocess.run(
+                    ["git", "commit", "-m", f"patch {patch_id}: {description}"],
+                    check=True,
+                    cwd=str(clone_root),
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.error("git commit failed: %s", exc)
+
+            result = self.pipeline.run(self.bot_name, energy=energy)
+            after_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
+            roi_delta = after_roi - before_roi
+            patch_logger = getattr(self.engine, "patch_logger", None)
+            if patch_logger is not None:
+                try:
+                    patch_logger.track_contributors(
+                        {},
+                        True,
+                        patch_id=str(patch_id or ""),
+                        contribution=roi_delta,
+                    )
+                except Exception:
+                    self.logger.exception("track_contributors failed")
+            conf = 1.0
+            if result is not None and getattr(result, "roi", None) is not None:
+                conf = getattr(result.roi, "confidence", None)  # type: ignore[attr-defined]
+                if conf is None:
+                    risk = getattr(result.roi, "risk", None)  # type: ignore[attr-defined]
+                    if risk is not None:
+                        try:
+                            conf = 1.0 - float(risk)
+                        except Exception:
+                            conf = 1.0
+                if conf is None:
+                    conf = 1.0
+            branch = f"review/{patch_id}" if conf < confidence_threshold else "main"
+            try:
+                subprocess.run(
+                    ["git", "push", "origin", f"HEAD:{branch}"],
+                    check=True,
+                    cwd=str(clone_root),
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.error("git push failed: %s", exc)
         event_id = MutationLogger.log_mutation(
             change=f"self_coding_patch_{patch_id}",
             reason=description,
