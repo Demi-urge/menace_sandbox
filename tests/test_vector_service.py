@@ -135,6 +135,8 @@ class DummyPatchDB:
         regret,
         lines_changed=None,
         tests_passed=None,
+        context_tokens=None,
+        patch_difficulty=None,
         enhancement_name=None,
         timestamp=None,
         roi_deltas=None,
@@ -153,6 +155,8 @@ class DummyPatchDB:
             "regret": regret,
             "lines_changed": lines_changed,
             "tests_passed": tests_passed,
+            "context_tokens": context_tokens,
+            "patch_difficulty": patch_difficulty,
             "enhancement_name": enhancement_name,
             "timestamp": timestamp,
             "roi_deltas": roi_deltas,
@@ -184,6 +188,8 @@ def test_patch_logger_patch_db_success():
     pl.track_contributors(["a:b"], True, patch_id="7", session_id="sid")
     assert pdb.called
     assert pdb.kwargs["patch_id"] == 7
+    assert pdb.kwargs["context_tokens"] == 0
+    assert pdb.kwargs["patch_difficulty"] == 0
 
 
 def test_patch_logger_metrics_db_failure_ignored():

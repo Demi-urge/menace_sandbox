@@ -171,12 +171,16 @@ class TrackResult(dict):
         errors=None,
         tests_passed: bool | None = None,
         lines_changed: int | None = None,
+        context_tokens: int | None = None,
+        patch_difficulty: int | None = None,
         roi_deltas: Mapping[str, float] | None = None,
     ) -> None:
         super().__init__(mapping or {})
         self.errors = list(errors or [])
         self.tests_passed = tests_passed
         self.lines_changed = lines_changed
+        self.context_tokens = context_tokens
+        self.patch_difficulty = patch_difficulty
         # ``roi_deltas`` allows callers to retrieve per-origin ROI changes
         # computed during :meth:`track_contributors`.  It defaults to an empty
         # mapping for backwards compatibility so existing callers treating the
@@ -291,11 +295,21 @@ class PatchLogger:
         status = "success" if result else "failure"
         roi_metrics: dict[str, dict[str, Any]] = {}
         roi_deltas: dict[str, float] = {}
+        context_tokens = 0
+        patch_difficulty = (lines_changed or 0)
         try:
             detailed = self._parse_vectors(vector_ids)
             detailed.sort(key=lambda t: t[2], reverse=True)
             pairs = [(o, vid) for o, vid, _ in detailed]
             meta = retrieval_metadata or {}
+            context_tokens = 0
+            for m in meta.values():
+                if isinstance(m, Mapping):
+                    try:
+                        context_tokens += int(m.get("prompt_tokens") or 0)
+                    except Exception:
+                        pass
+            patch_difficulty = (lines_changed or 0) + context_tokens
             errors: list[Mapping[str, Any]] = []
             if error_summary:
                 errors.append({"summary": error_summary})
@@ -645,6 +659,8 @@ class PatchLogger:
                             regret=not result,
                             lines_changed=lines_changed,
                             tests_passed=tests_passed,
+                            context_tokens=context_tokens,
+                            patch_difficulty=patch_difficulty,
                             enhancement_name=enhancement_name,
                             timestamp=timestamp,
                             errors=errors,
@@ -772,6 +788,8 @@ class PatchLogger:
             "result": result,
             "roi_deltas": dict(roi_deltas),
             "lines_changed": lines_changed,
+            "context_tokens": context_tokens,
+            "patch_difficulty": patch_difficulty,
             "tests_passed": tests_passed,
             "enhancement_name": enhancement_name,
             "timestamp": timestamp,
@@ -800,6 +818,8 @@ class PatchLogger:
                     errors=errors,
                     tests_passed=tests_passed,
                     lines_changed=lines_changed,
+                    context_tokens=context_tokens,
+                    patch_difficulty=patch_difficulty,
                 )
             except Exception:
                 logger.exception("vector_metrics.record_patch_summary failed")
@@ -819,6 +839,8 @@ class PatchLogger:
             errors=errors,
             tests_passed=tests_passed,
             lines_changed=lines_changed,
+            context_tokens=context_tokens,
+            patch_difficulty=patch_difficulty,
             roi_deltas=roi_deltas,
         )
 
@@ -830,7 +852,7 @@ class PatchLogger:
         try:
             conn = self.patch_db.router.get_connection("patch_history")
             row = conn.execute(
-                "SELECT diff, summary, outcome, lines_changed, tests_passed, enhancement_name, timestamp, roi_deltas, errors FROM patch_history WHERE id=?",
+                "SELECT diff, summary, outcome, lines_changed, tests_passed, context_tokens, patch_difficulty, enhancement_name, timestamp, roi_deltas, errors FROM patch_history WHERE id=?",
                 (int(patch_id),),
             ).fetchone()
             if row is None:
@@ -841,6 +863,8 @@ class PatchLogger:
                 outcome,
                 lines_changed,
                 tests_passed,
+                context_tokens,
+                patch_difficulty,
                 enhancement_name,
                 ts,
                 roi_json,
@@ -861,6 +885,8 @@ class PatchLogger:
                 "outcome": outcome,
                 "lines_changed": lines_changed,
                 "tests_passed": bool(tests_passed) if tests_passed is not None else None,
+                "context_tokens": context_tokens,
+                "patch_difficulty": patch_difficulty,
                 "enhancement_name": enhancement_name,
                 "timestamp": ts,
                 "roi_deltas": roi_data,

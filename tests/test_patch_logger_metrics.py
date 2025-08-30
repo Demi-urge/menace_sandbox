@@ -64,13 +64,24 @@ class DummyVectorMetricsDB:
     def log_retrieval_feedback(self, db, *, win=False, regret=False, roi=0.0):
         self.fb_calls.append({"db": db, "win": win, "regret": regret, "roi": roi})
 
-    def record_patch_summary(self, patch_id, *, errors=None, tests_passed=None, lines_changed=None):
+    def record_patch_summary(
+        self,
+        patch_id,
+        *,
+        errors=None,
+        tests_passed=None,
+        lines_changed=None,
+        context_tokens=None,
+        patch_difficulty=None,
+    ):
         self.summary_calls.append(
             {
                 "patch_id": patch_id,
                 "errors": errors,
                 "tests_passed": tests_passed,
                 "lines_changed": lines_changed,
+                "context_tokens": context_tokens,
+                "patch_difficulty": patch_difficulty,
             }
         )
 
@@ -119,6 +130,8 @@ class DummyPatchDB:
         regret,
         lines_changed=None,
         tests_passed=None,
+        context_tokens=None,
+        patch_difficulty=None,
         enhancement_name=None,
         timestamp=None,
         roi_deltas=None,
@@ -136,6 +149,8 @@ class DummyPatchDB:
             "regret": regret,
             "lines_changed": lines_changed,
             "tests_passed": tests_passed,
+            "context_tokens": context_tokens,
+            "patch_difficulty": patch_difficulty,
             "enhancement_name": enhancement_name,
             "timestamp": timestamp,
             "roi_deltas": roi_deltas,
@@ -234,6 +249,8 @@ def test_track_contributors_forwards_contribution_patch_db(monkeypatch):
     assert pdb.kwargs and pdb.kwargs["contribution"] == 0.8
     assert pdb.kwargs["lines_changed"] == 5
     assert pdb.kwargs["tests_passed"] is True
+    assert pdb.kwargs["context_tokens"] == 0
+    assert pdb.kwargs["patch_difficulty"] == 5
     assert pdb.kwargs["enhancement_name"] == "feat"
     assert pdb.kwargs["timestamp"] == 123.0
     assert pdb.kwargs["roi_deltas"] == {}
@@ -320,6 +337,8 @@ def test_track_contributors_emits_summary_event(monkeypatch):
     )
     summary = [p for t, p in events if t == "patch:summary"][0]
     assert summary["lines_changed"] == 10
+    assert summary["context_tokens"] == 0
+    assert summary["patch_difficulty"] == 10
     assert summary["tests_passed"] is False
     assert summary["enhancement_name"] == "feat"
     assert summary["timestamp"] == pytest.approx(1.23)
@@ -378,13 +397,24 @@ def test_track_contributors_persists_errors_and_results(monkeypatch):
             super().__init__()
             self.summary_calls: list[dict[str, Any]] = []
 
-        def record_patch_summary(self, patch_id, *, errors=None, tests_passed=None, lines_changed=None):
+        def record_patch_summary(
+            self,
+            patch_id,
+            *,
+            errors=None,
+            tests_passed=None,
+            lines_changed=None,
+            context_tokens=None,
+            patch_difficulty=None,
+        ):
             self.summary_calls.append(
                 {
                     "patch_id": patch_id,
                     "errors": errors,
                     "tests_passed": tests_passed,
                     "lines_changed": lines_changed,
+                    "context_tokens": context_tokens,
+                    "patch_difficulty": patch_difficulty,
                 }
             )
 
@@ -401,13 +431,19 @@ def test_track_contributors_persists_errors_and_results(monkeypatch):
         retrieval_metadata={"error": {"msg": "boom"}},
     )
     assert pdb.kwargs["errors"] == [{"msg": "boom"}]
+    assert pdb.kwargs["context_tokens"] == 0
+    assert pdb.kwargs["patch_difficulty"] == 2
     assert vm.summary_calls and vm.summary_calls[0]["errors"] == [{"msg": "boom"}]
     assert vm.summary_calls[0]["tests_passed"] is True
     assert vm.summary_calls[0]["lines_changed"] == 2
+    assert vm.summary_calls[0]["context_tokens"] == 0
+    assert vm.summary_calls[0]["patch_difficulty"] == 2
     assert ("inc", "", 1.0) in fail_gauge.calls
     assert ("inc", "passed", 1.0) in test_gauge.calls
     assert res.tests_passed is True
     assert res.lines_changed == 2
+    assert res.context_tokens == 0
+    assert res.patch_difficulty == 2
     assert res.errors == [{"msg": "boom"}]
 
 
