@@ -1,4 +1,5 @@
 import os, sys, types
+from pathlib import Path
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 sys.modules.setdefault("jinja2", types.ModuleType("jinja2"))
 sys.modules["jinja2"].Template = lambda *a, **k: None
@@ -29,9 +30,29 @@ import asyncio
 import json
 import logging
 import pytest
-import menace.self_test_service as sts
+import importlib.util
+import importlib.machinery
 
-from menace.self_test_service import SelfTestService, _container_lock
+
+def load_self_test_service():
+    if 'menace' in sys.modules:
+        del sys.modules['menace']
+    sys.modules.setdefault('data_bot', types.SimpleNamespace(DataBot=object))
+    sys.modules.setdefault('error_bot', types.SimpleNamespace(ErrorDB=object))
+    sys.modules.setdefault('error_logger', types.SimpleNamespace(ErrorLogger=object))
+    sys.modules.setdefault('knowledge_graph', types.SimpleNamespace(KnowledgeGraph=object))
+    pkg = types.ModuleType('menace')
+    pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
+    pkg.__spec__ = importlib.machinery.ModuleSpec('menace', loader=None, is_package=True)
+    sys.modules['menace'] = pkg
+    spec = importlib.util.spec_from_file_location('menace.self_test_service', pkg.__path__[0] + '/self_test_service.py')
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules['menace.self_test_service'] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+sts = load_self_test_service()
+SelfTestService = sts.SelfTestService
 
 
 class DummyLogger:
@@ -86,7 +107,7 @@ def test_container_worker_distribution(monkeypatch):
     svc = SelfTestService(pytest_args="a b c", workers=5, use_container=True, container_image="img")
     svc.run_once()
 
-    assert not _container_lock.locked()
+    assert not svc._container_lock.locked()
     assert len(calls) == 3
     workers = [_parse_workers(c) for c in calls]
     assert workers == [2, 2, 1]
@@ -106,7 +127,7 @@ def test_lock_released_on_docker_error(monkeypatch, caplog):
     svc.run_once()
     assert "self test run failed" in caplog.text
 
-    assert not _container_lock.locked()
+    assert not svc._container_lock.locked()
 
 
 # ---------------------------------------------------------------------------
@@ -136,4 +157,4 @@ def test_lock_released_on_test_failure(monkeypatch, caplog):
     svc = SelfTestService(use_container=True, container_image="img")
     caplog.set_level(logging.ERROR)
     svc.run_once()
-    assert not _container_lock.locked()
+    assert not svc._container_lock.locked()

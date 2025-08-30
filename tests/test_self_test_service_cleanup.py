@@ -55,6 +55,10 @@ sys.modules.setdefault("pydantic.dataclasses", pydantic_dc)
 def load_self_test_service():
     if 'menace' in sys.modules:
         del sys.modules['menace']
+    sys.modules.setdefault('data_bot', types.SimpleNamespace(DataBot=object))
+    sys.modules.setdefault('error_bot', types.SimpleNamespace(ErrorDB=object))
+    sys.modules.setdefault('error_logger', types.SimpleNamespace(ErrorLogger=object))
+    sys.modules.setdefault('knowledge_graph', types.SimpleNamespace(KnowledgeGraph=object))
     pkg = types.ModuleType('menace')
     pkg.__path__ = [str(ROOT)]
     pkg.__spec__ = importlib.machinery.ModuleSpec('menace', loader=None, is_package=True)

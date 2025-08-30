@@ -58,6 +58,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def load_self_test_service():
     if 'menace' in sys.modules:
         del sys.modules['menace']
+    sys.modules.setdefault('data_bot', types.SimpleNamespace(DataBot=object))
+    sys.modules.setdefault('error_bot', types.SimpleNamespace(ErrorDB=object))
+    sys.modules.setdefault('error_logger', types.SimpleNamespace(ErrorLogger=object))
+    sys.modules.setdefault('knowledge_graph', types.SimpleNamespace(KnowledgeGraph=object))
     pkg = types.ModuleType('menace')
     pkg.__path__ = [str(ROOT)]
     pkg.__spec__ = importlib.machinery.ModuleSpec('menace', loader=None, is_package=True)
@@ -136,7 +140,8 @@ def test_container_locking(monkeypatch):
         await asyncio.gather(run_svc(svc1), run_svc(svc2))
 
     asyncio.run(main())
-    assert not sts._container_lock.locked()
+    assert not svc1._container_lock.locked()
+    assert not svc2._container_lock.locked()
 
 
 def test_container_retries(monkeypatch):
