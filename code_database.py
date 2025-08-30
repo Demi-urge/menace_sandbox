@@ -1070,7 +1070,8 @@ class PatchHistoryDB:
                 roi_deltas TEXT,
                 errors TEXT,
                 error_trace_count INTEGER DEFAULT 0,
-                roi_tag TEXT
+                roi_tag TEXT,
+                enhancement_score REAL
             )
             """
         )
@@ -1177,6 +1178,7 @@ class PatchHistoryDB:
             "errors": "ALTER TABLE patch_history ADD COLUMN errors TEXT",
             "error_trace_count": "ALTER TABLE patch_history ADD COLUMN error_trace_count INTEGER DEFAULT 0",
             "roi_tag": "ALTER TABLE patch_history ADD COLUMN roi_tag TEXT",
+            "enhancement_score": "ALTER TABLE patch_history ADD COLUMN enhancement_score REAL",
         }
         for name, stmt in migrations.items():
             if name not in cols:
@@ -1514,6 +1516,7 @@ class PatchHistoryDB:
         errors: Sequence[Mapping[str, Any]] | None = None,
         error_trace_count: int | None = None,
         roi_tag: str | None = None,
+        enhancement_score: float | None = None,
     ) -> None:
         """Update :class:`VectorMetricsDB` rows for *session_id* and *vectors*."""
 
@@ -1546,7 +1549,7 @@ class PatchHistoryDB:
                 except Exception:
                     logger.exception("failed to serialise errors")
             conn.execute(
-                "UPDATE patch_history SET lines_changed=?, tests_passed=?, context_tokens=?, patch_difficulty=?, effort_estimate=?, enhancement_name=?, start_time=?, time_to_completion=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary), outcome=COALESCE(?, outcome), roi_deltas=COALESCE(?, roi_deltas), errors=COALESCE(?, errors), error_trace_count=COALESCE(?, error_trace_count), roi_tag=COALESCE(?, roi_tag) WHERE id=?",
+                "UPDATE patch_history SET lines_changed=?, tests_passed=?, context_tokens=?, patch_difficulty=?, effort_estimate=?, enhancement_name=?, start_time=?, time_to_completion=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary), outcome=COALESCE(?, outcome), roi_deltas=COALESCE(?, roi_deltas), errors=COALESCE(?, errors), error_trace_count=COALESCE(?, error_trace_count), roi_tag=COALESCE(?, roi_tag), enhancement_score=COALESCE(?, enhancement_score) WHERE id=?",
                 (
                     lines_changed,
                     None if tests_passed is None else int(bool(tests_passed)),
@@ -1564,6 +1567,7 @@ class PatchHistoryDB:
                     err_json,
                     error_trace_count,
                     roi_tag,
+                    enhancement_score,
                     patch_id,
                 ),
             )
@@ -1585,6 +1589,7 @@ class PatchHistoryDB:
                     time_to_completion=time_to_completion,
                     error_trace_count=error_trace_count,
                     roi_tag=roi_tag,
+                    enhancement_score=enhancement_score,
                 )
             except Exception:
                 logger.exception("vector metrics patch summary failed")

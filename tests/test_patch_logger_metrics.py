@@ -77,6 +77,8 @@ class DummyVectorMetricsDB:
         time_to_completion=None,
         error_trace_count=None,
         roi_tag=None,
+        effort_estimate=None,
+        enhancement_score=None,
     ):
         self.summary_calls.append(
             {
@@ -90,6 +92,8 @@ class DummyVectorMetricsDB:
                 "time_to_completion": time_to_completion,
                 "error_trace_count": error_trace_count,
                 "roi_tag": roi_tag,
+                "effort_estimate": effort_estimate,
+                "enhancement_score": enhancement_score,
             }
         )
 
@@ -149,6 +153,7 @@ class DummyPatchDB:
         errors=None,
         error_trace_count=None,
         roi_tag=None,
+        enhancement_score=None,
         diff=None,
         summary=None,
         outcome=None,
@@ -173,6 +178,7 @@ class DummyPatchDB:
             "errors": errors,
             "error_trace_count": error_trace_count,
             "roi_tag": roi_tag,
+            "enhancement_score": enhancement_score,
             "diff": diff,
             "summary": summary,
             "outcome": outcome,
@@ -434,6 +440,7 @@ def test_track_contributors_persists_errors_and_results(monkeypatch):
             error_trace_count=None,
             roi_tag=None,
             effort_estimate=None,
+            enhancement_score=None,
         ):
             self.summary_calls.append(
                 {
@@ -448,6 +455,7 @@ def test_track_contributors_persists_errors_and_results(monkeypatch):
                     "error_trace_count": error_trace_count,
                     "roi_tag": roi_tag,
                     "effort_estimate": effort_estimate,
+                    "enhancement_score": enhancement_score,
                 }
             )
 
