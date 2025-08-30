@@ -22,7 +22,24 @@ except Exception:  # pragma: no cover - gracefully degrade
         MetaWorkflowPlanner = None  # type: ignore
 
 settings = load_sandbox_settings()
+
+
+def _validate_config(cfg: SandboxSettings) -> None:
+    """Validate meta planning configuration on import."""
+    if cfg.meta_entropy_threshold is not None and not 0 <= cfg.meta_entropy_threshold <= 1:
+        raise ValueError("meta_entropy_threshold must be between 0 and 1")
+    for attr in ("meta_mutation_rate", "meta_roi_weight", "meta_domain_penalty"):
+        if getattr(cfg, attr) < 0:
+            raise ValueError(f"{attr} must be non-negative")
+
+
+_validate_config(settings)
+
 PLANNER_INTERVAL = getattr(settings, "meta_planning_interval", 0)
+MUTATION_RATE = settings.meta_mutation_rate
+ROI_WEIGHT = settings.meta_roi_weight
+DOMAIN_PENALTY = settings.meta_domain_penalty
+ENTROPY_THRESHOLD = settings.meta_entropy_threshold
 STABLE_WORKFLOWS = WorkflowStabilityDB()
 
 
@@ -62,7 +79,7 @@ async def self_improvement_cycle(
 
     planner = MetaWorkflowPlanner()
 
-    cfg = SandboxSettings()
+    cfg = load_sandbox_settings()
     mutation_rate = cfg.meta_mutation_rate
     roi_weight = cfg.meta_roi_weight
     domain_penalty = cfg.meta_domain_penalty
@@ -157,4 +174,11 @@ async def self_improvement_cycle(
         await asyncio.sleep(interval)
 
 
-__all__ = ["self_improvement_cycle", "PLANNER_INTERVAL"]
+__all__ = [
+    "self_improvement_cycle",
+    "PLANNER_INTERVAL",
+    "MUTATION_RATE",
+    "ROI_WEIGHT",
+    "DOMAIN_PENALTY",
+    "ENTROPY_THRESHOLD",
+]
