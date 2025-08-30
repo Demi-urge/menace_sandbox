@@ -1301,6 +1301,46 @@ The Menace integrity model interprets tiers as follows:
 * ``critical`` – treated as integrity violations and usually block deployment
   until resolved or explicitly waived.
 
+### Sandbox self-improvement
+
+See [docs/sandbox_self_improvement.md](docs/sandbox_self_improvement.md) for a
+full walkthrough covering package requirements, environment variables, example
+workflows and troubleshooting tips.
+
+#### Required packages
+
+- `sandbox_runner`
+- `quick_fix_engine`
+
+#### Optional packages
+
+- `pandas`, `psutil` and `prometheus-client` for metrics dashboards and resource
+  statistics
+- `torch` for deep reinforcement learning modules
+
+#### Key environment variables
+
+- `SANDBOX_REPO_PATH` – path to the local sandbox repository clone
+- `SANDBOX_DATA_DIR` – directory where metrics and state files are written
+- `SANDBOX_ENV_PRESETS` – comma separated scenario preset files
+- `AUTO_TRAIN_INTERVAL`, `SYNERGY_TRAIN_INTERVAL`, `ADAPTIVE_ROI_RETRAIN_INTERVAL`
+  – control retraining frequency
+- `ENABLE_META_PLANNER` – require meta-planning support when set to ``true``
+
+#### Example workflow
+
+```bash
+SANDBOX_REPO_PATH=$(pwd) python sandbox_runner.py --runs 1
+```
+
+#### Troubleshooting
+
+- ``ModuleNotFoundError`` for `sandbox_runner` or `quick_fix_engine`: install
+  missing packages or rerun `./setup_env.sh`
+- ``RuntimeError: ffmpeg not found``: install `ffmpeg` and `tesseract` and
+  ensure they are on ``PATH``
+- Stale containers or overlays: ``python -m sandbox_runner.cli --cleanup``
+
 ### Safe mode, self-improvement intervals and metrics
 
 Run individual modules inside an isolated directory and block outbound
@@ -1329,19 +1369,6 @@ Self-improvement cycles retrain the synergy learner periodically. Set
 often weights are updated. ``ADAPTIVE_ROI_RETRAIN_INTERVAL`` controls ROI
 retraining frequency. Lower values shorten the feedback loop while higher ones
 reduce system load.
-
-#### Optional dependencies
-
-Some features rely on optional packages:
-
-- ``sandbox_runner`` and ``quick_fix_engine`` enable orphan integration and
-  helper patch generation.  Missing modules raise ``RuntimeError`` when those
-  features are invoked.
-- ``pandas``, ``psutil`` and ``prometheus-client`` power metrics dashboards and
-  detailed resource statistics.  If absent the sandbox logs a warning and
-  skips the related functionality.
-- ``torch`` enables deep reinforcement learners.  When not installed the engine
-  falls back to simpler strategies.
 
 #### Personal ``SandboxSettings`` example
 
