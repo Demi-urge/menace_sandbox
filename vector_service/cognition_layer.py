@@ -40,6 +40,7 @@ from .patch_logger import PatchLogger
 from vector_metrics_db import VectorMetricsDB
 from .decorators import log_and_measure
 from .embedding_backfill import schedule_backfill
+from weight_adjuster import WeightAdjuster
 
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ class CognitionLayer:
         event_bus: "UnifiedEventBus" | None = None,
         roi_tracker: ROITracker | None = None,
         ranking_model: Any | None = None,
+        weight_adjuster: WeightAdjuster | None = None,
     ) -> None:
         self.retriever = retriever or Retriever()
         self.patch_retriever = patch_retriever or PatchRetriever()
@@ -100,7 +102,10 @@ class CognitionLayer:
             roi_tracker=self.roi_tracker,
             db_weights=db_weights,
         )
-        if context_builder is not None and getattr(context_builder, "patch_retriever", None) is None:
+        if (
+            context_builder is not None
+            and getattr(context_builder, "patch_retriever", None) is None
+        ):
             try:
                 context_builder.patch_retriever = self.patch_retriever
             except Exception:
@@ -108,11 +113,17 @@ class CognitionLayer:
         if context_builder is not None and db_weights:
             try:
                 if hasattr(self.context_builder, "refresh_db_weights"):
-                    self.context_builder.refresh_db_weights(db_weights)  # type: ignore[attr-defined]
+                    self.context_builder.refresh_db_weights(
+                        db_weights
+                    )  # type: ignore[attr-defined]
                 elif hasattr(self.context_builder, "db_weights"):
-                    self.context_builder.db_weights.update(db_weights)  # type: ignore[attr-defined]
+                    self.context_builder.db_weights.update(
+                        db_weights
+                    )  # type: ignore[attr-defined]
             except Exception:
-                logger.exception("Failed to refresh context builder db weights")
+                logger.exception(
+                    "Failed to refresh context builder db weights"
+                )
         self.patch_logger = patch_logger or PatchLogger(
             vector_metrics=self.vector_metrics,
             roi_tracker=self.roi_tracker,
@@ -136,6 +147,9 @@ class CognitionLayer:
                     self._retrieval_meta[sid] = meta
             except Exception:
                 logger.exception("Failed to load pending sessions from metrics DB")
+        self.weight_adjuster = weight_adjuster or WeightAdjuster(
+            vector_metrics=self.vector_metrics
+        )
 
     # ------------------------------------------------------------------
     def reload_ranker_model(
@@ -340,17 +354,25 @@ class CognitionLayer:
                         all_weights = self.vector_metrics.get_db_weights()
                     except Exception:
                         all_weights = updates
-                try:
-                    if hasattr(self.context_builder, "refresh_db_weights"):
-                        self.context_builder.refresh_db_weights(all_weights)  # type: ignore[attr-defined]
-                    elif hasattr(self.context_builder, "db_weights"):
-                        try:
-                            self.context_builder.db_weights.clear()  # type: ignore[attr-defined]
-                            self.context_builder.db_weights.update(all_weights)  # type: ignore[attr-defined]
-                        except Exception:
-                            self.context_builder.db_weights = dict(all_weights)  # type: ignore[attr-defined]
-                except Exception:
-                    logger.exception("Failed to apply updated db weights to context builder")
+            try:
+                if hasattr(self.context_builder, "refresh_db_weights"):
+                    self.context_builder.refresh_db_weights(
+                        all_weights
+                    )  # type: ignore[attr-defined]
+                elif hasattr(self.context_builder, "db_weights"):
+                    try:
+                        self.context_builder.db_weights.clear()  # type: ignore[attr-defined]
+                        self.context_builder.db_weights.update(
+                            all_weights
+                        )  # type: ignore[attr-defined]
+                    except Exception:
+                        self.context_builder.db_weights = dict(
+                            all_weights
+                        )  # type: ignore[attr-defined]
+            except Exception:
+                logger.exception(
+                    "Failed to apply updated db weights to context builder"
+                )
 
                 try:
                     self.vector_metrics.set_db_weights(all_weights)
@@ -404,15 +426,23 @@ class CognitionLayer:
                 self._db_weights = all_weights
                 try:
                     if hasattr(self.context_builder, "refresh_db_weights"):
-                        self.context_builder.refresh_db_weights(all_weights)  # type: ignore[attr-defined]
+                        self.context_builder.refresh_db_weights(
+                            all_weights
+                        )  # type: ignore[attr-defined]
                     elif hasattr(self.context_builder, "db_weights"):
                         try:
                             self.context_builder.db_weights.clear()  # type: ignore[attr-defined]
-                            self.context_builder.db_weights.update(all_weights)  # type: ignore[attr-defined]
+                            self.context_builder.db_weights.update(
+                                all_weights
+                            )  # type: ignore[attr-defined]
                         except Exception:
-                            self.context_builder.db_weights = dict(all_weights)  # type: ignore[attr-defined]
+                            self.context_builder.db_weights = dict(
+                                all_weights
+                            )  # type: ignore[attr-defined]
                 except Exception:
-                    logger.exception("Failed to apply updated db weights to context builder")
+                    logger.exception(
+                        "Failed to apply updated db weights to context builder"
+                    )
 
         if per_db:
             bus = self.event_bus
@@ -675,8 +705,6 @@ class CognitionLayer:
 
     # ------------------------------------------------------------------
 
-
-
     async def _record_patch_outcome_impl(
         self,
         session_id: str,
@@ -915,6 +943,12 @@ class CognitionLayer:
                 self.context_builder.refresh_db_weights()
             except Exception:
                 logger.exception("Failed to refresh context builder weights")
+
+        if self.weight_adjuster is not None:
+            try:
+                self.weight_adjuster.adjust(vectors, success, roi_deltas=roi_deltas)
+            except Exception:
+                logger.exception("Failed to adjust vector weights")
 
         if not success or roi_drop:
             try:
