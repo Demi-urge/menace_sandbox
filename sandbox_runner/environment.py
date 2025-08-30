@@ -3127,14 +3127,27 @@ def start_container_event_listener() -> None:
 def stop_container_event_listener() -> None:
     """Stop the background container event listener if running."""
     global _EVENT_THREAD, _EVENT_STOP
-    if _EVENT_THREAD is None:
+    thread = _EVENT_THREAD
+    if thread is None:
         return
     if _EVENT_STOP is not None:
         _EVENT_STOP.set()
-    try:
-        _EVENT_THREAD.join(timeout=1.0)
-    except Exception:
-        logger.exception('unexpected error')
+
+    # Attempt to join the worker thread, logging errors and retrying if needed.
+    for attempt in range(1, 4):
+        try:
+            thread.join(timeout=1.0)
+        except Exception:
+            logger.exception("failed to join event listener thread", exc_info=True)
+        if not thread.is_alive():
+            break
+        logger.warning(
+            "container event listener thread still running after stop attempt %s", attempt
+        )
+        time.sleep(0.1)
+    else:
+        logger.error("container event listener thread did not terminate after retries")
+
     _EVENT_THREAD = None
     _EVENT_STOP = None
 

@@ -1,5 +1,14 @@
+import logging
+import os
+import sys
+import threading
 import time
 import types
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
+sys.modules.pop("sandbox_runner.environment", None)
+sys.modules.pop("sandbox_runner", None)
 import sandbox_runner.environment as env
 
 class DummyContainer:
@@ -79,3 +88,53 @@ def test_event_listener_api_error(monkeypatch):
     env.start_container_event_listener()
     time.sleep(0.05)
     assert env._EVENT_THREAD is None
+
+
+def test_stop_listener_terminates_thread(monkeypatch):
+    stop_event = threading.Event()
+
+    def worker():
+        stop_event.wait()
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    env._EVENT_THREAD = thread
+    env._EVENT_STOP = stop_event
+
+    env.stop_container_event_listener()
+
+    assert env._EVENT_THREAD is None
+    assert not thread.is_alive()
+
+
+def test_stop_listener_retries_on_error(monkeypatch, caplog):
+    stop_event = threading.Event()
+
+    def worker():
+        while not stop_event.is_set():
+            time.sleep(0.01)
+        # give time so the thread is still alive after first join failure
+        time.sleep(0.2)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    env._EVENT_THREAD = thread
+    env._EVENT_STOP = stop_event
+
+    original_join = thread.join
+    calls = {"n": 0}
+
+    def flaky_join(timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        return original_join(timeout)
+
+    monkeypatch.setattr(thread, "join", flaky_join)
+
+    with caplog.at_level(logging.ERROR):
+        env.stop_container_event_listener()
+
+    assert calls["n"] >= 2
+    assert env._EVENT_THREAD is None
+    assert not thread.is_alive()
