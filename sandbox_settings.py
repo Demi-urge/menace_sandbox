@@ -260,6 +260,25 @@ class SandboxSettings(BaseSettings):
             if isinstance(v, str):
                 return [s.strip() for s in v.split(",") if s.strip()]
             return v
+    suggestion_sources: list[str] = Field(
+        default_factory=lambda: ["cache", "knowledge", "heuristic"],
+        env="SANDBOX_SUGGESTION_SOURCES",
+        description=(
+            "Comma-separated suggestion source order for offline patch hints."
+        ),
+    )
+    if PYDANTIC_V2:
+        @field_validator("suggestion_sources", mode="before")
+        def _split_suggestion_sources(cls, v: Any) -> Any:
+            if isinstance(v, str):
+                return [s.strip() for s in v.split(",") if s.strip()]
+            return v
+    else:  # pragma: no cover - pydantic<2
+        @field_validator("suggestion_sources", pre=True)
+        def _split_suggestion_sources(cls, v: Any) -> Any:  # type: ignore[override]
+            if isinstance(v, str):
+                return [s.strip() for s in v.split(",") if s.strip()]
+            return v
     meta_planning_interval: int = Field(
         10,
         env="META_PLANNING_INTERVAL",
