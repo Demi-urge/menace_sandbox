@@ -365,6 +365,7 @@ class SelfTestService:
         include_redundant: bool = SandboxSettings().test_redundant_modules,
         report_dir: str | Path = Path(test_config.report_dir),
         stub_scenarios: Mapping[str, Any] | None = None,
+        fixture_hook: str | None = None,
     ) -> None:
         """Create a new service instance.
 
@@ -407,6 +408,10 @@ class SelfTestService:
             :class:`~sandbox_settings.SandboxSettings.test_redundant_modules`.
             Can also be enabled via ``SELF_TEST_INCLUDE_REDUNDANT`` or
             ``SANDBOX_TEST_REDUNDANT``.
+        fixture_hook:
+            Optional dotted path to a function ``(inspect.Parameter) -> Any``
+            used by generated stubs to supply domain-specific argument values.
+            Overrides the ``SELF_TEST_FIXTURE_HOOK`` environment variable.
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -477,6 +482,9 @@ class SelfTestService:
 
         # Optional mapping defining scenario templates for generated stubs.
         self.stub_scenarios = dict(stub_scenarios or {})
+
+        # Optional hook supplying custom fixture values in generated stubs.
+        self.fixture_hook = fixture_hook
 
         # Allow the test runner to be customised via environment variable.  This
         # defaults to ``pytest`` to preserve historical behaviour but can be
@@ -1244,27 +1252,66 @@ class SelfTestService:
             fixtures = {}
 
         stub_path = tmp_dir / f"test_{Path(mod).stem}_stub.py"
+        hook_line = (
+            f"HOOK_PATH = '{self.fixture_hook}'\n" if self.fixture_hook else "HOOK_PATH = os.getenv('SELF_TEST_FIXTURE_HOOK')\n"
+        )
         stub_code = (
-            "import importlib, inspect, json\n\n"
+            "import importlib, inspect, json, os, dataclasses, enum, typing\n\n"
             f"SCENARIOS = json.loads('''{json.dumps(tests)}''')\n"
-            f"FIXTURES = json.loads('''{json.dumps(fixtures)}''')\n\n"
+            f"FIXTURES = json.loads('''{json.dumps(fixtures)}''')\n"
+            f"{hook_line}"
+            "HOOK = None\n"
+            "if HOOK_PATH:\n"
+            "    mod, _, fn = HOOK_PATH.rpartition(':')\n"
+            "    try:\n"
+            "        HOOK = getattr(importlib.import_module(mod), fn)\n"
+            "    except Exception:\n"
+            "        HOOK = None\n\n"
             "def _resolve(v):\n"
             "    if isinstance(v, dict) and 'fixture' in v:\n"
             "        return FIXTURES.get(v['fixture'])\n"
             "    return v\n\n"
-            "def _dummy_value(p):\n"
-            "    ann = getattr(p.annotation, '__origin__', p.annotation)\n"
-            "    if ann in (int, float, complex):\n"
-            "        return 0\n"
-            "    if ann is bool:\n"
+            "def _dummy_from_ann(t):\n"
+            "    origin = typing.get_origin(t) or t\n"
+            "    args = typing.get_args(t)\n"
+            "    if origin in (int, float, complex):\n"
+            "        return origin()\n"
+            "    if origin is bool:\n"
             "        return False\n"
-            "    if ann is str:\n"
+            "    if origin is str:\n"
             "        return ''\n"
-            "    if ann in (list, tuple, set):\n"
-            "        return ann()\n"
-            "    if ann is dict:\n"
-            "        return {}\n"
+            "    if isinstance(origin, type) and dataclasses.is_dataclass(origin):\n"
+            "        kwargs = {}\n"
+            "        for f in dataclasses.fields(origin):\n"
+            "            if f.default is not dataclasses.MISSING:\n"
+            "                kwargs[f.name] = f.default\n"
+            "            elif getattr(f, 'default_factory', dataclasses.MISSING) is not dataclasses.MISSING:\n"
+            "                kwargs[f.name] = f.default_factory()\n"
+            "            else:\n"
+            "                kwargs[f.name] = _dummy_from_ann(f.type)\n"
+            "        return origin(**kwargs)\n"
+            "    if isinstance(origin, type) and issubclass(origin, enum.Enum):\n"
+            "        return list(origin)[0]\n"
+            "    if origin in (list, set, tuple):\n"
+            "        inner = _dummy_from_ann(args[0]) if args else None\n"
+            "        seq = [inner]\n"
+            "        if origin is tuple:\n"
+            "            return tuple(seq)\n"
+            "        return origin(seq)\n"
+            "    if origin is dict:\n"
+            "        key = _dummy_from_ann(args[0]) if args else None\n"
+            "        val = _dummy_from_ann(args[1]) if len(args) > 1 else None\n"
+            "        return {key: val}\n"
             "    return None\n\n"
+            "def _dummy_value(p):\n"
+            "    if HOOK:\n"
+            "        try:\n"
+            "            val = HOOK(p)\n"
+            "            if val is not None:\n"
+            "                return val\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "    return _dummy_from_ann(p.annotation)\n\n"
             "def _call_with_dummies(obj, is_class=False):\n"
             "    sig = inspect.signature(obj)\n"
             "    args = []\n"
