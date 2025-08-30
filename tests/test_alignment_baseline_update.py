@@ -67,6 +67,57 @@ def test_alignment_baseline_updates(tmp_path, monkeypatch):
     assert data2["files"]["foo.py"]["complexity"] > foo_metrics1["complexity"]
 
 
+def test_incremental_update_adds_new_files(tmp_path, monkeypatch):
+    sie = _load_engine()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    foo = repo / "foo.py"
+    foo.write_text("def add(a, b):\n    return a + b\n")
+    baseline = tmp_path / "baseline.yaml"
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    settings = types.SimpleNamespace(alignment_baseline_metrics_path=str(baseline))
+    sie._update_alignment_baseline(settings)
+    original = yaml.safe_load(baseline.read_text())
+    foo_metrics = original["files"]["foo.py"].copy()
+
+    bar = repo / "bar.py"
+    bar.write_text("def sub(a, b):\n    return a - b\n")
+    sie._update_alignment_baseline(settings, [bar])
+    updated = yaml.safe_load(baseline.read_text())
+    assert updated["files"]["foo.py"] == foo_metrics
+    assert "bar.py" in updated["files"]
+    assert updated["complexity"] == sum(v["complexity"] for v in updated["files"].values())
+
+
+def test_vendor_directories_skipped(tmp_path, monkeypatch):
+    sie = _load_engine()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    vendor_dir = repo / "venv"
+    vendor_dir.mkdir()
+    (vendor_dir / "bad.py").write_text("def v():\n    return 1\n")
+    (repo / "foo.py").write_text("def f():\n    return 1\n")
+    baseline = tmp_path / "baseline.yaml"
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    settings = types.SimpleNamespace(alignment_baseline_metrics_path=str(baseline))
+    sie._update_alignment_baseline(settings)
+    data = yaml.safe_load(baseline.read_text())
+    assert "venv/bad.py" not in data["files"]
+
+
+def test_parse_failure_logged(tmp_path, monkeypatch, caplog):
+    sie = _load_engine()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "bad.py").write_text("def broken(:\n    pass\n")
+    baseline = tmp_path / "baseline.yaml"
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    settings = types.SimpleNamespace(alignment_baseline_metrics_path=str(baseline))
+    with caplog.at_level("WARNING"):
+        sie._update_alignment_baseline(settings)
+    assert any("bad.py" in r.message for r in caplog.records)
+
+
 def test_flag_patch_alignment_refreshes_baseline_when_approved(tmp_path, monkeypatch):
     sie = _load_engine()
     repo = tmp_path / "repo"
