@@ -35,8 +35,8 @@ The final call updates ROI metrics and adjusts ranking weights.
 
 Modules can retrieve stored code patch examples with a single call to
 ``search_patches``.  The helper initialises a ``PatchRetriever`` using the
-similarity metric (``vector.distance_metric``) and ``VectorStore`` configured for
-the application:
+backend and metric from ``vector_store`` configuration.  Scores are normalised
+to the ``[0, 1]`` range regardless of backend:
 
 ```python
 from vector_service.retriever import search_patches
