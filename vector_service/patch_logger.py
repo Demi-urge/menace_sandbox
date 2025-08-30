@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Helper for recording patch outcomes for contributing vectors."""
 
-from typing import Any, Callable, Iterable, List, Mapping, Sequence, Tuple, Union
+from typing import Any, Callable, Iterable, List, Mapping, Sequence, Tuple, Union, TYPE_CHECKING
 
 import asyncio
 import logging
@@ -12,6 +12,9 @@ from .decorators import log_and_measure
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from patch_safety import PatchSafety
 from db_router import GLOBAL_ROUTER, init_db_router
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .vectorizer import SharedVectorService
 
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me  # type: ignore
@@ -141,7 +144,7 @@ class PatchLogger:
         metrics_db: Any | None = None,
         roi_tracker: ROITracker | None = None,
         event_bus: "UnifiedEventBus" | None = None,
-        vector_service: "SharedVectorService" | None = None,
+        vector_service: SharedVectorService | None = None,
         info_db: InfoDB | None = None,
         enhancement_db: EnhancementDB | None = None,
         max_alert_severity: float = 1.0,
@@ -218,6 +221,7 @@ class PatchLogger:
         diff: str | None = None,
         summary: str | None = None,
         outcome: str | None = None,
+        error_summary: str | None = None,
     ) -> dict[str, float]:
         """Log patch outcome for vectors contributing to a patch.
 
@@ -238,6 +242,8 @@ class PatchLogger:
             pairs = [(o, vid) for o, vid, _ in detailed]
             meta = retrieval_metadata or {}
             errors: list[Mapping[str, Any]] = []
+            if error_summary:
+                errors.append({"summary": error_summary})
             if not result and meta:
                 generic_error = meta.get("error")
                 if generic_error:
@@ -356,6 +362,7 @@ class PatchLogger:
             else:
                 if self.patch_db is not None and patch_id:
                     try:  # pragma: no cover - best effort
+                        summary_arg = summary if summary is not None else error_summary
                         self.patch_db.record_vector_metrics(
                             session_id,
                             pairs,
@@ -368,7 +375,7 @@ class PatchLogger:
                             enhancement_name=enhancement_name,
                             timestamp=timestamp,
                             diff=diff,
-                            summary=summary,
+                            summary=summary_arg,
                             outcome=outcome,
                         )
                     except Exception:
@@ -707,6 +714,8 @@ class PatchLogger:
             "outcome": outcome,
             "errors": errors,
         }
+        if error_summary is not None:
+            summary_payload["error_summary"] = error_summary
         if self.event_bus is not None:
             try:
                 self.event_bus.publish("patch:summary", summary_payload)
@@ -745,6 +754,7 @@ class PatchLogger:
         diff: str | None = None,
         summary: str | None = None,
         outcome: str | None = None,
+        error_summary: str | None = None,
     ) -> dict[str, float]:
         """Asynchronous wrapper for :meth:`track_contributors`."""
 
@@ -765,6 +775,7 @@ class PatchLogger:
             diff=diff,
             summary=summary,
             outcome=outcome,
+            error_summary=error_summary,
         )
 
 
