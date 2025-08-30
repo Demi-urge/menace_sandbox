@@ -31,7 +31,7 @@ def test_construct_prompt_orders_by_roi_and_timestamp():
         _record(1.0, ts=2, summary="new fail", tests_passed=False),
         _record(1.0, ts=0, summary="old fail", tests_passed=False),
     ]
-    engine = PromptEngine(retriever=DummyRetriever(records))
+    engine = PromptEngine(retriever=DummyRetriever(records), confidence_threshold=0.05)
     prompt = engine.build_prompt("desc")
     assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
     assert "Code summary: new fail" in prompt
