@@ -10,7 +10,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, defaultdict
 import atexit
 import importlib
 from importlib import metadata
@@ -42,6 +42,9 @@ _CACHE: "OrderedDict[Tuple[str, str], Dict[str, Any]]" = OrderedDict()
 
 # protect cache mutations across threads and async tasks
 _CACHE_LOCK = threading.Lock()
+
+# track stub usage statistics per target to avoid repetition
+_TARGET_STATS: dict[str, Counter[str]] = defaultdict(Counter)
 
 # Entry-point group for discovering available text generation models
 MODEL_ENTRY_POINT_GROUP = "sandbox.stub_models"
@@ -465,6 +468,7 @@ async def _aload_generator():
             return None
         openai.api_key = os.getenv("OPENAI_API_KEY")
         _GENERATOR = openai
+        await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
         return _GENERATOR
 
     if not _feature_enabled("SANDBOX_ENABLE_TRANSFORMERS"):
@@ -490,6 +494,7 @@ async def _aload_generator():
             _GENERATOR = await asyncio.to_thread(
                 pipeline, "text-generation", **kwargs
             )
+            await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
             break
         except Exception:  # pragma: no cover - model load failures
             logger.exception("failed to load model %s", name)
@@ -507,6 +512,25 @@ def _get_history_db() -> InputHistoryDB:
         "SANDBOX_INPUT_HISTORY", str(ROOT / "sandbox_data" / "input_history.db")
     )
     return InputHistoryDB(path)
+
+
+def _seed_generator_from_history(gen: Any) -> None:
+    """Seed *gen* with stored input examples when possible."""
+    try:
+        records = _get_history_db().recent(100)
+    except Exception:
+        logger.debug("failed to load history for seeding", exc_info=True)
+        return
+    if not records:
+        return
+    payload = "\n".join(json.dumps(r) for r in records)
+    for attr in ("seed", "train", "fit"):
+        if hasattr(gen, attr):
+            try:
+                getattr(gen, attr)(payload)
+            except Exception:
+                logger.debug("stub generator %s failed", attr, exc_info=True)
+            break
 
 
 def _aggregate(records: List[dict[str, Any]]) -> dict[str, Any]:
@@ -577,7 +601,9 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
         name = getattr(func, "__name__", "function")
         key = _cache_key(name, stub)
         with _CACHE_LOCK:
+            stats = _TARGET_STATS.setdefault(name, Counter())
             cached = _CACHE.get(key)
+            stub_key = None
             if cached is not None:
                 try:
                     _CACHE.move_to_end(key)
@@ -585,7 +611,19 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
                     logger.warning(
                         "failed to update cache LRU for key %s: %s", key, exc
                     )
+                try:
+                    stub_key = json.dumps(cached, sort_keys=True, default=str)
+                except TypeError:
+                    stub_key = repr(cached)
         if cached is not None:
+            with _CACHE_LOCK:
+                stats = _TARGET_STATS.setdefault(name, Counter())
+                if stub_key is None:
+                    try:
+                        stub_key = json.dumps(cached, sort_keys=True, default=str)
+                    except TypeError:
+                        stub_key = repr(cached)
+                stats[stub_key] += 1
             new_stubs.append(dict(cached))
             continue
         args = ", ".join(f"{k}={v!r}" for k, v in stub.items())
@@ -660,6 +698,11 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
                                 "failed to update cache LRU for key %s: %s", key, exc
                             )
                         _cache_evict()
+                        try:
+                            stub_key = json.dumps(data, sort_keys=True, default=str)
+                        except TypeError:
+                            stub_key = repr(data)
+                        _TARGET_STATS.setdefault(name, Counter())[stub_key] += 1
                     changed = True
                     new_stubs.append(dict(data))
                     continue
