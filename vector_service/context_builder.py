@@ -680,8 +680,11 @@ class ContextBuilder:
         return key_map.get(origin, ""), _ScoredEntry(entry, score, origin, vec_id, meta)
 
     # ------------------------------------------------------------------
-    def _format_entry(self, scored: _ScoredEntry, bucket: str) -> Dict[str, Any]:
+    def _merge_metadata(self, scored: _ScoredEntry, bucket: str) -> Dict[str, Any]:
         """Merge metadata and inject patch history details.
+
+        The merged record summarises descriptions, diffs and outcomes so
+        callers receive compact patch context suitable for prompts.
 
         Parameters
         ----------
@@ -698,6 +701,7 @@ class ContextBuilder:
         # Normalise patch-specific fields from retrieval metadata when present.
         summary = meta.get("summary") or meta.get("description")
         diff = meta.get("diff")
+        outcome = meta.get("outcome")
         roi_delta = meta.get("roi_delta")
         lines_changed = meta.get("lines_changed")
         tests_passed = meta.get("tests_passed")
@@ -708,6 +712,9 @@ class ContextBuilder:
         if diff:
             diff = _summarise_text(str(diff))
             full["diff"] = diff
+        if outcome:
+            outcome = self._summarise(str(outcome))
+            full["outcome"] = outcome
         if roi_delta is not None:
             full["roi_delta"] = roi_delta
         if lines_changed is not None:
@@ -893,7 +900,7 @@ class ContextBuilder:
                 continue
             items.sort(key=lambda e: e.score, reverse=True)
             for e in items[:top_k]:
-                cand = self._format_entry(e, key)
+                cand = self._merge_metadata(e, key)
                 candidates.append(cand)
 
         def estimate_tokens(cands: List[Dict[str, Any]]) -> int:

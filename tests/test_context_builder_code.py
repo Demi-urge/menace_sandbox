@@ -122,3 +122,36 @@ def test_context_builder_includes_patch_details(monkeypatch):
     assert entry["lines_changed"] == 5
     assert entry["tests_passed"] is True
     assert entry["outcome"] == "win"
+
+
+def test_context_builder_summarises_patch_text(monkeypatch):
+    long_text = "line" * 40
+
+    class DummyPatchDB:
+        def get(self, pid):  # pragma: no cover - simple stub
+            return types.SimpleNamespace(
+                description=long_text,
+                diff=long_text,
+                outcome=long_text,
+            )
+
+    monkeypatch.setattr(cb, "PatchHistoryDB", DummyPatchDB)
+
+    class DummyRetriever:
+        def search(self, *_a, **_k):
+            return [
+                {
+                    "origin_db": "patch",
+                    "record_id": 1,
+                    "score": 1.0,
+                    "text": "",
+                    "metadata": {"patch_id": 1},
+                }
+            ]
+
+    builder = ContextBuilder(retriever=DummyRetriever())
+    data = json.loads(builder.build_context("q"))
+    entry = data["patches"][0]
+    assert entry["summary"].endswith("...")
+    assert entry["diff"].endswith("...")
+    assert entry["outcome"].endswith("...")
