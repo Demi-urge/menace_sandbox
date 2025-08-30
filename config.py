@@ -206,6 +206,10 @@ class ContextBuilderConfig(BaseModel):
             " if set to False or the dependency is missing, a regex approximation is used."
         ),
     )
+    similarity_metric: str = Field(
+        "cosine",
+        description="Similarity metric for patch examples. Options: cosine or inner_product",
+    )
 
 
 

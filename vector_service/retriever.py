@@ -470,6 +470,77 @@ class Retriever:
         return self.search(query, top_k=top_k, dbs=["error"])
 
 
+@dataclass
+class PatchRetriever:
+    """Lightweight retriever that queries a local :class:`VectorStore`.
+
+    The retriever embeds natural language queries using
+    :class:`~vector_service.vectorizer.SharedVectorService` and looks up the
+    closest patch vectors from the configured :class:`VectorStore`.
+    """
+
+    store: "VectorStore | None" = None
+    vector_service: "SharedVectorService | None" = None
+    top_k: int = 5
+    metric: str = "cosine"
+
+    def __post_init__(self) -> None:
+        if self.vector_service is None:
+            try:
+                from .vectorizer import SharedVectorService  # type: ignore
+            except Exception:  # pragma: no cover - fallback to absolute import
+                from vector_service.vectorizer import SharedVectorService  # type: ignore
+            self.vector_service = SharedVectorService()
+        if self.store is None:
+            try:
+                from .vector_store import get_default_vector_store  # type: ignore
+            except Exception:  # pragma: no cover - fallback
+                from vector_service.vector_store import get_default_vector_store  # type: ignore
+            self.store = get_default_vector_store()
+
+    # ------------------------------------------------------------------
+    def _similarity(self, a: Sequence[float], b: Sequence[float]) -> float:
+        if self.metric == "inner_product":
+            return float(sum(x * y for x, y in zip(a, b)))
+        # cosine similarity
+        na = sum(x * x for x in a) ** 0.5
+        nb = sum(x * x for x in b) ** 0.5
+        if not na or not nb:
+            return 0.0
+        return float(sum(x * y for x, y in zip(a, b)) / (na * nb))
+
+    # ------------------------------------------------------------------
+    @log_and_measure
+    def search(self, query: str, *, top_k: int | None = None) -> List[Dict[str, Any]]:
+        if self.store is None or self.vector_service is None:
+            return []
+        vec = self.vector_service.vectorise("text", {"text": query})
+        ids = getattr(self.store, "ids", [])
+        vectors = getattr(self.store, "vectors", [])
+        meta = getattr(self.store, "meta", [])
+        results: List[Dict[str, Any]] = []
+        for vid, _dist in self.store.query(vec, top_k=top_k or self.top_k):
+            try:
+                idx = ids.index(vid)
+            except ValueError:
+                continue
+            vec2 = vectors[idx] if idx < len(vectors) else []
+            score = self._similarity(vec, vec2)
+            m = meta[idx] if idx < len(meta) else {}
+            md = m.get("metadata", {}) if isinstance(m, dict) else {}
+            text = md.get("diff") or md.get("text") or ""
+            results.append(
+                {
+                    "origin_db": m.get("origin_db", "patch"),
+                    "record_id": str(vid),
+                    "score": score,
+                    "text": text,
+                    "metadata": md,
+                }
+            )
+        return results
+
+
 def fts_search(
     query: str,
     *,
@@ -494,4 +565,4 @@ def fts_search(
         return []
 
 
-__all__ = ["Retriever", "FallbackResult", "fts_search"]
+__all__ = ["Retriever", "PatchRetriever", "FallbackResult", "fts_search"]
