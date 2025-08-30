@@ -42,8 +42,10 @@ jobs:
         run: pre-commit run flake8 --all-files
       - name: Enforce DB router usage
         run: pytest tests/test_db_router_enforcement.py -q
+      - name: Run sandbox runner security tests
+        run: pytest tests/test_workflow_sandbox_runner_security.py -q
       - name: Run unit and integration tests
-        run: pytest -k "not fuzz"
+        run: pytest -k "not fuzz" --ignore=tests/test_workflow_sandbox_runner_security.py
       - name: Run fuzz and property-based tests
         run: pytest tests/fuzz tests/test_bot_testing_bot_property.py tests/test_communication_testing_bot_property.py
 
