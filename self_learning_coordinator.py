@@ -7,6 +7,7 @@ import logging
 import asyncio
 
 from pydantic import BaseModel, ValidationError
+from sandbox_settings import SandboxSettings
 
 from .unified_event_bus import EventBus
 from .data_bot import MetricsDB
@@ -32,10 +33,10 @@ class SelfLearningCoordinator:
         learning_engine: LearningEngine | None = None,
         unified_engine: UnifiedLearningEngine | None = None,
         action_engine: ActionLearningEngine | None = None,
-        eval_interval: int = 0,
+        eval_interval: int | None = None,
         metrics_db: MetricsDB | None = None,
         error_bot: ErrorBot | None = None,
-        summary_interval: int = 0,
+        summary_interval: int | None = None,
         curriculum_builder: CurriculumBuilder | None = None,
     ) -> None:
         self.event_bus = event_bus
@@ -43,10 +44,22 @@ class SelfLearningCoordinator:
         self.unified_engine = unified_engine
         self.action_engine = action_engine
         self.running = False
-        self.eval_interval = eval_interval
+        try:
+            settings = SandboxSettings()
+        except Exception:  # pragma: no cover - fallback when settings unavailable
+            settings = None
+        self.eval_interval = (
+            eval_interval
+            if eval_interval is not None
+            else getattr(settings, "self_learning_eval_interval", 0)
+        )
         self.metrics_db = metrics_db
         self.error_bot = error_bot
-        self.summary_interval = summary_interval
+        self.summary_interval = (
+            summary_interval
+            if summary_interval is not None
+            else getattr(settings, "self_learning_summary_interval", 0)
+        )
         self.curriculum_builder = curriculum_builder
         self._summary_count = 0
         self._train_count = 0
