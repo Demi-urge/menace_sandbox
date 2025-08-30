@@ -5,7 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 import logging
 import subprocess
+import tempfile
 from typing import Dict, Any
+
+from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
@@ -86,14 +89,26 @@ class SelfCodingManager:
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
         before_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
-        patch_id, reverted, _ = self.engine.apply_patch(
-            path,
-            description,
-            parent_patch_id=self._last_patch_id,
-            reason=description,
-            trigger=path.name,
-            context_meta=context_meta,
-        )
+        repo_root = Path.cwd().resolve()
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(["git", "clone", str(repo_root), tmp], check=True)
+            clone_root = Path(tmp)
+            cloned_path = clone_root / path.resolve().relative_to(repo_root)
+            patch_id, reverted, _ = self.engine.apply_patch(
+                cloned_path,
+                description,
+                parent_patch_id=self._last_patch_id,
+                reason=description,
+                trigger=path.name,
+                context_meta=context_meta,
+            )
+
+            def _run_tests() -> None:
+                subprocess.run(["pytest", "-q"], check=True, cwd=str(clone_root))
+
+            runner = WorkflowSandboxRunner()
+            runner.run(_run_tests, safe_mode=True)
+            path.write_text(cloned_path.read_text(encoding="utf-8"), encoding="utf-8")
         result = self.pipeline.run(self.bot_name, energy=energy)
         after_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
         roi_delta = after_roi - before_roi
