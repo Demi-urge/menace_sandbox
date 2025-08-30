@@ -1,20 +1,49 @@
 import hashlib
-import types
+from pathlib import Path
 
-import menace.self_modification_detector as smd
+import pytest
+
+import menace_sandbox.self_modification_detector as smd
+from menace_sandbox.sandbox_settings import SandboxSettings
 
 
-def _run_once(monkeypatch, remote, current):
-    def fake_get(url, timeout=5):
-        return types.SimpleNamespace(status_code=200, json=lambda: remote)
+def _settings(tmp_path: Path, url: str | None = None) -> SandboxSettings:
+    return SandboxSettings(
+        sandbox_repo_path=str(tmp_path),
+        self_mod_interval_seconds=0,
+        self_mod_reference_path="ref.json",
+        self_mod_reference_url=url,
+        self_mod_lockdown_flag_path=str(tmp_path / "lock.flag"),
+    )
 
-    monkeypatch.setattr(smd, "requests", types.SimpleNamespace(get=fake_get))
-    monkeypatch.setattr(smd, "generate_code_hashes", lambda d: current)
-    monkeypatch.setattr(smd, "load_reference_hashes", lambda p: {})
-    monkeypatch.setattr(smd, "save_reference_hashes", lambda d, p: None)
 
-    called = []
-    monkeypatch.setattr(smd, "trigger_lockdown", lambda files: called.append(files))
+def _run_once(monkeypatch, remote, current, tmp_path: Path):
+    settings = _settings(tmp_path, url="http://ref")
+    detector = smd.SelfModificationDetector(settings, base_dir=tmp_path)
+
+    monkeypatch.setattr(
+        smd.SelfModificationDetector,
+        "_fetch_reference_hashes",
+        staticmethod(lambda url: remote),
+    )
+    monkeypatch.setattr(
+        smd.SelfModificationDetector,
+        "generate_code_hashes",
+        staticmethod(lambda d: current),
+    )
+    monkeypatch.setattr(
+        smd.SelfModificationDetector,
+        "load_reference_hashes",
+        staticmethod(lambda p: {}),
+    )
+    monkeypatch.setattr(
+        smd.SelfModificationDetector,
+        "save_reference_hashes",
+        staticmethod(lambda d, p: None),
+    )
+
+    called: list[list[str]] = []
+    monkeypatch.setattr(detector, "trigger_lockdown", lambda files: called.append(files))
 
     class DummyEvent:
         def __init__(self):
@@ -24,8 +53,10 @@ def _run_once(monkeypatch, remote, current):
             self.calls += 1
             return self.calls > 1
 
-    monkeypatch.setattr(smd, "_STOP_EVENT", DummyEvent())
-    monkeypatch.setattr(smd, "_MONITOR_THREAD", None)
+        def clear(self):
+            pass
+
+    detector._stop_event = DummyEvent()
 
     class DummyThread:
         def __init__(self, target=None, daemon=None):
@@ -38,26 +69,29 @@ def _run_once(monkeypatch, remote, current):
         def is_alive(self):
             return False
 
-    monkeypatch.setattr(smd.threading, "Thread", DummyThread)
+        def join(self):
+            pass
 
-    smd.monitor_self_integrity(interval_seconds=0, reference_url="http://ref")
+    monkeypatch.setattr(smd.threading, "Thread", DummyThread)
+    detector.start()
     return called
 
 
-def test_lockdown_trigger_on_mismatch(monkeypatch):
-    called = _run_once(monkeypatch, {"a.py": "1"}, {"a.py": "2"})
+def test_lockdown_trigger_on_mismatch(monkeypatch, tmp_path):
+    called = _run_once(monkeypatch, {"a.py": "1"}, {"a.py": "2"}, tmp_path)
     assert called == [["a.py"]]
 
 
-def test_no_lockdown_on_match(monkeypatch):
-    called = _run_once(monkeypatch, {"a.py": "1"}, {"a.py": "1"})
+def test_no_lockdown_on_match(monkeypatch, tmp_path):
+    called = _run_once(monkeypatch, {"a.py": "1"}, {"a.py": "1"}, tmp_path)
     assert called == []
 
 
-def test_save_reference_hashes_logs_warning(tmp_path, caplog):
+def test_save_reference_hashes_logs_and_raises(tmp_path, caplog):
     path = tmp_path / "sub" / "ref.json"
     caplog.set_level("ERROR")
-    smd.save_reference_hashes({"a": "1"}, str(path))
+    with pytest.raises(OSError):
+        smd.save_reference_hashes({"a": "1"}, str(path))
     assert "failed writing reference hashes" in caplog.text
 
 
@@ -73,28 +107,10 @@ def test_generate_code_hashes(tmp_path):
     assert hashes["a.py"] == hashlib.sha256(b"print('a')").hexdigest()
 
 
-def test_monitor_start_and_stop(monkeypatch):
-    class DummyEvent:
-        def __init__(self):
-            self.cleared = False
-            self.set_called = False
-
-        def wait(self, _):
-            return True
-
-        def clear(self):
-            self.cleared = True
-
-        def set(self):
-            self.set_called = True
-
-    event = DummyEvent()
-    monkeypatch.setattr(smd, "_STOP_EVENT", event)
-    monkeypatch.setattr(smd, "_REFERENCE_HASHES", {})
-    monkeypatch.setattr(smd, "generate_code_hashes", lambda d: {})
-    monkeypatch.setattr(smd, "load_reference_hashes", lambda p: {})
-    monkeypatch.setattr(smd, "save_reference_hashes", lambda d, p: None)
-    monkeypatch.setattr(smd, "detect_self_modification", lambda r, c: [])
+def test_thread_start_and_cleanup(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    detector = smd.SelfModificationDetector(settings, base_dir=tmp_path)
+    monkeypatch.setattr(detector, "_load_reference", lambda: None)
 
     class DummyThread:
         def __init__(self, target=None, daemon=None):
@@ -103,8 +119,7 @@ def test_monitor_start_and_stop(monkeypatch):
             self.alive = True
 
         def start(self):
-            if self.target:
-                self.target()
+            self.alive = True
 
         def join(self):
             self.join_called = True
@@ -114,14 +129,27 @@ def test_monitor_start_and_stop(monkeypatch):
             return self.alive
 
     monkeypatch.setattr(smd.threading, "Thread", DummyThread)
-    smd._MONITOR_THREAD = None
-
-    smd.monitor_self_integrity(interval_seconds=0)
-    thread = smd._MONITOR_THREAD
+    detector.start()
+    thread = detector._thread
     assert isinstance(thread, DummyThread)
-    assert event.cleared
-
-    smd.stop_monitoring()
-    assert event.set_called
+    detector.stop()
+    assert detector._thread is None
+    assert detector._stop_event.is_set()
     assert thread.join_called
-    assert smd._MONITOR_THREAD is None
+
+
+def test_reconfigure_updates_settings(tmp_path):
+    settings = _settings(tmp_path)
+    detector = smd.SelfModificationDetector(settings, base_dir=tmp_path)
+    new = SandboxSettings(
+        sandbox_repo_path=str(tmp_path),
+        self_mod_interval_seconds=5,
+        self_mod_reference_path="other.json",
+        self_mod_reference_url="http://new",
+        self_mod_lockdown_flag_path=str(tmp_path / "new.flag"),
+    )
+    detector.reconfigure(new)
+    assert detector.interval_seconds == 5
+    assert detector.reference_url == "http://new"
+    assert detector.reference_path.name == "other.json"
+    assert detector.lockdown_flag_path.name == "new.flag"
