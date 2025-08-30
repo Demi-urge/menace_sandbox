@@ -657,6 +657,16 @@ class SandboxSettings(BaseSettings):
             raise ValueError(f"{info.field_name} must be a positive integer")
         return v
 
+    @field_validator(
+        "adaptive_roi_retrain_interval",
+        "adaptive_roi_train_interval",
+        "backup_rotation_count",
+    )
+    def _validate_positive_training(cls, v: int, info: Any) -> int:
+        if v <= 0:
+            raise ValueError(f"{info.field_name} must be a positive integer")
+        return v
+
     @field_validator("weight_update_interval", "test_run_timeout")
     def _validate_positive_float(cls, v: float, info: Any) -> float:
         if v <= 0:
@@ -906,6 +916,21 @@ class SandboxSettings(BaseSettings):
     synergy_weights_lr: float = Field(0.1, env="SYNERGY_WEIGHTS_LR")
     synergy_train_interval: int = Field(10, env="SYNERGY_TRAIN_INTERVAL")
     synergy_replay_size: int = Field(100, env="SYNERGY_REPLAY_SIZE")
+    adaptive_roi_retrain_interval: int = Field(
+        20,
+        env="ADAPTIVE_ROI_RETRAIN_INTERVAL",
+        description="Cycles between adaptive ROI model retraining.",
+    )
+    adaptive_roi_train_interval: int = Field(
+        3600,
+        env="ADAPTIVE_ROI_TRAIN_INTERVAL",
+        description="Seconds between scheduled adaptive ROI predictor training.",
+    )
+    backup_rotation_count: int = Field(
+        3,
+        env="SELF_IMPROVEMENT_BACKUP_COUNT",
+        description="Number of rotated backups to keep for self-improvement data.",
+    )
     scenario_metric_thresholds: dict[str, float] = Field(
         default_factory=lambda: {
             "schema_mismatch_rate": 0.1,

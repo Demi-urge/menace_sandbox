@@ -339,9 +339,6 @@ except ImportError:  # pragma: no cover - fallback for flat layout
 
 logger = get_logger(__name__)
 
-BACKUP_COUNT = 3
-ADAPTIVE_ROI_TRAIN_INTERVAL = 3600  # seconds between scheduled retraining
-
 
 # Default synergy weight values used when no valid file is available
 DEFAULT_SYNERGY_WEIGHTS: dict[str, float] = dict(
@@ -363,10 +360,11 @@ DEFAULT_SYNERGY_WEIGHTS: dict[str, float] = dict(
 
 def _rotate_backups(path: Path) -> None:
     """Rotate backup files for ``path``."""
+    count = getattr(settings, "backup_rotation_count", 3)
     backups = [
-        path.with_suffix(path.suffix + f".bak{i}") for i in range(1, BACKUP_COUNT + 1)
+        path.with_suffix(path.suffix + f".bak{i}") for i in range(1, count + 1)
     ]
-    for i in range(BACKUP_COUNT - 1, 0, -1):
+    for i in range(count - 1, 0, -1):
         if backups[i - 1].exists():
             if backups[i].exists():
                 backups[i].unlink()
@@ -394,7 +392,14 @@ def _atomic_write(path: Path, data: bytes | str, *, binary: bool = False) -> Non
 def _load_initial_synergy_weights() -> None:
     """Load persisted synergy weights into :class:`SandboxSettings`."""
 
-    path = Path(getattr(settings, "synergy_weight_file", settings.synergy_weights_path))
+    default_path = Path(getattr(settings, "sandbox_data_dir", ".")) / "synergy_weights.json"
+    path = Path(
+        getattr(
+            settings,
+            "synergy_weight_file",
+            getattr(settings, "synergy_weights_path", default_path),
+        )
+    )
     weights = DEFAULT_SYNERGY_WEIGHTS.copy()
     try:
         with open(path, "r", encoding="utf-8") as fh:
@@ -1147,13 +1152,15 @@ class SelfImprovementEngine:
             )
             self._adaptive_roi_last_train = time.time()
             self.adaptive_roi_train_interval = getattr(
-                settings, "adaptive_roi_train_interval", ADAPTIVE_ROI_TRAIN_INTERVAL
+                settings, "adaptive_roi_train_interval", 3600
             )
         else:
             self.roi_predictor = None
             self.roi_tracker = None
             self._adaptive_roi_last_train = 0.0
-            self.adaptive_roi_train_interval = ADAPTIVE_ROI_TRAIN_INTERVAL
+            self.adaptive_roi_train_interval = getattr(
+                settings, "adaptive_roi_train_interval", 3600
+            )
         metrics_db = data_bot.db if data_bot else MetricsDB()
         self.pathway_db = PathwayDB()
         self.workflow_scorer = CompositeWorkflowScorer(
