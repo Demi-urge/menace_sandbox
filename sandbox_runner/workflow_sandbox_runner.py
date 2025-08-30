@@ -1,14 +1,19 @@
 """Isolated workflow execution with telemetry support.
 
 This module provides :class:`WorkflowSandboxRunner` which runs one or more
-callables inside a temporary directory.  File system access is redirected to
-that directory and, when ``safe_mode`` is enabled, common networking libraries
-are patched so requests either raise :class:`RuntimeError` or invoke supplied
-mock handlers.  File writes are confined to the sandbox and can also be
-redirected to custom handlers such as in-memory buffers.  Access to kernel
-introspection paths such as ``/proc`` is left untouched so runners may read
-process information.  Each executed callable has execution time, memory usage
-and errors recorded and aggregated into a :class:`RunMetrics` instance.
+callables inside a temporary directory or an OS-level sandbox.  File system
+access is redirected to that directory and, when ``safe_mode`` is enabled,
+common networking libraries are patched so requests either raise
+:class:`RuntimeError` or invoke supplied mock handlers.  File writes are
+confined to the sandbox and can also be redirected to custom handlers such as
+in-memory buffers.  Access to kernel introspection paths such as ``/proc`` is
+left untouched so runners may read process information.  Each executed callable
+has execution time, memory usage, CPU time and errors recorded and aggregated
+into a :class:`RunMetrics` instance.  When ``use_subprocess`` is enabled the
+workflow executes in a separate process with CPU and memory quotas enforced via
+``resource`` limits or cgroups.  Optional audit hooks receive callbacks for
+file and network access attempts, allowing external logging of sandboxed
+behaviour including blocked network traffic.
 
 Safe mode guarantees
 --------------------
@@ -42,10 +47,17 @@ import signal
 import threading
 import _thread
 import logging
+import multiprocessing
+import traceback
 from dataclasses import dataclass, field
 from time import perf_counter, process_time
 from typing import Any, Callable, Iterable, Mapping
 from unittest import mock
+
+try:  # pragma: no cover - resource module may be missing on some platforms
+    import resource  # type: ignore
+except Exception:  # pragma: no cover - resource unavailable
+    resource = None  # type: ignore
 
 try:  # pragma: no cover - psutil is optional
     import psutil  # type: ignore
@@ -143,6 +155,9 @@ class WorkflowSandboxRunner:
         roi_delta: float | None = None,
         timeout: float | None = None,
         memory_limit: int | None = None,
+        cpu_limit: int | None = None,
+        use_subprocess: bool = False,
+        audit_hook: Callable[[str, Mapping[str, Any]], None] | None = None,
     ) -> RunMetrics:
         """Execute ``workflow`` inside a sandbox and return telemetry.
 
@@ -174,6 +189,19 @@ class WorkflowSandboxRunner:
         running process in bytes.  When exceeded the module is interrupted and
         the event recorded as a crash.  This requires ``psutil`` to be
         available; otherwise the limit is ignored.
+
+        ``cpu_limit`` specifies the maximum amount of CPU time (in seconds)
+        available to the workflow when executed in a subprocess.  This is
+        enforced using ``resource`` limits or cgroups when available.
+
+        When ``use_subprocess`` is ``True`` the entire workflow executes in a
+        separate Python process with the supplied CPU and memory limits applied.
+        This provides an additional OS-level isolation layer.
+
+        ``audit_hook`` if provided is invoked for every file and network access
+        attempt.  The first argument is a string describing the event and the
+        second a mapping containing event metadata.  Hooks must be picklable if
+        ``use_subprocess`` is enabled.
         """
 
         test_data = dict(test_data or {})
@@ -189,6 +217,35 @@ class WorkflowSandboxRunner:
                 network_data[key] = value
             else:
                 file_data[key] = value
+
+        if use_subprocess:
+            parent_conn, child_conn = multiprocessing.Pipe()
+            params = {
+                "safe_mode": safe_mode,
+                "test_data": test_data,
+                "network_mocks": network_mocks,
+                "fs_mocks": fs_mocks,
+                "module_fixtures": module_fixtures,
+                "roi_delta": roi_delta,
+                "timeout": timeout,
+                "memory_limit": memory_limit,
+                "cpu_limit": cpu_limit,
+                "audit_hook": audit_hook,
+                "use_subprocess": False,
+            }
+
+            p = multiprocessing.Process(
+                target=_subprocess_worker, args=(child_conn, workflow, params)
+            )
+            p.start()
+            p.join()
+            if p.is_alive():
+                p.kill()
+                p.join()
+            metrics, telemetry = parent_conn.recv()
+            self.metrics = metrics
+            self.telemetry = telemetry
+            return metrics
 
         if timeout is None or memory_limit is None:
             try:  # pragma: no cover - optional settings
@@ -214,6 +271,13 @@ class WorkflowSandboxRunner:
         with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
             root = pathlib.Path(tmp).resolve()
             stack.enter_context(_patched_imports())
+
+            def _audit(event: str, **info: Any) -> None:
+                if audit_hook:
+                    try:
+                        audit_hook(event, info)
+                    except Exception:
+                        logger.exception("audit hook error")
 
             funcs = [workflow] if callable(workflow) else list(workflow)
 
@@ -294,6 +358,7 @@ class WorkflowSandboxRunner:
                     if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                         raise RuntimeError("file write disabled in safe_mode")
                     path.parent.mkdir(parents=True, exist_ok=True)
+                _audit("file_open", path=str(path), mode=mode)
                 return original_open(path, mode, *a, **kw)
 
             stack.enter_context(mock.patch("builtins.open", sandbox_open))
@@ -321,6 +386,7 @@ class WorkflowSandboxRunner:
                     if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                         raise RuntimeError("file write disabled in safe_mode")
                     path.parent.mkdir(parents=True, exist_ok=True)
+                _audit("file_open", path=str(path), mode=mode)
                 return original_path_open(path, *a, **kw)
 
             def path_write_text(path_obj, data, *a, **kw):
@@ -337,6 +403,7 @@ class WorkflowSandboxRunner:
                 if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
                 path.parent.mkdir(parents=True, exist_ok=True)
+                _audit("file_write", path=str(path))
                 return original_write_text(path, data, *a, **kw)
 
             def path_read_text(path_obj, *a, **kw):
@@ -344,6 +411,7 @@ class WorkflowSandboxRunner:
                 if raw.startswith("/proc/"):
                     return original_read_text(path_obj, *a, **kw)
                 path = self._resolve(root, raw)
+                _audit("file_read", path=str(path))
                 return original_read_text(path, *a, **kw)
 
             def path_write_bytes(path_obj, data, *a, **kw):
@@ -360,6 +428,7 @@ class WorkflowSandboxRunner:
                 if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
                 path.parent.mkdir(parents=True, exist_ok=True)
+                _audit("file_write", path=str(path))
                 return original_write_bytes(path, data, *a, **kw)
 
             def path_read_bytes(path_obj, *a, **kw):
@@ -367,6 +436,7 @@ class WorkflowSandboxRunner:
                 if raw.startswith("/proc/"):
                     return original_read_bytes(path_obj, *a, **kw)
                 path = self._resolve(root, raw)
+                _audit("file_read", path=str(path))
                 return original_read_bytes(path, *a, **kw)
 
             def path_mkdir(path_obj, *a, **kw):
@@ -380,6 +450,7 @@ class WorkflowSandboxRunner:
                     return fn(path, *a, **kw)
                 if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
+                _audit("file_mkdir", path=str(path))
                 return original_path_mkdir(path, *a, **kw)
 
             def path_unlink(path_obj, *a, **kw):
@@ -393,6 +464,7 @@ class WorkflowSandboxRunner:
                     return fn(path, *a, **kw)
                 if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
+                _audit("file_unlink", path=str(path))
                 return original_path_unlink(path, *a, **kw)
 
             def path_rmdir(path_obj, *a, **kw):
@@ -406,6 +478,7 @@ class WorkflowSandboxRunner:
                     return fn(path, *a, **kw)
                 if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
+                _audit("file_rmdir", path=str(path))
                 return original_path_rmdir(path, *a, **kw)
 
             stack.enter_context(mock.patch.object(pathlib.Path, "open", path_open))
@@ -456,6 +529,7 @@ class WorkflowSandboxRunner:
                     return fn(s, mode, *a, **kw)
                 if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
+                _audit("file_mkdir", path=str(s))
                 return original_mkdir(s, mode, *a, **kw)
 
             def sandbox_makedirs(path, mode=0o777, exist_ok=False):
@@ -466,6 +540,7 @@ class WorkflowSandboxRunner:
                     return fn(s, mode, exist_ok=exist_ok)
                 if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
+                _audit("file_mkdir", path=str(s))
                 return original_makedirs(s, mode, exist_ok=exist_ok)
 
             def sandbox_rmdir(path, *a, **kw):
@@ -479,6 +554,7 @@ class WorkflowSandboxRunner:
                     return fn(s, *a, **kw)
                 if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
+                _audit("file_rmdir", path=str(s))
                 return original_rmdir(s, *a, **kw)
 
             def sandbox_removedirs(path, *a, **kw):
@@ -489,6 +565,7 @@ class WorkflowSandboxRunner:
                     return fn(s, *a, **kw)
                 if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
+                _audit("file_rmdir", path=str(s))
                 return original_removedirs(s, *a, **kw)
 
             def sandbox_os_open(path, flags, *a, **kw):
@@ -508,12 +585,18 @@ class WorkflowSandboxRunner:
                     if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                         raise RuntimeError("file write disabled in safe_mode")
                     pathlib.Path(s).parent.mkdir(parents=True, exist_ok=True)
+                _audit("file_open", path=str(s), flags=flags)
                 return original_os_open(s, flags, *a, **kw)
 
             def sandbox_stat(path, *a, **kw):
                 raw = os.fspath(path)
                 if raw.startswith("/proc/"):
                     return original_stat(path, *a, **kw)
+                if os.path.isabs(raw):
+                    try:
+                        return original_stat(raw, *a, **kw)
+                    except Exception:
+                        pass
                 current = os.stat
                 try:
                     os.stat = original_stat
@@ -522,7 +605,9 @@ class WorkflowSandboxRunner:
                     os.stat = current
                 fn = fs_mocks.get("os.stat")
                 if fn:
+                    _audit("file_stat", path=str(s))
                     return fn(s, *a, **kw)
+                _audit("file_stat", path=str(s))
                 return original_stat(s, *a, **kw)
 
             def sandbox_rmtree(path, *a, **kw):
@@ -665,6 +750,7 @@ class WorkflowSandboxRunner:
                         family = a[0]
                     if family == socket.AF_UNIX:
                         return original_socket(*a, **kw)
+                    _audit("network_blocked", target="socket")
                     raise RuntimeError("network access disabled in safe_mode")
 
                 stack.enter_context(mock.patch("socket.socket", _blocked_socket))
@@ -716,12 +802,14 @@ class WorkflowSandboxRunner:
                 orig_request = requests.Session.request
 
                 def fake_request(self, method, url, *a, **kw):
+                    _audit("network_request", url=url, method=method)
                     if url in network_data:
                         return _response_for(network_data[url])
                     fn = network_mocks.get(url)
                     if fn:
                         return fn(self, method, url, *a, **kw)
                     if safe_mode:
+                        _audit("network_blocked", url=url, method=method)
                         raise RuntimeError("network access disabled in safe_mode")
                     return orig_request(self, method, url, *a, **kw)
 
@@ -745,12 +833,14 @@ class WorkflowSandboxRunner:
                     orig_httpx_request = httpx.Client.request
 
                     def fake_httpx_request(self, method, url, *a, **kw):
+                        _audit("network_request", url=url, method=method)
                         if url in network_data:
                             return _httpx_response(network_data[url])
                         fn = network_mocks.get(url)
                         if fn:
                             return fn(self, method, url, *a, **kw)
                         if safe_mode:
+                            _audit("network_blocked", url=url, method=method)
                             raise RuntimeError("network access disabled in safe_mode")
                         return orig_httpx_request(self, method, url, *a, **kw)
 
@@ -762,6 +852,7 @@ class WorkflowSandboxRunner:
                         orig_async_httpx_request = httpx.AsyncClient.request
 
                         async def fake_async_httpx_request(self, method, url, *a, **kw):
+                            _audit("network_request", url=url, method=method)
                             if url in network_data:
                                 return _httpx_response(network_data[url])
                             fn = network_mocks.get(url)
@@ -771,6 +862,7 @@ class WorkflowSandboxRunner:
                                     return await res
                                 return res
                             if safe_mode:
+                                _audit("network_blocked", url=url, method=method)
                                 raise RuntimeError("network access disabled in safe_mode")
                             return await orig_async_httpx_request(self, method, url, *a, **kw)
 
@@ -788,6 +880,7 @@ class WorkflowSandboxRunner:
                     orig_aio_request = aiohttp.ClientSession._request
 
                     async def fake_aio_request(self, method, url, *a, **kw):
+                        _audit("network_request", url=url, method=method)
                         if url in network_data:
                             data = network_data[url]
                             if isinstance(data, str):
@@ -807,8 +900,12 @@ class WorkflowSandboxRunner:
                             return _AioResp(data)
                         fn = network_mocks.get(url)
                         if fn:
-                            return await fn(self, method, url, *a, **kw)
+                            res = fn(self, method, url, *a, **kw)
+                            if inspect.isawaitable(res):
+                                return await res
+                            return res
                         if safe_mode:
+                            _audit("network_blocked", url=url, method=method)
                             raise RuntimeError("network access disabled in safe_mode")
                         return await orig_aio_request(self, method, url, *a, **kw)
 
@@ -827,12 +924,14 @@ class WorkflowSandboxRunner:
 
                 def fake_urlopen(url, *a, **kw):
                     u = url if isinstance(url, str) else url.get_full_url()
+                    _audit("network_request", url=u, method="urlopen")
                     if u in network_data:
                         return _response_for(network_data[u])
                     fn = network_mocks.get(u)
                     if fn:
                         return fn(url, *a, **kw)
                     if safe_mode:
+                        _audit("network_blocked", url=u, method="urlopen")
                         raise RuntimeError("network access disabled in safe_mode")
                     return orig_urlopen(url, *a, **kw)
 
@@ -1172,5 +1271,49 @@ class WorkflowSandboxRunner:
             self.telemetry = telemetry
             return metrics
 
+
+def _subprocess_worker(conn: multiprocessing.connection.Connection, workflow: Any, params: dict[str, Any]) -> None:  # pragma: no cover - subprocess
+    """Entry point for subprocess isolated execution."""
+    cpu_limit = params.pop("cpu_limit", None)
+    memory_limit = params.get("memory_limit")
+    cgroup_path = None
+    if resource and (cpu_limit or memory_limit):
+        try:
+            if cpu_limit:
+                sec = int(cpu_limit)
+                resource.setrlimit(resource.RLIMIT_CPU, (sec, sec))
+            if memory_limit:
+                resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
+        except Exception:
+            pass
+    elif cpu_limit or memory_limit:
+        try:
+            from .environment import _cgroup_v2_supported, _create_cgroup, _cleanup_cgroup
+
+            if _cgroup_v2_supported():
+                cgroup_path = _create_cgroup(cpu_limit, memory_limit)
+                if cgroup_path is not None:
+                    try:
+                        with open(cgroup_path / "cgroup.procs", "w", encoding="utf-8") as fh:
+                            fh.write(str(os.getpid()))
+                    except Exception:
+                        pass
+        except Exception:
+            cgroup_path = None
+    try:
+        runner = WorkflowSandboxRunner()
+        metrics = runner.run(workflow, **params)
+        conn.send((metrics, runner.telemetry))
+    except Exception as exc:  # pragma: no cover - safety
+        conn.send((RunMetrics(), {"error": str(exc), "trace": traceback.format_exc()}))
+    finally:
+        if cgroup_path is not None:
+            try:
+                from .environment import _cleanup_cgroup
+
+                _cleanup_cgroup(cgroup_path)
+            except Exception:
+                pass
+        conn.close()
 
 __all__ = ["WorkflowSandboxRunner", "RunMetrics", "ModuleMetrics"]
