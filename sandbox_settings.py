@@ -453,6 +453,24 @@ class SandboxSettings(BaseSettings):
         env="SYNERGY_WEIGHTS_PATH",
         description="Persisted synergy weight JSON file.",
     )
+    synergy_weight_file: str = Field(
+        "sandbox_data/synergy_weights.json",
+        env="SYNERGY_WEIGHT_FILE",
+        description="File storing persisted synergy weights between runs.",
+    )
+    default_synergy_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "roi": 1.0,
+            "efficiency": 1.0,
+            "resilience": 1.0,
+            "antifragility": 1.0,
+            "reliability": 1.0,
+            "maintainability": 1.0,
+            "throughput": 1.0,
+        },
+        env="DEFAULT_SYNERGY_WEIGHTS",
+        description="Fallback synergy weights used when no persisted file is found.",
+    )
     alignment_flags_path: str = Field(
         "sandbox_data/alignment_flags.jsonl",
         env="ALIGNMENT_FLAGS_PATH",
