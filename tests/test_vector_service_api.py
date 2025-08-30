@@ -61,16 +61,22 @@ def test_build_context_error(monkeypatch):
 def test_track_contributors_success(monkeypatch):
     called = {}
 
-    def fake_track(ids, result, patch_id="", session_id=""):
-        called['args'] = (ids, result, patch_id, session_id)
+    def fake_track(ids, result, patch_id="", session_id="", **kwargs):
+        called['args'] = (ids, result, patch_id, session_id, kwargs.get("roi_tag"))
 
     monkeypatch.setattr(api, "_patch_logger", types.SimpleNamespace(track_contributors=fake_track))
     resp = client.post(
         "/track-contributors",
-        json={"vector_ids": ["a"], "result": True, "patch_id": "p", "session_id": "s"},
+        json={
+            "vector_ids": ["a"],
+            "result": True,
+            "patch_id": "p",
+            "session_id": "s",
+            "roi_tag": "success",
+        },
     )
     assert resp.status_code == 200
-    assert called['args'] == (["a"], True, "p", "s")
+    assert called['args'] == (["a"], True, "p", "s", "success")
 
 
 def test_track_contributors_error(monkeypatch):

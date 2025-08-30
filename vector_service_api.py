@@ -27,8 +27,21 @@ from vector_service import (
     VectorServiceError,
     FallbackResult,
 )
-from roi_tracker import ROITracker
-from analytics.ranker_scheduler import start_scheduler_from_env
+from vector_service.patch_logger import RoiTag
+try:  # pragma: no cover - optional dependency
+    from roi_tracker import ROITracker
+except Exception:  # pragma: no cover - simple fallback for tests
+    class ROITracker:  # type: ignore
+        def update_db_metrics(self, metrics: dict | None = None) -> None:
+            pass
+
+        def origin_db_deltas(self) -> dict:
+            return {}
+try:  # pragma: no cover - optional scheduler
+    from analytics.ranker_scheduler import start_scheduler_from_env
+except Exception:  # pragma: no cover - fallback for tests
+    def start_scheduler_from_env(*args, **kwargs):  # type: ignore
+        return None
 
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
@@ -192,6 +205,7 @@ class TrackRequest(BaseModel):
     session_id: str = ""
     diff: str | None = None
     summary: str | None = None
+    roi_tag: RoiTag | None = None
 
 
 @app.post("/track-contributors")
@@ -206,6 +220,7 @@ def track_contributors(req: TrackRequest) -> Any:
             session_id=req.session_id,
             diff=req.diff,
             summary=req.summary,
+            roi_tag=req.roi_tag,
         )
     except VectorServiceError as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail=str(exc))
