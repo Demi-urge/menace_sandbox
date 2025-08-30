@@ -156,3 +156,14 @@ def test_validate_chain_recursive_execution(monkeypatch):
     assert record is not None
     assert record["roi_gain"] == pytest.approx(1.0)
     assert record["failures"] == pytest.approx(1 / 3)
+
+
+def test_validate_chain_skips_empty_chain():
+    planner = MetaWorkflowPlanner()
+
+    class DummyRunner:
+        def run(self, *_a, **_kw):  # pragma: no cover - should not be called
+            raise AssertionError("runner.run should not be invoked")
+
+    record = planner._validate_chain([], {}, runner=DummyRunner(), runs=1)
+    assert record is None
