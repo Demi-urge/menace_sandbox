@@ -7,7 +7,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Mapping, Sequence
 import json
-import sqlite3
 import logging
 
 from db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
@@ -142,6 +141,14 @@ class VectorMetricsDB:
             )
             """
         )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vector_weights(
+                vector_id TEXT PRIMARY KEY,
+                weight REAL
+            )
+            """
+        )
         # Persist session vector data so retrievals can be reconciled after
         # restarts.  Stored as JSON blobs keyed by ``session_id``.
         self.conn.execute(
@@ -268,6 +275,44 @@ class VectorMetricsDB:
         self.conn.commit()
 
     # ------------------------------------------------------------------
+    def update_vector_weight(self, vector_id: str, delta: float) -> float:
+        """Adjust ranking weight for *vector_id* by ``delta`` and persist it."""
+
+        cur = self.conn.execute(
+            "SELECT weight FROM vector_weights WHERE vector_id=?", (vector_id,)
+        )
+        row = cur.fetchone()
+        weight = float(row[0]) if row and row[0] is not None else 0.0
+        weight = max(0.0, min(1.0, weight + delta))
+        self.conn.execute(
+            "REPLACE INTO vector_weights(vector_id, weight) VALUES(?, ?)",
+            (vector_id, weight),
+        )
+        self.conn.commit()
+        return weight
+
+    # ------------------------------------------------------------------
+    def get_vector_weight(self, vector_id: str) -> float:
+        """Return ranking weight for *vector_id* (0.0 if unknown)."""
+
+        cur = self.conn.execute(
+            "SELECT weight FROM vector_weights WHERE vector_id=?", (vector_id,)
+        )
+        row = cur.fetchone()
+        return float(row[0]) if row and row[0] is not None else 0.0
+
+    # ------------------------------------------------------------------
+    def set_vector_weight(self, vector_id: str, weight: float) -> None:
+        """Persist absolute weight value for *vector_id*."""
+
+        weight = max(0.0, min(1.0, float(weight)))
+        self.conn.execute(
+            "REPLACE INTO vector_weights(vector_id, weight) VALUES(?, ?)",
+            (vector_id, weight),
+        )
+        self.conn.commit()
+
+    # ------------------------------------------------------------------
     def recalc_ranking_weights(self) -> Dict[str, float]:
         """Recalculate ranking weights from cumulative ROI and safety data."""
 
@@ -315,7 +360,7 @@ class VectorMetricsDB:
     # ------------------------------------------------------------------
     def load_sessions(
         self,
-        ) -> Dict[str, Tuple[List[Tuple[str, str, float]], Dict[str, Dict[str, Any]]]]:
+    ) -> Dict[str, Tuple[List[Tuple[str, str, float]], Dict[str, Dict[str, Any]]]]:
         """Return mapping of session_id to stored vectors and metadata."""
 
         cur = self.conn.execute(
@@ -519,7 +564,8 @@ class VectorMetricsDB:
     # ------------------------------------------------------------------
     def retriever_win_rate(self, db: str | None = None) -> float:
         cur = self.conn.execute(
-            "SELECT AVG(win) FROM vector_metrics WHERE event_type='retrieval' AND win IS NOT NULL"
+            "SELECT AVG(win) FROM vector_metrics "
+            "WHERE event_type='retrieval' AND win IS NOT NULL"
             + (" AND db=?" if db else ""),
             (db,) if db else (),
         )
@@ -529,7 +575,8 @@ class VectorMetricsDB:
     # ------------------------------------------------------------------
     def retriever_regret_rate(self, db: str | None = None) -> float:
         cur = self.conn.execute(
-            "SELECT AVG(regret) FROM vector_metrics WHERE event_type='retrieval' AND regret IS NOT NULL"
+            "SELECT AVG(regret) FROM vector_metrics "
+            "WHERE event_type='retrieval' AND regret IS NOT NULL"
             + (" AND db=?" if db else ""),
             (db,) if db else (),
         )
@@ -611,7 +658,9 @@ class VectorMetricsDB:
                 list(vec) + [None, None, None, None, None]
             )[:6]
             self.conn.execute(
-                "INSERT INTO patch_ancestry(patch_id, vector_id, rank, contribution, license, semantic_alerts, alignment_severity, risk_score) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO patch_ancestry(patch_id, vector_id, rank, contribution, "
+                "license, semantic_alerts, alignment_severity, risk_score) "
+                "VALUES(?,?,?,?,?,?,?,?)",
                 (
                     patch_id,
                     vec_id,
@@ -642,7 +691,10 @@ class VectorMetricsDB:
     ) -> None:
         try:
             self.conn.execute(
-                "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, lines_changed, context_tokens, patch_difficulty, start_time, time_to_completion, error_trace_count, roi_tag, effort_estimate) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, "
+                "lines_changed, context_tokens, patch_difficulty, start_time, "
+                "time_to_completion, error_trace_count, roi_tag, effort_estimate) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     patch_id,
                     json.dumps(list(errors or [])),
