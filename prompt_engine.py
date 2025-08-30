@@ -29,6 +29,17 @@ except Exception:  # pragma: no cover - logging only when available
         return
 
 
+logger = logging.getLogger(__name__)
+
+try:  # pragma: no cover - optional precise tokenizer
+    import tiktoken
+
+    _ENCODER = tiktoken.get_encoding("cl100k_base")
+except Exception:  # pragma: no cover - dependency missing or failed
+    tiktoken = None  # type: ignore
+    _ENCODER = None
+
+
 DEFAULT_TEMPLATE = "No relevant patches were found. Proceed with a fresh implementation."
 
 
@@ -392,16 +403,26 @@ class PromptEngine:
 
     # ------------------------------------------------------------------
     def _trim_tokens(self, text: str, limit: int) -> str:
-        """Trim ``text`` to ``limit`` tokens using ContextBuilder heuristics."""
+        """Trim ``text`` to ``limit`` tokens using available tokenizers."""
 
         counter = None
         if self.context_builder is not None:
             counter = getattr(self.context_builder, "_count_tokens", None)
         if counter is None:
-            def _default_counter(s: Any) -> int:
-                return len(str(s).split())
+            if _ENCODER is not None:
+                def _token_counter(s: Any) -> int:
+                    return len(_ENCODER.encode(str(s)))
 
-            counter = _default_counter
+                counter = _token_counter
+            else:
+                logger.warning(
+                    "precise token counting requires the 'tiktoken' package"
+                )
+
+                def _default_counter(s: Any) -> int:
+                    return len(str(s).split())
+
+                counter = _default_counter
 
         tokens = counter(text)
         if tokens <= limit:

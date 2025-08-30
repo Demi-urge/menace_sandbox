@@ -1,5 +1,7 @@
 from typing import Any, Dict, List
 
+import pytest
+
 from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
 from vector_service.retriever import FallbackResult
 
@@ -153,3 +155,29 @@ def test_roi_tag_weights_adjust_ranking():
     ranked = engine._rank_records(records)
     assert ranked[0]["metadata"]["summary"] == "bad"
 
+
+def test_trim_tokens_with_tokenizer():
+    pytest.importorskip("tiktoken")
+    engine = PromptEngine(
+        retriever=DummyRetriever([]),
+        patch_retriever=DummyRetriever([]),
+        context_builder=object(),
+    )
+    text = "Hello, world!"
+    assert engine._trim_tokens(text, 3) == "Hello, wo..."
+
+
+def test_trim_tokens_without_tokenizer(monkeypatch):
+    import prompt_engine as pe
+
+    monkeypatch.setattr(pe, "_ENCODER", None)
+    messages: list[str] = []
+    monkeypatch.setattr(pe.logger, "warning", lambda msg: messages.append(msg))
+    engine = PromptEngine(
+        retriever=DummyRetriever([]),
+        patch_retriever=DummyRetriever([]),
+        context_builder=object(),
+    )
+    text = "Hello, world!"
+    assert engine._trim_tokens(text, 3) == text
+    assert any("tiktoken" in m for m in messages)
