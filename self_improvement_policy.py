@@ -68,6 +68,18 @@ class RLStrategy:
 
 
 @dataclass
+class PolicyConfig:
+    """Configuration for :class:`SelfImprovementPolicy` hyperparameters."""
+
+    alpha: float = 0.5
+    gamma: float = 0.9
+    epsilon: float = 0.1
+    temperature: float = 1.0
+    exploration: str = "epsilon_greedy"
+    adaptive: bool = False
+
+
+@dataclass
 class QLearningConfig(RLConfig):
     """Configuration for tabular Q-learning style strategies."""
 
@@ -573,6 +585,19 @@ class DeepQLearningStrategy(RLStrategy):
             return float(torch.max(self.model(torch.tensor(state, dtype=torch.float32))).item())
 
 
+if torch is None:
+    class _FallbackDQNStrategy(QLearningStrategy):
+        """Fallback strategy when PyTorch is unavailable."""
+
+        Config = DQNConfig
+        _deterministic_fallback = True
+
+
+    DeepQLearningStrategy = _FallbackDQNStrategy
+    DQNStrategy = _FallbackDQNStrategy
+    DoubleDQNStrategy = _FallbackDQNStrategy
+
+
 # ---------------------------------------------------------------------------
 # RL strategy factory utilities
 # ---------------------------------------------------------------------------
@@ -644,7 +669,15 @@ class SelfImprovementPolicy:
         adaptive: bool = False,
         epsilon_schedule: Optional[Callable[[int, float], float]] = None,
         temperature_schedule: Optional[Callable[[int, float], float]] = None,
+        config: PolicyConfig | None = None,
     ) -> None:
+        if config is not None:
+            alpha = config.alpha
+            gamma = config.gamma
+            exploration = config.exploration
+            epsilon = config.epsilon
+            temperature = config.temperature
+            adaptive = config.adaptive
         self.alpha = alpha
         self.gamma = gamma
         self.adaptive = adaptive
@@ -757,12 +790,23 @@ class SelfImprovementPolicy:
         return max(actions, key=actions.get)
 
     # ------------------------------------------------------------------
+    def get_config(self) -> PolicyConfig:
+        """Return current hyperparameters."""
+
+        return PolicyConfig(
+            alpha=self.alpha,
+            gamma=self.gamma,
+            epsilon=self.epsilon,
+            temperature=self.temperature,
+            exploration=self.exploration,
+            adaptive=self.adaptive,
+        )
+
+    # ------------------------------------------------------------------
     def to_json(self) -> str:
         """Serialize policy configuration and values to JSON."""
         data: Dict[str, object] = {
-            "alpha": self.alpha,
-            "gamma": self.gamma,
-            "epsilon": self.epsilon,
+            "hyperparameters": asdict(self.get_config()),
             "strategy": self.strategy.__class__.__name__,
             "values": [
                 {"state": list(k), "actions": v} for k, v in self.values.items()
@@ -785,12 +829,20 @@ class SelfImprovementPolicy:
             strat = strat_cls(config=cfg)  # type: ignore[arg-type]
         else:
             strat = strat_cls()
-        policy = cls(
-            alpha=obj.get("alpha", 0.5),
-            gamma=obj.get("gamma", 0.9),
-            epsilon=obj.get("epsilon", 0.1),
-            strategy=strat,
-        )
+        hyper = obj.get("hyperparameters")
+        if hyper:
+            hp = PolicyConfig(**hyper)
+            policy = cls(config=hp, strategy=strat)
+        else:
+            policy = cls(
+                alpha=obj.get("alpha", 0.5),
+                gamma=obj.get("gamma", 0.9),
+                epsilon=obj.get("epsilon", 0.1),
+                temperature=obj.get("temperature", 1.0),
+                exploration=obj.get("exploration", "epsilon_greedy"),
+                adaptive=obj.get("adaptive", False),
+                strategy=strat,
+            )
         values: Dict[Tuple[int, ...], Dict[int, float]] = {}
         for item in obj.get("values", []):
             state = tuple(item["state"])
@@ -817,6 +869,26 @@ class SelfImprovementPolicy:
                 else:
                     new_table[tuple(k) if not isinstance(k, tuple) else k] = {1: float(v)}
             self.values = new_table
+
+    def save_model(self, path: str) -> None:
+        """Save policy and strategy weights to ``path`` as JSON."""
+
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(self.to_json())
+        base = os.path.splitext(path)[0]
+        self.save_dqn_weights(base)
+
+    @classmethod
+    def load_model(cls, path: str) -> "SelfImprovementPolicy":
+        """Load policy and associated weights from ``path``."""
+
+        with open(path, "r", encoding="utf-8") as fh:
+            data = fh.read()
+        policy = cls.from_json(data)
+        policy.path = path
+        base = os.path.splitext(path)[0]
+        policy.load_dqn_weights(base)
+        return policy
 
     def save_dqn_weights(self, base: str) -> None:
         if torch is None or not hasattr(self.strategy, "model"):
@@ -908,6 +980,7 @@ class ConfigurableSelfImprovementPolicy(SelfImprovementPolicy):
 
 
 __all__ = [
+    "PolicyConfig",
     "RLConfig",
     "QLearningConfig",
     "ActorCriticConfig",
