@@ -52,9 +52,15 @@ class PatchVectorizer(EmbeddableDBMixin):
     vector = transform
 
     def iter_records(self) -> Iterator[Tuple[int, Dict[str, Any], str]]:
-        cur = self.conn.execute("SELECT id, description FROM patch_history")
-        for pid, desc in cur.fetchall():
-            yield pid, {"description": desc}, "patch"
+        cur = self.conn.execute(
+            "SELECT id, description, diff, summary FROM patch_history"
+        )
+        for pid, desc, diff, summary in cur.fetchall():
+            yield pid, {
+                "description": desc,
+                "diff": diff,
+                "summary": summary,
+            }, "patch"
 
 
 __all__ = ["PatchVectorizer"]
