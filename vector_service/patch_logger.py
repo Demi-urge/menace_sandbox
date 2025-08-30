@@ -162,25 +162,37 @@ router = GLOBAL_ROUTER or init_db_router("patch_logger")
 
 
 def compute_enhancement_score(
-    patch_difficulty: int | None,
-    time_to_completion: float | None,
+    lines_changed: int | None,
+    context_tokens: int | None,
+    duration_s: float | None,
     tests_passed: bool | None,
-    error_trace_count: int | None,
-    effort_estimate: float | None,
+    error_count: int | None,
+    human_effort: float | None,
 ) -> float:
-    """Return a simple enhancement score combining patch metrics.
+    """Return a normalised score summarising patch enhancement metrics.
 
-    Higher values indicate more valuable patches.  Difficulty, effort and
-    passing tests increase the score while longer completion times and errors
-    decrease it.
+    The score ranges from 0 to 1.  Positive metrics (lines changed, context
+    length, human effort and passing tests) increase the score while longer
+    durations and higher error counts decrease it.
     """
 
-    difficulty = float(patch_difficulty or 0)
-    duration = float(time_to_completion or 0)
-    tests = 1.0 if tests_passed else 0.0
-    errors = float(error_trace_count or 0)
-    effort = float(effort_estimate or 0)
-    return difficulty + effort + tests - errors - duration
+    def _norm(value: float | int | None, scale: float) -> float:
+        try:
+            return max(0.0, min(float(value or 0) / scale, 1.0))
+        except Exception:
+            return 0.0
+
+    positives = (
+        _norm(lines_changed, 200)
+        + _norm(context_tokens, 4000)
+        + _norm(human_effort, 10)
+        + (1.0 if tests_passed else 0.0)
+    )
+    negatives = _norm(duration_s, 3600) + _norm(error_count, 20)
+    total = positives + negatives
+    if total <= 0.0:
+        return 0.0
+    return positives / total
 
 
 class TrackResult(dict):
@@ -195,6 +207,8 @@ class TrackResult(dict):
         lines_changed: int | None = None,
         context_tokens: int | None = None,
         patch_difficulty: int | None = None,
+        duration_s: float | None = None,
+        error_count: int | None = None,
         effort_estimate: float | None = None,
         roi_deltas: Mapping[str, float] | None = None,
         enhancement_score: float | None = None,
@@ -205,7 +219,10 @@ class TrackResult(dict):
         self.lines_changed = lines_changed
         self.context_tokens = context_tokens
         self.patch_difficulty = patch_difficulty
+        self.duration_s = duration_s
+        self.error_count = error_count
         self.effort_estimate = effort_estimate
+        self.human_effort = effort_estimate
         self.enhancement_score = enhancement_score
         # ``roi_deltas`` allows callers to retrieve per-origin ROI changes
         # computed during :meth:`track_contributors`.  It defaults to an empty
@@ -631,7 +648,8 @@ class PatchLogger:
                                 )
                 error_trace_count = len(errors)
                 enhancement_score = compute_enhancement_score(
-                    patch_difficulty,
+                    lines_changed,
+                    context_tokens,
                     time_to_completion,
                     tests_passed,
                     error_trace_count,
@@ -904,6 +922,8 @@ class PatchLogger:
             lines_changed=lines_changed,
             context_tokens=context_tokens,
             patch_difficulty=patch_difficulty,
+            duration_s=time_to_completion,
+            error_count=error_trace_count,
             roi_deltas=roi_deltas,
             effort_estimate=effort_estimate_val,
             enhancement_score=enhancement_score,
