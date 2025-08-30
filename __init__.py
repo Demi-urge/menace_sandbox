@@ -8,6 +8,8 @@ import importlib.util
 import logging
 import os
 import sys
+import shutil
+import time
 from typing import TYPE_CHECKING
 
 from .roi_calculator import ROICalculator
@@ -16,6 +18,71 @@ from .foresight_tracker import ForesightTracker
 from .upgrade_forecaster import UpgradeForecaster
 from .workflow_synthesizer import WorkflowSynthesizer
 from .workflow_synergy_comparator import WorkflowSynergyComparator
+
+from . import metrics_exporter
+
+_ORIG_RMTREE = shutil.rmtree
+
+_rmtree_retries = metrics_exporter.Gauge(
+    "cleanup_rmtree_retries_total",
+    "Total retries while removing directories on Windows",
+    labelnames=("path",),
+)
+
+_rmtree_failures = metrics_exporter.Gauge(
+    "cleanup_rmtree_failures_total",
+    "Total failed directory removals on Windows",
+    labelnames=("path",),
+)
+
+
+def _rmtree_with_retry(
+    path: str,
+    *args: object,
+    attempts: int = 3,
+    delay: float = 0.1,
+    **kwargs: object,
+) -> None:
+    """Remove ``path`` with retries and metrics on Windows."""
+
+    if os.name != "nt":
+        return _ORIG_RMTREE(path, *args, **kwargs)
+
+    ignore_errors = bool(kwargs.get("ignore_errors", False))
+    for i in range(attempts):
+        try:
+            return _ORIG_RMTREE(path, *args, **kwargs)
+        except Exception as exc:  # pragma: no cover - best effort cleanup
+            if i < attempts - 1:
+                logging.warning(
+                    "rmtree attempt %s/%s for %s failed: %s",
+                    i + 1,
+                    attempts,
+                    path,
+                    exc,
+                )
+                try:
+                    _rmtree_retries.labels(str(path)).inc()
+                except Exception:
+                    pass
+                time.sleep(delay * (2 ** i))
+            else:
+                logging.error(
+                    "rmtree failed for %s after %s attempts: %s",
+                    path,
+                    attempts,
+                    exc,
+                )
+                try:
+                    _rmtree_failures.labels(str(path)).inc()
+                except Exception:
+                    pass
+                if not ignore_errors:
+                    raise
+                return
+
+
+shutil.rmtree = _rmtree_with_retry
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from .composite_workflow_scorer import CompositeWorkflowScorer
 try:  # pragma: no cover - optional heavy dependency
