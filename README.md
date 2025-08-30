@@ -817,6 +817,20 @@ are skipped unless `MENACE_HARDWARE=1` is set:
 MENACE_HARDWARE=1 pytest tests/hardware
 ```
 
+### Running integration tests
+
+Run the deterministic integration tests with:
+
+```bash
+pytest tests/integration/test_stub_generation.py tests/integration/test_planning_cycle.py tests/integration/test_environment_cleanup.py
+```
+
+Run all integration tests via:
+
+```bash
+pytest tests/integration
+```
+
 ### Optional dependencies
 
 Some features such as anomaly detection and the `ErrorForecaster` make use of

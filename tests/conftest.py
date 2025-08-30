@@ -55,7 +55,7 @@ sandbox_env = types.ModuleType("sandbox_runner.environment")
 sandbox_env.simulate_temporal_trajectory = lambda *a, **k: None
 sandbox_pkg = types.ModuleType("sandbox_runner")
 sandbox_pkg.environment = sandbox_env
-sandbox_pkg.__path__ = []  # mark as package
+sandbox_pkg.__path__ = [str(ROOT / "sandbox_runner")]
 sys.modules["sandbox_runner"] = sandbox_pkg
 sys.modules["sandbox_runner.environment"] = sandbox_env
 
@@ -66,11 +66,14 @@ sys.modules.setdefault("run_autonomous", run_auto_stub)
 sys.modules.setdefault("menace.run_autonomous", run_auto_stub)
 
 # Load the real menace package if possible but tolerate missing system deps
-spec = importlib.util.spec_from_file_location("menace", ROOT / "__init__.py")
-real_mod = importlib.util.module_from_spec(spec)
-try:  # pragma: no cover - defensive against SystemExit
-    spec.loader.exec_module(real_mod)  # type: ignore[attr-defined]
-except SystemExit:
+if os.getenv("MENACE_IMPORT_REAL", "0") == "1":
+    spec = importlib.util.spec_from_file_location("menace", ROOT / "__init__.py")
+    real_mod = importlib.util.module_from_spec(spec)
+    try:  # pragma: no cover - defensive against SystemExit
+        spec.loader.exec_module(real_mod)  # type: ignore[attr-defined]
+    except SystemExit:
+        real_mod = types.ModuleType("menace")
+else:
     real_mod = types.ModuleType("menace")
 
 if not hasattr(real_mod, "ForesightTracker"):
