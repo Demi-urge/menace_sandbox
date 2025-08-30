@@ -739,6 +739,28 @@ class SandboxSettings(BaseSettings):
         description="Penalty weight for each failure category detected.",
     )
 
+    # self modification detector configuration
+    self_mod_interval_seconds: int = Field(
+        10,
+        env="SELF_MOD_INTERVAL_SECONDS",
+        description="Seconds between integrity checks for self-modification detection.",
+    )
+    self_mod_reference_path: str = Field(
+        "immutable_reference.json",
+        env="SELF_MOD_REFERENCE_PATH",
+        description="Path to reference hash snapshot.",
+    )
+    self_mod_reference_url: str | None = Field(
+        None,
+        env="SELF_MOD_REFERENCE_URL",
+        description="Optional URL providing reference hashes.",
+    )
+    self_mod_lockdown_flag_path: str = Field(
+        "lockdown.flag",
+        env="SELF_MOD_LOCKDOWN_FLAG_PATH",
+        description="Location of lockdown flag written on tampering.",
+    )
+
     # self debugger scoring configuration
     score_threshold: float = Field(
         0.5,
@@ -790,6 +812,8 @@ class SandboxSettings(BaseSettings):
         "alignment_flags_path",
         "module_synergy_graph_path",
         "relevancy_metrics_db_path",
+        "self_mod_reference_path",
+        "self_mod_lockdown_flag_path",
     )
     def _ensure_parent_dirs(cls, v: str) -> str:
         Path(v).parent.mkdir(parents=True, exist_ok=True)
