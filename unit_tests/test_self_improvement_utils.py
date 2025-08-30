@@ -10,8 +10,6 @@ import asyncio
 import random
 import inspect
 from dataclasses import dataclass
-import subprocess
-import sys
 import threading
 from functools import lru_cache
 
@@ -64,8 +62,6 @@ def _load_utils():
         "self_improvement_failure_total": counter,
         "SandboxSettings": _StubSettings,
         "dataclass": dataclass,
-        "subprocess": subprocess,
-        "sys": sys,
         "threading": threading,
         "lru_cache": lru_cache,
     }
@@ -88,31 +84,14 @@ def test_load_callable_success_and_cache():
 
 def test_load_callable_missing_returns_stub_and_records_metric():
     utils, counter = _load_utils()
-    with patch("subprocess.run", side_effect=Exception) as sp, patch(
-        "importlib.import_module", side_effect=ImportError
-    ):
+    with patch("importlib.import_module", side_effect=ImportError):
         fn = utils["_load_callable"]("missing", "attr", allow_install=True)
         with pytest.raises(RuntimeError) as ei:
             fn()
     assert counter.count == 1
     assert fn.error.module == "missing"
-    assert fn.error.install_attempted is True
-    assert "pip install missing" in str(ei.value)
-    assert utils["_load_callable"].diagnostics["install_attempts"] == 1
-    assert sp.called
-
-
-def test_no_install_without_flag():
-    utils, counter = _load_utils()
-    with patch("subprocess.run") as sp, patch(
-        "importlib.import_module", side_effect=ImportError
-    ):
-        fn = utils["_load_callable"]("missing", "attr")
-        with pytest.raises(RuntimeError):
-            fn()
     assert fn.error.install_attempted is False
-    assert utils["_load_callable"].diagnostics["install_attempts"] == 0
-    sp.assert_not_called()
+    assert "pip install missing" in str(ei.value)
 
 
 def test_load_callable_retry_succeeds_when_enabled():
@@ -127,9 +106,7 @@ def test_load_callable_retry_succeeds_when_enabled():
             raise ImportError
         return types.SimpleNamespace(attr=lambda: "ok")
 
-    with patch("subprocess.check_call", side_effect=Exception), patch(
-        "importlib.import_module", side_effect=side_effect
-    ):
+    with patch("importlib.import_module", side_effect=side_effect):
         utils["SandboxSettings"] = lambda: types.SimpleNamespace(
             retry_optional_dependencies=True,
             sandbox_retry_delay=0,
