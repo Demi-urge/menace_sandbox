@@ -25,6 +25,7 @@ from vector_service import (
     PatchLogger,
     Retriever,
     VectorServiceError,
+    FallbackResult,
 )
 from roi_tracker import ROITracker
 from analytics.ranker_scheduler import start_scheduler_from_env
@@ -189,6 +190,8 @@ class TrackRequest(BaseModel):
     result: bool
     patch_id: str | None = ""
     session_id: str = ""
+    diff: str | None = None
+    summary: str | None = None
 
 
 @app.post("/track-contributors")
@@ -201,6 +204,8 @@ def track_contributors(req: TrackRequest) -> Any:
             req.result,
             patch_id=req.patch_id or "",
             session_id=req.session_id,
+            diff=req.diff,
+            summary=req.summary,
         )
     except VectorServiceError as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail=str(exc))

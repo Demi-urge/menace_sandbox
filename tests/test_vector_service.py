@@ -136,6 +136,8 @@ class DummyPatchDB:
         tests_passed=None,
         enhancement_name=None,
         timestamp=None,
+        diff=None,
+        summary=None,
     ):
         self.called = True
         self.args = (
@@ -149,6 +151,8 @@ class DummyPatchDB:
             tests_passed,
             enhancement_name,
             timestamp,
+            diff,
+            summary,
         )
 
 

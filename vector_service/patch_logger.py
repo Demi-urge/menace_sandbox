@@ -213,6 +213,8 @@ class PatchLogger:
         tests_passed: bool | None = None,
         enhancement_name: str | None = None,
         timestamp: float | None = None,
+        diff: str | None = None,
+        summary: str | None = None,
     ) -> dict[str, float]:
         """Log patch outcome for vectors contributing to a patch.
 
@@ -259,7 +261,11 @@ class PatchLogger:
                     except Exception:
                         logger.exception("Failed to record failure metadata")
                 if similarity >= self.patch_safety.threshold:
-                    payload = {"vector": key, "score": similarity, "threshold": self.patch_safety.threshold}
+                    payload = {
+                        "vector": key,
+                        "score": similarity,
+                        "threshold": self.patch_safety.threshold,
+                    }
                     bus = self.event_bus
                     if bus is None and UnifiedEventBus is not None:
                         try:
@@ -358,6 +364,8 @@ class PatchLogger:
                             tests_passed=tests_passed,
                             enhancement_name=enhancement_name,
                             timestamp=timestamp,
+                            diff=diff,
+                            summary=summary,
                         )
                     except Exception:
                         logger.exception("patch_db.record_vector_metrics failed")
@@ -601,7 +609,8 @@ class PatchLogger:
         try:
             conn = router.get_connection("risk_summaries")
             conn.execute(
-                "CREATE TABLE IF NOT EXISTS risk_summaries(ts REAL, patch_id TEXT, origin TEXT, risk REAL)"
+                "CREATE TABLE IF NOT EXISTS risk_summaries("
+                "ts REAL, patch_id TEXT, origin TEXT, risk REAL)"
             )
             ts = time.time()
             for origin, risk in origin_similarity.items():
@@ -671,6 +680,8 @@ class PatchLogger:
         tests_passed: bool | None = None,
         enhancement_name: str | None = None,
         timestamp: float | None = None,
+        diff: str | None = None,
+        summary: str | None = None,
     ) -> dict[str, float]:
         """Asynchronous wrapper for :meth:`track_contributors`."""
 
@@ -688,8 +699,9 @@ class PatchLogger:
             tests_passed=tests_passed,
             enhancement_name=enhancement_name,
             timestamp=timestamp,
+            diff=diff,
+            summary=summary,
         )
 
 
 __all__ = ["PatchLogger"]
-
