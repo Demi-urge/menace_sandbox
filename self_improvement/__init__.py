@@ -411,30 +411,42 @@ def _load_initial_synergy_weights() -> None:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
         valid = isinstance(data, dict) and all(
-            k in data and isinstance(data[k], (int, float)) for k in weights
+            k in data and isinstance(data.get(k), (int, float)) for k in weights
         )
         if valid:
             for k in weights:
                 weights[k] = float(data[k])
     except FileNotFoundError:
         logger.info(
-            "synergy weights file %s missing; writing defaults",
+            "synergy weights file %s missing; creating defaults",
             path,
             extra=log_record(path=str(path)),
         )
+        payload = {
+            "_doc": "Default synergy weights. Adjust values between 0.0 and 10.0.",
+            **weights,
+        }
         try:
-            _atomic_write(path, json.dumps(weights, indent=2))
+            _atomic_write(path, json.dumps(payload, indent=2))
         except OSError as exc:  # pragma: no cover - best effort
             logger.warning(
                 "failed to write default synergy weights %s",
                 path,
-                extra=log_record(path=str(path)),
+                extra=log_record(path=str(path), error=str(exc)),
                 exc_info=exc,
             )
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
         logger.warning(
-            "failed to load synergy weights %s", path,
-            extra=log_record(path=str(path)),
+            "I/O error loading synergy weights %s",
+            path,
+            extra=log_record(path=str(path), error=str(exc)),
+            exc_info=exc,
+        )
+    except ValueError as exc:
+        logger.warning(
+            "invalid synergy weights %s",
+            path,
+            extra=log_record(path=str(path), error=str(exc)),
             exc_info=exc,
         )
     settings.synergy_weight_roi = weights["roi"]
