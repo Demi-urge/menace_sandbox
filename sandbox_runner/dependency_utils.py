@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import ast
 import os
+import logging
 from typing import Callable, Iterable, List, Mapping, Set, Tuple
 
 
@@ -25,6 +26,9 @@ ModuleCallback = Callable[[str, Path, List[str]], None]
 """Callback invoked when a module is visited during traversal."""
 
 
+logger = logging.getLogger(__name__)
+
+
 def collect_local_dependencies(
     paths: Iterable[str],
     *,
@@ -32,6 +36,7 @@ def collect_local_dependencies(
     on_module: ModuleCallback | None = None,
     on_dependency: DependencyCallback | None = None,
     max_depth: int | None = None,
+    strict: bool = False,
 ) -> Set[str]:
     """Return modules reachable from ``paths`` following local imports.
 
@@ -51,10 +56,33 @@ def collect_local_dependencies(
     max_depth:
         Optional maximum dependency chain length. When set, traversal stops once
         the chain of parents reaches this depth. ``None`` means unlimited.
+    strict:
+        When ``True``, propagate exceptions raised by callbacks instead of
+        logging and continuing.
     """
 
     repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
     queue: List[Tuple[Path, List[str]]] = []
+
+    def _call_on_module(rel: str, path: Path, parents: List[str]) -> None:
+        if on_module is None:
+            return
+        try:
+            on_module(rel, path, parents)
+        except Exception:  # pragma: no cover - best effort
+            if strict:
+                raise
+            logger.exception("on_module callback failed for %s", rel)
+
+    def _call_on_dependency(dep_rel: str, rel: str, dep_parents: List[str]) -> None:
+        if on_dependency is None:
+            return
+        try:
+            on_dependency(dep_rel, rel, dep_parents)
+        except Exception:  # pragma: no cover - best effort
+            if strict:
+                raise
+            logger.exception("on_dependency callback failed for %s", dep_rel)
 
     for m in paths:
         p = Path(m)
@@ -77,11 +105,7 @@ def collect_local_dependencies(
         except Exception:
             rel = path.as_posix()
 
-        if on_module is not None:
-            try:
-                on_module(rel, path, parents)
-            except Exception:  # pragma: no cover - best effort
-                pass
+        _call_on_module(rel, path, parents)
 
         if rel in seen:
             continue
@@ -111,11 +135,7 @@ def collect_local_dependencies(
                     if dep is not None:
                         dep_rel = dep.relative_to(repo).as_posix()
                         dep_parents = [rel] + parents
-                        if on_dependency is not None:
-                            try:
-                                on_dependency(dep_rel, rel, dep_parents)
-                            except Exception:  # pragma: no cover - best effort
-                                pass
+                        _call_on_dependency(dep_rel, rel, dep_parents)
                         queue.append((dep, dep_parents))
             elif isinstance(node, ast.ImportFrom):
                 if node.level:
@@ -137,11 +157,7 @@ def collect_local_dependencies(
                     if dep is not None:
                         dep_rel = dep.relative_to(repo).as_posix()
                         dep_parents = [rel] + parents
-                        if on_dependency is not None:
-                            try:
-                                on_dependency(dep_rel, rel, dep_parents)
-                            except Exception:  # pragma: no cover - best effort
-                                pass
+                        _call_on_dependency(dep_rel, rel, dep_parents)
                         queue.append((dep, dep_parents))
                     for alias in node.names:
                         if alias.name == "*":
@@ -157,11 +173,7 @@ def collect_local_dependencies(
                         if dep is not None:
                             dep_rel = dep.relative_to(repo).as_posix()
                             dep_parents = [rel] + parents
-                            if on_dependency is not None:
-                                try:
-                                    on_dependency(dep_rel, rel, dep_parents)
-                                except Exception:  # pragma: no cover - best effort
-                                    pass
+                            _call_on_dependency(dep_rel, rel, dep_parents)
                             queue.append((dep, dep_parents))
                 elif node.names:
                     for alias in node.names:
@@ -176,11 +188,7 @@ def collect_local_dependencies(
                         if dep is not None:
                             dep_rel = dep.relative_to(repo).as_posix()
                             dep_parents = [rel] + parents
-                            if on_dependency is not None:
-                                try:
-                                    on_dependency(dep_rel, rel, dep_parents)
-                                except Exception:  # pragma: no cover - best effort
-                                    pass
+                            _call_on_dependency(dep_rel, rel, dep_parents)
                             queue.append((dep, dep_parents))
             elif isinstance(node, ast.Call):
                 mod_name: str | None = None
@@ -218,11 +226,7 @@ def collect_local_dependencies(
                     if dep is not None:
                         dep_rel = dep.relative_to(repo).as_posix()
                         dep_parents = [rel] + parents
-                        if on_dependency is not None:
-                            try:
-                                on_dependency(dep_rel, rel, dep_parents)
-                            except Exception:  # pragma: no cover - best effort
-                                pass
+                        _call_on_dependency(dep_rel, rel, dep_parents)
                         queue.append((dep, dep_parents))
 
     return seen
