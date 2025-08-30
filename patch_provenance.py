@@ -54,6 +54,39 @@ def get_patch_provenance(
 
 
 # ---------------------------------------------------------------------------
+def get_roi_history(
+    patch_id: int, *, patch_db: PatchHistoryDB | None = None
+) -> Dict[str, Any]:
+    """Return stored ROI information for ``patch_id``.
+
+    The result contains the overall ``roi_before``, ``roi_after`` and
+    ``roi_delta`` values along with any per-origin ``roi_deltas`` mapping
+    recorded during :func:`PatchLogger.track_contributors`.
+    Missing records yield an empty mapping.
+    """
+
+    db = patch_db or PatchHistoryDB()
+    try:
+        rec = db.get(patch_id)
+    except Exception:
+        rec = None
+    if not rec:
+        return {}
+    try:
+        roi_deltas = json.loads(getattr(rec, "roi_deltas", "") or "{}")
+    except Exception:
+        roi_deltas = {}
+    return {
+        "roi_before": float(getattr(rec, "roi_before", 0.0)),
+        "roi_after": float(getattr(rec, "roi_after", 0.0)),
+        "roi_delta": float(
+            getattr(rec, "roi_delta", getattr(rec, "roi_after", 0.0) - getattr(rec, "roi_before", 0.0))
+        ),
+        "roi_deltas": {k: float(v) for k, v in roi_deltas.items()},
+    }
+
+
+# ---------------------------------------------------------------------------
 def search_patches_by_vector(
     vector_id: str,
     *,
@@ -191,6 +224,7 @@ def build_chain(
 
 __all__ = [
     "get_patch_provenance",
+    "get_roi_history",
     "search_patches_by_vector",
     "search_patches_by_hash",
     "search_patches_by_license",

@@ -44,6 +44,7 @@ class SimplePatchDB:
         *,
         patch_id,
         contribution,
+        roi_delta=None,
         win,
         regret,
         lines_changed=None,
