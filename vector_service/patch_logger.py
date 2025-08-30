@@ -720,6 +720,7 @@ class PatchLogger:
                                 "diff": embed_diff or "",
                                 "summary": embed_summary or "",
                                 "enhancement_score": enhancement_score,
+                                "roi_tag": roi_tag_val.value,
                             }
                             svc = self.vector_service
                             if svc is None:
