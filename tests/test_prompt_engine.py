@@ -1,7 +1,8 @@
 from typing import Any, Dict, List
 
 from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
-from vector_service.roi_tags import RoiTag
+from vector_service.retriever import FallbackResult
+from typing import Any, Dict, List
 
 
 class DummyRetriever:
@@ -22,16 +23,17 @@ def _record(score: float, **meta: Any) -> Dict[str, Any]:
 
 def test_prompt_engine_ranks_snippets_by_roi_and_timestamp():
     records = [
-        _record(0.9, roi_tag=RoiTag.LOW_ROI.value, summary="low", tests_passed=True, ts=1),
-        _record(0.8, roi_tag=RoiTag.HIGH_ROI.value, summary="high", tests_passed=True, ts=2),
-        _record(0.2, summary="old fail", tests_passed=False, ts=1),
-        _record(0.1, summary="new fail", tests_passed=False, ts=2),
+        _record(0.9, raroi=0.4, summary="low", tests_passed=True, ts=1),
+        _record(0.8, raroi=0.9, summary="high", tests_passed=True, ts=2),
+        _record(0.6, summary="new fail", tests_passed=False, ts=2),
+        _record(0.6, summary="old fail", tests_passed=False, ts=1),
     ]
     engine = PromptEngine(retriever=DummyRetriever(records), top_n=4)
     prompt = engine.build_prompt("desc")
     assert "Successful example:" in prompt
     assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
-    assert prompt.index("Code summary: new fail") < prompt.index("Code summary: old fail")
+    assert "Code summary: new fail" in prompt
+    assert "Code summary: old fail" not in prompt
 
 
 def test_prompt_engine_falls_back_when_confidence_low(monkeypatch):
@@ -43,7 +45,7 @@ def test_prompt_engine_falls_back_when_confidence_low(monkeypatch):
 
 
 def test_prompt_engine_includes_failure_trace():
-    records = [_record(1.0, summary="foo", tests_passed=True)]
+    records = [_record(1.0, summary="foo", tests_passed=True, raroi=0.5)]
     engine = PromptEngine(retriever=DummyRetriever(records))
     trace = "Traceback: fail"
     prompt = engine.build_prompt("goal", retry_info=trace)
@@ -53,3 +55,16 @@ def test_prompt_engine_includes_failure_trace():
         "Try a different approach."
     )
     assert expected in prompt
+
+
+def test_prompt_engine_handles_fallback(monkeypatch):
+    fb = FallbackResult("low_confidence", [], confidence=0.1)
+
+    class Dummy:
+        def search(self, q: str, top_k: int):
+            return fb
+
+    engine = PromptEngine(retriever=Dummy())
+    monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
+    prompt = engine.build_prompt("goal")
+    assert prompt == DEFAULT_TEMPLATE

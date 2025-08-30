@@ -2,8 +2,11 @@ import json
 import logging
 from typing import Any, Dict, List, Tuple
 
+import json
+import logging
+from typing import Any, Dict, List, Tuple
+
 from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
-from vector_service.roi_tags import RoiTag
 
 
 class DummyRetriever:
@@ -23,15 +26,16 @@ def _record(score: float, **meta: Any) -> Dict[str, Any]:
 
 def test_construct_prompt_orders_by_roi_and_timestamp():
     records = [
-        _record(1.0, roi_tag=RoiTag.LOW_ROI.value, summary="low", tests_passed=True),
-        _record(1.0, roi_tag=RoiTag.HIGH_ROI.value, summary="high", tests_passed=True),
-        _record(1.0, ts=1, summary="old fail", tests_passed=False),
+        _record(1.0, raroi=0.4, summary="low", tests_passed=True, ts=1),
+        _record(1.0, raroi=0.9, summary="high", tests_passed=True, ts=1),
         _record(1.0, ts=2, summary="new fail", tests_passed=False),
+        _record(1.0, ts=0, summary="old fail", tests_passed=False),
     ]
     engine = PromptEngine(retriever=DummyRetriever(records))
     prompt = engine.build_prompt("desc")
     assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
-    assert prompt.index("Code summary: new fail") < prompt.index("Code summary: old fail")
+    assert "Code summary: new fail" in prompt
+    assert "Code summary: old fail" not in prompt
 
 
 def test_construct_prompt_fallback_on_low_confidence(monkeypatch, caplog):

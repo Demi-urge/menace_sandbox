@@ -2,9 +2,11 @@ import logging
 
 from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
 import vector_service.vectorizer as vz
+from typing import Any, Dict, List
+import logging
+
 from vector_service.retriever import PatchRetriever
 from vector_service.vector_store import AnnoyVectorStore
-from vector_service.roi_tags import RoiTag
 
 
 def _setup_store(monkeypatch, tmp_path, patches, query_vec):
@@ -33,9 +35,9 @@ def _setup_store(monkeypatch, tmp_path, patches, query_vec):
 
 def test_prompt_engine_retrieves_top_n_snippets(monkeypatch, tmp_path):
     patches = [
-        ("1", [1.0, 0.0], {"summary": "A1", "tests_passed": True}),
-        ("2", [0.8, 0.2], {"summary": "A2", "tests_passed": True}),
-        ("3", [0.0, 1.0], {"summary": "A3", "tests_passed": True}),
+        ("1", [1.0, 0.0], {"summary": "A1", "tests_passed": True, "raroi": 0.9, "ts": 3}),
+        ("2", [0.8, 0.2], {"summary": "A2", "tests_passed": True, "raroi": 0.4, "ts": 2}),
+        ("3", [0.0, 1.0], {"summary": "A3", "tests_passed": True, "ts": 1}),
     ]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
     engine = PromptEngine(retriever=pr, top_n=2)
@@ -48,20 +50,21 @@ def test_prompt_engine_retrieves_top_n_snippets(monkeypatch, tmp_path):
 
 def test_prompt_engine_orders_by_roi_and_recency(monkeypatch, tmp_path):
     patches = [
-        ("1", [1.0, 0.0], {"summary": "low", "tests_passed": True, "roi_tag": RoiTag.LOW_ROI.value}),
-        ("2", [1.0, 0.0], {"summary": "high", "tests_passed": True, "roi_tag": RoiTag.HIGH_ROI.value}),
-        ("3", [1.0, 0.0], {"summary": "old fail", "tests_passed": False, "ts": 1}),
-        ("4", [1.0, 0.0], {"summary": "new fail", "tests_passed": False, "ts": 2}),
+        ("1", [1.0, 0.0], {"summary": "low", "tests_passed": True, "raroi": 0.4, "ts": 1}),
+        ("2", [1.0, 0.0], {"summary": "high", "tests_passed": True, "raroi": 0.9, "ts": 2}),
+        ("3", [1.0, 0.0], {"summary": "new fail", "tests_passed": False, "ts": 3}),
+        ("4", [1.0, 0.0], {"summary": "old fail", "tests_passed": False, "ts": 1}),
     ]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
     engine = PromptEngine(retriever=pr, top_n=4)
     prompt = engine.build_prompt("goal")
     assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
-    assert prompt.index("Code summary: new fail") < prompt.index("Code summary: old fail")
+    assert "Code summary: new fail" in prompt
+    assert "Code summary: old fail" not in prompt
 
 
 def test_retry_trace_injection(monkeypatch, tmp_path):
-    patches = [("1", [1.0, 0.0], {"summary": "foo", "tests_passed": True})]
+    patches = [("1", [1.0, 0.0], {"summary": "foo", "tests_passed": True, "raroi": 0.5})]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
     engine = PromptEngine(retriever=pr)
     trace = "Traceback: fail"
