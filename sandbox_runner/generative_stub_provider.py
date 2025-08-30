@@ -472,8 +472,10 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
             if cached is not None:
                 try:
                     _CACHE.move_to_end(key)
-                except Exception:
-                    logger.exception("failed to update cache LRU for key %s", key)
+                except Exception as exc:
+                    logger.warning(
+                        "failed to update cache LRU for key %s: %s", key, exc
+                    )
         if cached is not None:
             new_stubs.append(dict(cached))
             continue
@@ -544,8 +546,10 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
                         _CACHE[key] = data
                         try:
                             _CACHE.move_to_end(key)
-                        except Exception:
-                            logger.exception("failed to update cache LRU for key %s", key)
+                        except Exception as exc:
+                            logger.warning(
+                                "failed to update cache LRU for key %s: %s", key, exc
+                            )
                         _cache_evict()
                     changed = True
                     new_stubs.append(dict(data))
