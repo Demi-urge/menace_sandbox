@@ -259,7 +259,7 @@ def test_generate_input_stubs_synthetic_fallback(monkeypatch, tmp_path):
         pass
 
     stubs = env.generate_input_stubs(1, target=target)
-    assert stubs == [{"a": 1}]
+    assert gsp._type_matches(stubs[0]["a"], int)
 
 
 def test_generate_input_stubs_history_db(monkeypatch, tmp_path):

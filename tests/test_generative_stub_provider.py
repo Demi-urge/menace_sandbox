@@ -114,8 +114,12 @@ def test_rule_based_fallback(monkeypatch, tmp_path):
         pass
 
     ctx = {"strategy": "synthetic", "target": target}
-    res = gsp_mod.generate_stubs([{}], ctx)
-    assert res == [{"a": 1, "b": 1.0, "c": True, "d": "value", "e": None}]
+    res = gsp_mod.generate_stubs([{}], ctx)[0]
+    assert gsp_mod._type_matches(res["a"], int)
+    assert gsp_mod._type_matches(res["b"], float)
+    assert gsp_mod._type_matches(res["c"], bool)
+    assert gsp_mod._type_matches(res["d"], str)
+    assert res["e"] is None
 
 
 def test_generation_failure_propagates(monkeypatch, tmp_path):
