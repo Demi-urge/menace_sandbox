@@ -2725,6 +2725,8 @@ def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
+    logger = get_logger(__name__)
+
     run = sub.add_parser("run", help="Run self tests once", aliases=["manual"])
     run.add_argument("paths", nargs="*", help="Test paths or patterns")
     run.add_argument("--workers", type=int, default=1, help="Number of pytest workers")
@@ -3080,14 +3082,16 @@ def cli(argv: list[str] | None = None) -> int:
         try:
             asyncio.run(service._run_once(refresh_orphans=args.refresh_orphans))
         except Exception as exc:
-            print(f"self test run failed: {exc}", file=sys.stderr)
+            logger.error(
+                "self test run failed: %s", exc, extra=log_record(error=exc)
+            )
             if service.results:
                 out = service.results.get("stdout")
                 err = service.results.get("stderr")
                 if out:
-                    print(out, file=sys.stderr)
+                    logger.error(out)
                 if err:
-                    print(err, file=sys.stderr)
+                    logger.error(err)
             return 1
         return 0
 
@@ -3126,7 +3130,6 @@ def cli(argv: list[str] | None = None) -> int:
                 refresh_orphans=args.refresh_orphans,
             )
         except KeyboardInterrupt as exc:
-            logger = get_logger(__name__)
             logger.info("self test interrupted", extra=log_record(error=exc))
         return 0
 
@@ -3134,7 +3137,7 @@ def cli(argv: list[str] | None = None) -> int:
         report_dir = Path(args.report_dir)
         files = sorted(report_dir.glob("*.json"))
         if not files:
-            print("no reports found", file=sys.stderr)
+            logger.error("no reports found")
             return 1
         print(files[-1].read_text())
         return 0
@@ -3148,7 +3151,7 @@ def cli(argv: list[str] | None = None) -> int:
         try:
             asyncio.run(service._cleanup_containers())
         except Exception as exc:
-            print(f"cleanup failed: {exc}", file=sys.stderr)
+            logger.error("cleanup failed: %s", exc, extra=log_record(error=exc))
             return 1
         return 0
 
