@@ -2962,6 +2962,11 @@ def _cleanup_pools() -> None:
                             stderr=subprocess.DEVNULL,
                             check=False,
                         )
+                    else:
+                        try:
+                            logger.warning("encountered empty container id during prune")
+                        except Exception:
+                            logger.exception('unexpected error')
             else:
                 try:
                     stderr = (proc.stderr or "").strip()
