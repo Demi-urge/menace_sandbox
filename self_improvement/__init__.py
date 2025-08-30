@@ -2277,11 +2277,13 @@ class SelfImprovementEngine:
             )
             return
         except Exception:
+            self.logger.exception("git command unexpected failure")
             return
 
         try:
             report = self.alignment_flagger.flag_patch(patch, {"files": files})
         except Exception:
+            self.logger.exception("alignment flagger failed")
             return
         issues = report.get("issues", [])
         max_severity = max((i.get("severity", 0) for i in issues), default=0) / 4.0
@@ -2344,6 +2346,7 @@ class SelfImprovementEngine:
             )
             return
         except Exception:
+            self.logger.exception("git command unexpected failure")
             return
         try:
             commit_hash = subprocess.run(
