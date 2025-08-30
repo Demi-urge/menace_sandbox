@@ -13,6 +13,10 @@ vec_mod.VectorServiceError = _VSError
 vec_mod.EmbeddableDBMixin = object
 vec_mod.SharedVectorService = object
 sys.modules.setdefault("vector_service", vec_mod)
+retr_mod = types.ModuleType("vector_service.retriever")
+retr_mod.Retriever = lambda: None
+retr_mod.FallbackResult = list
+sys.modules.setdefault("vector_service.retriever", retr_mod)
 
 sys.modules.setdefault("vector_service.decorators", types.ModuleType("vector_service.decorators"))
 
@@ -31,6 +35,7 @@ sys.modules.setdefault("gpt_memory_interface", types.SimpleNamespace(GPTMemoryIn
 sys.modules.setdefault("safety_monitor", types.SimpleNamespace(SafetyMonitor=object))
 sys.modules.setdefault("advanced_error_management", types.SimpleNamespace(FormalVerifier=object))
 sys.modules.setdefault("chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
+sys.modules.setdefault("menace.chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
 sys.modules.setdefault("memory_aware_gpt_client", types.SimpleNamespace(ask_with_memory=lambda *a, **k: {}))
 sys.modules.setdefault("shared_gpt_memory", types.SimpleNamespace(GPT_MEMORY_MANAGER=None))
 log_tags_mod = types.SimpleNamespace(
@@ -134,9 +139,7 @@ def test_knowledge_service_logging(monkeypatch, caplog):
     monkeypatch.setattr(sce, "recent_error_fix", boom)
     monkeypatch.setattr(sce, "ask_with_memory", lambda *a, **k: {})
     monkeypatch.setattr(sce.SelfCodingEngine, "_get_repo_layout", lambda self, lines: "")
-    monkeypatch.setattr(
-        sce.SelfCodingEngine, "build_visual_agent_prompt", lambda self, *a, **k: ""
-    )
+    monkeypatch.setattr(sce.PromptEngine, "construct_prompt", staticmethod(lambda *a, **k: ""))
     monkeypatch.setattr(
         sce.SelfCodingEngine, "suggest_snippets", lambda self, desc, limit=3: []
     )

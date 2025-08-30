@@ -73,6 +73,7 @@ except Exception:  # pragma: no cover - defensive fallback
         pass
 
 from .roi_tracker import ROITracker
+from .prompt_engine import PromptEngine
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -184,6 +185,7 @@ class SelfCodingEngine:
         self.patch_logger = patch_logger
         self.roi_tracker = tracker
         self.knowledge_service = knowledge_service
+        self.prompt_engine = PromptEngine()
         self.router = kwargs.get("router")
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
@@ -416,19 +418,25 @@ class SelfCodingEngine:
             ]
             return "\n".join(skeleton)
 
-        if not self.llm_client:
+        if not self.llm_client or not self.prompt_engine:
             return _fallback()
         repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
         retrieval_context = ""
+        retry_trace: str | None = None
         if metadata:
             retrieval_context = str(metadata.get("retrieval_context", ""))
-        prompt = self.build_visual_agent_prompt(
-            str(path) if path else None,
-            description,
-            context,
-            retrieval_context=retrieval_context,
-            repo_layout=repo_layout,
+            retry_trace = metadata.get("retry_trace")
+        retrieval_data = "\n".join(
+            [p for p in (context, retrieval_context, repo_layout) if p]
         )
+        try:
+            prompt = self.prompt_engine.construct_prompt(
+                description,
+                retrieval_data,
+                retry_trace=retry_trace,
+            )
+        except Exception:
+            return _fallback()
 
         # Incorporate past patch outcomes from memory
         history = ""
@@ -806,15 +814,15 @@ class SelfCodingEngine:
             self._store_patch_memory(path, description, generated_code, False, roi_delta)
             if self.patch_db and session_id and vectors and patch_id is not None:
                 try:
-                self.patch_db.record_vector_metrics(
-                    session_id,
-                    [(o, v) for o, v, _ in vectors],
-                    patch_id=patch_id,
-                    contribution=0.0,
-                    win=False,
-                    regret=True,
-                    effort_estimate=effort_estimate,
-                )
+                    self.patch_db.record_vector_metrics(
+                        session_id,
+                        [(o, v) for o, v, _ in vectors],
+                        patch_id=patch_id,
+                        contribution=0.0,
+                        win=False,
+                        regret=True,
+                        effort_estimate=effort_estimate,
+                    )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             if self.data_bot:
@@ -843,15 +851,15 @@ class SelfCodingEngine:
             self._store_patch_memory(path, description, generated_code, False, 0.0)
             if self.patch_db and session_id and vectors:
                 try:
-                self.patch_db.record_vector_metrics(
-                    session_id,
-                    [(o, v) for o, v, _ in vectors],
-                    patch_id=0,
-                    contribution=0.0,
-                    win=False,
-                    regret=True,
-                    effort_estimate=effort_estimate,
-                )
+                    self.patch_db.record_vector_metrics(
+                        session_id,
+                        [(o, v) for o, v, _ in vectors],
+                        patch_id=0,
+                        contribution=0.0,
+                        win=False,
+                        regret=True,
+                        effort_estimate=effort_estimate,
+                    )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             if self.data_bot:
@@ -879,15 +887,15 @@ class SelfCodingEngine:
             self._store_patch_memory(path, description, generated_code, False, 0.0)
             if self.patch_db and session_id and vectors:
                 try:
-                self.patch_db.record_vector_metrics(
-                    session_id,
-                    [(o, v) for o, v, _ in vectors],
-                    patch_id=0,
-                    contribution=0.0,
-                    win=False,
-                    regret=True,
-                    effort_estimate=effort_estimate,
-                )
+                    self.patch_db.record_vector_metrics(
+                        session_id,
+                        [(o, v) for o, v, _ in vectors],
+                        patch_id=0,
+                        contribution=0.0,
+                        win=False,
+                        regret=True,
+                        effort_estimate=effort_estimate,
+                    )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             if self.data_bot:
