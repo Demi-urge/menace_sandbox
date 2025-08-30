@@ -53,8 +53,10 @@ import importlib
 from db_router import GLOBAL_ROUTER, init_db_router
 
 from sandbox_settings import SandboxSettings, load_sandbox_settings
+from sandbox_runner.bootstrap import initialize_autonomous_sandbox
 
 settings = load_sandbox_settings()
+initialize_autonomous_sandbox(settings)
 
 if getattr(settings, "sandbox_central_logging", False):
     setup_logging()
