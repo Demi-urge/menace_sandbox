@@ -31,7 +31,15 @@ from db_router import GLOBAL_ROUTER, init_db_router
 router = GLOBAL_ROUTER or init_db_router("sandbox_cycle")
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
-except Exception:  # pragma: no cover - fallback when unavailable
+except ImportError as exc:  # pragma: no cover - fallback when unavailable
+    get_logger(__name__).warning(
+        "using fallback ErrorResult",  # noqa: TRY300
+        extra=log_record(
+            module=__name__, dependency="vector_service.ErrorResult"
+        ),
+        exc_info=exc,
+    )
+
     class ErrorResult(Exception):
         """Fallback ErrorResult when vector service lacks explicit class."""
 
@@ -39,7 +47,12 @@ except Exception:  # pragma: no cover - fallback when unavailable
 
 try:  # pragma: no cover - optional dependency
     from vector_service import PatchLogger, VectorServiceError  # type: ignore
-except Exception:  # pragma: no cover - fallback when unavailable
+except ImportError as exc:  # pragma: no cover - fallback when unavailable
+    get_logger(__name__).warning(
+        "vector service components unavailable",  # noqa: TRY300
+        extra=log_record(module=__name__, dependency="vector_service"),
+        exc_info=exc,
+    )
     PatchLogger = object  # type: ignore
 
     class VectorServiceError(Exception):
@@ -53,20 +66,35 @@ if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
 
 try:
     from radon.metrics import mi_visit  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
+except ImportError as exc:  # pragma: no cover - optional dependency
+    get_logger(__name__).warning(
+        "radon metrics unavailable",  # noqa: TRY300
+        extra=log_record(module=__name__, dependency="radon"),
+        exc_info=exc,
+    )
     mi_visit = None  # type: ignore
 
 try:
     from pylint.lint import Run as PylintRun  # type: ignore
     from pylint.reporters.text import TextReporter  # type: ignore
     from io import StringIO
-except Exception:  # pragma: no cover - optional dependency
+except ImportError as exc:  # pragma: no cover - optional dependency
+    get_logger(__name__).warning(
+        "pylint unavailable",  # noqa: TRY300
+        extra=log_record(module=__name__, dependency="pylint"),
+        exc_info=exc,
+    )
     PylintRun = None  # type: ignore
     TextReporter = None  # type: ignore
 
 try:
     import psutil  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
+except ImportError as exc:  # pragma: no cover - optional dependency
+    get_logger(__name__).warning(
+        "psutil unavailable",  # noqa: TRY300
+        extra=log_record(module=__name__, dependency="psutil"),
+        exc_info=exc,
+    )
     psutil = None  # type: ignore
 
 # ``VectorMetricsDB`` was previously used for logging patch outcomes but has
@@ -132,7 +160,7 @@ def _usage_worker() -> None:
                 _radar_track_usage(module, impact)
                 record_output_impact(module, impact)
                 break
-            except Exception:  # pragma: no cover - network/IO errors
+            except OSError:  # pragma: no cover - network/IO errors
                 logger.exception(
                     "relevancy radar usage tracking failed",
                     extra=log_record(module=module, attempt=attempt + 1),
@@ -156,8 +184,12 @@ def _flush_usage_queue() -> None:
         _usage_queue.join()
         if _usage_thread and _usage_thread.is_alive():
             _usage_thread.join(timeout=1.0)
-    except Exception:  # pragma: no cover - best effort
-        logger.exception("failed to flush usage tracking queue")
+    except (queue.Full, RuntimeError) as exc:  # pragma: no cover - best effort
+        logger.exception(
+            "failed to flush usage tracking queue",
+            extra=log_record(module=__name__),
+            exc_info=exc,
+        )
 
 
 if _ENABLE_RELEVANCY_RADAR:
@@ -178,11 +210,13 @@ def _async_track_usage(module: str, impact: float | None = None) -> None:
     impact_val = 0.0 if impact is None else float(impact)
     try:
         _usage_queue.put((module, impact_val))
-    except Exception:  # pragma: no cover - queue failures
+    except queue.Full as exc:  # pragma: no cover - queue failures
         logger.exception(
             "failed to enqueue usage tracking",
             extra=log_record(module=module),
+            exc_info=exc,
         )
+        raise
 
 
 def map_module_identifier(
@@ -197,7 +231,12 @@ def map_module_identifier(
     base = name.split(":", 1)[0]
     try:
         rel = Path(base).resolve().relative_to(repo)
-    except Exception:
+    except (ValueError, OSError) as exc:
+        logger.debug(
+            "module path resolution failed",
+            extra=log_record(module=base, repo=str(repo)),
+            exc_info=exc,
+        )
         rel = Path(base)
     module_id = rel.with_suffix("").as_posix()
     record_output_impact(module_id, 0.0 if impact is None else float(impact))

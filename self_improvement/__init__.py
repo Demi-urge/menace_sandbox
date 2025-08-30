@@ -173,8 +173,12 @@ def generate_patch(
         patch_id = _call_with_retries(
             func, *args, retries=retries, delay=delay, **kwargs
         )
-    except Exception as exc:  # pragma: no cover - best effort logging
-        logger.error("quick_fix_engine failed: %s", exc)
+    except (RuntimeError, OSError) as exc:  # pragma: no cover - best effort logging
+        logger.error(
+            "quick_fix_engine failed",
+            extra=log_record(module=__name__),
+            exc_info=exc,
+        )
         raise RuntimeError("quick_fix_engine failed to generate patch") from exc
     if patch_id is None:
         logger.error("quick_fix_engine returned no patch")
@@ -414,8 +418,12 @@ def _load_initial_synergy_weights() -> None:
                 weights[k] = float(data[k])
     except FileNotFoundError:
         pass
-    except Exception as exc:
-        logger.warning("failed to load synergy weights %s: %s", path, exc)
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "failed to load synergy weights %s", path,
+            extra=log_record(path=str(path)),
+            exc_info=exc,
+        )
     settings.synergy_weight_roi = weights["roi"]
     settings.synergy_weight_efficiency = weights["efficiency"]
     settings.synergy_weight_resilience = weights["resilience"]
@@ -432,7 +440,13 @@ _load_initial_synergy_weights()
 
 try:  # optional dependency
     from ..self_model_bootstrap import bootstrap
-except Exception as exc:
+except ImportError as exc:
+    get_logger(__name__).warning(
+        "self_model_bootstrap unavailable",  # noqa: TRY300
+        extra=log_record(module=__name__, dependency="self_model_bootstrap"),
+        exc_info=exc,
+    )
+
     def bootstrap(*_a: object, **_k: object) -> int:  # type: ignore
         """Bootstrap the system model.
 
@@ -474,8 +488,14 @@ from .. import synergy_weight_cli
 from .. import synergy_history_db as shd
 try:  # pragma: no cover - optional dependency
     from ..adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
-except Exception:  # pragma: no cover - fallback for tests
+except ImportError as exc:  # pragma: no cover - fallback for tests
+    get_logger(__name__).warning(
+        "adaptive_roi_predictor unavailable",  # noqa: TRY300
+        extra=log_record(module=__name__, dependency="adaptive_roi_predictor"),
+        exc_info=exc,
+    )
     AdaptiveROIPredictor = object  # type: ignore
+
     def load_training_data(*a, **k):  # type: ignore
         return []
 from ..adaptive_roi_dataset import build_dataset
