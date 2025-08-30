@@ -32,6 +32,16 @@ sys.modules.setdefault("env_config", types.SimpleNamespace(DATABASE_URL="sqlite:
 sys.modules.setdefault("httpx", types.ModuleType("httpx"))
 sys.modules.setdefault("sqlalchemy", types.ModuleType("sqlalchemy"))
 sys.modules.setdefault("sqlalchemy.engine", types.ModuleType("engine"))
+orphan_stub = types.ModuleType("orphan_discovery")
+orphan_stub.append_orphan_cache = lambda *a, **k: None
+orphan_stub.append_orphan_classifications = lambda *a, **k: None
+orphan_stub.prune_orphan_cache = lambda *a, **k: None
+orphan_stub.load_orphan_cache = lambda *a, **k: {}
+sandbox_runner = types.ModuleType("sandbox_runner")
+sandbox_runner.discover_recursive_orphans = lambda *a, **k: {}
+sys.modules.setdefault("sandbox_runner", sandbox_runner)
+sys.modules.setdefault("sandbox_runner.orphan_discovery", orphan_stub)
+sys.modules.setdefault("orphan_discovery", orphan_stub)
 pydantic_mod = types.ModuleType("pydantic")
 pydantic_dc = types.ModuleType("dataclasses")
 pydantic_dc.dataclass = lambda *a, **k: (lambda cls: cls)
