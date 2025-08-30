@@ -270,6 +270,82 @@ class SandboxSettings(BaseSettings):
             if isinstance(v, str):
                 return [s.strip() for s in v.split(",") if s.strip()]
             return v
+
+    stub_strategy: str | None = Field(
+        None,
+        env="SANDBOX_STUB_STRATEGY",
+        description="Primary stub generation strategy to attempt first.",
+    )
+    stub_strategy_order: list[str] | None = Field(
+        None,
+        env="SANDBOX_STUB_STRATEGY_ORDER",
+        description="Comma-separated fallback order for stub strategies.",
+    )
+    input_templates_file: str = Field(
+        "sandbox_data/input_stub_templates.json",
+        env="SANDBOX_INPUT_TEMPLATES_FILE",
+        description="Path to input stub templates JSON file.",
+    )
+    input_history: str | None = Field(
+        None,
+        env="SANDBOX_INPUT_HISTORY",
+        description="Path to input history database or JSONL file.",
+    )
+    stub_seed: int | None = Field(
+        None,
+        env="SANDBOX_STUB_SEED",
+        description="Seed value for deterministic stub generation.",
+    )
+    stub_random_config: dict[str, Any] = Field(
+        default_factory=dict,
+        env="SANDBOX_STUB_RANDOM_CONFIG",
+        description="JSON-encoded configuration for the random strategy.",
+    )
+    misuse_stubs: bool = Field(
+        False,
+        env="SANDBOX_MISUSE_STUBS",
+        description="Append misuse stubs to generated inputs when true.",
+    )
+    if PYDANTIC_V2:
+        @field_validator("stub_strategy_order", mode="before")
+        def _split_stub_strategy_order(cls, v: Any) -> Any:
+            if isinstance(v, str):
+                return [s.strip() for s in v.split(",") if s.strip()]
+            return v
+
+        @field_validator("stub_random_config", mode="before")
+        def _parse_stub_random_config(cls, v: Any) -> Any:
+            if isinstance(v, str):
+                try:
+                    return json.loads(v) if v else {}
+                except Exception:
+                    return {}
+            return v
+        @field_validator("input_history", mode="before")
+        def _empty_history(cls, v: Any) -> Any:
+            if isinstance(v, str) and not v.strip():
+                return None
+            return v
+    else:  # pragma: no cover - pydantic<2
+        @field_validator("stub_strategy_order", pre=True)
+        def _split_stub_strategy_order(cls, v: Any) -> Any:  # type: ignore[override]
+            if isinstance(v, str):
+                return [s.strip() for s in v.split(",") if s.strip()]
+            return v
+
+        @field_validator("stub_random_config", pre=True)
+        def _parse_stub_random_config(cls, v: Any) -> Any:  # type: ignore[override]
+            if isinstance(v, str):
+                try:
+                    return json.loads(v) if v else {}
+                except Exception:
+                    return {}
+            return v
+        @field_validator("input_history", pre=True)
+        def _empty_history(cls, v: Any) -> Any:  # type: ignore[override]
+            if isinstance(v, str) and not v.strip():
+                return None
+            return v
     suggestion_sources: list[str] = Field(
         default_factory=lambda: ["cache", "knowledge", "heuristic"],
         env="SANDBOX_SUGGESTION_SOURCES",
