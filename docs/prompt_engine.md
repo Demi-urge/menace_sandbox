@@ -11,7 +11,6 @@ from prompt_engine import PromptEngine
 
 prompt = PromptEngine.construct_prompt(
     "Fix the failing parser",
-    retrieval_data="Related patches:",
     retry_trace="Traceback: ValueError",
     top_n=3,
 )
@@ -25,9 +24,7 @@ Given the following pattern...
 - Code summary: handle edge case
   Diff summary: adjust parsing
   Outcome: works (tests passed)
-
-Traceback: ValueError
-Please try a different approach.
+Previous attempt failed with Traceback: ValueError; seek alternative solution.
 ```
 
 ## Configuration
@@ -36,6 +33,5 @@ Please try a different approach.
 * `DEFAULT_TEMPLATE` – fallback text when no snippets are available.
 * `CONFIDENCE_THRESHOLD` – minimum confidence before using the fallback
   template.
-* `retrieval_data` – optional prefix containing external context.
-* `retry_trace` – when provided, the failure trace is appended to the prompt
-  to help retries.
+* `retry_trace` – when provided, the prompt includes:
+  `Previous attempt failed with <trace>; seek alternative solution.`

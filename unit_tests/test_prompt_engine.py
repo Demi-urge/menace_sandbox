@@ -4,10 +4,10 @@ from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
 
 def test_retrieval_snippets_included(monkeypatch):
     records = [{"metadata": {
-        "summary": "fixed bug", 
-        "diff": "changed logic", 
-        "outcome": "works", 
-        "tests_passed": True
+        "summary": "fixed bug",
+        "diff": "changed logic",
+        "outcome": "works",
+        "tests_passed": True,
     }}]
     monkeypatch.setattr(PromptEngine, "_fetch_patches", staticmethod(lambda q, n: (records, 1.0)))
     prompt = PromptEngine.construct_prompt("desc")
@@ -42,5 +42,5 @@ def test_retry_trace_included(monkeypatch):
     monkeypatch.setattr(PromptEngine, "_fetch_patches", staticmethod(lambda q, n: (records, 1.0)))
     trace = "Traceback: fail"
     prompt = PromptEngine.construct_prompt("desc", retry_trace=trace)
-    assert trace in prompt
-    assert "Please try a different approach." in prompt
+    expected = f"Previous attempt failed with {trace}; seek alternative solution."
+    assert expected in prompt
