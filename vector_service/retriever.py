@@ -11,7 +11,7 @@ heuristic fallbacks used across the code base.
 from dataclasses import dataclass, field
 import time
 import asyncio
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Sequence
 
 from retrieval_cache import RetrievalCache
 
@@ -470,6 +470,11 @@ class Retriever:
         return self.search(query, top_k=top_k, dbs=["error"])
 
 
+if TYPE_CHECKING:  # pragma: no cover
+    from .vector_store import VectorStore
+    from .vectorizer import SharedVectorService
+
+
 @dataclass
 class PatchRetriever:
     """Lightweight retriever that queries a local :class:`VectorStore`.
@@ -479,8 +484,8 @@ class PatchRetriever:
     closest patch vectors from the configured :class:`VectorStore`.
     """
 
-    store: "VectorStore | None" = None
-    vector_service: "SharedVectorService | None" = None
+    store: VectorStore | None = None
+    vector_service: SharedVectorService | None = None
     top_k: int = 5
     metric: str = "cosine"
 
@@ -500,14 +505,23 @@ class PatchRetriever:
 
     # ------------------------------------------------------------------
     def _similarity(self, a: Sequence[float], b: Sequence[float]) -> float:
-        if self.metric == "inner_product":
+        """Return similarity score for vectors ``a`` and ``b``.
+
+        The computation depends on :attr:`metric` which can be either
+        ``"cosine"`` (the default) or ``"inner_product"``.  Any other value
+        results in a :class:`ValueError` to surface misconfiguration early.
+        """
+
+        metric = (self.metric or "cosine").lower()
+        if metric == "inner_product":
             return float(sum(x * y for x, y in zip(a, b)))
-        # cosine similarity
-        na = sum(x * x for x in a) ** 0.5
-        nb = sum(x * x for x in b) ** 0.5
-        if not na or not nb:
-            return 0.0
-        return float(sum(x * y for x, y in zip(a, b)) / (na * nb))
+        if metric == "cosine":
+            na = sum(x * x for x in a) ** 0.5
+            nb = sum(x * x for x in b) ** 0.5
+            if not na or not nb:
+                return 0.0
+            return float(sum(x * y for x, y in zip(a, b)) / (na * nb))
+        raise ValueError(f"unsupported metric: {self.metric}")
 
     # ------------------------------------------------------------------
     @log_and_measure
