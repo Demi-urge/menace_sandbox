@@ -26,6 +26,28 @@ PLANNER_INTERVAL = getattr(settings, "meta_planning_interval", 0)
 STABLE_WORKFLOWS = WorkflowStabilityDB()
 
 
+def _get_entropy_threshold(
+    cfg: SandboxSettings, db: WorkflowStabilityDB
+) -> float:
+    """Determine entropy threshold from settings or stored metrics."""
+    threshold = cfg.meta_entropy_threshold
+    if threshold is None:
+        try:
+            entropies = [abs(float(v.get("entropy", 0.0))) for v in db.data.values()]
+            threshold = max(entropies) if entropies else 0.2
+        except Exception:  # pragma: no cover - best effort
+            threshold = 0.2
+    return float(threshold)
+
+
+def _should_encode(record: Mapping[str, Any], *, entropy_threshold: float) -> bool:
+    """Return True if ``record`` indicates improvement and stability."""
+    return (
+        float(record.get("roi_gain", 0.0)) > 0.0
+        and abs(float(record.get("entropy", 0.0))) <= float(entropy_threshold)
+    )
+
+
 async def self_improvement_cycle(
     workflows: Mapping[str, Callable[[], Any]],
     *,
@@ -53,14 +75,7 @@ async def self_improvement_cycle(
         if hasattr(planner, name):
             setattr(planner, name, value)
 
-    ENTROPY_THRESHOLD = 0.2
-
-    def _should_encode(record: Mapping[str, Any]) -> bool:
-        """Return True if ``record`` indicates improvement and stability."""
-        return (
-            float(record.get("roi_gain", 0.0)) > 0.0
-            and abs(float(record.get("entropy", 0.0))) <= ENTROPY_THRESHOLD
-        )
+    entropy_threshold = _get_entropy_threshold(cfg, STABLE_WORKFLOWS)
 
     async def _log(record: Mapping[str, Any]) -> None:
         chain = record.get("chain", [])
@@ -115,6 +130,8 @@ async def self_improvement_cycle(
             active: list[list[str]] = []
             for rec in records:
                 await _log(rec)
+                if not _should_encode(rec, entropy_threshold=entropy_threshold):
+                    continue
                 chain = rec.get("chain", [])
                 roi = float(rec.get("roi_gain", 0.0))
                 failures = int(rec.get("failures", 0))
