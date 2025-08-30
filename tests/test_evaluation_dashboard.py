@@ -231,12 +231,24 @@ def test_governance_panel(tmp_path, monkeypatch):
     log_path = tmp_path / "gov.log"
     monkeypatch.setattr(ed, "GOVERNANCE_LOG", log_path)
     ed.append_governance_result(
-        {"decision": "ship", "alignment": "pass", "raroi_increase": 0}, [],
-        {"confidence": 0.9}, ["auto"]
+        {
+            "decision": "ship",
+            "alignment": {"status": "pass", "rationale": ""},
+            "raroi_increase": 0,
+        },
+        [],
+        {"confidence": 0.9},
+        ["auto"],
     )
     ed.append_governance_result(
-        {"decision": "rollback", "alignment": "fail", "raroi_increase": 1}, ["rule"],
-        {"confidence": 0.1}, ["rule"]
+        {
+            "decision": "rollback",
+            "alignment": {"status": "fail", "rationale": ""},
+            "raroi_increase": 1,
+        },
+        ["rule"],
+        {"confidence": 0.1},
+        ["rule"],
     )
     panel = dash.governance_panel()
     assert len(panel) == 2

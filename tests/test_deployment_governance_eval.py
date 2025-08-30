@@ -2,14 +2,17 @@ import menace.deployment_governance as dg
 
 
 def test_alignment_veto():
-    res = dg.evaluate({"alignment": "fail"}, {})
+    res = dg.evaluate({"alignment": {"status": "fail", "rationale": ""}}, {})
     assert res["verdict"] == "demote"
     assert "alignment_veto" in res["reasons"]
     assert res["overridable"] is False
 
 
 def test_promote_path():
-    scorecard = {"alignment": "pass", "security": "pass"}
+    scorecard = {
+        "alignment": {"status": "pass", "rationale": ""},
+        "security": "pass",
+    }
     metrics = {
         "raroi": 0.9,
         "confidence": 0.7,
@@ -23,7 +26,10 @@ def test_promote_path():
 
 
 def test_micro_pilot_path():
-    scorecard = {"alignment": "pass", "security": "pass"}
+    scorecard = {
+        "alignment": {"status": "pass", "rationale": ""},
+        "security": "pass",
+    }
     metrics = {
         "raroi": 0.55,
         "confidence": 0.52,
@@ -39,7 +45,10 @@ def test_micro_pilot_path():
 
 
 def test_variance_demotes():
-    scorecard = {"alignment": "pass", "security": "pass"}
+    scorecard = {
+        "alignment": {"status": "pass", "rationale": ""},
+        "security": "pass",
+    }
     metrics = {
         "raroi": 0.5,
         "confidence": 0.6,
@@ -54,7 +63,10 @@ def test_variance_demotes():
 
 
 def test_per_scenario_threshold():
-    scorecard = {"alignment": "pass", "security": "pass"}
+    scorecard = {
+        "alignment": {"status": "pass", "rationale": ""},
+        "security": "pass",
+    }
     metrics = {
         "raroi": 0.5,
         "confidence": 0.6,

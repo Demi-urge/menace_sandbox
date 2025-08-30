@@ -207,7 +207,7 @@ bucket = BorderlineBucket("sandbox_data/borderline_bucket.jsonl")
 tracker = ForesightTracker()
 
 result = evaluate(
-    {"alignment": "pass"},
+    {"alignment": {"status": "pass", "rationale": ""}},
     {"raroi": 1.0, "confidence": 0.8},
     patch=["step_a"],
     foresight_tracker=tracker,
