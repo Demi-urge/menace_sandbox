@@ -1,19 +1,40 @@
-import importlib.util
-import os
-import sys
 import types
+import subprocess
 import yaml
 
 
 def _load_engine():
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from sandbox_settings import SandboxSettings
+    import security_auditor
+
+    repo = Path(__file__).resolve().parent.parent
+    metrics_path = repo / "self_improvement" / "metrics.py"
     spec = importlib.util.spec_from_file_location(
-        "menace.self_improvement",
-        os.path.join(os.path.dirname(__file__), "..", "self_improvement.py"),
+        "menace.self_improvement.metrics", metrics_path
     )
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    metrics = importlib.util.module_from_spec(spec)
+    pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
+    pkg.__path__ = [str(repo)]  # type: ignore[attr-defined]
+    sys.modules[spec.name] = metrics
+    spec.loader.exec_module(metrics)  # type: ignore[union-attr]
+
+    ns = types.SimpleNamespace()
+
+    def _flag_patch_alignment(engine, patch_id, context):
+        settings = ns.SandboxSettings()
+        metrics._update_alignment_baseline(settings)
+
+    ns._update_alignment_baseline = metrics._update_alignment_baseline
+    ns.SandboxSettings = SandboxSettings
+    ns.security_auditor = security_auditor
+    ns.subprocess = subprocess
+    ns.SelfImprovementEngine = types.SimpleNamespace(
+        _flag_patch_alignment=staticmethod(_flag_patch_alignment)
+    )
+    return ns
 
 
 def test_alignment_baseline_updates(tmp_path, monkeypatch):
@@ -31,6 +52,10 @@ def test_alignment_baseline_updates(tmp_path, monkeypatch):
     data1 = yaml.safe_load(baseline.read_text())
     assert data1["tests"] == 1
     assert data1["complexity"] >= 1
+    assert "foo.py" in data1["files"]
+    foo_metrics1 = data1["files"]["foo.py"]
+    assert foo_metrics1["complexity"] >= 1
+    assert foo_metrics1["maintainability"] > 0
     (tests_dir / "test_bar.py").write_text("def test_bar():\n    assert True\n")
     (repo / "foo.py").write_text(
         """def add(a, b):\n    if a > b:\n        return a - b\n    return a + b\n"""
@@ -39,6 +64,7 @@ def test_alignment_baseline_updates(tmp_path, monkeypatch):
     data2 = yaml.safe_load(baseline.read_text())
     assert data2["tests"] == 2
     assert data2["complexity"] > data1["complexity"]
+    assert data2["files"]["foo.py"]["complexity"] > foo_metrics1["complexity"]
 
 
 def test_flag_patch_alignment_refreshes_baseline_when_approved(tmp_path, monkeypatch):
