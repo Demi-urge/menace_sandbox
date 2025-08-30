@@ -47,6 +47,10 @@ try:
     from .sandbox_runner import post_round_orphan_scan
 except Exception:  # pragma: no cover - fallback for flat layout
     from sandbox_runner import post_round_orphan_scan  # type: ignore
+try:
+    from vector_service import ContextBuilder
+except Exception:  # pragma: no cover - optional dependency
+    ContextBuilder = None  # type: ignore
 
 
 class CoverageSubprocessError(RuntimeError):
@@ -594,6 +598,47 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         except Exception:
             s_af = 0.0
         return s_roi, s_eff, s_res, s_af
+
+    # ------------------------------------------------------------------
+    def _retry_with_feedback(self, parsed_failure: ParsedFailure) -> list[str]:
+        """Fetch new examples excluding previously failed strategies."""
+
+        if ContextBuilder is None:
+            return []
+
+        exclude: list[str] = []
+        if self._score_db:
+            try:
+                with self._db_lock:
+                    exclude = list(self._score_db.failed_strategy_hashes())
+            except Exception:
+                self.logger.exception("failed strategy lookup failed")
+        try:
+            builder = ContextBuilder()
+        except Exception:
+            return []
+        try:
+            ctx, meta = builder.query(
+                parsed_failure.message or "",
+                top_k=5,
+                return_metadata=True,
+                failure=parsed_failure,
+                exclude_strategies=exclude,
+            )
+        except Exception:
+            self.logger.exception("context feedback query failed")
+            return []
+        examples: list[str] = []
+        try:
+            if isinstance(meta, dict):
+                for bucket in meta.values():
+                    for entry in bucket:
+                        ex = entry.get("example") or entry.get("code")
+                        if isinstance(ex, str):
+                            examples.append(ex)
+        except Exception:
+            pass
+        return examples
 
     # ------------------------------------------------------------------
     def _load_history_stats(self, limit: int = 50) -> None:
@@ -1149,15 +1194,18 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             if not logs:
                 return
             tests = self._generate_tests(logs)
-            total_candidates = len(tests)
-            best: dict[str, object] | None = None
+            attempt = 0
+            patched = False
+            while attempt < self._test_retries and not patched:
+                total_candidates = len(tests)
+                best: dict[str, object] | None = None
 
-            async def _eval_candidate(idx: int, code: str) -> dict[str, object] | None:
-                with create_ephemeral_repo(self._settings) as (repo, run):
-                    test_path = repo / "test_auto.py"
-                    test_path.write_text(code)
-                    env = os.environ.copy()
-                    env["PYTHONPATH"] = str(repo)
+                async def _eval_candidate(idx: int, code: str) -> dict[str, object] | None:
+                    with create_ephemeral_repo(self._settings) as (repo, run):
+                        test_path = repo / "test_auto.py"
+                        test_path.write_text(code)
+                        env = os.environ.copy()
+                        env["PYTHONPATH"] = str(repo)
                     try:
                         self.engine.patch_file(test_path, "auto_debug")
 
@@ -1168,6 +1216,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         except Exception:
                             code_hash = None
 
+        
                         if code_hash:
                             if code_hash in self._bad_hashes:
                                 self.logger.info(
@@ -1178,6 +1227,13 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             if patch_db:
                                 try:
                                     with self._db_lock:
+                                        if patch_db.has_failed_strategy(code_hash):
+                                            self.logger.info(
+                                                "skipping failed strategy",
+                                                extra=log_record(hash=code_hash),
+                                            )
+                                            self._bad_hashes.add(code_hash)
+                                            return None
                                         records = patch_db.by_hash(code_hash)
                                 except Exception:
                                     self.logger.exception("patch history lookup failed")
@@ -1204,6 +1260,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             "sandbox tests failed",
                             extra=log_record(cmd=exc.cmd, rc=exc.returncode, output=exc.stderr),
                         )
+                        if code_hash and patch_db:
+                            try:
+                                with self._db_lock:
+                                    patch_db.record_failed_strategy(code_hash)
+                            except Exception:
+                                self.logger.exception("record failed strategy failed")
                         return None
                     except subprocess.TimeoutExpired as exc:
                         self._record_exception(exc)
@@ -1211,6 +1273,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             "sandbox tests timed out",
                             extra=log_record(cmd=exc.cmd, timeout=exc.timeout, output=exc.stderr),
                         )
+                        if code_hash and patch_db:
+                            try:
+                                with self._db_lock:
+                                    patch_db.record_failed_strategy(code_hash)
+                            except Exception:
+                                self.logger.exception("record failed strategy failed")
                         return None
 
                     root_test = Path(f"test_auto_{idx}.py")
@@ -1366,154 +1434,177 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
                     return {"score": score, "code": code}
 
-            async def _eval_all() -> list[dict[str, object] | None]:
-                tasks = [
-                    asyncio.create_task(_eval_candidate(i, c))
-                    for i, c in enumerate(tests)
-                ]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                cleaned: list[dict[str, object] | None] = []
-                for res in results:
-                    if isinstance(res, Exception):
-                        self._record_exception(res)
-                        self.logger.error("candidate eval failed", exc_info=res)
-                        continue
-                    cleaned.append(res)
-                return cleaned
+                async def _eval_all() -> list[dict[str, object] | None]:
+                    tasks = [
+                        asyncio.create_task(_eval_candidate(i, c))
+                        for i, c in enumerate(tests)
+                    ]
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    cleaned: list[dict[str, object] | None] = []
+                    for res in results:
+                        if isinstance(res, Exception):
+                            self._record_exception(res)
+                            self.logger.error("candidate eval failed", exc_info=res)
+                            continue
+                        cleaned.append(res)
+                    return cleaned
 
-            try:
-                results = asyncio.run(_eval_all())
-            except Exception as exc:
-                self._record_exception(exc)
-                self.logger.error("candidate evaluation failed", exc_info=exc)
-                results = []
-
-            for res in results:
-                if not res:
-                    continue
-                if res["score"] > (best["score"] if best else float("-inf")):
-                    best = res
-
-            if not best:
-                continue
-
-            code = best["code"]
-            root_test = Path("test_auto.py")
-            root_test.write_text(code)
-            result = "failed"
-            before_cov = after_cov = None
-            before_runtime = after_runtime = 0.0
-            coverage_delta = 0.0
-            error_delta = 0.0
-            roi_delta = 0.0
-            patched = False
-            runtime_delta = 0.0
-            reason = None
-            try:
-                res = self._run_tests(root_test)
-                before_cov, before_runtime = res[:2]
-                before_err = getattr(self.engine, "_current_errors", lambda: 0)()
-                pid, reverted, roi_delta = self.engine.apply_patch(
-                    root_test,
-                    "auto_debug",
-                    reason="auto_debug",
-                    trigger="self_debugger_sandbox",
-                )
                 try:
-                    post_round_orphan_scan(
-                        Path.cwd(), logger=self.logger, router=router
-                    )
+                    results = asyncio.run(_eval_all())
+                except Exception as exc:
+                    self._record_exception(exc)
+                    self.logger.error("candidate evaluation failed", exc_info=exc)
+                    results = []
+
+                for res in results:
+                    if not res:
+                        continue
+                    if res["score"] > (best["score"] if best else float("-inf")):
+                        best = res
+
+                if not best:
+                    break
+
+                code = best["code"]
+                root_test = Path("test_auto.py")
+                root_test.write_text(code)
+                code_hash: str | None = None
+                try:
+                    with open(root_test, "rb") as fh:
+                        code_hash = _hash_code(fh.read())
                 except Exception:
-                    self.logger.exception(
-                        "post_round_orphan_scan after apply_patch failed"
-                    )
-                if self.policy:
-                    try:
-                        state = self.state_getter() if self.state_getter else ()
-                        self.policy.update(state, roi_delta)
-                    except Exception as exc:
-                        self.logger.exception("policy patch update failed", exc)
-                res = self._run_tests(root_test)
-                after_cov, after_runtime = res[:2]
-                after_err = getattr(self.engine, "_current_errors", lambda: 0)()
-                coverage_delta = (
-                    (after_cov - before_cov)
-                    if after_cov is not None and before_cov is not None
-                    else 0.0
-                )
-                error_delta = before_err - after_err
-                flakiness = self._test_flakiness(root_test, runs=self.flakiness_runs)
-                complexity = self._code_complexity(root_test)
-                runtime_delta = after_runtime - before_runtime
-                syn_roi, syn_eff, *_ = self._recent_synergy_metrics(tracker)
-                patch_score = self._composite_score(
-                    coverage_delta,
-                    error_delta,
-                    roi_delta,
-                    flakiness,
-                    runtime_delta,
-                    complexity,
-                    synergy_roi=syn_roi,
-                    synergy_efficiency=syn_eff,
-                    filename=str(root_test),
-                    tracker=tracker,
-                )
-                result = "reverted" if reverted else "success"
+                    code_hash = None
+                result = "failed"
+                before_cov = after_cov = None
+                before_runtime = after_runtime = 0.0
+                coverage_delta = 0.0
+                error_delta = 0.0
+                roi_delta = 0.0
+                runtime_delta = 0.0
                 reason = None
-                if patch_score < self.score_threshold:
-                    if pid is not None and getattr(self.engine, "rollback_mgr", None):
+                failure: ParsedFailure | None = None
+                try:
+                    res = self._run_tests(root_test)
+                    before_cov, before_runtime = res[:2]
+                    if len(res) > 2:
+                        failure = res[2]
+                    before_err = getattr(self.engine, "_current_errors", lambda: 0)()
+                    pid, reverted, roi_delta = self.engine.apply_patch(
+                        root_test,
+                        "auto_debug",
+                        reason="auto_debug",
+                        trigger="self_debugger_sandbox",
+                    )
+                    try:
+                        post_round_orphan_scan(
+                            Path.cwd(), logger=self.logger, router=router
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "post_round_orphan_scan after apply_patch failed"
+                        )
+                    if self.policy:
+                        try:
+                            state = self.state_getter() if self.state_getter else ()
+                            self.policy.update(state, roi_delta)
+                        except Exception as exc:
+                            self.logger.exception("policy patch update failed", exc)
+                    res = self._run_tests(root_test)
+                    after_cov, after_runtime = res[:2]
+                    if len(res) > 2:
+                        failure = res[2]
+                    after_err = getattr(self.engine, "_current_errors", lambda: 0)()
+                    coverage_delta = (
+                        (after_cov - before_cov)
+                        if after_cov is not None and before_cov is not None
+                        else 0.0
+                    )
+                    error_delta = before_err - after_err
+                    flakiness = self._test_flakiness(root_test, runs=self.flakiness_runs)
+                    complexity = self._code_complexity(root_test)
+                    runtime_delta = after_runtime - before_runtime
+                    syn_roi, syn_eff, *_ = self._recent_synergy_metrics(tracker)
+                    patch_score = self._composite_score(
+                        coverage_delta,
+                        error_delta,
+                        roi_delta,
+                        flakiness,
+                        runtime_delta,
+                        complexity,
+                        synergy_roi=syn_roi,
+                        synergy_efficiency=syn_eff,
+                        filename=str(root_test),
+                        tracker=tracker,
+                    )
+                    result = "reverted" if reverted else "success"
+                    if patch_score < self.score_threshold:
+                        if pid is not None and getattr(self.engine, "rollback_mgr", None):
+                            try:
+                                self.engine.rollback_mgr.rollback(str(pid))
+                            except Exception as exc:
+                                reason = f"rollback failed: {exc}"
+                                self._record_exception(exc)
+                                self.logger.exception("rollback failed")
+                        result = "reverted"
+                        reason = f"score {patch_score:.3f} below threshold {self.score_threshold:.3f}"
+                    elif (
+                        not reverted
+                        and pid is not None
+                        and getattr(self.engine, "rollback_mgr", None)
+                        and (coverage_delta < 0 or error_delta < 0)
+                    ):
                         try:
                             self.engine.rollback_mgr.rollback(str(pid))
                         except Exception as exc:
                             reason = f"rollback failed: {exc}"
                             self._record_exception(exc)
                             self.logger.exception("rollback failed")
-                    result = "reverted"
-                    reason = f"score {patch_score:.3f} below threshold {self.score_threshold:.3f}"
-                elif (
-                    not reverted
-                    and pid is not None
-                    and getattr(self.engine, "rollback_mgr", None)
-                    and (coverage_delta < 0 or error_delta < 0)
-                ):
-                    try:
-                        self.engine.rollback_mgr.rollback(str(pid))
-                    except Exception as exc:
-                        reason = f"rollback failed: {exc}"
-                        self._record_exception(exc)
-                        self.logger.exception("rollback failed")
-                    result = "reverted"
+                        result = "reverted"
+                    else:
+                        patched = not reverted and patch_score >= self.score_threshold
+                except RuntimeError as exc:
+                    reason = f"sandbox tests failed: {exc}"
+                    failure = parse_failure(str(exc))
+                    self._record_exception(exc)
+                    self.logger.error("sandbox tests failed", exc_info=exc)
+                except Exception as exc:
+                    reason = f"{type(exc).__name__}: {exc}"
+                    failure = parse_failure(str(exc))
+                    self._record_exception(exc)
+                    self.logger.exception("patch failed")
+                finally:
+                    self._log_patch(
+                        "auto_debug",
+                        result,
+                        before_cov,
+                        after_cov,
+                        coverage_delta=coverage_delta,
+                        error_delta=error_delta,
+                        roi_delta=roi_delta,
+                        score=patch_score if "patch_score" in locals() else None,
+                        flakiness=flakiness if "flakiness" in locals() else None,
+                        runtime_impact=(
+                            runtime_delta if "runtime_delta" in locals() else None
+                        ),
+                        complexity=complexity if "complexity" in locals() else None,
+                        synergy_roi=syn_roi if "syn_roi" in locals() else 0.0,
+                        synergy_efficiency=syn_eff if "syn_eff" in locals() else 0.0,
+                        log_path=str(self._last_test_log) if self._last_test_log else None,
+                        reason=reason,
+                    )
+                    root_test.unlink(missing_ok=True)
+                if not patched:
+                    if code_hash and patch_db:
+                        try:
+                            with self._db_lock:
+                                patch_db.record_failed_strategy(code_hash)
+                        except Exception:
+                            self.logger.exception("record failed strategy failed")
+                    if failure:
+                        tests.extend(self._retry_with_feedback(failure))
+                    attempt += 1
                 else:
-                    patched = not reverted and patch_score >= self.score_threshold
-            except RuntimeError as exc:
-                reason = f"sandbox tests failed: {exc}"
-                self._record_exception(exc)
-                self.logger.error("sandbox tests failed", exc_info=exc)
-            except Exception as exc:
-                reason = f"{type(exc).__name__}: {exc}"
-                self._record_exception(exc)
-                self.logger.exception("patch failed")
-            finally:
-                self._log_patch(
-                    "auto_debug",
-                    result,
-                    before_cov,
-                    after_cov,
-                    coverage_delta=coverage_delta,
-                    error_delta=error_delta,
-                    roi_delta=roi_delta,
-                    score=patch_score if "patch_score" in locals() else None,
-                    flakiness=flakiness if "flakiness" in locals() else None,
-                    runtime_impact=(
-                        runtime_delta if "runtime_delta" in locals() else None
-                    ),
-                    complexity=complexity if "complexity" in locals() else None,
-                    synergy_roi=syn_roi if "syn_roi" in locals() else 0.0,
-                    synergy_efficiency=syn_eff if "syn_eff" in locals() else 0.0,
-                    log_path=str(self._last_test_log) if self._last_test_log else None,
-                    reason=reason,
-                )
-                root_test.unlink(missing_ok=True)
+                    break
             if patched:
                 break
 
