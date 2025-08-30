@@ -14,63 +14,90 @@ import inspect
 import random
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable, Awaitable
 
 from ..metrics_exporter import self_improvement_failure_total
 from ..sandbox_settings import SandboxSettings
 
 
+_diagnostics_lock = threading.Lock()
+_diagnostics = {"cache_hits": 0, "cache_misses": 0, "install_attempts": 0}
+
+
+@lru_cache(maxsize=None)
+def _import_callable(module: str, attr: str) -> Callable[..., Any]:
+    mod = importlib.import_module(module)
+    return getattr(mod, attr)
+
+
 def _load_callable(
     module: str,
     attr: str,
-    _cache: dict[tuple[str, str], Callable[..., Any]] = {},
-    _diagnostics: dict[str, int] = {"cache_hits": 0, "cache_misses": 0, "install_attempts": 0},
+    *,
+    allow_install: bool = False,
 ) -> Callable[..., Any]:
     """Dynamically import ``attr`` from ``module`` with logging and caching.
 
     Successful imports are cached for future lookups. When the dependency is
     missing a stub is returned. The stub carries a structured error object and,
     depending on :class:`SandboxSettings`, may attempt to lazily retry the
-    import on first use.  A best effort automatic installation is performed
-    before falling back to the stub and ``dependency_load_diagnostics`` keeps
+    import on first use.  Installation is only attempted when ``allow_install``
+    is ``True`` and its output is logged. ``_load_callable.diagnostics`` keeps
     track of cache statistics for monitoring.
     """
 
-    _load_callable.cache = _cache
-    _load_callable.diagnostics = _diagnostics
-    key = (module, attr)
-    if key in _cache:
-        _diagnostics["cache_hits"] += 1
-        return _cache[key]
-    _diagnostics["cache_misses"] += 1
+    logger = logging.getLogger(__name__)
 
     try:
-        mod = importlib.import_module(module)
-        func = getattr(mod, attr)
-        _cache[key] = func
+        func = _import_callable(module, attr)
+        with _diagnostics_lock:
+            info = _import_callable.cache_info()
+            _diagnostics["cache_hits"] = info.hits
+            _diagnostics["cache_misses"] = info.misses
+        _load_callable.diagnostics = _diagnostics
         return func
     except (ImportError, AttributeError) as exc:  # pragma: no cover - best effort logging
-        logger = logging.getLogger(__name__)
         logger.exception("missing dependency %s.%s", module, attr)
         self_improvement_failure_total.labels(reason="missing_dependency").inc()
 
         settings = SandboxSettings()
         installed = False
-        if not getattr(settings, "menace_offline_install", False):
+        install_output: str | None = None
+        if allow_install and not getattr(settings, "menace_offline_install", False):
             pkg = module.split(".")[0]
-            _diagnostics["install_attempts"] += 1
+            with _diagnostics_lock:
+                _diagnostics["install_attempts"] += 1
             try:  # pragma: no cover - network side effect
-                subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
-                installed = True
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", pkg],
+                    capture_output=True,
+                    text=True,
+                )
+                install_output = (result.stdout or "") + (result.stderr or "")
+                logger.info("pip install %s stdout: %s", pkg, result.stdout)
+                if result.stderr:
+                    logger.warning("pip install %s stderr: %s", pkg, result.stderr)
+                installed = result.returncode == 0
+                if not installed:
+                    logger.warning(
+                        "automatic install of %s failed with code %s", pkg, result.returncode
+                    )
             except Exception as install_exc:  # pragma: no cover - best effort logging
                 logger.warning("automatic install of %s failed: %s", pkg, install_exc)
+                install_output = str(install_exc)
 
         if installed:
+            _import_callable.cache_clear()
             try:
-                mod = importlib.import_module(module)
-                func = getattr(mod, attr)
-                _cache[key] = func
+                func = _import_callable(module, attr)
+                with _diagnostics_lock:
+                    info = _import_callable.cache_info()
+                    _diagnostics["cache_hits"] = info.hits
+                    _diagnostics["cache_misses"] = info.misses
+                _load_callable.diagnostics = _diagnostics
                 return func
             except Exception as exc2:  # pragma: no cover - best effort logging
                 exc = exc2
@@ -80,8 +107,18 @@ def _load_callable(
             module: str
             attr: str
             exc: Exception
+            install_attempted: bool
+            install_output: str | None = None
 
-        error = MissingDependencyError(module, attr, exc)
+        error = MissingDependencyError(
+            module,
+            attr,
+            exc,
+            install_attempted=allow_install and not getattr(
+                settings, "menace_offline_install", False
+            ),
+            install_output=install_output,
+        )
         guide = f"Install it via `pip install {module.split('.')[0]}` to use {attr}"
 
         if not getattr(settings, "retry_optional_dependencies", False):
@@ -91,6 +128,7 @@ def _load_callable(
                 )
 
             _stub.error = error
+            _load_callable.diagnostics = _diagnostics
             return _stub
 
         def _retry_stub(*args: Any, **kwargs: Any) -> Any:
@@ -106,6 +144,7 @@ def _load_callable(
             )
 
         _retry_stub.error = error
+        _load_callable.diagnostics = _diagnostics
         return _retry_stub
 
 

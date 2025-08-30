@@ -12,6 +12,8 @@ import inspect
 from dataclasses import dataclass
 import subprocess
 import sys
+import threading
+from functools import lru_cache
 
 import pytest
 
@@ -19,8 +21,16 @@ import pytest
 def _load_utils():
     src = Path("self_improvement/utils.py").read_text()
     tree = ast.parse(src)
-    wanted = {"_load_callable", "_call_with_retries"}
-    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
+    wanted_funcs = {"_load_callable", "_call_with_retries", "_import_callable"}
+    wanted_assigns = {"_diagnostics_lock", "_diagnostics"}
+    nodes: list[ast.stmt] = []
+    for n in tree.body:
+        if isinstance(n, ast.FunctionDef) and n.name in wanted_funcs:
+            nodes.append(n)
+        elif isinstance(n, ast.Assign):
+            targets = {t.id for t in n.targets if isinstance(t, ast.Name)}
+            if targets & wanted_assigns:
+                nodes.append(n)
     module = ast.Module(nodes, type_ignores=[])
 
     class Counter:
@@ -54,6 +64,8 @@ def _load_utils():
         "dataclass": dataclass,
         "subprocess": subprocess,
         "sys": sys,
+        "threading": threading,
+        "lru_cache": lru_cache,
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns, counter
@@ -74,17 +86,31 @@ def test_load_callable_success_and_cache():
 
 def test_load_callable_missing_returns_stub_and_records_metric():
     utils, counter = _load_utils()
-    with patch("subprocess.check_call", side_effect=Exception) as sp, patch(
+    with patch("subprocess.run", side_effect=Exception) as sp, patch(
         "importlib.import_module", side_effect=ImportError
     ):
-        fn = utils["_load_callable"]("missing", "attr")
+        fn = utils["_load_callable"]("missing", "attr", allow_install=True)
         with pytest.raises(RuntimeError) as ei:
             fn()
     assert counter.count == 1
     assert fn.error.module == "missing"
+    assert fn.error.install_attempted is True
     assert "pip install missing" in str(ei.value)
     assert utils["_load_callable"].diagnostics["install_attempts"] == 1
     assert sp.called
+
+
+def test_no_install_without_flag():
+    utils, counter = _load_utils()
+    with patch("subprocess.run") as sp, patch(
+        "importlib.import_module", side_effect=ImportError
+    ):
+        fn = utils["_load_callable"]("missing", "attr")
+        with pytest.raises(RuntimeError):
+            fn()
+    assert fn.error.install_attempted is False
+    assert utils["_load_callable"].diagnostics["install_attempts"] == 0
+    sp.assert_not_called()
 
 
 def test_load_callable_retry_succeeds_when_enabled():
