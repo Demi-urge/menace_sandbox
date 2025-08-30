@@ -1965,6 +1965,22 @@ python -m vector_metrics_analytics --weight-summary
 
 Use `--db` to point at an alternative `vector_metrics.db` file.
 
+### Dependencies
+
+Some features rely on optional third‑party libraries. Missing packages trigger
+warnings and degrade functionality gracefully.
+
+- `pandas` – enables DataFrame operations in performance assessment and metrics
+  queries.
+- `psutil` – provides detailed CPU, memory and I/O statistics for the data bot.
+- `prometheus-client` – exposes collected metrics via a Prometheus endpoint.
+
+Install the extras with:
+
+```bash
+pip install pandas psutil prometheus-client
+```
+
 ## Legal Notice
 
 See [LEGAL.md](LEGAL.md) for the full legal terms. In short, this project may
