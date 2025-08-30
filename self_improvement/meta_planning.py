@@ -84,7 +84,9 @@ class _FallbackPlanner:
 
         self.logger = get_logger("FallbackPlanner")
         self.state_path = Path("sandbox_data/fallback_planner.json")
-        self.state_lock = SandboxLock(str(self.state_path.with_suffix(self.state_path.suffix + ".lock")))
+        self.state_lock = SandboxLock(
+            str(self.state_path.with_suffix(self.state_path.suffix + ".lock"))
+        )
         self.cluster_map: dict[tuple[str, ...], dict[str, Any]] = {}
         self.mutation_rate = getattr(cfg, "mutation_rate", getattr(cfg, "meta_mutation_rate", 1.0))
         self.roi_weight = getattr(cfg, "roi_weight", getattr(cfg, "meta_roi_weight", 1.0))
@@ -157,7 +159,10 @@ class _FallbackPlanner:
         """
 
         self.logger.info(
-            "begin run %s/%s", workflow_id, run_id, extra=log_record(workflow_id=workflow_id, run_id=run_id)
+            "begin run %s/%s",
+            workflow_id,
+            run_id,
+            extra=log_record(workflow_id=workflow_id, run_id=run_id),
         )
         if self.roi_db is not None:
             try:
@@ -181,7 +186,8 @@ class _FallbackPlanner:
                 self.stability_db.record_metrics(workflow_id, 0.0, 0.0, 0.0, roi_delta=0.0)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception(
-                    "stability logging failed", extra=log_record(workflow_id=workflow_id, run_id=run_id)
+                    "stability logging failed",
+                    extra=log_record(workflow_id=workflow_id, run_id=run_id),
                 )
 
     # ------------------------------------------------------------------
@@ -250,7 +256,7 @@ class _FallbackPlanner:
             if self.roi_db is not None:
                 try:
                     results = self.roi_db.fetch_results(wid)
-                    recent = [r.roi_gain for r in results[-self.roi_window :]]
+                    recent = [r.roi_gain for r in results[-self.roi_window:]]
                     roi = fmean(recent) if recent else 0.0
                 except Exception:  # pragma: no cover - best effort
                     self.logger.warning(
@@ -582,8 +588,6 @@ async def self_improvement_cycle(
         await asyncio.sleep(interval)
 
 
-
-
 def start_self_improvement_cycle(
     workflows: Mapping[str, Callable[[], Any]],
     *,
@@ -597,11 +601,29 @@ def start_self_improvement_cycle(
     daemon.
     """
     load_sandbox_settings()
+    logger_fn = globals().get("get_logger")
+    log_record_fn = globals().get("log_record")
+    logger = logger_fn(__name__) if logger_fn else None
     try:
         ROIResultsDB()
+    except (OSError, RuntimeError) as exc:
+        if logger is not None:
+            logger.error(
+                "ROIResultsDB initialisation failed",
+                extra=(log_record_fn(module=__name__) if log_record_fn else None),
+                exc_info=exc,
+            )
+        raise RuntimeError("ROIResultsDB initialisation failed") from exc
+    try:
         WorkflowStabilityDB()
-    except Exception:
-        pass
+    except (OSError, RuntimeError) as exc:
+        if logger is not None:
+            logger.error(
+                "WorkflowStabilityDB initialisation failed",
+                extra=(log_record_fn(module=__name__) if log_record_fn else None),
+                exc_info=exc,
+            )
+        raise RuntimeError("WorkflowStabilityDB initialisation failed") from exc
 
     def _runner() -> None:
         asyncio.run(self_improvement_cycle(workflows, interval=interval, event_bus=event_bus))
