@@ -604,7 +604,7 @@ class WorkflowSandboxRunner:
                     try:
                         return original_stat(raw, *a, **kw)
                     except Exception:
-                        logger.exception('unexpected error')
+                        logger.exception("os.stat failed for absolute path %s", raw)
                 current = os.stat
                 try:
                     os.stat = original_stat
