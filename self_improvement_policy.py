@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Q-learning policy predicting ROI improvement from self-improvement cycles."""
 
+import abc
 from typing import Dict, Tuple, Optional, Callable
 import pickle
 import os
@@ -31,7 +32,7 @@ class RLConfig:
     action_dim: int | None = None
 
 
-class RLStrategy:
+class RLStrategy(abc.ABC):
     """Base class for reinforcement learning update strategies."""
 
     def __init__(self, config: RLConfig | None = None) -> None:
@@ -49,6 +50,7 @@ class RLStrategy:
                 f"action {action} outside range(0, {self.config.action_dim})"
             )
 
+    @abc.abstractmethod
     def update(
         self,
         table: Dict[Tuple[int, ...], Dict[int, float]],
@@ -59,7 +61,8 @@ class RLStrategy:
         alpha: float,
         gamma: float,
     ) -> float:
-        raise NotImplementedError
+        """Update the value table for a transition."""
+        ...
 
     @staticmethod
     def value(table: Dict[Tuple[int, ...], Dict[int, float]], state: Tuple[int, ...]) -> float:
