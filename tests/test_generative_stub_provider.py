@@ -7,6 +7,7 @@ import time
 import pytest
 import logging
 from pathlib import Path
+from collections import OrderedDict
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -394,4 +395,41 @@ def test_cache_persist_after_failure(monkeypatch, tmp_path):
 
     assert path.exists()
     assert calls == ["start", "end"]
-    assert not gsp_mod._SAVE_TASKS
+    assert not gsp_mod._SAVE_TASKS._tasks
+
+
+@pytest.mark.asyncio
+async def test_concurrent_stub_generation(monkeypatch, tmp_path):
+    path = tmp_path / "cache.json"
+    monkeypatch.setenv("SANDBOX_STUB_CACHE", str(path))
+    gsp_mod = importlib.reload(gsp)
+
+    class SlowGen:
+        def __init__(self):
+            self.calls = 0
+
+        async def __call__(self, prompt, max_length=64, num_return_sequences=1):
+            self.calls += 1
+            await asyncio.sleep(0.01)
+            return [{"generated_text": "{\"x\": 1}"}]
+
+    dummy = SlowGen()
+
+    async def loader():
+        return dummy
+
+    monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
+    gsp_mod._CACHE = OrderedDict()
+
+    def target(x: int) -> None:
+        pass
+
+    ctx = {"strategy": "synthetic", "target": target}
+    results = await asyncio.gather(
+        *(gsp_mod.async_generate_stubs([{"x": 0}], ctx) for _ in range(5))
+    )
+
+    assert all(res == [{"x": 1}] for res in results)
+    with gsp_mod._CACHE_LOCK:
+        assert len(gsp_mod._CACHE) == 1
+    assert dummy.calls >= 1

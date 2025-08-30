@@ -14,6 +14,8 @@ from collections import Counter, OrderedDict
 import atexit
 import importlib
 import random
+import threading
+from contextlib import AbstractAsyncContextManager
 from typing import get_origin, get_args, Union
 
 from .input_history_db import InputHistoryDB
@@ -35,7 +37,33 @@ _GENERATOR = None
 # use OrderedDict for LRU eviction semantics
 _CACHE: "OrderedDict[Tuple[str, str], Dict[str, Any]]" = OrderedDict()
 
-_SAVE_TASKS: set[asyncio.Task[None]] = set()
+# protect cache mutations across threads and async tasks
+_CACHE_LOCK = threading.Lock()
+
+
+class _SaveTaskManager(AbstractAsyncContextManager):
+    """Track background save tasks and await them on shutdown."""
+
+    def __init__(self) -> None:
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._lock = threading.Lock()
+
+    def add(self, task: asyncio.Task[None]) -> None:
+        with self._lock:
+            self._tasks.add(task)
+        task.add_done_callback(lambda t: self._tasks.discard(t))
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+        with self._lock:
+            tasks = list(self._tasks)
+            self._tasks.clear()
+        if tasks:
+            await asyncio.gather(
+                *(asyncio.shield(t) for t in tasks), return_exceptions=True
+            )
+
+
+_SAVE_TASKS = _SaveTaskManager()
 
 
 def _feature_enabled(name: str) -> bool:
@@ -216,7 +244,8 @@ def _load_cache() -> "OrderedDict[Tuple[str, str], Dict[str, Any]]":
 def _save_cache() -> None:
     try:
         _STUB_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        data = [[f"{k[0]}::{k[1]}", v] for k, v in _CACHE.items()]
+        with _CACHE_LOCK:
+            data = [[f"{k[0]}::{k[1]}", v] for k, v in _CACHE.items()]
         tmp = _STUB_CACHE_PATH.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
@@ -238,7 +267,10 @@ async def _asave_cache() -> None:
 
 
 def _cache_evict() -> None:
-    """Evict least recently used cache entries when exceeding limit."""
+    """Evict least recently used cache entries when exceeding limit.
+
+    Caller must hold ``_CACHE_LOCK``.
+    """
     while len(_CACHE) > _CACHE_MAX:
         try:
             _CACHE.popitem(last=False)
@@ -257,38 +289,30 @@ def _schedule_cache_persist() -> None:
 
     task = asyncio.create_task(_runner())
     _SAVE_TASKS.add(task)
-    task.add_done_callback(lambda t: _SAVE_TASKS.discard(t))
 
 
 # load persistent cache at import time
-_CACHE.update(_load_cache())
-_cache_evict()
+with _CACHE_LOCK:
+    _CACHE.update(_load_cache())
+    _cache_evict()
 
 
 def _atexit_save_cache() -> None:
     """Persist the cache on shutdown without blocking the event loop."""
 
     async def _wait_and_save() -> None:
-        if _SAVE_TASKS:
-            await asyncio.gather(
-                *(asyncio.shield(t) for t in list(_SAVE_TASKS)),
-                return_exceptions=True,
-            )
-        await asyncio.to_thread(_save_cache)
+        await _SAVE_TASKS.__aexit__(None, None, None)
+        try:
+            await asyncio.to_thread(_save_cache)
+        except RuntimeError:
+            _save_cache()
 
     try:
         loop: asyncio.AbstractEventLoop | None = None
-        if _SAVE_TASKS:
-            try:
-                loop = next(iter(_SAVE_TASKS)).get_loop()
-            except Exception:
-                loop = None
-        if loop is None:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
         if loop is None or loop.is_closed():
             asyncio.run(_wait_and_save())
         else:
@@ -401,7 +425,11 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
 
     if not _CACHE:
         try:
-            _CACHE.update(await _aload_cache())
+            loaded = await _aload_cache()
+            with _CACHE_LOCK:
+                if not _CACHE:
+                    _CACHE.update(loaded)
+                    _cache_evict()
         except Exception:
             logger.exception("failed to load stub cache")
     if strategy == "history":
@@ -439,12 +467,14 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
         func = ctx.get("target")
         name = getattr(func, "__name__", "function")
         key = _cache_key(name, stub)
-        cached = _CACHE.get(key)
+        with _CACHE_LOCK:
+            cached = _CACHE.get(key)
+            if cached is not None:
+                try:
+                    _CACHE.move_to_end(key)
+                except Exception:
+                    pass
         if cached is not None:
-            try:
-                _CACHE.move_to_end(key)
-            except Exception:
-                pass
             new_stubs.append(dict(cached))
             continue
         args = ", ".join(f"{k}={v!r}" for k, v in stub.items())
@@ -510,12 +540,13 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
                             raise ValueError("missing field")
                         if not _type_matches(data[p_name], param.annotation):
                             raise ValueError("type mismatch")
-                    _CACHE[key] = data
-                    try:
-                        _CACHE.move_to_end(key)
-                    except Exception:
-                        pass
-                    _cache_evict()
+                    with _CACHE_LOCK:
+                        _CACHE[key] = data
+                        try:
+                            _CACHE.move_to_end(key)
+                        except Exception:
+                            pass
+                        _cache_evict()
                     changed = True
                     new_stubs.append(dict(data))
                     continue
