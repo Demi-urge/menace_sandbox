@@ -20,13 +20,12 @@ print(prompt)
 A successful lookup yields a prompt such as:
 
 ```
-Given the following pattern...
-- Code summary: handle edge case
-  Diff summary: adjust parsing
-  Outcome: works (tests passed)
-Previous failure:
-Traceback: ValueError
-Please attempt a different solution.
+Given the following pattern, fix the failing parser
+
+Given the following pattern:
+Code summary: handle edge case
+Diff summary: adjust parsing
+Outcome: works (tests passed)
 ```
 
 ## Configuration
@@ -43,8 +42,9 @@ Please attempt a different solution.
   Please attempt a different solution.
   ```
 * `success_header` and `failure_header` – control the section titles for
-  successful and failing examples.  The defaults are `"Successful example:"`
-  and `"Avoid pattern:"`.
+  successful and failing examples.  The defaults are
+  `"Given the following pattern:"` and
+  `"Avoid {summary} because it caused {outcome}:"`.
 
 ### Custom headers
 

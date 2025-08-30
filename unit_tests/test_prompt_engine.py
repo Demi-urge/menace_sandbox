@@ -29,7 +29,8 @@ def test_retrieval_snippets_included():
     ]
     engine = PromptEngine(retriever=DummyRetriever(records))
     prompt = engine.build_prompt("desc")
-    assert "Successful example:" in prompt
+    assert prompt.startswith("Given the following pattern, desc")
+    assert "Given the following pattern:" in prompt
     assert "Code summary: fixed bug" in prompt
     assert "Diff summary: changed logic" in prompt
     assert "Outcome: works (tests passed)" in prompt

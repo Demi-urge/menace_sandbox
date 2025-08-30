@@ -105,10 +105,11 @@ class PromptEngine:
         Maximum number of tokens allowed for each snippet block.
     success_header:
         Header inserted before successful examples. Defaults to
-        ``"Successful example:"``.
+        ``"Given the following pattern:"``.
     failure_header:
-        Header inserted before failed examples. Defaults to
-        ``"Avoid pattern:"``.
+        Template for headers inserted before failed examples. Supports
+        ``{summary}`` and ``{outcome}`` placeholders and defaults to
+        ``"Avoid {summary} because it caused {outcome}:"``.
     """
 
     retriever: Retriever | None = None
@@ -142,8 +143,8 @@ class PromptEngine:
             "coding_standards;repository_layout;metadata;version_control;testing",
         ).split(";"),
     )
-    success_header: str = "Successful example:"
-    failure_header: str = "Avoid pattern:"
+    success_header: str = "Given the following pattern:"
+    failure_header: str = "Avoid {summary} because it caused {outcome}:"
 
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
         if self.retriever is None:
@@ -187,7 +188,7 @@ class PromptEngine:
         span = max(max_ts - min_ts, 1.0)
 
         successes: List[tuple[float, str]] = []
-        failures: List[tuple[float, str]] = []
+        failures: List[tuple[float, str, str, str]] = []
         for rec, meta in zip(records, metas):
             score = rec.get("weighted_score")
             if score is None:
@@ -200,7 +201,9 @@ class PromptEngine:
             if passed:
                 successes.append((score, snippet))
             else:
-                failures.append((score, snippet))
+                summary = str(meta.get("summary") or "this pattern")
+                outcome = str(meta.get("outcome") or "a failure")
+                failures.append((score, summary, outcome, snippet))
 
         successes.sort(key=lambda x: x[0], reverse=True)
         failures.sort(key=lambda x: x[0], reverse=True)
@@ -211,11 +214,11 @@ class PromptEngine:
             for _, text in successes:
                 lines.extend(text.splitlines())
                 lines.append("")
-        if failures:
-            lines.append(self.failure_header)
-            for _, text in failures:
-                lines.extend(text.splitlines())
-                lines.append("")
+        for _, summary, outcome, text in failures:
+            header = self.failure_header.format(summary=summary, outcome=outcome)
+            lines.append(header)
+            lines.extend(text.splitlines())
+            lines.append("")
         return [line for line in lines if line]
 
     # ------------------------------------------------------------------
@@ -298,7 +301,7 @@ class PromptEngine:
         if context:
             lines.append(context.strip())
             lines.append("")
-        lines.append(f"Enhancement goal: {task}")
+        lines.append(f"Given the following pattern, {task}")
         lines.append("")
         lines.extend(self.build_snippets(ranked))
         if retry_trace:
@@ -559,8 +562,8 @@ class PromptEngine:
         retriever: Retriever | None = None,
         context_builder: ContextBuilder | None = None,
         roi_tracker: Any | None = None,
-        success_header: str = "Successful example:",
-        failure_header: str = "Avoid pattern:",
+        success_header: str = "Given the following pattern:",
+        failure_header: str = "Avoid {summary} because it caused {outcome}:",
     ) -> str:
         """Class method wrapper used by existing callers and tests."""
 
@@ -588,8 +591,8 @@ def build_prompt(
     context: str | None = None,
     retrieval_context: str | None = None,
     top_n: int = 5,
-    success_header: str = "Successful example:",
-    failure_header: str = "Avoid pattern:",
+    success_header: str = "Given the following pattern:",
+    failure_header: str = "Avoid {summary} because it caused {outcome}:",
 ) -> str:
     """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`."""
 
