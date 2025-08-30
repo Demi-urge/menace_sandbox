@@ -44,13 +44,15 @@ def test_prompt_engine_sections_and_ranking():
     prompt = engine.build_prompt("desc")
 
     # Sections from build_snippets are present
-    assert "Successful example:" in prompt
-    assert "Avoid pattern:" in prompt
+    assert "Given the following pattern:" in prompt
+    assert "Avoid fail because it caused a failure:" in prompt
 
     # Ranking respects ROI values
     assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
     # Failure snippet appears after successes
-    assert prompt.rindex("Code summary: fail") > prompt.index("Avoid pattern:")
+    assert prompt.rindex("Code summary: fail") > prompt.index(
+        "Avoid fail because it caused a failure:"
+    )
 
 
 def test_prompt_engine_custom_headers():
@@ -69,8 +71,8 @@ def test_prompt_engine_custom_headers():
     prompt = engine.build_prompt("desc")
     assert "Correct example:" in prompt
     assert "Incorrect example:" in prompt
-    assert "Successful example:" not in prompt
-    assert "Avoid pattern:" not in prompt
+    assert "Given the following pattern:" not in prompt
+    assert "Avoid bad because it caused a failure:" not in prompt
 
 
 def test_prompt_engine_handles_retry_trace():
