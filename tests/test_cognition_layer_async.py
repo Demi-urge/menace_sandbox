@@ -86,11 +86,12 @@ class DummyPatchLogger:
         tests_passed=None,
         enhancement_name=None,
         start_time=None,
-        timestamp=None,
+        end_time=None,
         diff=None,
         summary=None,
         outcome=None,
         error_summary=None,
+        effort_estimate=None,
     ):
         await asyncio.sleep(0.05)
         self.sessions.append(
@@ -100,7 +101,8 @@ class DummyPatchLogger:
                 "tests_passed": tests_passed,
                 "enhancement_name": enhancement_name,
                 "start_time": start_time,
-                "timestamp": timestamp,
+                "end_time": end_time,
+                "effort_estimate": effort_estimate,
             }
         )
         return {}
@@ -143,5 +145,5 @@ def test_concurrent_async_usage():
         assert meta["lines_changed"] == 1
         assert meta["tests_passed"] is True
         assert meta["enhancement_name"] == "feat"
-        assert meta["timestamp"] == 2.0
+        assert meta["end_time"] == 2.0
     assert duration < 0.17

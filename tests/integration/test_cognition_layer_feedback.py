@@ -48,11 +48,12 @@ class DummyPatchLogger:
         tests_passed=None,
         enhancement_name=None,
         start_time=None,
-        timestamp=None,
+        end_time=None,
         diff=None,
         summary=None,
         outcome=None,
         error_summary=None,
+        effort_estimate=None,
     ):
         if risk_callback is not None:
             risk_callback(self.risk_scores)

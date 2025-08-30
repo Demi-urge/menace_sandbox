@@ -12,19 +12,23 @@ from typing import (
     Tuple,
     Union,
     TYPE_CHECKING,
-    Literal,
 )
 
 import asyncio
 import logging
 import time
 import json
+from enum import Enum
 
 from .decorators import log_and_measure
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from patch_safety import PatchSafety
 from db_router import GLOBAL_ROUTER, init_db_router
 from .weight_adjuster import WeightAdjuster
+from enhancement_score import (
+    EnhancementMetrics,
+    compute_enhancement_score as _compute_enhancement_score,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from .vectorizer import SharedVectorService
@@ -116,7 +120,28 @@ except Exception:  # pragma: no cover
     _ps_log_outcome = None  # type: ignore
 
 # Restricted set of ROI tags used to annotate patch outcomes.
-RoiTag = Literal["success", "low-ROI", "bug-introduced", "needs-review", "blocked"]
+class RoiTag(str, Enum):
+    SUCCESS = "success"
+    HIGH_ROI = "high-ROI"
+    LOW_ROI = "low-ROI"
+    BUG_INTRODUCED = "bug-introduced"
+    NEEDS_REVIEW = "needs-review"
+    BLOCKED = "blocked"
+
+    @classmethod
+    def validate(cls, value: "RoiTag | str | None") -> "RoiTag":
+        """Return a valid :class:`RoiTag`, defaulting to ``SUCCESS``.
+
+        Unknown tags are logged and coerced to ``SUCCESS``.
+        """
+
+        if value is None:
+            return cls.SUCCESS
+        try:
+            return cls(value)
+        except ValueError:
+            logger.warning("Invalid ROI tag %r, defaulting to 'success'", value)
+            return cls.SUCCESS
 
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken
@@ -179,40 +204,6 @@ except Exception:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 router = GLOBAL_ROUTER or init_db_router("patch_logger")
-
-
-def compute_enhancement_score(
-    lines_changed: int | None,
-    context_tokens: int | None,
-    duration_s: float | None,
-    tests_passed: bool | None,
-    error_count: int | None,
-    human_effort: float | None,
-) -> float:
-    """Return a normalised score summarising patch enhancement metrics.
-
-    The score ranges from 0 to 1.  Positive metrics (lines changed, context
-    length, human effort and passing tests) increase the score while longer
-    durations and higher error counts decrease it.
-    """
-
-    def _norm(value: float | int | None, scale: float) -> float:
-        try:
-            return max(0.0, min(float(value or 0) / scale, 1.0))
-        except Exception:
-            return 0.0
-
-    positives = (
-        _norm(lines_changed, 200)
-        + _norm(context_tokens, 4000)
-        + _norm(human_effort, 10)
-        + (1.0 if tests_passed else 0.0)
-    )
-    negatives = _norm(duration_s, 3600) + _norm(error_count, 20)
-    total = positives + negatives
-    if total <= 0.0:
-        return 0.0
-    return positives / total
 
 
 class TrackResult(dict):
@@ -345,13 +336,15 @@ class PatchLogger:
         lines_changed: int | None = None,
         tests_passed: bool | None = None,
         enhancement_name: str | None = None,
+        context_tokens: int | None = None,
         start_time: float | None = None,
-        timestamp: float | None = None,
+        end_time: float | None = None,
         diff: str | None = None,
         summary: str | None = None,
         outcome: str | None = None,
         error_summary: str | None = None,
-        roi_tag: RoiTag | None = None,
+        error_traces: Sequence[Mapping[str, Any]] | None = None,
+        roi_tag: RoiTag | str | None = None,
         effort_estimate: float | None = None,
     ) -> dict[str, float]:
         """Log patch outcome for vectors contributing to a patch.
@@ -365,30 +358,31 @@ class PatchLogger:
 
         start = time.time()
         status = "success" if result else "failure"
+        roi_tag_val = RoiTag.validate(roi_tag)
         roi_metrics: dict[str, dict[str, Any]] = {}
         roi_deltas: dict[str, float] = {}
-        context_tokens = 0
+        context_tokens_val = int(context_tokens or 0)
         patch_difficulty = (lines_changed or 0)
         effort_estimate_val = effort_estimate
         time_to_completion = (
             None
-            if start_time is None or timestamp is None
-            else float(timestamp) - float(start_time)
+            if start_time is None or end_time is None
+            else float(end_time) - float(start_time)
         )
         try:
             detailed = self._parse_vectors(vector_ids)
             detailed.sort(key=lambda t: t[2], reverse=True)
             pairs = [(o, vid) for o, vid, _ in detailed]
             meta = retrieval_metadata or {}
-            context_tokens = 0
-            for m in meta.values():
-                if isinstance(m, Mapping):
-                    try:
-                        context_tokens += int(m.get("prompt_tokens") or 0)
-                    except Exception:
-                        pass
-            patch_difficulty = (lines_changed or 0) + context_tokens
-            errors: list[Mapping[str, Any]] = []
+            if context_tokens is None:
+                for m in meta.values():
+                    if isinstance(m, Mapping):
+                        try:
+                            context_tokens_val += int(m.get("prompt_tokens") or 0)
+                        except Exception:
+                            pass
+            patch_difficulty = (lines_changed or 0) + context_tokens_val
+            errors: list[Mapping[str, Any]] = list(error_traces or [])
             if error_summary:
                 errors.append({"summary": error_summary})
             if not result and meta:
@@ -508,7 +502,7 @@ class PatchLogger:
                             result,
                             pairs,
                             session_id=session_id,
-                            roi_tag=roi_tag,
+                            roi_tag=roi_tag_val.value,
                         )
                     except TypeError:
                         self.metrics_db.log_patch_outcome(
@@ -682,14 +676,18 @@ class PatchLogger:
                                     "UnifiedEventBus embedding backfill publish failed"
                                 )
                 error_trace_count = len(errors)
-                enhancement_score = compute_enhancement_score(
-                    lines_changed,
-                    context_tokens,
-                    time_to_completion,
-                    tests_passed,
-                    error_trace_count,
-                    effort_estimate_val,
+                tests_passed_count = 1 if tests_passed else 0
+                tests_failed_count = 1 if tests_passed is False else 0
+                metrics = EnhancementMetrics(
+                    lines_changed=lines_changed or 0,
+                    context_tokens=context_tokens_val,
+                    time_to_completion=time_to_completion or 0.0,
+                    tests_passed=tests_passed_count,
+                    tests_failed=tests_failed_count,
+                    error_traces=error_trace_count,
+                    effort_estimate=effort_estimate_val or 0.0,
                 )
+                enhancement_score = _compute_enhancement_score(metrics)
                 if self.patch_db is not None and patch_id:
                     try:  # pragma: no cover - best effort
                         self.patch_db.record_vector_metrics(
@@ -701,16 +699,16 @@ class PatchLogger:
                             regret=not result,
                             lines_changed=lines_changed,
                             tests_passed=tests_passed,
-                            context_tokens=context_tokens,
+                            context_tokens=context_tokens_val,
                             patch_difficulty=patch_difficulty,
                             effort_estimate=effort_estimate_val,
                             enhancement_name=enhancement_name,
                             start_time=start_time,
                             time_to_completion=time_to_completion,
-                            timestamp=timestamp,
+                            timestamp=end_time,
                             errors=errors,
                             error_trace_count=error_trace_count,
-                            roi_tag=roi_tag,
+                            roi_tag=roi_tag_val.value,
                             diff=diff,
                             summary=summary_arg,
                             outcome=outcome,
@@ -852,6 +850,10 @@ class PatchLogger:
             "risk_score": max_risk,
             "risk_scores": dict(origin_similarity),
             "enhancement_score": enhancement_score,
+            "roi_tag": roi_tag_val.value,
+            "start_time": start_time,
+            "end_time": end_time,
+            "time_to_completion": time_to_completion,
         }
         if patch_id:
             payload["patch_id"] = patch_id
@@ -892,20 +894,20 @@ class PatchLogger:
             "result": result,
             "roi_deltas": dict(roi_deltas),
             "lines_changed": lines_changed,
-            "context_tokens": context_tokens,
+            "context_tokens": context_tokens_val,
             "patch_difficulty": patch_difficulty,
             "effort_estimate": effort_estimate_val,
             "tests_passed": tests_passed,
             "enhancement_name": enhancement_name,
-            "timestamp": timestamp,
             "start_time": start_time,
+            "end_time": end_time,
             "time_to_completion": time_to_completion,
             "diff": diff,
             "summary": summary,
             "outcome": outcome,
             "errors": errors,
             "error_trace_count": error_trace_count,
-            "roi_tag": roi_tag,
+            "roi_tag": roi_tag_val.value,
             "enhancement_score": enhancement_score,
         }
         if error_summary is not None:
@@ -929,7 +931,7 @@ class PatchLogger:
                         "result": "ok" if result else "failed",
                         "vectors": [(o or "", vid, s) for o, vid, s in detailed],
                         "retrieval_session_id": session_id,
-                        "roi_tag": roi_tag,
+                        "roi_tag": roi_tag_val.value,
                     }
                 )
             except Exception:
@@ -942,12 +944,12 @@ class PatchLogger:
                     errors=errors,
                     tests_passed=tests_passed,
                     lines_changed=lines_changed,
-                    context_tokens=context_tokens,
+                    context_tokens=context_tokens_val,
                     patch_difficulty=patch_difficulty,
                     start_time=start_time,
                     time_to_completion=time_to_completion,
                     error_trace_count=error_trace_count,
-                    roi_tag=roi_tag,
+                    roi_tag=roi_tag_val.value,
                     effort_estimate=effort_estimate_val,
                     enhancement_score=enhancement_score,
                 )
@@ -966,7 +968,7 @@ class PatchLogger:
 
         if self.weight_adjuster is not None:
             try:
-                self.weight_adjuster.adjust(pairs, enhancement_score, roi_tag)
+                self.weight_adjuster.adjust(pairs, enhancement_score, roi_tag_val.value)
             except Exception:
                 logger.exception("Failed to adjust ranking weights")
 
@@ -975,7 +977,7 @@ class PatchLogger:
             errors=errors,
             tests_passed=tests_passed,
             lines_changed=lines_changed,
-            context_tokens=context_tokens,
+            context_tokens=context_tokens_val,
             patch_difficulty=patch_difficulty,
             duration_s=time_to_completion,
             error_count=error_trace_count,
@@ -1066,13 +1068,15 @@ class PatchLogger:
         lines_changed: int | None = None,
         tests_passed: bool | None = None,
         enhancement_name: str | None = None,
+        context_tokens: int | None = None,
         start_time: float | None = None,
-        timestamp: float | None = None,
+        end_time: float | None = None,
         diff: str | None = None,
         summary: str | None = None,
         outcome: str | None = None,
         error_summary: str | None = None,
-        roi_tag: RoiTag | None = None,
+        error_traces: Sequence[Mapping[str, Any]] | None = None,
+        roi_tag: RoiTag | str | None = None,
         effort_estimate: float | None = None,
     ) -> dict[str, float]:
         """Asynchronous wrapper for :meth:`track_contributors`."""
@@ -1090,12 +1094,14 @@ class PatchLogger:
             lines_changed=lines_changed,
             tests_passed=tests_passed,
             enhancement_name=enhancement_name,
+            context_tokens=context_tokens,
             start_time=start_time,
-            timestamp=timestamp,
+            end_time=end_time,
             diff=diff,
             summary=summary,
             outcome=outcome,
             error_summary=error_summary,
+            error_traces=error_traces,
             roi_tag=roi_tag,
             effort_estimate=effort_estimate,
         )

@@ -2,7 +2,8 @@ import types
 
 import pytest
 
-from vector_service.patch_logger import PatchLogger, compute_enhancement_score
+from vector_service.patch_logger import PatchLogger
+from enhancement_score import EnhancementMetrics, compute_enhancement_score
 
 
 class DummyPatchDB:
@@ -85,13 +86,22 @@ def test_track_contributors_enhancement_score_and_roi_tag():
         lines_changed=10,
         tests_passed=True,
         start_time=0.0,
-        timestamp=30.0,
-        roi_tag="high-ROI",
+        end_time=30.0,
+        roi_tag="low-ROI",
         effort_estimate=5.0,
     )
-    expected = compute_enhancement_score(10, 0, 30.0, True, 0, 5.0)
+    metrics = EnhancementMetrics(
+        lines_changed=10,
+        context_tokens=0,
+        time_to_completion=30.0,
+        tests_passed=1,
+        tests_failed=0,
+        error_traces=0,
+        effort_estimate=5.0,
+    )
+    expected = compute_enhancement_score(metrics)
     assert res.enhancement_score == pytest.approx(expected)
-    assert pdb.kwargs["roi_tag"] == "high-ROI"
-    assert vm.kwargs["roi_tag"] == "high-ROI"
+    assert pdb.kwargs["roi_tag"] == "low-ROI"
+    assert vm.kwargs["roi_tag"] == "low-ROI"
     assert pdb.kwargs["enhancement_score"] == pytest.approx(expected)
     assert vm.kwargs["enhancement_score"] == pytest.approx(expected)

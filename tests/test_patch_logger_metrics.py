@@ -265,7 +265,7 @@ def test_track_contributors_forwards_contribution_patch_db(monkeypatch):
         lines_changed=5,
         tests_passed=True,
         enhancement_name="feat",
-        timestamp=123.0,
+        end_time=123.0,
         diff="diff",
         summary="summary",
         outcome="failed",
@@ -280,7 +280,7 @@ def test_track_contributors_forwards_contribution_patch_db(monkeypatch):
     assert pdb.kwargs["roi_deltas"] == {}
     assert pdb.kwargs["errors"] == []
     assert pdb.kwargs["error_trace_count"] == 0
-    assert pdb.kwargs.get("roi_tag") is None
+    assert pdb.kwargs.get("roi_tag") == "success"
     assert pdb.kwargs["diff"] == "diff"
     assert pdb.kwargs["summary"] == "summary"
     assert pdb.kwargs["outcome"] == "failed"
@@ -355,7 +355,7 @@ def test_track_contributors_emits_summary_event(monkeypatch):
         lines_changed=10,
         tests_passed=False,
         enhancement_name="feat",
-        timestamp=1.23,
+        end_time=1.23,
         diff="d",
         summary="s",
         outcome="fail",
@@ -367,14 +367,14 @@ def test_track_contributors_emits_summary_event(monkeypatch):
     assert summary["patch_difficulty"] == 10
     assert summary["tests_passed"] is False
     assert summary["enhancement_name"] == "feat"
-    assert summary["timestamp"] == pytest.approx(1.23)
+    assert summary["end_time"] == pytest.approx(1.23)
     assert summary["roi_deltas"]["db1"] == pytest.approx(0.5)
     assert summary["diff"] == "d"
     assert summary["summary"] == "s"
     assert summary["outcome"] == "fail"
     assert summary["errors"] == [{"info": "boom"}]
     assert summary["error_trace_count"] == 1
-    assert summary.get("roi_tag") is None
+    assert summary.get("roi_tag") == "success"
 
 
 def test_track_contributors_error_summary(monkeypatch):
