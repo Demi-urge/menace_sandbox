@@ -9,6 +9,21 @@ redirected to custom handlers such as in-memory buffers.  Access to kernel
 introspection paths such as ``/proc`` is left untouched so runners may read
 process information.  Each executed callable has execution time, memory usage
 and errors recorded and aggregated into a :class:`RunMetrics` instance.
+
+Safe mode guarantees
+--------------------
+
+When ``safe_mode`` is ``True`` the runner enforces two security properties:
+
+* Outbound network access via :mod:`socket`, :mod:`urllib`, :mod:`requests`
+  and :mod:`httpx` is blocked.  Tests that expect network traffic must supply
+  a response through ``test_data`` or ``network_mocks``.
+* File writes are disallowed and path resolution prevents escaping the
+  sandbox.  To permit writes or to intercept them, callers may provide
+  handlers through ``fs_mocks``.
+
+These guarantees ensure workflows cannot reach external systems or modify the
+host filesystem unless explicitly allowed by the test harness.
 """
 
 from __future__ import annotations
