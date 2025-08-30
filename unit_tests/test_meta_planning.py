@@ -3,6 +3,7 @@ import asyncio
 import types
 from pathlib import Path
 from typing import Any, Callable, Mapping
+import pytest
 
 
 def _load_meta_planning():
@@ -27,33 +28,30 @@ def _load_meta_planning():
         "Any": Any,
         "Callable": Callable,
         "Mapping": Mapping,
+        "DEFAULT_ENTROPY_THRESHOLD": 0.2,
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns
 
 
-def test_entropy_threshold_from_settings():
+@pytest.mark.parametrize(
+    "cfg_value, db_data, expected",
+    [
+        (0.7, {}, 0.7),
+        (None, {"a": {"entropy": 0.2}, "b": {"entropy": -0.5}}, 0.5),
+        (None, {}, 0.2),
+    ],
+)
+def test_get_entropy_threshold(cfg_value, db_data, expected):
     meta = _load_meta_planning()
 
     class Cfg:
-        meta_entropy_threshold = 0.7
+        meta_entropy_threshold = cfg_value
 
     class DB:
-        data = {}
+        data = db_data
 
-    assert meta["_get_entropy_threshold"](Cfg(), DB()) == 0.7
-
-
-def test_entropy_threshold_falls_back_to_db():
-    meta = _load_meta_planning()
-
-    class Cfg:
-        meta_entropy_threshold = None
-
-    class DB:
-        data = {"a": {"entropy": 0.2}, "b": {"entropy": -0.5}}
-
-    assert meta["_get_entropy_threshold"](Cfg(), DB()) == 0.5
+    assert meta["_get_entropy_threshold"](Cfg(), DB()) == expected
 
 
 def test_should_encode_requires_positive_roi_and_low_entropy():
