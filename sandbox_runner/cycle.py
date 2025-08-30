@@ -175,8 +175,71 @@ def map_module_identifier(
     return module_id
 
 
-def _heuristic_suggestion(module: str) -> str:
-    """Return a simple heuristic suggestion based on *module* name."""
+def _heuristic_suggestion(ctx: Any, module: str) -> str:
+    """Return an enhanced heuristic suggestion for ``module``.
+
+    The suggestion is influenced by code complexity metrics (via ``radon``)
+    and the presence of recent failures in ``failures.db``.  When available,
+    the suggestion database is consulted before falling back to name based
+    heuristics.
+    """
+
+    # ------------------------------------------------------------------
+    # Prefer explicit suggestions from the suggestion DB when available
+    sdb = getattr(ctx, "suggestion_db", None)
+    if sdb is not None:
+        try:
+            sugg = sdb.best_match(module)
+            if sugg:
+                return sugg
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("heuristic suggestion db lookup failed for %s", module)
+
+    suggestions: list[str] = []
+
+    # ------------------------------------------------------------------
+    # Analyse code complexity if ``radon`` is installed
+    repo = Path(getattr(ctx, "repo", "."))
+    path = repo / module
+    if mi_visit is not None and path.is_file():
+        try:
+            code = path.read_text(encoding="utf-8")
+            mi_score = mi_visit(code, True)
+            if mi_score < 50:
+                suggestions.append("refactor for maintainability")
+            elif mi_score < 70:
+                suggestions.append("simplify complex logic")
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("complexity analysis failed for %s", module)
+
+    # ------------------------------------------------------------------
+    # Inspect recent failures from the failures database
+    failure_db_path = getattr(ctx, "failure_db_path", "failures.db")
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(failure_db_path)
+        try:
+            cur = conn.execute(
+                """
+                SELECT COUNT(*) FROM failures
+                WHERE model_id = ? AND ts >= datetime('now','-7 day')
+                """,
+                (module,),
+            )
+            cnt = cur.fetchone()[0]
+            if cnt:
+                suggestions.append("address recent failures")
+        finally:
+            conn.close()
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failure data lookup failed for %s", module)
+
+    # ------------------------------------------------------------------
+    if suggestions:
+        return "; ".join(suggestions)
+
+    # Fallback to simple name based heuristic
     name = module.lower()
     if "test" in name:
         return "add tests for edge cases"
@@ -216,7 +279,7 @@ def _choose_suggestion(ctx: Any, module: str) -> str:
                 except Exception:
                     logger.exception("knowledge lookup failed for %s", module)
         elif source == "heuristic":
-            return _heuristic_suggestion(module)
+            return _heuristic_suggestion(ctx, module)
     return "review module for improvements"
 
 
