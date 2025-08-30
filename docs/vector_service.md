@@ -72,6 +72,10 @@ context, meta = builder.build_context("fix failing tests", return_metadata=True)
 `context` contains the compact summaries while `meta` mirrors the structure with
 the additional `win_rate`, `regret_rate` and `flags` details for each entry.
 
+When patch examples are retrieved, ranking combines vector similarity with the
+`enhancement_score` pulled from `PatchHistoryDB`.  The relative influence of the
+score can be tuned via ``ContextBuilderConfig.enhancement_weight``.
+
 ## PatchLogger
 
 ```python

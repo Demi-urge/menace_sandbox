@@ -647,7 +647,29 @@ class ContextBuilder:
             penalty += 1.0
         penalty *= self.safety_weight
 
-        similarity = float(bundle.get("score", 0.0))
+        similarity = float(bundle.get("similarity", bundle.get("score", 0.0)))
+        enhancement = bundle.get("enhancement_score")
+        if enhancement is None and isinstance(meta, dict):
+            enhancement = meta.get("enhancement_score")
+        if enhancement is None and origin == "patch" and PatchHistoryDB is not None:
+            try:
+                pid = meta.get("patch_id") if isinstance(meta, dict) else None
+                if pid is None:
+                    pid = vec_id
+                pid = int(pid)
+                rec = PatchHistoryDB().get(pid)  # type: ignore[operator]
+                if rec is not None:
+                    enhancement = getattr(rec, "enhancement_score", None)
+            except Exception:
+                enhancement = None
+        if enhancement is not None:
+            try:
+                enhancement = float(enhancement)
+            except Exception:
+                enhancement = None
+        if enhancement is not None:
+            entry["enhancement_score"] = enhancement
+
         rank_prob = self.ranking_weight
         roi_bias = self.roi_weight
         if self.roi_tracker is not None:
@@ -660,6 +682,11 @@ class ContextBuilder:
 
         roi_score = entry.get("roi")
         base = similarity * rank_prob * roi_bias
+        if enhancement is not None:
+            try:
+                base *= 1.0 + enhancement * self.enhancement_weight
+            except Exception:
+                pass
         if roi_score is not None:
             try:
                 base *= 1.0 + float(roi_score) * self.roi_weight
@@ -784,6 +811,9 @@ class ContextBuilder:
                 roi_delta = rec_dict.get("roi_delta")
                 lines_changed = rec_dict.get("lines_changed")
                 tests_passed = rec_dict.get("tests_passed")
+                enh_score = rec_dict.get("enhancement_score")
+                if enh_score is not None and "enhancement_score" not in full:
+                    full["enhancement_score"] = enh_score
                 if desc and "summary" not in full:
                     if cache and "summary" in cache:
                         desc = cache["summary"]

@@ -29,6 +29,11 @@ from patch_safety import PatchSafety
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 
+try:  # pragma: no cover - optional dependency
+    from code_database import PatchHistoryDB  # type: ignore
+except Exception:  # pragma: no cover
+    PatchHistoryDB = None  # type: ignore
+
 _DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 
 
@@ -593,30 +598,45 @@ class PatchRetriever:
             md: Dict[str, Any] = {}
             text_val = ""
             origin = "patch"
-            score: float
+            similarity: float
             if vid in ids:
                 idx = ids.index(vid)
                 vec2 = vectors[idx] if idx < len(vectors) else []
                 raw = self._similarity(vec, vec2)
-                score = self._to_unit_interval(raw)
+                similarity = self._to_unit_interval(raw)
                 m = meta[idx] if idx < len(meta) else {}
                 md = m.get("metadata", {}) if isinstance(m, dict) else {}
                 text_val = md.get("diff") or md.get("text") or ""
                 origin = m.get("origin_db", "patch")
             else:
-                score = self._normalise_distance(dist, backend)
-            enh = 0.0
+                similarity = self._normalise_distance(dist, backend)
+
+            enh: float | None = None
             if isinstance(md, dict):
                 try:
-                    enh = float(md.get("enhancement_score", 0.0))
+                    enh = float(md.get("enhancement_score"))
                 except Exception:
-                    enh = 0.0
+                    enh = None
+            if (enh is None) and PatchHistoryDB is not None:
+                try:
+                    pid = int(vid)
+                    rec = PatchHistoryDB().get(pid)  # type: ignore[operator]
+                    if rec is not None:
+                        enh = float(getattr(rec, "enhancement_score", 0.0))
+                except Exception:
+                    pass
+            if enh is None:
+                enh = 0.0
+
+            score = similarity
             if self.enhancement_weight:
-                score += max(0.0, enh) * self.enhancement_weight
+                score *= 1.0 + max(0.0, enh) * self.enhancement_weight
+
             item = {
                 "origin_db": origin,
                 "record_id": str(vid),
                 "score": score,
+                "similarity": similarity,
                 "text": text_val,
                 "metadata": md,
             }
