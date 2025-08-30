@@ -462,27 +462,67 @@ class SynergyWeightLearner:
         lr: float | None = None,
         *,
         settings: SandboxSettings | None = None,
+        strategy_factory: Callable[..., Any] | None = None,
+        net_factory: Callable[..., Any] | None = None,
+        hyperparams: Mapping[str, Any] | None = None,
     ) -> None:
+        """Create a learner.
+
+        Parameters
+        ----------
+        path:
+            Where weights and model state should be persisted.
+        lr:
+            Base learning rate for torch optimisers.
+        strategy_factory:
+            Callable returning an RL strategy instance.  Defaults to
+            :class:`ActorCriticStrategy`.
+        net_factory:
+            Optional factory to build the neural network used when PyTorch is
+            available.  Receives ``input_dim`` and ``output_dim`` along with any
+            ``net_kwargs`` from ``hyperparams``.
+        hyperparams:
+            Extra keyword arguments forwarded to ``strategy_factory`` and
+            optimisation components such as ``optimizer_cls``, ``optimizer_kwargs``
+            and ``net_kwargs``.
+        """
+
         settings = settings or SandboxSettings()
         if lr is None:
             lr = float(getattr(settings, "synergy_weights_lr", 0.1))
         self.train_interval = int(getattr(settings, "synergy_train_interval", 10))
         self.replay_size = int(getattr(settings, "synergy_replay_size", 100))
-        if sip_torch is None:
-            logger.warning("PyTorch not installed - using ActorCritic strategy")
         self.path = Path(path) if path else None
         self.lr = lr
         self.weights = DEFAULT_SYNERGY_WEIGHTS.copy()
-        self.strategy = ActorCriticStrategy()
+        hp: Dict[str, Any] = dict(hyperparams or {})
+        strat_factory = strategy_factory or (lambda **kw: ActorCriticStrategy(**kw))
+        self.strategy = strat_factory(**hp)
         self._state: tuple[float, ...] = (0.0,) * 7
         self._steps = 0
         self.eval_loss = 0.0
-        self.buffer: deque[tuple["sip_torch.Tensor", float]] = deque(maxlen=self.replay_size) if sip_torch is not None and type(self) is SynergyWeightLearner else deque()
-        if sip_torch is not None and type(self) is SynergyWeightLearner:
-            # simple linear model mapping state -> weights
-            self.model = sip_torch.nn.Linear(7, 7)
-            self.optimizer = sip_torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        allow_py = bool(getattr(settings, "synergy_python_fallback", True))
+        max_replay = int(getattr(settings, "synergy_python_max_replay", 1000))
+        if sip_torch is None:
+            if not allow_py or self.replay_size > max_replay:
+                raise RuntimeError(
+                    "PyTorch is required for SynergyWeightLearner; pure-Python "
+                    "fallback is disabled or too slow"
+                )
+            logger.warning(
+                "PyTorch not installed - using %s strategy",
+                type(self.strategy).__name__,
+            )
+            self.buffer: deque[tuple[Any, float]] = deque(maxlen=self.replay_size)
+        else:
+            net_factory = net_factory or (lambda i, o, **_: sip_torch.nn.Linear(i, o))
+            net_kwargs = dict(hp.get("net_kwargs", {}))
+            self.model = net_factory(7, 7, **net_kwargs)
+            opt_cls = hp.get("optimizer_cls", sip_torch.optim.Adam)
+            opt_kwargs = dict(hp.get("optimizer_kwargs", {}))
+            self.optimizer = opt_cls(self.model.parameters(), lr=self.lr, **opt_kwargs)
             self.loss_fn = sip_torch.nn.MSELoss()
+            self.buffer: deque[tuple[Any, float]] = deque(maxlen=self.replay_size)
         self.load()
 
     # ------------------------------------------------------------------
@@ -516,6 +556,14 @@ class SynergyWeightLearner:
                     self.strategy = pickle.load(fh)
         except Exception as exc:
             logger.exception("failed to load strategy pickle: %s", exc)
+        try:
+            replay = base + ".replay.pkl"
+            if os.path.exists(replay):
+                with open(replay, "rb") as fh:
+                    items = pickle.load(fh)
+                self.buffer = deque(items, maxlen=self.replay_size)
+        except Exception as exc:
+            logger.exception("failed to load replay buffer: %s", exc)
         if sip_torch is not None and hasattr(self, "model"):
             model_file = Path(base + ".model.pt")
             opt_file = Path(base + ".optim.pt")
@@ -544,6 +592,11 @@ class SynergyWeightLearner:
             _atomic_write(pkl, pickle.dumps(self.strategy), binary=True)
         except Exception as exc:
             logger.exception("failed to save strategy pickle: %s", exc)
+        try:
+            replay = Path(base + ".replay.pkl")
+            _atomic_write(replay, pickle.dumps(list(self.buffer)), binary=True)
+        except Exception as exc:
+            logger.exception("failed to save replay buffer: %s", exc)
         if self.path and sip_torch is not None and hasattr(self, "model"):
             try:
                 buf = io.BytesIO()
@@ -601,6 +654,7 @@ class SynergyWeightLearner:
             with sip_torch.no_grad():
                 q_vals_list = self.model(state_tensor).clamp(0.0, 10.0).tolist()
         else:
+            self.buffer.append((self._state, float(roi_delta)))
             q_vals_list: list[float] = []
             for idx, _ in enumerate(names):
                 reward = roi_delta * self._state[idx]
