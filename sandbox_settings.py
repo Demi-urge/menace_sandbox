@@ -188,6 +188,16 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_REPO_PATH",
         description="Path to repository root for sandbox operations.",
     )
+    sandbox_backend: str = Field(
+        "venv",
+        env="SANDBOX_BACKEND",
+        description="Sandbox execution backend: 'venv' or 'docker'.",
+    )
+    sandbox_docker_image: str = Field(
+        "python:3.11-slim",
+        env="SANDBOX_DOCKER_IMAGE",
+        description="Docker image for sandbox runs when using the docker backend.",
+    )
     sandbox_central_logging: bool = Field(
         True,
         env="SANDBOX_CENTRAL_LOGGING",

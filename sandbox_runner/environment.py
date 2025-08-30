@@ -64,6 +64,7 @@ from typing import (
 from contextlib import asynccontextmanager, contextmanager, suppress
 from lock_utils import SandboxLock as FileLock
 from dataclasses import dataclass, asdict
+from sandbox_settings import SandboxSettings
 
 from .workflow_sandbox_runner import WorkflowSandboxRunner
 from metrics_exporter import Gauge, environment_failure_total
@@ -330,6 +331,61 @@ ERROR_CATEGORY_COUNTS: Counter[str] = Counter()
 
 # Track how many times each module/scenario combination was executed
 COVERAGE_TRACKER: Dict[str, Dict[str, int]] = {}
+
+
+@contextmanager
+def create_ephemeral_repo(
+    settings: SandboxSettings | None = None,
+) -> Iterable[tuple[Path, Callable[..., subprocess.CompletedProcess]]]:
+    """Clone the current repository into an ephemeral location.
+
+    Depending on ``settings.sandbox_backend`` the repository is cloned into a
+    temporary directory (``venv``) or mounted into a lightweight Docker
+    container (``docker``). The context manager yields the cloned repository
+    path and a ``run`` helper that executes commands within that repository.
+    """
+
+    settings = settings or SandboxSettings()
+    backend = getattr(settings, "sandbox_backend", "venv").lower()
+    repo_src = settings.sandbox_repo_path or "."
+
+    use_docker = backend == "docker" and shutil.which("docker")
+
+    with tempfile.TemporaryDirectory(prefix="repo_clone_") as td:
+        repo_path = Path(td) / "repo"
+        subprocess.check_call(["git", "clone", "--depth", "1", repo_src, str(repo_path)])
+
+        if use_docker:
+            image = getattr(settings, "sandbox_docker_image", "python:3.11-slim")
+
+            def _run(cmd: Sequence[str], *, env: Mapping[str, str] | None = None, **kw: Any):
+                env = env or {}
+                env_args: list[str] = []
+                for k, v in env.items():
+                    env_args.extend(["-e", f"{k}={v}"])
+                docker_cmd = [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "-v",
+                    f"{repo_path}:/repo",
+                    "-w",
+                    "/repo",
+                    *env_args,
+                    image,
+                    *cmd,
+                ]
+                return subprocess.run(docker_cmd, **kw)
+
+        else:
+
+            def _run(cmd: Sequence[str], *, env: Mapping[str, str] | None = None, **kw: Any):
+                env_local = os.environ.copy()
+                if env:
+                    env_local.update(env)
+                return subprocess.run(cmd, cwd=str(repo_path), env=env_local, **kw)
+
+        yield repo_path, _run
 
 
 def _update_coverage(module: str, scenario: str) -> None:
