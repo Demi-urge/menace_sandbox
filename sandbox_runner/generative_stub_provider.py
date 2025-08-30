@@ -17,6 +17,8 @@ import random
 import threading
 from contextlib import AbstractAsyncContextManager
 from typing import get_origin, get_args, Union
+import ast
+import dataclasses
 
 from .input_history_db import InputHistoryDB
 
@@ -140,33 +142,79 @@ async def _call_with_retry(func: Callable[[], Awaitable[Any]]) -> Any:
 
 
 def _rule_based_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
-    """Fill missing fields using simple deterministic, context aware rules."""
+    """Fill missing fields using deterministic rules with type awareness."""
+
+    def _example_from_doc(doc: str, param_name: str) -> Any | None:
+        pattern = re.compile(
+            rf"{re.escape(param_name)}[^\n]*?e\.g\.[\s]*([^\n\.]+)", re.IGNORECASE
+        )
+        match = pattern.search(doc)
+        if not match:
+            return None
+        text = match.group(1).strip().rstrip(",;.")
+        try:
+            return ast.literal_eval(text)
+        except Exception:
+            return text.strip("'\"")
+
+    def _value_from_annotation(annotation: Any, name: str) -> Any:
+        origin = get_origin(annotation)
+        if origin is None:
+            if dataclasses.is_dataclass(annotation):
+                kwargs = {
+                    f.name: _value_from_annotation(f.type, f.name)
+                    for f in dataclasses.fields(annotation)
+                }
+                return annotation(**kwargs)
+            lname = name.lower()
+            if annotation in (int, "int"):
+                return 1
+            if annotation in (float, "float"):
+                return 1.0
+            if annotation in (bool, "bool"):
+                return True
+            if annotation in (str, "str"):
+                return "example" if any(
+                    token in lname for token in ["name", "title", "id"]
+                ) else "value"
+            return None
+        args = get_args(annotation)
+        if origin is list:
+            (arg,) = args or (Any,)
+            return [_value_from_annotation(arg, name)]
+        if origin is set:
+            (arg,) = args or (Any,)
+            return {_value_from_annotation(arg, name)}
+        if origin is tuple:
+            if len(args) == 2 and args[1] is Ellipsis:
+                return (_value_from_annotation(args[0], name),)
+            return tuple(_value_from_annotation(a, name) for a in args)
+        if origin is dict:
+            key_ann, val_ann = args or (str, Any)
+            key = _value_from_annotation(key_ann, f"{name}_key")
+            val = _value_from_annotation(val_ann, name)
+            return {key: val}
+        if origin is Union:
+            non_none = [a for a in args if a is not type(None)]
+            return _value_from_annotation(non_none[0], name) if non_none else None
+        return None
+
     if func is None:
         return dict(stub)
     try:
         sig = inspect.signature(func)
+        doc = inspect.getdoc(func) or ""
     except Exception:
         return dict(stub)
     result = dict(stub)
     for name, param in sig.parameters.items():
         if name in result and result[name] is not None:
             continue
-        ann = param.annotation
-        lname = name.lower()
-        if ann in (int, "int"):
-            val = 1
-        elif ann in (float, "float"):
-            val = 1.0
-        elif ann in (bool, "bool"):
-            val = True
-        elif ann in (str, "str"):
-            if any(token in lname for token in ["name", "title", "id"]):
-                val = "example"
-            else:
-                val = "value"
-        else:
-            val = None
-        result[name] = val
+        example = _example_from_doc(doc, name)
+        if example is not None:
+            result[name] = example
+            continue
+        result[name] = _value_from_annotation(param.annotation, name)
     return result
 
 
