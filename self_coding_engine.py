@@ -185,7 +185,9 @@ class SelfCodingEngine:
         self.patch_logger = patch_logger
         self.roi_tracker = tracker
         self.knowledge_service = knowledge_service
-        self.prompt_engine = PromptEngine()
+        # expose ROI tracker to the prompt engine so retrieved examples can
+        # carry risk-adjusted ROI hints when available
+        self.prompt_engine = PromptEngine(tracker)
         self.router = kwargs.get("router")
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
