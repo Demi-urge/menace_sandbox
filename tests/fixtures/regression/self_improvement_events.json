@@ -1,0 +1,6 @@
+[
+  [
+    "metrics:new",
+    {"bot": "wf", "errors": 0, "entropy": 0.0, "expense": 1.0, "revenue": 1.5}
+  ]
+]
