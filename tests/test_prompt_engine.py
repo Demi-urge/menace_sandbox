@@ -37,6 +37,7 @@ def test_prompt_engine_sections_and_ranking():
         retriever=DummyRetriever(records),
         patch_retriever=DummyRetriever(records),
         top_n=3,
+        confidence_threshold=0.0,
     )
     prompt = engine.build_prompt("desc")
 
@@ -74,4 +75,61 @@ def test_prompt_engine_handles_fallback_result(monkeypatch):
     monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
     prompt = engine.build_prompt("goal")
     assert prompt == DEFAULT_TEMPLATE
+
+
+def test_weighted_scoring_alters_ordering():
+    records = [
+        _record(0.0, raroi=1.0, summary="roi", tests_passed=True, ts=1),
+        _record(0.0, raroi=0.2, summary="recent", tests_passed=True, ts=2),
+    ]
+    engine = PromptEngine(
+        patch_retriever=DummyRetriever(records),
+        top_n=2,
+        roi_weight=1.0,
+        recency_weight=0.0,
+        confidence_threshold=-10,
+    )
+
+    ranked = engine._rank_records(records)
+    assert ranked[0]["metadata"]["summary"] == "roi"
+
+    engine.roi_weight = 0.0
+    engine.recency_weight = 1.0
+    ranked = engine._rank_records(records)
+    assert ranked[0]["metadata"]["summary"] == "recent"
+
+
+def test_roi_tag_weights_adjust_ranking():
+    records = [
+        _record(
+            0.0,
+            raroi=0.5,
+            summary="good",
+            tests_passed=True,
+            ts=1,
+            roi_tag="high-ROI",
+        ),
+        _record(
+            0.0,
+            raroi=0.5,
+            summary="bad",
+            tests_passed=True,
+            ts=1,
+            roi_tag="bug-introduced",
+        ),
+    ]
+    engine = PromptEngine(
+        patch_retriever=DummyRetriever(records),
+        top_n=2,
+        roi_weight=0.0,
+        recency_weight=0.0,
+        confidence_threshold=-10,
+    )
+
+    ranked = engine._rank_records(records)
+    assert ranked[0]["metadata"]["summary"] == "good"
+
+    engine.roi_tag_weights = {"high-ROI": -1.0, "bug-introduced": 1.0}
+    ranked = engine._rank_records(records)
+    assert ranked[0]["metadata"]["summary"] == "bad"
 
