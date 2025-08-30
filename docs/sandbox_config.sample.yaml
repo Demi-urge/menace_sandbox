@@ -1,4 +1,4 @@
-meta_entropy_threshold: null
+meta_entropy_threshold: 0.2
 roi:
   threshold: null
   confidence: null

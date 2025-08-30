@@ -14,6 +14,11 @@ from ..sandbox_settings import SandboxSettings, load_sandbox_settings
 from ..workflow_stability_db import WorkflowStabilityDB
 
 try:  # pragma: no cover - optional dependency
+    from ..unified_event_bus import UnifiedEventBus
+except Exception:  # pragma: no cover - fallback when event bus missing
+    UnifiedEventBus = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
     from ..meta_workflow_planner import MetaWorkflowPlanner
 except Exception:  # pragma: no cover - gracefully degrade
     try:
@@ -39,7 +44,12 @@ PLANNER_INTERVAL = getattr(settings, "meta_planning_interval", 0)
 MUTATION_RATE = settings.meta_mutation_rate
 ROI_WEIGHT = settings.meta_roi_weight
 DOMAIN_PENALTY = settings.meta_domain_penalty
-ENTROPY_THRESHOLD = settings.meta_entropy_threshold
+DEFAULT_ENTROPY_THRESHOLD = 0.2
+ENTROPY_THRESHOLD = (
+    settings.meta_entropy_threshold
+    if settings.meta_entropy_threshold is not None
+    else DEFAULT_ENTROPY_THRESHOLD
+)
 STABLE_WORKFLOWS = WorkflowStabilityDB()
 
 
@@ -51,9 +61,9 @@ def _get_entropy_threshold(
     if threshold is None:
         try:
             entropies = [abs(float(v.get("entropy", 0.0))) for v in db.data.values()]
-            threshold = max(entropies) if entropies else 0.2
+            threshold = max(entropies) if entropies else DEFAULT_ENTROPY_THRESHOLD
         except Exception:  # pragma: no cover - best effort
-            threshold = 0.2
+            threshold = DEFAULT_ENTROPY_THRESHOLD
     return float(threshold)
 
 
@@ -69,8 +79,8 @@ async def self_improvement_cycle(
     workflows: Mapping[str, Callable[[], Any]],
     *,
     interval: float = PLANNER_INTERVAL,
-    event_bus: "UnifiedEventBus" | None = None,
-) -> None:
+    event_bus: UnifiedEventBus | None = None,
+ ) -> None:
     """Background loop evolving ``workflows`` using the meta planner."""
     logger = get_logger("SelfImprovementCycle")
     if MetaWorkflowPlanner is None:

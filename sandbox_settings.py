@@ -291,9 +291,12 @@ class SandboxSettings(BaseSettings):
         description="Penalty for domain transitions in meta planning.",
     )
     meta_entropy_threshold: float | None = Field(
-        None,
+        0.2,
         env="META_ENTROPY_THRESHOLD",
-        description="Maximum allowed workflow entropy when recording improvements.",
+        description=(
+            "Maximum allowed workflow entropy when recording improvements."
+            " Defaults to 0.2 when unset."
+        ),
     )
     workflows_db: str = Field(
         "workflows.db",
