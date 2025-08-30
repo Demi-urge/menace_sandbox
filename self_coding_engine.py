@@ -59,6 +59,7 @@ from .access_control import READ, WRITE, check_permission
 from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
 from typing import TYPE_CHECKING
 from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
+from sandbox_runner.test_harness import run_tests, TestHarnessResult
 from .sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - optional dependency
@@ -626,8 +627,8 @@ class SelfCodingEngine:
         )
         return code, True
 
-    def _run_ci(self, path: Path | None = None) -> bool:
-        """Run verification and linting inside an isolated sandbox."""
+    def _run_ci(self, path: Path | None = None) -> TestHarnessResult:
+        """Run linting and unit tests inside isolated environments."""
 
         file_name = path.name if path else None
         test_data = {file_name: path.read_text(encoding="utf-8")} if path else None
@@ -653,12 +654,19 @@ class SelfCodingEngine:
 
         runner = WorkflowSandboxRunner()
         metrics = runner.run(workflow, test_data=test_data)
-        if metrics.modules:
-            result = metrics.modules[0].result
-            if result:
-                self.logger.info("CI checks succeeded")
-            return bool(result)
-        return False
+        lint_ok = bool(metrics.modules and metrics.modules[0].result)
+
+        harness_result = run_tests(Path.cwd(), path)
+        success = lint_ok and harness_result.success
+        if success:
+            self.logger.info("CI checks succeeded")
+        else:
+            if not lint_ok:
+                self.logger.error("lint failed")
+            if not harness_result.success:
+                self.logger.error("tests failed")
+                self._last_retry_trace = harness_result.stderr or harness_result.stdout
+        return TestHarnessResult(success, harness_result.stdout, harness_result.stderr, harness_result.duration)
 
     def _current_errors(self) -> int:
         """Return the latest recorded error count for the bot."""
