@@ -56,6 +56,24 @@ def test_gpt_memory_routes_through_vector_service():
             return [self._Vec([0.25]) for _ in texts]
 
     svc = SharedVectorService(DummyEmbedder(), vector_store=store)
+
+    # ``gpt_memory`` depends on modules with package-relative imports which are
+    # not available in the test environment.  Provide lightweight stubs so the
+    # import succeeds without pulling in the heavy dependencies.
+    import sys
+    sys.modules.setdefault(
+        "data_bot",
+        types.SimpleNamespace(MetricsDB=object),
+    )
+    sys.modules.setdefault(
+        "scope_utils",
+        types.SimpleNamespace(
+            Scope=object,
+            build_scope_clause=lambda *a, **k: "",
+            apply_scope=lambda *a, **k: None,
+        ),
+    )
+
     from gpt_memory import GPTMemoryManager
     mem = GPTMemoryManager(db_path=':memory:', vector_service=svc)
     mem.log_interaction('hi','there')
