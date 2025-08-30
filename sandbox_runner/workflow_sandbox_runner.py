@@ -365,7 +365,7 @@ class WorkflowSandboxRunner:
                         return fn(path, mode, *a, **kw)
                     if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                         raise RuntimeError("file write disabled in safe_mode")
-                    path.parent.mkdir(parents=True, exist_ok=True)
+                    _safe_makedirs(path.parent)
                 _audit("file_open", path=str(path), mode=mode)
                 return original_open(path, mode, *a, **kw)
 
@@ -393,7 +393,7 @@ class WorkflowSandboxRunner:
                         return fn(path, *a, **kw)
                     if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                         raise RuntimeError("file write disabled in safe_mode")
-                    path.parent.mkdir(parents=True, exist_ok=True)
+                    _safe_makedirs(path.parent)
                 _audit("file_open", path=str(path), mode=mode)
                 return original_path_open(path, *a, **kw)
 
@@ -410,7 +410,7 @@ class WorkflowSandboxRunner:
                     return fn(path, data, *a, **kw)
                 if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
-                path.parent.mkdir(parents=True, exist_ok=True)
+                _safe_makedirs(path.parent)
                 _audit("file_write", path=str(path))
                 return original_write_text(path, data, *a, **kw)
 
@@ -435,7 +435,7 @@ class WorkflowSandboxRunner:
                     return fn(path, data, *a, **kw)
                 if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                     raise RuntimeError("file write disabled in safe_mode")
-                path.parent.mkdir(parents=True, exist_ok=True)
+                _safe_makedirs(path.parent)
                 _audit("file_write", path=str(path))
                 return original_write_bytes(path, data, *a, **kw)
 
@@ -512,7 +512,6 @@ class WorkflowSandboxRunner:
                 mock.patch.object(pathlib.Path, "rmdir", path_rmdir)
             )
 
-            original_mkdir = os.mkdir
             original_makedirs = os.makedirs
             original_rmdir = os.rmdir
             original_removedirs = os.removedirs
@@ -529,16 +528,13 @@ class WorkflowSandboxRunner:
             original_copytree = shutil.copytree
             original_move = shutil.move
 
-            def sandbox_mkdir(path, mode=0o777, *a, **kw):
-                p = pathlib.Path(path)
-                s = self._resolve(root, path)
-                fn = fs_mocks.get("os.mkdir")
+            def _safe_makedirs(path, mode=0o777):
+                target = self._resolve(root, path)
+                fn = fs_mocks.get("os.makedirs")
                 if fn:
-                    return fn(s, mode, *a, **kw)
-                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
-                    raise RuntimeError("file write disabled in safe_mode")
-                _audit("file_mkdir", path=str(s))
-                return original_mkdir(s, mode, *a, **kw)
+                    return fn(target, mode, exist_ok=True)
+                _audit("file_mkdir", path=str(target))
+                return original_makedirs(target, mode, exist_ok=True)
 
             def sandbox_makedirs(path, mode=0o777, exist_ok=False):
                 p = pathlib.Path(path)
@@ -592,7 +588,7 @@ class WorkflowSandboxRunner:
                         return fn(s, flags, *a, **kw)
                     if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
                         raise RuntimeError("file write disabled in safe_mode")
-                    pathlib.Path(s).parent.mkdir(parents=True, exist_ok=True)
+                    _safe_makedirs(pathlib.Path(s).parent)
                 _audit("file_open", path=str(s), flags=flags)
                 return original_os_open(s, flags, *a, **kw)
 
@@ -654,7 +650,10 @@ class WorkflowSandboxRunner:
                 fn = fs_mocks.get("os.rename")
                 if fn:
                     return fn(s, d, *a, **kw)
-                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                p = pathlib.Path(dst)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                _safe_makedirs(pathlib.Path(d).parent)
                 return original_rename(s, d, *a, **kw)
 
             def sandbox_replace(src, dst, *a, **kw):
@@ -663,7 +662,10 @@ class WorkflowSandboxRunner:
                 fn = fs_mocks.get("os.replace")
                 if fn:
                     return fn(s, d, *a, **kw)
-                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                p = pathlib.Path(dst)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                _safe_makedirs(pathlib.Path(d).parent)
                 return original_replace(s, d, *a, **kw)
 
             def sandbox_copy(src, dst, *a, **kw):
@@ -672,7 +674,10 @@ class WorkflowSandboxRunner:
                 fn = fs_mocks.get("shutil.copy")
                 if fn:
                     return fn(s, d, *a, **kw)
-                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                p = pathlib.Path(dst)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                _safe_makedirs(pathlib.Path(d).parent)
                 return original_copy(s, d, *a, **kw)
 
             def sandbox_copy2(src, dst, *a, **kw):
@@ -681,7 +686,10 @@ class WorkflowSandboxRunner:
                 fn = fs_mocks.get("shutil.copy2")
                 if fn:
                     return fn(s, d, *a, **kw)
-                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                p = pathlib.Path(dst)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                _safe_makedirs(pathlib.Path(d).parent)
                 return original_copy2(s, d, *a, **kw)
 
             def sandbox_copyfile(src, dst, *a, **kw):
@@ -690,7 +698,10 @@ class WorkflowSandboxRunner:
                 fn = fs_mocks.get("shutil.copyfile")
                 if fn:
                     return fn(s, d, *a, **kw)
-                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                p = pathlib.Path(dst)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                _safe_makedirs(pathlib.Path(d).parent)
                 return original_copyfile(s, d, *a, **kw)
 
             def sandbox_copytree(src, dst, *a, **kw):
@@ -699,7 +710,10 @@ class WorkflowSandboxRunner:
                 fn = fs_mocks.get("shutil.copytree")
                 if fn:
                     return fn(s, d, *a, **kw)
-                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                p = pathlib.Path(dst)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                _safe_makedirs(pathlib.Path(d).parent)
                 return original_copytree(s, d, *a, **kw)
 
             def sandbox_move(src, dst, *a, **kw):
@@ -708,10 +722,12 @@ class WorkflowSandboxRunner:
                 fn = fs_mocks.get("shutil.move")
                 if fn:
                     return fn(s, d, *a, **kw)
-                pathlib.Path(d).parent.mkdir(parents=True, exist_ok=True)
+                p = pathlib.Path(dst)
+                if safe_mode and (not p.is_absolute() or p.is_relative_to(root)):
+                    raise RuntimeError("file write disabled in safe_mode")
+                _safe_makedirs(pathlib.Path(d).parent)
                 return original_move(s, d, *a, **kw)
 
-            stack.enter_context(mock.patch("os.mkdir", sandbox_mkdir))
             stack.enter_context(mock.patch("os.makedirs", sandbox_makedirs))
             stack.enter_context(mock.patch("os.rmdir", sandbox_rmdir))
             stack.enter_context(mock.patch("os.removedirs", sandbox_removedirs))
@@ -731,15 +747,7 @@ class WorkflowSandboxRunner:
             # Pre-populate any provided file data into the sandbox.
             for name, content in file_data.items():
                 real = self._resolve(root, name)
-                # ``real.parent`` may require creation even when ``safe_mode`` is
-                # enabled. Temporarily restore the original ``os.mkdir`` so that
-                # directory creation bypasses sandbox write restrictions.
-                current_mkdir = os.mkdir
-                try:
-                    os.mkdir = original_mkdir
-                    original_makedirs(real.parent, exist_ok=True)
-                finally:
-                    os.mkdir = current_mkdir
+                _safe_makedirs(real.parent)
                 mode = "wb" if isinstance(content, (bytes, bytearray)) else "w"
                 with original_open(real, mode) as fh:
                     fh.write(content)
@@ -960,7 +968,7 @@ class WorkflowSandboxRunner:
                 # Write per-module file fixtures
                 for fname, content in files.items():
                     real = self._resolve(root, fname)
-                    real.parent.mkdir(parents=True, exist_ok=True)
+                    _safe_makedirs(real.parent)
                     mode = "wb" if isinstance(content, (bytes, bytearray)) else "w"
                     with original_open(real, mode) as fh:
                         fh.write(content)
