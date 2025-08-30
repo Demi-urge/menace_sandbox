@@ -15,7 +15,10 @@ import uuid
 
 try:
     from .logging_utils import set_correlation_id
-except Exception:  # pragma: no cover - module not a package
+except ImportError as exc:  # pragma: no cover - module not a package
+    logging.getLogger(__name__).debug(
+        "fallback to top-level logging_utils due to import error", exc_info=exc
+    )
     from logging_utils import set_correlation_id  # type: ignore
 
 try:
@@ -24,7 +27,10 @@ try:
         CircuitOpenError,
         ResilienceError,
     )
-except Exception:  # pragma: no cover - module not a package
+except ImportError as exc:  # pragma: no cover - module not a package
+    logging.getLogger(__name__).debug(
+        "fallback to top-level resilience due to import error", exc_info=exc
+    )
     from resilience import (
         CircuitBreaker,  # type: ignore
         CircuitOpenError,  # type: ignore
@@ -32,9 +38,18 @@ except Exception:  # pragma: no cover - module not a package
     )
 
 try:
-    from .metrics_exporter import CollectorRegistry
-except Exception:  # pragma: no cover - module may not be a package
-    from metrics_exporter import CollectorRegistry  # type: ignore
+    from .metrics_exporter import CollectorRegistry, Gauge
+except ImportError as exc:  # pragma: no cover - module may not be a package
+    logging.getLogger(__name__).debug(
+        "fallback to top-level metrics_exporter due to import error", exc_info=exc
+    )
+    from metrics_exporter import CollectorRegistry, Gauge  # type: ignore
+
+recovery_failure_total = Gauge(
+    "sandbox_recovery_failure_total",
+    "Total number of sandbox recovery failures by severity",
+    labelnames=["severity"],
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +65,8 @@ class RecoveryMetricsRecorder:
         try:
             try:
                 from . import metrics_exporter as _me
-            except Exception:  # pragma: no cover - package not available
+            except ImportError as exc:  # pragma: no cover - package not available
+                logger.debug("metrics_exporter relative import failed", exc_info=exc)
                 import metrics_exporter as _me  # type: ignore
 
             self._using_exporter = not getattr(_me, "_USING_STUB", False)
@@ -60,7 +76,8 @@ class RecoveryMetricsRecorder:
             else:
                 self._restart_gauge = None
                 self._failure_gauge = None
-        except Exception:  # pragma: no cover - optional dependency missing
+        except (ImportError, AttributeError) as exc:  # pragma: no cover - optional dependency missing
+            logger.debug("metrics exporter unavailable; falling back to file", exc_info=exc)
             self._using_exporter = False
             self._restart_gauge = None
             self._failure_gauge = None
@@ -76,8 +93,8 @@ class RecoveryMetricsRecorder:
             try:
                 self._restart_gauge.set(float(restart_count))
                 self._failure_gauge.set(ts)
-            except Exception:  # pragma: no cover - runtime issues
-                logger.exception("failed to update metrics")
+            except (ValueError, RuntimeError) as exc:  # pragma: no cover - runtime issues
+                logger.exception("failed to update metrics", exc_info=exc)
             return
 
         payload = {
@@ -88,12 +105,17 @@ class RecoveryMetricsRecorder:
             data_dir.mkdir(parents=True, exist_ok=True)
             with open(data_dir / "recovery.json", "w", encoding="utf-8") as fh:
                 json.dump(payload, fh)
-        except Exception:  # pragma: no cover - runtime issues
-            logger.exception("failed to write recovery metrics")
+        except OSError as exc:  # pragma: no cover - runtime issues
+            logger.exception("failed to write recovery metrics", exc_info=exc)
 
 
 class SandboxRecoveryManager:
-    """Wrap ``_sandbox_main`` and restart on uncaught errors."""
+    """Run ``sandbox_main`` with retry and circuit breaker handling.
+
+    The manager retries failed runs with exponential backoff, records
+    recoverable and fatal failure metrics and halts execution when the
+    underlying :class:`~resilience.CircuitBreaker` opens.
+    """
 
     def __init__(
         self,
@@ -134,21 +156,29 @@ class SandboxRecoveryManager:
         """Return :class:`ROITracker` loaded from ``data_dir`` or ``None``."""
         try:
             from menace.roi_tracker import ROITracker
-        except Exception:  # pragma: no cover - fallback
+        except ImportError as exc:  # pragma: no cover - fallback
+            logger.debug("roi_tracker relative import failed", exc_info=exc)
             from roi_tracker import ROITracker  # type: ignore
 
         path = Path(data_dir) / "roi_history.json"
         tracker = ROITracker()
         try:
             tracker.load_history(str(path))
-        except Exception:
-            logger.exception("failed to load tracker history: %s", path)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.exception(
+                "failed to load tracker history", extra={"path": str(path)}, exc_info=exc
+            )
             return None
         return tracker
 
     # ------------------------------------------------------------------
     def run(self, preset: Dict[str, Any], args: argparse.Namespace):
-        """Execute ``sandbox_main`` retrying on failure."""
+        """Execute ``sandbox_main`` with retry and circuit-breaker support.
+
+        Recoverable failures trigger exponential backoff retries while fatal
+        errors—such as an open circuit or exceeding ``max_retries``—raise
+        :class:`SandboxRecoveryError`.
+        """
         attempts = 0
         delay = self.retry_delay
         while True:
@@ -158,14 +188,23 @@ class SandboxRecoveryManager:
             try:
                 return self._circuit.call(lambda: self.sandbox_main(preset, args))
             except CircuitOpenError as exc:
-                self.logger.error("recovery circuit open: %s", exc)
+                self.logger.error("recovery circuit open", exc_info=exc)
+                recovery_failure_total.labels(severity="fatal").inc()
                 raise SandboxRecoveryError("circuit open") from exc
+            except ResilienceError as exc:
+                self.logger.error("sandbox resilience error", exc_info=exc)
+                recovery_failure_total.labels(severity="fatal").inc()
+                raise SandboxRecoveryError("resilience failure") from exc
             except Exception as exc:  # pragma: no cover - rare
                 attempts += 1
                 self.restart_count += 1
                 self.last_failure_time = time.time()
                 runtime = time.monotonic() - start
-                self.logger.exception("sandbox run crashed; restarting")
+                recovery_failure_total.labels(severity="recoverable").inc()
+                self.logger.exception(
+                    "sandbox run crashed; restarting",
+                    extra={"attempt": attempts, "cid": cid, "runtime": runtime},
+                )
 
                 log_dir = Path(
                     getattr(args, "sandbox_data_dir", None)
@@ -183,13 +222,14 @@ class SandboxRecoveryManager:
                 if self.on_retry:
                     try:
                         self.on_retry(exc, runtime)
-                    except Exception:
-                        self.logger.exception("on_retry callback failed")
+                    except Exception as cb_exc:
+                        self.logger.exception("on_retry callback failed", exc_info=cb_exc)
                 self._metrics_recorder.record(
                     self.restart_count, self.last_failure_time, log_dir
                 )
 
                 if self.max_retries is not None and attempts >= self.max_retries:
+                    recovery_failure_total.labels(severity="fatal").inc()
                     raise SandboxRecoveryError("maximum retries reached") from exc
                 time.sleep(delay)
                 delay = min(delay * 2, 60.0)
@@ -211,8 +251,10 @@ def load_metrics(path: Path) -> Dict[str, float]:
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except Exception:
-        logger.exception("failed to load recovery metrics: %s", path)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.exception(
+            "failed to load recovery metrics", extra={"path": str(path)}, exc_info=exc
+        )
         return {}
     out: Dict[str, float] = {}
     if isinstance(data, dict):
@@ -224,7 +266,7 @@ def load_metrics(path: Path) -> Dict[str, float]:
             name = mapping.get(str(k), str(k))
             try:
                 out[name] = float(v)
-            except Exception:
+            except (TypeError, ValueError):
                 out[name] = 0.0
     return out
 
@@ -241,8 +283,8 @@ def cli(argv: List[str] | None = None) -> int:
 
     try:
         data = load_metrics(Path(args.file))
-    except Exception as exc:  # pragma: no cover - runtime issues
-        logger.error("failed to read %s: %s", args.file, exc)
+    except OSError as exc:  # pragma: no cover - runtime issues
+        logger.error("failed to read %s", args.file, exc_info=exc)
         return 1
 
     for k, v in data.items():
