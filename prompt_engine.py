@@ -400,7 +400,12 @@ class PromptEngine:
         )
 
         tag = meta.get("roi_tag")
-        score += float(self.roi_tag_weights.get(tag, 0.0))
+        if tag is not None:
+            try:
+                valid = RoiTag.validate(tag)
+                score += float(self.roi_tag_weights.get(valid.value, 0.0))
+            except Exception:  # pragma: no cover - defensive
+                pass
 
         return score
 

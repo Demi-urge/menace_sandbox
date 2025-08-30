@@ -129,3 +129,17 @@ def test_retry_trace_idempotent():
     prompt = engine.build_prompt("desc", retry_trace=trace)
     assert prompt.count("Traceback: boom") == 1
     assert prompt.count("Previous failure:") == 1
+
+
+def test_roi_tag_positive_effect_on_score():
+    engine = PromptEngine(retriever=DummyRetriever([]))
+    baseline = engine._score_snippet({})
+    high = engine._score_snippet({"roi_tag": RoiTag.HIGH_ROI.value})
+    assert high > baseline
+
+
+def test_roi_tag_negative_effect_on_score():
+    engine = PromptEngine(retriever=DummyRetriever([]))
+    baseline = engine._score_snippet({})
+    bad = engine._score_snippet({"roi_tag": RoiTag.BUG_INTRODUCED.value})
+    assert bad < baseline
