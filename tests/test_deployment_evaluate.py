@@ -52,7 +52,7 @@ def _patch_gate(monkeypatch, ok, reasons):
 def test_deployment_evaluate_promote(monkeypatch):
     tracker = _patch_gate(monkeypatch, True, [])
     res = evaluate(
-        {"alignment": "pass", "security": "pass"},
+        {"alignment": {"status": "pass", "rationale": ""}, "security": "pass"},
         {"raroi": 1.0, "confidence": 0.9},
         patch=[],
         foresight_tracker=tracker,
@@ -68,7 +68,7 @@ def test_deployment_evaluate_borderline(monkeypatch):
     tracker = _patch_gate(monkeypatch, False, ["low_confidence"])
     bucket = DummyBucket()
     res = evaluate(
-        {"alignment": "pass", "security": "pass"},
+        {"alignment": {"status": "pass", "rationale": ""}, "security": "pass"},
         {"raroi": 1.0, "confidence": 0.9},
         patch=[],
         foresight_tracker=tracker,
@@ -83,7 +83,7 @@ def test_deployment_evaluate_borderline(monkeypatch):
 def test_deployment_evaluate_pilot(monkeypatch):
     tracker = _patch_gate(monkeypatch, False, ["negative_dag_impact"])
     res = evaluate(
-        {"alignment": "pass", "security": "pass"},
+        {"alignment": {"status": "pass", "rationale": ""}, "security": "pass"},
         {"raroi": 1.0, "confidence": 0.9},
         patch=[],
         foresight_tracker=tracker,

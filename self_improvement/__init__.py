@@ -6760,7 +6760,6 @@ class SelfImprovementEngine:
                     cards = []
                 scorecard = {
                     "decision": "rollback" if reverted else "ship",
-                    "alignment": "pass",
                     "raroi_increase": sum(
                         1 for c in cards if getattr(c, "raroi_delta", 0.0) > 0
                     ),
@@ -6788,6 +6787,31 @@ class SelfImprovementEngine:
                         "sandbox_roi": roi_realish,
                         "adapter_roi": pred_realish,
                     }
+                    try:
+                        settings = SandboxSettings()
+                        agent = HumanAlignmentAgent(settings=settings)
+                        logs: list[dict[str, Any]] | None = None
+                        try:
+                            logs = get_recent_events(limit=20)
+                        except Exception:
+                            pass
+                        warnings = agent.evaluate_changes(actions, metrics, logs, None)
+                        if any(warnings.values()):
+                            scorecard["alignment"] = {
+                                "status": "fail",
+                                "rationale": warnings,
+                            }
+                        else:
+                            scorecard["alignment"] = {
+                                "status": "pass",
+                                "rationale": "no_warnings",
+                            }
+                    except Exception:
+                        self.logger.exception("alignment evaluation failed")
+                        scorecard["alignment"] = {
+                            "status": "error",
+                            "rationale": "alignment_evaluation_error",
+                        }
                     gov_result = deployment_evaluate(
                         scorecard,
                         metrics,

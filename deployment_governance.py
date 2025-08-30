@@ -586,7 +586,14 @@ def evaluate_workflow(
         ),
     )
 
-    alignment_status = str(scorecard.get("alignment_status", "pass"))
+    alignment_info = scorecard.get("alignment_status") or scorecard.get("alignment")
+    if isinstance(alignment_info, Mapping):
+        alignment_status = alignment_info.get("status", "pass")
+    elif alignment_info is not None:
+        alignment_status = alignment_info
+    else:
+        alignment_status = "pass"
+    alignment_status = str(alignment_status)
     raroi = scorecard.get("raroi")
     confidence = scorecard.get("confidence")
     sandbox_roi = scorecard.get("sandbox_roi")
@@ -879,8 +886,13 @@ def evaluate(
         }
 
     # ------------------------------------------------------------------ vetoes
+    alignment_info = scorecard.get("alignment") or scorecard.get("alignment_status")
+    if isinstance(alignment_info, Mapping):
+        alignment_status = alignment_info.get("status")
+    else:
+        alignment_status = alignment_info
     veto_card = {
-        "alignment": scorecard.get("alignment") or scorecard.get("alignment_status"),
+        "alignment": alignment_status,
         "security": scorecard.get("security") or scorecard.get("security_status"),
     }
     veto_rules = [
@@ -1055,9 +1067,14 @@ class RuleEvaluator:
         borderline_bucket: BorderlineBucket | None = None,
     ) -> Dict[str, Any]:
         scorecard = scorecard or {}
-        alignment = str(
+        alignment_info = (
             scorecard.get("alignment_status") or scorecard.get("alignment") or ""
-        ).lower()
+        )
+        if isinstance(alignment_info, Mapping):
+            alignment_status = alignment_info.get("status") or ""
+        else:
+            alignment_status = alignment_info
+        alignment = str(alignment_status).lower()
         security = str(
             scorecard.get("security_status") or scorecard.get("security") or ""
         ).lower()

@@ -15,7 +15,10 @@ def test_evaluate_honours_override(tmp_path, monkeypatch):
     sig = generate_signature(data, str(key))
     override = tmp_path / "override.json"
     override.write_text(json.dumps({"data": data, "signature": sig}))
-    scorecard = {"alignment": "pass", "security": "pass"}
+    scorecard = {
+        "alignment": {"status": "pass", "rationale": ""},
+        "security": "pass",
+    }
     metrics = {"raroi": 0.1, "confidence": 0.2}
     res = dg.evaluate(
         scorecard,
