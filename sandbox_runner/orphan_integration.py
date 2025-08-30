@@ -5,6 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Dict, List, TYPE_CHECKING, Tuple
 
+import json
+from datetime import datetime
+
 import yaml
 
 from logging_utils import get_logger
@@ -80,6 +83,7 @@ def integrate_and_graph_orphans(
     added = tested.get("added", [])
     synergy_ok = False
     cluster_ok = False
+    workflow_ok = False
     if added:
         try:
             from module_synergy_grapher import ModuleSynergyGrapher, load_graph
@@ -114,11 +118,36 @@ def integrate_and_graph_orphans(
 
         try:
             updated = try_integrate_into_workflows(sorted(added), router=router) or []
+            workflow_ok = True
         except Exception:  # pragma: no cover - best effort
             log.warning("workflow integration failed", exc_info=True)
             updated = []
+            workflow_ok = False
     else:
         updated = []
+        workflow_ok = True
+
+    retry: List[str] = []
+    if added and not (synergy_ok and cluster_ok and workflow_ok):
+        retry = list(added)
+        tested["retry"] = retry
+
+    log_path = repo / "sandbox_data" / "orphan_integration.log"
+    record = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "modules": added,
+        "updated_workflows": updated,
+        "synergy_ok": synergy_ok,
+        "cluster_ok": cluster_ok,
+        "workflow_ok": workflow_ok,
+        "retry": retry,
+    }
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception:  # pragma: no cover - best effort
+        log.warning("failed to record orphan integration log", exc_info=True)
 
     return tracker, tested, updated, synergy_ok, cluster_ok
 
@@ -204,4 +233,3 @@ def post_round_orphan_scan(
 # the old name so existing callers continue to function while new code uses the
 # more descriptive ``integrate_and_graph_orphans``.
 integrate_orphans = integrate_and_graph_orphans
-
