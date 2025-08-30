@@ -1,3 +1,11 @@
+"""Runtime helpers for sandbox execution.
+
+The sandbox repository location is resolved via :mod:`sandbox_runner.config`,
+which consults the ``SANDBOX_REPO_URL`` and ``SANDBOX_REPO_PATH`` environment
+variables or a ``SandboxSettings`` instance.  When unset, defaults point to the
+current repository checkout.
+"""
+
 from __future__ import annotations
 
 import ast
@@ -173,7 +181,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 _FAKER = Faker() if Faker is not None else None
 
-from .config import SANDBOX_REPO_URL, SANDBOX_REPO_PATH
+from . import config as sandbox_config
 from .input_history_db import InputHistoryDB
 from collections import Counter
 try:
@@ -6431,7 +6439,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
     tmp_dir = tempfile.mkdtemp(prefix="full_env_")
     diagnostics: Dict[str, str] = {}
     try:
-        repo_path = SANDBOX_REPO_PATH
+        repo_path = sandbox_config.get_sandbox_repo_path()
         data_dir = Path(tmp_dir) / "data"
         env = os.environ.copy()
         env.update({k: str(v) for k, v in preset.items()})
