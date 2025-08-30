@@ -55,11 +55,18 @@ from lock_utils import SandboxLock as FileLock
 from dataclasses import dataclass, asdict
 
 from .workflow_sandbox_runner import WorkflowSandboxRunner
-from metrics_exporter import environment_failure_total
+from metrics_exporter import Gauge, environment_failure_total
+
+environment_failure_severity_total = Gauge(
+    "environment_failure_severity_total",
+    "Total number of sandbox environment failures by severity",
+    labelnames=["severity"],
+)
 
 try:
     from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord
-except Exception:  # pragma: no cover - optional dependency
+except ImportError as exc:  # pragma: no cover - optional dependency
+    get_logger(__name__).debug("diagnostic manager unavailable", exc_info=exc)
     DiagnosticManager = None  # type: ignore
     ResolutionRecord = None  # type: ignore
 
@@ -142,7 +149,7 @@ if os.name == "nt" and "fcntl" not in sys.modules:
     try:
         import fcntl_compat as _fcntl
         sys.modules["fcntl"] = _fcntl
-    except Exception as exc:  # pragma: no cover - best effort
+    except (ImportError, OSError) as exc:  # pragma: no cover - best effort
         logger.error("fcntl compatibility shim is required on Windows", exc_info=exc)
         raise RuntimeError("fcntl support unavailable on Windows") from exc
 
@@ -171,7 +178,8 @@ from .input_history_db import InputHistoryDB
 from collections import Counter
 try:
     from error_logger import ErrorLogger
-except Exception:  # pragma: no cover - optional during minimal imports
+except ImportError as exc:  # pragma: no cover - optional during minimal imports
+    logger.debug("error_logger unavailable", exc_info=exc)
     from error_ontology import ErrorCategory, classify_exception
 
     class ErrorLogger:  # type: ignore[misc]
@@ -248,8 +256,10 @@ def record_module_usage(module_name: str) -> None:
             module_map = data.setdefault(module_name, {})
             module_map[ts] = module_map.get(ts, 0) + 1
             MODULE_USAGE_PATH.write_text(json.dumps(data, indent=2))
-        except Exception:
-            logger.exception("module usage logging failed for %s", module_name)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.exception(
+                "module usage logging failed", extra={"module": module_name}, exc_info=exc
+            )
 
 # path to cleanup log file
 _CLEANUP_LOG_PATH = Path(
@@ -283,7 +293,8 @@ def _update_coverage(module: str, scenario: str) -> None:
 
     try:  # pragma: no cover - environment generator optional
         from menace.environment_generator import _PROFILE_ALIASES
-    except Exception:  # pragma: no cover - fallback when generator unavailable
+    except ImportError as exc:  # pragma: no cover - fallback when generator unavailable
+        logger.debug("environment generator unavailable", exc_info=exc)
         _PROFILE_ALIASES = {}
 
     canonical = _PROFILE_ALIASES.get(scenario, scenario)
@@ -295,7 +306,8 @@ def coverage_summary() -> Dict[str, Dict[str, Any]]:
     """Return coverage counts and missing canonical scenarios per module."""
     try:
         from menace.environment_generator import CANONICAL_PROFILES
-    except Exception:  # pragma: no cover - environment generator optional
+    except ImportError as exc:  # pragma: no cover - environment generator optional
+        logger.debug("environment generator unavailable", exc_info=exc)
         profiles: List[str] = []
     else:
         profiles = list(CANONICAL_PROFILES)
@@ -333,7 +345,8 @@ def verify_scenario_coverage(
             CANONICAL_PROFILES,
             _PROFILE_ALIASES,
         )
-    except Exception:  # pragma: no cover - graceful fallback
+    except ImportError as exc:  # pragma: no cover - graceful fallback
+        logger.debug("environment generator unavailable", exc_info=exc)
         CANONICAL_PROFILES = []
         _PROFILE_ALIASES = {}
 
@@ -423,8 +436,10 @@ def save_scenario_summary(
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
             json.dump(result, fh, indent=2, sort_keys=True)
-    except Exception as exc:
-        logger.exception("failed to save scenario summary: %s", exc)
+    except (OSError, TypeError, ValueError) as exc:
+        logger.exception(
+            "failed to save scenario summary", extra={"path": str(path)}, exc_info=exc
+        )
     return result
 
 
@@ -434,20 +449,27 @@ def load_scenario_summary() -> Dict[str, Any]:
     try:
         with path.open("r", encoding="utf-8") as fh:
             return json.load(fh)
-    except Exception:
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "failed to load scenario summary", extra={"path": str(path)}, exc_info=exc
+        )
         return {}
 
 
-def record_error(exc: Exception) -> None:
-    """Log *exc* via :class:`ErrorLogger` and track its category."""
+def record_error(exc: Exception, *, fatal: bool = False) -> None:
+    """Log *exc* via :class:`ErrorLogger` and track its category and severity."""
     stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     _, category, _ = ERROR_LOGGER.classifier.classify_details(exc, stack)
     ERROR_LOGGER.log(exc, None, None)
     ERROR_CATEGORY_COUNTS[category.value] += 1
+    severity = "fatal" if fatal else "recoverable"
     try:
         environment_failure_total.labels(reason=category.value).inc()
-    except Exception:  # pragma: no cover - metrics best effort
-        logger.exception("failed to update environment_failure_total")
+        environment_failure_severity_total.labels(severity=severity).inc()
+    except (ValueError, RuntimeError) as metrics_exc:  # pragma: no cover - metrics best effort
+        logger.exception(
+            "failed to update environment failure metrics", exc_info=metrics_exc
+        )
 
 
 def _get_history_db() -> InputHistoryDB:
@@ -2636,7 +2658,11 @@ def reconcile_active_containers() -> None:
 
 
 def retry_failed_cleanup() -> tuple[int, int]:
-    """Attempt to delete items recorded in :data:`FAILED_CLEANUP_FILE`."""
+    """Retry deletion of items recorded in :data:`FAILED_CLEANUP_FILE`.
+
+    Each entry represents a previous cleanup failure. This function retries the
+    removal and returns a ``(successes, failures)`` tuple.
+    """
     data = _read_failed_cleanup()
     successes = 0
     failures = 0
@@ -2648,7 +2674,8 @@ def retry_failed_cleanup() -> tuple[int, int]:
                 _remove_failed_cleanup(item)
                 successes += 1
                 continue
-            except Exception:
+            except OSError as exc:
+                logger.warning("cleanup retry failed", extra={"path": item}, exc_info=exc)
                 if os.name == "nt" and _rmtree_windows(item):
                     _remove_failed_cleanup(item)
                     successes += 1
