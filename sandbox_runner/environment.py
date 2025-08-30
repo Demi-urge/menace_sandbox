@@ -119,7 +119,7 @@ def _tracking_import(
             try:
                 path = path.relative_to(root)
             except ValueError:
-                pass
+                logger.debug("module %s outside root %s", module_file, root)
         record_fn(path.as_posix())
     return mod
 
@@ -141,8 +141,9 @@ if os.name == "nt" and "fcntl" not in sys.modules:
     try:
         import fcntl_compat as _fcntl
         sys.modules["fcntl"] = _fcntl
-    except Exception:  # pragma: no cover - best effort
-        pass
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.error("fcntl compatibility shim is required on Windows", exc_info=exc)
+        raise RuntimeError("fcntl support unavailable on Windows") from exc
 
 try:  # pragma: no cover - optional dependency
     from pyroute2 import IPRoute, NSPopen, netns
@@ -696,18 +697,18 @@ def stop_background_loop() -> None:
     if loop is not None:
         try:
             loop.call_soon_threadsafe(loop.stop)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("failed stopping background loop: %s", exc)
     if thread is not None:
         try:
             thread.join(timeout=1.0)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("failed joining background thread: %s", exc)
     if loop is not None:
         try:
             loop.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("failed closing background loop: %s", exc)
     _BACKGROUND_LOOP = None
     _BACKGROUND_THREAD = None
 
@@ -849,7 +850,7 @@ def _release_pool_lock() -> None:
         try:
             os.remove(_POOL_FILE_LOCK.lock_file)
         except FileNotFoundError:
-            pass
+            logger.debug("pool lock file already removed")
         except Exception as exc:  # pragma: no cover - unexpected errors
             logger.warning("failed removing pool lock file: %s", exc)
     except Exception as exc:  # pragma: no cover - unexpected errors
@@ -1039,8 +1040,8 @@ def _record_active_overlay(path: str) -> None:
                 _MAX_OVERLAY_COUNT,
                 removed,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("failed to log overlay limit warning: %s", exc)
         global _ACTIVE_OVERLAY_LIMIT_REACHED
         _ACTIVE_OVERLAY_LIMIT_REACHED += 1
         with _ACTIVE_OVERLAYS_LOCK:
@@ -1270,8 +1271,8 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
         for d in list(to_cleanup):
             try:
                 logger.info("removing recorded overlay dir %s", d)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("failed to log overlay dir removal %s: %s", d, exc)
             success = True
             try:
                 shutil.rmtree(d)
@@ -1297,8 +1298,8 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 if name.startswith("qemu-system"):
                     try:
                         logger.info("terminating stale qemu process %s", p.pid)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("failed to log qemu termination %s: %s", p.pid, exc)
                     try:
                         for arg in p.info.get("cmdline") or []:
                             if "overlay.qcow2" in arg:
@@ -1347,8 +1348,8 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 cmdline = parts[1] if len(parts) > 1 else ""
                 try:
                     logger.info("terminating stale qemu process %s", pid)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("failed to log qemu termination %s: %s", pid, exc)
                 for arg in cmdline.split():
                     if "overlay.qcow2" in arg:
                         if arg.startswith("file="):
@@ -1411,8 +1412,8 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 continue
             try:
                 logger.info("removing leftover overlay %s", overlay)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("failed to log overlay removal %s: %s", overlay, exc)
             success = True
             try:
                 overlay.unlink()
@@ -1489,8 +1490,8 @@ def _prune_volumes() -> int:
                     continue
                 try:
                     logger.info("removing stale sandbox volume %s", vol)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("failed to log volume removal %s: %s", vol, exc)
                 subprocess.run(
                     ["docker", "volume", "rm", "-f", vol],
                     stdout=subprocess.DEVNULL,
@@ -1540,8 +1541,8 @@ def _prune_volumes() -> int:
                 if created_ts <= threshold:
                     try:
                         logger.info("removing stale sandbox volume %s", vol)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("failed to log volume removal %s: %s", vol, exc)
                     subprocess.run(
                         ["docker", "volume", "rm", "-f", vol],
                         stdout=subprocess.DEVNULL,
@@ -1584,8 +1585,8 @@ def _prune_networks() -> int:
                     continue
                 try:
                     logger.info("removing stale sandbox network %s", net)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("failed to log network removal %s: %s", net, exc)
                 subprocess.run(
                     ["docker", "network", "rm", "-f", net],
                     stdout=subprocess.DEVNULL,
@@ -1638,8 +1639,8 @@ def _prune_networks() -> int:
                 if created_ts <= threshold:
                     try:
                         logger.info("removing stale sandbox network %s", net)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("failed to log network removal %s: %s", net, exc)
                     subprocess.run(
                         ["docker", "network", "rm", "-f", net],
                         stdout=subprocess.DEVNULL,
@@ -1670,8 +1671,8 @@ def purge_leftovers() -> None:
             for cid in ids:
                 try:
                     logger.info("removing recorded sandbox container %s", cid)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("failed to log container removal %s: %s", cid, exc)
                 subprocess.run(
                     ["docker", "rm", "-f", cid],
                     stdout=subprocess.DEVNULL,
@@ -1712,8 +1713,8 @@ def purge_leftovers() -> None:
             for d in overlays:
                 try:
                     logger.info("removing recorded overlay dir %s", d)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("failed to log overlay dir removal %s: %s", d, exc)
                 try:
                     shutil.rmtree(d)
                     _remove_failed_overlay(d)
@@ -1744,8 +1745,8 @@ def purge_leftovers() -> None:
                     if cid:
                         try:
                             logger.info("removing stale sandbox container %s", cid)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.debug("failed to log stale container %s: %s", cid, exc)
                         proc_rm = subprocess.run(
                             ["docker", "rm", "-f", cid],
                             stdout=subprocess.DEVNULL,
@@ -1788,8 +1789,8 @@ def purge_leftovers() -> None:
                     if created_ts <= threshold and "sandbox_runner.py" in cmd:
                         try:
                             logger.info("removing stale sandbox container %s", cid)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.debug("failed to log stale container %s: %s", cid, exc)
                         proc_rm = subprocess.run(
                             ["docker", "rm", "-f", cid],
                             stdout=subprocess.DEVNULL,
@@ -1855,14 +1856,14 @@ def ensure_docker_client() -> None:
             reconnect = True
             try:
                 logger.warning("docker client ping failed: %s", exc)
-            except Exception:
-                pass
+            except Exception as log_exc:
+                print(f"docker client ping failed: {exc} (logging failed: {log_exc})")
     if not reconnect:
         return
     try:
         logger.info("reconnecting docker client")
-    except Exception:
-        pass
+    except Exception as log_exc:
+        print(f"reconnecting docker client (logging failed: {log_exc})")
     try:
         _DOCKER_CLIENT = docker.from_env()
         _DOCKER_CLIENT.ping()
@@ -1897,8 +1898,8 @@ def _ensure_pool_size_async(image: str) -> None:
                 _MAX_OVERLAY_COUNT,
                 removed,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("failed to log overlay limit warning: %s", exc)
         global _ACTIVE_OVERLAY_LIMIT_REACHED
         _ACTIVE_OVERLAY_LIMIT_REACHED += 1
     if t and not t.done():
@@ -2018,8 +2019,8 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
                 logger.info(
                     "created container %s from image %s", container.id, img_tag
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("failed to log container creation %s: %s", container.id, exc)
             return container, td
         except Exception as exc:
             last_exc = exc
@@ -2135,8 +2136,8 @@ async def _get_pooled_container(image: str) -> tuple[Any, str]:
                     logger.info(
                         "reusing pooled container %s for image %s", c.id, img_tag
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("failed to log pooled container reuse %s: %s", c.id, exc)
                 return c, dir_path
             success = _stop_and_remove(c)
             _log_cleanup_event(c.id, "unhealthy", success)
@@ -2408,8 +2409,8 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
             logger.info(
                 "container %s (image %s) shutdown and removed", cid, img_tag or "?"
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("failed to log container removal %s: %s", cid, exc)
     elif cid and exists:
         _CLEANUP_FAILURES += 1
         logger.error("container %s still exists after removal attempts", cid)
@@ -2452,8 +2453,8 @@ def report_failed_cleanup(
     if alert and stale:
         try:
             logger.error("failed cleanup items: %s", list(stale.keys()))
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"failed cleanup items {list(stale.keys())} (logging failed: {exc})")
         _log_diagnostic("failed_cleanup", False)
     return stale
 
@@ -2560,8 +2561,8 @@ def _reap_orphan_containers() -> int:
             continue
         try:
             _verify_container(c)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("failed to verify container %s: %s", c.id, exc)
         success = _stop_and_remove(c)
         _log_cleanup_event(c.id, "orphan", success)
         removed += 1
@@ -2608,8 +2609,8 @@ def reconcile_active_containers() -> None:
             continue
         try:
             logger.info("removing untracked sandbox container %s", cid)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("failed to log untracked container removal %s: %s", cid, exc)
         subprocess.run(
             ["docker", "rm", "-f", cid],
             stdout=subprocess.DEVNULL,
@@ -2687,8 +2688,8 @@ def retry_failed_cleanup() -> tuple[int, int]:
                 logger.warning(
                     "failsafe prune triggered after %s failures", failures
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("failed to log failsafe prune: %s", exc)
             try:
                 subprocess.run(
                     ["docker", "system", "prune", "-f", "--volumes"],
@@ -2725,8 +2726,8 @@ def retry_failed_cleanup() -> tuple[int, int]:
     if stale:
         try:
             logger.warning("persistent cleanup failures: %s", list(stale.keys()))
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"persistent cleanup failures {list(stale.keys())} (logging failed: {exc})")
         _log_diagnostic("cleanup_retry_failure", False)
         _CONSECUTIVE_CLEANUP_FAILURES += 1
         if _CONSECUTIVE_CLEANUP_FAILURES > _CLEANUP_ALERT_THRESHOLD:
@@ -2735,8 +2736,8 @@ def retry_failed_cleanup() -> tuple[int, int]:
                     "cleanup retries failing %s times consecutively",
                     _CONSECUTIVE_CLEANUP_FAILURES,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"cleanup retries failing {_CONSECUTIVE_CLEANUP_FAILURES} times (logging failed: {exc})")
             _log_diagnostic("persistent_cleanup_failure", False)
     else:
         _CONSECUTIVE_CLEANUP_FAILURES = 0
