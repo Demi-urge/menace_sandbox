@@ -9,6 +9,7 @@
 - Adaptive energy score guiding resource allocation ([docs/energy_score.md](docs/energy_score.md))
 - Central Menace orchestrator coordinating all stages and hierarchical oversight
 - Self improvement engine automatically runs the workflow on the Menace model when metrics degrade
+- Optional meta planner integrates structural evolution; set `ENABLE_META_PLANNER=true` to require its presence
 - ROI foresight with `ForesightTracker.predict_roi_collapse`, projecting trends,
   classifying risk (Stable, Slow decay, Volatile, Immediate collapse risk) and
   flagging brittle workflows. Baseline curves live in

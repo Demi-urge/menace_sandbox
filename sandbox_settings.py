@@ -275,6 +275,11 @@ class SandboxSettings(BaseSettings):
         env="META_PLANNING_LOOP",
         description="Run meta planning continuously in its own loop.",
     )
+    enable_meta_planner: bool = Field(
+        False,
+        env="ENABLE_META_PLANNER",
+        description="Fail fast if MetaWorkflowPlanner is unavailable.",
+    )
     meta_improvement_threshold: float = Field(
         0.01,
         env="META_IMPROVEMENT_THRESHOLD",

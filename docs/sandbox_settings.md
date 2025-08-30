@@ -14,6 +14,7 @@ settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 - `meta_planning_interval`: `10`
 - `meta_planning_period`: `3600`
 - `meta_planning_loop`: `False`
+- `enable_meta_planner`: `False` – fail if the optional MetaWorkflowPlanner is missing
 - `meta_improvement_threshold`: `0.01`
 - `meta_mutation_rate`: `1.0`
 - `meta_roi_weight`: `1.0`
