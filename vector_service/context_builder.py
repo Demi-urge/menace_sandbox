@@ -20,6 +20,7 @@ from config import ContextBuilderConfig
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_logger import _VECTOR_RISK  # type: ignore
 from patch_safety import PatchSafety
+from .ranking_utils import rank_patches
 
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken
@@ -88,6 +89,7 @@ class ContextBuilder:
         db_weights: Dict[str, float] | None = None,
         ranking_weight: float = ContextBuilderConfig().ranking_weight,
         roi_weight: float = ContextBuilderConfig().roi_weight,
+        recency_weight: float = ContextBuilderConfig().recency_weight,
         safety_weight: float = ContextBuilderConfig().safety_weight,
         max_tokens: int = ContextBuilderConfig().max_tokens,
         regret_penalty: float = ContextBuilderConfig().regret_penalty,
@@ -157,6 +159,7 @@ class ContextBuilder:
         self.roi_tracker = roi_tracker
         self.ranking_weight = ranking_weight
         self.roi_weight = roi_weight
+        self.recency_weight = recency_weight
         self.safety_weight = safety_weight
         self.regret_penalty = regret_penalty
         self.alignment_penalty = alignment_penalty
@@ -657,6 +660,10 @@ class ContextBuilder:
         penalty *= self.safety_weight
 
         similarity = float(bundle.get("similarity", bundle.get("score", 0.0)))
+        try:
+            entry["similarity"] = similarity
+        except Exception:
+            pass
         enhancement = bundle.get("enhancement_score")
         if enhancement is None and isinstance(meta, dict):
             enhancement = meta.get("enhancement_score")
@@ -985,6 +992,22 @@ class ContextBuilder:
             if bucket:
                 buckets[bucket].append(scored)
 
+        patch_confidence = 0.0
+        if buckets["patches"]:
+            try:
+                patch_db = PatchHistoryDB() if PatchHistoryDB is not None else None
+            except Exception:
+                patch_db = None
+            ranked, patch_confidence = rank_patches(
+                buckets["patches"],
+                roi_tracker=self.roi_tracker,
+                patch_db=patch_db,
+                similarity_weight=self.ranking_weight,
+                roi_weight=self.roi_weight,
+                recency_weight=self.recency_weight,
+            )
+            buckets["patches"] = ranked
+
         # Flatten scored entries and compute token estimates so we can trim
         # globally across buckets.
         bucket_order = list(buckets.keys())
@@ -1082,6 +1105,7 @@ class ContextBuilder:
             "tokens": total_tokens,
             "wall_time_ms": elapsed_ms,
             "prompt_tokens": prompt_tokens,
+            "patch_confidence": patch_confidence,
         }
         if include_vectors and return_metadata:
             if return_stats:

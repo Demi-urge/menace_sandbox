@@ -172,6 +172,9 @@ class ContextBuilderConfig(BaseModel):
     roi_weight: float = Field(
         1.0, description="Default multiplier when ROI tracker lacks bias"
     )
+    recency_weight: float = Field(
+        1.0, description="Multiplier applied to recency when ranking patches"
+    )
     safety_weight: float = Field(
         1.0,
         description="Weight applied to safety signals such as win/regret rate and alignment severity",
