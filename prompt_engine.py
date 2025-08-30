@@ -70,7 +70,11 @@ class PromptEngine:
 
     @classmethod
     def construct_prompt(
-        cls, description: str, retry_trace: Optional[str] = None, top_n: int = 5
+        cls,
+        description: str,
+        retrieval_data: Optional[str] = None,
+        retry_trace: Optional[str] = None,
+        top_n: int = 5,
     ) -> str:
         """Return a structured prompt with patch examples for ``description``."""
         records, confidence = cls._fetch_patches(description, top_n)
@@ -79,9 +83,12 @@ class PromptEngine:
                 "PromptEngine falling back to default template: confidence %.3f",
                 confidence,
             )
+            body = DEFAULT_TEMPLATE
             if retry_trace:
-                return f"{DEFAULT_TEMPLATE}\n{retry_trace}"
-            return DEFAULT_TEMPLATE
+                body = f"{body}\n{retry_trace}"
+            if retrieval_data:
+                return f"{retrieval_data}\n\n{body}" if body else retrieval_data
+            return body
 
         # Rank records by ROI delta when available, otherwise by recency
         def _score(rec: Dict[str, Any]) -> Tuple[int, float]:
@@ -126,9 +133,12 @@ class PromptEngine:
             if retry_trace:
                 sections.append("\n" if sections else "")
                 sections.append(f"{retry_trace}\nPlease try a different approach.")
-            return "".join(sections).strip()
-
-        logger.info("PromptEngine falling back to default template: no snippets")
-        if retry_trace:
-            return f"{DEFAULT_TEMPLATE}\n{retry_trace}"
-        return DEFAULT_TEMPLATE
+            body = "".join(sections).strip()
+        else:
+            logger.info("PromptEngine falling back to default template: no snippets")
+            body = DEFAULT_TEMPLATE
+            if retry_trace:
+                body = f"{body}\n{retry_trace}"
+        if retrieval_data:
+            return f"{retrieval_data}\n\n{body}" if body else retrieval_data
+        return body
