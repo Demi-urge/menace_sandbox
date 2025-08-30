@@ -491,6 +491,7 @@ class PatchRetriever:
     vector_service: SharedVectorService | None = None
     top_k: int = 5
     metric: str | None = None
+    enhancement_weight: float = 1.0
 
     def __post_init__(self) -> None:
         if self.vector_service is None:
@@ -604,13 +605,25 @@ class PatchRetriever:
                 origin = m.get("origin_db", "patch")
             else:
                 score = self._normalise_distance(dist, backend)
-            results.append({
+            enh = 0.0
+            if isinstance(md, dict):
+                try:
+                    enh = float(md.get("enhancement_score", 0.0))
+                except Exception:
+                    enh = 0.0
+            if self.enhancement_weight:
+                score += max(0.0, enh) * self.enhancement_weight
+            item = {
                 "origin_db": origin,
                 "record_id": str(vid),
                 "score": score,
                 "text": text_val,
                 "metadata": md,
-            })
+            }
+            if enh:
+                item["enhancement_score"] = enh
+            results.append(item)
+        results.sort(key=lambda r: r.get("score", 0.0), reverse=True)
         return results
 
 
