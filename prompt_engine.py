@@ -112,25 +112,27 @@ class PromptEngine:
         callers can provide their own ranking.
         """
 
-        successes: List[Dict[str, Any]] = []
-        failures: List[Dict[str, Any]] = []
+        successes: List[str] = []
+        failures: List[str] = []
         for record in patches:
-            meta = self._compress(record.get("metadata", {}))
-            if meta.get("tests_passed"):
-                successes.append(meta)
+            snippet, passed = self._compress_patch(record.get("metadata", {}))
+            if not snippet:
+                continue
+            if passed:
+                successes.append(snippet)
             else:
-                failures.append(meta)
+                failures.append(snippet)
 
         lines: List[str] = []
         if successes:
-            lines.append("Here's a successful example:")
-            for meta in successes:
-                lines.extend(self._format_record(meta))
+            lines.append("Successful example:")
+            for text in successes:
+                lines.extend(text.splitlines())
                 lines.append("")
         if failures:
-            lines.append("Avoid these pitfalls:")
-            for meta in failures:
-                lines.extend(self._format_record(meta))
+            lines.append("Avoid pattern:")
+            for text in failures:
+                lines.extend(text.splitlines())
                 lines.append("")
         return [line for line in lines if line]
     # ------------------------------------------------------------------
@@ -214,6 +216,27 @@ class PromptEngine:
         return items[: self.top_n]
 
     # ------------------------------------------------------------------
+    def _trim_tokens(self, text: str, limit: int) -> str:
+        """Trim ``text`` to ``limit`` tokens using ContextBuilder heuristics."""
+
+        counter = None
+        if self.context_builder is not None:
+            counter = getattr(self.context_builder, "_count_tokens", None)
+        if counter is None:
+            counter = lambda s: len(str(s).split())
+
+        tokens = counter(text)
+        if tokens <= limit:
+            return text
+
+        ratio = limit / max(tokens, 1)
+        char_limit = max(1, int(len(text) * ratio))
+        trimmed = text[:char_limit].rstrip()
+        if trimmed != text:
+            trimmed += "..."
+        return trimmed
+
+    # ------------------------------------------------------------------
     def _compress(self, meta: Dict[str, Any]) -> Dict[str, Any]:
         """Return a condensed copy of ``meta`` using micro-model helpers."""
 
@@ -229,6 +252,23 @@ class PromptEngine:
         out["ts"] = meta.get("ts")
         out["context"] = meta.get("context") or meta.get("retrieval_context")
         return out
+
+    # ------------------------------------------------------------------
+    def _compress_patch(self, patch: Dict[str, Any], *, max_tokens: int = 200) -> tuple[str, bool]:
+        """Return a compact textual representation of ``patch``.
+
+        The function extracts description, diff, code snippet and test logs and
+        trims the final snippet to ``max_tokens`` tokens using the
+        :class:`ContextBuilder`'s token counting utilities when available.
+        ``True`` is returned alongside the snippet when tests passed for the
+        patch.
+        """
+
+        meta = self._compress(patch)
+        lines = self._format_record(meta)
+        snippet = "\n".join(lines)
+        snippet = self._trim_tokens(snippet, max_tokens)
+        return snippet, bool(meta.get("tests_passed"))
 
     # ------------------------------------------------------------------
     def _format_record(self, meta: Dict[str, Any]) -> List[str]:
@@ -248,6 +288,10 @@ class PromptEngine:
             lines.append(f"Code summary: {meta['summary']}")
         if meta.get("diff"):
             lines.append(f"Diff summary: {meta['diff']}")
+        if meta.get("snippet"):
+            lines.append(f"Code:\n{meta['snippet']}")
+        if meta.get("test_log"):
+            lines.append(f"Test log:\n{meta['test_log']}")
         if meta.get("outcome"):
             status = "tests passed" if meta.get("tests_passed") else "tests failed"
             lines.append(f"Outcome: {meta['outcome']} ({status})")

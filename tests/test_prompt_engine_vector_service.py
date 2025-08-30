@@ -40,6 +40,7 @@ def test_prompt_engine_retrieves_top_n_snippets(monkeypatch, tmp_path):
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
     engine = PromptEngine(retriever=pr, top_n=2)
     prompt = engine.build_prompt("goal")
+    assert "Successful example:" in prompt
     assert "Code summary: A1" in prompt
     assert "Code summary: A2" in prompt
     assert "A3" not in prompt
