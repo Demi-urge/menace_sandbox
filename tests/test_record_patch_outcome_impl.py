@@ -67,11 +67,12 @@ class DualPatchLogger:
         tests_passed=None,
         enhancement_name=None,
         start_time=None,
-        timestamp=None,
+        end_time=None,
         diff=None,
         summary=None,
         outcome=None,
         error_summary=None,
+        effort_estimate=None,
     ):
         self.sync_calls.append(
             {
@@ -85,10 +86,11 @@ class DualPatchLogger:
                 "tests_passed": tests_passed,
                 "enhancement_name": enhancement_name,
                 "start_time": start_time,
-                "timestamp": timestamp,
+                "end_time": end_time,
                 "diff": diff,
                 "summary": summary,
                 "outcome": outcome,
+                "effort_estimate": effort_estimate,
             }
         )
         return {}
@@ -104,13 +106,14 @@ class DualPatchLogger:
         retrieval_metadata=None,
         lines_changed=None,
         tests_passed=None,
-       enhancement_name=None,
+        enhancement_name=None,
         start_time=None,
-        timestamp=None,
+        end_time=None,
         diff=None,
         summary=None,
         outcome=None,
         error_summary=None,
+        effort_estimate=None,
     ):
         self.async_calls.append(
             {
@@ -124,10 +127,11 @@ class DualPatchLogger:
                 "tests_passed": tests_passed,
                 "enhancement_name": enhancement_name,
                 "start_time": start_time,
-                "timestamp": timestamp,
+                "end_time": end_time,
                 "diff": diff,
                 "summary": summary,
                 "outcome": outcome,
+                "effort_estimate": effort_estimate,
             }
         )
         return {}

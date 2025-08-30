@@ -770,7 +770,7 @@ class CognitionLayer:
             "tests_passed": tests_passed,
             "enhancement_name": enhancement_name,
             "start_time": start_time,
-            "timestamp": timestamp,
+            "end_time": timestamp,
             "effort_estimate": effort_estimate,
         }
         import inspect

@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vector_service.patch_logger import PatchLogger
 from vector_metrics_db import VectorMetricsDB
+from enhancement_score import EnhancementMetrics, compute_enhancement_score
 
 
 class SimplePatchDB:
@@ -108,12 +109,20 @@ def test_patch_logger_persists_metrics(tmp_path):
         lines_changed=2,
         tests_passed=True,
         start_time=1.0,
-        timestamp=4.0,
+        end_time=4.0,
         error_summary="err",
         effort_estimate=2.0,
     )
-
-    expected_score = 5 + 2.0 + 1 - 1 - 3
+    metrics = EnhancementMetrics(
+        lines_changed=2,
+        context_tokens=3,
+        time_to_completion=3.0,
+        tests_passed=1,
+        tests_failed=0,
+        error_traces=1,
+        effort_estimate=2.0,
+    )
+    expected_score = compute_enhancement_score(metrics)
 
     vm_row = vmdb.conn.execute(
         "SELECT patch_difficulty, time_to_completion, error_trace_count, effort_estimate, enhancement_score FROM patch_metrics WHERE patch_id=?",
