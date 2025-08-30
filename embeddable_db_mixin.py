@@ -57,6 +57,7 @@ try:
         embedding_wall_time_seconds as _EMBED_WALL_LAST,
         embedding_store_latency_seconds as _EMBED_STORE_LAST,
     )
+    from .data_bot import MetricsDB
 except Exception:  # pragma: no cover - fallback to absolute imports
     from vector_metrics_db import VectorMetricsDB  # type: ignore
     from embedding_stats_db import EmbeddingStatsDB  # type: ignore
@@ -68,6 +69,7 @@ except Exception:  # pragma: no cover - fallback to absolute imports
         embedding_wall_time_seconds as _EMBED_WALL_LAST,
         embedding_store_latency_seconds as _EMBED_STORE_LAST,
     )
+    from data_bot import MetricsDB  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -357,6 +359,7 @@ class EmbeddableDBMixin:
             "kind": kind,
             "source_id": source_id,
             "redacted": True,
+            "record": record,
         }
         self._rebuild_index()
         save_start = perf_counter()
