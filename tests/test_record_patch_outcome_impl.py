@@ -66,10 +66,12 @@ class DualPatchLogger:
         lines_changed=None,
         tests_passed=None,
         enhancement_name=None,
+        start_time=None,
         timestamp=None,
         diff=None,
         summary=None,
         outcome=None,
+        error_summary=None,
     ):
         self.sync_calls.append(
             {
@@ -82,6 +84,7 @@ class DualPatchLogger:
                 "lines_changed": lines_changed,
                 "tests_passed": tests_passed,
                 "enhancement_name": enhancement_name,
+                "start_time": start_time,
                 "timestamp": timestamp,
                 "diff": diff,
                 "summary": summary,
@@ -101,11 +104,13 @@ class DualPatchLogger:
         retrieval_metadata=None,
         lines_changed=None,
         tests_passed=None,
-        enhancement_name=None,
+       enhancement_name=None,
+        start_time=None,
         timestamp=None,
         diff=None,
         summary=None,
         outcome=None,
+        error_summary=None,
     ):
         self.async_calls.append(
             {
@@ -118,6 +123,7 @@ class DualPatchLogger:
                 "lines_changed": lines_changed,
                 "tests_passed": tests_passed,
                 "enhancement_name": enhancement_name,
+                "start_time": start_time,
                 "timestamp": timestamp,
                 "diff": diff,
                 "summary": summary,

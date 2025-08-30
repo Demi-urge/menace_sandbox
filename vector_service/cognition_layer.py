@@ -687,6 +687,7 @@ class CognitionLayer:
         lines_changed: int | None = None,
         tests_passed: bool | None = None,
         enhancement_name: str | None = None,
+        start_time: float | None = None,
         timestamp: float | None = None,
         async_mode: bool = False,
     ) -> None:
@@ -744,6 +745,7 @@ class CognitionLayer:
             "lines_changed": lines_changed,
             "tests_passed": tests_passed,
             "enhancement_name": enhancement_name,
+            "start_time": start_time,
             "timestamp": timestamp,
         }
         import inspect
@@ -939,6 +941,7 @@ class CognitionLayer:
         lines_changed: int | None = None,
         tests_passed: bool | None = None,
         enhancement_name: str | None = None,
+        start_time: float | None = None,
         timestamp: float | None = None,
     ) -> None:
         """Forward patch outcome to :class:`PatchLogger`."""
@@ -952,6 +955,7 @@ class CognitionLayer:
                 lines_changed=lines_changed,
                 tests_passed=tests_passed,
                 enhancement_name=enhancement_name,
+                start_time=start_time,
                 timestamp=timestamp,
                 async_mode=False,
             )
@@ -968,6 +972,7 @@ class CognitionLayer:
         lines_changed: int | None = None,
         tests_passed: bool | None = None,
         enhancement_name: str | None = None,
+        start_time: float | None = None,
         timestamp: float | None = None,
     ) -> None:
         """Asynchronous wrapper for :meth:`record_patch_outcome`."""
@@ -980,6 +985,7 @@ class CognitionLayer:
             lines_changed=lines_changed,
             tests_passed=tests_passed,
             enhancement_name=enhancement_name,
+            start_time=start_time,
             timestamp=timestamp,
             async_mode=True,
         )

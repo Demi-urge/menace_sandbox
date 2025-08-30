@@ -116,10 +116,12 @@ class DummyPatchLogger:
         lines_changed=None,
         tests_passed=None,
         enhancement_name=None,
+        start_time=None,
         timestamp=None,
         diff=None,
         summary=None,
         outcome=None,
+        error_summary=None,
     ):
         self.calls.append(
             {
@@ -363,10 +365,12 @@ def test_build_context_and_feedback_updates_weights(monkeypatch):
             lines_changed=None,
             tests_passed=None,
             enhancement_name=None,
+            start_time=None,
             timestamp=None,
             diff=None,
             summary=None,
             outcome=None,
+            error_summary=None,
         ):
             super().track_contributors(
                 vector_ids,
@@ -378,10 +382,12 @@ def test_build_context_and_feedback_updates_weights(monkeypatch):
                 lines_changed=lines_changed,
                 tests_passed=tests_passed,
                 enhancement_name=enhancement_name,
+                start_time=start_time,
                 timestamp=timestamp,
                 diff=diff,
                 summary=summary,
                 outcome=outcome,
+                error_summary=error_summary,
             )
             if not result:
                 scores = {}

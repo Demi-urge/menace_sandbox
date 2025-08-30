@@ -73,6 +73,8 @@ class DummyVectorMetricsDB:
         lines_changed=None,
         context_tokens=None,
         patch_difficulty=None,
+        start_time=None,
+        time_to_completion=None,
     ):
         self.summary_calls.append(
             {
@@ -82,6 +84,8 @@ class DummyVectorMetricsDB:
                 "lines_changed": lines_changed,
                 "context_tokens": context_tokens,
                 "patch_difficulty": patch_difficulty,
+                "start_time": start_time,
+                "time_to_completion": time_to_completion,
             }
         )
 
@@ -133,6 +137,8 @@ class DummyPatchDB:
         context_tokens=None,
         patch_difficulty=None,
         enhancement_name=None,
+        start_time=None,
+        time_to_completion=None,
         timestamp=None,
         roi_deltas=None,
         errors=None,
@@ -152,6 +158,8 @@ class DummyPatchDB:
             "context_tokens": context_tokens,
             "patch_difficulty": patch_difficulty,
             "enhancement_name": enhancement_name,
+            "start_time": start_time,
+            "time_to_completion": time_to_completion,
             "timestamp": timestamp,
             "roi_deltas": roi_deltas,
             "errors": errors,
@@ -406,6 +414,8 @@ def test_track_contributors_persists_errors_and_results(monkeypatch):
             lines_changed=None,
             context_tokens=None,
             patch_difficulty=None,
+            start_time=None,
+            time_to_completion=None,
         ):
             self.summary_calls.append(
                 {
@@ -415,6 +425,8 @@ def test_track_contributors_persists_errors_and_results(monkeypatch):
                     "lines_changed": lines_changed,
                     "context_tokens": context_tokens,
                     "patch_difficulty": patch_difficulty,
+                    "start_time": start_time,
+                    "time_to_completion": time_to_completion,
                 }
             )
 

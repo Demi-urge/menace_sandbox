@@ -124,7 +124,9 @@ class VectorMetricsDB:
                 tests_passed INTEGER,
                 lines_changed INTEGER,
                 context_tokens INTEGER,
-                patch_difficulty INTEGER
+                patch_difficulty INTEGER,
+                start_time REAL,
+                time_to_completion REAL
             )
             """
         )
@@ -182,6 +184,12 @@ class VectorMetricsDB:
             self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN context_tokens INTEGER")
         if "patch_difficulty" not in mcols:
             self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN patch_difficulty INTEGER")
+        if "start_time" not in mcols:
+            self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN start_time REAL")
+        if "time_to_completion" not in mcols:
+            self.conn.execute(
+                "ALTER TABLE patch_metrics ADD COLUMN time_to_completion REAL"
+            )
         self.conn.commit()
 
     # ------------------------------------------------------------------
@@ -615,10 +623,12 @@ class VectorMetricsDB:
         lines_changed: int | None = None,
         context_tokens: int | None = None,
         patch_difficulty: int | None = None,
+        start_time: float | None = None,
+        time_to_completion: float | None = None,
     ) -> None:
         try:
             self.conn.execute(
-                "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, lines_changed, context_tokens, patch_difficulty) VALUES(?,?,?,?,?,?)",
+                "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, lines_changed, context_tokens, patch_difficulty, start_time, time_to_completion) VALUES(?,?,?,?,?,?,?,?)",
                 (
                     patch_id,
                     json.dumps(list(errors or [])),
@@ -626,6 +636,8 @@ class VectorMetricsDB:
                     lines_changed,
                     context_tokens,
                     patch_difficulty,
+                    start_time,
+                    time_to_completion,
                 ),
             )
             self.conn.commit()
