@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import logging
 
 from code_database import PatchHistoryDB
 from .vectorizer import SharedVectorService
@@ -31,22 +32,49 @@ class Embedder:
         return "\n".join(part for part in (desc, diff, summary) if part)
 
     # ------------------------------------------------------------------
-    def embed_all(self) -> None:
-        """Embed all patch history records using ``SharedVectorService``."""
+    def _latest_patch_id(self) -> int:
+        """Return the highest ``patch_id`` already embedded."""
+        store = getattr(self.svc, "vector_store", None)
+        max_id = 0
+        if store is not None and hasattr(store, "meta"):
+            for meta in getattr(store, "meta", []):
+                pid = (meta.get("metadata") or {}).get("patch_id")
+                if isinstance(pid, int) and pid > max_id:
+                    max_id = pid
+        return max_id
+
+    def embed_since(self, last_id: int) -> int:
+        """Embed patches with ``id`` greater than ``last_id``.
+
+        Returns the latest successfully embedded ``patch_id``.
+        """
         cur = self.conn.execute(
-            "SELECT id, description, diff, summary, timestamp, enhancement_name FROM patch_history"
+            "SELECT id, description, diff, summary, timestamp, enhancement_name FROM patch_history WHERE id>? ORDER BY id",
+            (last_id,),
         )
-        rows = cur.fetchall()
-        for pid, desc, diff, summary, ts, enh in rows:
+        latest = last_id
+        logger = logging.getLogger(__name__)
+        for pid, desc, diff, summary, ts, enh in cur:
             text = self._compose({"description": desc, "diff": diff, "summary": summary})
             metadata = {"patch_id": pid, "timestamp": ts, "enhancement_name": enh}
-            self.svc.vectorise_and_store(
-                "text",
-                str(pid),
-                {"text": text},
-                origin_db="patch_history",
-                metadata=metadata,
-            )
+            try:
+                self.svc.vectorise_and_store(
+                    "text",
+                    str(pid),
+                    {"text": text},
+                    origin_db="patch_history",
+                    metadata=metadata,
+                )
+                latest = pid
+            except Exception as exc:  # pragma: no cover - best effort logging
+                logger.warning("failed to embed patch %s: %s", pid, exc)
+        return latest
+
+    # ------------------------------------------------------------------
+    def embed_all(self) -> int:
+        """Embed new patch history records using ``SharedVectorService``."""
+        last_id = self._latest_patch_id()
+        return self.embed_since(last_id)
 
 
 # ----------------------------------------------------------------------
