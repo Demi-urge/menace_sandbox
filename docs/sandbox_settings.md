@@ -10,6 +10,9 @@ from sandbox_settings import load_sandbox_settings
 settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 ```
 
+## Meta planning defaults
+- `meta_entropy_threshold`: `null`
+
 ## ROI defaults
 - `threshold`: `null`
 - `confidence`: `null`

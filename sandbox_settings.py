@@ -212,6 +212,11 @@ class SandboxSettings(BaseSettings):
         env="META_DOMAIN_PENALTY",
         description="Penalty for domain transitions in meta planning.",
     )
+    meta_entropy_threshold: float | None = Field(
+        None,
+        env="META_ENTROPY_THRESHOLD",
+        description="Maximum allowed workflow entropy when recording improvements.",
+    )
     workflows_db: str = Field(
         "workflows.db",
         env="WORKFLOWS_DB",
@@ -363,6 +368,14 @@ class SandboxSettings(BaseSettings):
     def _validate_exploration_temperature(cls, v: float) -> float:
         if v <= 0:
             raise ValueError("exploration_temperature must be positive")
+        return v
+
+    @field_validator("meta_entropy_threshold")
+    def _validate_meta_entropy_threshold(
+        cls, v: float | None
+    ) -> float | None:
+        if v is not None and not 0 <= v <= 1:
+            raise ValueError("meta_entropy_threshold must be between 0 and 1")
         return v
 
     @field_validator("meta_planning_interval", "meta_planning_period")
