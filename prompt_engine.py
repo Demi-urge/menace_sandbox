@@ -9,18 +9,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 try:  # pragma: no cover - optional at runtime
     from .roi_tracker import ROITracker  # type: ignore
 except Exception:  # pragma: no cover - fallback when running in isolation
     ROITracker = None  # type: ignore
 
-try:  # pragma: no cover - optional dependency used for diff compression
-    from .micro_models.diff_summarizer import summarize_diff  # type: ignore
-except Exception:  # pragma: no cover - summariser may be missing
-    def summarize_diff(before: str, after: str, max_new_tokens: int = 128) -> str:  # type: ignore
-        return (before + "\n" + after).strip()
+from snippet_compressor import compress_snippets
 
 DEFAULT_TEMPLATE = (
     "No relevant patches were found. Proceed with a fresh implementation."
@@ -67,34 +63,12 @@ class PromptEngine:
     # ------------------------------------------------------------------
     @staticmethod
     def _compress(meta: Dict[str, Any]) -> Dict[str, Any]:
-        """Return a condensed copy of ``meta`` using micro-models.
-
-        Only a handful of fields are kept to keep the final prompt lean.  The
-        function uses the diff summariser when ``before``/``after`` snippets are
-        present and truncates long code blocks or logs.
-        """
+        """Return a condensed copy of ``meta`` using micro-model helpers."""
 
         out: Dict[str, Any] = {}
         out["summary"] = meta.get("summary") or meta.get("description")
 
-        before = meta.get("before")
-        after = meta.get("after")
-        diff = meta.get("diff")
-        if before or after:
-            try:
-                out["diff"] = summarize_diff(before or "", after or "")
-            except Exception:  # pragma: no cover - defensive
-                out["diff"] = diff
-        elif diff:
-            out["diff"] = diff
-
-        snippet = meta.get("snippet") or meta.get("code")
-        if isinstance(snippet, str):
-            out["snippet"] = snippet if len(snippet) < 200 else snippet[:197] + "..."
-
-        log = meta.get("test_log")
-        if isinstance(log, str):
-            out["test_log"] = log if len(log) < 200 else log[:197] + "..."
+        out.update(compress_snippets(meta))
 
         out["outcome"] = meta.get("outcome")
         out["tests_passed"] = meta.get("tests_passed")
@@ -178,7 +152,7 @@ class PromptEngine:
         if retry_trace:
             lines.append(retry_trace)
             lines.append("Please try a different approach.")
-        return "\n".join(l for l in lines if l)
+        return "\n".join(line for line in lines if line)
 
     # Backwards compatibility -------------------------------------------------
     @classmethod
