@@ -161,6 +161,13 @@ register_vectorizer(
     db_class="FailureDB",
 )
 register_vectorizer(
+    "patch",
+    "vector_service.patch_vectorizer",
+    "PatchVectorizer",
+    db_module="vector_service.patch_vectorizer",
+    db_class="PatchVectorizer",
+)
+register_vectorizer(
     "research",
     "research_vectorizer",
     "ResearchVectorizer",
