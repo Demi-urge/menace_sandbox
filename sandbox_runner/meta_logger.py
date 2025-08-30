@@ -13,7 +13,7 @@ from logging_utils import get_logger, log_record
 from audit_trail import AuditTrail
 try:  # optional dependency
     from relevancy_metrics_db import RelevancyMetricsDB
-except Exception:  # pragma: no cover - optional
+except ImportError:  # pragma: no cover - optional
     RelevancyMetricsDB = None  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -21,11 +21,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 try:  # avoid heavy dependency during light imports
     from .cycle import _async_track_usage
-except Exception:  # pragma: no cover - best effort stub
+except Exception as exc:  # pragma: no cover - best effort stub
     _SUPPRESS_TELEMETRY_WARNING = os.getenv("SANDBOX_SUPPRESS_TELEMETRY_WARNING") == "1"
+    _tmp_logger = get_logger(__name__)
+    _tmp_logger.debug("_async_track_usage import failed: %s", exc, exc_info=exc)
     try:  # optional relevancy radar dependency
         from relevancy_radar import track_usage as _radar_track_usage, record_output_impact
-    except Exception:  # pragma: no cover - optional
+    except ImportError:  # pragma: no cover - optional
         _radar_track_usage = None  # type: ignore
         record_output_impact = None  # type: ignore
 
@@ -45,16 +47,18 @@ except Exception:  # pragma: no cover - best effort stub
             try:
                 _radar_track_usage(module, impact_val)
                 record_output_impact(module, impact_val)
-            except Exception:
-                logger.exception("relevancy radar usage tracking failed")
+            except Exception as exc:
+                logger.exception(
+                    "relevancy radar usage tracking failed", exc_info=exc
+                )
 
         try:
             loop = asyncio.get_running_loop()
-        except Exception:
+        except RuntimeError:
             try:
                 threading.Thread(target=_track, daemon=True).start()
-            except Exception:
-                logger.exception("failed to schedule relevancy tracking")
+            except (RuntimeError, OSError) as exc:
+                logger.exception("failed to schedule relevancy tracking", exc_info=exc)
         else:
             loop.create_task(asyncio.to_thread(_track))
 
@@ -95,8 +99,8 @@ class _SandboxMetaLogger:
                 data = json.loads(self.flags_path.read_text())
                 if isinstance(data, list):
                     self.flagged_sections.update(str(x) for x in data)
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("failed to load sandbox flags")
+            except (OSError, json.JSONDecodeError) as exc:  # pragma: no cover - best effort
+                logger.exception("failed to load sandbox flags", exc_info=exc)
         if self.history_path.exists():
             try:
                 data = json.loads(self.history_path.read_text())
@@ -116,8 +120,8 @@ class _SandboxMetaLogger:
                             hist[i] - hist[i - 1] for i in range(1, len(hist))
                         )
                         self.module_entropy_deltas[m] = deltas
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("failed to load sandbox history")
+            except (OSError, json.JSONDecodeError) as exc:  # pragma: no cover - best effort
+                logger.exception("failed to load sandbox history", exc_info=exc)
         logger.debug("SandboxMetaLogger initialised at %s", path)
 
     def log_cycle(
@@ -140,7 +144,10 @@ class _SandboxMetaLogger:
                     from pathlib import Path
 
                     gid = str(self.module_index.get(Path(m).name))
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        "module index lookup failed for %s: %s", m, exc
+                    )
                     gid = m
             else:
                 gid = m
@@ -154,8 +161,10 @@ class _SandboxMetaLogger:
                         self.module_index,
                         roi_delta=per_module_delta,
                     )
-                except Exception:
-                    logger.exception("relevancy metrics record failed")
+                except Exception as exc:
+                    logger.exception(
+                        "relevancy metrics record failed", exc_info=exc
+                    )
             _async_track_usage(gid, per_module_delta)
         self._persist_history()
         try:
@@ -169,8 +178,8 @@ class _SandboxMetaLogger:
             if warnings:
                 record["warnings"] = warnings
             self.audit.record(record)
-        except Exception:
-            logger.exception("meta log record failed")
+        except Exception as exc:
+            logger.exception("meta log record failed", exc_info=exc)
         logger.debug(
             "cycle %d logged roi=%s delta=%s modules=%s", cycle, roi, delta, modules
         )
@@ -207,8 +216,8 @@ class _SandboxMetaLogger:
                 "module_entropies": self.module_entropies,
             }
             self.history_path.write_text(json.dumps(data))
-        except Exception:  # pragma: no cover - best effort
-            logger.exception("failed to persist sandbox history")
+        except (OSError, TypeError) as exc:  # pragma: no cover - best effort
+            logger.exception("failed to persist sandbox history", exc_info=exc)
 
     def ceiling(self, ratio_threshold: float, consecutive: int = 3) -> list[str]:
         """Return modules where ROI gain per entropy delta diminishes."""
@@ -267,8 +276,10 @@ class _SandboxMetaLogger:
             if len(ent_vals) < len(vals):
                 try:
                     self.entropy_delta(m)
-                except Exception:
-                    logger.exception("entropy delta computation failed for %s", m)
+                except Exception as exc:
+                    logger.exception(
+                        "entropy delta computation failed for %s", m, exc_info=exc
+                    )
                 ent_vals = self.module_entropy_deltas.get(m, [])
             ent_plateau = False
             if len(ent_vals) >= consecutive:
@@ -285,8 +296,8 @@ class _SandboxMetaLogger:
     def _persist_flags(self) -> None:
         try:
             self.flags_path.write_text(json.dumps(sorted(self.flagged_sections)))
-        except Exception:  # pragma: no cover - best effort
-            logger.exception("failed to persist sandbox flags")
+        except OSError as exc:  # pragma: no cover - best effort
+            logger.exception("failed to persist sandbox flags", exc_info=exc)
 
     def flag_modules(self, modules: Sequence[str], *, reason: str = "entropy_ceiling") -> None:
         """Mark ``modules`` as completed and add them to ``flagged_sections``."""
@@ -303,8 +314,8 @@ class _SandboxMetaLogger:
                     "reason": reason,
                 }
             )
-        except Exception:
-            logger.exception("meta log flag record failed")
+        except Exception as exc:
+            logger.exception("meta log flag record failed", exc_info=exc)
         logger.info("modules flagged complete", extra=log_record(modules=new_flags))
 
 

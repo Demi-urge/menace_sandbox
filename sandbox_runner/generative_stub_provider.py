@@ -105,8 +105,8 @@ def _available_models(settings: Any | None = None) -> set[str]:
         eps = metadata.entry_points(group=MODEL_ENTRY_POINT_GROUP)
     except TypeError:  # pragma: no cover - legacy API
         eps = metadata.entry_points().get(MODEL_ENTRY_POINT_GROUP, [])
-    except Exception:  # pragma: no cover - best effort
-        logger.exception("failed to gather stub model entry points")
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.exception("failed to gather stub model entry points", exc_info=exc)
         eps = []
     for ep in eps:
         models.add(ep.name)
@@ -125,7 +125,7 @@ def _validate_env() -> None:
             if f <= 0:
                 raise ValueError
             return f
-        except Exception:
+        except ValueError:
             logger.warning("invalid %s=%r; using default %s", name, val, default)
             return default
 
@@ -138,7 +138,7 @@ def _validate_env() -> None:
             if i < 1:
                 raise ValueError
             return i
-        except Exception:
+        except ValueError:
             logger.warning("invalid %s=%r; using default %s", name, val, default)
             return default
 
@@ -174,9 +174,10 @@ async def _call_with_retry(func: Callable[[], Awaitable[Any]]) -> Any:
         try:
             async with _RATE_LIMIT:
                 return await asyncio.wait_for(func(), timeout=_GEN_TIMEOUT)
-        except Exception:
+        except Exception as exc:
             if attempt == _GEN_RETRIES - 1:
                 raise
+            logger.warning("generation attempt %d failed: %s", attempt + 1, exc)
             jitter = random.uniform(0, delay)
             await asyncio.sleep(jitter)
             delay = min(delay * 2, _RETRY_MAX)
@@ -195,7 +196,7 @@ def _rule_based_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
         text = match.group(1).strip().rstrip(",;.")
         try:
             return ast.literal_eval(text)
-        except Exception:
+        except (ValueError, SyntaxError):
             return text.strip("'\"")
 
     def _value_from_annotation(annotation: Any, name: str) -> Any:
@@ -250,7 +251,8 @@ def _rule_based_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
                                 param.annotation, p_name
                             )
                     return annotation(**kwargs)
-                except Exception:
+                except (TypeError, ValueError) as exc:
+                    logger.debug("failed to instantiate %s: %s", annotation, exc)
                     return None
             return None
         args = get_args(annotation)
@@ -279,7 +281,8 @@ def _rule_based_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
     try:
         sig = inspect.signature(func)
         doc = inspect.getdoc(func) or ""
-    except Exception:
+    except (TypeError, ValueError) as exc:
+        logger.debug("signature inspection failed for %s: %s", func, exc)
         return dict(stub)
     result = dict(stub)
     for name, param in sig.parameters.items():
@@ -359,13 +362,13 @@ def _load_cache() -> "OrderedDict[Tuple[str, str], Dict[str, Any]]":
                     if len(parts) == 2:
                         cache[(parts[0], parts[1])] = item[1]
                 return cache
-    except Exception:
-        logger.exception("failed to load stub cache")
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.exception("failed to load stub cache", exc_info=exc)
         try:
             backup = _STUB_CACHE_PATH.with_suffix(".corrupt")
             _STUB_CACHE_PATH.replace(backup)
-        except Exception:
-            logger.exception("failed to back up corrupt cache")
+        except OSError as backup_exc:
+            logger.exception("failed to back up corrupt cache", exc_info=backup_exc)
     return OrderedDict()
 
 
@@ -380,8 +383,8 @@ def _save_cache() -> None:
             fh.flush()
             os.fsync(fh.fileno())
         tmp.replace(_STUB_CACHE_PATH)
-    except Exception:
-        logger.exception("failed to save stub cache")
+    except (OSError, TypeError) as exc:
+        logger.exception("failed to save stub cache", exc_info=exc)
 
 
 async def _aload_cache() -> Dict[Tuple[str, str], Dict[str, Any]]:
@@ -402,7 +405,7 @@ def _cache_evict() -> None:
     while len(_CACHE) > _CACHE_MAX:
         try:
             _CACHE.popitem(last=False)
-        except Exception:
+        except KeyError:
             break
 
 
@@ -412,8 +415,8 @@ def _schedule_cache_persist() -> None:
     async def _runner() -> None:
         try:
             await asyncio.shield(_asave_cache())
-        except Exception:
-            logger.exception("failed to save stub cache")
+        except Exception as exc:
+            logger.exception("failed to save stub cache", exc_info=exc)
 
     task = asyncio.create_task(_runner())
     _SAVE_TASKS.add(task)
@@ -445,8 +448,8 @@ def _atexit_save_cache() -> None:
             asyncio.run(_wait_and_save())
         else:
             loop.run_until_complete(_wait_and_save())
-    except Exception:
-        logger.exception("cache save failed")
+    except Exception as exc:
+        logger.exception("cache save failed", exc_info=exc)
 
 
 atexit.register(_atexit_save_cache)
@@ -481,9 +484,10 @@ async def _aload_generator():
                 global openai
                 if openai is None:
                     openai = importlib.import_module("openai")  # type: ignore
-            except Exception:
+            except ImportError as exc:
                 logger.error(
-                    "openai library unavailable; falling back to %s", FALLBACK_MODEL
+                    "openai library unavailable; falling back to %s", FALLBACK_MODEL,
+                    exc_info=exc,
                 )
             else:
                 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -501,8 +505,8 @@ async def _aload_generator():
         if pipeline is None:
             transformers = importlib.import_module("transformers")
             pipeline = transformers.pipeline  # type: ignore[attr-defined]
-    except Exception:
-        logger.error("transformers library unavailable")
+    except ImportError as exc:
+        logger.error("transformers library unavailable", exc_info=exc)
         return None
 
     hf_token = SETTINGS.huggingface_token
@@ -516,8 +520,8 @@ async def _aload_generator():
                 local_files_only=True,
             )
             await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
-        except Exception:  # pragma: no cover - model load failures
-            logger.exception("failed to load fallback model %s", FALLBACK_MODEL)
+        except Exception as exc:  # pragma: no cover - model load failures
+            logger.exception("failed to load fallback model %s", FALLBACK_MODEL, exc_info=exc)
             _GENERATOR = None
         return _GENERATOR
 
@@ -529,9 +533,10 @@ async def _aload_generator():
             use_auth_token=hf_token,
         )
         await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
-    except Exception:  # pragma: no cover - model load failures
+    except Exception as exc:  # pragma: no cover - model load failures
         logger.exception(
-            "failed to load model %s; falling back to %s", model, FALLBACK_MODEL
+            "failed to load model %s; falling back to %s", model, FALLBACK_MODEL,
+            exc_info=exc,
         )
         try:
             _GENERATOR = await asyncio.to_thread(
@@ -541,8 +546,8 @@ async def _aload_generator():
                 local_files_only=True,
             )
             await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
-        except Exception:  # pragma: no cover - model load failures
-            logger.exception("failed to load fallback model %s", FALLBACK_MODEL)
+        except Exception as exc:  # pragma: no cover - model load failures
+            logger.exception("failed to load fallback model %s", FALLBACK_MODEL, exc_info=exc)
             _GENERATOR = None
     return _GENERATOR
 
@@ -563,8 +568,8 @@ def _seed_generator_from_history(gen: Any) -> None:
     """Seed *gen* with stored input examples when possible."""
     try:
         records = _get_history_db().recent(100)
-    except Exception:
-        logger.debug("failed to load history for seeding", exc_info=True)
+    except Exception as exc:
+        logger.debug("failed to load history for seeding: %s", exc, exc_info=exc)
         return
     if not records:
         return
@@ -573,8 +578,8 @@ def _seed_generator_from_history(gen: Any) -> None:
         if hasattr(gen, attr):
             try:
                 getattr(gen, attr)(payload)
-            except Exception:
-                logger.debug("stub generator %s failed", attr, exc_info=True)
+            except Exception as exc:
+                logger.debug("stub generator %s failed: %s", attr, exc, exc_info=exc)
             break
 
 
@@ -610,13 +615,13 @@ async def async_generate_stubs(
                 if not _CACHE:
                     _CACHE.update(loaded)
                     _cache_evict()
-        except Exception:
-            logger.exception("failed to load stub cache")
+        except Exception as exc:
+            logger.exception("failed to load stub cache", exc_info=exc)
     if strategy == "history":
         try:
             records = _get_history_db().recent(50)
-        except Exception:
-            logger.exception("failed to load input history")
+        except Exception as exc:
+            logger.exception("failed to load input history", exc_info=exc)
             records = []
         if records:
             hist = _aggregate(records)
@@ -654,7 +659,7 @@ async def async_generate_stubs(
             if cached is not None:
                 try:
                     _CACHE.move_to_end(key)
-                except Exception as exc:
+                except KeyError as exc:
                     logger.warning(
                         "failed to update cache LRU for key %s: %s", key, exc
                     )
@@ -731,7 +736,8 @@ async def async_generate_stubs(
                                     inspect.Parameter.KEYWORD_ONLY,
                                 )
                             ]
-                        except Exception:
+                        except (TypeError, ValueError) as exc:
+                            logger.debug("signature inspection failed for %s: %s", func, exc)
                             params = []
                     for p_name, param in params:
                         if p_name not in data:
@@ -742,7 +748,7 @@ async def async_generate_stubs(
                         _CACHE[key] = data
                         try:
                             _CACHE.move_to_end(key)
-                        except Exception as exc:
+                        except KeyError as exc:
                             logger.warning(
                                 "failed to update cache LRU for key %s: %s", key, exc
                             )

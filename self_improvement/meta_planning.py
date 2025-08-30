@@ -177,17 +177,20 @@ class _FallbackPlanner:
                     patchability_score=0.0,
                     module_deltas={},
                 )
-            except Exception:  # pragma: no cover - best effort
+            except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
-                    "ROI logging failed", extra=log_record(workflow_id=workflow_id, run_id=run_id)
+                    "ROI logging failed",
+                    extra=log_record(workflow_id=workflow_id, run_id=run_id),
+                    exc_info=exc,
                 )
         if self.stability_db is not None:
             try:
                 self.stability_db.record_metrics(workflow_id, 0.0, 0.0, 0.0, roi_delta=0.0)
-            except Exception:  # pragma: no cover - best effort
+            except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
                     "stability logging failed",
                     extra=log_record(workflow_id=workflow_id, run_id=run_id),
+                    exc_info=exc,
                 )
 
     # ------------------------------------------------------------------
@@ -258,9 +261,9 @@ class _FallbackPlanner:
                     results = self.roi_db.fetch_results(wid)
                     recent = [r.roi_gain for r in results[-self.roi_window:]]
                     roi = fmean(recent) if recent else 0.0
-                except Exception:  # pragma: no cover - best effort
+                except Exception as exc:  # pragma: no cover - best effort
                     self.logger.warning(
-                        "roi fetch failed", extra=log_record(workflow_id=wid)
+                        "roi fetch failed", extra=log_record(workflow_id=wid), exc_info=exc
                     )
                     roi = 0.0
 
@@ -274,9 +277,9 @@ class _FallbackPlanner:
                     stable = self.stability_db.is_stable(
                         wid, current_roi=roi, threshold=1.0
                     )
-                except Exception:  # pragma: no cover - best effort
+                except Exception as exc:  # pragma: no cover - best effort
                     self.logger.warning(
-                        "stability check failed", extra=log_record(workflow_id=wid)
+                        "stability check failed", extra=log_record(workflow_id=wid), exc_info=exc
                     )
                     stable = True
 
@@ -328,20 +331,22 @@ class _FallbackPlanner:
                     patchability_score=0.0,
                     module_deltas={},
                 )
-            except Exception:  # pragma: no cover - logging best effort
+            except Exception as exc:  # pragma: no cover - logging best effort
                 self.logger.exception(
                     "ROI logging failed",
                     extra=log_record(workflow_id="->".join(chain)),
+                    exc_info=exc,
                 )
         if self.stability_db is not None:
             try:
                 self.stability_db.record_metrics(
                     "->".join(chain), chain_roi, failures, chain_entropy, roi_delta=chain_roi
                 )
-            except Exception:  # pragma: no cover - logging best effort
+            except Exception as exc:  # pragma: no cover - logging best effort
                 self.logger.exception(
                     "stability logging failed",
                     extra=log_record(workflow_id="->".join(chain)),
+                    exc_info=exc,
                 )
 
         return record
@@ -464,7 +469,10 @@ def _get_entropy_threshold(
         try:
             entropies = [abs(float(v.get("entropy", 0.0))) for v in db.data.values()]
             threshold = max(entropies) if entropies else DEFAULT_ENTROPY_THRESHOLD
-        except Exception:  # pragma: no cover - best effort
+        except Exception as exc:  # pragma: no cover - best effort
+            get_logger(__name__).debug(
+                "entropy threshold calculation failed: %s", exc, exc_info=exc
+            )
             threshold = DEFAULT_ENTROPY_THRESHOLD
     return float(threshold)
 
@@ -527,16 +535,18 @@ async def self_improvement_cycle(
                     patchability_score=0.0,
                     module_deltas={},
                 )
-            except Exception:  # pragma: no cover - logging best effort
-                logger.exception("ROI logging failed", extra=log_record(workflow_id=cid))
+            except Exception as exc:  # pragma: no cover - logging best effort
+                logger.exception(
+                    "ROI logging failed", extra=log_record(workflow_id=cid), exc_info=exc
+                )
         if planner.stability_db is not None:
             try:
                 planner.stability_db.record_metrics(
                     cid, roi, failures, entropy, roi_delta=roi
                 )
-            except Exception:  # pragma: no cover - logging best effort
+            except Exception as exc:  # pragma: no cover - logging best effort
                 logger.exception(
-                    "stability logging failed", extra=log_record(workflow_id=cid)
+                    "stability logging failed", extra=log_record(workflow_id=cid), exc_info=exc
                 )
         if event_bus is not None:
             try:
@@ -550,9 +560,11 @@ async def self_improvement_cycle(
                         "revenue": 1.0 + roi,
                     },
                 )
-            except Exception:  # pragma: no cover - best effort
+            except Exception as exc:  # pragma: no cover - best effort
                 logger.exception(
-                    "failed to publish metrics", extra=log_record(workflow_id=cid)
+                    "failed to publish metrics",
+                    extra=log_record(workflow_id=cid),
+                    exc_info=exc,
                 )
 
     while True:
@@ -574,10 +586,11 @@ async def self_improvement_cycle(
                         STABLE_WORKFLOWS.record_metrics(
                             chain_id, roi, failures, entropy, roi_delta=roi
                         )
-                    except Exception:  # pragma: no cover - best effort
+                    except Exception as exc:  # pragma: no cover - best effort
                         logger.exception(
                             "global stability logging failed",
                             extra=log_record(workflow_id=chain_id),
+                            exc_info=exc,
                         )
         except Exception as exc:  # pragma: no cover - planner is best effort
             logger.exception("meta planner execution failed", exc_info=exc)

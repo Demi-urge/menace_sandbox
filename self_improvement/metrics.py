@@ -12,7 +12,7 @@ import yaml
 try:  # pragma: no cover - radon is an optional dependency
     from radon.complexity import cc_visit
     from radon.metrics import mi_visit
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     cc_visit = mi_visit = None
 
 from ..sandbox_settings import SandboxSettings
@@ -49,7 +49,7 @@ def _collect_metrics(
     for file in files:
         try:
             rel_path = file.relative_to(repo)
-        except Exception:
+        except ValueError:
             rel_path = file
         if any(part in _SKIP_DIRS for part in rel_path.parts):
             continue
@@ -59,7 +59,7 @@ def _collect_metrics(
             test_count += 1
         try:
             code = file.read_text(encoding="utf-8")
-        except Exception as exc:
+        except OSError as exc:
             logger.warning("Failed to read %s: %s", rel, exc)
             continue
 
@@ -71,7 +71,7 @@ def _collect_metrics(
                 blocks = cc_visit(code)
                 file_complexity = int(sum(b.complexity for b in blocks))
                 file_mi = float(mi_visit(code, False))
-            except Exception as exc:
+            except Exception as exc:  # pragma: no cover - radon may raise various errors
                 logger.warning("Radon metrics failed for %s: %s", rel, exc)
         else:  # fallback to AST-based estimation
             try:
@@ -95,7 +95,7 @@ def _collect_metrics(
                                 score += 1
                         file_complexity += score
                 file_mi = 100.0
-            except Exception as exc:
+            except (SyntaxError, ValueError) as exc:
                 logger.warning("AST metrics failed for %s: %s", rel, exc)
 
         per_file[rel] = {"complexity": file_complexity, "maintainability": file_mi}
@@ -116,7 +116,8 @@ def get_alignment_metrics(settings: SandboxSettings | None = None) -> Dict[str, 
         if not path_str:
             return {}
         return yaml.safe_load(Path(path_str).read_text()) or {}
-    except Exception:  # pragma: no cover - best effort
+    except (OSError, yaml.YAMLError) as exc:  # pragma: no cover - best effort
+        logger.warning("Failed to load baseline metrics: %s", exc)
         return {}
 
 
@@ -145,7 +146,8 @@ def _update_alignment_baseline(
         baseline_path = Path(path_str)
         try:
             existing = yaml.safe_load(baseline_path.read_text(encoding="utf-8")) or {}
-        except Exception:
+        except (OSError, yaml.YAMLError) as exc:
+            logger.warning("Failed to read existing baseline: %s", exc)
             existing = {}
 
         if files is None:
