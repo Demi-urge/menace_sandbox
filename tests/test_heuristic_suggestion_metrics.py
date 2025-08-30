@@ -1,6 +1,9 @@
+import types
+import sqlite3
 import os
 import sys
 import types
+import sqlite3
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -47,41 +50,50 @@ _stub(
     discover_recursive_orphans=lambda *a, **k: None,
 )
 
-from menace.sandbox_runner.cycle import _choose_suggestion
+from menace.sandbox_runner import cycle
 
 
-class _DummyDB:
-    def __init__(self, path):
-        self.data = {}
-
-    def add(self, rec):
-        self.data.setdefault(rec.module, rec.description)
-
-    def best_match(self, module):
-        return self.data.get(module)
+def _ctx(tmp_path, **kwargs):
+    base = {"repo": tmp_path, "suggestion_db": None, "failure_db_path": str(tmp_path / "failures.db")}
+    base.update(kwargs)
+    return types.SimpleNamespace(**base)
 
 
-class _Rec:
-    def __init__(self, module: str, description: str, safe: bool = True):
-        self.module = module
-        self.description = description
-        self.safe = safe
+def _write_module(tmp_path, name="mod.py"):
+    p = tmp_path / name
+    p.write_text("def foo():\n    return 1\n")
+    return p
 
 
-_stub("patch_suggestion_db", PatchSuggestionDB=_DummyDB, SuggestionRecord=_Rec)
-import patch_suggestion_db as psdb
+def test_complexity_metric_influences_suggestion(monkeypatch, tmp_path):
+    _write_module(tmp_path)
+    ctx = _ctx(tmp_path)
+
+    monkeypatch.setattr(cycle, "mi_visit", lambda code, _: 40.0)
+    low = cycle._heuristic_suggestion(ctx, "mod.py")
+    assert "maintainability" in low
+
+    monkeypatch.setattr(cycle, "mi_visit", lambda code, _: 90.0)
+    high = cycle._heuristic_suggestion(ctx, "mod.py")
+    assert "consider simplifying" in high
+    assert low != high
 
 
-def test_choose_suggestion_uses_db(tmp_path):
-    db = psdb.PatchSuggestionDB(tmp_path / "s.db")
-    db.add(psdb.SuggestionRecord(module="mod.py", description="add logging"))
-    db.add(psdb.SuggestionRecord(module="mod.py", description="add logging"))
-    db.add(psdb.SuggestionRecord(module="mod.py", description="improve error"))
-    ctx = types.SimpleNamespace(suggestion_cache={"mod.py": "fallback"}, suggestion_db=db)
-    assert _choose_suggestion(ctx, "mod.py") == "add logging"
+def test_failure_data_influences_suggestion(monkeypatch, tmp_path):
+    _write_module(tmp_path)
+    db_path = tmp_path / "failures.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE failures(model_id TEXT, cause TEXT, features TEXT, demographics TEXT, profitability REAL, retention REAL, cac REAL, roi REAL, ts TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO failures VALUES(?,?,?,?,?,?,?,?,datetime('now'))",
+        ("mod.py", "", "", "", 0.0, 0.0, 0.0, 0.0),
+    )
+    conn.commit()
+    conn.close()
 
-
-def test_choose_suggestion_fallback():
-    ctx = types.SimpleNamespace(suggestion_cache={"mod.py": "fallback"}, suggestion_db=None)
-    assert _choose_suggestion(ctx, "mod.py") == "fallback"
-
+    monkeypatch.setattr(cycle, "mi_visit", lambda code, _: 90.0)
+    ctx = _ctx(tmp_path)
+    suggestion = cycle._heuristic_suggestion(ctx, "mod.py")
+    assert "recent failures" in suggestion
