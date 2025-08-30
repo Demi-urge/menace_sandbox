@@ -22,6 +22,7 @@ import threading
 import inspect
 import subprocess
 import ast
+from contextlib import AsyncExitStack
 
 from db_router import init_db_router
 
@@ -403,7 +404,6 @@ class SelfTestService:
         self.results: dict[str, Any] | None = None
         self.history_path = Path(history_path) if history_path else None
         self._history_db: sqlite3.Connection | None = None
-        self._lock_acquired = False
         self.container_runtime = container_runtime
         self.docker_host = docker_host
         self.container_retries = int(os.getenv("SELF_TEST_RETRIES", container_retries))
@@ -765,10 +765,8 @@ class SelfTestService:
                 self.logger.exception("failed to delete state file")
 
     async def _docker_available(self) -> bool:
-        """Return ``True`` if the docker CLI is available and acquire the container lock."""
+        """Return ``True`` if the docker CLI is available."""
         try:
-            await _container_lock.acquire()
-            self._lock_acquired = True
             cmd = [self.container_runtime, "--version"]
             if self.docker_host:
                 cmd.extend(
@@ -783,20 +781,11 @@ class SelfTestService:
                 stderr=asyncio.subprocess.DEVNULL,
             )
             await proc.wait()
-            if proc.returncode != 0:
-                _container_lock.release()
-                self._lock_acquired = False
             return proc.returncode == 0
         except FileNotFoundError:
-            if self._lock_acquired:
-                _container_lock.release()
-                self._lock_acquired = False
             return False
         except Exception:
             self.logger.exception("docker check failed")
-            if self._lock_acquired:
-                _container_lock.release()
-                self._lock_acquired = False
             return False
 
     # ------------------------------------------------------------------
@@ -897,21 +886,13 @@ class SelfTestService:
 
     async def _cleanup_containers(self) -> None:
         """Remove containers labelled for self tests and exit."""
-        acquired = False
         try:
-            _file_lock.acquire()
-            acquired = True
-            if await self._docker_available():
-                await self._remove_stale_containers()
-        finally:
-            if self._lock_acquired:
-                _container_lock.release()
-                self._lock_acquired = False
-            if acquired:
-                try:
-                    _file_lock.release()
-                except Exception:
-                    pass
+            with _file_lock:
+                async with _container_lock:
+                    if await self._docker_available():
+                        await self._remove_stale_containers()
+        except Exception:
+            self.logger.exception("container cleanup failed")
 
     # ------------------------------------------------------------------
     def _discover_orphans(self) -> list[str]:
@@ -1708,69 +1689,28 @@ class SelfTestService:
             raise
 
 
-        use_container = False
-        acquired = False
         try:
-            if self.use_container:
-                _file_lock.acquire()
-                acquired = True
-                use_container = await self._docker_available()
-            use_pipe = self.result_callback is not None or use_container
-            workers_list = [self.workers for _ in paths]
-            if use_container and self.workers > 1 and len(paths) > 1:
-                base = self.workers // len(paths)
-                rem = self.workers % len(paths)
-                workers_list = [base + (1 if i < rem else 0) for i in range(len(paths))]
-                workers_list = [max(w, 1) for w in workers_list]
-
-            if use_container and self.offline_install and self.image_tar_path:
-                docker_cmd = [self.container_runtime]
-                if self.docker_host:
-                    docker_cmd.extend(
-                        [
-                            "-H" if self.container_runtime == "docker" else "--url",
-                            self.docker_host,
-                        ]
-                    )
-                docker_cmd.extend(["load", "-i", self.image_tar_path])
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        *docker_cmd,
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL,
-                    )
-                    await proc.wait()
-                    if proc.returncode != 0:
-                        self.logger.error("docker load failed: %s", self.image_tar_path)
-                        use_container = False
-                except Exception:
-                    self.logger.exception("docker load failed")
+            async with AsyncExitStack() as stack:
+                if self.use_container:
+                    try:
+                        stack.enter_context(_file_lock)
+                        await stack.enter_async_context(_container_lock)
+                    except Exception:
+                        self.logger.exception("failed to acquire self-test locks")
+                        raise
+                    use_container = await self._docker_available()
+                else:
                     use_container = False
 
-            for idx, p in enumerate(paths):
-                tmp_name: str | None = None
-                cmd = [
-                    sys.executable,
-                    "-m",
-                    self.test_runner,
-                    "-q",
-                    "--json-report",
-                ]
-                if use_pipe:
-                    cmd.append("--json-report-file=-")
-                else:
-                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
-                    tmp.close()
-                    tmp_name = tmp.name
-                    cmd.append(f"--json-report-file={tmp_name}")
-                cmd.extend(other_args)
-                w = workers_list[idx]
-                if w > 1:
-                    cmd.extend(["-n", str(w)])
-                if p:
-                    cmd.append(p)
+                use_pipe = self.result_callback is not None or use_container
+                workers_list = [self.workers for _ in paths]
+                if use_container and self.workers > 1 and len(paths) > 1:
+                    base = self.workers // len(paths)
+                    rem = self.workers % len(paths)
+                    workers_list = [base + (1 if i < rem else 0) for i in range(len(paths))]
+                    workers_list = [max(w, 1) for w in workers_list]
 
-                if use_container:
+                if use_container and self.offline_install and self.image_tar_path:
                     docker_cmd = [self.container_runtime]
                     if self.docker_host:
                         docker_cmd.extend(
@@ -1779,185 +1719,201 @@ class SelfTestService:
                                 self.docker_host,
                             ]
                         )
-                    cname = f"selftest_{uuid.uuid4().hex}"
-                    docker_cmd.extend(
-                        [
-                            "run",
-                            "--rm",
-                            "--name",
-                            cname,
-                            "--label",
-                            "menace_self_test=1",
-                            "-i",
-                            "-v",
-                            f"{os.getcwd()}:{os.getcwd()}:ro",
-                            "-w",
-                            os.getcwd(),
-                        ]
-                    )
-                    for k, v in os.environ.items():
-                        docker_cmd.extend(["-e", f"{k}={v}"])
-                    docker_cmd.append(self.container_image)
+                    docker_cmd.extend(["load", "-i", self.image_tar_path])
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            *docker_cmd,
+                            stdout=asyncio.subprocess.DEVNULL,
+                            stderr=asyncio.subprocess.DEVNULL,
+                        )
+                        await proc.wait()
+                        if proc.returncode != 0:
+                            self.logger.error("docker load failed: %s", self.image_tar_path)
+                            use_container = False
+                    except Exception:
+                        self.logger.exception("docker load failed")
+                        use_container = False
 
-                    container_cmd = [
-                        "python",
+                for idx, p in enumerate(paths):
+                    tmp_name: str | None = None
+                    cmd = [
+                        sys.executable,
                         "-m",
                         self.test_runner,
-                        *cmd[3:],
+                        "-q",
+                        "--json-report",
                     ]
+                    if use_pipe:
+                        cmd.append("--json-report-file=-")
+                    else:
+                        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
+                        tmp.close()
+                        tmp_name = tmp.name
+                        cmd.append(f"--json-report-file={tmp_name}")
+                    cmd.extend(other_args)
+                    w = workers_list[idx]
+                    if w > 1:
+                        cmd.extend(["-n", str(w)])
+                    if p:
+                        cmd.append(p)
 
-                    full_cmd = [*docker_cmd, *container_cmd]
-                    proc_info.append((full_cmd, None, True, cname, p))
-                else:
-                    proc_info.append((cmd, tmp_name, False, None, p))
-
-            async def _process(
-                cmd: list[str], tmp: str | None, is_container: bool, name: str | None
-            ) -> tuple[int, int, float, float, bool, str, str, str, list[dict[str, Any]]]:
-                report: dict[str, Any] = {}
-                out: bytes = b""
-                err: bytes = b""
-                attempts = self.container_retries + 1 if is_container else 1
-                delay = 0.1
-                records: list[dict[str, Any]] = []
-                for attempt in range(attempts):
-                    proc = await asyncio.create_subprocess_exec(
-                        *cmd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    try:
-                        out, err = await asyncio.wait_for(
-                            proc.communicate(),
-                            timeout=self.container_timeout if is_container else None,
-                        )
-                    except asyncio.TimeoutError as exc:
-                        proc.kill()
-                        await proc.wait()
-                        if is_container and name:
-                            await self._force_remove_container(name)
-                        try:
-                            self_test_container_timeouts_total.inc()
-                        except Exception:
-                            self.logger.exception("failed to update container timeout metric")
-                        rec = log_record(
-                            attempt=attempt + 1,
-                            error="timeout",
-                            name=name,
-                        )
-                        self.logger.warning("container attempt timed out", extra=rec)
-                        records.append(dict(rec))
-                        if attempt == attempts - 1:
-                            self.logger.error("self test container timed out")
-                            break
-                        await asyncio.sleep(delay)
-                        delay *= 2
-                        continue
-
-                    if proc.returncode != 0 and is_container and attempt < attempts - 1:
-                        if name:
-                            await self._force_remove_container(name)
-                        rec = log_record(
-                            attempt=attempt + 1,
-                            error=f"exit {proc.returncode}",
-                            name=name,
-                        )
-                        self.logger.warning("container attempt failed", extra=rec)
-                        records.append(dict(rec))
-                        await asyncio.sleep(delay)
-                        delay *= 2
-                        continue
-                    break
-
-                if use_pipe:
-                    data = (out or b"") + (err or b"")
-                    try:
-                        report = json.loads(data.decode() or "{}")
-                    except Exception:
-                        self.logger.exception("failed to parse test report")
-                else:
-                    if tmp and os.path.exists(tmp):
-                        try:
-                            with open(tmp, "r", encoding="utf-8") as fh:
-                                report = json.load(fh)
-                        except Exception:
-                            self.logger.exception("failed to parse test report")
-
-                if tmp:
-                    try:
-                        os.unlink(tmp)
-                    except Exception:
-                        pass
-
-                summary = report.get("summary", {})
-                pcount = int(summary.get("passed", 0))
-                fcount = int(summary.get("failed", 0)) + int(summary.get("error", 0))
-                cov_info = report.get("coverage", {}) or report.get("cov", {})
-                cov = float(
-                    cov_info.get("percent")
-                    or cov_info.get("coverage")
-                    or cov_info.get("percent_covered")
-                    or 0.0
-                )
-                runtime = float(
-                    report.get("duration")
-                    or summary.get("duration")
-                    or summary.get("runtime")
-                    or 0.0
-                )
-
-                failed_flag = proc.returncode != 0
-                out_snip = (out.decode(errors="ignore") if out else "")[:1000]
-                err_snip = (err.decode(errors="ignore") if err else "")[:1000]
-                log_snip = ""
-                if failed_flag:
-                    exc = RuntimeError(
-                        f"self tests failed with code {proc.returncode}"
-                    )
-                    if is_container:
-                        cmd_str = " ".join(shlex.quote(c) for c in cmd)
-                        err_snip = f"[container {name} cmd: {cmd_str}]\n" + err_snip
-                        if name:
-                            log_cmd = [self.container_runtime]
-                            if self.docker_host:
-                                log_cmd.extend([
+                    if use_container:
+                        docker_cmd = [self.container_runtime]
+                        if self.docker_host:
+                            docker_cmd.extend(
+                                [
                                     "-H" if self.container_runtime == "docker" else "--url",
                                     self.docker_host,
-                                ])
-                            log_cmd.extend(["logs", name])
-                            try:
-                                lp = await asyncio.create_subprocess_exec(
-                                    *log_cmd,
-                                    stdout=asyncio.subprocess.PIPE,
-                                    stderr=asyncio.subprocess.STDOUT,
-                                )
-                                lout, _ = await asyncio.wait_for(lp.communicate(), timeout=10)
-                                log_snip = (lout.decode(errors="ignore") if lout else "")[:1000]
-                            except Exception:
-                                log_snip = ""
-                        self.logger.error(
-                            "self tests failed in container %s: %s (cmd: %s)",
-                            name,
-                            exc,
-                            cmd_str,
+                                ]
+                            )
+                        cname = f"selftest_{uuid.uuid4().hex}"
+                        docker_cmd.extend(
+                            [
+                                "run",
+                                "--rm",
+                                "--name",
+                                cname,
+                                "--label",
+                                "menace_self_test=1",
+                                "-i",
+                                "-v",
+                                f"{os.getcwd()}:{os.getcwd()}:ro",
+                                "-w",
+                                os.getcwd(),
+                            ]
                         )
+                        for k, v in os.environ.items():
+                            docker_cmd.extend(["-e", f"{k}={v}"])
+                        docker_cmd.append(self.container_image)
+
+                        container_cmd = [
+                            "python",
+                            "-m",
+                            self.test_runner,
+                            *cmd[3:],
+                        ]
+
+                        full_cmd = [*docker_cmd, *container_cmd]
+                        proc_info.append((full_cmd, None, True, cname, p))
                     else:
-                        self.logger.error("self tests failed: %s", exc)
-                    try:
-                        self.error_logger.log(exc, "self_tests", "sandbox")
-                    except Exception:
-                        self.logger.exception("error logging failed")
-                return (
-                    pcount,
-                    fcount,
-                    cov,
-                    runtime,
-                    failed_flag,
-                    out_snip,
-                    err_snip,
-                    log_snip,
-                    records,
-                )
+                        proc_info.append((cmd, tmp_name, False, None, p))
+
+                async def _process(
+                    cmd: list[str], tmp: str | None, is_container: bool, name: str | None
+                ) -> tuple[int, int, float, float, bool, str, str, str, list[dict[str, Any]]]:
+                    report: dict[str, Any] = {}
+                    out: bytes = b""
+                    err: bytes = b""
+                    attempts = self.container_retries + 1 if is_container else 1
+                    delay = 0.1
+                    records: list[dict[str, Any]] = []
+                    for attempt in range(attempts):
+                        proc = await asyncio.create_subprocess_exec(
+                            *cmd,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        try:
+                            out, err = await asyncio.wait_for(
+                                proc.communicate(),
+                                timeout=self.container_timeout if is_container else None,
+                            )
+                        except asyncio.TimeoutError as exc:
+                            proc.kill()
+                            await proc.wait()
+                            if is_container and name:
+                                await self._force_remove_container(name)
+                            try:
+                                self_test_container_timeouts_total.inc()
+                            except Exception:
+                                self.logger.exception("failed to update container timeout metric")
+                            rec = log_record(
+                                attempt=attempt + 1,
+                                error="timeout",
+                                name=name,
+                            )
+                            self.logger.warning("container attempt timed out", extra=rec)
+                            records.append(dict(rec))
+                            if attempt == attempts - 1:
+                                self.logger.error("self test container timed out")
+                                break
+                            await asyncio.sleep(delay)
+                            delay *= 2
+                            continue
+
+                        if proc.returncode != 0 and is_container and attempt < attempts - 1:
+                            if name:
+                                await self._force_remove_container(name)
+                            rec = log_record(
+                                attempt=attempt + 1,
+                                error=f"exit {proc.returncode}",
+                                name=name,
+                            )
+                            self.logger.warning("container attempt failed", extra=rec)
+                            records.append(dict(rec))
+                            await asyncio.sleep(delay)
+                            delay *= 2
+                            continue
+                        break
+
+                    if use_pipe:
+                        data = (out or b"") + (err or b"")
+                        try:
+                            report = json.loads(data.decode()) if data else {}
+                        except Exception:
+                            self.logger.exception("failed to parse json report")
+                    else:
+                        if tmp:
+                            try:
+                                report = json.loads(Path(tmp).read_text())
+                            except Exception:
+                                self.logger.exception("failed to parse json report")
+                        if tmp:
+                            try:
+                                os.unlink(tmp)
+                            except Exception:
+                                pass
+
+                    summary = report.get("summary", {})
+                    pcount = int(summary.get("passed", 0))
+                    fcount = int(summary.get("failed", 0))
+                    cov = float(summary.get("coverage", 0.0))
+                    runtime = float(summary.get("duration", 0.0))
+                    failed_flag = report.get("exitcode", 0) != 0
+                    out_snip = out.decode(errors="ignore")[:1000]
+                    err_snip = err.decode(errors="ignore")[:1000]
+                    log_snip = ""
+                    if failed_flag and name and is_container:
+                        log_cmd = [self.container_runtime]
+                        if self.docker_host:
+                            log_cmd.extend(
+                                [
+                                    "-H" if self.container_runtime == "docker" else "--url",
+                                    self.docker_host,
+                                ]
+                            )
+                        log_cmd.extend(["logs", name])
+                        try:
+                            lp = await asyncio.create_subprocess_exec(
+                                *log_cmd,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.STDOUT,
+                            )
+                            lout, _ = await asyncio.wait_for(lp.communicate(), timeout=10)
+                            log_snip = (lout.decode(errors="ignore") if lout else "")[:1000]
+                        except Exception:
+                            log_snip = ""
+                    return (
+                        pcount,
+                        fcount,
+                        cov,
+                        runtime,
+                        failed_flag,
+                        out_snip,
+                        err_snip,
+                        log_snip,
+                        records,
+                    )
 
             tasks = [asyncio.create_task(_process(cmd, tmp, is_c, name)) for cmd, tmp, is_c, name, _ in proc_info]
 
@@ -2208,15 +2164,6 @@ class SelfTestService:
             if any_failed:
                 raise RuntimeError("self tests failed")
         finally:
-            if self._lock_acquired:
-                _container_lock.release()
-                self._lock_acquired = False
-            if acquired:
-                try:
-                    _file_lock.release()
-                except Exception:
-                    pass
-
             _restore_env()
     async def _schedule_loop(self, interval: float, *, refresh_orphans: bool = False) -> None:
         assert self._async_stop is not None
