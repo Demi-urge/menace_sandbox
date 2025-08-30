@@ -1,9 +1,6 @@
 import asyncio
 import time
 
-import asyncio
-import time
-
 from vector_service.cognition_layer import CognitionLayer
 
 
@@ -58,15 +55,43 @@ class DummyPatchLogger:
     def __init__(self):
         self.sessions = []
 
-    async def track_contributors_async(self, vector_ids, result, *, patch_id="", session_id="", contribution=None, retrieval_metadata=None):
+    async def track_contributors_async(
+        self,
+        vector_ids,
+        result,
+        *,
+        patch_id="",
+        session_id="",
+        contribution=None,
+        retrieval_metadata=None,
+        lines_changed=None,
+        tests_passed=None,
+        enhancement_name=None,
+        timestamp=None,
+    ):
         await asyncio.sleep(0.05)
-        self.sessions.append(session_id)
+        self.sessions.append(
+            {
+                "session_id": session_id,
+                "lines_changed": lines_changed,
+                "tests_passed": tests_passed,
+                "enhancement_name": enhancement_name,
+                "timestamp": timestamp,
+            }
+        )
         return {}
 
 
 async def _run_session(layer, name):
     ctx, sid = await layer.query_async(name)
-    await layer.record_patch_outcome_async(sid, True)
+    await layer.record_patch_outcome_async(
+        sid,
+        True,
+        lines_changed=1,
+        tests_passed=True,
+        enhancement_name="feat",
+        timestamp=2.0,
+    )
     return sid
 
 
@@ -88,5 +113,10 @@ def test_concurrent_async_usage():
     duration = time.time() - start
 
     assert len(set(sids)) == 2
-    assert layer.patch_logger.sessions == sids
+    assert [s["session_id"] for s in layer.patch_logger.sessions] == sids
+    for meta in layer.patch_logger.sessions:
+        assert meta["lines_changed"] == 1
+        assert meta["tests_passed"] is True
+        assert meta["enhancement_name"] == "feat"
+        assert meta["timestamp"] == 2.0
     assert duration < 0.17

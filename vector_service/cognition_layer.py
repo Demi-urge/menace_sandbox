@@ -676,6 +676,10 @@ class CognitionLayer:
         *,
         patch_id: str = "",
         contribution: float | None = None,
+        lines_changed: int | None = None,
+        tests_passed: bool | None = None,
+        enhancement_name: str | None = None,
+        timestamp: float | None = None,
         async_mode: bool = False,
     ) -> None:
         """Shared implementation for patch outcome recording."""
@@ -729,6 +733,10 @@ class CognitionLayer:
             "session_id": session_id,
             "contribution": contribution,
             "retrieval_metadata": meta,
+            "lines_changed": lines_changed,
+            "tests_passed": tests_passed,
+            "enhancement_name": enhancement_name,
+            "timestamp": timestamp,
         }
         import inspect
 
@@ -920,6 +928,10 @@ class CognitionLayer:
         *,
         patch_id: str = "",
         contribution: float | None = None,
+        lines_changed: int | None = None,
+        tests_passed: bool | None = None,
+        enhancement_name: str | None = None,
+        timestamp: float | None = None,
     ) -> None:
         """Forward patch outcome to :class:`PatchLogger`."""
 
@@ -929,6 +941,10 @@ class CognitionLayer:
                 success,
                 patch_id=patch_id,
                 contribution=contribution,
+                lines_changed=lines_changed,
+                tests_passed=tests_passed,
+                enhancement_name=enhancement_name,
+                timestamp=timestamp,
                 async_mode=False,
             )
         )
@@ -941,6 +957,10 @@ class CognitionLayer:
         *,
         patch_id: str = "",
         contribution: float | None = None,
+        lines_changed: int | None = None,
+        tests_passed: bool | None = None,
+        enhancement_name: str | None = None,
+        timestamp: float | None = None,
     ) -> None:
         """Asynchronous wrapper for :meth:`record_patch_outcome`."""
 
@@ -949,6 +969,10 @@ class CognitionLayer:
             success,
             patch_id=patch_id,
             contribution=contribution,
+            lines_changed=lines_changed,
+            tests_passed=tests_passed,
+            enhancement_name=enhancement_name,
+            timestamp=timestamp,
             async_mode=True,
         )
 

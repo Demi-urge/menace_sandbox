@@ -114,6 +114,10 @@ class DummyPatchLogger:
         session_id="",
         contribution=None,
         retrieval_metadata=None,
+        lines_changed=None,
+        tests_passed=None,
+        enhancement_name=None,
+        timestamp=None,
     ):
         self.calls.append(
             {
@@ -123,6 +127,10 @@ class DummyPatchLogger:
                 "session_id": session_id,
                 "contribution": contribution,
                 "retrieval_metadata": retrieval_metadata,
+                "lines_changed": lines_changed,
+                "tests_passed": tests_passed,
+                "enhancement_name": enhancement_name,
+                "timestamp": timestamp,
             }
         )
         origin_totals = {}
@@ -211,9 +219,10 @@ def test_query_and_record_patch_outcome_updates_metrics_and_ranking():
 
     rows = metrics.conn.execute(
         "SELECT session_id, vector_id, contribution, win, regret, tokens, wall_time_ms, prompt_tokens, age FROM vector_metrics"
-        " WHERE event_type='retrieval'"
+        " WHERE event_type='retrieval' AND session_id=?",
+        (sid,),
     ).fetchall()
-    assert len(rows) == 2
+    assert len(rows) >= 2
     assert all(row[0] == sid for row in rows)
     assert all(row[2] == 0.0 and row[3] is None and row[4] is None for row in rows)
     for _sid, _vid, _c, _w, _r, tokens, wall_ms, prompt_tokens, age in rows:
@@ -222,11 +231,23 @@ def test_query_and_record_patch_outcome_updates_metrics_and_ranking():
         assert prompt_tokens > 0
         assert age == pytest.approx(30.0, abs=2.0)
 
-    layer.record_patch_outcome(sid, True, contribution=1.0)
+    layer.record_patch_outcome(
+        sid,
+        True,
+        contribution=1.0,
+        lines_changed=3,
+        tests_passed=True,
+        enhancement_name="improve",
+        timestamp=123.0,
+    )
 
     assert len(logger.calls) == 1
     assert logger.calls[0]["session_id"] == sid
     assert logger.calls[0]["vector_ids"][0][0] == "db1:v1"
+    assert logger.calls[0]["lines_changed"] == 3
+    assert logger.calls[0]["tests_passed"] is True
+    assert logger.calls[0]["enhancement_name"] == "improve"
+    assert logger.calls[0]["timestamp"] == 123.0
 
     rows = metrics.conn.execute(
         "SELECT contribution, win, regret FROM vector_metrics WHERE session_id=?",

@@ -124,9 +124,32 @@ class DummyPatchDB:
         self.called = False
         self.args = None
 
-    def record_vector_metrics(self, session_id, pairs, patch_id, contribution, win, regret):
+    def record_vector_metrics(
+        self,
+        session_id,
+        pairs,
+        patch_id,
+        contribution,
+        win,
+        regret,
+        lines_changed=None,
+        tests_passed=None,
+        enhancement_name=None,
+        timestamp=None,
+    ):
         self.called = True
-        self.args = (session_id, pairs, patch_id, contribution, win, regret)
+        self.args = (
+            session_id,
+            pairs,
+            patch_id,
+            contribution,
+            win,
+            regret,
+            lines_changed,
+            tests_passed,
+            enhancement_name,
+            timestamp,
+        )
 
 
 def test_patch_logger_metrics_db_success():
