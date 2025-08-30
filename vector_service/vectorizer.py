@@ -6,7 +6,7 @@ This module consolidates the various standalone vectorisers into a single
 service.  Callers provide a ``kind`` identifying the record type and a
 dictionary representing the record.  The service delegates to the
 appropriate vectoriser and optionally persists the resulting embedding
-using :mod:`vector_utils`.
+using a configurable :class:`~vector_service.vector_store.VectorStore`.
 """
 
 from dataclasses import dataclass, field
@@ -19,9 +19,9 @@ import tempfile
 import torch
 from transformers import AutoModel, AutoTokenizer
 
-from vector_utils import persist_embedding
 from governed_embeddings import governed_embed
 from .registry import load_handlers
+from .vector_store import VectorStore, get_default_vector_store
 
 try:  # pragma: no cover - optional dependency used for text embeddings
     from sentence_transformers import SentenceTransformer  # type: ignore
@@ -71,12 +71,15 @@ class SharedVectorService:
     """Facade exposing a unified ``vectorise`` API."""
 
     text_embedder: SentenceTransformer | None = None
+    vector_store: VectorStore | None = None
     _handlers: Dict[str, Callable[[Dict[str, Any]], List[float]]] = field(init=False)
 
     def __post_init__(self) -> None:
         # Handlers are populated dynamically from the registry so newly
         # registered vectorisers are picked up automatically.
         self._handlers = load_handlers()
+        if self.vector_store is None:
+            self.vector_store = get_default_vector_store()
 
     def _encode_text(self, text: str) -> List[float]:
         if self.text_embedder is not None:
@@ -111,16 +114,15 @@ class SharedVectorService:
         """Vectorise ``record`` and persist the embedding."""
 
         vec = self.vectorise(kind, record)
-        try:
-            persist_embedding(
-                kind.lower(),
-                record_id,
-                vec,
-                origin_db=origin_db or kind,
-                metadata=metadata or {},
-            )
-        except TypeError:  # pragma: no cover - compatibility with older signatures
-            persist_embedding(kind.lower(), record_id, vec)
+        if self.vector_store is None:
+            raise RuntimeError("VectorStore not configured")
+        self.vector_store.add(
+            kind.lower(),
+            record_id,
+            vec,
+            origin_db=origin_db or kind,
+            metadata=metadata or {},
+        )
         return vec
 
 

@@ -1,17 +1,23 @@
 from vector_service.vectorizer import SharedVectorService
 
 
-def test_failure_and_research_embeddings_persist(monkeypatch):
-    calls = []
+class DummyStore:
+    def __init__(self):
+        self.calls = []
 
-    def fake_persist(kind, record_id, vec, *, path="embeddings.jsonl"):
-        calls.append((kind, record_id, list(vec)))
+    def add(self, kind, record_id, vector, *, origin_db=None, metadata=None):
+        self.calls.append((kind, record_id, list(vector)))
 
-    monkeypatch.setattr(
-        "vector_service.vectorizer.persist_embedding", fake_persist
-    )
+    def query(self, vector, top_k=5):  # pragma: no cover - unused
+        return []
 
-    svc = SharedVectorService()
+    def load(self):  # pragma: no cover - unused
+        pass
+
+
+def test_failure_and_research_embeddings_persist():
+    store = DummyStore()
+    svc = SharedVectorService(vector_store=store)
 
     failure = {
         "cause": "timeout",
@@ -32,5 +38,5 @@ def test_failure_and_research_embeddings_persist(monkeypatch):
     f_vec = svc.vectorise_and_store("failure", "f1", failure)
     r_vec = svc.vectorise_and_store("research", "r1", research)
 
-    assert calls[0][0] == "failure" and len(f_vec) > 0
-    assert calls[1][0] == "research" and len(r_vec) > 0
+    assert store.calls[0][0] == "failure" and len(f_vec) > 0
+    assert store.calls[1][0] == "research" and len(r_vec) > 0

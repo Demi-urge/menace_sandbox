@@ -12,6 +12,9 @@ logging:
 vector:
   dimensions: 512
   distance_metric: cosine
+vector_store:
+  backend: faiss
+  path: vectors.index
 bot:
   learning_rate: 0.01
   epsilon: 0.1
