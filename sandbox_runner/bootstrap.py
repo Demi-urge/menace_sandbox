@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from typing import Callable
 
+from packaging.version import Version
+
 from menace.auto_env_setup import ensure_env
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 
@@ -17,6 +19,12 @@ from .cli import main as _cli_main
 
 
 logger = logging.getLogger(__name__)
+
+
+REQUIRED_SERVICE_VERSIONS = {
+    "relevancy_radar": "1.0.0",
+    "quick_fix_engine": "1.0.0",
+}
 
 
 def _ensure_sqlite_db(path: Path) -> None:
@@ -41,6 +49,16 @@ def initialize_autonomous_sandbox(
 
     data_dir = Path(settings.sandbox_data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        probe = data_dir / ".write-test"
+        probe.touch()
+        probe.unlink()
+    except Exception as exc:  # pragma: no cover - environment dependent
+        logger.error("sandbox data directory %s is not writable", data_dir, exc_info=True)
+        raise RuntimeError(
+            f"sandbox data directory '{data_dir}' is not writable; "
+            "adjust permissions or update sandbox_data_dir"
+        ) from exc
 
     # Ensure baseline metrics file exists; fall back to minimal snapshot when
     # metrics collection fails.
@@ -59,10 +77,32 @@ def initialize_autonomous_sandbox(
     for name in ("metrics.db", "patch_history.db", "visual_agent_queue.db"):
         _ensure_sqlite_db(data_dir / name)
 
-    # Verify optional services are importable
-    for mod in ("relevancy_radar", "quick_fix_engine"):
-        if importlib.util.find_spec(mod) is None:
-            raise RuntimeError(f"{mod} service is required but missing")
+    # Verify optional services are importable and meet version requirements
+    from importlib import metadata
+
+    for mod, min_version in REQUIRED_SERVICE_VERSIONS.items():
+        try:
+            module = importlib.import_module(mod)
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                f"{mod} service is required but missing. "
+                f"Install it with 'pip install {mod}>={min_version}'."
+            ) from exc
+        version: str | None
+        try:
+            version = metadata.version(mod)
+        except Exception:
+            version = getattr(module, "__version__", None)
+        if version is None:
+            raise RuntimeError(
+                f"Unable to determine {mod} version. "
+                f"Reinstall or upgrade with 'pip install --upgrade {mod}'."
+            )
+        if Version(version) < Version(min_version):
+            raise RuntimeError(
+                f"{mod} service version {version} is too old; "
+                f"install {mod}>={min_version} with 'pip install --upgrade {mod}'."
+            )
 
     return settings
 
