@@ -344,15 +344,21 @@ ADAPTIVE_ROI_TRAIN_INTERVAL = 3600  # seconds between scheduled retraining
 
 
 # Default synergy weight values used when no valid file is available
-DEFAULT_SYNERGY_WEIGHTS: dict[str, float] = {
-    "roi": 1.0,
-    "efficiency": 1.0,
-    "resilience": 1.0,
-    "antifragility": 1.0,
-    "reliability": 1.0,
-    "maintainability": 1.0,
-    "throughput": 1.0,
-}
+DEFAULT_SYNERGY_WEIGHTS: dict[str, float] = dict(
+    getattr(
+        settings,
+        "default_synergy_weights",
+        {
+            "roi": 1.0,
+            "efficiency": 1.0,
+            "resilience": 1.0,
+            "antifragility": 1.0,
+            "reliability": 1.0,
+            "maintainability": 1.0,
+            "throughput": 1.0,
+        },
+    )
+)
 
 
 def _rotate_backups(path: Path) -> None:
@@ -383,6 +389,37 @@ def _atomic_write(path: Path, data: bytes | str, *, binary: bool = False) -> Non
         tmp = Path(fh.name)
     _rotate_backups(path)
     os.replace(tmp, path)
+
+
+def _load_initial_synergy_weights() -> None:
+    """Load persisted synergy weights into :class:`SandboxSettings`."""
+
+    path = Path(getattr(settings, "synergy_weight_file", settings.synergy_weights_path))
+    weights = DEFAULT_SYNERGY_WEIGHTS.copy()
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        valid = isinstance(data, dict) and all(
+            k in data and isinstance(data[k], (int, float)) for k in weights
+        )
+        if valid:
+            for k in weights:
+                weights[k] = float(data[k])
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning("failed to load synergy weights %s: %s", path, exc)
+    settings.synergy_weight_roi = weights["roi"]
+    settings.synergy_weight_efficiency = weights["efficiency"]
+    settings.synergy_weight_resilience = weights["resilience"]
+    settings.synergy_weight_antifragility = weights["antifragility"]
+    settings.synergy_weight_reliability = weights["reliability"]
+    settings.synergy_weight_maintainability = weights["maintainability"]
+    settings.synergy_weight_throughput = weights["throughput"]
+    settings.synergy_weight_file = str(path)
+
+
+_load_initial_synergy_weights()
 
 
 
@@ -492,7 +529,7 @@ class SynergyWeightLearner:
             lr = float(getattr(settings, "synergy_weights_lr", 0.1))
         self.train_interval = int(getattr(settings, "synergy_train_interval", 10))
         self.replay_size = int(getattr(settings, "synergy_replay_size", 100))
-        self.path = Path(path) if path else None
+        self.path = Path(path) if path else Path(settings.synergy_weight_file)
         self.lr = lr
         self.weights = DEFAULT_SYNERGY_WEIGHTS.copy()
         hp: Dict[str, Any] = dict(hyperparams or {})
@@ -1090,7 +1127,6 @@ class SelfImprovementEngine:
         )
         self.pre_roi_bias = pre_roi_bias if pre_roi_bias is not None else PRE_ROI_BIAS
         self.pre_roi_cap = pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
-        settings = SandboxSettings()
         self.borderline_bucket = BorderlineBucket()
         self.workflow_ready = False
         self.workflow_high_risk = False
@@ -1175,7 +1211,7 @@ class SelfImprovementEngine:
             "linear": getattr(settings, "growth_multiplier_linear", 2.0),
             "marginal": getattr(settings, "growth_multiplier_marginal", 1.0),
         }
-        default_path = Path(settings.synergy_weights_path)
+        default_path = Path(settings.synergy_weight_file)
         self.synergy_weights_path = (
             Path(synergy_weights_path)
             if synergy_weights_path is not None
@@ -1229,7 +1265,9 @@ class SelfImprovementEngine:
             synergy_learner_cls = mapping.get(env_name, synergy_learner_cls)
 
         self.synergy_learner = synergy_learner_cls(
-            self.synergy_weights_path, lr=self.synergy_weights_lr
+            self.synergy_weights_path,
+            lr=self.synergy_weights_lr,
+            settings=settings,
         )
         if synergy_weight_roi is None:
             self.synergy_weight_roi = self.synergy_learner.weights["roi"]
