@@ -60,7 +60,7 @@ def test_move_to_end_logging(monkeypatch, caplog):
     monkeypatch.setattr(gsp, "_aload_generator", _fake_aload_generator)
 
     ctx = {"target": _dummy_func}
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.WARNING):
         result = asyncio.run(gsp.async_generate_stubs([{"a": 1}], ctx))
     assert result == [{"a": 1}]
     assert any("failed to update cache LRU" in rec.message for rec in caplog.records)
