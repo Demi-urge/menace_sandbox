@@ -24,9 +24,9 @@ Given the following pattern...
 - Code summary: handle edge case
   Diff summary: adjust parsing
   Outcome: works (tests passed)
-Previous attempt failed with:
+Previous failure:
 Traceback: ValueError
-Try a different approach.
+Please attempt a different solution.
 ```
 
 ## Configuration
@@ -38,7 +38,7 @@ Try a different approach.
 * `retry_trace` – when provided, the prompt includes:
 
   ```
-  Previous attempt failed with:
+  Previous failure:
   <trace>
-  Try a different approach.
+  Please attempt a different solution.
   ```

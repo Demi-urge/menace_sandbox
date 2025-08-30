@@ -125,12 +125,14 @@ import menace.self_coding_engine as sce  # noqa: E402
 def test_build_visual_agent_prompt_basic(monkeypatch):
     captured: dict[str, str | None] = {}
 
-    def fake_build_prompt(self, description, *, context="", retrieval_context="", retry_info=None):
+    def fake_build_prompt(
+        self, description, *, context="", retrieval_context="", retry_trace=None
+    ):
         captured.update(
             description=description,
             context=context,
             retrieval_context=retrieval_context,
-            retry_info=retry_info,
+            retry_trace=retry_trace,
         )
         return "PROMPT"
 
@@ -142,7 +144,7 @@ def test_build_visual_agent_prompt_basic(monkeypatch):
     assert captured["description"] == "print hello"
     assert "def hello()" in captured["context"]
     assert captured["retrieval_context"] == ""
-    assert captured["retry_info"] is None
+    assert captured["retry_trace"] is None
 
 
 def test_build_visual_agent_prompt_env(monkeypatch, tmp_path):
@@ -167,7 +169,9 @@ def test_build_visual_agent_prompt_layout(monkeypatch):
     importlib.reload(sce)
     captured = {}
 
-    def fake_build_prompt(self, description, *, context="", retrieval_context="", retry_info=None):
+    def fake_build_prompt(
+        self, description, *, context="", retrieval_context="", retry_trace=None
+    ):
         captured["context"] = context
         return "PROMPT"
 
@@ -182,7 +186,9 @@ def test_build_visual_agent_prompt_layout(monkeypatch):
 def test_build_visual_agent_prompt_retrieval_context(monkeypatch):
     captured = {}
 
-    def fake_build_prompt(self, description, *, context="", retrieval_context="", retry_info=None):
+    def fake_build_prompt(
+        self, description, *, context="", retrieval_context="", retry_trace=None
+    ):
         captured["retrieval_context"] = retrieval_context
         return "PROMPT"
 

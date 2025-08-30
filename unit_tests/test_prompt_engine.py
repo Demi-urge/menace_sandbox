@@ -24,6 +24,7 @@ def test_retrieval_snippets_included():
             diff="changed logic",
             outcome="works",
             tests_passed=True,
+            raroi=0.5,
         )
     ]
     engine = PromptEngine(retriever=DummyRetriever(records))
@@ -36,8 +37,20 @@ def test_retrieval_snippets_included():
 
 def test_orders_by_roi_and_timestamp():
     records = [
-        _record(1.0, roi_tag=RoiTag.LOW_ROI.value, summary="low", tests_passed=True),
-        _record(1.0, roi_tag=RoiTag.HIGH_ROI.value, summary="high", tests_passed=True),
+        _record(
+            1.0,
+            roi_tag=RoiTag.LOW_ROI.value,
+            summary="low",
+            tests_passed=True,
+            raroi=0.4,
+        ),
+        _record(
+            1.0,
+            roi_tag=RoiTag.HIGH_ROI.value,
+            summary="high",
+            tests_passed=True,
+            raroi=0.9,
+        ),
         _record(1.0, ts=1, summary="old fail", tests_passed=False),
         _record(1.0, ts=2, summary="new fail", tests_passed=False),
     ]
@@ -54,6 +67,7 @@ def test_build_snippets_sorted_by_score():
                 "summary": "bad",
                 "roi_tag": RoiTag.BUG_INTRODUCED.value,
                 "tests_passed": True,
+                "raroi": -1.0,
             }
         },
         {
@@ -61,10 +75,11 @@ def test_build_snippets_sorted_by_score():
                 "summary": "good",
                 "roi_tag": RoiTag.HIGH_ROI.value,
                 "tests_passed": True,
+                "raroi": 1.0,
             }
         },
     ]
-    engine = PromptEngine()
+    engine = PromptEngine(confidence_threshold=-2.0)
     lines = engine.build_snippets(patches)
     text = "\n".join(lines)
     assert text.index("Code summary: good") < text.index("Code summary: bad")
@@ -81,20 +96,20 @@ def test_fallback_on_low_confidence(caplog, monkeypatch):
 
 
 def test_retry_trace_included():
-    records = [_record(1.0, summary="foo", tests_passed=True)]
+    records = [_record(1.0, summary="foo", tests_passed=True, raroi=0.5)]
     engine = PromptEngine(retriever=DummyRetriever(records))
     trace = "Traceback: fail"
-    prompt = engine.build_prompt("desc", retry_info=trace)
-    expected = "Previous attempt failed with:\nTraceback: fail\nTry a different approach."
+    prompt = engine.build_prompt("desc", retry_trace=trace)
+    expected = "Previous failure:\nTraceback: fail\nPlease attempt a different solution."
     assert expected in prompt
 
 
 def test_retry_trace_idempotent():
-    records = [_record(1.0, summary="foo", tests_passed=True)]
+    records = [_record(1.0, summary="foo", tests_passed=True, raroi=0.5)]
     engine = PromptEngine(retriever=DummyRetriever(records))
     trace = (
-        "Previous attempt failed with:\nTraceback: boom\nTry a different approach."
+        "Previous failure:\nTraceback: boom\nPlease attempt a different solution."
     )
-    prompt = engine.build_prompt("desc", retry_info=trace)
+    prompt = engine.build_prompt("desc", retry_trace=trace)
     assert prompt.count("Traceback: boom") == 1
-    assert prompt.count("Previous attempt failed with:") == 1
+    assert prompt.count("Previous failure:") == 1
