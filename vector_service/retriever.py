@@ -487,7 +487,7 @@ class PatchRetriever:
     store: VectorStore | None = None
     vector_service: SharedVectorService | None = None
     top_k: int = 5
-    metric: str = "cosine"
+    metric: str | None = None
 
     def __post_init__(self) -> None:
         if self.vector_service is None:
@@ -502,6 +502,18 @@ class PatchRetriever:
             except Exception:  # pragma: no cover - fallback
                 from vector_service.vector_store import get_default_vector_store  # type: ignore
             self.store = get_default_vector_store()
+        if not self.metric:
+            # Pull similarity metric from configuration when available.  The
+            # global ``vector.distance_metric`` field supports ``"cosine"`` or
+            # ``"inner_product"`` and defaults to cosine when unspecified.
+            metric = "cosine"
+            try:  # pragma: no cover - configuration optional in tests
+                from config import CONFIG
+
+                metric = getattr(getattr(CONFIG, "vector", None), "distance_metric", metric)
+            except Exception:
+                pass
+            self.metric = str(metric).lower()
 
     # ------------------------------------------------------------------
     def _similarity(self, a: Sequence[float], b: Sequence[float]) -> float:
@@ -555,6 +567,43 @@ class PatchRetriever:
         return results
 
 
+_patch_retriever: PatchRetriever | None = None
+
+
+def _get_patch_retriever() -> PatchRetriever:
+    """Return a configured :class:`PatchRetriever` instance.
+
+    The retriever is created lazily on first use and draws its similarity
+    metric and vector store backend from the global configuration.  Reusing a
+    single instance keeps the in-memory vector store loaded between calls.
+    """
+
+    global _patch_retriever
+    if _patch_retriever is None:
+        metric = "cosine"
+        try:  # pragma: no cover - configuration optional in tests
+            from config import CONFIG
+
+            metric = getattr(getattr(CONFIG, "vector", None), "distance_metric", metric)
+        except Exception:
+            pass
+        _patch_retriever = PatchRetriever(metric=str(metric).lower())
+    return _patch_retriever
+
+
+def search_patches(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    """Retrieve patch examples for ``query``.
+
+    This adapter wraps :class:`PatchRetriever.search` and initialises the
+    retriever using application configuration, exposing a single entry point
+    for modules that only need patch lookups.  The similarity metric
+    (``cosine`` or ``inner_product``) and the underlying :class:`VectorStore`
+    are selected via configuration.
+    """
+
+    return _get_patch_retriever().search(query, top_k=top_k)
+
+
 def fts_search(
     query: str,
     *,
@@ -579,4 +628,10 @@ def fts_search(
         return []
 
 
-__all__ = ["Retriever", "PatchRetriever", "FallbackResult", "fts_search"]
+__all__ = [
+    "Retriever",
+    "PatchRetriever",
+    "FallbackResult",
+    "fts_search",
+    "search_patches",
+]

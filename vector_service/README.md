@@ -31,6 +31,22 @@ layer.record_patch_outcome(session_id, True, contribution=1.0)
 
 The final call updates ROI metrics and adjusts ranking weights.
 
+## Patch example lookup
+
+Modules can retrieve stored code patch examples with a single call to
+``search_patches``.  The helper initialises a ``PatchRetriever`` using the
+similarity metric (``vector.distance_metric``) and ``VectorStore`` configured for
+the application:
+
+```python
+from vector_service.retriever import search_patches
+
+examples = search_patches("fix bug", top_k=3)
+```
+
+The returned list contains ``origin_db``, ``record_id`` and ``score`` fields
+similar to results from ``Retriever.search``.
+
 ## Adding new modalities
 
 The vector service dynamically discovers vectorisers.  Any module placed under
