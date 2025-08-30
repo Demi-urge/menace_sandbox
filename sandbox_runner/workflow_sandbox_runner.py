@@ -243,12 +243,23 @@ class WorkflowSandboxRunner:
             p = multiprocessing.Process(
                 target=_subprocess_worker, args=(child_conn, workflow, params)
             )
-            p.start()
-            p.join()
-            if p.is_alive():
-                p.kill()
-                p.join()
-            metrics, telemetry = parent_conn.recv()
+            try:
+                p.start()
+                metrics, telemetry = parent_conn.recv()
+                if telemetry and isinstance(telemetry, Mapping) and telemetry.get("error"):
+                    logger.error("subprocess error: %s", telemetry["error"])
+            except Exception as exc:
+                logger.exception("subprocess execution failed")
+                metrics = RunMetrics()
+                telemetry = {"error": str(exc), "trace": traceback.format_exc()}
+            finally:
+                if p.pid is not None:
+                    p.join()
+                    if p.is_alive():
+                        p.kill()
+                        p.join()
+                parent_conn.close()
+                child_conn.close()
             self.metrics = metrics
             self.telemetry = telemetry
             return metrics
@@ -1074,22 +1085,26 @@ class WorkflowSandboxRunner:
                     success = False
                     error = str(exc)
                     metrics.crash_count += 1
+                    logger.exception("module %s failed", name)
                     if not safe_mode:
                         raise
-                except BaseException:  # pragma: no cover - timeout/memory
+                except BaseException as exc:  # pragma: no cover - timeout/memory
                     if mem_event.is_set():
                         success = False
                         error = "module exceeded memory limit"
                         metrics.crash_count += 1
+                        logger.exception("module %s exceeded memory limit", name)
                         if not safe_mode:
                             raise MemoryError(error)
                     elif timeout_event.is_set():
                         success = False
                         error = "module exceeded timeout"
                         metrics.crash_count += 1
+                        logger.exception("module %s exceeded timeout", name)
                         if not safe_mode:
                             raise TimeoutError(error)
                     else:
+                        logger.exception("module %s terminated unexpectedly", name)
                         raise
                 finally:
                     if timeout:
@@ -1325,6 +1340,7 @@ def _subprocess_worker(
         metrics = runner.run(workflow, **params)
         conn.send((metrics, runner.telemetry))
     except Exception as exc:  # pragma: no cover - safety
+        logger.exception("subprocess workflow failed")
         conn.send((RunMetrics(), {"error": str(exc), "trace": traceback.format_exc()}))
     finally:
         if cgroup_path is not None:

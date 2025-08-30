@@ -10,6 +10,7 @@ import logging
 
 import urllib.request
 import shutil
+import multiprocessing
 
 import pytest
 import time
@@ -531,3 +532,44 @@ def test_telemetry_write_error_logged(monkeypatch, caplog):
         runner.run([step])
 
     assert any("failed to persist telemetry" in r.message for r in caplog.records)
+
+
+def test_module_failure_logs_and_cleans(monkeypatch, caplog):
+    paths: dict[str, str] = {}
+    original_tmpdir = tempfile.TemporaryDirectory
+
+    def record_tmpdir(*a, **kw):
+        td = original_tmpdir(*a, **kw)
+        paths["path"] = td.name
+        return td
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", record_tmpdir)
+    orig_open = builtins.open
+
+    def failing_step():
+        raise RuntimeError("boom")
+
+    runner = WorkflowSandboxRunner()
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError):
+            runner.run([failing_step])
+
+    assert any("module failing_step failed" in r.message for r in caplog.records)
+    assert builtins.open is orig_open
+    assert paths["path"]
+    assert not Path(paths["path"]).exists()
+
+
+def test_subprocess_failure_cleanup(caplog):
+    def failing_step():
+        raise RuntimeError("boom")
+
+    runner = WorkflowSandboxRunner()
+    before = set(multiprocessing.active_children())
+    with caplog.at_level(logging.ERROR):
+        metrics = runner.run(failing_step, use_subprocess=True)
+    after = set(multiprocessing.active_children())
+
+    assert before == after
+    assert runner.telemetry and "error" in runner.telemetry
+    assert any("subprocess error" in r.message for r in caplog.records)
