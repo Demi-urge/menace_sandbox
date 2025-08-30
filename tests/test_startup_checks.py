@@ -37,6 +37,7 @@ def test_run_startup_checks_warns(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv("MENACE_MODE", "test")
     pyproj = tmp_path / "pyproject.toml"
     _write_pyproject(pyproj, ["fake_package_123"])
+    monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
     sc.run_startup_checks(pyproject_path=pyproj)
     assert "Missing required dependencies" in caplog.text
 
@@ -51,6 +52,7 @@ def test_optional_dependency_install(monkeypatch, tmp_path):
     monkeypatch.setattr(sc, "validate_dependencies", lambda modules=sc.OPTIONAL_LIBS: ["missing_pkg"])
     monkeypatch.setattr(sc, "verify_project_dependencies", lambda p: [])
     monkeypatch.setattr(sc, "_install_packages", lambda pkgs: called.extend(pkgs))
+    monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
 
     sc.run_startup_checks(pyproject_path=pyproj)
 
@@ -61,6 +63,7 @@ def test_run_startup_checks_fails(monkeypatch, tmp_path):
     monkeypatch.setenv("MENACE_MODE", "production")
     pyproj = tmp_path / "pyproject.toml"
     _write_pyproject(pyproj, ["fake_package_456"])
+    monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
     with pytest.raises(RuntimeError):
         sc.run_startup_checks(pyproject_path=pyproj)
 
@@ -86,10 +89,39 @@ def test_audit_log_verification(monkeypatch, tmp_path):
     ).decode()
     monkeypatch.setenv("AUDIT_LOG_PATH", str(path))
     monkeypatch.setenv("AUDIT_PUBKEY", pub_b64)
+    monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
     sc.run_startup_checks(pyproject_path=pyproj)
     # Corrupt the log
     with open(path, "a") as fh:
         fh.write("bad entry\n")
+    monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
     with pytest.raises(RuntimeError):
         sc.run_startup_checks(pyproject_path=pyproj)
+
+
+def test_run_startup_checks_invokes_optional_verifier(monkeypatch, tmp_path):
+    monkeypatch.setenv("MENACE_MODE", "test")
+    pyproj = tmp_path / "pyproject.toml"
+    _write_pyproject(pyproj, [])
+    called = {"val": False}
+
+    def fake_verify() -> list[str]:
+        called["val"] = True
+        return []
+
+    monkeypatch.setattr(sc, "verify_optional_dependencies", fake_verify)
+    monkeypatch.setattr(sc, "verify_project_dependencies", lambda p: [])
+
+    sc.run_startup_checks(pyproject_path=pyproj)
+
+    assert called["val"]
+
+
+def test_verify_optional_dependencies_reports_missing(monkeypatch):
+    def _raise(*a, **k):
+        raise ImportError
+
+    monkeypatch.setattr(sc.importlib, "import_module", _raise)
+    missing = sc.verify_optional_dependencies(["foo", "bar"])
+    assert missing == ["foo", "bar"]
 

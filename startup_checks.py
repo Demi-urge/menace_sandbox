@@ -62,6 +62,20 @@ def validate_dependencies(modules: Iterable[str] = OPTIONAL_LIBS) -> list[str]:
     return missing
 
 
+def verify_optional_dependencies(modules: Iterable[str] | None = None) -> list[str]:
+    """Return list of optional modules specific to the sandbox that are missing."""
+
+    modules = list(modules) if modules is not None else ["quick_fix_engine"]
+    missing: list[str] = []
+    for mod in modules:
+        try:
+            importlib.import_module(mod)
+        except Exception:
+            logger.warning("optional dependency %s is missing", mod)
+            missing.append(mod)
+    return missing
+
+
 def _parse_requirement(req: str) -> str:
     """Return the package name portion of a dependency string."""
     name = req.split(";")[0].strip()
@@ -145,6 +159,7 @@ def run_startup_checks(pyproject_path: Path | None = None) -> None:
     missing_optional = validate_dependencies()
     if missing_optional:
         _install_packages(missing_optional)
+    verify_optional_dependencies()
     missing = verify_project_dependencies(pyproject_path or PYPROJECT_PATH)
     mode = os.getenv("MENACE_MODE", "test").lower()
     if missing:
@@ -182,4 +197,5 @@ __all__ = [
     "verify_critical_libs",
     "verify_project_dependencies",
     "dependencies_from_pyproject",
+    "verify_optional_dependencies",
 ]

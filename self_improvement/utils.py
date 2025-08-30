@@ -12,8 +12,6 @@ import time
 import asyncio
 import inspect
 import random
-import subprocess
-import sys
 import threading
 from dataclasses import dataclass
 from functools import lru_cache
@@ -24,7 +22,7 @@ from ..sandbox_settings import SandboxSettings
 
 
 _diagnostics_lock = threading.Lock()
-_diagnostics = {"cache_hits": 0, "cache_misses": 0, "install_attempts": 0}
+_diagnostics = {"cache_hits": 0, "cache_misses": 0}
 
 
 @lru_cache(maxsize=None)
@@ -44,9 +42,9 @@ def _load_callable(
     Successful imports are cached for future lookups. When the dependency is
     missing a stub is returned. The stub carries a structured error object and,
     depending on :class:`SandboxSettings`, may attempt to lazily retry the
-    import on first use.  Installation is only attempted when ``allow_install``
-    is ``True`` and its output is logged. ``_load_callable.diagnostics`` keeps
-    track of cache statistics for monitoring.
+    import on first use. Automatic installation attempts have been removed; the
+    caller instead receives a :class:`RuntimeError` with instructions on how to
+    install the missing package.
     """
 
     logger = logging.getLogger(__name__)
@@ -64,43 +62,6 @@ def _load_callable(
         self_improvement_failure_total.labels(reason="missing_dependency").inc()
 
         settings = SandboxSettings()
-        installed = False
-        install_output: str | None = None
-        if allow_install and not getattr(settings, "menace_offline_install", False):
-            pkg = module.split(".")[0]
-            with _diagnostics_lock:
-                _diagnostics["install_attempts"] += 1
-            try:  # pragma: no cover - network side effect
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", pkg],
-                    capture_output=True,
-                    text=True,
-                )
-                install_output = (result.stdout or "") + (result.stderr or "")
-                logger.info("pip install %s stdout: %s", pkg, result.stdout)
-                if result.stderr:
-                    logger.warning("pip install %s stderr: %s", pkg, result.stderr)
-                installed = result.returncode == 0
-                if not installed:
-                    logger.warning(
-                        "automatic install of %s failed with code %s", pkg, result.returncode
-                    )
-            except Exception as install_exc:  # pragma: no cover - best effort logging
-                logger.warning("automatic install of %s failed: %s", pkg, install_exc)
-                install_output = str(install_exc)
-
-        if installed:
-            _import_callable.cache_clear()
-            try:
-                func = _import_callable(module, attr)
-                with _diagnostics_lock:
-                    info = _import_callable.cache_info()
-                    _diagnostics["cache_hits"] = info.hits
-                    _diagnostics["cache_misses"] = info.misses
-                _load_callable.diagnostics = _diagnostics
-                return func
-            except Exception as exc2:  # pragma: no cover - best effort logging
-                exc = exc2
 
         @dataclass
         class MissingDependencyError:
@@ -114,10 +75,8 @@ def _load_callable(
             module,
             attr,
             exc,
-            install_attempted=allow_install and not getattr(
-                settings, "menace_offline_install", False
-            ),
-            install_output=install_output,
+            install_attempted=False,
+            install_output=None,
         )
         guide = f"Install it via `pip install {module.split('.')[0]}` to use {attr}"
 

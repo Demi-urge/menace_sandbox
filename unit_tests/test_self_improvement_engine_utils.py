@@ -1,5 +1,4 @@
 import ast
-import ast
 import importlib
 import logging
 import time
@@ -11,8 +10,6 @@ import asyncio
 import random
 import inspect
 from dataclasses import dataclass
-import subprocess
-import sys
 import threading
 from functools import lru_cache
 
@@ -57,8 +54,6 @@ def _load_utils():
         "self_improvement_failure_total": counter,
         "SandboxSettings": _StubSettings,
         "dataclass": dataclass,
-        "subprocess": subprocess,
-        "sys": sys,
         "threading": threading,
         "lru_cache": lru_cache,
     }
@@ -68,13 +63,10 @@ def _load_utils():
 
 def test_missing_dependency_returns_stub():
     utils = _load_utils()
-    with patch("subprocess.run") as sp, patch(
-        "importlib.import_module", side_effect=ModuleNotFoundError
-    ):
+    with patch("importlib.import_module", side_effect=ModuleNotFoundError):
         fn = utils["_load_callable"]("mod", "attr")
         with pytest.raises(RuntimeError):
             fn()
-    sp.assert_not_called()
 
 
 def test_retry_succeeds_after_transient_failure():
@@ -104,9 +96,7 @@ def test_load_callable_retry_when_enabled():
             raise ModuleNotFoundError
         return types.SimpleNamespace(attr=lambda: "ok")
 
-    with patch("subprocess.run", side_effect=Exception), patch(
-        "importlib.import_module", side_effect=side_effect
-    ):
+    with patch("importlib.import_module", side_effect=side_effect):
         utils["SandboxSettings"] = lambda: types.SimpleNamespace(
             retry_optional_dependencies=True,
             sandbox_retry_delay=0,
