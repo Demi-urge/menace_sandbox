@@ -55,3 +55,26 @@ settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 
 See [`sandbox_config.sample.yaml`](sandbox_config.sample.yaml) for a complete
 example configuration file.
+
+## Personal configuration examples
+
+Override defaults via constructor arguments or environment variables when
+tailoring the sandbox for personal deployments:
+
+```python
+from sandbox_settings import SandboxSettings
+
+settings = SandboxSettings(
+    sandbox_repo_path="/home/alice/menace_sandbox",
+    sandbox_data_dir="/home/alice/.menace",
+    synergy_train_interval=20,
+)
+```
+
+```env
+SANDBOX_REPO_PATH=/home/alice/menace_sandbox
+SANDBOX_DATA_DIR=/home/alice/.menace
+SYNERGY_TRAIN_INTERVAL=20
+```
+
+Any field listed above can be overridden in the same manner.
