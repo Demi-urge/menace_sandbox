@@ -604,7 +604,7 @@ class WorkflowSandboxRunner:
                     try:
                         return original_stat(raw, *a, **kw)
                     except Exception:
-                        pass
+                        logger.exception('unexpected error')
                 current = os.stat
                 try:
                     os.stat = original_stat
@@ -1297,7 +1297,7 @@ def _subprocess_worker(
             if memory_limit:
                 resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
         except Exception:
-            pass
+            logger.exception('unexpected error')
     elif cpu_limit or memory_limit:
         try:
             from .environment import _cgroup_v2_supported, _create_cgroup
@@ -1309,7 +1309,7 @@ def _subprocess_worker(
                         with open(cgroup_path / "cgroup.procs", "w", encoding="utf-8") as fh:
                             fh.write(str(os.getpid()))
                     except Exception:
-                        pass
+                        logger.exception('unexpected error')
         except Exception:
             cgroup_path = None
     try:
@@ -1325,7 +1325,7 @@ def _subprocess_worker(
 
                 _cleanup_cgroup(cgroup_path)
             except Exception:
-                pass
+                logger.exception('unexpected error')
         conn.close()
 
 
