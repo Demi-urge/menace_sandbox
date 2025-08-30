@@ -72,7 +72,11 @@ class WorkflowSandboxRunner:
                 self.success = success
                 self.exception = error
 
-        metrics = type("RunMetrics", (), {"modules": [Module(success, error)], "crash_count": 0 if success else 1})
+        metrics = type(
+            "RunMetrics",
+            (),
+            {"modules": [Module(success, error)], "crash_count": 0 if success else 1},
+        )
         self.metrics = metrics
         return metrics
 
@@ -99,3 +103,13 @@ def test_safe_mode_blocks_fs_write():
     assert not metrics.modules[0].success
     assert "file write disabled" in metrics.modules[0].exception
 
+
+def test_safe_mode_blocks_fs_escape():
+    runner = WorkflowSandboxRunner()
+
+    def wf():
+        open("../escape.txt")
+
+    metrics = runner.run(wf, safe_mode=True)
+    assert not metrics.modules[0].success
+    assert "path escapes sandbox" in metrics.modules[0].exception
