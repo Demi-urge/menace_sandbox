@@ -416,6 +416,106 @@ from ..env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
 POLICY_STATE_LEN = 21
 
 
+class TorchReplayStrategy:
+    """Minimal DQN-style learner with replay buffer and configurable optimiser."""
+
+    def __init__(
+        self,
+        *,
+        net_factory: Callable[[int, int, Any], Any],
+        optimizer_cls: Any,
+        lr: float,
+        train_interval: int,
+        replay_size: int,
+        optimizer_kwargs: Mapping[str, Any] | None = None,
+        net_kwargs: Mapping[str, Any] | None = None,
+    ) -> None:
+        if sip_torch is None:  # pragma: no cover - torch not available
+            raise RuntimeError("PyTorch required for TorchReplayStrategy")
+        self.model = net_factory(7, 7, **(net_kwargs or {}))
+        self.optimizer = optimizer_cls(
+            self.model.parameters(), lr=lr, **(optimizer_kwargs or {})
+        )
+        self.loss_fn = sip_torch.nn.MSELoss()
+        self.train_interval = max(1, int(train_interval))
+        self.buffer: deque[tuple[Any, float]] = deque(maxlen=int(replay_size))
+        self.steps = 0
+        self.eval_loss = 0.0
+
+    # --------------------------------------------------------------
+    def update(
+        self,
+        state: Sequence[float],
+        reward: float,
+        extra: Mapping[str, float] | None = None,
+    ) -> list[float]:
+        self.steps += 1
+        if extra:
+            reward *= 1.0 + float(extra.get("avg_roi", 0.0))
+            reward *= 1.0 + float(extra.get("pass_rate", 0.0))
+        state_tensor = sip_torch.tensor(state, dtype=sip_torch.float32)
+        self.buffer.append((state_tensor, float(reward)))
+        if self.steps % self.train_interval == 0 and self.buffer:
+            states, rewards = zip(*self.buffer)
+            states_batch = sip_torch.stack(states)
+            rewards_batch = (
+                sip_torch.tensor(rewards, dtype=sip_torch.float32).unsqueeze(1)
+            )
+            targets = states_batch * rewards_batch
+            preds = self.model(states_batch)
+            loss = self.loss_fn(preds, targets)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            self.eval_loss = float(loss.item())
+            self.buffer.clear()
+        with sip_torch.no_grad():
+            q_vals = self.model(state_tensor).clamp(0.0, 10.0).tolist()
+        return [float(v) for v in q_vals]
+
+    # --------------------------------------------------------------
+    def save(self, base: str) -> bool:
+        try:
+            buf = io.BytesIO()
+            sip_torch.save(self.model.state_dict(), buf)
+            _atomic_write(Path(base + ".model.pt"), buf.getvalue(), binary=True)
+            buf = io.BytesIO()
+            sip_torch.save(self.optimizer.state_dict(), buf)
+            _atomic_write(Path(base + ".optim.pt"), buf.getvalue(), binary=True)
+            _atomic_write(
+                Path(base + ".replay.pkl"),
+                pickle.dumps(list(self.buffer)),
+                binary=True,
+            )
+        except Exception as exc:  # pragma: no cover - disk errors
+            logger.exception("failed to save strategy state: %s", exc)
+            return False
+        try:
+            sip_torch.load(base + ".model.pt")
+            sip_torch.load(base + ".optim.pt")
+        except Exception as exc:
+            logger.warning("failed to validate strategy save: %s", exc)
+            return False
+        return True
+
+    # --------------------------------------------------------------
+    def load(self, base: str) -> None:
+        try:
+            model_file = Path(base + ".model.pt")
+            optim_file = Path(base + ".optim.pt")
+            if model_file.exists():
+                self.model.load_state_dict(sip_torch.load(model_file))
+            if optim_file.exists():
+                self.optimizer.load_state_dict(sip_torch.load(optim_file))
+            replay_file = Path(base + ".replay.pkl")
+            if replay_file.exists():
+                with open(replay_file, "rb") as fh:
+                    items = pickle.load(fh)
+                self.buffer = deque(items, maxlen=self.buffer.maxlen)
+        except Exception as exc:  # pragma: no cover - disk errors
+            logger.warning("failed to load strategy state: %s", exc)
+
+
 class SynergyWeightLearner:
     """Learner adjusting synergy weights using a simple RL policy."""
 
@@ -464,13 +564,18 @@ class SynergyWeightLearner:
         self._state: tuple[float, ...] = (0.0,) * 7
         self._steps = 0
         self.eval_loss = 0.0
+        self.checkpoint_interval = int(
+            getattr(settings, "synergy_checkpoint_interval", 50)
+        )
+        self._save_count = 0
+        self.checkpoint_path = self.path.with_suffix(self.path.suffix + ".bak")
         allow_py = bool(getattr(settings, "synergy_python_fallback", True))
         max_replay = int(getattr(settings, "synergy_python_max_replay", 1000))
         if sip_torch is None:
             if not allow_py or self.replay_size > max_replay:
                 raise RuntimeError(
                     "PyTorch is required for SynergyWeightLearner; pure-Python "
-                    "fallback is disabled or too slow"
+                    "fallback is disabled or too slow",
                 )
             logger.warning(
                 "PyTorch not installed - using %s strategy",
@@ -478,25 +583,65 @@ class SynergyWeightLearner:
             )
             self.buffer: deque[tuple[Any, float]] = deque(maxlen=self.replay_size)
         else:
-            net_factory = net_factory or (lambda i, o, **_: sip_torch.nn.Linear(i, o))
-            net_kwargs = dict(hp.get("net_kwargs", {}))
-            self.model = net_factory(7, 7, **net_kwargs)
-            opt_cls = hp.get("optimizer_cls", sip_torch.optim.Adam)
+            hidden = int(getattr(settings, "synergy_hidden_size", 32))
+            layers = int(getattr(settings, "synergy_layers", 1))
+            opt_name = str(getattr(settings, "synergy_optimizer", "adam")).lower()
+            opt_cls_default = {
+                "sgd": sip_torch.optim.SGD,
+                "adam": sip_torch.optim.Adam,
+            }.get(opt_name, sip_torch.optim.Adam)
+
+            def default_net(i: int, o: int, *, hidden_size: int = hidden, layers: int = layers):
+                modules: list[Any] = []
+                in_dim = i
+                for _ in range(max(0, layers)):
+                    modules.append(sip_torch.nn.Linear(in_dim, hidden_size))
+                    modules.append(sip_torch.nn.ReLU())
+                    in_dim = hidden_size
+                modules.append(sip_torch.nn.Linear(in_dim, o))
+                return sip_torch.nn.Sequential(*modules)
+
+            net_factory = net_factory or default_net
             opt_kwargs = dict(hp.get("optimizer_kwargs", {}))
-            self.optimizer = opt_cls(self.model.parameters(), lr=self.lr, **opt_kwargs)
-            self.loss_fn = sip_torch.nn.MSELoss()
-            self.buffer: deque[tuple[Any, float]] = deque(maxlen=self.replay_size)
+            net_kwargs = dict(hp.get("net_kwargs", {}))
+            opt_cls = hp.get("optimizer_cls", opt_cls_default)
+            self.nn_strategy = TorchReplayStrategy(
+                net_factory=net_factory,
+                optimizer_cls=opt_cls,
+                lr=self.lr,
+                train_interval=self.train_interval,
+                replay_size=self.replay_size,
+                optimizer_kwargs=opt_kwargs,
+                net_kwargs=net_kwargs,
+            )
+            self.buffer = self.nn_strategy.buffer
         self.load()
 
     # ------------------------------------------------------------------
     def load(self) -> None:
         if not self.path or not self.path.exists():
             return
+        data: dict[str, Any] | None = None
         try:
             with open(self.path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
         except Exception as exc:
             logger.warning("failed to load synergy weights %s: %s", self.path, exc)
+            if self.checkpoint_path.exists():
+                try:
+                    with open(self.checkpoint_path, "r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                        logger.warning(
+                            "recovered synergy weights from checkpoint %s",
+                            self.checkpoint_path,
+                        )
+                except Exception as exc2:
+                    logger.warning(
+                        "failed to load checkpoint %s: %s",
+                        self.checkpoint_path,
+                        exc2,
+                    )
+        if data is None:
             self.weights = DEFAULT_SYNERGY_WEIGHTS.copy()
             return
 
@@ -527,17 +672,8 @@ class SynergyWeightLearner:
                 self.buffer = deque(items, maxlen=self.replay_size)
         except Exception as exc:
             logger.exception("failed to load replay buffer: %s", exc)
-        if sip_torch is not None and hasattr(self, "model"):
-            model_file = Path(base + ".model.pt")
-            opt_file = Path(base + ".optim.pt")
-            if model_file.exists() and opt_file.exists():
-                try:
-                    self.model.load_state_dict(sip_torch.load(model_file))  # type: ignore[attr-defined]
-                    self.optimizer.load_state_dict(  # type: ignore[attr-defined]
-                        sip_torch.load(opt_file)
-                    )
-                except Exception as exc:
-                    logger.warning("failed to load model state: %s", exc)
+        if sip_torch is not None and hasattr(self, "nn_strategy"):
+            self.nn_strategy.load(base)
 
         logger.info("loaded synergy weights", extra=log_record(weights=self.weights))
 
@@ -545,31 +681,40 @@ class SynergyWeightLearner:
     def save(self) -> None:
         if not self.path:
             return
+        base = os.path.splitext(self.path)[0]
         try:
             _atomic_write(self.path, json.dumps(self.weights))
+            with open(self.path, "r", encoding="utf-8") as fh:
+                json.load(fh)
         except Exception as exc:
             logger.exception("failed to save synergy weights: %s", exc)
-        base = os.path.splitext(self.path)[0]
+            if self.checkpoint_path.exists():
+                try:
+                    shutil.copy(self.checkpoint_path, self.path)
+                except Exception:
+                    pass
+            return
+        self._save_count += 1
+        if self._save_count % self.checkpoint_interval == 0:
+            try:
+                shutil.copy(self.path, self.checkpoint_path)
+            except Exception as exc:
+                logger.warning("failed to checkpoint synergy weights: %s", exc)
         try:
             pkl = Path(base + ".policy.pkl")
             _atomic_write(pkl, pickle.dumps(self.strategy), binary=True)
         except Exception as exc:
             logger.exception("failed to save strategy pickle: %s", exc)
-        try:
-            replay = Path(base + ".replay.pkl")
-            _atomic_write(replay, pickle.dumps(list(self.buffer)), binary=True)
-        except Exception as exc:
-            logger.exception("failed to save replay buffer: %s", exc)
-        if self.path and sip_torch is not None and hasattr(self, "model"):
+        if sip_torch is not None and hasattr(self, "nn_strategy"):
+            ok = self.nn_strategy.save(base)
+            if not ok:
+                logger.warning("strategy persistence validation failed")
+        else:
             try:
-                buf = io.BytesIO()
-                sip_torch.save(self.model.state_dict(), buf)
-                _atomic_write(Path(base + ".model.pt"), buf.getvalue(), binary=True)
-                buf = io.BytesIO()
-                sip_torch.save(self.optimizer.state_dict(), buf)
-                _atomic_write(Path(base + ".optim.pt"), buf.getvalue(), binary=True)
+                replay = Path(base + ".replay.pkl")
+                _atomic_write(replay, pickle.dumps(list(self.buffer)), binary=True)
             except Exception as exc:
-                logger.exception("failed to save model state: %s", exc)
+                logger.exception("failed to save replay buffer: %s", exc)
         try:
             synergy_weight_updates_total.inc()
         except Exception:
@@ -594,28 +739,8 @@ class SynergyWeightLearner:
             "synergy_throughput",
         ]
         self._state = tuple(float(deltas.get(n, 0.0)) for n in names)
-        if sip_torch is not None and hasattr(self, "model"):
-            self._steps += 1
-            reward = float(roi_delta)
-            if extra:
-                reward *= 1.0 + float(extra.get("avg_roi", 0.0))
-                reward *= 1.0 + float(extra.get("pass_rate", 0.0))
-            state_tensor = sip_torch.tensor(self._state, dtype=sip_torch.float32)
-            self.buffer.append((state_tensor, reward))
-            if self._steps % self.train_interval == 0 and self.buffer:
-                states, rewards = zip(*self.buffer)
-                states_batch = sip_torch.stack(states)
-                rewards_batch = sip_torch.tensor(rewards, dtype=sip_torch.float32).unsqueeze(1)
-                targets = states_batch * rewards_batch
-                preds = self.model(states_batch)
-                loss = self.loss_fn(preds, targets)
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-                self.eval_loss = float(loss.item())
-                self.buffer.clear()
-            with sip_torch.no_grad():
-                q_vals_list = self.model(state_tensor).clamp(0.0, 10.0).tolist()
+        if sip_torch is not None and hasattr(self, "nn_strategy"):
+            q_vals_list = self.nn_strategy.update(self._state, float(roi_delta), extra)
         else:
             self.buffer.append((self._state, float(roi_delta)))
             q_vals_list: list[float] = []
@@ -664,6 +789,9 @@ class DQNSynergyLearner(SynergyWeightLearner):
         target_sync: int = 10,
     ) -> None:
         super().__init__(path, lr)
+        if hasattr(self, "nn_strategy"):
+            self.buffer = deque(maxlen=self.replay_size)
+            delattr(self, "nn_strategy")
         if sip_torch is None:
             logger.warning(
                 "PyTorch not available - DQNSynergyLearner falling back to DQN strategy"
