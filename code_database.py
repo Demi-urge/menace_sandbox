@@ -7,7 +7,7 @@ import logging
 import threading
 import hashlib
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Callable, Iterator, TypeVar, Sequence, Tuple, Literal
+from typing import Any, Dict, Iterable, List, Optional, Callable, Iterator, TypeVar, Sequence, Tuple, Literal, Mapping
 import json
 from collections import deque, Counter
 import re
@@ -1061,7 +1061,8 @@ class PatchHistoryDB:
                 lines_changed INTEGER DEFAULT 0,
                 tests_passed INTEGER DEFAULT 0,
                 enhancement_name TEXT,
-                timestamp REAL
+                timestamp REAL,
+                roi_deltas TEXT
             )
             """
         )
@@ -1159,7 +1160,8 @@ class PatchHistoryDB:
             "tests_passed": "ALTER TABLE patch_history ADD COLUMN tests_passed INTEGER DEFAULT 0",
             "enhancement_name": "ALTER TABLE patch_history ADD COLUMN enhancement_name TEXT",
             "timestamp": "ALTER TABLE patch_history ADD COLUMN timestamp REAL",
- }
+            "roi_deltas": "ALTER TABLE patch_history ADD COLUMN roi_deltas TEXT",
+}
         for name, stmt in migrations.items():
             if name not in cols:
                 conn.execute(stmt)
@@ -1484,6 +1486,7 @@ class PatchHistoryDB:
         tests_passed: bool | None = None,
         enhancement_name: str | None = None,
         timestamp: float | None = None,
+        roi_deltas: Mapping[str, float] | None = None,
         diff: str | None = None,
         summary: str | None = None,
         outcome: str | None = None,
@@ -1506,8 +1509,14 @@ class PatchHistoryDB:
 
         try:
             conn = self.router.get_connection("patch_history")
+            roi_json = "{}"
+            if roi_deltas:
+                try:
+                    roi_json = json.dumps(roi_deltas)
+                except Exception:
+                    logger.exception("failed to serialise roi_deltas")
             conn.execute(
-                "UPDATE patch_history SET lines_changed=?, tests_passed=?, enhancement_name=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary), outcome=COALESCE(?, outcome) WHERE id=?",
+                "UPDATE patch_history SET lines_changed=?, tests_passed=?, enhancement_name=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary), outcome=COALESCE(?, outcome), roi_deltas=COALESCE(?, roi_deltas) WHERE id=?",
                 (
                     lines_changed,
                     None if tests_passed is None else int(bool(tests_passed)),
@@ -1516,6 +1525,7 @@ class PatchHistoryDB:
                     diff,
                     summary,
                     outcome,
+                    roi_json,
                     patch_id,
                 ),
             )
