@@ -237,46 +237,44 @@ def map_module_identifier(
     return module_id
 
 
-def _heuristic_suggestion(ctx: Any, module: str) -> str:
-    """Return an enhanced heuristic suggestion for ``module``.
+def _analyse_module(ctx: Any, module: str) -> tuple[float, Dict[str, float]]:
+    """Return a weighted risk score for ``module`` and the contributing signals.
 
-    The suggestion is influenced by code complexity metrics (via ``radon``)
-    and the presence of recent failures in ``failures.db``.  When available,
-    the suggestion database is consulted before falling back to name based
-    heuristics.
+    The score combines commit churn, code complexity (via ``radon``) and recent
+    failure frequency.  Each signal contributes a value in ``[0, 1]`` which is
+    multiplied by its weight before summation.  Missing signals are treated as
+    zero and errors are logged but otherwise ignored.
     """
 
-    # ------------------------------------------------------------------
-    # Prefer explicit suggestions from the suggestion DB when available
-    sdb = getattr(ctx, "suggestion_db", None)
-    if sdb is not None:
-        try:
-            sugg = sdb.best_match(module)
-            if sugg:
-                return sugg
-        except Exception:  # pragma: no cover - best effort
-            logger.exception("heuristic suggestion db lookup failed for %s", module)
-
-    suggestions: list[str] = []
-
-    # ------------------------------------------------------------------
-    # Analyse code complexity if ``radon`` is installed
     repo = Path(getattr(ctx, "repo", "."))
     path = repo / module
+
+    weights = {"commit": 0.2, "complexity": 0.4, "failures": 0.4}
+    signals: Dict[str, float] = {k: 0.0 for k in weights}
+
+    # Commit history churn
+    try:
+        out = subprocess.check_output(
+            ["git", "log", "--oneline", "--since=30 days", "--", str(path)],
+            cwd=repo,
+            text=True,
+        )
+        commits = len([ln for ln in out.splitlines() if ln.strip()])
+        signals["commit"] = min(commits / 10.0, 1.0)
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("commit history lookup failed for %s", module)
+
+    # Code complexity via radon
     if mi_visit is not None and path.is_file():
         try:
             code = path.read_text(encoding="utf-8")
-            mi_score = mi_visit(code, True)
-            if mi_score < 50:
-                suggestions.append("refactor for maintainability")
-            elif mi_score < 70:
-                suggestions.append("simplify complex logic")
+            mi_score = float(mi_visit(code, True))
+            mi_score = max(0.0, min(100.0, mi_score))
+            signals["complexity"] = 1.0 - mi_score / 100.0
         except Exception:  # pragma: no cover - best effort
             logger.exception("complexity analysis failed for %s", module)
 
-    # ------------------------------------------------------------------
-    # Inspect recent failures from the failures database
-    failure_db_path = getattr(ctx, "failure_db_path", "failures.db")
+    # Recent failure frequency
     try:
         conn = router.get_connection("failures")
         try:
@@ -288,26 +286,25 @@ def _heuristic_suggestion(ctx: Any, module: str) -> str:
                 (module,),
             )
             cnt = cur.fetchone()[0]
-            if cnt:
-                suggestions.append("address recent failures")
+            signals["failures"] = min(cnt / 10.0, 1.0)
         finally:
             conn.close()
     except Exception:  # pragma: no cover - best effort
         logger.exception("failure data lookup failed for %s", module)
 
-    # ------------------------------------------------------------------
-    if suggestions:
-        return "; ".join(suggestions)
+    score = sum(signals[k] * weights[k] for k in weights)
+    return score, signals
 
-    # Fallback to simple name based heuristic
-    name = module.lower()
-    if "test" in name:
-        return "add tests for edge cases"
-    if "db" in name or "sql" in name:
-        return "optimise database interactions"
-    if "util" in name or "helper" in name:
-        return "consolidate helper utilities"
-    return "consider simplifying complex logic"
+
+def _heuristic_suggestion(ctx: Any, module: str) -> str:
+    """Return a suggestion based on :func:`_analyse_module`'s score."""
+
+    score, _ = _analyse_module(ctx, module)
+    if score >= 0.6:
+        return "refactor high-risk module"
+    if score >= 0.3:
+        return "review module for stability"
+    return "module appears stable"
 
 
 def _choose_suggestion(ctx: Any, module: str) -> str:
