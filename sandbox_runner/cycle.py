@@ -129,16 +129,27 @@ def _async_track_usage(module: str, impact: float | None = None) -> None:
     impact_val = 0.0 if impact is None else float(impact)
 
     def _track() -> None:
-        try:
-            _radar_track_usage(module, impact_val)
-            record_output_impact(module, impact_val)
-        except Exception:
-            pass
+        """Best effort tracking with simple retry and logging."""
+        # try a few times in case the radar service is temporarily unavailable
+        for attempt in range(3):
+            try:
+                _radar_track_usage(module, impact_val)
+                record_output_impact(module, impact_val)
+                return
+            except Exception:  # pragma: no cover - network/IO errors
+                logger.exception(
+                    "relevancy radar usage tracking failed for %s (attempt %d)",
+                    module,
+                    attempt + 1,
+                )
+                # small delay before retrying to avoid hot looping
+                time.sleep(0.1)
 
     try:
         threading.Thread(target=_track, daemon=True).start()
-    except Exception:
-        pass
+    except Exception:  # pragma: no cover - thread creation failures
+        logger.exception("failed to start usage tracking thread")
+        raise
 
 
 def map_module_identifier(
