@@ -58,11 +58,44 @@ try:  # pragma: no cover - heavy dependency
 except Exception:  # pragma: no cover - tiny fallback helper
     MenaceMemoryManager = None  # type: ignore
 
+    try:  # pragma: no cover - optional local summariser
+        from gensim.summarization import summarize as _gs  # type: ignore
+    except Exception:  # pragma: no cover - dependency missing
+        _gs = None  # type: ignore
+
+    _MAX_INPUT_TOKENS = 2048
+    _MAX_SUMMARY_TOKENS = 128
+
+    def _trim_to_tokens(text: str, limit: int) -> str:
+        if _FALLBACK_ENCODER is not None:
+            tokens = _FALLBACK_ENCODER.encode(text)
+            if len(tokens) > limit:
+                return _FALLBACK_ENCODER.decode(tokens[:limit])
+            return text
+        # Rough character based fallback when tokenizer unavailable
+        if len(text) > limit * 4:
+            return text[: limit * 4]
+        return text
+
     def _summarise_text(text: str, ratio: float = 0.3) -> str:
         text = text.strip().replace("\n", " ")
-        if len(text) <= 120:
-            return text
-        return text[:117] + "..."
+        if not text:
+            return ""
+        text = _trim_to_tokens(text, _MAX_INPUT_TOKENS)
+        summary = ""
+        if _gs is not None:
+            try:
+                summary = _gs(text, ratio=ratio)
+            except Exception:
+                summary = ""
+        if not summary:
+            sentences = [s.strip() for s in text.split(".") if s.strip()]
+            if not sentences:
+                summary = text
+            else:
+                count = max(1, int(len(sentences) * ratio))
+                summary = ". ".join(sentences[:count]) + "."
+        return _trim_to_tokens(summary, _MAX_SUMMARY_TOKENS)
 
 # Optional patch history ----------------------------------------------------
 try:  # pragma: no cover - optional dependency

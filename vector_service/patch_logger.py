@@ -86,14 +86,53 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover
     ROITracker = None  # type: ignore
 
+try:  # pragma: no cover - optional precise tokenizer
+    import tiktoken
+    _ENCODER = tiktoken.get_encoding("cl100k_base")
+except Exception:  # pragma: no cover - dependency missing
+    tiktoken = None  # type: ignore
+    _ENCODER = None
+
 try:  # pragma: no cover - optional summariser
     from menace_memory_manager import _summarise_text  # type: ignore
 except Exception:  # pragma: no cover - lightweight fallback
-    def _summarise_text(text: str, ratio: float = 0.2) -> str:
-        text = text.strip()
-        if len(text) <= 120:
+    try:  # pragma: no cover - local summarisation model
+        from gensim.summarization import summarize as _gs  # type: ignore
+    except Exception:  # pragma: no cover - dependency missing
+        _gs = None  # type: ignore
+
+    _MAX_INPUT_TOKENS = 2048
+    _MAX_SUMMARY_TOKENS = 128
+
+    def _trim_to_tokens(text: str, limit: int) -> str:
+        if _ENCODER is not None:
+            tokens = _ENCODER.encode(text)
+            if len(tokens) > limit:
+                return _ENCODER.decode(tokens[:limit])
             return text
-        return text[:117] + "..."
+        if len(text) > limit * 4:
+            return text[: limit * 4]
+        return text
+
+    def _summarise_text(text: str, ratio: float = 0.2) -> str:
+        text = text.strip().replace("\n", " ")
+        if not text:
+            return ""
+        text = _trim_to_tokens(text, _MAX_INPUT_TOKENS)
+        summary = ""
+        if _gs is not None:
+            try:
+                summary = _gs(text, ratio=ratio)
+            except Exception:
+                summary = ""
+        if not summary:
+            sentences = [s.strip() for s in text.split(".") if s.strip()]
+            if not sentences:
+                summary = text
+            else:
+                count = max(1, int(len(sentences) * ratio))
+                summary = ". ".join(sentences[:count]) + "."
+        return _trim_to_tokens(summary, _MAX_SUMMARY_TOKENS)
 
 try:  # pragma: no cover - optional info database
     from research_aggregator_bot import InfoDB, ResearchItem  # type: ignore
