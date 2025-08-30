@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Tuple
 import logging
 
 from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
+from vector_service.roi_tags import RoiTag
 
 
 class DummyRetriever:
@@ -21,8 +22,8 @@ def _record(score: float, **meta: Any) -> Dict[str, Any]:
 
 def test_construct_prompt_orders_by_roi_and_timestamp():
     records = [
-        _record(1.0, roi_delta=0.1, summary="low", tests_passed=True),
-        _record(1.0, roi_delta=0.9, summary="high", tests_passed=True),
+        _record(1.0, roi_tag=RoiTag.LOW_ROI.value, summary="low", tests_passed=True),
+        _record(1.0, roi_tag=RoiTag.HIGH_ROI.value, summary="high", tests_passed=True),
         _record(1.0, ts=1, summary="old fail", tests_passed=False),
         _record(1.0, ts=2, summary="new fail", tests_passed=False),
     ]

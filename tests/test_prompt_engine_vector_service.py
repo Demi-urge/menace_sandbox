@@ -4,6 +4,7 @@ from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
 import vector_service.vectorizer as vz
 from vector_service.retriever import PatchRetriever
 from vector_service.vector_store import AnnoyVectorStore
+from vector_service.roi_tags import RoiTag
 
 
 def _setup_store(monkeypatch, tmp_path, patches, query_vec):
@@ -46,8 +47,8 @@ def test_prompt_engine_retrieves_top_n_snippets(monkeypatch, tmp_path):
 
 def test_prompt_engine_orders_by_roi_and_recency(monkeypatch, tmp_path):
     patches = [
-        ("1", [1.0, 0.0], {"summary": "low", "tests_passed": True, "roi_delta": 0.1}),
-        ("2", [1.0, 0.0], {"summary": "high", "tests_passed": True, "roi_delta": 0.9}),
+        ("1", [1.0, 0.0], {"summary": "low", "tests_passed": True, "roi_tag": RoiTag.LOW_ROI.value}),
+        ("2", [1.0, 0.0], {"summary": "high", "tests_passed": True, "roi_tag": RoiTag.HIGH_ROI.value}),
         ("3", [1.0, 0.0], {"summary": "old fail", "tests_passed": False, "ts": 1}),
         ("4", [1.0, 0.0], {"summary": "new fail", "tests_passed": False, "ts": 2}),
     ]
