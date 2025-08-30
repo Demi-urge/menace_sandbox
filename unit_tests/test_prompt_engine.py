@@ -47,9 +47,10 @@ def test_orders_by_roi_and_timestamp():
     assert prompt.index("Code summary: new fail") < prompt.index("Code summary: old fail")
 
 
-def test_fallback_on_low_confidence(caplog):
+def test_fallback_on_low_confidence(caplog, monkeypatch):
     records: List[Dict[str, Any]] = []
     engine = PromptEngine(retriever=DummyRetriever(records))
+    monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
     with caplog.at_level(logging.INFO):
         prompt = engine.build_prompt("desc")
     assert prompt == DEFAULT_TEMPLATE
@@ -61,5 +62,16 @@ def test_retry_trace_included():
     engine = PromptEngine(retriever=DummyRetriever(records))
     trace = "Traceback: fail"
     prompt = engine.build_prompt("desc", retry_info=trace)
-    expected = f"Previous attempt failed with {trace}; seek alternative solution."
+    expected = "Previous attempt failed with:\nTraceback: fail\nTry a different approach."
     assert expected in prompt
+
+
+def test_retry_trace_idempotent():
+    records = [_record(1.0, summary="foo", tests_passed=True)]
+    engine = PromptEngine(retriever=DummyRetriever(records))
+    trace = (
+        "Previous attempt failed with:\nTraceback: boom\nTry a different approach."
+    )
+    prompt = engine.build_prompt("desc", retry_info=trace)
+    assert prompt.count("Traceback: boom") == 1
+    assert prompt.count("Previous attempt failed with:") == 1
