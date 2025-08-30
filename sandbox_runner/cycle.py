@@ -216,9 +216,7 @@ def _heuristic_suggestion(ctx: Any, module: str) -> str:
     # Inspect recent failures from the failures database
     failure_db_path = getattr(ctx, "failure_db_path", "failures.db")
     try:
-        import sqlite3
-
-        conn = sqlite3.connect(failure_db_path)
+        conn = router.get_connection("failures")
         try:
             cur = conn.execute(
                 """
@@ -577,7 +575,17 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         orphan_modules_legacy_total.inc(legacy_count)
         orphan_modules_reclassified_total.inc(reclassified_count)
     except Exception:
-        logger.exception("failed to update orphan module counters")
+        logger.exception(
+            "failed to update orphan module counters",
+            extra=log_record(
+                tested=tested_count,
+                passed=passed_count,
+                failed=failed_count,
+                redundant=redundant_count,
+                legacy=legacy_count,
+                reclassified=reclassified_count,
+            ),
+        )
 
     logger.info(
         "isolated module tests",
