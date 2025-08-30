@@ -34,6 +34,9 @@ GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 from orphan_analyzer import classify_module
 from sandbox_settings import SandboxSettings
 from logging_utils import log_record
+from pydantic import ValidationError
+
+from .self_services_config import SelfTestConfig
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     from logging_utils import setup_logging
@@ -75,6 +78,10 @@ orphan_modules_legacy_total = _me.orphan_modules_legacy_total
 router = GLOBAL_ROUTER
 
 settings = SandboxSettings()
+try:  # Validate early so misconfiguration is reported immediately
+    test_config = SelfTestConfig()
+except ValidationError as exc:  # pragma: no cover - import time validation
+    raise RuntimeError(f"Invalid self-test configuration: {exc}") from exc
 
 self_test_passed_total = _me.Gauge(
     "self_test_passed_total", "Total number of passed self tests"
@@ -103,7 +110,7 @@ setattr(_me, "self_test_container_failures_total", self_test_container_failures_
 setattr(_me, "self_test_container_timeouts_total", self_test_container_timeouts_total)
 
 _container_lock = Lock()
-_file_lock = FileLock(settings.self_test_lock_file)
+_file_lock = FileLock(test_config.lock_file)
 
 # ---------------------------------------------------------------------------
 # Track failing critical test suites across runs
@@ -348,7 +355,7 @@ class SelfTestService:
         recursive_isolated: bool = SandboxSettings().recursive_isolated,
         clean_orphans: bool = False,
         include_redundant: bool = SandboxSettings().test_redundant_modules,
-        report_dir: str | Path = Path(settings.self_test_report_dir),
+        report_dir: str | Path = Path(test_config.report_dir),
         stub_scenarios: Mapping[str, Any] | None = None,
     ) -> None:
         """Create a new service instance.
@@ -2482,7 +2489,7 @@ def cli(argv: list[str] | None = None) -> int:
     )
     run.add_argument(
         "--report-dir",
-        default=settings.self_test_report_dir,
+        default=str(test_config.report_dir),
         help="Directory to store failure reports",
     )
     run.add_argument(
@@ -2613,7 +2620,7 @@ def cli(argv: list[str] | None = None) -> int:
     )
     sched.add_argument(
         "--report-dir",
-        default=settings.self_test_report_dir,
+        default=str(test_config.report_dir),
         help="Directory to store failure reports",
     )
     sched.add_argument(
@@ -2695,7 +2702,7 @@ def cli(argv: list[str] | None = None) -> int:
     rep = sub.add_parser("report", help="Show last self test report")
     rep.add_argument(
         "--report-dir",
-        default=settings.self_test_report_dir,
+        default=str(test_config.report_dir),
         help="Directory containing failure reports",
     )
 

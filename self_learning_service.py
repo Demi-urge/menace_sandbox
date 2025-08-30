@@ -8,7 +8,7 @@ import logging
 from typing import Optional
 from threading import Event, Thread
 
-from sandbox_settings import SandboxSettings
+from pydantic import ValidationError
 
 from .unified_event_bus import UnifiedEventBus
 from .neuroplasticity import PathwayDB
@@ -20,9 +20,14 @@ from .unified_learning_engine import UnifiedLearningEngine
 from .action_learning_engine import ActionLearningEngine
 from .self_learning_coordinator import SelfLearningCoordinator
 from .local_knowledge_module import init_local_knowledge
+from .self_services_config import SelfLearningConfig
 
 logger = logging.getLogger(__name__)
-settings = SandboxSettings()
+
+try:  # Validate configuration at import time for early feedback
+    config = SelfLearningConfig()
+except ValidationError as exc:  # pragma: no cover - import time validation
+    raise RuntimeError(f"Invalid self-learning configuration: {exc}") from exc
 
 
 def main(
@@ -50,6 +55,11 @@ def main(
         environment variable.  Must be a positive integer.
     """
 
+    if persist_events is None and config.persist_events is not None:
+        persist_events = str(config.persist_events)
+    if persist_progress is None and config.persist_progress is not None:
+        persist_progress = str(config.persist_progress)
+
     bus = UnifiedEventBus(persist_events) if persist_events else UnifiedEventBus()
 
     pdb = PathwayDB(event_bus=bus)
@@ -70,9 +80,9 @@ def main(
     )
     coord.start()
 
-    # Determine the effective prune interval from argument or settings.
+    # Determine the effective prune interval from argument or configuration.
     if prune_interval is None:
-        prune_interval = int(getattr(settings, "prune_interval", 50))
+        prune_interval = config.prune_interval
     if prune_interval <= 0:
         raise ValueError("prune_interval must be positive")
 

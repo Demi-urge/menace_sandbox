@@ -1981,6 +1981,33 @@ Install the extras with:
 pip install pandas psutil prometheus-client
 ```
 
+## Service Configuration
+
+### Self-Learning Service
+
+| Environment variable | Description | Default |
+| --- | --- | --- |
+| `SELF_LEARNING_PERSIST_EVENTS` | Optional path where the event bus persists state | unset |
+| `SELF_LEARNING_PERSIST_PROGRESS` | Optional path storing evaluation results on shutdown | unset |
+| `PRUNE_INTERVAL` | Number of new interactions before pruning GPT memory | `50` |
+
+### Self-Test Service
+
+| Environment variable | Description | Default |
+| --- | --- | --- |
+| `SELF_TEST_LOCK_FILE` | File used to serialise self-test runs | `sandbox_data/self_test.lock` |
+| `SELF_TEST_REPORT_DIR` | Directory used to store self-test reports | `sandbox_data/self_test_reports` |
+
+Example `.env` snippet for personal deployments:
+
+```env
+SELF_LEARNING_PERSIST_EVENTS=/var/menace/events.db
+SELF_LEARNING_PERSIST_PROGRESS=/var/menace/progress.json
+PRUNE_INTERVAL=100
+SELF_TEST_LOCK_FILE=/var/menace/self_test.lock
+SELF_TEST_REPORT_DIR=/var/menace/reports
+```
+
 ## Legal Notice
 
 See [LEGAL.md](LEGAL.md) for the full legal terms. In short, this project may
