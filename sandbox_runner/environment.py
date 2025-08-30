@@ -2963,7 +2963,18 @@ def _cleanup_pools() -> None:
                             check=False,
                         )
             else:
-                pass
+                try:
+                    stderr = (proc.stderr or "").strip()
+                except Exception:
+                    stderr = ""
+                try:
+                    logger.error(
+                        "failed to list stale sandbox containers (rc=%s): %s",
+                        proc.returncode,
+                        stderr,
+                    )
+                except Exception:
+                    logger.exception('unexpected error')
         except Exception:
             logger.exception('unexpected error')
 
