@@ -1286,6 +1286,71 @@ The Menace integrity model interprets tiers as follows:
 * ``critical`` – treated as integrity violations and usually block deployment
   until resolved or explicitly waived.
 
+### Safe mode, self-improvement intervals and metrics
+
+Run individual modules inside an isolated directory and block outbound
+networking by passing ``safe_mode=True`` to
+``WorkflowSandboxRunner.run``. Any unexpected network call raises
+``RuntimeError`` and file writes outside the sandbox are rejected::
+
+    from sandbox_runner import WorkflowSandboxRunner
+
+    def fetch(url="https://example.com"):
+        import httpx
+        return httpx.get(url).text
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run(fetch, safe_mode=True)
+
+``RunMetrics`` exposes ``duration``, ``memory_*`` fields and a per-module
+``success`` flag so callers can evaluate resource usage and error rates.
+``crash_count`` captures the number of failing modules while
+``memory_per_module`` and ``peak_memory`` highlight overall consumption.
+
+#### Configuring self-improvement intervals
+
+Self-improvement cycles retrain the synergy learner periodically. Set
+``AUTO_TRAIN_INTERVAL`` or ``SYNERGY_TRAIN_INTERVAL`` (seconds) to adjust how
+often weights are updated. ``ADAPTIVE_ROI_RETRAIN_INTERVAL`` controls ROI
+retraining frequency. Lower values shorten the feedback loop while higher ones
+reduce system load.
+
+#### Optional dependencies
+
+Some features rely on optional packages:
+
+- ``sandbox_runner`` and ``quick_fix_engine`` enable orphan integration and
+  helper patch generation.  Missing modules raise ``RuntimeError`` when those
+  features are invoked.
+- ``pandas``, ``psutil`` and ``prometheus-client`` power metrics dashboards and
+  detailed resource statistics.  If absent the sandbox logs a warning and
+  skips the related functionality.
+- ``torch`` enables deep reinforcement learners.  When not installed the engine
+  falls back to simpler strategies.
+
+#### Personal ``SandboxSettings`` example
+
+Override defaults directly when instantiating ``SandboxSettings`` or via
+environment variables:
+
+```python
+from sandbox_settings import SandboxSettings
+
+settings = SandboxSettings(
+    sandbox_repo_path="/home/alice/menace_sandbox",
+    sandbox_data_dir="/home/alice/.menace",
+    synergy_train_interval=20,
+    roi_cycles=5,
+)
+```
+
+```
+SANDBOX_REPO_PATH=/home/alice/menace_sandbox
+SANDBOX_DATA_DIR=/home/alice/.menace
+SYNERGY_TRAIN_INTERVAL=20
+ROI_CYCLES=5
+```
+
 ### Advanced sandbox commands
 
 - ``--auto-thresholds`` recomputes ROI and synergy thresholds every cycle so
