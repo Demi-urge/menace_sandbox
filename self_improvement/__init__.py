@@ -52,14 +52,15 @@ import importlib
 
 from db_router import GLOBAL_ROUTER, init_db_router
 
-from sandbox_settings import SandboxSettings, load_sandbox_settings
-from sandbox_runner.bootstrap import initialize_autonomous_sandbox
-
-settings = load_sandbox_settings()
-initialize_autonomous_sandbox(settings)
-
-if getattr(settings, "sandbox_central_logging", False):
-    setup_logging()
+from sandbox_settings import SandboxSettings
+from .init import (
+    init_self_improvement,
+    settings,
+    _repo_path,
+    _data_dir,
+    _atomic_write,
+    DEFAULT_SYNERGY_WEIGHTS,
+)
 from ..metrics_exporter import (
     synergy_weight_updates_total,
     synergy_weight_update_failures_total,
@@ -137,17 +138,6 @@ except ImportError as exc:  # pragma: no cover - explicit guidance for users
         " Install the sandbox runner package or add it to PYTHONPATH."
     ) from exc
 
-
-def _repo_path() -> Path:
-    """Return repository root from :class:`SandboxSettings`."""
-
-    return Path(SandboxSettings().sandbox_repo_path)
-
-
-def _data_dir() -> Path:
-    """Return sandbox data directory from :class:`SandboxSettings`."""
-
-    return Path(SandboxSettings().sandbox_data_dir)
 
 from .utils import _load_callable, _call_with_retries
 from .orphan_integration import integrate_orphans, post_round_orphan_scan
@@ -344,122 +334,6 @@ except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_evolution_manager import WorkflowEvolutionManager  # type: ignore
 
 logger = get_logger(__name__)
-
-
-# Default synergy weight values used when no valid file is available
-DEFAULT_SYNERGY_WEIGHTS: dict[str, float] = dict(
-    getattr(
-        settings,
-        "default_synergy_weights",
-        {
-            "roi": 1.0,
-            "efficiency": 1.0,
-            "resilience": 1.0,
-            "antifragility": 1.0,
-            "reliability": 1.0,
-            "maintainability": 1.0,
-            "throughput": 1.0,
-        },
-    )
-)
-
-
-def _rotate_backups(path: Path) -> None:
-    """Rotate backup files for ``path``."""
-    count = getattr(settings, "backup_rotation_count", 3)
-    backups = [
-        path.with_suffix(path.suffix + f".bak{i}") for i in range(1, count + 1)
-    ]
-    for i in range(count - 1, 0, -1):
-        if backups[i - 1].exists():
-            if backups[i].exists():
-                backups[i].unlink()
-            os.replace(backups[i - 1], backups[i])
-    if path.exists():
-        os.replace(path, backups[0])
-
-
-def _atomic_write(path: Path, data: bytes | str, *, binary: bool = False) -> None:
-    """Atomically write data to ``path`` with backup rotation."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    mode = "wb" if binary else "w"
-    encoding = None if binary else "utf-8"
-    with tempfile.NamedTemporaryFile(
-        mode, encoding=encoding, dir=path.parent, delete=False
-    ) as fh:
-        fh.write(data)
-        fh.flush()
-        os.fsync(fh.fileno())
-        tmp = Path(fh.name)
-    _rotate_backups(path)
-    os.replace(tmp, path)
-
-
-def _load_initial_synergy_weights() -> None:
-    """Load persisted synergy weights into :class:`SandboxSettings`."""
-
-    default_path = Path(getattr(settings, "sandbox_data_dir", ".")) / "synergy_weights.json"
-    path = Path(
-        getattr(
-            settings,
-            "synergy_weight_file",
-            getattr(settings, "synergy_weights_path", default_path),
-        )
-    )
-    weights = DEFAULT_SYNERGY_WEIGHTS.copy()
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        valid = isinstance(data, dict) and all(
-            k in data and isinstance(data.get(k), (int, float)) for k in weights
-        )
-        if valid:
-            for k in weights:
-                weights[k] = float(data[k])
-    except FileNotFoundError:
-        logger.info(
-            "synergy weights file %s missing; creating defaults",
-            path,
-            extra=log_record(path=str(path)),
-        )
-        payload = {
-            "_doc": "Default synergy weights. Adjust values between 0.0 and 10.0.",
-            **weights,
-        }
-        try:
-            _atomic_write(path, json.dumps(payload, indent=2))
-        except OSError as exc:  # pragma: no cover - best effort
-            logger.warning(
-                "failed to write default synergy weights %s",
-                path,
-                extra=log_record(path=str(path), error=str(exc)),
-                exc_info=exc,
-            )
-    except OSError as exc:
-        logger.warning(
-            "I/O error loading synergy weights %s",
-            path,
-            extra=log_record(path=str(path), error=str(exc)),
-            exc_info=exc,
-        )
-    except ValueError as exc:
-        logger.warning(
-            "invalid synergy weights %s",
-            path,
-            extra=log_record(path=str(path), error=str(exc)),
-            exc_info=exc,
-        )
-    settings.synergy_weight_roi = weights["roi"]
-    settings.synergy_weight_efficiency = weights["efficiency"]
-    settings.synergy_weight_resilience = weights["resilience"]
-    settings.synergy_weight_antifragility = weights["antifragility"]
-    settings.synergy_weight_reliability = weights["reliability"]
-    settings.synergy_weight_maintainability = weights["maintainability"]
-    settings.synergy_weight_throughput = weights["throughput"]
-    settings.synergy_weight_file = str(path)
-
-
-_load_initial_synergy_weights()
 
 
 
