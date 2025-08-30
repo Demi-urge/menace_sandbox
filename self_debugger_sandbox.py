@@ -111,7 +111,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         if env_runs is not None:
             try:
                 flakiness_runs = int(env_runs)
-            except Exception:
+            except (TypeError, ValueError):
                 self.logger.exception("invalid FLAKINESS_RUNS value")
         self.flakiness_runs = max(1, int(flakiness_runs))
         self.smoothing_factor = max(0.0, min(1.0, float(smoothing_factor))) or 0.5
@@ -119,7 +119,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         if weight_update_interval is None and env_interval is not None:
             try:
                 weight_update_interval = float(env_interval)
-            except Exception:
+            except (TypeError, ValueError):
                 self.logger.exception("invalid WEIGHT_UPDATE_INTERVAL value")
         if weight_update_interval is None:
             weight_update_interval = 60.0
@@ -246,11 +246,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             try:
                 yield self._history_conn
                 self._history_conn.commit()
-            except Exception:
+            except sqlite3.DatabaseError:
                 try:
                     self._history_conn.rollback()
-                except Exception:
-                    pass
+                except sqlite3.DatabaseError:
+                    self.logger.exception("history rollback failed")
+                self.logger.exception("history commit failed")
                 raise
 
     # ------------------------------------------------------------------
