@@ -79,10 +79,6 @@ logger = get_logger(__name__)
 from analytics import adaptive_roi_model
 from adaptive_roi_predictor import load_training_data
 
-ADAPTIVE_ROI_RETRAIN_INTERVAL = int(
-    os.getenv("ADAPTIVE_ROI_RETRAIN_INTERVAL", "20")
-)
-
 from metrics_exporter import (
     orphan_modules_reintroduced_total,
     orphan_modules_tested_total,
@@ -684,6 +680,8 @@ def _sandbox_cycle_runner(
             record_error(exc)
 
     tuner = ResourceTuner()
+    settings = getattr(ctx, "settings", SandboxSettings())
+    retrain_interval = getattr(settings, "adaptive_roi_retrain_interval", 20)
 
     low_roi_streak = 0
     resilience_history: list[float] = []
@@ -1918,7 +1916,7 @@ def _sandbox_cycle_runner(
         except Exception:
             logger.exception("relevancy radar flagging failed")
 
-        if (idx + 1) % ADAPTIVE_ROI_RETRAIN_INTERVAL == 0:
+        if (idx + 1) % retrain_interval == 0:
             logger.info(
                 "adaptive roi model retrain", extra=log_record(cycle=idx)
             )

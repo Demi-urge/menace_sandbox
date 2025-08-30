@@ -649,6 +649,9 @@ persisted to `sandbox_data/metrics.db` for later inspection.
 - `SANDBOX_PRESET_RL_STRATEGY` – reinforcement learning algorithm
 - `SANDBOX_ADAPTIVE_AGENT_PATH` – path to the adaptive RL agent state
 - `SANDBOX_ADAPTIVE_AGENT_STRATEGY` – algorithm for the adaptive agent
+- `ADAPTIVE_ROI_TRAIN_INTERVAL` – seconds between scheduled adaptive ROI training
+- `ADAPTIVE_ROI_RETRAIN_INTERVAL` – cycles between adaptive ROI model retraining
+- `SELF_IMPROVEMENT_BACKUP_COUNT` – number of rotated backups to keep for self-improvement data
 
 ### Recursion environment variables
 
