@@ -1,4 +1,5 @@
 from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
+from vector_service.roi_tags import RoiTag
 from typing import Any, Dict, List
 import logging
 
@@ -34,8 +35,8 @@ def test_retrieval_snippets_included():
 
 def test_orders_by_roi_and_timestamp():
     records = [
-        _record(1.0, roi_delta=0.1, summary="low", tests_passed=True),
-        _record(1.0, roi_delta=0.9, summary="high", tests_passed=True),
+        _record(1.0, roi_tag=RoiTag.LOW_ROI.value, summary="low", tests_passed=True),
+        _record(1.0, roi_tag=RoiTag.HIGH_ROI.value, summary="high", tests_passed=True),
         _record(1.0, ts=1, summary="old fail", tests_passed=False),
         _record(1.0, ts=2, summary="new fail", tests_passed=False),
     ]

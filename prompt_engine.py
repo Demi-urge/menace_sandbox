@@ -11,7 +11,7 @@ template is returned instead of an unhelpful prompt.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -33,9 +33,22 @@ DEFAULT_TEMPLATE = "No relevant patches were found. Proceed with a fresh impleme
 try:  # pragma: no cover - optional heavy imports for type checking
     from vector_service.retriever import Retriever  # type: ignore
     from vector_service.context_builder import ContextBuilder  # type: ignore
+    from vector_service.roi_tags import RoiTag  # type: ignore
 except Exception:  # pragma: no cover - allow running tests without service layer
     Retriever = Any  # type: ignore
     ContextBuilder = Any  # type: ignore
+
+    class RoiTag:  # type: ignore[misc]
+        SUCCESS = "success"
+        HIGH_ROI = "high-ROI"
+        LOW_ROI = "low-ROI"
+        BUG_INTRODUCED = "bug-introduced"
+        NEEDS_REVIEW = "needs-review"
+        BLOCKED = "blocked"
+
+        @classmethod
+        def validate(cls, value: Any) -> "RoiTag":
+            return cls.SUCCESS
 
 
 @dataclass
@@ -61,6 +74,18 @@ class PromptEngine:
     roi_tracker: Any | None = None
     confidence_threshold: float = 0.3
     top_n: int = 5
+    roi_weight: float = 1.0
+    recency_weight: float = 0.1
+    roi_tag_weights: Dict[str, float] = field(
+        default_factory=lambda: {
+            RoiTag.HIGH_ROI.value: 1.0,
+            RoiTag.SUCCESS.value: 0.5,
+            RoiTag.LOW_ROI.value: -0.5,
+            RoiTag.NEEDS_REVIEW.value: -0.5,
+            RoiTag.BUG_INTRODUCED.value: -1.0,
+            RoiTag.BLOCKED.value: -1.0,
+        }
+    )
 
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
         if self.retriever is None:
@@ -78,13 +103,13 @@ class PromptEngine:
 
     # ------------------------------------------------------------------
     def build_snippets(self, patches: Iterable[Dict[str, Any]]) -> List[str]:
-        """Return ranked and formatted snippet lines for *patches*.
+        """Return formatted snippet lines for pre-ranked *patches*.
 
         Each element in *patches* is expected to be a mapping containing a
         ``metadata`` field.  The metadata is compressed via
         :func:`snippet_compressor.compress_snippets` and grouped into
-        successful or failed examples.  Successful examples are ordered by
-        ``roi_delta`` while failures are ordered by ``ts`` (recency).
+        successful or failed examples.  The order of *patches* is preserved so
+        callers can provide their own ranking.
         """
 
         successes: List[Dict[str, Any]] = []
@@ -95,9 +120,6 @@ class PromptEngine:
                 successes.append(meta)
             else:
                 failures.append(meta)
-
-        successes.sort(key=lambda m: m.get("roi_delta") or 0.0, reverse=True)
-        failures.sort(key=lambda m: m.get("ts") or 0, reverse=True)
 
         lines: List[str] = []
         if successes:
@@ -111,7 +133,6 @@ class PromptEngine:
                 lines.extend(self._format_record(meta))
                 lines.append("")
         return [line for line in lines if line]
-
     # ------------------------------------------------------------------
     def build_prompt(self, task: str, retry_info: str | None = None) -> str:
         """Return a prompt for *task* using retrieved patch examples.
@@ -145,7 +166,8 @@ class PromptEngine:
                 total += float(rec.get("score") or rec.get("similarity") or 0.0)
             confidence = total / len(records) if records else 0.0
 
-        if not records or confidence < self.confidence_threshold:
+        ranked = self._rank_records(records)
+        if not ranked or confidence < self.confidence_threshold:
             logging.info(
                 "Retrieval confidence %.2f below threshold; falling back", confidence
             )
@@ -160,12 +182,36 @@ class PromptEngine:
             return self._static_prompt()
 
         lines = [f"Enhancement goal: {task}", ""]
-        lines.extend(self.build_snippets(records))
+        lines.extend(self.build_snippets(ranked))
         if retry_info:
             lines.append(
                 f"Previous attempt failed with {retry_info}; seek alternative solution."
             )
         return "\n".join(line for line in lines if line)
+
+    # ------------------------------------------------------------------
+    def _rank_records(self, records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Return ``records`` ordered by ROI tag and recency."""
+
+        items = list(records)
+        if not items:
+            return []
+        ts_vals = [float(r.get("metadata", {}).get("ts") or 0.0) for r in items]
+        min_ts = min(ts_vals) if ts_vals else 0.0
+        max_ts = max(ts_vals) if ts_vals else 0.0
+        span = max(max_ts - min_ts, 1.0)
+
+        def score(rec: Dict[str, Any]) -> float:
+            meta = rec.get("metadata", {})
+            tag_val = meta.get("roi_tag") or rec.get("roi_tag")
+            tag = RoiTag.validate(tag_val)
+            roi_score = self.roi_tag_weights.get(tag.value, 0.0)
+            ts = float(meta.get("ts") or 0.0)
+            ts_score = (ts - min_ts) / span
+            return self.roi_weight * roi_score + self.recency_weight * ts_score
+
+        items.sort(key=score, reverse=True)
+        return items[: self.top_n]
 
     # ------------------------------------------------------------------
     def _compress(self, meta: Dict[str, Any]) -> Dict[str, Any]:
@@ -179,6 +225,7 @@ class PromptEngine:
         out["outcome"] = meta.get("outcome")
         out["tests_passed"] = meta.get("tests_passed")
         out["roi_delta"] = meta.get("roi_delta")
+        out["roi_tag"] = meta.get("roi_tag")
         out["ts"] = meta.get("ts")
         out["context"] = meta.get("context") or meta.get("retrieval_context")
         return out
@@ -208,6 +255,8 @@ class PromptEngine:
             lines.append(f"Risk-adjusted ROI: {meta['raroi']:.2f}")
         elif meta.get("roi_delta") is not None:
             lines.append(f"ROI delta: {meta['roi_delta']}")
+        if meta.get("roi_tag"):
+            lines.append(f"ROI tag: {meta['roi_tag']}")
         if meta.get("context"):
             lines.append(f"Context: {meta['context']}")
         return lines
