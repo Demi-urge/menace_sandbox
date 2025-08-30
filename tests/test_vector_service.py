@@ -122,12 +122,13 @@ class DummyVectorMetricsDB:
 class DummyPatchDB:
     def __init__(self):
         self.called = False
-        self.args = None
+        self.kwargs = None
 
     def record_vector_metrics(
         self,
         session_id,
         pairs,
+        *,
         patch_id,
         contribution,
         win,
@@ -136,26 +137,28 @@ class DummyPatchDB:
         tests_passed=None,
         enhancement_name=None,
         timestamp=None,
+        roi_deltas=None,
         diff=None,
         summary=None,
         outcome=None,
     ):
         self.called = True
-        self.args = (
-            session_id,
-            pairs,
-            patch_id,
-            contribution,
-            win,
-            regret,
-            lines_changed,
-            tests_passed,
-            enhancement_name,
-            timestamp,
-            diff,
-            summary,
-            outcome,
-        )
+        self.kwargs = {
+            "session_id": session_id,
+            "pairs": pairs,
+            "patch_id": patch_id,
+            "contribution": contribution,
+            "win": win,
+            "regret": regret,
+            "lines_changed": lines_changed,
+            "tests_passed": tests_passed,
+            "enhancement_name": enhancement_name,
+            "timestamp": timestamp,
+            "roi_deltas": roi_deltas,
+            "diff": diff,
+            "summary": summary,
+            "outcome": outcome,
+        }
 
 
 def test_patch_logger_metrics_db_success():
@@ -178,7 +181,7 @@ def test_patch_logger_patch_db_success():
     pl = PatchLogger(patch_db=pdb)
     pl.track_contributors(["a:b"], True, patch_id="7", session_id="sid")
     assert pdb.called
-    assert pdb.args[2] == 7
+    assert pdb.kwargs["patch_id"] == 7
 
 
 def test_patch_logger_metrics_db_failure_ignored():

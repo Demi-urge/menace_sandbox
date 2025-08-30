@@ -95,6 +95,7 @@ class DummyPatchDB:
         tests_passed=None,
         enhancement_name=None,
         timestamp=None,
+        roi_deltas=None,
         diff=None,
         summary=None,
         outcome=None,
@@ -110,6 +111,7 @@ class DummyPatchDB:
             "tests_passed": tests_passed,
             "enhancement_name": enhancement_name,
             "timestamp": timestamp,
+            "roi_deltas": roi_deltas,
             "diff": diff,
             "summary": summary,
             "outcome": outcome,
@@ -206,6 +208,7 @@ def test_track_contributors_forwards_contribution_patch_db(monkeypatch):
     assert pdb.kwargs["tests_passed"] is True
     assert pdb.kwargs["enhancement_name"] == "feat"
     assert pdb.kwargs["timestamp"] == 123.0
+    assert pdb.kwargs["roi_deltas"] == {}
     assert pdb.kwargs["diff"] == "diff"
     assert pdb.kwargs["summary"] == "summary"
     assert pdb.kwargs["outcome"] == "failed"

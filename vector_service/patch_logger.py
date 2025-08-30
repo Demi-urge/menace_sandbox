@@ -7,6 +7,7 @@ from typing import Any, Callable, Iterable, List, Mapping, Sequence, Tuple, Unio
 import asyncio
 import logging
 import time
+import json
 
 from .decorators import log_and_measure
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
@@ -287,6 +288,7 @@ class PatchLogger:
                 generic_error = meta.get("error")
                 if generic_error:
                     errors.append(generic_error)
+            summary_arg = summary if summary is not None else error_summary
             detailed_meta = []
             provenance_meta = []
             vm_vectors = []
@@ -400,40 +402,23 @@ class PatchLogger:
                     logger.exception("metrics_db.log_patch_outcome failed")
             else:
                 if self.patch_db is not None and patch_id:
-                    try:  # pragma: no cover - best effort
-                        summary_arg = summary if summary is not None else error_summary
-                        self.patch_db.record_vector_metrics(
-                            session_id,
-                            pairs,
-                            patch_id=int(patch_id),
-                            contribution=0.0 if contribution is None else contribution,
-                            win=result,
-                            regret=not result,
-                            lines_changed=lines_changed,
-                            tests_passed=tests_passed,
-                            enhancement_name=enhancement_name,
-                            timestamp=timestamp,
-                            diff=diff,
-                            summary=summary_arg,
-                            outcome=outcome,
-                        )
-                    except Exception:
-                        logger.exception("patch_db.record_vector_metrics failed")
-                        raise
                     try:
                         self.patch_db.record_provenance(int(patch_id), provenance_meta)
-                    except Exception:
+                    except Exception as exc:
                         logger.exception("patch_db.record_provenance failed")
+                        errors.append({"db_write": str(exc)})
                     try:
                         self.patch_db.log_ancestry(int(patch_id), detailed_meta)
-                    except Exception:
+                    except Exception as exc:
                         logger.exception("patch_db.log_ancestry failed")
+                        errors.append({"db_write": str(exc)})
                     try:
                         self.patch_db.log_contributors(
                             int(patch_id), detailed, session_id
                         )
-                    except Exception:
+                    except Exception as exc:
                         logger.exception("patch_db.log_contributors failed")
+                        errors.append({"db_write": str(exc)})
                     # Generate and persist patch embedding for future retrieval
                     try:
                         desc_text = ""
@@ -565,13 +550,15 @@ class PatchLogger:
                         try:
                             # send deltas for each origin individually
                             self.roi_tracker.update_db_metrics({origin: stats})
-                        except Exception:
+                        except Exception as exc:
                             logger.exception("ROITracker.update_db_metrics failed")
+                            errors.append({"roi_update": str(exc)})
                     try:
                         deltas = self.roi_tracker.origin_db_deltas()
-                    except Exception:
+                    except Exception as exc:
                         deltas = {}
                         logger.exception("Failed to fetch ROI tracker origin deltas")
+                        errors.append({"roi_update": str(exc)})
                     for origin in origin_totals:
                         val = deltas.get(origin)
                         if val is None:
@@ -592,17 +579,19 @@ class PatchLogger:
                         if self.event_bus is not None:
                             try:
                                 self.event_bus.publish("roi:update", payload)
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "event bus ROI update publish failed",
                                 )
+                                errors.append({"roi_update": str(exc)})
                         elif UnifiedEventBus is not None:
                             try:
                                 UnifiedEventBus().publish("roi:update", payload)
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "UnifiedEventBus ROI update publish failed",
                                 )
+                                errors.append({"roi_update": str(exc)})
                     if _DB_ROI_DELTA is not None:
                         for origin, roi in origin_totals.items():
                             try:
@@ -630,6 +619,28 @@ class PatchLogger:
                                 logger.exception(
                                     "UnifiedEventBus embedding backfill publish failed"
                                 )
+                if self.patch_db is not None and patch_id:
+                    try:  # pragma: no cover - best effort
+                        self.patch_db.record_vector_metrics(
+                            session_id,
+                            pairs,
+                            patch_id=int(patch_id),
+                            contribution=0.0 if contribution is None else contribution,
+                            win=result,
+                            regret=not result,
+                            lines_changed=lines_changed,
+                            tests_passed=tests_passed,
+                            enhancement_name=enhancement_name,
+                            timestamp=timestamp,
+                            diff=diff,
+                            summary=summary_arg,
+                            outcome=outcome,
+                            roi_deltas=roi_deltas,
+                        )
+                    except Exception as exc:
+                        logger.exception("patch_db.record_vector_metrics failed")
+                        errors.append({"db_write": str(exc)})
+                        raise
                 if result and retrieval_metadata:
                     for origin, vid, _ in detailed:
                         key = f"{origin}:{vid}" if origin else vid
@@ -773,6 +784,48 @@ class PatchLogger:
                 logger.exception("risk callback failed")
 
         return TrackResult(origin_similarity, errors=errors, roi_deltas=roi_deltas)
+
+    # ------------------------------------------------------------------
+    def get_patch_summary(self, patch_id: str | int) -> Mapping[str, Any] | None:
+        """Return stored patch metadata for *patch_id* if available."""
+        if self.patch_db is None:
+            return None
+        try:
+            conn = self.patch_db.router.get_connection("patch_history")
+            row = conn.execute(
+                "SELECT diff, summary, outcome, lines_changed, tests_passed, enhancement_name, timestamp, roi_deltas FROM patch_history WHERE id=?",
+                (int(patch_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            (
+                diff,
+                summary,
+                outcome,
+                lines_changed,
+                tests_passed,
+                enhancement_name,
+                ts,
+                roi_json,
+            ) = row
+            try:
+                roi_data = json.loads(roi_json) if roi_json else {}
+            except Exception:
+                roi_data = {}
+            return {
+                "patch_id": int(patch_id),
+                "diff": diff,
+                "summary": summary,
+                "outcome": outcome,
+                "lines_changed": lines_changed,
+                "tests_passed": bool(tests_passed) if tests_passed is not None else None,
+                "enhancement_name": enhancement_name,
+                "timestamp": ts,
+                "roi_deltas": roi_data,
+            }
+        except Exception:
+            logger.exception("Failed to retrieve patch summary")
+            return None
 
     # ------------------------------------------------------------------
     @log_and_measure
