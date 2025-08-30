@@ -210,6 +210,31 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_STUB_RETRY_MAX",
         description="Maximum delay for exponential backoff in seconds.",
     )
+    stub_providers: list[str] | None = Field(
+        None,
+        env="SANDBOX_STUB_PROVIDERS",
+        description=(
+            "Comma-separated stub provider names to enable. When unset, all "
+            "discovered providers are used."
+        ),
+    )
+    disabled_stub_providers: list[str] = Field(
+        default_factory=list,
+        env="SANDBOX_DISABLED_STUB_PROVIDERS",
+        description="Comma-separated stub provider names to disable.",
+    )
+    if PYDANTIC_V2:
+        @field_validator("stub_providers", "disabled_stub_providers", mode="before")
+        def _split_stub_providers(cls, v: Any) -> Any:
+            if isinstance(v, str):
+                return [s.strip() for s in v.split(",") if s.strip()]
+            return v
+    else:  # pragma: no cover - pydantic<2
+        @field_validator("stub_providers", "disabled_stub_providers", pre=True)
+        def _split_stub_providers(cls, v: Any) -> Any:  # type: ignore[override]
+            if isinstance(v, str):
+                return [s.strip() for s in v.split(",") if s.strip()]
+            return v
     meta_planning_interval: int = Field(
         10,
         env="META_PLANNING_INTERVAL",

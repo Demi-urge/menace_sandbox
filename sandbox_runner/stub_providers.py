@@ -1,46 +1,96 @@
+"""Plugin hooks for input stub generation."""
+
 from __future__ import annotations
 
-"""Plugin hooks for input stub generation.
-
-Plugins must expose a ``generate_stubs`` function matching ``StubProvider``.
-The callback receives the current list of stubs and a context dictionary and
-should return a new list. Returning ``None`` leaves the stubs unchanged.
-"""
-
-import importlib
+import inspect
 import logging
-import os
-from typing import Callable, Dict, List, Sequence, Any
-
-logger = logging.getLogger(__name__)
+from importlib import metadata
+from typing import Any, Callable, Dict, Iterable, List, Sequence
 
 # Callback type for stub provider
 StubProvider = Callable[[List[Dict[str, Any]], dict], List[Dict[str, Any]]]
 
+logger = logging.getLogger(__name__)
+
+# Entry-point group used to discover stub providers
+STUB_PROVIDER_GROUP = "sandbox.stub_providers"
+
+
+def _iter_entry_points() -> Iterable[metadata.EntryPoint]:
+    """Return entry points registered for stub providers."""
+
+    try:
+        eps = metadata.entry_points(group=STUB_PROVIDER_GROUP)
+    except TypeError:  # pragma: no cover - legacy API
+        eps = metadata.entry_points().get(STUB_PROVIDER_GROUP, [])
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to gather stub provider entry points")
+        return []
+    return list(eps)
+
+
+def _validate_provider(func: Any) -> bool:
+    """Return ``True`` if ``func`` matches :class:`StubProvider`."""
+
+    if not callable(func):
+        return False
+    try:
+        sig = inspect.signature(func)
+    except Exception:  # pragma: no cover - defensive
+        return False
+    params = list(sig.parameters.values())
+    return len(params) == 2
+
+
+def _load_entry_point(ep: metadata.EntryPoint) -> StubProvider | None:
+    try:
+        func = ep.load()
+    except Exception:
+        logger.exception("failed to load stub provider %s", ep.name)
+        return None
+    if not _validate_provider(func):
+        logger.warning("stub provider %s has invalid signature", ep.name)
+        return None
+    return func  # type: ignore[return-value]
+
 
 def load_stub_providers(names: Sequence[str]) -> List[StubProvider]:
-    """Import stub provider callbacks from *names*."""
+    """Return providers matching ``names`` discovered via entry points."""
+
     providers: List[StubProvider] = []
+    ep_map = {ep.name: ep for ep in _iter_entry_points()}
     for name in names:
-        if not name:
+        ep = ep_map.get(name)
+        if ep is None:
+            logger.warning("stub provider %s not found", name)
             continue
-        try:
-            mod = importlib.import_module(name)
-        except Exception:  # pragma: no cover - import errors
-            logger.exception("failed to import stub provider %s", name)
-            continue
-        func = getattr(mod, "generate_stubs", None)
-        if callable(func):
+        func = _load_entry_point(ep)
+        if func:
             providers.append(func)
-        else:  # pragma: no cover - malformed plugin
-            logger.warning("stub provider %s missing generate_stubs", name)
     return providers
 
 
-def discover_stub_providers(env: dict | None = None) -> List[StubProvider]:
-    """Discover stub providers using environment variables."""
-    env = env or os.environ
-    names = env.get("SANDBOX_STUB_PLUGINS", "")
-    if not names:
-        return []
-    return load_stub_providers([n.strip() for n in names.split(os.pathsep) if n.strip()])
+def discover_stub_providers(settings: Any | None = None) -> List[StubProvider]:
+    """Discover stub providers using entry points and settings."""
+
+    if settings is None:
+        try:  # pragma: no cover - sandbox_settings may not be available
+            from sandbox_settings import SandboxSettings
+
+            settings = SandboxSettings()
+        except Exception:  # pragma: no cover - defensive
+            settings = None
+
+    enabled = set(getattr(settings, "stub_providers", []) or [])
+    disabled = set(getattr(settings, "disabled_stub_providers", []) or [])
+
+    providers: List[StubProvider] = []
+    for ep in _iter_entry_points():
+        if enabled and ep.name not in enabled:
+            continue
+        if ep.name in disabled:
+            continue
+        func = _load_entry_point(ep)
+        if func:
+            providers.append(func)
+    return providers
