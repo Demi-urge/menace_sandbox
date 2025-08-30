@@ -4,8 +4,11 @@ import logging
 import time
 from pathlib import Path
 from unittest.mock import patch
-from typing import Callable, Any
+from typing import Callable, Any, Awaitable
 import types
+import asyncio
+import random
+import inspect
 
 import pytest
 
@@ -21,8 +24,12 @@ def _load_utils():
         "importlib": importlib,
         "logging": logging,
         "time": time,
+        "asyncio": asyncio,
+        "random": random,
+        "inspect": inspect,
         "Callable": Callable,
         "Any": Any,
+        "Awaitable": Awaitable,
         "self_improvement_failure_total": counter,
     }
     exec(compile(module, "<ast>", "exec"), ns)
@@ -60,4 +67,27 @@ def test_retry_fails_after_all_attempts():
 
     with pytest.raises(ValueError):
         utils["_call_with_retries"](always_fail, retries=2)
+
+
+def test_async_retry_and_backoff_features():
+    utils = _load_utils()
+    sleeps: list[float] = []
+    utils["time"].sleep = lambda t: sleeps.append(t)
+    utils["random"].uniform = lambda a, b: 0.5
+    attempts = {"count": 0}
+
+    async def flaky_async():
+        attempts["count"] += 1
+        if attempts["count"] < 2:
+            raise ValueError("boom")
+        return "ok"
+
+    assert (
+        utils["_call_with_retries"](
+            flaky_async, retries=3, delay=1, jitter=1, max_delay=2
+        )
+        == "ok"
+    )
+    assert attempts["count"] == 2
+    assert sleeps == [1.5]
 
