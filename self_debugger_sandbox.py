@@ -94,6 +94,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         error_predictor: ErrorClusterPredictor | None = None,
         *,
         score_threshold: float | None = None,
+        merge_threshold: float | None = None,
         score_weights: tuple[float, float, float, float, float, float] | None = None,
         flakiness_runs: int | None = None,
         smoothing_factor: float = 0.5,
@@ -111,7 +112,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             score_threshold = self._settings.score_threshold
         if score_weights is None:
             score_weights = tuple(self._settings.score_weights)
+        if merge_threshold is None:
+            merge_threshold = score_threshold
         self.score_threshold = float(score_threshold)
+        self.merge_threshold = float(merge_threshold)
         self.score_weights = tuple(score_weights)
         if flakiness_runs is None:
             flakiness_runs = self._settings.flakiness_runs
@@ -1593,6 +1597,18 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         reason=reason,
                     )
                     root_test.unlink(missing_ok=True)
+                if patched and pid is not None:
+                    try:
+                        from .patch_branch_manager import finalize_patch_branch
+
+                        finalize_patch_branch(
+                            str(pid),
+                            patch_score,
+                            self.merge_threshold,
+                            audit_trail=self.audit_trail,
+                        )
+                    except Exception:
+                        self.logger.exception("patch branch finalization failed")
                 if not patched:
                     if code_hash and patch_db:
                         try:
