@@ -2,6 +2,8 @@ from __future__ import annotations
 
 """Automatically propose fixes for recurring errors."""
 
+__version__ = "1.0.0"
+
 from pathlib import Path
 import logging
 import subprocess

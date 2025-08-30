@@ -12,6 +12,8 @@ session.
 
 from __future__ import annotations
 
+__version__ = "1.0.0"
+
 import atexit
 import json
 import sqlite3
