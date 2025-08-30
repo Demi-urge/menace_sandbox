@@ -40,6 +40,7 @@ import time
 import inspect
 import random
 import threading
+import queue
 import signal
 import weakref
 import traceback
@@ -47,6 +48,7 @@ import statistics
 from datetime import datetime
 from pathlib import Path
 import importlib
+import atexit
 from typing import (
     Any,
     Dict,
@@ -104,17 +106,57 @@ except ImportError:  # pragma: no cover - optional dependency
     def _radar_track_module_usage(_module: str) -> None:  # type: ignore
         return None
 
+_radar_queue: queue.Queue[str] | None = None
+_radar_thread: threading.Thread | None = None
+
+
+def _radar_worker() -> None:
+    while True:
+        module = _radar_queue.get()
+        if module is None:
+            break
+        try:
+            _radar_track_module_usage(module)
+        except Exception as exc:  # pragma: no cover - best effort
+            record_error(exc)
+
+
+def _stop_radar_worker() -> None:
+    if _radar_queue is None:
+        return
+    _radar_queue.put(None)
+    if _radar_thread and _radar_thread.is_alive():
+        _radar_thread.join()
+
+
+def _ensure_radar_worker() -> None:
+    global _radar_thread, _radar_queue
+    if _radar_thread is not None and _radar_thread.is_alive():
+        return
+    _radar_queue = queue.Queue()
+    _radar_thread = threading.Thread(
+        target=_radar_worker, name="radar-track", daemon=True
+    )
+    try:
+        _radar_thread.start()
+    except RuntimeError as exc:
+        record_error(exc)
+        _radar_thread = None
+        return
+    atexit.register(_stop_radar_worker)
+
 
 def _async_radar_track(module: str) -> None:
     """Record ``module`` usage without blocking."""
 
     if not _ENABLE_RELEVANCY_RADAR:
         return
+    _ensure_radar_worker()
+    if _radar_queue is None:
+        return
     try:
-        threading.Thread(
-            target=_radar_track_module_usage, args=(module,), daemon=True
-        ).start()
-    except RuntimeError as exc:
+        _radar_queue.put_nowait(module)
+    except Exception as exc:  # pragma: no cover - best effort
         record_error(exc)
 
 import builtins
