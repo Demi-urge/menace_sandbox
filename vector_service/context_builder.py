@@ -15,7 +15,7 @@ from redaction_utils import redact_text
 
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
-from .retriever import Retriever, FallbackResult
+from .retriever import Retriever, PatchRetriever, FallbackResult
 from config import ContextBuilderConfig
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_logger import _VECTOR_RISK  # type: ignore
@@ -87,6 +87,7 @@ class ContextBuilder:
         self,
         *,
         retriever: Retriever | None = None,
+        patch_retriever: PatchRetriever | None = None,
         ranking_model: Any | None = None,
         roi_tracker: Any | None = None,
         memory_manager: Optional[MenaceMemoryManager] = None,
@@ -110,8 +111,11 @@ class ContextBuilder:
             ContextBuilderConfig(), "precise_token_count", True
         ),
         patch_safety: PatchSafety | None = None,
+        similarity_metric: str = getattr(ContextBuilderConfig(), "similarity_metric", "cosine"),
     ) -> None:
         self.retriever = retriever or Retriever()
+        self.patch_retriever = patch_retriever or PatchRetriever(metric=similarity_metric)
+        self.similarity_metric = similarity_metric
 
         if ranking_model is None:
             try:  # pragma: no cover - best effort model load
@@ -505,6 +509,14 @@ class ContextBuilder:
                 )
         elif origin == "discrepancy":
             text = text or meta.get("message") or meta.get("description") or ""
+        elif origin == "patch":
+            text = (
+                text
+                or meta.get("diff")
+                or meta.get("description")
+                or meta.get("summary")
+                or ""
+            )
         elif origin == "code":
             text = text or meta.get("summary") or meta.get("code") or ""
 
@@ -663,6 +675,7 @@ class ContextBuilder:
             "information": "information",
             "code": "code",
             "discrepancy": "discrepancies",
+            "patch": "patches",
         }
         return key_map.get(origin, ""), _ScoredEntry(entry, score, origin, vec_id, meta)
 
@@ -801,6 +814,17 @@ class ContextBuilder:
             raise
         except Exception as exc:  # pragma: no cover - defensive
             raise VectorServiceError("retriever failure") from exc
+        patch_hits: List[Dict[str, Any]] = []
+        if self.patch_retriever is not None:
+            try:
+                patch_hits = self.patch_retriever.search(query, top_k=top_k)
+            except Exception:
+                patch_hits = []
+        if patch_hits:
+            try:
+                hits.extend(patch_hits)
+            except Exception:
+                pass
         elapsed_ms = (time.perf_counter() - start) * 1000.0
 
         if isinstance(hits, ErrorResult):
@@ -822,6 +846,7 @@ class ContextBuilder:
             "information": [],
             "code": [],
             "discrepancies": [],
+            "patches": [],
         }
 
         for bundle in hits:

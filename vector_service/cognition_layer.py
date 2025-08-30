@@ -34,7 +34,7 @@ from pathlib import Path
 import logging
 import os
 
-from .retriever import Retriever
+from .retriever import Retriever, PatchRetriever
 from .context_builder import ContextBuilder
 from .patch_logger import PatchLogger
 from vector_metrics_db import VectorMetricsDB
@@ -73,6 +73,7 @@ class CognitionLayer:
         self,
         *,
         retriever: Retriever | None = None,
+        patch_retriever: PatchRetriever | None = None,
         context_builder: ContextBuilder | None = None,
         patch_logger: PatchLogger | None = None,
         vector_metrics: VectorMetricsDB | None = None,
@@ -81,6 +82,7 @@ class CognitionLayer:
         ranking_model: Any | None = None,
     ) -> None:
         self.retriever = retriever or Retriever()
+        self.patch_retriever = patch_retriever or PatchRetriever()
         self.vector_metrics = vector_metrics or VectorMetricsDB()
         self.roi_tracker = roi_tracker or (ROITracker() if ROITracker is not None else None)
         self.event_bus = event_bus or getattr(patch_logger, "event_bus", None)
@@ -93,10 +95,16 @@ class CognitionLayer:
         self._db_weights: Dict[str, float] = dict(db_weights or {})
         self.context_builder = context_builder or ContextBuilder(
             retriever=self.retriever,
+            patch_retriever=self.patch_retriever,
             ranking_model=ranking_model,
             roi_tracker=self.roi_tracker,
             db_weights=db_weights,
         )
+        if context_builder is not None and getattr(context_builder, "patch_retriever", None) is None:
+            try:
+                context_builder.patch_retriever = self.patch_retriever
+            except Exception:
+                pass
         if context_builder is not None and db_weights:
             try:
                 if hasattr(self.context_builder, "refresh_db_weights"):
