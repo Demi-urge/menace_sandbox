@@ -122,7 +122,9 @@ class VectorMetricsDB:
                 patch_id TEXT PRIMARY KEY,
                 errors TEXT,
                 tests_passed INTEGER,
-                lines_changed INTEGER
+                lines_changed INTEGER,
+                context_tokens INTEGER,
+                patch_difficulty INTEGER
             )
             """
         )
@@ -174,6 +176,12 @@ class VectorMetricsDB:
             self.conn.execute(
                 "ALTER TABLE patch_ancestry ADD COLUMN risk_score REAL"
             )
+        self.conn.commit()
+        mcols = [r[1] for r in self.conn.execute("PRAGMA table_info(patch_metrics)").fetchall()]
+        if "context_tokens" not in mcols:
+            self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN context_tokens INTEGER")
+        if "patch_difficulty" not in mcols:
+            self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN patch_difficulty INTEGER")
         self.conn.commit()
 
     # ------------------------------------------------------------------
@@ -605,15 +613,19 @@ class VectorMetricsDB:
         errors: Sequence[Mapping[str, Any]] | None = None,
         tests_passed: bool | None = None,
         lines_changed: int | None = None,
+        context_tokens: int | None = None,
+        patch_difficulty: int | None = None,
     ) -> None:
         try:
             self.conn.execute(
-                "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, lines_changed) VALUES(?,?,?,?)",
+                "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, lines_changed, context_tokens, patch_difficulty) VALUES(?,?,?,?,?,?)",
                 (
                     patch_id,
                     json.dumps(list(errors or [])),
                     None if tests_passed is None else int(bool(tests_passed)),
                     lines_changed,
+                    context_tokens,
+                    patch_difficulty,
                 ),
             )
             self.conn.commit()

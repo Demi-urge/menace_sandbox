@@ -1060,6 +1060,8 @@ class PatchHistoryDB:
                 outcome TEXT,
                 lines_changed INTEGER DEFAULT 0,
                 tests_passed INTEGER DEFAULT 0,
+                context_tokens INTEGER DEFAULT 0,
+                patch_difficulty INTEGER DEFAULT 0,
                 enhancement_name TEXT,
                 timestamp REAL,
                 roi_deltas TEXT,
@@ -1159,6 +1161,8 @@ class PatchHistoryDB:
             "outcome": "ALTER TABLE patch_history ADD COLUMN outcome TEXT",
             "lines_changed": "ALTER TABLE patch_history ADD COLUMN lines_changed INTEGER DEFAULT 0",
             "tests_passed": "ALTER TABLE patch_history ADD COLUMN tests_passed INTEGER DEFAULT 0",
+            "context_tokens": "ALTER TABLE patch_history ADD COLUMN context_tokens INTEGER DEFAULT 0",
+            "patch_difficulty": "ALTER TABLE patch_history ADD COLUMN patch_difficulty INTEGER DEFAULT 0",
             "enhancement_name": "ALTER TABLE patch_history ADD COLUMN enhancement_name TEXT",
             "timestamp": "ALTER TABLE patch_history ADD COLUMN timestamp REAL",
             "roi_deltas": "ALTER TABLE patch_history ADD COLUMN roi_deltas TEXT",
@@ -1486,6 +1490,8 @@ class PatchHistoryDB:
         regret: bool,
         lines_changed: int | None = None,
         tests_passed: bool | None = None,
+        context_tokens: int | None = None,
+        patch_difficulty: int | None = None,
         enhancement_name: str | None = None,
         timestamp: float | None = None,
         roi_deltas: Mapping[str, float] | None = None,
@@ -1525,10 +1531,12 @@ class PatchHistoryDB:
                 except Exception:
                     logger.exception("failed to serialise errors")
             conn.execute(
-                "UPDATE patch_history SET lines_changed=?, tests_passed=?, enhancement_name=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary), outcome=COALESCE(?, outcome), roi_deltas=COALESCE(?, roi_deltas), errors=COALESCE(?, errors) WHERE id=?",
+                "UPDATE patch_history SET lines_changed=?, tests_passed=?, context_tokens=?, patch_difficulty=?, enhancement_name=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary), outcome=COALESCE(?, outcome), roi_deltas=COALESCE(?, roi_deltas), errors=COALESCE(?, errors) WHERE id=?",
                 (
                     lines_changed,
                     None if tests_passed is None else int(bool(tests_passed)),
+                    context_tokens,
+                    patch_difficulty,
                     enhancement_name,
                     timestamp,
                     diff,
@@ -1550,6 +1558,8 @@ class PatchHistoryDB:
                     errors=errors,
                     tests_passed=tests_passed,
                     lines_changed=lines_changed,
+                    context_tokens=context_tokens,
+                    patch_difficulty=patch_difficulty,
                 )
             except Exception:
                 logger.exception("vector metrics patch summary failed")
