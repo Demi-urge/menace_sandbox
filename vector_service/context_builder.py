@@ -695,6 +695,26 @@ class ContextBuilder:
         meta = scored.metadata or {}
         full.update(meta)
 
+        # Normalise patch-specific fields from retrieval metadata when present.
+        summary = meta.get("summary") or meta.get("description")
+        diff = meta.get("diff")
+        roi_delta = meta.get("roi_delta")
+        lines_changed = meta.get("lines_changed")
+        tests_passed = meta.get("tests_passed")
+        if summary:
+            summary = _summarise_text(str(summary))
+            full.setdefault("desc", summary)
+            full["summary"] = summary
+        if diff:
+            diff = _summarise_text(str(diff))
+            full["diff"] = diff
+        if roi_delta is not None:
+            full["roi_delta"] = roi_delta
+        if lines_changed is not None:
+            full["lines_changed"] = lines_changed
+        if tests_passed is not None:
+            full["tests_passed"] = tests_passed
+
         patch_id = meta.get("patch_id") if isinstance(meta, dict) else None
         try:
             patch_id = int(patch_id) if patch_id is not None else None
@@ -711,16 +731,25 @@ class ContextBuilder:
                 desc = rec_dict.get("description") or rec_dict.get("summary") or ""
                 diff = rec_dict.get("diff") or ""
                 outcome = rec_dict.get("outcome") or ""
-                if desc:
-                    desc = self._summarise(str(desc))
+                roi_delta = rec_dict.get("roi_delta")
+                lines_changed = rec_dict.get("lines_changed")
+                tests_passed = rec_dict.get("tests_passed")
+                if desc and "summary" not in full:
+                    desc = _summarise_text(str(desc))
                     full.setdefault("desc", desc)
                     full["summary"] = desc
-                if diff:
-                    diff = self._summarise(str(diff))
+                if diff and "diff" not in full:
+                    diff = _summarise_text(str(diff))
                     full["diff"] = diff
                 if outcome:
                     outcome = self._summarise(str(outcome))
                     full["outcome"] = outcome
+                if roi_delta is not None and "roi_delta" not in full:
+                    full["roi_delta"] = roi_delta
+                if lines_changed is not None and "lines_changed" not in full:
+                    full["lines_changed"] = lines_changed
+                if tests_passed is not None and "tests_passed" not in full:
+                    full["tests_passed"] = tests_passed
 
         summary = {
             k: v
