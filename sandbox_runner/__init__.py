@@ -1,9 +1,10 @@
 """Support modules for sandbox_runner wrapper."""
-import os
 import importlib
 
+from sandbox_settings import SandboxSettings
 
-_LIGHT_IMPORTS = bool(os.getenv("MENACE_LIGHT_IMPORTS"))
+settings = SandboxSettings()
+_LIGHT_IMPORTS = settings.menace_light_imports
 _env_simulate_temporal_trajectory = None
 
 if not _LIGHT_IMPORTS:

@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import uuid
 from pathlib import Path
 from typing import Any, List, Mapping
 import tempfile
@@ -43,7 +44,7 @@ except Exception:  # pragma: no cover - fallback when scipy is missing
 from threading import Thread
 
 from menace.metrics_dashboard import MetricsDashboard
-from logging_utils import get_logger, setup_logging
+from logging_utils import get_logger, setup_logging, set_correlation_id
 
 from foresight_tracker import ForesightTracker
 from .environment import SANDBOX_ENV_PRESETS, simulate_full_environment
@@ -54,6 +55,7 @@ except Exception:  # pragma: no cover
     generate_presets = lambda n=None: [{}]  # type: ignore
 
 logger = get_logger(__name__)
+settings = SandboxSettings()
 
 
 def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
@@ -62,8 +64,8 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
         from sandbox_runner import _sandbox_main as sandbox_main
 
     presets = SANDBOX_ENV_PRESETS or [{}]
-    if presets == [{}] and not os.environ.get("SANDBOX_ENV_PRESETS"):
-        if os.getenv("SANDBOX_GENERATE_PRESETS", "1") != "0":
+    if presets == [{}] and not settings.sandbox_env_presets:
+        if settings.sandbox_generate_presets:
             try:
                 from menace.environment_generator import generate_presets
 
@@ -688,140 +690,60 @@ def full_autonomous_run(
     roi_ma_history: list[float] = []
     synergy_ma_history = list(synergy_ma_history or [])
     roi_threshold = getattr(args, "roi_threshold", None)
-    env_val = os.getenv("ROI_THRESHOLD")
-    if roi_threshold is None and env_val is not None:
-        try:
-            roi_threshold = float(env_val)
-        except Exception:
-            roi_threshold = None
+    if roi_threshold is None:
+        roi_threshold = settings.roi_threshold
     synergy_threshold = getattr(args, "synergy_threshold", None)
-    env_val = os.getenv("SYNERGY_THRESHOLD")
-    if synergy_threshold is None and env_val is not None:
-        try:
-            synergy_threshold = float(env_val)
-        except Exception:
-            synergy_threshold = None
+    if synergy_threshold is None:
+        synergy_threshold = settings.synergy_threshold
     roi_confidence = getattr(args, "roi_confidence", None)
-    env_val = os.getenv("ROI_CONFIDENCE")
-    if roi_confidence is None and env_val is not None:
-        try:
-            roi_confidence = float(env_val)
-        except Exception:
-            roi_confidence = None
+    if roi_confidence is None:
+        roi_confidence = settings.roi_confidence
     synergy_confidence = getattr(args, "synergy_confidence", None)
-    env_val = os.getenv("SYNERGY_CONFIDENCE")
-    if synergy_confidence is None and env_val is not None:
-        try:
-            synergy_confidence = float(env_val)
-        except Exception:
-            synergy_confidence = None
+    if synergy_confidence is None:
+        synergy_confidence = settings.synergy_confidence
     entropy_plateau_threshold = getattr(args, "entropy_plateau_threshold", None)
-    env_val = os.getenv("ENTROPY_PLATEAU_THRESHOLD")
-    if entropy_plateau_threshold is None and env_val is not None:
-        try:
-            entropy_plateau_threshold = float(env_val)
-        except Exception:
-            entropy_plateau_threshold = None
+    if entropy_plateau_threshold is None:
+        entropy_plateau_threshold = settings.entropy_plateau_threshold
     entropy_consecutive = getattr(args, "entropy_plateau_consecutive", None)
-    env_val = os.getenv("ENTROPY_PLATEAU_CONSECUTIVE")
-    if entropy_consecutive is None and env_val is not None:
-        try:
-            entropy_consecutive = int(env_val)
-        except Exception:
-            entropy_consecutive = None
+    if entropy_consecutive is None:
+        entropy_consecutive = settings.entropy_plateau_consecutive
     entropy_threshold = getattr(args, "entropy_threshold", None)
-    env_val = os.getenv("ENTROPY_THRESHOLD")
-    if entropy_threshold is None and env_val is not None:
-        try:
-            entropy_threshold = float(env_val)
-        except Exception:
-            entropy_threshold = None
+    if entropy_threshold is None:
+        entropy_threshold = settings.entropy_threshold
     entropy_ceiling_threshold = getattr(args, "entropy_ceiling_threshold", None)
-    env_val = os.getenv("ENTROPY_CEILING_THRESHOLD")
-    if entropy_ceiling_threshold is None and env_val is not None:
-        try:
-            entropy_ceiling_threshold = float(env_val)
-        except Exception:
-            entropy_ceiling_threshold = None
+    if entropy_ceiling_threshold is None:
+        entropy_ceiling_threshold = settings.entropy_ceiling_threshold
     if entropy_ceiling_threshold is not None:
         os.environ["ENTROPY_CEILING_THRESHOLD"] = str(entropy_ceiling_threshold)
     entropy_ceiling_consecutive = getattr(args, "entropy_ceiling_consecutive", None)
-    env_val = os.getenv("ENTROPY_CEILING_CONSECUTIVE")
-    if entropy_ceiling_consecutive is None and env_val is not None:
-        try:
-            entropy_ceiling_consecutive = int(env_val)
-        except Exception:
-            entropy_ceiling_consecutive = None
+    if entropy_ceiling_consecutive is None:
+        entropy_ceiling_consecutive = settings.entropy_ceiling_consecutive
     if entropy_ceiling_consecutive is not None:
         os.environ["ENTROPY_CEILING_CONSECUTIVE"] = str(entropy_ceiling_consecutive)
     synergy_threshold_window = getattr(args, "synergy_threshold_window", None)
-    env_val = os.getenv("SYNERGY_THRESHOLD_WINDOW")
-    if synergy_threshold_window is None and env_val is not None:
-        try:
-            synergy_threshold_window = int(env_val)
-        except Exception:
-            synergy_threshold_window = None
+    if synergy_threshold_window is None:
+        synergy_threshold_window = settings.synergy_threshold_window
     synergy_threshold_weight = getattr(args, "synergy_threshold_weight", None)
-    env_val = os.getenv("SYNERGY_THRESHOLD_WEIGHT")
-    if synergy_threshold_weight is None and env_val is not None:
-        try:
-            synergy_threshold_weight = float(env_val)
-        except Exception:
-            synergy_threshold_weight = None
+    if synergy_threshold_weight is None:
+        synergy_threshold_weight = settings.synergy_threshold_weight
     synergy_ma_window = getattr(args, "synergy_ma_window", None)
-    env_val = os.getenv("SYNERGY_MA_WINDOW")
-    if synergy_ma_window is None and env_val is not None:
-        try:
-            synergy_ma_window = int(env_val)
-        except Exception:
-            synergy_ma_window = None
+    if synergy_ma_window is None:
+        synergy_ma_window = settings.synergy_ma_window
     synergy_stationarity_confidence = getattr(
         args, "synergy_stationarity_confidence", None
     )
-    env_val = os.getenv("SYNERGY_STATIONARITY_CONFIDENCE")
-    if synergy_stationarity_confidence is None and env_val is not None:
-        try:
-            synergy_stationarity_confidence = float(env_val)
-        except Exception:
-            synergy_stationarity_confidence = None
+    if synergy_stationarity_confidence is None:
+        synergy_stationarity_confidence = settings.synergy_stationarity_confidence
     synergy_std_threshold = getattr(args, "synergy_std_threshold", None)
-    env_val = os.getenv("SYNERGY_STD_THRESHOLD")
-    if synergy_std_threshold is None and env_val is not None:
-        try:
-            synergy_std_threshold = float(env_val)
-        except Exception:
-            synergy_std_threshold = None
+    if synergy_std_threshold is None:
+        synergy_std_threshold = settings.synergy_std_threshold
     synergy_variance_confidence = getattr(args, "synergy_variance_confidence", None)
-    env_val = os.getenv("SYNERGY_VARIANCE_CONFIDENCE")
-    if synergy_variance_confidence is None and env_val is not None:
-        try:
-            synergy_variance_confidence = float(env_val)
-        except Exception:
-            synergy_variance_confidence = None
+    if synergy_variance_confidence is None:
+        synergy_variance_confidence = settings.synergy_variance_confidence
     last_tracker = None
     iteration = 0
-    roi_cycles = getattr(args, "roi_cycles", 3)
-    env_val = os.getenv("ROI_CYCLES")
-    if env_val is not None:
-        try:
-            roi_cycles = int(env_val)
-        except Exception:
-            logger.warning(
-                "invalid ROI_CYCLES %r, using %s",
-                env_val,
-                roi_cycles,
-            )
-    synergy_cycles = getattr(args, "synergy_cycles", 3)
-    env_val = os.getenv("SYNERGY_CYCLES")
-    if env_val is not None:
-        try:
-            synergy_cycles = int(env_val)
-        except Exception:
-            logger.warning(
-                "invalid SYNERGY_CYCLES %r, using %s",
-                env_val,
-                synergy_cycles,
-            )
+    roi_cycles = getattr(args, "roi_cycles", settings.roi_cycles or 3)
+    synergy_cycles = getattr(args, "synergy_cycles", settings.synergy_cycles or 3)
     if synergy_threshold_window is None:
         synergy_threshold_window = synergy_cycles
     if synergy_threshold_weight is None:
@@ -1114,6 +1036,7 @@ def install_autopurge_command() -> None:
 
 def main(argv: List[str] | None = None) -> None:
     """Entry point for command line execution."""
+    set_correlation_id(str(uuid.uuid4()))
     parser = argparse.ArgumentParser(description="Run Menace sandbox")
     parser.add_argument(
         "--workflow-sim",
@@ -1139,18 +1062,19 @@ def main(argv: List[str] | None = None) -> None:
     parser.add_argument(
         "--module-algorithm",
         choices=["greedy", "label", "hdbscan"],
-        default=os.getenv("SANDBOX_MODULE_ALGO"),
+        default=settings.sandbox_module_algo,
         help="module clustering algorithm",
     )
     parser.add_argument(
         "--module-threshold",
         type=float,
-        default=os.getenv("SANDBOX_MODULE_THRESHOLD"),
+        default=settings.sandbox_module_threshold,
         help="semantic similarity threshold",
     )
     parser.add_argument(
         "--module-semantic",
         action="store_true",
+        default=settings.sandbox_semantic_modules,
         help="enable docstring similarity (or SANDBOX_SEMANTIC_MODULES=1)",
     )
     parser.add_argument(
@@ -1201,7 +1125,7 @@ def main(argv: List[str] | None = None) -> None:
     parser.add_argument(
         "--max-recursion-depth",
         type=int,
-        default=os.getenv("SANDBOX_MAX_RECURSION_DEPTH"),
+        default=settings.sandbox_max_recursion_depth,
         help="maximum depth when resolving dependency chains",
     )
     parser.add_argument(
@@ -1308,7 +1232,7 @@ def main(argv: List[str] | None = None) -> None:
     )
     parser.add_argument(
         "--log-level",
-        default=os.getenv("SANDBOX_LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO")),
+        default=settings.sandbox_log_level or settings.log_level,
         help="logging level for console output",
     )
     parser.add_argument(
@@ -1592,19 +1516,22 @@ def main(argv: List[str] | None = None) -> None:
     if getattr(args, "misuse_stubs", False):
         os.environ["SANDBOX_MISUSE_STUBS"] = "1"
 
-    settings = SandboxSettings()
-    auto_include_isolated = bool(getattr(settings, "auto_include_isolated", True) or getattr(args, "auto_include_isolated", False))
-    recursive_orphans = getattr(settings, "recursive_orphan_scan", True)
+    env_settings = SandboxSettings()
+    auto_include_isolated = bool(
+        getattr(env_settings, "auto_include_isolated", True)
+        or getattr(args, "auto_include_isolated", False)
+    )
+    recursive_orphans = getattr(env_settings, "recursive_orphan_scan", True)
     if args.recursive_orphans is not None:
         recursive_orphans = args.recursive_orphans
-    recursive_isolated = getattr(settings, "recursive_isolated", True)
+    recursive_isolated = getattr(env_settings, "recursive_isolated", True)
     if args.recursive_isolated is not None:
         recursive_isolated = args.recursive_isolated
     if auto_include_isolated:
         recursive_isolated = True
 
     fail_on_missing = bool(
-        getattr(settings, "fail_on_missing_scenarios", False)
+        getattr(env_settings, "fail_on_missing_scenarios", False)
         or getattr(args, "fail_on_missing_scenarios", False)
     )
 

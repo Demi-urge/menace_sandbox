@@ -3,6 +3,27 @@
 This guide describes the prerequisites and environment variables used when
 running the fully autonomous sandbox.
 
+## Configuration
+
+`SandboxSettings` reads configuration from the environment or an optional
+`.env` file. The most important variables are:
+
+- `MENACE_MODE` – operating mode (`test` or `production`).
+- `DATABASE_URL` – database connection string.
+- `SANDBOX_REPO_PATH` – repository root used by background services.
+- `SANDBOX_DATA_DIR` – directory where sandbox state and metrics are stored.
+- `OPENAI_API_KEY` – API key for model access.
+- `VISUAL_AGENT_MONITOR_INTERVAL` – seconds between visual agent health checks
+  (default `30`).
+- `LOCAL_KNOWLEDGE_REFRESH_INTERVAL` – refresh interval for the local
+  knowledge module (default `600`).
+- `MENACE_LOCAL_DB_PATH` and `MENACE_SHARED_DB_PATH` – override default SQLite
+  database locations.
+
+The `.env` file referenced by `MENACE_ENV_FILE` is loaded automatically when
+present. Additional configuration files such as synergy weights or self‑test
+locks are created inside `SANDBOX_DATA_DIR` during execution.
+
 For information on built-in scenario profiles, hostile input stubs and
 concurrency options, see the sections on [Predefined Profiles](sandbox_runner.md#predefined-profiles),
 [Hostile Input Stub Strategy](sandbox_runner.md#hostile-input-stub-strategy) and
