@@ -33,11 +33,12 @@ DEFAULT_TEMPLATE = "No relevant patches were found. Proceed with a fresh impleme
 
 
 try:  # pragma: no cover - optional heavy imports for type checking
-    from vector_service.retriever import Retriever  # type: ignore
+    from vector_service.retriever import Retriever, PatchRetriever  # type: ignore
     from vector_service.context_builder import ContextBuilder  # type: ignore
     from vector_service.roi_tags import RoiTag  # type: ignore
 except Exception:  # pragma: no cover - allow running tests without service layer
     Retriever = Any  # type: ignore
+    PatchRetriever = Any  # type: ignore
     ContextBuilder = Any  # type: ignore
 
     class RoiTag:  # type: ignore[misc]
@@ -63,6 +64,9 @@ class PromptEngine:
         Object exposing a ``search(query, top_k)`` method returning patch
         records.  The default attempts to instantiate
         :class:`vector_service.retriever.Retriever`.
+    patch_retriever:
+        Optional :class:`vector_service.retriever.PatchRetriever` instance.
+        When omitted the *retriever* is used for patch lookups.
     context_builder:
         Optional :class:`vector_service.context_builder.ContextBuilder`
         instance.  When supplied the engine will attempt to read the
@@ -75,13 +79,17 @@ class PromptEngine:
     template_sections:
         Names of sections from ``template_path`` to include in fallback
         prompts.
+    max_tokens:
+        Maximum number of tokens allowed for each snippet block.
     """
 
     retriever: Retriever | None = None
+    patch_retriever: PatchRetriever | None = None
     context_builder: ContextBuilder | None = None
     roi_tracker: Any | None = None
     confidence_threshold: float = 0.3
     top_n: int = 5
+    max_tokens: int = 200
     roi_weight: float = 1.0
     recency_weight: float = 0.1
     roi_tag_weights: Dict[str, float] = field(
@@ -113,6 +121,14 @@ class PromptEngine:
                 self.retriever = Retriever()
             except Exception:
                 self.retriever = None
+        if self.patch_retriever is None:
+            if self.retriever is not None:
+                self.patch_retriever = self.retriever  # type: ignore[assignment]
+            else:
+                try:
+                    self.patch_retriever = PatchRetriever()
+                except Exception:
+                    self.patch_retriever = None
         if self.context_builder is None:
             try:
                 self.context_builder = ContextBuilder(retriever=self.retriever)
@@ -143,7 +159,7 @@ class PromptEngine:
         successes: List[tuple[float, str]] = []
         failures: List[tuple[float, str]] = []
         for meta in metas:
-            snippet, passed = self._compress_patch(meta)
+            snippet, passed = self._compress_patch(meta, max_tokens=self.max_tokens)
             if not snippet:
                 continue
             score = self._score_snippet(meta, min_ts=min_ts, span=span)
@@ -189,12 +205,13 @@ class PromptEngine:
         ``confidence_threshold`` a static fallback template is returned.
         """
 
-        if self.retriever is None:
+        retriever = self.patch_retriever or self.retriever
+        if retriever is None:
             logging.info("No retriever available; falling back to static template")
             return self._static_prompt()
 
         try:
-            result = self.retriever.search(task, top_k=self.top_n)
+            result = retriever.search(task, top_k=self.top_n)
         except Exception as exc:  # pragma: no cover - best effort
             logging.exception("Snippet retrieval failed: %s", exc)
             audit_log_event(
@@ -358,7 +375,9 @@ class PromptEngine:
         return out
 
     # ------------------------------------------------------------------
-    def _compress_patch(self, patch: Dict[str, Any], *, max_tokens: int = 200) -> tuple[str, bool]:
+    def _compress_patch(
+        self, patch: Dict[str, Any], *, max_tokens: int | None = None
+    ) -> tuple[str, bool]:
         """Return a compact textual representation of ``patch``.
 
         The function extracts description, diff, code snippet and test logs and
@@ -368,10 +387,11 @@ class PromptEngine:
         patch.
         """
 
+        limit = self.max_tokens if max_tokens is None else max_tokens
         meta = self._compress(patch)
         lines = self._format_record(meta)
         snippet = "\n".join(lines)
-        snippet = self._trim_tokens(snippet, max_tokens)
+        snippet = self._trim_tokens(snippet, limit)
         return snippet, bool(meta.get("tests_passed"))
 
     # ------------------------------------------------------------------
