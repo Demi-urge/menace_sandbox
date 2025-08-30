@@ -206,6 +206,8 @@ class Retriever:
             if roi_tag is not None:
                 score = max(score - self.roi_tag_weights.get(str(roi_tag), 0.0), 0.0)
                 item["roi_tag"] = roi_tag
+                if isinstance(item.get("metadata"), dict):
+                    item["metadata"]["roi_tag"] = roi_tag
             item["score"] = score
             results.append(item)
         if filtered:
@@ -681,6 +683,8 @@ class PatchRetriever:
             roi_tag = md.get("roi_tag") if isinstance(md, dict) else None
             if roi_tag is not None:
                 score = max(score - self.roi_tag_weights.get(str(roi_tag), 0.0), 0.0)
+                if isinstance(md, dict):
+                    md["roi_tag"] = roi_tag
 
             item = {
                 "origin_db": origin,
