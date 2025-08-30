@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 try:  # pragma: no cover - optional at runtime
@@ -17,6 +18,13 @@ except Exception:  # pragma: no cover - fallback when running in isolation
     ROITracker = None  # type: ignore
 
 from snippet_compressor import compress_snippets
+
+try:  # pragma: no cover - optional dependency
+    from audit_logger import log_event as audit_log_event  # type: ignore
+except Exception:  # pragma: no cover - logging only when available
+    def audit_log_event(*_a: Any, **_k: Any) -> None:  # type: ignore
+        """Stub when audit logger is unavailable."""
+        return
 
 DEFAULT_TEMPLATE = (
     "No relevant patches were found. Proceed with a fresh implementation."
@@ -35,30 +43,36 @@ class PromptEngine:
     """
 
     roi_tracker: ROITracker | None = None
+    confidence_threshold: float = 0.3
 
     # ------------------------------------------------------------------
     @staticmethod
     def _fetch_patches(goal: str, top_n: int) -> Tuple[List[Dict[str, Any]], float]:
-        """Return ``(records, confidence)`` for ``goal``.
+        """Return ``(records, avg_confidence)`` for ``goal``.
 
         The default implementation queries :class:`PatchRetriever` from the
-        vector service.  The confidence score is derived from the best hit
-        similarity and normalised to the ``[0, 1]`` range.  Test suites monkey
-        patch this helper to isolate the prompt construction logic.
+        vector service.  The confidence score is the average similarity of the
+        retrieved snippets normalised to the ``[0, 1]`` range.  Test suites
+        monkey patch this helper to isolate the prompt construction logic.
         """
 
         try:  # pragma: no cover - heavy dependency optional in tests
             from .vector_service.retriever import PatchRetriever  # type: ignore
-        except Exception:  # pragma: no cover - vector service unavailable
-            return [], 0.0
+        except Exception as exc:  # pragma: no cover - vector service unavailable
+            raise RuntimeError("retriever unavailable") from exc
 
-        retriever = PatchRetriever(top_k=top_n)
-        records = retriever.search(goal, top_k=top_n) or []
-        confidence = 0.0
+        try:
+            retriever = PatchRetriever(top_k=top_n)
+            records = retriever.search(goal, top_k=top_n) or []
+        except Exception as exc:  # pragma: no cover - retrieval failure
+            raise RuntimeError("retriever search failed") from exc
+
+        total = 0.0
         for rec in records:
             score = rec.get("score") or rec.get("similarity") or 0.0
-            confidence = max(confidence, float(score))
-        return records, confidence
+            total += float(score)
+        avg_confidence = total / len(records) if records else 0.0
+        return records, avg_confidence
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -111,20 +125,37 @@ class PromptEngine:
         retry_trace: str | None = None,
         *,
         top_n: int = 5,
-        confidence_threshold: float = 0.3,
     ) -> str:
         """Assemble a prompt for ``goal``.
 
-        When the retrieval confidence falls below ``confidence_threshold`` the
-        function returns :data:`DEFAULT_TEMPLATE` instead of an unhelpful prompt.
+        When the average retrieval confidence falls below ``confidence_threshold``
+        or snippet retrieval fails, the function falls back to a static template
+        instead of emitting an unhelpful prompt.
         """
 
-        records, confidence = self._fetch_patches(goal, top_n)
-        if not records or confidence < confidence_threshold:
+        try:
+            records, confidence = self._fetch_patches(goal, top_n)
+        except Exception as exc:
+            logging.exception("Snippet retrieval failed: %s", exc)
+            audit_log_event(
+                "prompt_engine_fallback",
+                {"goal": goal, "reason": "retrieval_error", "error": str(exc)},
+            )
+            return self._static_prompt()
+
+        if not records or confidence < self.confidence_threshold:
             logging.info(
                 "Retrieval confidence %.2f below threshold; falling back", confidence
             )
-            return DEFAULT_TEMPLATE
+            audit_log_event(
+                "prompt_engine_fallback",
+                {
+                    "goal": goal,
+                    "reason": "low_confidence",
+                    "confidence": confidence,
+                },
+            )
+            return self._static_prompt()
 
         successes: List[Dict[str, Any]] = []
         failures: List[Dict[str, Any]] = []
@@ -168,13 +199,22 @@ class PromptEngine:
     ) -> str:
         """Class method wrapper used by existing tests and callers."""
 
-        engine = cls(roi_tracker=roi_tracker)
-        return engine.build_prompt(
-            goal,
-            retry_trace,
-            top_n=top_n,
-            confidence_threshold=confidence_threshold,
+        engine = cls(
+            roi_tracker=roi_tracker, confidence_threshold=confidence_threshold
         )
+        return engine.build_prompt(goal, retry_trace, top_n=top_n)
+
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _static_prompt() -> str:
+        """Return a generic prompt template used when retrieval fails."""
+
+        try:  # pragma: no cover - optional heavy dependency
+            from bot_development_bot import DEFAULT_TEMPLATE as BOT_DEV_TEMPLATE
+            return Path(BOT_DEV_TEMPLATE).read_text(encoding="utf-8")
+        except Exception:
+            return DEFAULT_TEMPLATE
 
 
 def build_prompt(goal: str, retry_trace: str | None = None, *, top_n: int = 5) -> str:
