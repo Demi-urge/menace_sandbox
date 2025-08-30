@@ -6871,13 +6871,17 @@ def generate_workflows_for_modules(
     *,
     router: DBRouter | None = None,
 ) -> list[int]:
-    """Create simple workflows executing each *module* in isolation.
+    """Create workflows for ``modules`` including their dependencies.
+
+    The repository import graph is analysed to determine required module
+    dependencies. Modules connected through this graph are combined into a
+    single multi‑step workflow preserving dependency order.
 
     Parameters
     ----------
     modules:
-        Iterable of module names or file paths. Each entry becomes a single step
-        workflow.
+        Iterable of module names or file paths. Related modules will be grouped
+        into a single workflow.
     workflows_db:
         Path to the workflows database. Defaults to ``"workflows.db"``.
 
@@ -6889,11 +6893,71 @@ def generate_workflows_for_modules(
 
     from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
 
+    try:
+        from dynamic_module_mapper import build_import_graph
+        import networkx as nx
+    except Exception:  # pragma: no cover - optional dependency
+        build_import_graph = None  # type: ignore
+        nx = None  # type: ignore
+
     wf_db = WorkflowDB(Path(workflows_db), router=router)
     ids: list[int] = []
-    for mod in modules:
-        name = str(mod)
-        dotted = Path(name).with_suffix("").as_posix().replace("/", ".")
+
+    repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+    graph = None
+    if build_import_graph and nx:
+        try:
+            graph = build_import_graph(repo)
+        except Exception:
+            logger.exception("failed to build import graph")
+
+    norm_paths = [Path(str(m)).with_suffix("").as_posix() for m in modules]
+
+    processed: set[str] = set()
+    if graph is not None:
+        sub_nodes: set[str] = set()
+        for mp in norm_paths:
+            if mp in graph:
+                sub_nodes.add(mp)
+                try:
+                    sub_nodes.update(nx.descendants(graph, mp))
+                except Exception:
+                    sub_nodes.add(mp)
+            else:
+                sub_nodes.add(mp)
+        sub = graph.subgraph(sub_nodes).copy()
+        for comp in nx.connected_components(sub.to_undirected()):
+            sg = sub.subgraph(comp)
+            try:
+                order = list(nx.topological_sort(sg.reverse()))
+            except Exception:
+                order = list(comp)
+            dotted_workflow = [n.replace("/", ".") for n in order]
+            deps = [n.replace("/", ".") for n in order if n not in norm_paths]
+            reasons = [
+                f"{a.replace('/', '.')} -> {b.replace('/', '.')}" for a, b in sg.edges()
+            ]
+            title = dotted_workflow[-1] if dotted_workflow else "workflow"
+            try:
+                rec = WorkflowRecord(
+                    workflow=dotted_workflow,
+                    title=title,
+                    dependencies=deps,
+                    reasons=reasons,
+                )
+                wid = wf_db.add(rec)
+                if wid is not None:
+                    ids.append(wid)
+                else:
+                    logger.warning("duplicate workflow ignored for %s", title)
+            except Exception:
+                logger.exception("failed to store workflow for %s", title)
+            processed.update(comp)
+
+    for mp in norm_paths:
+        if mp in processed:
+            continue
+        dotted = mp.replace("/", ".")
         try:
             rec = WorkflowRecord(workflow=[dotted], title=dotted)
             wid = wf_db.add(rec)
@@ -6903,8 +6967,8 @@ def generate_workflows_for_modules(
                 logger.warning("duplicate workflow ignored for %s", dotted)
         except Exception:
             logger.exception("failed to store workflow for %s", dotted)
+
     try:
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
         integrate_new_orphans(repo, router=router)
     except Exception:
         logger.exception("integrate_new_orphans after workflow generation failed")

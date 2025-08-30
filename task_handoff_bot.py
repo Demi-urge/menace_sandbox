@@ -76,6 +76,8 @@ class WorkflowRecord:
     description: str = ""
     task_sequence: List[str] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)
+    dependencies: List[str] = field(default_factory=list)
+    reasons: List[str] = field(default_factory=list)
     category: str = ""
     type_: str = ""
     status: str = "pending"
@@ -133,6 +135,8 @@ class WorkflowDB(EmbeddableDBMixin):
                 description TEXT,
                 task_sequence TEXT,
                 tags TEXT,
+                dependencies TEXT,
+                reasons TEXT,
                 category TEXT,
                 type TEXT,
                 status TEXT,
@@ -151,6 +155,10 @@ class WorkflowDB(EmbeddableDBMixin):
             self.conn.execute("ALTER TABLE workflows ADD COLUMN action_chains TEXT")
         if "argument_strings" not in cols:
             self.conn.execute("ALTER TABLE workflows ADD COLUMN argument_strings TEXT")
+        if "dependencies" not in cols:
+            self.conn.execute("ALTER TABLE workflows ADD COLUMN dependencies TEXT")
+        if "reasons" not in cols:
+            self.conn.execute("ALTER TABLE workflows ADD COLUMN reasons TEXT")
         if "source_menace_id" not in cols:
             self.conn.execute(
                 "ALTER TABLE workflows ADD COLUMN "
@@ -182,6 +190,8 @@ class WorkflowDB(EmbeddableDBMixin):
             description=row["description"] or "",
             task_sequence=row["task_sequence"].split(",") if row["task_sequence"] else [],
             tags=row["tags"].split(",") if row["tags"] else [],
+            dependencies=row["dependencies"].split(",") if row["dependencies"] else [],
+            reasons=row["reasons"].split(",") if row["reasons"] else [],
             category=row["category"] or "",
             type_=row["type"] or "",
             status=row["status"] or "",
@@ -322,6 +332,8 @@ class WorkflowDB(EmbeddableDBMixin):
             "description": wf.description,
             "task_sequence": ",".join(wf.task_sequence),
             "tags": ",".join(wf.tags),
+            "dependencies": ",".join(wf.dependencies),
+            "reasons": ",".join(wf.reasons),
             "category": wf.category,
             "type": wf.type_,
             "status": wf.status,
