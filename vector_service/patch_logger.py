@@ -24,6 +24,7 @@ from .decorators import log_and_measure
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from patch_safety import PatchSafety
 from db_router import GLOBAL_ROUTER, init_db_router
+from .weight_adjuster import WeightAdjuster
 
 if TYPE_CHECKING:  # pragma: no cover
     from .vectorizer import SharedVectorService
@@ -272,6 +273,7 @@ class PatchLogger:
         max_alerts: int = 5,
         license_denylist: set[str] | None = None,
         patch_safety: PatchSafety | None = None,
+        weight_adjuster: WeightAdjuster | None = None,
     ) -> None:
         self.patch_db = patch_db or (PatchHistoryDB() if PatchHistoryDB is not None else None)
         if vector_metrics is not None:
@@ -296,6 +298,11 @@ class PatchLogger:
         self.patch_safety.max_alert_severity = max_alert_severity
         self.patch_safety.max_alerts = max_alerts
         self.patch_safety.license_denylist = self.license_denylist
+        self.weight_adjuster = weight_adjuster or (
+            WeightAdjuster(vector_metrics=self.vector_metrics)
+            if self.vector_metrics is not None
+            else None
+        )
 
     # ------------------------------------------------------------------
     def _parse_vectors(
@@ -956,6 +963,12 @@ class PatchLogger:
         _TRACK_FAILURES.inc(error_trace_count)
         if tests_passed is not None:
             _TRACK_TESTS.labels("passed" if tests_passed else "failed").inc()
+
+        if self.weight_adjuster is not None:
+            try:
+                self.weight_adjuster.adjust(pairs, enhancement_score, roi_tag)
+            except Exception:
+                logger.exception("Failed to adjust ranking weights")
 
         return TrackResult(
             origin_similarity,
