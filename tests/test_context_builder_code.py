@@ -75,11 +75,12 @@ class _CodeRetriever:
 
 
 def test_context_builder_returns_code_record(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        EmbeddableDBMixin,
-        "encode_text",
-        lambda self, text: [float(len(text))],
-    )
+    if hasattr(EmbeddableDBMixin, "encode_text"):
+        monkeypatch.setattr(
+            EmbeddableDBMixin,
+            "encode_text",
+            lambda self, text: [float(len(text))],
+        )
 
     db = CodeDB(path=tmp_path / "code.db")
     cid = db.add(CodeRecord(code="print('hi')", summary="greet"))
@@ -95,7 +96,7 @@ def test_context_builder_includes_patch_details(monkeypatch):
     class DummyPatchDB:
         def get(self, pid):  # pragma: no cover - simple stub
             return types.SimpleNamespace(
-                description="patched", diff="diff", outcome="win"
+                outcome="win", roi_delta=1.2, lines_changed=5, tests_passed=True
             )
 
     monkeypatch.setattr(cb, "PatchHistoryDB", DummyPatchDB)
@@ -104,17 +105,20 @@ def test_context_builder_includes_patch_details(monkeypatch):
         def search(self, *_a, **_k):
             return [
                 {
-                    "origin_db": "code",
+                    "origin_db": "patch",
                     "record_id": 1,
                     "score": 1.0,
                     "text": "",
-                    "metadata": {"patch_id": 1},
+                    "metadata": {"patch_id": 1, "summary": "patched", "diff": "diff"},
                 }
             ]
 
     builder = ContextBuilder(retriever=DummyRetriever())
     data = json.loads(builder.build_context("q"))
-    entry = data["code"][0]
+    entry = data["patches"][0]
     assert entry["summary"] == "patched"
     assert entry["diff"] == "diff"
+    assert entry["roi_delta"] == 1.2
+    assert entry["lines_changed"] == 5
+    assert entry["tests_passed"] is True
     assert entry["outcome"] == "win"
