@@ -37,6 +37,7 @@ import traceback
 import statistics
 from datetime import datetime
 from pathlib import Path
+import importlib
 from typing import (
     Any,
     Dict,
@@ -58,7 +59,7 @@ from metrics_exporter import environment_failure_total
 
 try:
     from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord
-except ImportError:  # pragma: no cover - optional dependency
+except Exception:  # pragma: no cover - optional dependency
     DiagnosticManager = None  # type: ignore
     ResolutionRecord = None  # type: ignore
 
@@ -4846,10 +4847,47 @@ def aggregate_history_stubs() -> Dict[str, Any]:
     return result
 
 
+def _load_strategy_hook(env_var: str) -> Callable[..., Any] | None:
+    """Load a strategy hook specified by ``env_var``.
+
+    The environment variable should contain ``"module:attr"`` pointing to a
+    callable accepting the same parameters as the corresponding strategy
+    function.
+    """
+
+    path = os.getenv(env_var)
+    if not path:
+        return None
+    mod_name, _, attr = path.partition(":")
+    try:
+        mod = importlib.import_module(mod_name)
+        hook = getattr(mod, attr)
+        if callable(hook):
+            return hook  # type: ignore[return-value]
+    except Exception:
+        logger.exception("failed to load strategy hook: %s", path)
+    return None
+
+
 def _random_strategy(
     count: int, conf: Dict[str, Any] | None = None
 ) -> List[Dict[str, Any]]:
     conf = conf or {}
+    hook = conf.get("hook") or _load_strategy_hook("SANDBOX_RANDOM_STRATEGY_HOOK")
+    if hook:
+        try:
+            res = hook(count, conf)
+            if res:
+                return [dict(r) for r in res if isinstance(r, dict)]
+        except Exception:
+            logger.exception("random strategy hook failed")
+
+    history = conf.get("history")
+    if history is None:
+        history = _load_history(os.getenv("SANDBOX_INPUT_HISTORY"))
+    if history:
+        return [dict(random.choice(history)) for _ in range(count)]
+
     modes = conf.get("modes", ["default", "alt", "stress"])
     level_range = conf.get("level_range", [1, 5])
     flags = conf.get("flags", ["A", "B", "C"])
@@ -4870,29 +4908,41 @@ def _hostile_strategy(
     count: int, target: Callable[..., Any] | None = None
 ) -> List[Dict[str, Any]]:
     """Return adversarial input dictionaries."""
+    hook = _load_strategy_hook("SANDBOX_HOSTILE_STRATEGY_HOOK")
+    if hook:
+        try:
+            res = hook(count, target)
+            if res:
+                return [dict(r) for r in res if isinstance(r, dict)]
+        except Exception:
+            logger.exception("hostile strategy hook failed")
 
-    payloads = [
-        "' OR '1'='1",
-        "<script>alert(1)</script>",
-        "A" * 10_000,
-        "../../etc/passwd",
-        '{"id": 1,',  # malformed JSON
-        "[1, 2,]",  # malformed JSON array
-        "",
-        "\x00",
-        0,
-        -1,
-        2**31,
-        float('inf'),
-        float('-inf'),
-        float('nan'),
-        None,
-    ]
+    payloads: List[Any] = []
+    history = _load_history(os.getenv("SANDBOX_INPUT_HISTORY"))
+    for rec in history:
+        for val in rec.values():
+            if isinstance(val, (str, int, float)):
+                payloads.append(val)
 
-    # Allow external templates to supplement the built-in payloads. When
-    # ``SANDBOX_INPUT_TEMPLATES_FILE`` is provided and contains a ``hostile``
-    # list, those values are prepended so callers can customise the
-    # adversarial corpus without modifying the codebase.
+    if not payloads:
+        payloads = [
+            "' OR '1'='1",
+            "<script>alert(1)</script>",
+            "A" * 10_000,
+            "../../etc/passwd",
+            '{"id": 1,',  # malformed JSON
+            "[1, 2,]",  # malformed JSON array
+            "",
+            "\x00",
+            0,
+            -1,
+            2**31,
+            float('inf'),
+            float('-inf'),
+            float('nan'),
+            None,
+        ]
+
     tmpl_path = os.getenv(
         "SANDBOX_INPUT_TEMPLATES_FILE",
         str(ROOT / "sandbox_data" / "input_stub_templates.json"),
@@ -4971,6 +5021,34 @@ def _misuse_provider(
     target = ctx.get("target") if isinstance(ctx, dict) else None
     hostile = _hostile_strategy(count, target)
     return (stubs or []) + hostile
+
+
+def _validate_stubs(
+    stubs: List[Dict[str, Any]] | None, target: Callable[..., Any] | None
+) -> List[Dict[str, Any]]:
+    """Return ``stubs`` filtered to match ``target`` signature."""
+
+    if not stubs or target is None:
+        return stubs or []
+    try:
+        sig = inspect.signature(target)
+    except Exception:
+        return stubs or []
+    required = {
+        name
+        for name, p in sig.parameters.items()
+        if p.default is inspect._empty
+    }
+    allowed = set(sig.parameters)
+    valid: List[Dict[str, Any]] = []
+    for stub in stubs:
+        if not isinstance(stub, dict):
+            continue
+        if required - set(stub):
+            continue
+        cleaned = {k: v for k, v in stub.items() if k in allowed}
+        valid.append(cleaned)
+    return valid or (stubs or [])
 
 
 def _smart_value(name: str, hint: Any) -> Any:
@@ -5191,6 +5269,7 @@ def generate_input_stubs(
         except Exception:
             logger.exception("stub provider %s failed", getattr(prov, "__name__", "?"))
 
+    stubs = _validate_stubs(stubs, target)
     return stubs
 
 
