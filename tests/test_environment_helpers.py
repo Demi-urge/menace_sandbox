@@ -99,6 +99,7 @@ def test_section_worker_concurrency_spike():
 def test_generate_input_stubs_env(monkeypatch):
     monkeypatch.setenv("SANDBOX_INPUT_STUBS", '[{"a": 1}]')
     import importlib
+
     importlib.reload(env)
     stubs = env.generate_input_stubs()
     assert stubs == [{"a": 1}]
@@ -110,6 +111,7 @@ def test_generate_input_stubs_random(monkeypatch):
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
     import importlib
+
     importlib.reload(env)
     monkeypatch.setattr(env.random, "choice", lambda seq: seq[0])
     monkeypatch.setattr(env.random, "randint", lambda a, b: a)
@@ -129,6 +131,7 @@ def test_generate_input_stubs_templates(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", str(f))
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
     import importlib
+
     importlib.reload(env)
     stubs = env.generate_input_stubs(1)
     assert stubs == [{"mode": "x", "level": 9}]
@@ -141,6 +144,7 @@ def test_generate_input_stubs_smart(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
     import importlib
+
     importlib.reload(env)
     if env._FAKER is not None:
         monkeypatch.setattr(env._FAKER, "random_int", lambda *a, **k: 42)
@@ -161,6 +165,7 @@ def test_generate_input_stubs_smart_no_faker(monkeypatch):
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
     import importlib
+
     importlib.reload(env)
     monkeypatch.setattr(env, "_FAKER", None)
     monkeypatch.setattr(env, "_hyp_strats", None)
@@ -185,6 +190,7 @@ def test_generate_input_stubs_synthetic_plugin(monkeypatch, tmp_path):
     )
     import importlib
     import sandbox_runner.generative_stub_provider as gsp
+
     gsp = importlib.reload(gsp)
 
     class DummyGen:
@@ -193,12 +199,13 @@ def test_generate_input_stubs_synthetic_plugin(monkeypatch, tmp_path):
 
         def __call__(self, prompt, max_length=64, num_return_sequences=1):
             self.prompts.append(prompt)
-            return [{"generated_text": "{\"foo\": 7}"}]
+            return [{"generated_text": '{"foo": 7}'}]
 
     dummy = DummyGen()
 
     async def loader():
         return dummy
+
     monkeypatch.setattr(gsp, "_aload_generator", loader)
     importlib.reload(env)
 
@@ -230,7 +237,8 @@ def test_generative_load_default(monkeypatch):
     monkeypatch.setattr(gsp, "_GENERATOR", None)
     gen = gsp._load_generator()
     assert called["task"] == "text-generation"
-    assert called["model"] == "gpt2-large"
+    assert called["model"] == "distilgpt2"
+    assert called["local_files_only"] is True
     assert gen is not None
 
 
@@ -249,6 +257,7 @@ def test_generative_model_validation(monkeypatch):
         return []
 
     from importlib import metadata
+
     monkeypatch.setattr(metadata, "entry_points", dummy_entry_points)
 
     import importlib
@@ -271,6 +280,7 @@ def test_generate_input_stubs_synthetic_fallback(monkeypatch, tmp_path):
     )
     import importlib
     import sandbox_runner.generative_stub_provider as gsp
+
     gsp = importlib.reload(gsp)
 
     async def loader():
@@ -301,6 +311,7 @@ def test_generate_input_stubs_history_db(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", str(db_path))
     import importlib
+
     importlib.reload(env)
 
     stubs = env.generate_input_stubs(1)
@@ -318,6 +329,7 @@ def test_generate_input_stubs_history_db_empty(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", str(db_path))
     import importlib
+
     importlib.reload(env)
 
     def target(z: int) -> None:
@@ -340,6 +352,7 @@ def test_generate_input_stubs_history_mean(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", str(db_path))
     import importlib
+
     importlib.reload(env)
 
     stubs = env.generate_input_stubs(1)
@@ -360,6 +373,7 @@ def test_generate_input_stubs_history_common(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", str(db_path))
     import importlib
+
     importlib.reload(env)
 
     stubs = env.generate_input_stubs(1)
@@ -378,6 +392,7 @@ def test_generate_input_stubs_history_fallback(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", str(tmp_path / "none.json"))
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", str(db_path))
     import importlib
+
     importlib.reload(env)
 
     stubs = env.generate_input_stubs(1)
@@ -392,6 +407,7 @@ def test_generate_input_stubs_hostile(monkeypatch):
     monkeypatch.delenv("SANDBOX_HOSTILE_PAYLOADS_FILE", raising=False)
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
     import importlib
+
     importlib.reload(env)
     stubs = env.generate_input_stubs(1, strategy="hostile")
     val = next(iter(stubs[0].values()))
@@ -427,6 +443,7 @@ def test_generate_input_stubs_misuse(monkeypatch):
     monkeypatch.delenv("SANDBOX_INPUT_TEMPLATES_FILE", raising=False)
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
     import importlib
+
     importlib.reload(env)
 
     def target(a: int, name: str) -> None:
@@ -490,6 +507,7 @@ def _stub_docker_logs(holder):
 
     class DummyErr(Exception):
         pass
+
     err_mod.DockerException = DummyErr
     err_mod.APIError = DummyErr
     dummy.errors = err_mod

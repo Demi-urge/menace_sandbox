@@ -22,6 +22,7 @@ import ast
 import dataclasses
 
 from .input_history_db import InputHistoryDB
+from sandbox_settings import SandboxSettings
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -48,6 +49,10 @@ _TARGET_STATS: dict[str, Counter[str]] = defaultdict(Counter)
 
 # Entry-point group for discovering available text generation models
 MODEL_ENTRY_POINT_GROUP = "sandbox.stub_models"
+
+FALLBACK_MODEL = "distilgpt2"
+
+SETTINGS = SandboxSettings()
 
 
 class _SaveTaskManager(AbstractAsyncContextManager):
@@ -144,11 +149,13 @@ def _validate_env() -> None:
     _RETRY_MAX = _float_env("SANDBOX_STUB_RETRY_MAX", 30.0)
     _CACHE_MAX = _int_env("SANDBOX_STUB_CACHE_MAX", 1024)
 
-    model = os.getenv("SANDBOX_STUB_MODEL")
+    model = SETTINGS.sandbox_stub_model
     if model:
-        available = _available_models()
+        available = _available_models(SETTINGS)
         if available and model not in available:
-            msg = f"unknown SANDBOX_STUB_MODEL {model!r}; available: {sorted(available)}"
+            msg = (
+                f"unknown SANDBOX_STUB_MODEL {model!r}; available: {sorted(available)}"
+            )
             logger.error(msg)
             raise ValueError(msg)
         if not available:
@@ -204,7 +211,9 @@ def _rule_based_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
                     return 0.5
                 return float(
                     1
-                    if any(t in lname for t in ["count", "num", "size", "len", "quantity"])
+                    if any(
+                        t in lname for t in ["count", "num", "size", "len", "quantity"]
+                    )
                     else 0
                 )
             if annotation in (bool, "bool"):
@@ -222,7 +231,12 @@ def _rule_based_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
                     for f in dataclasses.fields(annotation)
                 }
                 return annotation(**kwargs)
-            if inspect.isclass(annotation) and annotation not in (int, float, bool, str):
+            if inspect.isclass(annotation) and annotation not in (
+                int,
+                float,
+                bool,
+                str,
+            ):
                 try:
                     sig = inspect.signature(annotation)
                     kwargs: dict[str, Any] = {}
@@ -313,8 +327,10 @@ def _type_matches(value: Any, annotation: Any) -> bool:
             return isinstance(value, tuple) and all(
                 _type_matches(v, elem_type) for v in value
             )
-        return isinstance(value, tuple) and len(value) == len(args) and all(
-            _type_matches(v, t) for v, t in zip(value, args)
+        return (
+            isinstance(value, tuple)
+            and len(value) == len(args)
+            and all(_type_matches(v, t) for v, t in zip(value, args))
         )
     if origin is set:
         (arg,) = get_args(annotation) or (Any,)
@@ -450,26 +466,31 @@ async def _aload_generator():
     global _GENERATOR
     if _GENERATOR is not None:
         return _GENERATOR
-    model = os.getenv("SANDBOX_STUB_MODEL")
+    model = SETTINGS.sandbox_stub_model
 
     if model == "openai":
         if not _feature_enabled("SANDBOX_ENABLE_OPENAI"):
-            logger.error("openai support disabled; set SANDBOX_ENABLE_OPENAI=1")
-            return None
-        if not os.getenv("OPENAI_API_KEY"):
-            logger.error("OPENAI_API_KEY missing for openai usage")
-            return None
-        try:
-            global openai
-            if openai is None:
-                openai = importlib.import_module("openai")  # type: ignore
-        except Exception:
-            logger.error("openai library unavailable")
-            return None
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        _GENERATOR = openai
-        await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
-        return _GENERATOR
+            logger.error("openai support disabled; falling back to %s", FALLBACK_MODEL)
+        elif not os.getenv("OPENAI_API_KEY"):
+            logger.error(
+                "OPENAI_API_KEY missing for openai usage; falling back to %s",
+                FALLBACK_MODEL,
+            )
+        else:
+            try:
+                global openai
+                if openai is None:
+                    openai = importlib.import_module("openai")  # type: ignore
+            except Exception:
+                logger.error(
+                    "openai library unavailable; falling back to %s", FALLBACK_MODEL
+                )
+            else:
+                openai.api_key = os.getenv("OPENAI_API_KEY")
+                _GENERATOR = openai
+                await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
+                return _GENERATOR
+        model = None
 
     if not _feature_enabled("SANDBOX_ENABLE_TRANSFORMERS"):
         logger.error("transformers support disabled; set SANDBOX_ENABLE_TRANSFORMERS=1")
@@ -484,20 +505,44 @@ async def _aload_generator():
         logger.error("transformers library unavailable")
         return None
 
-    candidates = ["gpt2-large", "distilgpt2"] if model is None else [model]
-    hf_token = os.getenv("HUGGINGFACE_API_TOKEN") or os.getenv("HF_TOKEN")
-    for name in candidates:
+    hf_token = SETTINGS.huggingface_token
+    if not model or not hf_token:
+        logger.info("Using bundled '%s' model for stub generation", FALLBACK_MODEL)
         try:
-            kwargs = {"model": name}
-            if hf_token:
-                kwargs["use_auth_token"] = hf_token
             _GENERATOR = await asyncio.to_thread(
-                pipeline, "text-generation", **kwargs
+                pipeline,
+                "text-generation",
+                model=FALLBACK_MODEL,
+                local_files_only=True,
             )
             await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
-            break
         except Exception:  # pragma: no cover - model load failures
-            logger.exception("failed to load model %s", name)
+            logger.exception("failed to load fallback model %s", FALLBACK_MODEL)
+            _GENERATOR = None
+        return _GENERATOR
+
+    try:
+        _GENERATOR = await asyncio.to_thread(
+            pipeline,
+            "text-generation",
+            model=model,
+            use_auth_token=hf_token,
+        )
+        await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
+    except Exception:  # pragma: no cover - model load failures
+        logger.exception(
+            "failed to load model %s; falling back to %s", model, FALLBACK_MODEL
+        )
+        try:
+            _GENERATOR = await asyncio.to_thread(
+                pipeline,
+                "text-generation",
+                model=FALLBACK_MODEL,
+                local_files_only=True,
+            )
+            await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
+        except Exception:  # pragma: no cover - model load failures
+            logger.exception("failed to load fallback model %s", FALLBACK_MODEL)
             _GENERATOR = None
     return _GENERATOR
 
@@ -551,7 +596,9 @@ def _aggregate(records: List[dict[str, Any]]) -> dict[str, Any]:
     return result
 
 
-async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[Dict[str, Any]]:
+async def async_generate_stubs(
+    stubs: List[Dict[str, Any]], ctx: dict
+) -> List[Dict[str, Any]]:
     """Generate or enhance ``stubs`` using recent history or a language model."""
 
     strategy = ctx.get("strategy")
@@ -638,7 +685,9 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
         async def _invoke() -> str:
             if use_openai:
                 comp_kwargs = {
-                    "model": os.getenv("OPENAI_STUB_COMPLETION_MODEL", "text-davinci-003"),
+                    "model": os.getenv(
+                        "OPENAI_STUB_COMPLETION_MODEL", "text-davinci-003"
+                    ),
                     "prompt": prompt,
                     "max_tokens": 64,
                 }
