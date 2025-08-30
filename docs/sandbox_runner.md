@@ -39,6 +39,10 @@ tracker, summary = run_scenarios(["simple_functions:print_ten"])
 print(summary["worst_scenario"], summary["scenarios"]["normal"]["roi_delta"])
 ```
 
+Each workflow step must specify its module path using ``module:function`` or
+``module.function``. Bare function names are no longer supported and will
+raise ``ValueError``.
+
 Both forms run the workflow in five predefined scenarios. Each scenario is
 executed twice – once with the workflow enabled and once with it disabled – so
 the ROI delta reflects the workflow's direct contribution. The disabled run

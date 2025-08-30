@@ -5725,8 +5725,9 @@ def run_scenarios(
     ----------
     workflow:
         Sequence of step strings or single step name forming the workflow to
-        execute. Objects providing a ``workflow`` attribute are also accepted for
-        backward compatibility.
+        execute. Each step must include an explicit module reference in the form
+        ``module:function`` or ``module.function``. Objects providing a
+        ``workflow`` attribute are also accepted for backward compatibility.
     tracker:
         Optional ROI tracker used to calculate diminishing returns and record
         synergy metrics. When omitted a new tracker is created.
@@ -5775,7 +5776,13 @@ def run_scenarios(
                 if "." in step:
                     mod, func = step.rsplit(".", 1)
                 else:
-                    mod, func = "simple_functions", step
+                    raise ValueError(
+                        f"Workflow step '{step}' must include a module path"
+                    )
+            if importlib.util.find_spec(mod) is None:
+                raise ValueError(
+                    f"Module '{mod}' for workflow step '{step}' not found"
+                )
             imports.append(f"from {mod} import {func} as {alias}")
             calls.append(f"{alias}()")
         if not calls:
@@ -5792,8 +5799,12 @@ def run_scenarios(
                 mod, _func = step.split(":", 1)
             elif "." in step:
                 mod, _func = step.rsplit(".", 1)
-            else:
+            elif importlib.util.find_spec(step) is not None:
                 mod = step
+            else:
+                raise ValueError(
+                    f"Workflow step '{step}' must include a module path"
+                )
             try:
                 cluster = get_synergy_cluster(mod)
             except Exception:
@@ -6040,7 +6051,13 @@ def simulate_temporal_trajectory(
                 if "." in step:
                     mod, func = step.rsplit(".", 1)
                 else:
-                    mod, func = "simple_functions", step
+                    raise ValueError(
+                        f"Workflow step '{step}' must include a module path"
+                    )
+            if importlib.util.find_spec(mod) is None:
+                raise ValueError(
+                    f"Module '{mod}' for workflow step '{step}' not found"
+                )
             imports.append(f"from {mod} import {func} as {alias}")
             calls.append(f"{alias}()")
         if not calls:
@@ -7303,7 +7320,9 @@ def run_workflow_simulations(
         step = step.replace("/", ".")
         if "." in step:
             return step.rsplit(".", 1)[0]
-        return "simple_functions"
+        if importlib.util.find_spec(step) is not None:
+            return step
+        raise ValueError(f"Workflow step '{step}' must include a module path")
 
     tracker = tracker or ROITracker()
     scenario_names: List[str] = []
@@ -7338,31 +7357,29 @@ def run_workflow_simulations(
             imports: list[str] = []
             calls: list[str] = []
             for idx, step in enumerate(steps):
-                mod = ""
-                func = ""
                 alias = f"_wf_{idx}"
+                mod: str
+                func: str | None = None
                 if ":" in step:
                     mod, func = step.split(":", 1)
-                    imports.append(f"from {mod} import {func} as {alias}")
-                    calls.append(f"{alias}()")
+                elif importlib.util.find_spec(step) is not None:
+                    mod = step
+                elif "." in step:
+                    mod, func = step.rsplit(".", 1)
+                elif "/" in step:
+                    mod = step.replace("/", ".")
                 else:
-                    if "." in step:
-                        path = Path(step.replace(".", "/"))
-                        file = Path.cwd() / (path.as_posix() + ".py")
-                        init = Path.cwd() / path / "__init__.py"
-                        if file.exists() or init.exists():
-                            mod = step
-                            imports.append(f"import {mod} as {alias}")
-                            calls.append(f"getattr({alias}, 'main', lambda: None)()")
-                            continue
-                        mod, func = step.rsplit(".", 1)
-                    else:
-                        if "/" in step:
-                            mod = step.replace("/", ".")
-                            imports.append(f"import {mod} as {alias}")
-                            calls.append(f"getattr({alias}, 'main', lambda: None)()")
-                            continue
-                        mod, func = "simple_functions", step
+                    raise ValueError(
+                        f"Workflow step '{step}' must include a module path"
+                    )
+                if importlib.util.find_spec(mod) is None:
+                    raise ValueError(
+                        f"Module '{mod}' for workflow step '{step}' not found"
+                    )
+                if func is None:
+                    imports.append(f"import {mod} as {alias}")
+                    calls.append(f"getattr({alias}, 'main', lambda: None)()")
+                else:
                     imports.append(f"from {mod} import {func} as {alias}")
                     calls.append(f"{alias}()")
             if not calls:
