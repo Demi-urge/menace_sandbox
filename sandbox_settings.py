@@ -161,6 +161,7 @@ class SandboxSettings(BaseSettings):
     database_url: str = Field("", env="DATABASE_URL")
     menace_offline_install: bool = Field(False, env="MENACE_OFFLINE_INSTALL")
     menace_wheel_dir: str | None = Field(None, env="MENACE_WHEEL_DIR")
+    menace_light_imports: bool = Field(False, env="MENACE_LIGHT_IMPORTS")
     roi_cycles: int | None = Field(None, env="ROI_CYCLES")
     synergy_cycles: int | None = Field(None, env="SYNERGY_CYCLES")
     save_synergy_history: bool | None = Field(None, env="SAVE_SYNERGY_HISTORY")
@@ -173,10 +174,49 @@ class SandboxSettings(BaseSettings):
         description="Path to repository root for sandbox operations.",
     )
     sandbox_central_logging: bool = Field(
-        False,
+        True,
         env="SANDBOX_CENTRAL_LOGGING",
         description="Enable centralised logging output.",
     )
+    visual_agent_monitor_interval: float = Field(
+        30.0, env="VISUAL_AGENT_MONITOR_INTERVAL"
+    )
+    local_knowledge_refresh_interval: float = Field(
+        600.0, env="LOCAL_KNOWLEDGE_REFRESH_INTERVAL"
+    )
+    menace_local_db_path: str | None = Field(None, env="MENACE_LOCAL_DB_PATH")
+    menace_shared_db_path: str = Field(
+        "./shared/global.db", env="MENACE_SHARED_DB_PATH"
+    )
+    visual_agent_token: str = Field("", env="VISUAL_AGENT_TOKEN")
+    visual_agent_token_rotate: str | None = Field(
+        None, env="VISUAL_AGENT_TOKEN_ROTATE"
+    )
+    sandbox_volatility_threshold: float = Field(
+        1.0, env="SANDBOX_VOLATILITY_THRESHOLD"
+    )
+    gpt_memory_compact_interval: float | None = Field(
+        None, env="GPT_MEMORY_COMPACT_INTERVAL"
+    )
+    export_synergy_metrics: bool = Field(False, env="EXPORT_SYNERGY_METRICS")
+    synergy_metrics_port: int = Field(8003, env="SYNERGY_METRICS_PORT")
+    metrics_port: int | None = Field(None, env="METRICS_PORT")
+    relevancy_radar_interval: float | None = Field(
+        None, env="RELEVANCY_RADAR_INTERVAL"
+    )
+    sandbox_generate_presets: bool = Field(True, env="SANDBOX_GENERATE_PRESETS")
+    sandbox_module_algo: str | None = Field(None, env="SANDBOX_MODULE_ALGO")
+    sandbox_module_threshold: float | None = Field(
+        None, env="SANDBOX_MODULE_THRESHOLD"
+    )
+    sandbox_semantic_modules: bool = Field(
+        False, env="SANDBOX_SEMANTIC_MODULES"
+    )
+    sandbox_max_recursion_depth: int | None = Field(
+        None, env="SANDBOX_MAX_RECURSION_DEPTH"
+    )
+    sandbox_log_level: str = Field("INFO", env="SANDBOX_LOG_LEVEL")
+    log_level: str = Field("INFO", env="LOG_LEVEL")
     sandbox_retry_delay: float = Field(
         1.0,
         env="SANDBOX_RETRY_DELAY",

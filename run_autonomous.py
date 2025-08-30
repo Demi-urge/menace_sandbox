@@ -31,16 +31,16 @@ import math
 import uuid
 from scipy.stats import t
 from db_router import init_db_router
+from sandbox_settings import SandboxSettings
 
 logger = logging.getLogger(__name__)
 
-if os.getenv("SANDBOX_CENTRAL_LOGGING") is None:
-    os.environ["SANDBOX_CENTRAL_LOGGING"] = "1"
-
-AGENT_MONITOR_INTERVAL = float(os.getenv("VISUAL_AGENT_MONITOR_INTERVAL", "30"))
-LOCAL_KNOWLEDGE_REFRESH_INTERVAL = float(
-    os.getenv("LOCAL_KNOWLEDGE_REFRESH_INTERVAL", "600")
+settings = SandboxSettings()
+os.environ["SANDBOX_CENTRAL_LOGGING"] = (
+    "1" if settings.sandbox_central_logging else "0"
 )
+AGENT_MONITOR_INTERVAL = settings.visual_agent_monitor_interval
+LOCAL_KNOWLEDGE_REFRESH_INTERVAL = settings.local_knowledge_refresh_interval
 _LKM_REFRESH_STOP = threading.Event()
 _LKM_REFRESH_THREAD: threading.Thread | None = None
 
@@ -59,7 +59,7 @@ OPTIONAL_PYTHON_PKGS = [
 ]
 
 
-def _verify_required_dependencies() -> None:
+def _verify_required_dependencies(settings: SandboxSettings) -> None:
     """Exit if required or production optional dependencies are missing."""
 
     def _have_spec(name: str) -> bool:
@@ -72,7 +72,7 @@ def _verify_required_dependencies() -> None:
     missing_req = [p for p in REQUIRED_PYTHON_PKGS if not _have_spec(p)]
     missing_opt = [p for p in OPTIONAL_PYTHON_PKGS if not _have_spec(p)]
 
-    mode = os.getenv("MENACE_MODE", "test").lower()
+    mode = settings.menace_mode.lower()
 
     messages: list[str] = []
     if missing_sys:
@@ -104,14 +104,14 @@ def _verify_required_dependencies() -> None:
         )
 
 
-_verify_required_dependencies()
+_verify_required_dependencies(settings)
 
 # Initialise database router with a unique menace_id. All DB access must go
 # through the router.  Import modules requiring database access afterwards so
 # they can rely on ``GLOBAL_ROUTER``.
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+LOCAL_DB_PATH = settings.menace_local_db_path or f"./menace_{MENACE_ID}_local.db"
+SHARED_DB_PATH = settings.menace_shared_db_path
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from gpt_memory import GPTMemoryManager
@@ -122,11 +122,14 @@ from filelock import FileLock
 from pydantic import BaseModel, RootModel, ValidationError, validator
 
 # Default to test mode when using the bundled SQLite database.
-if os.getenv("MENACE_MODE", "test").lower() == "production" and os.getenv(
-    "DATABASE_URL", ""
-).startswith("sqlite"):
-    logger.warning("MENACE_MODE=production with SQLite database; switching to test mode")
+if settings.menace_mode.lower() == "production" and settings.database_url.startswith(
+    "sqlite"
+):
+    logger.warning(
+        "MENACE_MODE=production with SQLite database; switching to test mode"
+    )
     os.environ["MENACE_MODE"] = "test"
+    settings = SandboxSettings()
 
 # allow execution directly from the package directory
 _pkg_dir = Path(__file__).resolve().parent
@@ -139,7 +142,7 @@ elif "menace" not in sys.modules:
 # Default to ``SANDBOX_REPO_PATH`` when provided, otherwise fall back to the
 # directory containing this file.  ``SANDBOX_REPO_PATH`` is required in most
 # environments but this fallback keeps unit tests and ad-hoc scripts working.
-REPO_ROOT = Path(os.getenv("SANDBOX_REPO_PATH", _pkg_dir))
+REPO_ROOT = Path(settings.sandbox_repo_path or _pkg_dir)
 
 
 def _visual_agent_running(urls: str) -> bool:
@@ -314,12 +317,12 @@ class VisualAgentMonitor:
     def _loop(self) -> None:
         base = self.urls.split(";")[0]
         queue_path = (
-            Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+            Path(settings.sandbox_data_dir)
             / "visual_agent_queue.db"
         )
         while not self._stop.is_set():
             running = _visual_agent_running(self.urls)
-            tok = os.getenv("VISUAL_AGENT_TOKEN", "")
+            tok = settings.visual_agent_token
             if not running:
                 try:
                     self.manager.restart_with_token(tok)
@@ -530,8 +533,11 @@ def check_env() -> None:
     """Exit if critical environment variables are unset."""
     missing = [
         name
-        for name in ("VISUAL_AGENT_TOKEN", "SANDBOX_REPO_PATH")
-        if not os.getenv(name)
+        for name, val in (
+            ("VISUAL_AGENT_TOKEN", settings.visual_agent_token),
+            ("SANDBOX_REPO_PATH", settings.sandbox_repo_path),
+        )
+        if not val
     ]
     if missing:
         raise SystemExit(
@@ -691,7 +697,7 @@ def execute_iteration(
 
     recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
     sandbox_runner._sandbox_main = recovery.run
-    volatility_threshold = float(os.getenv("SANDBOX_VOLATILITY_THRESHOLD", "1.0"))
+    volatility_threshold = settings.sandbox_volatility_threshold
     foresight_tracker = ForesightTracker(
         max_cycles=10, volatility_threshold=volatility_threshold
     )
@@ -976,6 +982,7 @@ def update_metrics(
 
 def main(argv: List[str] | None = None) -> None:
     """Entry point for the autonomous runner."""
+    set_correlation_id(str(uuid.uuid4()))
     parser = argparse.ArgumentParser(
         description="Run full autonomous sandbox with environment presets",
     )
@@ -1138,7 +1145,7 @@ def main(argv: List[str] | None = None) -> None:
     )
     parser.add_argument(
         "--log-level",
-        default=os.getenv("SANDBOX_LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO")),
+        default=settings.sandbox_log_level or settings.log_level,
         help="logging level for console output",
     )
     parser.add_argument(
@@ -1259,7 +1266,7 @@ def main(argv: List[str] | None = None) -> None:
         cli.foresight_stability(file, workflow_id)
         return
 
-    mem_db = args.memory_db or os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
+    mem_db = args.memory_db or settings.gpt_memory_db
     global LOCAL_KNOWLEDGE_MODULE, GPT_MEMORY_MANAGER, GPT_KNOWLEDGE_SERVICE
     LOCAL_KNOWLEDGE_MODULE = init_local_knowledge(mem_db)
     GPT_MEMORY_MANAGER = LOCAL_KNOWLEDGE_MODULE.memory
@@ -1270,7 +1277,7 @@ def main(argv: List[str] | None = None) -> None:
         log_path = args.debug_log_file
         if not log_path:
             data_dir = Path(
-                args.sandbox_data_dir or os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
+            args.sandbox_data_dir or settings.sandbox_data_dir
             )
             data_dir.mkdir(parents=True, exist_ok=True)
             log_path = data_dir / "preset_debug.log"
@@ -1283,7 +1290,7 @@ def main(argv: List[str] | None = None) -> None:
         )
         logging.getLogger().addHandler(fh)
 
-    env_file = Path(os.getenv("MENACE_ENV_FILE", ".env"))
+    env_file = Path(settings.menace_env_file)
     created_env = not env_file.exists()
     ensure_env(str(env_file))
     if created_env:
@@ -1291,12 +1298,9 @@ def main(argv: List[str] | None = None) -> None:
 
     port = args.metrics_port
     if port is None:
-        env_val = os.getenv("METRICS_PORT")
-        if env_val:
-            try:
-                port = int(env_val)
-            except Exception:
-                logger.warning("Invalid METRICS_PORT value: %s", env_val)
+        env_val = settings.metrics_port
+        if env_val is not None:
+            port = env_val
     if port is not None:
         try:
             logger.info("starting metrics server on port %d", port)
@@ -1510,15 +1514,8 @@ def main(argv: List[str] | None = None) -> None:
             os.environ["GPT_MEMORY_RETENTION"] = args.memory_retention
             retention_rules = _load_retention_rules()
         interval = args.memory_compact_interval
-        if interval is None:
-            env_interval = os.getenv("GPT_MEMORY_COMPACT_INTERVAL")
-            if env_interval:
-                try:
-                    interval = float(env_interval)
-                except Exception:
-                    logger.warning(
-                        "Invalid GPT_MEMORY_COMPACT_INTERVAL value: %s", env_interval
-                    )
+        if interval is None and settings.gpt_memory_compact_interval is not None:
+            interval = settings.gpt_memory_compact_interval
         mem_maint = MemoryMaintenance(
             GPT_MEMORY_MANAGER,
             interval=interval,
@@ -1554,8 +1551,8 @@ def main(argv: List[str] | None = None) -> None:
     synergy_exporter: SynergyExporter | None = None
     exporter_monitor: ExporterMonitor | None = None
     trainer_monitor: AutoTrainerMonitor | None = None
-    if os.getenv("EXPORT_SYNERGY_METRICS") == "1":
-        port = int(os.getenv("SYNERGY_METRICS_PORT", "8003"))
+    if settings.export_synergy_metrics:
+        port = settings.synergy_metrics_port
         if not _port_available(port):
             logger.error("synergy exporter port %d in use", port)
             port = _free_port()
@@ -1597,13 +1594,10 @@ def main(argv: List[str] | None = None) -> None:
             )
 
     auto_trainer = None
-    if os.getenv("AUTO_TRAIN_SYNERGY") == "1":
+    if settings.auto_train_synergy:
         from menace.synergy_auto_trainer import SynergyAutoTrainer
 
-        try:
-            interval = float(os.getenv("AUTO_TRAIN_INTERVAL", "600"))
-        except Exception:
-            interval = 600.0
+        interval = settings.auto_train_interval
         history_file = (
             Path(args.sandbox_data_dir or settings.sandbox_data_dir)
             / "synergy_history.db"
@@ -1702,7 +1696,7 @@ def main(argv: List[str] | None = None) -> None:
         if not _visual_agent_running(settings.visual_agent_urls):
             try:
                 logger.info("starting visual agent")
-                agent_mgr.start(os.getenv("VISUAL_AGENT_TOKEN", ""))
+                agent_mgr.start(settings.visual_agent_token)
                 logger.info("visual agent started")
                 agent_proc = agent_mgr.process
             except Exception:  # pragma: no cover - runtime dependent
@@ -1738,19 +1732,10 @@ def main(argv: List[str] | None = None) -> None:
         cleanup_funcs.append(agent_monitor.stop)
 
     relevancy_radar = None
-    if settings.enable_relevancy_radar:
-        interval_env = os.getenv("RELEVANCY_RADAR_INTERVAL")
-        radar_interval = settings.relevancy_radar_interval
-        if interval_env:
-            try:
-                radar_interval = float(interval_env)
-            except Exception:
-                logger.warning(
-                    "Invalid RELEVANCY_RADAR_INTERVAL value: %s", interval_env
-                )
-        # Instantiate the radar using the repository root so it scans the same
-        # checkout the sandbox operates on.
-        relevancy_radar = RelevancyRadarService(REPO_ROOT, float(radar_interval))
+    if settings.enable_relevancy_radar and settings.relevancy_radar_interval is not None:
+        relevancy_radar = RelevancyRadarService(
+            REPO_ROOT, float(settings.relevancy_radar_interval)
+        )
         relevancy_radar.start()
         atexit.register(relevancy_radar.stop)
         cleanup_funcs.append(relevancy_radar.stop)
@@ -1847,12 +1832,8 @@ def main(argv: List[str] | None = None) -> None:
         if agent_monitor is not None:
             agent_monitor.run_idx = run_idx
         if run_idx > 1:
-            new_tok = os.getenv("VISUAL_AGENT_TOKEN_ROTATE")
-            if (
-                new_tok
-                and agent_mgr
-                and _visual_agent_running(settings.visual_agent_urls)
-            ):
+            new_tok = settings.visual_agent_token_rotate
+            if new_tok and agent_mgr and _visual_agent_running(settings.visual_agent_urls):
                 try:
                     agent_mgr.restart_with_token(new_tok)
                     os.environ["VISUAL_AGENT_TOKEN"] = new_tok
