@@ -189,6 +189,8 @@ class SelfCodingEngine:
         # carry risk-adjusted ROI hints when available
         self.prompt_engine = PromptEngine(tracker)
         self.router = kwargs.get("router")
+        # store tracebacks from failed attempts for retry prompts
+        self._last_retry_trace: str | None = None
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
@@ -275,6 +277,26 @@ class SelfCodingEngine:
             if text:
                 lines.extend(text.splitlines())
         return lines
+
+    def _fetch_retry_trace(self, metadata: Dict[str, Any] | None) -> str | None:
+        """Return a traceback from metadata, analyzer logs or previous failures."""
+
+        meta = metadata or {}
+        trace = meta.get("retry_trace")
+        if trace:
+            return str(trace)
+        log_path = meta.get("analysis_log")
+        if log_path:
+            try:  # pragma: no cover - best effort
+                from codex_output_analyzer import load_analysis_result
+
+                result = load_analysis_result(log_path)
+                err = result.get("error")
+                if isinstance(err, dict):
+                    return err.get("details") or err.get("type")
+            except Exception:
+                self.logger.debug("failed to load analysis log", exc_info=True)
+        return self._last_retry_trace
 
     @staticmethod
     def _get_repo_layout(limit: int) -> str:
@@ -424,21 +446,22 @@ class SelfCodingEngine:
             return _fallback()
         repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
         retrieval_context = ""
-        retry_trace: str | None = None
         if metadata:
             retrieval_context = str(metadata.get("retrieval_context", ""))
-            retry_trace = metadata.get("retry_trace")
+        retry_trace = self._fetch_retry_trace(metadata)
         retrieval_data = "\n".join(
             [p for p in (context, retrieval_context, repo_layout) if p]
         )
         try:
             prompt = self.prompt_engine.construct_prompt(
                 description,
-                retrieval_data,
                 retry_trace=retry_trace,
             )
-        except Exception:
+        except Exception as exc:
+            self._last_retry_trace = str(exc)
             return _fallback()
+        if retrieval_data:
+            prompt = retrieval_data + "\n\n" + prompt
 
         # Incorporate past patch outcomes from memory
         history = ""
@@ -525,7 +548,8 @@ class SelfCodingEngine:
                 memory=self.gpt_memory,
                 tags=[ERROR_FIX, IMPROVEMENT_PATH],
             )
-        except Exception:
+        except Exception as exc:
+            self._last_retry_trace = str(exc)
             data = {}
         text = (
             data.get("choices", [{}])[0]
@@ -614,11 +638,13 @@ class SelfCodingEngine:
                         ok = False
                 except Exception as exc:  # pragma: no cover - verifier issues
                     self.logger.error("formal verification failed: %s", exc)
+                    self._last_retry_trace = str(exc)
                     ok = False
             try:
                 py_compile.compile(str(target), doraise=True)
             except Exception as exc:
                 self.logger.error("lint failed: %s", exc)
+                self._last_retry_trace = str(exc)
                 ok = False
             return ok
 

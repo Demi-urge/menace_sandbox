@@ -150,8 +150,9 @@ class PromptEngine:
                 lines.extend(self._format_record(meta))
                 lines.append("")
         if retry_trace:
-            lines.append(retry_trace)
-            lines.append("Please try a different approach.")
+            lines.append(
+                f"Previous attempt failed with {retry_trace}; seek alternative solution."
+            )
         return "\n".join(line for line in lines if line)
 
     # Backwards compatibility -------------------------------------------------
