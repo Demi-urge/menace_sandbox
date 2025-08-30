@@ -141,6 +141,7 @@ class PatchLogger:
         metrics_db: Any | None = None,
         roi_tracker: ROITracker | None = None,
         event_bus: "UnifiedEventBus" | None = None,
+        vector_service: "SharedVectorService" | None = None,
         info_db: InfoDB | None = None,
         enhancement_db: EnhancementDB | None = None,
         max_alert_severity: float = 1.0,
@@ -161,6 +162,7 @@ class PatchLogger:
         self.metrics_db = metrics_db
         self.roi_tracker = roi_tracker
         self.event_bus = event_bus
+        self.vector_service = vector_service
         self.info_db = info_db
         self.enhancement_db = enhancement_db
         self.max_alert_severity = max_alert_severity
@@ -386,6 +388,60 @@ class PatchLogger:
                         )
                     except Exception:
                         logger.exception("patch_db.log_contributors failed")
+                    # Generate and persist patch embedding for future retrieval
+                    try:
+                        desc_text = ""
+                        embed_diff = diff
+                        embed_summary = summary
+                        if self.patch_db is not None:
+                            try:
+                                rec = self.patch_db.get(int(patch_id))
+                                if rec is not None:
+                                    desc_text = getattr(rec, "description", "") or ""
+                                    if embed_diff is None:
+                                        embed_diff = getattr(rec, "diff", None)
+                                    if embed_summary is None:
+                                        embed_summary = getattr(rec, "summary", None)
+                            except Exception:
+                                logger.exception("Failed to fetch patch record for embedding")
+                        if desc_text or embed_diff or embed_summary:
+                            record = {
+                                "description": desc_text,
+                                "diff": embed_diff or "",
+                                "summary": embed_summary or "",
+                            }
+                            svc = self.vector_service
+                            if svc is None:
+                                try:
+                                    from .vectorizer import SharedVectorService  # type: ignore
+                                    svc = SharedVectorService()
+                                except Exception:
+                                    svc = None
+                            if svc is not None:
+                                try:
+                                    svc.vectorise_and_store(
+                                        "patch",
+                                        str(patch_id),
+                                        record,
+                                        origin_db="patch",
+                                        metadata=record,
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "SharedVectorService patch embedding failed"
+                                    )
+                            else:
+                                try:
+                                    from .patch_vectorizer import PatchVectorizer  # type: ignore
+                                    PatchVectorizer().try_add_embedding(
+                                        int(patch_id), record, "patch"
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "PatchVectorizer patch embedding failed"
+                                    )
+                    except Exception:
+                        logger.exception("Failed to embed patch metadata")
             roi_base = 0.0 if contribution is None else contribution
             origin_totals: dict[str, float] = {}
             for origin, vid, score in detailed:
