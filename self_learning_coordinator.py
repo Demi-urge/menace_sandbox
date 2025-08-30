@@ -8,6 +8,7 @@ import asyncio
 import json
 from pathlib import Path
 from datetime import datetime
+import time
 
 from pydantic import BaseModel, ValidationError
 from sandbox_settings import SandboxSettings
@@ -83,20 +84,47 @@ class SelfLearningCoordinator:
             self._train_count = int(data.get("train_count", 0))
             self._summary_count = int(data.get("summary_count", 0))
             self._last_eval_ts = data.get("last_eval_ts")
-        except Exception:
-            pass
+        except FileNotFoundError:
+            logger.info(
+                "self-learning state file not found at %s; initializing fresh state",
+                self._state_path,
+            )
+            self._train_count = 0
+            self._summary_count = 0
+            self._last_eval_ts = None
+            self._save_state()
+        except Exception as exc:
+            logger.warning(
+                "failed to read self-learning state from %s: %s; starting fresh",
+                self._state_path,
+                exc,
+            )
+            self._train_count = 0
+            self._summary_count = 0
+            self._last_eval_ts = None
+            self._save_state()
 
     def _save_state(self) -> None:
-        try:
-            self._state_path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {
-                "train_count": self._train_count,
-                "summary_count": self._summary_count,
-                "last_eval_ts": self._last_eval_ts,
-            }
-            self._state_path.write_text(json.dumps(payload))
-        except Exception as exc:
-            logger.warning("failed to persist self-learning state: %s", exc)
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "train_count": self._train_count,
+            "summary_count": self._summary_count,
+            "last_eval_ts": self._last_eval_ts,
+        }
+        for attempt in range(3):
+            try:
+                self._state_path.write_text(json.dumps(payload))
+                return
+            except Exception as exc:
+                logger.warning(
+                    "failed to persist self-learning state (attempt %d/3): %s",
+                    attempt + 1,
+                    exc,
+                )
+                time.sleep(0.1)
+        logger.error(
+            "giving up on persisting self-learning state after 3 attempts"
+        )
 
     def _reload_intervals(self) -> None:
         try:
