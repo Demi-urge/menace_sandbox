@@ -129,8 +129,12 @@ if _LIGHT_IMPORTS:
 
     def main(*_a, **_k):
         raise RuntimeError("CLI disabled in light import mode")
+
+    def launch_sandbox(*_a, **_k):
+        raise RuntimeError("CLI disabled in light import mode")
 else:
     from .cli import _run_sandbox, rank_scenarios, main  # noqa: E402
+    from .bootstrap import launch_sandbox  # noqa: E402
 from .metrics_plugins import (  # noqa: E402
     discover_metrics_plugins,
     load_metrics_plugins,
@@ -179,6 +183,7 @@ __all__ = [
     "_run_sandbox",
     "rank_scenarios",
     "main",
+    "launch_sandbox",
     "discover_metrics_plugins",
     "load_metrics_plugins",
     "collect_plugin_metrics",
