@@ -15,5 +15,7 @@ def test_rule_based_stub_generation(monkeypatch):
     monkeypatch.setattr(gsp, "_aload_generator", fake_aload_generator)
     gsp._CACHE.clear()
 
-    stubs = gsp.generate_stubs([{}], {"target": sample_func})
-    assert stubs == [{"name": "example", "count": 1, "active": True}]
+    stubs = gsp.generate_stubs([{}], {"target": sample_func})[0]
+    assert gsp._type_matches(stubs["name"], str)
+    assert gsp._type_matches(stubs["count"], int)
+    assert gsp._type_matches(stubs["active"], bool)

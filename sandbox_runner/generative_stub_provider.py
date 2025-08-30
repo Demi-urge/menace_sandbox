@@ -160,23 +160,50 @@ def _rule_based_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
     def _value_from_annotation(annotation: Any, name: str) -> Any:
         origin = get_origin(annotation)
         if origin is None:
+            lname = name.lower()
+            if annotation in (int, "int"):
+                if any(t in lname for t in ["count", "num", "size", "len", "quantity"]):
+                    return 1
+                return 0
+            if annotation in (float, "float"):
+                if any(t in lname for t in ["ratio", "rate", "percent", "percentage"]):
+                    return 0.5
+                return float(
+                    1
+                    if any(t in lname for t in ["count", "num", "size", "len", "quantity"])
+                    else 0
+                )
+            if annotation in (bool, "bool"):
+                return any(
+                    t in lname
+                    for t in ["is", "has", "can", "should", "enabled", "active"]
+                )
+            if annotation in (str, "str"):
+                if any(t in lname for t in ["name", "title", "id"]):
+                    return f"{lname}_example"
+                return f"{lname}_value"
             if dataclasses.is_dataclass(annotation):
                 kwargs = {
                     f.name: _value_from_annotation(f.type, f.name)
                     for f in dataclasses.fields(annotation)
                 }
                 return annotation(**kwargs)
-            lname = name.lower()
-            if annotation in (int, "int"):
-                return 1
-            if annotation in (float, "float"):
-                return 1.0
-            if annotation in (bool, "bool"):
-                return True
-            if annotation in (str, "str"):
-                return "example" if any(
-                    token in lname for token in ["name", "title", "id"]
-                ) else "value"
+            if inspect.isclass(annotation) and annotation not in (int, float, bool, str):
+                try:
+                    sig = inspect.signature(annotation)
+                    kwargs: dict[str, Any] = {}
+                    for p_name, param in sig.parameters.items():
+                        if p_name == "self":
+                            continue
+                        if param.default is not inspect._empty:
+                            kwargs[p_name] = param.default
+                        else:
+                            kwargs[p_name] = _value_from_annotation(
+                                param.annotation, p_name
+                            )
+                    return annotation(**kwargs)
+                except Exception:
+                    return None
             return None
         args = get_args(annotation)
         if origin is list:
@@ -209,6 +236,9 @@ def _rule_based_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
     result = dict(stub)
     for name, param in sig.parameters.items():
         if name in result and result[name] is not None:
+            continue
+        if param.default is not inspect._empty:
+            result[name] = param.default
             continue
         example = _example_from_doc(doc, name)
         if example is not None:
