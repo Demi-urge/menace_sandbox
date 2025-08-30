@@ -171,3 +171,67 @@ def test_improvement_engine_subprocess_timeout(monkeypatch, caplog):
     with caplog.at_level(logging.ERROR):
         eng._alignment_review_last_commit("desc")
     assert "git command timed out" in caplog.text
+
+
+@pytest.mark.skipif(SelfImprovementEngine is None, reason="self_improvement_engine unavailable")
+def test_improvement_engine_subprocess_unexpected(monkeypatch, caplog):
+    eng = _make_engine()
+
+    def fake_run(cmd, **kwargs):
+        raise OSError("bad")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with caplog.at_level(logging.ERROR):
+        eng._alignment_review_last_commit("desc")
+    assert "git command unexpected failure" in caplog.text
+
+
+@pytest.mark.skipif(SelfImprovementEngine is None, reason="self_improvement_engine unavailable")
+def test_improvement_engine_flagger_failure(monkeypatch, caplog):
+    eng = _make_engine()
+
+    def fake_run(cmd, **kwargs):
+        return types.SimpleNamespace(stdout="", returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    class BadFlagger:
+        def flag_patch(self, patch, ctx):
+            raise RuntimeError("boom")
+
+    eng.alignment_flagger = BadFlagger()
+    with caplog.at_level(logging.ERROR):
+        eng._alignment_review_last_commit("desc")
+    assert "alignment flagger failed" in caplog.text
+
+
+@pytest.mark.skipif(SelfImprovementEngine is None, reason="self_improvement_engine unavailable")
+def test_flag_patch_alignment_subprocess_unexpected(monkeypatch, caplog):
+    eng = _make_engine()
+
+    def fake_run(cmd, **kwargs):
+        raise OSError("bad")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with caplog.at_level(logging.ERROR):
+        eng._flag_patch_alignment(1, {})
+    assert "git command unexpected failure" in caplog.text
+
+
+@pytest.mark.skipif(SelfImprovementEngine is None, reason="self_improvement_engine unavailable")
+def test_flag_patch_alignment_flagger_failure(monkeypatch, caplog):
+    eng = _make_engine()
+
+    def fake_run(cmd, **kwargs):
+        return types.SimpleNamespace(stdout="", returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    class BadFlagger:
+        def flag_patch(self, patch, ctx):
+            raise RuntimeError("boom")
+
+    eng.alignment_flagger = BadFlagger()
+    with caplog.at_level(logging.ERROR):
+        eng._flag_patch_alignment(1, {})
+    assert "alignment flagging failed" in caplog.text
