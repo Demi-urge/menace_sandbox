@@ -2,6 +2,9 @@ import os
 import sys
 import types
 import asyncio
+import json
+import yaml
+import logging
 from pathlib import Path
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
@@ -126,7 +129,7 @@ def test_generate_input_stubs_templates(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
     import importlib
     importlib.reload(env)
-    stubs = env.generate_input_stubs(1)
+    stubs = env.generate_input_stubs(1, strategy="hostile")
     assert stubs == [{"mode": "x", "level": 9}]
 
 
@@ -358,12 +361,37 @@ def test_generate_input_stubs_hostile(monkeypatch):
     monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
     monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "hostile")
     monkeypatch.delenv("SANDBOX_INPUT_TEMPLATES_FILE", raising=False)
+    monkeypatch.delenv("SANDBOX_HOSTILE_PAYLOADS", raising=False)
+    monkeypatch.delenv("SANDBOX_HOSTILE_PAYLOADS_FILE", raising=False)
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
     import importlib
     importlib.reload(env)
-    stubs = env.generate_input_stubs(1)
+    stubs = env.generate_input_stubs(1, strategy="hostile")
     val = next(iter(stubs[0].values()))
     assert isinstance(val, str) and ("' OR '1'='1" in val or len(val) > 1000)
+
+
+def test_hostile_strategy_env_var(monkeypatch, caplog):
+    monkeypatch.delenv("SANDBOX_HOSTILE_PAYLOADS_FILE", raising=False)
+    monkeypatch.delenv("SANDBOX_INPUT_TEMPLATES_FILE", raising=False)
+    monkeypatch.delenv("SANDBOX_INPUT_HISTORY", raising=False)
+    monkeypatch.setenv("SANDBOX_HOSTILE_PAYLOADS", json.dumps(["env", {"bad": 1}]))
+    with caplog.at_level(logging.WARNING):
+        stubs = env._hostile_strategy(1)
+    assert stubs == [{"payload": "env"}]
+    assert any("invalid hostile payload" in r.message for r in caplog.records)
+
+
+def test_hostile_strategy_file_yaml(monkeypatch, tmp_path):
+    monkeypatch.delenv("SANDBOX_HOSTILE_PAYLOADS", raising=False)
+    monkeypatch.delenv("SANDBOX_INPUT_TEMPLATES_FILE", raising=False)
+    monkeypatch.delenv("SANDBOX_INPUT_HISTORY", raising=False)
+    data = ["file", 1]
+    path = tmp_path / "payloads.yaml"
+    path.write_text(yaml.safe_dump(data))
+    monkeypatch.setenv("SANDBOX_HOSTILE_PAYLOADS_FILE", str(path))
+    stubs = env._hostile_strategy(2)
+    assert stubs[0]["payload"] == "file"
 
 
 def test_generate_input_stubs_misuse(monkeypatch):
