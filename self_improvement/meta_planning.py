@@ -30,14 +30,7 @@ except Exception:  # pragma: no cover - gracefully degrade
 
 
 class _FallbackPlanner:
-    """Lightweight planner leveraging ROI and stability metrics.
-
-    The implementation intentionally mirrors the public interface of
-    :class:`MetaWorkflowPlanner` so the rest of the system can continue to
-    operate when the full planner is unavailable.  It performs a very small
-    amount of optimisation by selecting individual workflows that have shown a
-    positive average ROI and have been marked stable.
-    """
+    """Simplified planner leveraging ROI and stability metrics."""
 
     def __init__(self) -> None:
         try:
@@ -48,10 +41,12 @@ class _FallbackPlanner:
             self.stability_db: WorkflowStabilityDB | None = WorkflowStabilityDB()
         except Exception:  # pragma: no cover - best effort
             self.stability_db = None
+
+        self.logger = get_logger("FallbackPlanner")
         self.cluster_map: dict[tuple[str, ...], dict[str, Any]] = {}
-        self.mutation_rate = 0.0
-        self.roi_weight = 0.0
-        self.domain_transition_penalty = 0.0
+        self.mutation_rate = 1.0
+        self.roi_weight = 1.0
+        self.domain_transition_penalty = 1.0
         self.roi_window = 5
 
     # ------------------------------------------------------------------
@@ -59,58 +54,34 @@ class _FallbackPlanner:
         """Compatibility stub for :class:`MetaWorkflowPlanner`."""
 
     # ------------------------------------------------------------------
+    def _domain(self, wid: str) -> str:
+        return wid.split(".", 1)[0]
+
+    def _score(self, chain: Sequence[str], roi: float) -> float:
+        transitions = sum(
+            1
+            for i in range(1, len(chain))
+            if self._domain(chain[i]) != self._domain(chain[i - 1])
+        )
+        return self.roi_weight * roi - self.domain_transition_penalty * transitions
+
+    # ------------------------------------------------------------------
     def discover_and_persist(
         self, workflows: Mapping[str, Callable[[], Any]]
     ) -> list[Mapping[str, Any]]:
-        """Return stable workflows ordered by average ROI."""
+        """Return stable workflows ordered by score."""
 
         records: list[dict[str, Any]] = []
         for wid in workflows:
-            roi = 0.0
-            failures = 0
-            entropy = 0.0
-            if self.roi_db is not None:
-                try:
-                    results = self.roi_db.fetch_results(wid)
-                    recent = [r.roi_gain for r in results[-self.roi_window :]]
-                    roi = fmean(recent) if recent else 0.0
-                except Exception:  # pragma: no cover - best effort
-                    roi = 0.0
-            stable = True
-            if self.stability_db is not None:
-                try:
-                    entry = self.stability_db.data.get(wid, {})
-                    failures = int(entry.get("failures", 0))
-                    entropy = float(entry.get("entropy", 0.0))
-                    stable = self.stability_db.is_stable(
-                        wid, current_roi=roi, threshold=1.0
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    stable = True
-            if roi > 0.0 and stable:
-                self.cluster_map[(wid,)] = {"last_roi": roi}
-                records.append(
-                    {
-                        "chain": [wid],
-                        "roi_gain": roi,
-                        "failures": failures,
-                        "entropy": entropy,
-                    }
-                )
+            rec = self._evaluate_chain([wid])
+            if rec:
+                records.append(rec)
 
-        records.sort(key=lambda r: r["roi_gain"], reverse=True)
+        records.sort(key=lambda r: r["score"], reverse=True)
         return records
 
     # ------------------------------------------------------------------
     def _evaluate_chain(self, chain: Sequence[str]) -> dict[str, Any] | None:
-        """Compute aggregated metrics for ``chain``.
-
-        Each workflow in ``chain`` must exhibit a positive average ROI and be
-        considered stable by :class:`WorkflowStabilityDB`.  The resulting
-        record mirrors the structure produced by :meth:`discover_and_persist`.
-        ``None`` is returned when any workflow fails the checks.
-        """
-
         roi_values: list[float] = []
         entropies: list[float] = []
         failures = 0
@@ -123,6 +94,9 @@ class _FallbackPlanner:
                     recent = [r.roi_gain for r in results[-self.roi_window :]]
                     roi = fmean(recent) if recent else 0.0
                 except Exception:  # pragma: no cover - best effort
+                    self.logger.warning(
+                        "roi fetch failed", extra=log_record(workflow_id=wid)
+                    )
                     roi = 0.0
 
             stable = True
@@ -136,9 +110,15 @@ class _FallbackPlanner:
                         wid, current_roi=roi, threshold=1.0
                     )
                 except Exception:  # pragma: no cover - best effort
+                    self.logger.warning(
+                        "stability check failed", extra=log_record(workflow_id=wid)
+                    )
                     stable = True
 
             if roi <= 0.0 or not stable:
+                self.logger.debug(
+                    "rejecting chain %s", "->".join(chain), extra=log_record(workflow_id=wid)
+                )
                 return None
 
             roi_values.append(roi)
@@ -149,40 +129,87 @@ class _FallbackPlanner:
 
         chain_roi = fmean(roi_values)
         chain_entropy = fmean(entropies) if entropies else 0.0
+        score = self._score(chain, chain_roi)
         record = {
             "chain": list(chain),
             "roi_gain": chain_roi,
             "failures": failures,
             "entropy": chain_entropy,
+            "score": score,
         }
-        self.cluster_map[tuple(chain)] = {"last_roi": chain_roi}
+        self.cluster_map[tuple(chain)] = {"last_roi": chain_roi, "score": score}
+        self.logger.debug(
+            "evaluated chain %s score %.3f",
+            "->".join(chain),
+            score,
+            extra=log_record(workflow_id="->".join(chain)),
+        )
+
+        if self.roi_db is not None:
+            try:
+                self.roi_db.log_result(
+                    workflow_id="->".join(chain),
+                    run_id="evaluation",
+                    runtime=0.0,
+                    success_rate=1.0,
+                    roi_gain=chain_roi,
+                    workflow_synergy_score=max(0.0, 1.0 - chain_entropy),
+                    bottleneck_index=0.0,
+                    patchability_score=0.0,
+                    module_deltas={},
+                )
+            except Exception:  # pragma: no cover - logging best effort
+                self.logger.exception(
+                    "ROI logging failed",
+                    extra=log_record(workflow_id="->".join(chain)),
+                )
+        if self.stability_db is not None:
+            try:
+                self.stability_db.record_metrics(
+                    "->".join(chain), chain_roi, failures, chain_entropy, roi_delta=chain_roi
+                )
+            except Exception:  # pragma: no cover - logging best effort
+                self.logger.exception(
+                    "stability logging failed",
+                    extra=log_record(workflow_id="->".join(chain)),
+                )
+
         return record
 
     # ------------------------------------------------------------------
+    def _generate_mutations(
+        self, chain: list[str], pool: list[str], depth: int
+    ) -> list[list[str]]:
+        if depth == 0:
+            return []
+        mutations: list[list[str]] = []
+        for wid in pool:
+            if wid in chain:
+                continue
+            mutated = chain + [wid]
+            mutations.append(mutated)
+            next_pool = [w for w in pool if w not in mutated]
+            mutations.extend(self._generate_mutations(mutated, next_pool, depth - 1))
+        return mutations
+
     def mutate_pipeline(
         self,
         chain: Sequence[str],
         workflows: Mapping[str, Callable[[], Any]],
         **_: Any,
     ) -> list[Mapping[str, Any]]:
-        """Create simple mutations by appending alternative workflows.
+        """Create mutations by appending up to ``mutation_rate`` steps."""
 
-        For every workflow in ``workflows`` that is not already part of
-        ``chain`` a new candidate chain is formed by appending the workflow.  A
-        candidate is only returned when all steps have positive ROI and are
-        stable according to the databases available to the planner.
-        """
-
+        depth = max(1, int(self.mutation_rate))
+        pool = [wid for wid in workflows if wid not in chain]
+        candidate_chains = self._generate_mutations(list(chain), pool, depth)
         results: list[Mapping[str, Any]] = []
-        for wid in workflows:
-            if wid in chain:
-                continue
-            mutated = list(chain) + [wid]
-            rec = self._evaluate_chain(mutated)
+        for cand in candidate_chains:
+            rec = self._evaluate_chain(cand)
             if rec:
                 results.append(rec)
 
-        results.sort(key=lambda r: r["roi_gain"], reverse=True)
+        results.sort(key=lambda r: r["score"], reverse=True)
         return results
 
     # ------------------------------------------------------------------
@@ -205,7 +232,7 @@ class _FallbackPlanner:
             if rec:
                 results.append(rec)
 
-        results.sort(key=lambda r: r["roi_gain"], reverse=True)
+        results.sort(key=lambda r: r["score"], reverse=True)
         return results
 
     # ------------------------------------------------------------------
@@ -227,7 +254,7 @@ class _FallbackPlanner:
                 if rec:
                     results.append(rec)
 
-        results.sort(key=lambda r: r["roi_gain"], reverse=True)
+        results.sort(key=lambda r: r["score"], reverse=True)
         return results
 
 
