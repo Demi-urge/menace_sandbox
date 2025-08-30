@@ -577,7 +577,7 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         orphan_modules_legacy_total.inc(legacy_count)
         orphan_modules_reclassified_total.inc(reclassified_count)
     except Exception:
-        pass
+        logger.exception("failed to update orphan module counters")
 
     logger.info(
         "isolated module tests",

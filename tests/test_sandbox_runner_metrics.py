@@ -288,6 +288,87 @@ def test_orphan_inclusion_updates_tracker(monkeypatch, tmp_path):
     assert ctx.tracker.metrics_history["custom"] == [1.0]
 
 
+def test_orphan_counter_failure_logged(monkeypatch, tmp_path, caplog):
+    monkeypatch.setitem(sys.modules, "data_bot", types.SimpleNamespace(MetricsDB=object))
+    monkeypatch.setitem(sys.modules, "adaptive_roi_predictor", types.SimpleNamespace(load_training_data=lambda *a, **k: None))
+
+    from menace.sandbox_runner import cycle
+
+    (tmp_path / "mod.py").write_text("VALUE = 1\n")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "orphan_analyzer",
+        types.SimpleNamespace(
+            analyze_redundancy=lambda path: False,
+            classify_module=lambda path: "candidate",
+        ),
+    )
+
+    monkeypatch.setattr(cycle, "discover_recursive_orphans", lambda repo: {})
+
+    import scripts.discover_isolated_modules as dim
+
+    monkeypatch.setattr(dim, "discover_isolated_modules", lambda *a, **k: [])
+
+    class FailingMetric:
+        def inc(self, *_):
+            raise RuntimeError("fail")
+
+    class DummyMetric:
+        def inc(self, *_):
+            pass
+
+        def dec(self, *_):
+            pass
+
+    monkeypatch.setattr(cycle, "orphan_modules_tested_total", FailingMetric(), raising=False)
+    for name in (
+        "orphan_modules_reintroduced_total",
+        "orphan_modules_failed_total",
+        "orphan_modules_redundant_total",
+        "orphan_modules_legacy_total",
+        "orphan_modules_reclassified_total",
+    ):
+        monkeypatch.setattr(cycle, name, DummyMetric(), raising=False)
+
+    class DummyTracker:
+        def __init__(self):
+            self.module_deltas = {}
+
+    inner_tracker = DummyTracker()
+
+    def fake_auto(mods, recursive=False, validate=False, **_):
+        return inner_tracker, {"added": list(mods), "failed": [], "redundant": []}
+
+    monkeypatch.setattr(cycle, "auto_include_modules", fake_auto)
+    monkeypatch.setattr(cycle, "append_orphan_cache", lambda *a, **k: None)
+    monkeypatch.setattr(cycle, "append_orphan_classifications", lambda *a, **k: None)
+    monkeypatch.setattr(cycle, "prune_orphan_cache", lambda *a, **k: None)
+
+    class Settings:
+        auto_include_isolated = True
+        recursive_isolated = False
+
+    class Ctx:
+        def __init__(self, repo):
+            self.repo = repo
+            self.settings = Settings()
+            self.module_map = set()
+            self.orphan_traces = {"mod.py": {"classification": "candidate", "parents": []}}
+            self.tracker = DummyTracker()
+
+    ctx = Ctx(tmp_path)
+
+    with caplog.at_level("ERROR"):
+        cycle.include_orphan_modules(ctx)
+
+    assert any(
+        "failed to update orphan module counters" in r.message for r in caplog.records
+    )
+    assert "mod.py" in ctx.module_map
+
+
 def test_repo_section_metrics(monkeypatch, tmp_path):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
 
