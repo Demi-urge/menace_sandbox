@@ -67,9 +67,11 @@ class VectorMetricsDB:
     def __init__(self, path: Path | str = "vector_metrics.db") -> None:
         LOCAL_TABLES.add("vector_metrics")
         p = Path(path).resolve()
-        self.router = GLOBAL_ROUTER or init_db_router(
-            "vector_metrics_db", str(p), str(p)
-        )
+        default_path = Path("vector_metrics.db").resolve()
+        if GLOBAL_ROUTER is not None and p == default_path:
+            self.router = GLOBAL_ROUTER
+        else:
+            self.router = init_db_router("vector_metrics_db", str(p), str(p))
         self.conn = self.router.get_connection("vector_metrics")
         self.conn.execute(
             """
@@ -128,7 +130,8 @@ class VectorMetricsDB:
                 time_to_completion REAL,
                 error_trace_count INTEGER,
                 roi_tag TEXT,
-                effort_estimate REAL
+                effort_estimate REAL,
+                enhancement_score REAL
             )
             """
         )
@@ -208,6 +211,10 @@ class VectorMetricsDB:
             self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN roi_tag TEXT")
         if "effort_estimate" not in mcols:
             self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN effort_estimate REAL")
+        if "enhancement_score" not in mcols:
+            self.conn.execute(
+                "ALTER TABLE patch_metrics ADD COLUMN enhancement_score REAL"
+            )
         self.conn.commit()
 
     # ------------------------------------------------------------------
@@ -688,13 +695,15 @@ class VectorMetricsDB:
         error_trace_count: int | None = None,
         roi_tag: str | None = None,
         effort_estimate: float | None = None,
+        enhancement_score: float | None = None,
     ) -> None:
         try:
             self.conn.execute(
                 "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, "
                 "lines_changed, context_tokens, patch_difficulty, start_time, "
-                "time_to_completion, error_trace_count, roi_tag, effort_estimate) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "time_to_completion, error_trace_count, roi_tag, "
+                "effort_estimate, enhancement_score) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     patch_id,
                     json.dumps(list(errors or [])),
@@ -707,6 +716,7 @@ class VectorMetricsDB:
                     error_trace_count,
                     roi_tag,
                     effort_estimate,
+                    enhancement_score,
                 ),
             )
             self.conn.commit()

@@ -161,6 +161,28 @@ logger = logging.getLogger(__name__)
 router = GLOBAL_ROUTER or init_db_router("patch_logger")
 
 
+def compute_enhancement_score(
+    patch_difficulty: int | None,
+    time_to_completion: float | None,
+    tests_passed: bool | None,
+    error_trace_count: int | None,
+    effort_estimate: float | None,
+) -> float:
+    """Return a simple enhancement score combining patch metrics.
+
+    Higher values indicate more valuable patches.  Difficulty, effort and
+    passing tests increase the score while longer completion times and errors
+    decrease it.
+    """
+
+    difficulty = float(patch_difficulty or 0)
+    duration = float(time_to_completion or 0)
+    tests = 1.0 if tests_passed else 0.0
+    errors = float(error_trace_count or 0)
+    effort = float(effort_estimate or 0)
+    return difficulty + effort + tests - errors - duration
+
+
 class TrackResult(dict):
     """Mapping of origin similarity scores with attached error metadata."""
 
@@ -175,6 +197,7 @@ class TrackResult(dict):
         patch_difficulty: int | None = None,
         effort_estimate: float | None = None,
         roi_deltas: Mapping[str, float] | None = None,
+        enhancement_score: float | None = None,
     ) -> None:
         super().__init__(mapping or {})
         self.errors = list(errors or [])
@@ -183,6 +206,7 @@ class TrackResult(dict):
         self.context_tokens = context_tokens
         self.patch_difficulty = patch_difficulty
         self.effort_estimate = effort_estimate
+        self.enhancement_score = enhancement_score
         # ``roi_deltas`` allows callers to retrieve per-origin ROI changes
         # computed during :meth:`track_contributors`.  It defaults to an empty
         # mapping for backwards compatibility so existing callers treating the
@@ -459,60 +483,6 @@ class PatchLogger:
                     except Exception as exc:
                         logger.exception("patch_db.log_contributors failed")
                         errors.append({"db_write": str(exc)})
-                    # Generate and persist patch embedding for future retrieval
-                    try:
-                        desc_text = ""
-                        embed_diff = diff
-                        embed_summary = summary
-                        if self.patch_db is not None:
-                            try:
-                                rec = self.patch_db.get(int(patch_id))
-                                if rec is not None:
-                                    desc_text = getattr(rec, "description", "") or ""
-                                    if embed_diff is None:
-                                        embed_diff = getattr(rec, "diff", None)
-                                    if embed_summary is None:
-                                        embed_summary = getattr(rec, "summary", None)
-                            except Exception:
-                                logger.exception("Failed to fetch patch record for embedding")
-                        if desc_text or embed_diff or embed_summary:
-                            record = {
-                                "description": desc_text,
-                                "diff": embed_diff or "",
-                                "summary": embed_summary or "",
-                            }
-                            svc = self.vector_service
-                            if svc is None:
-                                try:
-                                    from .vectorizer import SharedVectorService  # type: ignore
-                                    svc = SharedVectorService()
-                                except Exception:
-                                    svc = None
-                            if svc is not None:
-                                try:
-                                    svc.vectorise_and_store(
-                                        "patch",
-                                        str(patch_id),
-                                        record,
-                                        origin_db="patch",
-                                        metadata=record,
-                                    )
-                                except Exception:
-                                    logger.exception(
-                                        "SharedVectorService patch embedding failed"
-                                    )
-                            else:
-                                try:
-                                    from .patch_vectorizer import PatchVectorizer  # type: ignore
-                                    PatchVectorizer().try_add_embedding(
-                                        int(patch_id), record, "patch"
-                                    )
-                                except Exception:
-                                    logger.exception(
-                                        "PatchVectorizer patch embedding failed"
-                                    )
-                    except Exception:
-                        logger.exception("Failed to embed patch metadata")
             roi_base = 0.0 if contribution is None else contribution
             origin_totals: dict[str, float] = {}
             for origin, vid, score in detailed:
@@ -660,6 +630,13 @@ class PatchLogger:
                                     "UnifiedEventBus embedding backfill publish failed"
                                 )
                 error_trace_count = len(errors)
+                enhancement_score = compute_enhancement_score(
+                    patch_difficulty,
+                    time_to_completion,
+                    tests_passed,
+                    error_trace_count,
+                    effort_estimate_val,
+                )
                 if self.patch_db is not None and patch_id:
                     try:  # pragma: no cover - best effort
                         self.patch_db.record_vector_metrics(
@@ -685,11 +662,67 @@ class PatchLogger:
                             summary=summary_arg,
                             outcome=outcome,
                             roi_deltas=roi_deltas,
+                            enhancement_score=enhancement_score,
                         )
                     except Exception as exc:
                         logger.exception("patch_db.record_vector_metrics failed")
                         errors.append({"db_write": str(exc)})
                         raise
+                # Generate and persist patch embedding for future retrieval
+                if self.patch_db is not None and patch_id:
+                    try:
+                        desc_text = ""
+                        embed_diff = diff
+                        embed_summary = summary
+                        try:
+                            rec = self.patch_db.get(int(patch_id))
+                            if rec is not None:
+                                desc_text = getattr(rec, "description", "") or ""
+                                if embed_diff is None:
+                                    embed_diff = getattr(rec, "diff", None)
+                                if embed_summary is None:
+                                    embed_summary = getattr(rec, "summary", None)
+                        except Exception:
+                            logger.exception("Failed to fetch patch record for embedding")
+                        if desc_text or embed_diff or embed_summary:
+                            record = {
+                                "description": desc_text,
+                                "diff": embed_diff or "",
+                                "summary": embed_summary or "",
+                                "enhancement_score": enhancement_score,
+                            }
+                            svc = self.vector_service
+                            if svc is None:
+                                try:
+                                    from .vectorizer import SharedVectorService  # type: ignore
+                                    svc = SharedVectorService()
+                                except Exception:
+                                    svc = None
+                            if svc is not None:
+                                try:
+                                    svc.vectorise_and_store(
+                                        "patch",
+                                        str(patch_id),
+                                        record,
+                                        origin_db="patch",
+                                        metadata=record,
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "SharedVectorService patch embedding failed",
+                                    )
+                            else:
+                                try:
+                                    from .patch_vectorizer import PatchVectorizer  # type: ignore
+                                    PatchVectorizer().try_add_embedding(
+                                        int(patch_id), record, "patch"
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "PatchVectorizer patch embedding failed",
+                                    )
+                    except Exception:
+                        logger.exception("Failed to embed patch metadata")
                 if result and retrieval_metadata:
                     for origin, vid, _ in detailed:
                         key = f"{origin}:{vid}" if origin else vid
@@ -765,6 +798,7 @@ class PatchLogger:
             "semantic_alerts": all_alerts,
             "risk_score": max_risk,
             "risk_scores": dict(origin_similarity),
+            "enhancement_score": enhancement_score,
         }
         if patch_id:
             payload["patch_id"] = patch_id
@@ -819,6 +853,7 @@ class PatchLogger:
             "errors": errors,
             "error_trace_count": error_trace_count,
             "roi_tag": roi_tag,
+            "enhancement_score": enhancement_score,
         }
         if error_summary is not None:
             summary_payload["error_summary"] = error_summary
@@ -847,6 +882,7 @@ class PatchLogger:
                     error_trace_count=error_trace_count,
                     roi_tag=roi_tag,
                     effort_estimate=effort_estimate_val,
+                    enhancement_score=enhancement_score,
                 )
             except Exception:
                 logger.exception("vector_metrics.record_patch_summary failed")
@@ -870,6 +906,7 @@ class PatchLogger:
             patch_difficulty=patch_difficulty,
             roi_deltas=roi_deltas,
             effort_estimate=effort_estimate_val,
+            enhancement_score=enhancement_score,
         )
 
     # ------------------------------------------------------------------
@@ -880,7 +917,10 @@ class PatchLogger:
         try:
             conn = self.patch_db.router.get_connection("patch_history")
             row = conn.execute(
-                "SELECT diff, summary, outcome, lines_changed, tests_passed, context_tokens, patch_difficulty, effort_estimate, enhancement_name, start_time, time_to_completion, timestamp, roi_deltas, errors, error_trace_count, roi_tag FROM patch_history WHERE id=?",
+                "SELECT diff, summary, outcome, lines_changed, tests_passed, "
+                "context_tokens, patch_difficulty, effort_estimate, enhancement_name, "
+                "start_time, time_to_completion, timestamp, roi_deltas, errors, "
+                "error_trace_count, roi_tag, enhancement_score FROM patch_history WHERE id=?",
                 (int(patch_id),),
             ).fetchone()
             if row is None:
@@ -902,6 +942,7 @@ class PatchLogger:
                 err_json,
                 err_count,
                 roi_tag,
+                enh_score,
             ) = row
             try:
                 roi_data = json.loads(roi_json) if roi_json else {}
@@ -929,6 +970,7 @@ class PatchLogger:
                 "errors": err_data,
                 "error_trace_count": err_count,
                 "roi_tag": roi_tag,
+                "enhancement_score": enh_score,
             }
         except Exception:
             logger.exception("Failed to retrieve patch summary")
