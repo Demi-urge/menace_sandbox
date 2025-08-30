@@ -18,13 +18,13 @@ import asyncio
 import logging
 import time
 import json
-from enum import Enum
 
 from .decorators import log_and_measure
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from patch_safety import PatchSafety
 from db_router import GLOBAL_ROUTER, init_db_router
 from .weight_adjuster import WeightAdjuster
+from .roi_tags import RoiTag
 from enhancement_score import (
     EnhancementMetrics,
     compute_enhancement_score as _compute_enhancement_score,
@@ -119,29 +119,8 @@ try:  # pragma: no cover - optional patch score logging
 except Exception:  # pragma: no cover
     _ps_log_outcome = None  # type: ignore
 
-# Restricted set of ROI tags used to annotate patch outcomes.
-class RoiTag(str, Enum):
-    SUCCESS = "success"
-    HIGH_ROI = "high-ROI"
-    LOW_ROI = "low-ROI"
-    BUG_INTRODUCED = "bug-introduced"
-    NEEDS_REVIEW = "needs-review"
-    BLOCKED = "blocked"
-
-    @classmethod
-    def validate(cls, value: "RoiTag | str | None") -> "RoiTag":
-        """Return a valid :class:`RoiTag`, defaulting to ``SUCCESS``.
-
-        Unknown tags are logged and coerced to ``SUCCESS``.
-        """
-
-        if value is None:
-            return cls.SUCCESS
-        try:
-            return cls(value)
-        except ValueError:
-            logger.warning("Invalid ROI tag %r, defaulting to 'success'", value)
-            return cls.SUCCESS
+# Restricted set of ROI tags used to annotate patch outcomes is defined in
+# ``roi_tags.RoiTag``.
 
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken

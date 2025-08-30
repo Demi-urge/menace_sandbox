@@ -2,10 +2,51 @@ from __future__ import annotations
 
 """Adaptive ranking weight adjustments based on patch outcomes."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterable, Tuple, Dict
 
+import yaml
+
 from vector_metrics_db import VectorMetricsDB
+from .roi_tags import RoiTag
+
+
+def _load_tag_outcomes() -> Dict[RoiTag, bool]:
+    """Load ROI tag outcome mapping from YAML config.
+
+    The default mapping treats ``success`` and ``high-ROI`` as positive while
+    the remaining tags are negative.  A ``config/roi_tag_outcomes.yaml`` file
+    can override these defaults with a simple ``tag: bool`` mapping.
+    """
+
+    mapping: Dict[RoiTag, bool] = {
+        RoiTag.SUCCESS: True,
+        RoiTag.HIGH_ROI: True,
+        RoiTag.LOW_ROI: False,
+        RoiTag.BUG_INTRODUCED: False,
+        RoiTag.NEEDS_REVIEW: False,
+        RoiTag.BLOCKED: False,
+    }
+
+    cfg_path = Path(__file__).resolve().parent.parent / "config" / "roi_tag_outcomes.yaml"
+    if cfg_path.exists():
+        try:  # pragma: no cover - configuration loading is best effort
+            data = yaml.safe_load(cfg_path.read_text()) or {}
+            if isinstance(data, dict):
+                for key, val in data.items():
+                    try:
+                        tag = RoiTag(key)
+                    except ValueError:
+                        continue
+                    mapping[tag] = bool(val)
+        except Exception:
+            pass
+
+    return mapping
+
+
+ROI_TAG_OUTCOMES = _load_tag_outcomes()
 
 
 @dataclass
@@ -26,6 +67,9 @@ class WeightAdjuster:
     vector_metrics: VectorMetricsDB | None = None
     success_delta: float = 0.1
     failure_delta: float = 0.1
+    tag_outcomes: Dict[RoiTag, bool] = field(
+        default_factory=lambda: ROI_TAG_OUTCOMES.copy()
+    )
 
     def __post_init__(self) -> None:  # pragma: no cover - best effort init
         if self.vector_metrics is None:
@@ -39,7 +83,7 @@ class WeightAdjuster:
         self,
         vector_ids: Iterable[str | Tuple[str, str] | Tuple[str, str, float]],
         enhancement_score: float | None,
-        roi_tag: str | None,
+        roi_tag: RoiTag | str | None,
     ) -> Dict[str, float]:
         """Update ranking weights for origins and individual vectors.
 
@@ -59,7 +103,10 @@ class WeightAdjuster:
         entries = list(self._iter_ids(vector_ids))
         origins = {origin for origin, _, _ in entries if origin}
         score = float(enhancement_score or 0.0)
-        success = self._is_positive(score, roi_tag)
+        roi_tag_val: RoiTag | None = (
+            RoiTag.validate(roi_tag) if roi_tag is not None else None
+        )
+        success = self._is_positive(score, roi_tag_val)
         base = self.success_delta if success else -self.failure_delta
         db_delta = base * (score or 1.0)
 
@@ -117,15 +164,11 @@ class WeightAdjuster:
                     origin, rid = "", text
             yield str(origin or ""), str(rid), float(score or 1.0)
 
-    @staticmethod
-    def _is_positive(enhancement_score: float, roi_tag: str | None) -> bool:
-        tag = (roi_tag or "").lower()
-        negatives = ("low", "fail", "noise", "bug")
-        positives = ("high", "success", "pass")
-        if any(n in tag for n in negatives):
-            return False
-        if any(p in tag for p in positives):
-            return True
+    def _is_positive(self, enhancement_score: float, roi_tag: RoiTag | None) -> bool:
+        """Return ``True`` when the tag or score indicates a positive outcome."""
+
+        if roi_tag is not None:
+            return self.tag_outcomes.get(roi_tag, enhancement_score >= 0.5)
         return enhancement_score >= 0.5
 
 

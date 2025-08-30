@@ -98,6 +98,17 @@ Metrics emitted by `PatchLogger.track_contributors`:
   counter of contributor tracking attempts.
 - `patch_logger_track_contributors_duration_seconds` – duration of each call.
 
+### ROI tags
+
+Patch outcomes may specify an ROI tag describing the quality of a patch. The
+available tags are defined by the ``RoiTag`` enum and their effect on ranking
+weights is controlled by ``config/roi_tag_outcomes.yaml``. By default
+``success`` and ``high-ROI`` increase weights while ``low-ROI`` and
+``bug-introduced`` (along with ``needs-review`` and ``blocked``) decrease them.
+The YAML file can be edited to customise how each tag influences weight
+adjustments. Tags are validated against the enum before any adjustment is
+applied.
+
 ## CognitionLayer
 
 ```python
