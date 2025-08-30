@@ -391,26 +391,28 @@ class PromptEngine:
                 roi_val = None
 
         try:
-            raroi = float(roi_val) if roi_val is not None else 0.0
+            roi_component = float(roi_val) if roi_val is not None else 0.0
         except Exception:  # pragma: no cover - defensive
-            raroi = 0.0
+            roi_component = 0.0
 
         ts = float(meta.get("ts") or 0.0)
-        normalised_ts = (ts - min_ts) / span if span else 0.0
+        recency_component = (ts - min_ts) / span if span else 0.0
 
-        score = (
-            self.roi_weight * raroi + self.recency_weight * normalised_ts
-        )
-
+        tag_weight = 0.0
         tag = meta.get("roi_tag")
         if tag is not None:
             try:
                 valid = RoiTag.validate(tag)
-                score += float(self.roi_tag_weights.get(valid.value, 0.0))
+                key = getattr(valid, "value", valid)
+                tag_weight = float(self.roi_tag_weights.get(key, 0.0))
             except Exception:  # pragma: no cover - defensive
-                pass
+                tag_weight = 0.0
 
-        return score
+        return (
+            self.roi_weight * roi_component
+            + self.recency_weight * recency_component
+            + tag_weight
+        )
 
     # ------------------------------------------------------------------
     def _trim_tokens(self, text: str, limit: int) -> str:
