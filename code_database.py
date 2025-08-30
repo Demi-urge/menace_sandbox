@@ -1062,7 +1062,8 @@ class PatchHistoryDB:
                 tests_passed INTEGER DEFAULT 0,
                 enhancement_name TEXT,
                 timestamp REAL,
-                roi_deltas TEXT
+                roi_deltas TEXT,
+                errors TEXT
             )
             """
         )
@@ -1161,7 +1162,8 @@ class PatchHistoryDB:
             "enhancement_name": "ALTER TABLE patch_history ADD COLUMN enhancement_name TEXT",
             "timestamp": "ALTER TABLE patch_history ADD COLUMN timestamp REAL",
             "roi_deltas": "ALTER TABLE patch_history ADD COLUMN roi_deltas TEXT",
-}
+            "errors": "ALTER TABLE patch_history ADD COLUMN errors TEXT",
+        }
         for name, stmt in migrations.items():
             if name not in cols:
                 conn.execute(stmt)
@@ -1490,6 +1492,7 @@ class PatchHistoryDB:
         diff: str | None = None,
         summary: str | None = None,
         outcome: str | None = None,
+        errors: Sequence[Mapping[str, Any]] | None = None,
     ) -> None:
         """Update :class:`VectorMetricsDB` rows for *session_id* and *vectors*."""
 
@@ -1515,8 +1518,14 @@ class PatchHistoryDB:
                     roi_json = json.dumps(roi_deltas)
                 except Exception:
                     logger.exception("failed to serialise roi_deltas")
+            err_json = "[]"
+            if errors:
+                try:
+                    err_json = json.dumps(list(errors))
+                except Exception:
+                    logger.exception("failed to serialise errors")
             conn.execute(
-                "UPDATE patch_history SET lines_changed=?, tests_passed=?, enhancement_name=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary), outcome=COALESCE(?, outcome), roi_deltas=COALESCE(?, roi_deltas) WHERE id=?",
+                "UPDATE patch_history SET lines_changed=?, tests_passed=?, enhancement_name=?, timestamp=?, diff=COALESCE(?, diff), summary=COALESCE(?, summary), outcome=COALESCE(?, outcome), roi_deltas=COALESCE(?, roi_deltas), errors=COALESCE(?, errors) WHERE id=?",
                 (
                     lines_changed,
                     None if tests_passed is None else int(bool(tests_passed)),
@@ -1526,12 +1535,24 @@ class PatchHistoryDB:
                     summary,
                     outcome,
                     roi_json,
+                    err_json,
                     patch_id,
                 ),
             )
             conn.commit()
         except Exception:
             logger.exception("failed to update patch history with metrics")
+
+        if self._vec_db is not None:
+            try:
+                self._vec_db.record_patch_summary(
+                    str(patch_id),
+                    errors=errors,
+                    tests_passed=tests_passed,
+                    lines_changed=lines_changed,
+                )
+            except Exception:
+                logger.exception("vector metrics patch summary failed")
 
     # ------------------------------------------------------------------
     def _insert_provenance(

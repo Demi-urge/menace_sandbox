@@ -38,6 +38,17 @@ _VECTOR_RISK = _me.Gauge(
     labelnames=["risk"],
 )
 
+_TRACK_FAILURES = _me.Gauge(
+    "patch_logger_failures_total",
+    "Errors recorded by PatchLogger.track_contributors",
+)
+
+_TRACK_TESTS = _me.Gauge(
+    "patch_logger_tests_total",
+    "Counts of test results recorded by PatchLogger.track_contributors",
+    labelnames=["status"],
+)
+
 # Per-database metrics captured for Prometheus dashboards.  Gauges are
 # defined lazily to avoid duplicate registration when modules are reloaded.
 try:  # pragma: no cover - metrics optional
@@ -158,10 +169,14 @@ class TrackResult(dict):
         mapping: Mapping[str, float] | None = None,
         *,
         errors=None,
+        tests_passed: bool | None = None,
+        lines_changed: int | None = None,
         roi_deltas: Mapping[str, float] | None = None,
     ) -> None:
         super().__init__(mapping or {})
         self.errors = list(errors or [])
+        self.tests_passed = tests_passed
+        self.lines_changed = lines_changed
         # ``roi_deltas`` allows callers to retrieve per-origin ROI changes
         # computed during :meth:`track_contributors`.  It defaults to an empty
         # mapping for backwards compatibility so existing callers treating the
@@ -632,6 +647,7 @@ class PatchLogger:
                             tests_passed=tests_passed,
                             enhancement_name=enhancement_name,
                             timestamp=timestamp,
+                            errors=errors,
                             diff=diff,
                             summary=summary_arg,
                             outcome=outcome,
@@ -777,13 +793,34 @@ class PatchLogger:
             except Exception:
                 logger.exception("UnifiedEventBus patch summary publish failed")
 
+        if self.vector_metrics is not None and patch_id:
+            try:  # pragma: no cover - best effort
+                self.vector_metrics.record_patch_summary(
+                    str(patch_id),
+                    errors=errors,
+                    tests_passed=tests_passed,
+                    lines_changed=lines_changed,
+                )
+            except Exception:
+                logger.exception("vector_metrics.record_patch_summary failed")
+
         if risk_callback is not None:
             try:
                 risk_callback(origin_similarity)
             except Exception:
                 logger.exception("risk callback failed")
 
-        return TrackResult(origin_similarity, errors=errors, roi_deltas=roi_deltas)
+        _TRACK_FAILURES.inc(len(errors))
+        if tests_passed is not None:
+            _TRACK_TESTS.labels("passed" if tests_passed else "failed").inc()
+
+        return TrackResult(
+            origin_similarity,
+            errors=errors,
+            tests_passed=tests_passed,
+            lines_changed=lines_changed,
+            roi_deltas=roi_deltas,
+        )
 
     # ------------------------------------------------------------------
     def get_patch_summary(self, patch_id: str | int) -> Mapping[str, Any] | None:
@@ -793,7 +830,7 @@ class PatchLogger:
         try:
             conn = self.patch_db.router.get_connection("patch_history")
             row = conn.execute(
-                "SELECT diff, summary, outcome, lines_changed, tests_passed, enhancement_name, timestamp, roi_deltas FROM patch_history WHERE id=?",
+                "SELECT diff, summary, outcome, lines_changed, tests_passed, enhancement_name, timestamp, roi_deltas, errors FROM patch_history WHERE id=?",
                 (int(patch_id),),
             ).fetchone()
             if row is None:
@@ -807,11 +844,16 @@ class PatchLogger:
                 enhancement_name,
                 ts,
                 roi_json,
+                err_json,
             ) = row
             try:
                 roi_data = json.loads(roi_json) if roi_json else {}
             except Exception:
                 roi_data = {}
+            try:
+                err_data = json.loads(err_json) if err_json else []
+            except Exception:
+                err_data = []
             return {
                 "patch_id": int(patch_id),
                 "diff": diff,
@@ -822,6 +864,7 @@ class PatchLogger:
                 "enhancement_name": enhancement_name,
                 "timestamp": ts,
                 "roi_deltas": roi_data,
+                "errors": err_data,
             }
         except Exception:
             logger.exception("Failed to retrieve patch summary")
