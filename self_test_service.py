@@ -1,7 +1,15 @@
 # flake8: noqa
 from __future__ import annotations
 
-"""Service running self tests on a schedule."""
+"""Service running self tests on a schedule.
+
+The service prefers :mod:`sandbox_runner.dependency_utils` for resolving
+module dependencies when recursively executing orphan tests.  Environments
+that do not provide ``sandbox_runner`` fall back to a lightweight resolver
+included here.  This fallback supports package‑relative imports, namespace
+packages (PEP 420) and ``from ... import *`` patterns so dependency discovery
+behaves similarly to the full sandbox runner.
+"""
 
 import asyncio
 import time
@@ -145,11 +153,9 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
     ) -> set[str]:
         """Walk imports for ``paths`` to discover local dependencies.
 
-        This simplified implementation mirrors the behaviour of the sandbox
-        runner's dependency collector.  It parses ``import`` statements for the
-        given modules, recursively following imports that resolve to files within
-        the current repository.  ``on_module`` and ``on_dependency`` callbacks
-        are invoked on a best-effort basis.
+        The resolver understands package‑relative imports, namespace packages and
+        ``from ... import *`` patterns.  Only modules residing within the current
+        repository (``SANDBOX_REPO_PATH``) are followed.
 
         Raises
         ------
@@ -159,6 +165,23 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
         """
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+
+        def _iter_package(pkg: Path) -> Iterable[Path]:
+            for child in pkg.rglob("*.py"):
+                yield child
+
+        def _resolve(parts: list[str], *, star: bool = False) -> list[Path]:
+            base = repo / Path(*parts)
+            results: list[Path] = []
+            file_cand = base.with_suffix(".py")
+            if file_cand.exists():
+                results.append(file_cand)
+            init_cand = base / "__init__.py"
+            if init_cand.exists():
+                results.append(init_cand)
+            if base.is_dir() and (star or not results):
+                results.extend(_iter_package(base))
+            return results
 
         queue: list[tuple[Path, list[str]]] = []
         for m in paths:
@@ -204,35 +227,25 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
-                        parts = alias.name.split(".")
-                        for cand in (
-                            repo / Path(*parts).with_suffix(".py"),
-                            repo / Path(*parts) / "__init__.py",
-                        ):
-                            if cand.exists():
-                                dep_rel = cand.resolve().relative_to(repo).as_posix()
-                                dep_parents = [rel] + parents
-                                if on_dependency is not None:
-                                    try:
-                                        on_dependency(dep_rel, rel, dep_parents)
-                                    except Exception:  # pragma: no cover - best effort
-                                        pass
-                                queue.append((cand, dep_parents))
-                                break
+                        for cand in _resolve(alias.name.split(".")):
+                            dep_rel = cand.resolve().relative_to(repo).as_posix()
+                            dep_parents = [rel] + parents
+                            if on_dependency is not None:
+                                try:
+                                    on_dependency(dep_rel, rel, dep_parents)
+                                except Exception:  # pragma: no cover - best effort
+                                    pass
+                            queue.append((cand, dep_parents))
                 elif isinstance(node, ast.ImportFrom):
-                    if node.level:
-                        base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
-                    else:
-                        base_prefix = pkg_parts
+                    base_prefix = (
+                        pkg_parts[: len(pkg_parts) - node.level + 1]
+                        if node.level
+                        else pkg_parts
+                    )
                     parts = base_prefix + (node.module.split(".") if node.module else [])
-                    candidates = [
-                        repo / Path(*parts).with_suffix(".py"),
-                        repo / Path(*parts) / "__init__.py",
-                    ]
-                    dep = next((c for c in candidates if c.exists()), None)
-                    if dep is not None:
+                    dep_parents = [rel] + parents
+                    for dep in _resolve(parts):
                         dep_rel = dep.resolve().relative_to(repo).as_posix()
-                        dep_parents = [rel] + parents
                         if on_dependency is not None:
                             try:
                                 on_dependency(dep_rel, rel, dep_parents)
@@ -241,22 +254,23 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
                         queue.append((dep, dep_parents))
                     for alias in node.names:
                         if alias.name == "*":
-                            continue
-                        sub_parts = parts + alias.name.split(".")
-                        for cand in (
-                            repo / Path(*sub_parts).with_suffix(".py"),
-                            repo / Path(*sub_parts) / "__init__.py",
-                        ):
-                            if cand.exists():
+                            for cand in _resolve(parts, star=True):
                                 dep_rel = cand.resolve().relative_to(repo).as_posix()
-                                dep_parents = [rel] + parents
                                 if on_dependency is not None:
                                     try:
                                         on_dependency(dep_rel, rel, dep_parents)
                                     except Exception:  # pragma: no cover - best effort
                                         pass
                                 queue.append((cand, dep_parents))
-                                break
+                            continue
+                        for cand in _resolve(parts + alias.name.split(".")):
+                            dep_rel = cand.resolve().relative_to(repo).as_posix()
+                            if on_dependency is not None:
+                                try:
+                                    on_dependency(dep_rel, rel, dep_parents)
+                                except Exception:  # pragma: no cover - best effort
+                                    pass
+                            queue.append((cand, dep_parents))
                 elif isinstance(node, ast.Call):
                     mod_name: str | None = None
                     if (
@@ -282,21 +296,15 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
                         elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                             mod_name = arg.value
                     if mod_name:
-                        parts = mod_name.split(".")
-                        for cand in (
-                            repo / Path(*parts).with_suffix(".py"),
-                            repo / Path(*parts) / "__init__.py",
-                        ):
-                            if cand.exists():
-                                dep_rel = cand.resolve().relative_to(repo).as_posix()
-                                dep_parents = [rel] + parents
-                                if on_dependency is not None:
-                                    try:
-                                        on_dependency(dep_rel, rel, dep_parents)
-                                    except Exception:  # pragma: no cover - best effort
-                                        pass
-                                queue.append((cand, dep_parents))
-                                break
+                        for cand in _resolve(mod_name.split(".")):
+                            dep_rel = cand.resolve().relative_to(repo).as_posix()
+                            dep_parents = [rel] + parents
+                            if on_dependency is not None:
+                                try:
+                                    on_dependency(dep_rel, rel, dep_parents)
+                                except Exception:  # pragma: no cover - best effort
+                                    pass
+                            queue.append((cand, dep_parents))
 
         return seen
 
