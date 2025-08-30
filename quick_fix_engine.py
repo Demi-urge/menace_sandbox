@@ -59,6 +59,7 @@ def generate_patch(
     description: str | None = None,
     patch_logger: PatchLogger | None = None,
     context: Dict[str, Any] | None = None,
+    effort_estimate: float | None = None,
 ) -> int | None:
     """Attempt a quick patch for *module* and return the patch id.
 
@@ -190,6 +191,7 @@ def generate_patch(
                         patch_id is not None,
                         patch_id=str(patch_id) if patch_id is not None else "",
                         session_id=cb_session,
+                        effort_estimate=effort_estimate,
                     )
                 except Exception:
                     pass

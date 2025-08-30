@@ -128,7 +128,8 @@ class VectorMetricsDB:
                 start_time REAL,
                 time_to_completion REAL,
                 error_trace_count INTEGER,
-                roi_tag TEXT
+                roi_tag TEXT,
+                effort_estimate REAL
             )
             """
         )
@@ -198,6 +199,8 @@ class VectorMetricsDB:
             )
         if "roi_tag" not in mcols:
             self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN roi_tag TEXT")
+        if "effort_estimate" not in mcols:
+            self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN effort_estimate REAL")
         self.conn.commit()
 
     # ------------------------------------------------------------------
@@ -635,10 +638,11 @@ class VectorMetricsDB:
         time_to_completion: float | None = None,
         error_trace_count: int | None = None,
         roi_tag: str | None = None,
+        effort_estimate: float | None = None,
     ) -> None:
         try:
             self.conn.execute(
-                "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, lines_changed, context_tokens, patch_difficulty, start_time, time_to_completion, error_trace_count, roi_tag) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, lines_changed, context_tokens, patch_difficulty, start_time, time_to_completion, error_trace_count, roi_tag, effort_estimate) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     patch_id,
                     json.dumps(list(errors or [])),
@@ -650,6 +654,7 @@ class VectorMetricsDB:
                     time_to_completion,
                     error_trace_count,
                     roi_tag,
+                    effort_estimate,
                 ),
             )
             self.conn.commit()
