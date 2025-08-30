@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Dict, List, Any, Tuple
+from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping
 import subprocess
 import sys
 import json
@@ -238,9 +238,43 @@ class SelfCodingEngine:
         except Exception:
             self.logger.exception("memory logging failed")
 
-    def _track_contributors(self, *args: object, **kwargs: object) -> None:
-        """Deprecated helper retained for backward compatibility."""
-        return
+    def _track_contributors(
+        self,
+        session_id: str,
+        vectors: Iterable[Tuple[str, str, float] | Tuple[str, str]],
+        result: bool,
+        patch_id: int | None = None,
+        retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
+        roi_delta: float | None = None,
+    ) -> None:
+        """Forward vector contribution data to :class:`PatchLogger`.
+
+        Parameters mirror :meth:`vector_service.patch_logger.PatchLogger.track_contributors`.
+        This helper exists for historical compatibility and gracefully ignores
+        failures from the underlying logger.
+        """
+        if not self.patch_logger:
+            return
+        try:
+            ids: list[tuple[str, float]] = []
+            for item in vectors:
+                if len(item) == 3:  # type: ignore[comparison-overlap]
+                    origin, vid, score = item  # type: ignore[misc]
+                else:
+                    origin, vid = item  # type: ignore[misc]
+                    score = 0.0
+                ids.append((f"{origin}:{vid}", float(score)))
+            kwargs: dict[str, Any] = {
+                "session_id": session_id or "",
+                "retrieval_metadata": retrieval_metadata or {},
+            }
+            if patch_id is not None:
+                kwargs["patch_id"] = str(patch_id)
+            if roi_delta is not None:
+                kwargs["contribution"] = roi_delta
+            self.patch_logger.track_contributors(ids, result, **kwargs)
+        except Exception:
+            self.logger.exception("track_contributors failed")
 
     # --------------------------------------------------------------
     def suggest_snippets(self, description: str, limit: int = 3) -> Iterable[CodeRecord]:
@@ -833,7 +867,14 @@ class SelfCodingEngine:
                     )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
-            self._track_contributors(session_id, vectors, False, patch_id, retrieval_metadata)
+            self._track_contributors(
+                session_id,
+                vectors,
+                False,
+                patch_id=patch_id,
+                retrieval_metadata=retrieval_metadata,
+                roi_delta=roi_delta,
+            )
             self._log_attempt(
                 requesting_bot,
                 "apply_patch_result",
@@ -869,7 +910,11 @@ class SelfCodingEngine:
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             self._track_contributors(
-                session_id, vectors, False, retrieval_metadata=retrieval_metadata
+                session_id,
+                vectors,
+                False,
+                retrieval_metadata=retrieval_metadata,
+                roi_delta=0.0,
             )
             self._log_attempt(
                 requesting_bot,
@@ -905,7 +950,11 @@ class SelfCodingEngine:
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             self._track_contributors(
-                session_id, vectors, False, retrieval_metadata=retrieval_metadata
+                session_id,
+                vectors,
+                False,
+                retrieval_metadata=retrieval_metadata,
+                roi_delta=0.0,
             )
             self._log_attempt(
                 requesting_bot,
@@ -1092,8 +1141,9 @@ class SelfCodingEngine:
             session_id,
             vectors,
             bool(patch_id) and not reverted,
-            patch_id,
-            retrieval_metadata,
+            patch_id=patch_id,
+            retrieval_metadata=retrieval_metadata,
+            roi_delta=roi_delta,
         )
         self._log_attempt(
             requesting_bot,
