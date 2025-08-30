@@ -44,6 +44,15 @@ sys.modules.setdefault(
     "error_logger", types.SimpleNamespace(ErrorLogger=lambda *a, **k: None)
 )
 sys.modules.setdefault("menace.error_logger", sys.modules["error_logger"])
+sys.modules.setdefault("sandbox_runner", types.ModuleType("sandbox_runner"))
+od = types.SimpleNamespace(
+    append_orphan_cache=lambda *a, **k: None,
+    append_orphan_classifications=lambda *a, **k: None,
+    prune_orphan_cache=lambda *a, **k: None,
+    load_orphan_cache=lambda *a, **k: {},
+)
+sys.modules.setdefault("sandbox_runner.orphan_discovery", od)
+sys.modules.setdefault("orphan_discovery", od)
 
 
 class _Gauge:
