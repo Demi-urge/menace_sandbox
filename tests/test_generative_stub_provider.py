@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-
+sys.modules.pop("sandbox_runner", None)
 import sandbox_runner.generative_stub_provider as gsp  # noqa: E402
 
 
@@ -99,7 +99,7 @@ def test_async_generate_returns_json(monkeypatch, tmp_path):
     assert result == [{"y": 2}]
 
 
-def test_deterministic_fallback(monkeypatch, tmp_path):
+def test_rule_based_fallback(monkeypatch, tmp_path):
     path = tmp_path / "cache.json"
     monkeypatch.setenv("SANDBOX_STUB_CACHE", str(path))
     gsp_mod = importlib.reload(gsp)
@@ -114,7 +114,7 @@ def test_deterministic_fallback(monkeypatch, tmp_path):
 
     ctx = {"strategy": "synthetic", "target": target}
     res = gsp_mod.generate_stubs([{}], ctx)
-    assert res == [{"a": 0, "b": 0.0, "c": False, "d": "", "e": None}]
+    assert res == [{"a": 1, "b": 1.0, "c": True, "d": "value", "e": None}]
 
 
 def test_generation_failure_propagates(monkeypatch, tmp_path):

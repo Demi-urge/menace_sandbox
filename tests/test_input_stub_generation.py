@@ -7,6 +7,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+sys.modules.pop("sandbox_runner", None)
 
 import importlib  # noqa: E402
 import sandbox_runner.input_history_db as ih  # noqa: E402
