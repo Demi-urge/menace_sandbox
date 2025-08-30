@@ -41,6 +41,8 @@ def _load_utils():
             self.sandbox_retry_delay = 0
             self.sandbox_max_retries = 0
             self.menace_offline_install = False
+            self.sandbox_retry_backoff_multiplier = 1.0
+            self.sandbox_retry_jitter = 0.0
 
     ns = {
         "importlib": importlib,
@@ -147,3 +149,28 @@ def test_async_retry_and_backoff_features():
     )
     assert attempts["count"] == 2
     assert sleeps == [1.5]
+
+
+def test_async_context_uses_asyncio_sleep():
+    utils = _load_utils()
+    sleeps: list[float] = []
+
+    async def fake_sleep(t: float) -> None:
+        sleeps.append(t)
+
+    utils["asyncio"].sleep = fake_sleep
+    attempts = {"count": 0}
+
+    async def flaky_async():
+        attempts["count"] += 1
+        if attempts["count"] < 2:
+            raise ValueError("boom")
+        return "ok"
+
+    async def runner():
+        return await utils["_call_with_retries"](flaky_async, retries=2, delay=1)
+
+    result = asyncio.run(runner())
+    assert result == "ok"
+    assert attempts["count"] == 2
+    assert sleeps == [1]
