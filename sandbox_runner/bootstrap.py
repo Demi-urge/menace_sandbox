@@ -1,13 +1,16 @@
 from __future__ import annotations
-from __future__ import annotations
 
+import importlib
 import importlib.util
-
-import os
-import sqlite3
-from pathlib import Path
 import logging
+import os
+import shutil
+import sqlite3
+import sys
+from pathlib import Path
+from typing import Callable
 
+from menace.auto_env_setup import ensure_env
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 
 from .cli import main as _cli_main
@@ -62,6 +65,86 @@ def initialize_autonomous_sandbox(
             raise RuntimeError(f"{mod} service is required but missing")
 
     return settings
+
+
+# Dependency verification ----------------------------------------------------
+REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
+REQUIRED_PYTHON_PKGS = ["filelock", "pydantic", "dotenv"]
+OPTIONAL_PYTHON_PKGS = [
+    "matplotlib",
+    "statsmodels",
+    "uvicorn",
+    "fastapi",
+    "sklearn",
+    "stripe",
+    "httpx",
+]
+
+
+def _verify_required_dependencies(settings: SandboxSettings) -> None:
+    """Exit if required or production optional dependencies are missing."""
+
+    def _have_spec(name: str) -> bool:
+        try:
+            return importlib.util.find_spec(name) is not None
+        except Exception:
+            return name in sys.modules
+
+    missing_sys = [t for t in REQUIRED_SYSTEM_TOOLS if shutil.which(t) is None]
+    missing_req = [p for p in REQUIRED_PYTHON_PKGS if not _have_spec(p)]
+    missing_opt = [p for p in OPTIONAL_PYTHON_PKGS if not _have_spec(p)]
+
+    mode = settings.menace_mode.lower()
+
+    messages: list[str] = []
+    if missing_sys:
+        messages.append(
+            "Missing system packages: "
+            + ", ".join(missing_sys)
+            + ". Install them using your package manager."
+        )
+    if missing_req:
+        messages.append(
+            "Missing Python packages: "
+            + ", ".join(missing_req)
+            + ". Install them with 'pip install <package>'."
+        )
+    if missing_opt and mode == "production":
+        messages.append(
+            "Missing optional Python packages: "
+            + ", ".join(missing_opt)
+            + ". Install them with 'pip install <package>'."
+        )
+
+    if messages:
+        raise SystemExit("\n".join(messages))
+
+    if missing_opt:
+        logger.warning(
+            "Missing optional Python packages: %s",
+            ", ".join(missing_opt),
+        )
+
+
+def bootstrap_environment(
+    settings: SandboxSettings | None = None,
+    verifier: Callable[[SandboxSettings], None] | None = None,
+) -> SandboxSettings:
+    """Fully prepare the autonomous sandbox environment.
+
+    This convenience routine ensures the environment file exists, verifies
+    required dependencies, creates core SQLite databases and checks for
+    optional service modules.
+    """
+
+    settings = settings or load_sandbox_settings()
+    env_file = Path(settings.menace_env_file)
+    created_env = not env_file.exists()
+    ensure_env(str(env_file))
+    if created_env:
+        logger.info("created env file at %s", env_file)
+    (verifier or _verify_required_dependencies)(settings)
+    return initialize_autonomous_sandbox(settings)
 
 
 def launch_sandbox(settings: SandboxSettings | None = None) -> None:

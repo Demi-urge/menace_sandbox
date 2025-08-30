@@ -32,10 +32,15 @@ import uuid
 from scipy.stats import t
 from db_router import init_db_router
 from sandbox_settings import SandboxSettings
+from sandbox_runner.bootstrap import (
+    bootstrap_environment,
+    _verify_required_dependencies,
+)
 
 logger = logging.getLogger(__name__)
 
 settings = SandboxSettings()
+settings = bootstrap_environment(settings, _verify_required_dependencies)
 os.environ["SANDBOX_CENTRAL_LOGGING"] = (
     "1" if settings.sandbox_central_logging else "0"
 )
@@ -44,67 +49,6 @@ LOCAL_KNOWLEDGE_REFRESH_INTERVAL = settings.local_knowledge_refresh_interval
 _LKM_REFRESH_STOP = threading.Event()
 _LKM_REFRESH_THREAD: threading.Thread | None = None
 
-
-REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
-REQUIRED_PYTHON_PKGS = ["filelock", "pydantic", "dotenv"]
-# Optional packages used by various sandbox utilities
-OPTIONAL_PYTHON_PKGS = [
-    "matplotlib",
-    "statsmodels",
-    "uvicorn",
-    "fastapi",
-    "sklearn",
-    "stripe",
-    "httpx",
-]
-
-
-def _verify_required_dependencies(settings: SandboxSettings) -> None:
-    """Exit if required or production optional dependencies are missing."""
-
-    def _have_spec(name: str) -> bool:
-        try:
-            return importlib.util.find_spec(name) is not None
-        except Exception:
-            return name in sys.modules
-
-    missing_sys = [t for t in REQUIRED_SYSTEM_TOOLS if shutil.which(t) is None]
-    missing_req = [p for p in REQUIRED_PYTHON_PKGS if not _have_spec(p)]
-    missing_opt = [p for p in OPTIONAL_PYTHON_PKGS if not _have_spec(p)]
-
-    mode = settings.menace_mode.lower()
-
-    messages: list[str] = []
-    if missing_sys:
-        messages.append(
-            "Missing system packages: "
-            + ", ".join(missing_sys)
-            + ". Install them using your package manager."
-        )
-    if missing_req:
-        messages.append(
-            "Missing Python packages: "
-            + ", ".join(missing_req)
-            + ". Install them with 'pip install <package>'."
-        )
-    if missing_opt and mode == "production":
-        messages.append(
-            "Missing optional Python packages: "
-            + ", ".join(missing_opt)
-            + ". Install them with 'pip install <package>'."
-        )
-
-    if messages:
-        raise SystemExit("\n".join(messages))
-
-    if missing_opt:
-        logger.warning(
-            "Missing optional Python packages: %s",
-            ", ".join(missing_opt),
-        )
-
-
-_verify_required_dependencies(settings)
 
 # Initialise database router with a unique menace_id. All DB access must go
 # through the router.  Import modules requiring database access afterwards so
@@ -172,7 +116,6 @@ from logging_utils import (
     set_correlation_id,
 )
 from menace.audit_trail import AuditTrail
-from menace.auto_env_setup import ensure_env
 from menace.environment_generator import generate_presets
 from menace.roi_tracker import ROITracker
 from foresight_tracker import ForesightTracker
@@ -1290,12 +1233,6 @@ def main(argv: List[str] | None = None) -> None:
         )
         logging.getLogger().addHandler(fh)
 
-    env_file = Path(settings.menace_env_file)
-    created_env = not env_file.exists()
-    ensure_env(str(env_file))
-    if created_env:
-        logger.info("created env file at %s", env_file)
-
     port = args.metrics_port
     if port is None:
         env_val = settings.metrics_port
@@ -2040,14 +1977,14 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
     from roi_results_db import ROIResultsDB
     from workflow_stability_db import WorkflowStabilityDB
     from sandbox_runner import launch_sandbox
-    from sandbox_runner.bootstrap import initialize_autonomous_sandbox
+    from sandbox_runner.bootstrap import bootstrap_environment
 
     try:
         settings = load_sandbox_settings(config_path)
     except ValidationError as exc:
         raise SystemExit(f"Invalid bootstrap configuration: {exc}") from exc
 
-    initialize_autonomous_sandbox(settings)
+    bootstrap_environment(settings, _verify_required_dependencies)
     os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
     os.environ.setdefault("SANDBOX_DATA_DIR", settings.sandbox_data_dir)
 
