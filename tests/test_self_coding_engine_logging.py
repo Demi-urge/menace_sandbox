@@ -139,7 +139,7 @@ def test_knowledge_service_logging(monkeypatch, caplog):
     monkeypatch.setattr(sce, "recent_error_fix", boom)
     monkeypatch.setattr(sce, "ask_with_memory", lambda *a, **k: {})
     monkeypatch.setattr(sce.SelfCodingEngine, "_get_repo_layout", lambda self, lines: "")
-    monkeypatch.setattr(sce.PromptEngine, "construct_prompt", staticmethod(lambda *a, **k: ""))
+    monkeypatch.setattr(sce.PromptEngine, "build_prompt", staticmethod(lambda *a, **k: ""))
     monkeypatch.setattr(
         sce.SelfCodingEngine, "suggest_snippets", lambda self, desc, limit=3: []
     )

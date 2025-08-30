@@ -169,15 +169,24 @@ class PromptEngine:
         return [line for line in lines if line]
 
     # ------------------------------------------------------------------
-    def build_prompt(self, task: str, retry_info: str | None = None) -> str:
+    def build_prompt(
+        self,
+        task: str,
+        *,
+        context: str | None = None,
+        retrieval_context: str | None = None,
+        retry_info: str | None = None,
+    ) -> str:
         """Return a prompt for *task* using retrieved patch examples.
 
-        ``retry_info`` may contain failure logs or tracebacks from a prior
-        attempt.  When supplied a "Previous attempt failed with" section is
-        appended and the details are de-duplicated so repeated retries do not
-        accumulate duplicate traces.  When retrieval fails or the average
-        confidence of returned patches falls below ``confidence_threshold`` a
-        static fallback template is returned.
+        ``context`` and ``retrieval_context`` allow callers to prepend
+        additional information such as the snippet body, repository layout or
+        metadata from vector retrieval.  ``retry_info`` may contain failure logs
+        or tracebacks from a prior attempt.  When supplied a "Previous attempt
+        failed with" section is appended and the details are de-duplicated so
+        repeated retries do not accumulate duplicate traces.  When retrieval
+        fails or the average confidence of returned patches falls below
+        ``confidence_threshold`` a static fallback template is returned.
         """
 
         if self.retriever is None:
@@ -216,7 +225,15 @@ class PromptEngine:
             )
             return self._static_prompt()
 
-        lines = [f"Enhancement goal: {task}", ""]
+        lines: List[str] = []
+        if retrieval_context:
+            lines.append(retrieval_context.strip())
+            lines.append("")
+        if context:
+            lines.append(context.strip())
+            lines.append("")
+        lines.append(f"Enhancement goal: {task}")
+        lines.append("")
         lines.extend(self.build_snippets(ranked))
         if retry_info:
             lines.extend(self._format_retry_info(retry_info))
@@ -414,6 +431,8 @@ class PromptEngine:
         goal: str,
         retry_trace: str | None = None,
         *,
+        context: str | None = None,
+        retrieval_context: str | None = None,
         top_n: int = 5,
         confidence_threshold: float = 0.3,
         retriever: Retriever | None = None,
@@ -429,13 +448,31 @@ class PromptEngine:
             confidence_threshold=confidence_threshold,
             top_n=top_n,
         )
-        return engine.build_prompt(goal, retry_trace)
+        return engine.build_prompt(
+            goal,
+            context=context,
+            retrieval_context=retrieval_context,
+            retry_info=retry_trace,
+        )
 
 
-def build_prompt(goal: str, retry_trace: str | None = None, *, top_n: int = 5) -> str:
-    """Convenience function mirroring :meth:`PromptEngine.construct_prompt`."""
+def build_prompt(
+    goal: str,
+    retry_trace: str | None = None,
+    *,
+    context: str | None = None,
+    retrieval_context: str | None = None,
+    top_n: int = 5,
+) -> str:
+    """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`."""
 
-    return PromptEngine.construct_prompt(goal, retry_trace, top_n=top_n)
+    return PromptEngine.construct_prompt(
+        goal,
+        retry_trace,
+        context=context,
+        retrieval_context=retrieval_context,
+        top_n=top_n,
+    )
 
 
 __all__ = ["PromptEngine", "build_prompt", "DEFAULT_TEMPLATE"]
