@@ -845,6 +845,6 @@ def discover_recursive_orphans(
         append_orphan_cache(repo, entries)
         append_orphan_classifications(repo, class_entries)
     except Exception:  # pragma: no cover - best effort
-        pass
+        logger.exception("failed to update orphan cache for %s", repo)
 
     return result
