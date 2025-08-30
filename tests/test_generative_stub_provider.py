@@ -304,3 +304,94 @@ def test_import_exit_no_errors(tmp_path):
     )
     assert result.returncode == 0
     assert result.stderr == ""
+
+
+@pytest.mark.asyncio
+async def test_call_with_retry_backoff(monkeypatch):
+    monkeypatch.setenv("SANDBOX_STUB_RETRIES", "3")
+    monkeypatch.setenv("SANDBOX_STUB_RETRY_BASE", "1")
+    monkeypatch.setenv("SANDBOX_STUB_RETRY_MAX", "8")
+    gsp_mod = importlib.reload(gsp)
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(d: float):
+        sleeps.append(d)
+
+    monkeypatch.setattr(gsp_mod.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(gsp_mod.random, "uniform", lambda a, b: b)
+
+    calls = {"n": 0}
+
+    async def func():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("boom")
+        return "ok"
+
+    result = await gsp_mod._call_with_retry(func)
+    assert result == "ok"
+    assert sleeps == [1, 2]
+
+
+def test_cache_persist_after_failure(monkeypatch, tmp_path):
+    path = tmp_path / "cache.json"
+    monkeypatch.setenv("SANDBOX_STUB_CACHE", str(path))
+    gsp_mod = importlib.reload(gsp)
+
+    dummy = DummyGen()
+
+    async def loader_ok():
+        return dummy
+
+    monkeypatch.setattr(gsp_mod, "_aload_generator", loader_ok)
+
+    calls: list[str] = []
+    orig_asave = gsp_mod._asave_cache
+
+    async def slow_asave():
+        calls.append("start")
+        await asyncio.sleep(0.1)
+        await orig_asave()
+        calls.append("end")
+
+    monkeypatch.setattr(gsp_mod, "_asave_cache", slow_asave)
+
+    def target(x: int) -> None:
+        pass
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(
+            gsp_mod.async_generate_stubs(
+                [{"x": 0}], {"strategy": "synthetic", "target": target}
+            )
+        )
+
+        class BrokenGen:
+            def __call__(self, prompt, max_length=64, num_return_sequences=1):
+                raise RuntimeError("boom")
+
+        async def loader_fail():
+            return BrokenGen()
+
+        gsp_mod._GENERATOR = None
+        gsp_mod._CACHE = {}
+        monkeypatch.setattr(gsp_mod, "_aload_generator", loader_fail)
+
+        with pytest.raises(RuntimeError):
+            loop.run_until_complete(
+                gsp_mod.async_generate_stubs(
+                    [{"x": 1}], {"strategy": "synthetic", "target": target}
+                )
+            )
+    finally:
+        asyncio.set_event_loop(None)
+
+    gsp_mod._atexit_save_cache()
+    loop.close()
+
+    assert path.exists()
+    assert calls == ["start", "end"]
+    assert not gsp_mod._SAVE_TASKS

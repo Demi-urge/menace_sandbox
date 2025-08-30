@@ -177,6 +177,26 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_CENTRAL_LOGGING",
         description="Enable centralised logging output.",
     )
+    stub_timeout: float = Field(
+        10.0,
+        env="SANDBOX_STUB_TIMEOUT",
+        description="Timeout for stub generation in seconds.",
+    )
+    stub_retries: int = Field(
+        2,
+        env="SANDBOX_STUB_RETRIES",
+        description="Retry attempts for stub generation.",
+    )
+    stub_retry_base: float = Field(
+        0.5,
+        env="SANDBOX_STUB_RETRY_BASE",
+        description="Initial delay for exponential backoff in seconds.",
+    )
+    stub_retry_max: float = Field(
+        30.0,
+        env="SANDBOX_STUB_RETRY_MAX",
+        description="Maximum delay for exponential backoff in seconds.",
+    )
     meta_planning_interval: int = Field(
         10,
         env="META_PLANNING_INTERVAL",
