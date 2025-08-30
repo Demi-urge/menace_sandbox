@@ -107,6 +107,12 @@ class RunMetrics:
     crash_count: int = 0
 
 
+class EmptyWorkflowError(RuntimeError):
+    """Raised when a workflow contains no actionable steps."""
+
+    pass
+
+
 # ---------------------------------------------------------------------------
 class WorkflowSandboxRunner:
     """Execute workflows inside an isolated sandbox."""
@@ -280,6 +286,8 @@ class WorkflowSandboxRunner:
                         logger.exception("audit hook error")
 
             funcs = [workflow] if callable(workflow) else list(workflow)
+            if not funcs:
+                raise EmptyWorkflowError("workflow contains no actionable steps")
 
             # Copy each module's source file into the sandbox for completeness.
             for fn in funcs:
@@ -1272,7 +1280,11 @@ class WorkflowSandboxRunner:
             return metrics
 
 
-def _subprocess_worker(conn: multiprocessing.connection.Connection, workflow: Any, params: dict[str, Any]) -> None:  # pragma: no cover - subprocess
+def _subprocess_worker(
+    conn: multiprocessing.connection.Connection,
+    workflow: Any,
+    params: dict[str, Any],
+) -> None:  # pragma: no cover - subprocess
     """Entry point for subprocess isolated execution."""
     cpu_limit = params.pop("cpu_limit", None)
     memory_limit = params.get("memory_limit")
@@ -1288,7 +1300,7 @@ def _subprocess_worker(conn: multiprocessing.connection.Connection, workflow: An
             pass
     elif cpu_limit or memory_limit:
         try:
-            from .environment import _cgroup_v2_supported, _create_cgroup, _cleanup_cgroup
+            from .environment import _cgroup_v2_supported, _create_cgroup
 
             if _cgroup_v2_supported():
                 cgroup_path = _create_cgroup(cpu_limit, memory_limit)
@@ -1316,4 +1328,10 @@ def _subprocess_worker(conn: multiprocessing.connection.Connection, workflow: An
                 pass
         conn.close()
 
-__all__ = ["WorkflowSandboxRunner", "RunMetrics", "ModuleMetrics"]
+
+__all__ = [
+    "WorkflowSandboxRunner",
+    "RunMetrics",
+    "ModuleMetrics",
+    "EmptyWorkflowError",
+]

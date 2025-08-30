@@ -36,6 +36,7 @@ assert spec.loader
 sys.modules[spec.name] = wsr
 spec.loader.exec_module(wsr)
 WorkflowSandboxRunner = wsr.WorkflowSandboxRunner
+EmptyWorkflowError = wsr.EmptyWorkflowError
 
 from tests.fixtures.workflow_modules import mod_a  # noqa: E402
 
@@ -44,6 +45,12 @@ from tests.fixtures.workflow_modules import mod_a  # noqa: E402
 def _no_psutil(monkeypatch):
     """Ensure psutil is absent so tests don't depend on it."""
     monkeypatch.setattr(wsr, "psutil", None, raising=False)
+
+
+def test_empty_workflow_errors():
+    runner = WorkflowSandboxRunner()
+    with pytest.raises(EmptyWorkflowError):
+        runner.run([])
 
 
 def test_files_confined_to_temp_dir(monkeypatch):

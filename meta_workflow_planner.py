@@ -651,10 +651,12 @@ class MetaWorkflowPlanner:
             elif isinstance(meta, Iterable):
                 labels.extend(str(m).lower() for m in meta if m)
 
-        labels = [l for i, l in enumerate(labels) if l and l not in labels[:i]]
+        labels = [lbl for i, lbl in enumerate(labels) if lbl and lbl not in labels[:i]]
         if not labels:
             return [], []
-        indices = [_get_index(l, self.domain_index, self.max_domains) for l in labels]
+        indices = [
+            _get_index(lbl, self.domain_index, self.max_domains) for lbl in labels
+        ]
         return indices, labels
 
     # ------------------------------------------------------------------
@@ -938,6 +940,9 @@ class MetaWorkflowPlanner:
             if not callable(fn):
                 return None
             funcs.append(fn)
+
+        if not funcs:
+            return None
 
         if runner is None:
             try:
@@ -2333,9 +2338,15 @@ class MetaWorkflowPlanner:
                         prev_ent = float(entry.get("last_entropy", entropy))
                         entry["last_entropy"] = entropy
                         delta_e = entropy - prev_ent
-                    entry["delta_roi"] += (delta_r - entry.get("delta_roi", 0.0)) / entry["count"]
-                    entry["delta_failures"] += (delta_f - entry.get("delta_failures", 0.0)) / entry["count"]
-                    entry["delta_entropy"] += (delta_e - entry.get("delta_entropy", 0.0)) / entry["count"]
+                    entry["delta_roi"] += (
+                        delta_r - entry.get("delta_roi", 0.0)
+                    ) / entry["count"]
+                    entry["delta_failures"] += (
+                        delta_f - entry.get("delta_failures", 0.0)
+                    ) / entry["count"]
+                    entry["delta_entropy"] += (
+                        delta_e - entry.get("delta_entropy", 0.0)
+                    ) / entry["count"]
 
         if save:
             self._save_cluster_map()
