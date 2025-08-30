@@ -139,9 +139,8 @@ def _async_track_usage(module: str, impact: float | None = None) -> None:
                 return
             except Exception:  # pragma: no cover - network/IO errors
                 logger.exception(
-                    "relevancy radar usage tracking failed for %s (attempt %d)",
-                    module,
-                    attempt + 1,
+                    "relevancy radar usage tracking failed",
+                    extra=log_record(module=module, attempt=attempt + 1),
                 )
                 # small delay before retrying to avoid hot looping
                 time.sleep(0.1)
@@ -149,7 +148,10 @@ def _async_track_usage(module: str, impact: float | None = None) -> None:
     try:
         threading.Thread(target=_track, daemon=True).start()
     except Exception:  # pragma: no cover - thread creation failures
-        logger.exception("failed to start usage tracking thread")
+        logger.exception(
+            "failed to start usage tracking thread",
+            extra=log_record(module=module),
+        )
         raise
 
 
