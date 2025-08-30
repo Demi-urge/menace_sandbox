@@ -68,7 +68,7 @@ def test_store_logs_outcome(monkeypatch, tmp_path):
 
     class DummyMetrics:
         def log_patch_outcome(
-            self, patch_id, success, vectors, *, session_id="", reverted=False
+            self, patch_id, success, vectors, *, session_id="", reverted=False, roi_tag=None
         ):
             captured.update(
                 patch_id=patch_id,
@@ -76,12 +76,13 @@ def test_store_logs_outcome(monkeypatch, tmp_path):
                 vectors=list(vectors),
                 reverted=reverted,
                 session_id=session_id,
+                roi_tag=roi_tag,
             )
 
     monkeypatch.setattr(psb, "MetricsDB", lambda *_a, **_k: DummyMetrics())
     be = psb.FilePatchScoreBackend(str(tmp_path))
     rec = psb.attach_retrieval_info(
-        {"description": "p1", "result": "reverted"}, "s1", [("db", "v1", 0.0)]
+        {"description": "p1", "result": "reverted", "roi_tag": "bug"}, "s1", [("db", "v1", 0.0)]
     )
     be.store(rec)
     assert captured["patch_id"] == "p1"
@@ -89,6 +90,7 @@ def test_store_logs_outcome(monkeypatch, tmp_path):
     assert captured["vectors"] == [("db", "v1")]
     assert captured["reverted"] is True
     assert captured["session_id"] == "s1"
+    assert captured["roi_tag"] == "bug"
 
 
 def test_backend_from_url_file(tmp_path):

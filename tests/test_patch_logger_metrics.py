@@ -75,6 +75,8 @@ class DummyVectorMetricsDB:
         patch_difficulty=None,
         start_time=None,
         time_to_completion=None,
+        error_trace_count=None,
+        roi_tag=None,
     ):
         self.summary_calls.append(
             {
@@ -86,6 +88,8 @@ class DummyVectorMetricsDB:
                 "patch_difficulty": patch_difficulty,
                 "start_time": start_time,
                 "time_to_completion": time_to_completion,
+                "error_trace_count": error_trace_count,
+                "roi_tag": roi_tag,
             }
         )
 
@@ -142,6 +146,8 @@ class DummyPatchDB:
         timestamp=None,
         roi_deltas=None,
         errors=None,
+        error_trace_count=None,
+        roi_tag=None,
         diff=None,
         summary=None,
         outcome=None,
@@ -163,6 +169,8 @@ class DummyPatchDB:
             "timestamp": timestamp,
             "roi_deltas": roi_deltas,
             "errors": errors,
+            "error_trace_count": error_trace_count,
+            "roi_tag": roi_tag,
             "diff": diff,
             "summary": summary,
             "outcome": outcome,
@@ -263,6 +271,8 @@ def test_track_contributors_forwards_contribution_patch_db(monkeypatch):
     assert pdb.kwargs["timestamp"] == 123.0
     assert pdb.kwargs["roi_deltas"] == {}
     assert pdb.kwargs["errors"] == []
+    assert pdb.kwargs["error_trace_count"] == 0
+    assert pdb.kwargs.get("roi_tag") is None
     assert pdb.kwargs["diff"] == "diff"
     assert pdb.kwargs["summary"] == "summary"
     assert pdb.kwargs["outcome"] == "failed"
@@ -355,6 +365,8 @@ def test_track_contributors_emits_summary_event(monkeypatch):
     assert summary["summary"] == "s"
     assert summary["outcome"] == "fail"
     assert summary["errors"] == [{"info": "boom"}]
+    assert summary["error_trace_count"] == 1
+    assert summary.get("roi_tag") is None
 
 
 def test_track_contributors_error_summary(monkeypatch):
@@ -375,6 +387,7 @@ def test_track_contributors_error_summary(monkeypatch):
     summary = [p for t, p in events if t == "patch:summary"][0]
     assert summary["errors"] == [{"summary": "parse fail"}]
     assert summary["error_summary"] == "parse fail"
+    assert summary["error_trace_count"] == 1
     assert res.errors == [{"summary": "parse fail"}]
 
 
@@ -416,6 +429,8 @@ def test_track_contributors_persists_errors_and_results(monkeypatch):
             patch_difficulty=None,
             start_time=None,
             time_to_completion=None,
+            error_trace_count=None,
+            roi_tag=None,
         ):
             self.summary_calls.append(
                 {
@@ -427,6 +442,8 @@ def test_track_contributors_persists_errors_and_results(monkeypatch):
                     "patch_difficulty": patch_difficulty,
                     "start_time": start_time,
                     "time_to_completion": time_to_completion,
+                    "error_trace_count": error_trace_count,
+                    "roi_tag": roi_tag,
                 }
             )
 
@@ -445,11 +462,15 @@ def test_track_contributors_persists_errors_and_results(monkeypatch):
     assert pdb.kwargs["errors"] == [{"msg": "boom"}]
     assert pdb.kwargs["context_tokens"] == 0
     assert pdb.kwargs["patch_difficulty"] == 2
+    assert pdb.kwargs["error_trace_count"] == 1
+    assert pdb.kwargs.get("roi_tag") is None
     assert vm.summary_calls and vm.summary_calls[0]["errors"] == [{"msg": "boom"}]
     assert vm.summary_calls[0]["tests_passed"] is True
     assert vm.summary_calls[0]["lines_changed"] == 2
     assert vm.summary_calls[0]["context_tokens"] == 0
     assert vm.summary_calls[0]["patch_difficulty"] == 2
+    assert vm.summary_calls[0]["error_trace_count"] == 1
+    assert vm.summary_calls[0]["roi_tag"] is None
     assert ("inc", "", 1.0) in fail_gauge.calls
     assert ("inc", "passed", 1.0) in test_gauge.calls
     assert res.tests_passed is True

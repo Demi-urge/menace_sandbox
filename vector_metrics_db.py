@@ -126,7 +126,9 @@ class VectorMetricsDB:
                 context_tokens INTEGER,
                 patch_difficulty INTEGER,
                 start_time REAL,
-                time_to_completion REAL
+                time_to_completion REAL,
+                error_trace_count INTEGER,
+                roi_tag TEXT
             )
             """
         )
@@ -190,6 +192,12 @@ class VectorMetricsDB:
             self.conn.execute(
                 "ALTER TABLE patch_metrics ADD COLUMN time_to_completion REAL"
             )
+        if "error_trace_count" not in mcols:
+            self.conn.execute(
+                "ALTER TABLE patch_metrics ADD COLUMN error_trace_count INTEGER"
+            )
+        if "roi_tag" not in mcols:
+            self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN roi_tag TEXT")
         self.conn.commit()
 
     # ------------------------------------------------------------------
@@ -625,10 +633,12 @@ class VectorMetricsDB:
         patch_difficulty: int | None = None,
         start_time: float | None = None,
         time_to_completion: float | None = None,
+        error_trace_count: int | None = None,
+        roi_tag: str | None = None,
     ) -> None:
         try:
             self.conn.execute(
-                "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, lines_changed, context_tokens, patch_difficulty, start_time, time_to_completion) VALUES(?,?,?,?,?,?,?,?)",
+                "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, lines_changed, context_tokens, patch_difficulty, start_time, time_to_completion, error_trace_count, roi_tag) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (
                     patch_id,
                     json.dumps(list(errors or [])),
@@ -638,6 +648,8 @@ class VectorMetricsDB:
                     patch_difficulty,
                     start_time,
                     time_to_completion,
+                    error_trace_count,
+                    roi_tag,
                 ),
             )
             self.conn.commit()
