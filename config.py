@@ -141,6 +141,15 @@ class Vector(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class VectorStoreConfig(BaseModel):
+    """Backend configuration for vector storage."""
+
+    backend: str = Field(default="faiss")
+    path: str = Field(default="vectors.index")
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class Bot(BaseModel):
     """Bot tuning parameters."""
 
@@ -211,6 +220,7 @@ class Config(BaseModel):
     api_keys: APIKeys
     logging: Logging
     vector: Vector
+    vector_store: VectorStoreConfig = VectorStoreConfig()
     bot: Bot
     context_builder: ContextBuilderConfig = ContextBuilderConfig()
     watch_config: bool = True
