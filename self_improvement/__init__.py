@@ -5014,10 +5014,14 @@ class SelfImprovementEngine:
                             environment.try_integrate_into_workflows(
                                 sorted(safe), **kwargs
                             )
-                        except Exception:  # pragma: no cover - best effort
-                            pass
+                        except Exception as exc:  # pragma: no cover - best effort
+                            self.logger.exception(
+                                "workflow integration failed: %s", exc
+                            )
+                            raise
                     except Exception as exc:  # pragma: no cover - best effort
                         self.logger.exception("auto inclusion failed: %s", exc)
+                        raise
                     record_new = getattr(self, "_record_new_modules", None)
                     if record_new:
                         record_new(added_modules)
@@ -5028,10 +5032,12 @@ class SelfImprovementEngine:
                         integrated = self._integrate_orphans(abs_paths)
                     except Exception as exc:  # pragma: no cover - best effort
                         self.logger.exception("orphan integration failed: %s", exc)
+                        raise
                     try:
                         self._refresh_module_map(safe)
                     except Exception as exc:  # pragma: no cover - best effort
                         self.logger.exception("module map refresh failed: %s", exc)
+                        raise
                     try:
                         survivors = [
                             m for m in modules if Path(m).name not in integrated
@@ -5215,10 +5221,14 @@ class SelfImprovementEngine:
                         except Exception:
                             logger.exception("Unhandled exception in self_improvement")
                         environment.try_integrate_into_workflows(sorted(safe), **kwargs)
-                    except Exception:  # pragma: no cover - best effort
-                        pass
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "workflow integration failed: %s", exc
+                        )
+                        raise
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
+                    raise
                 record_new = getattr(self, "_record_new_modules", None)
                 if record_new:
                     record_new(added_modules)
@@ -5228,11 +5238,13 @@ class SelfImprovementEngine:
                     integrated = self._integrate_orphans(repo_paths)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("orphan integration failed: %s", exc)
+                    raise
                 try:
                     if hasattr(self, "_refresh_module_map"):
                         self._refresh_module_map(safe)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("module map refresh failed: %s", exc)
+                    raise
 
         if SandboxSettings().clean_orphans:
             survivors = [m for m in filtered if m not in passing]
