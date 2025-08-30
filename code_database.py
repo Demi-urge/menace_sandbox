@@ -1101,6 +1101,14 @@ class PatchHistoryDB:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS failed_strategies(
+                code_hash TEXT PRIMARY KEY,
+                ts TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS patch_provenance(
                 patch_id INTEGER,
                 origin TEXT,
@@ -1959,6 +1967,41 @@ class PatchHistoryDB:
                 extra={"hash": code_hash, "count": len(patches)},
             )
             return patches
+
+        return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    # ------------------------------------------------------------------
+    def record_failed_strategy(self, code_hash: str) -> None:
+        """Persist a failed strategy hash for future exclusion."""
+
+        def op(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "INSERT OR IGNORE INTO failed_strategies(code_hash, ts) VALUES(?, ?)",
+                (code_hash, datetime.utcnow().isoformat()),
+            )
+
+        with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    def has_failed_strategy(self, code_hash: str) -> bool:
+        """Return ``True`` if ``code_hash`` was previously marked as failed."""
+
+        def op(conn: sqlite3.Connection) -> bool:
+            row = conn.execute(
+                "SELECT 1 FROM failed_strategies WHERE code_hash=? LIMIT 1",
+                (code_hash,),
+            ).fetchone()
+            return bool(row)
+
+        return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    def failed_strategy_hashes(self) -> List[str]:
+        """Return all recorded failed strategy hashes."""
+
+        def op(conn: sqlite3.Connection) -> List[str]:
+            rows = conn.execute(
+                "SELECT code_hash FROM failed_strategies"
+            ).fetchall()
+            return [r[0] for r in rows]
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 

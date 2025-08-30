@@ -894,6 +894,7 @@ class ContextBuilder:
         return_stats: bool = False,
         prioritise: str | None = None,
         exclude_tags: Iterable[str] | None = None,
+        exclude_strategies: Iterable[str] | None = None,
         failure: ParsedFailure | None = None,
         **_: Any,
     ) -> Any:
@@ -916,6 +917,9 @@ class ContextBuilder:
         exclude_tags:
             Optional iterable of tag strings. Any retrieved vector containing
             one of these tags in its metadata is discarded before ranking.
+        exclude_strategies:
+            Optional iterable of strategy hashes.  Vectors whose metadata
+            ``strategy_hash`` matches any value in this collection are skipped.
         failure:
             Optional parsed failure metadata. When provided the error details
             are appended to the retrieval query to help surface relevant
@@ -950,7 +954,8 @@ class ContextBuilder:
             query = " ".join(parts)
         query = redact_text(query)
         exclude = set(exclude_tags or [])
-        cache_key = (query, top_k, tuple(sorted(exclude)))
+        exclude_strats = set(exclude_strategies or [])
+        cache_key = (query, top_k, tuple(sorted(exclude)), tuple(sorted(exclude_strats)))
         if not include_vectors and not return_metadata and cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -1018,7 +1023,10 @@ class ContextBuilder:
                 if tags
                 else set()
             )
+            strat_hash = meta.get("strategy_hash")
             if exclude and tag_set & exclude:
+                continue
+            if exclude_strats and strat_hash and str(strat_hash) in exclude_strats:
                 continue
             bucket, scored = self._bundle_to_entry(bundle, query)
             if bucket:
@@ -1181,6 +1189,7 @@ class ContextBuilder:
         return_stats: bool = False,
         prioritise: str | None = None,
         exclude_tags: Iterable[str] | None = None,
+        exclude_strategies: Iterable[str] | None = None,
         failure: ParsedFailure | None = None,
         **kwargs: Any,
     ) -> Any:
@@ -1193,6 +1202,7 @@ class ContextBuilder:
             "return_stats": return_stats,
             "prioritise": prioritise,
             "exclude_tags": exclude_tags,
+            "exclude_strategies": exclude_strategies,
             "failure": failure,
         }
         params.update(kwargs)
