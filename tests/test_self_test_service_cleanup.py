@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 import os
 import pytest
+import subprocess
 
 # replicate environment stubs similar to other tests
 ROOT = Path(__file__).resolve().parents[1]
@@ -167,4 +168,46 @@ def test_remove_stale_containers_failure_metric(monkeypatch):
     sts.self_test_container_failures_total.set(0)
     svc = sts.SelfTestService(use_container=True, container_retries=1)
     asyncio.run(svc._remove_stale_containers())
+    assert _get(sts.self_test_container_failures_total) == 1
+
+
+def test_run_module_harness_cleans_stub(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(sts.settings, "sandbox_data_dir", tmp_path)
+    mod_file = tmp_path / "m.py"
+    mod_file.write_text("def f():\n    return 1\n")
+
+    def fake_run(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, args[0], stderr=b"boom")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    svc = sts.SelfTestService()
+    with caplog.at_level(logging.ERROR):
+        passed, _, _ = svc._run_module_harness(mod_file.as_posix())
+    assert not passed
+    stub_root = tmp_path / "selftest_stubs"
+    assert not list(stub_root.glob("*"))
+    assert any("module harness failed" in r.message for r in caplog.records)
+
+
+def test_cleanup_containers_failure_metric(monkeypatch):
+    async def fake_exec(*cmd, **kwargs):
+        class P:
+            returncode = 1
+
+            async def communicate(self):
+                return b"", b"err"
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    async def avail(self):
+        return True
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(sts.SelfTestService, "_docker_available", avail)
+    sts.self_test_container_failures_total.set(0)
+    svc = sts.SelfTestService(use_container=True, container_retries=1)
+    asyncio.run(svc._cleanup_containers())
     assert _get(sts.self_test_container_failures_total) == 1

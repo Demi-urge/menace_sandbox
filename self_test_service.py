@@ -22,6 +22,7 @@ import shlex
 import sqlite3
 import sys
 import tempfile
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -41,7 +42,7 @@ GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from orphan_analyzer import classify_module
 from sandbox_settings import SandboxSettings
-from logging_utils import log_record
+from logging_utils import log_record, get_logger
 from pydantic import ValidationError
 
 from .self_services_config import SelfTestConfig
@@ -165,6 +166,7 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
         """
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        logger = get_logger(__name__)
 
         def _iter_package(pkg: Path) -> Iterable[Path]:
             for child in pkg.rglob("*.py"):
@@ -192,8 +194,9 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
                 raise RuntimeError(f"module not found: {m}")
             try:
                 rel = p.resolve().relative_to(repo).as_posix()
-            except Exception:
+            except Exception as exc:
                 rel = p.as_posix()
+                logger.debug("failed to resolve path", extra=log_record(module=rel, error=exc))
             parents = list(initial_parents.get(rel, []) if initial_parents else [])
             queue.append((p, parents))
 
@@ -202,14 +205,18 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
             path, parents = queue.pop()
             try:
                 rel = path.resolve().relative_to(repo).as_posix()
-            except Exception:
+            except Exception as exc:
                 rel = path.as_posix()
+                logger.debug("failed to resolve path", extra=log_record(module=rel, error=exc))
 
             if on_module is not None:
                 try:
                     on_module(rel, path, parents)
-                except Exception:  # pragma: no cover - best effort
-                    pass
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.exception(
+                        "on_module callback failed",
+                        extra=log_record(module=rel, parents=parents, error=exc),
+                    )
             if rel in seen:
                 continue
             seen.add(rel)
@@ -233,8 +240,16 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
                             if on_dependency is not None:
                                 try:
                                     on_dependency(dep_rel, rel, dep_parents)
-                                except Exception:  # pragma: no cover - best effort
-                                    pass
+                                except Exception as exc:  # pragma: no cover - best effort
+                                    logger.exception(
+                                        "on_dependency callback failed",
+                                        extra=log_record(
+                                            dependency=dep_rel,
+                                            module=rel,
+                                            parents=dep_parents,
+                                            error=exc,
+                                        ),
+                                    )
                             queue.append((cand, dep_parents))
                 elif isinstance(node, ast.ImportFrom):
                     base_prefix = (
@@ -249,8 +264,16 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
                         if on_dependency is not None:
                             try:
                                 on_dependency(dep_rel, rel, dep_parents)
-                            except Exception:  # pragma: no cover - best effort
-                                pass
+                            except Exception as exc:  # pragma: no cover - best effort
+                                logger.exception(
+                                    "on_dependency callback failed",
+                                    extra=log_record(
+                                        dependency=dep_rel,
+                                        module=rel,
+                                        parents=dep_parents,
+                                        error=exc,
+                                    ),
+                                )
                         queue.append((dep, dep_parents))
                     for alias in node.names:
                         if alias.name == "*":
@@ -259,8 +282,16 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
                                 if on_dependency is not None:
                                     try:
                                         on_dependency(dep_rel, rel, dep_parents)
-                                    except Exception:  # pragma: no cover - best effort
-                                        pass
+                                    except Exception as exc:  # pragma: no cover - best effort
+                                        logger.exception(
+                                            "on_dependency callback failed",
+                                            extra=log_record(
+                                                dependency=dep_rel,
+                                                module=rel,
+                                                parents=dep_parents,
+                                                error=exc,
+                                            ),
+                                        )
                                 queue.append((cand, dep_parents))
                             continue
                         for cand in _resolve(parts + alias.name.split(".")):
@@ -268,8 +299,16 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
                             if on_dependency is not None:
                                 try:
                                     on_dependency(dep_rel, rel, dep_parents)
-                                except Exception:  # pragma: no cover - best effort
-                                    pass
+                                except Exception as exc:  # pragma: no cover - best effort
+                                    logger.exception(
+                                        "on_dependency callback failed",
+                                        extra=log_record(
+                                            dependency=dep_rel,
+                                            module=rel,
+                                            parents=dep_parents,
+                                            error=exc,
+                                        ),
+                                    )
                             queue.append((cand, dep_parents))
                 elif isinstance(node, ast.Call):
                     mod_name: str | None = None
@@ -302,8 +341,16 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
                             if on_dependency is not None:
                                 try:
                                     on_dependency(dep_rel, rel, dep_parents)
-                                except Exception:  # pragma: no cover - best effort
-                                    pass
+                                except Exception as exc:  # pragma: no cover - best effort
+                                    logger.exception(
+                                        "on_dependency callback failed",
+                                        extra=log_record(
+                                            dependency=dep_rel,
+                                            module=rel,
+                                            parents=dep_parents,
+                                            error=exc,
+                                        ),
+                                    )
                             queue.append((cand, dep_parents))
 
         return seen
@@ -1235,43 +1282,47 @@ class SelfTestService:
         stub_root = stub_root / "selftest_stubs"
         stub_root.mkdir(parents=True, exist_ok=True)
         tmp_dir = Path(tempfile.mkdtemp(prefix="stub_", dir=stub_root))
-
+        stub_path: Path | None = None
         try:
-            rel = Path(mod).resolve().relative_to(repo)
-        except Exception:
-            rel = Path(mod).resolve()
-        import_name = ".".join(rel.with_suffix("").parts)
+            try:
+                rel = Path(mod).resolve().relative_to(repo)
+            except Exception as exc:
+                rel = Path(mod).resolve()
+                self.logger.debug(
+                    "failed to relativize module", extra=log_record(module=mod, error=exc)
+                )
+            import_name = ".".join(rel.with_suffix("").parts)
 
-        tests: Mapping[str, Any]
-        fixtures: Mapping[str, Any]
-        if scenarios and ("tests" in scenarios or "fixtures" in scenarios):
-            tests = scenarios.get("tests", {})  # type: ignore[assignment]
-            fixtures = scenarios.get("fixtures", {})  # type: ignore[assignment]
-        else:
-            tests = scenarios or {}
-            fixtures = {}
+            tests: Mapping[str, Any]
+            fixtures: Mapping[str, Any]
+            if scenarios and ("tests" in scenarios or "fixtures" in scenarios):
+                tests = scenarios.get("tests", {})  # type: ignore[assignment]
+                fixtures = scenarios.get("fixtures", {})  # type: ignore[assignment]
+            else:
+                tests = scenarios or {}
+                fixtures = {}
 
-        stub_path = tmp_dir / f"test_{Path(mod).stem}_stub.py"
-        hook_line = (
-            f"HOOK_PATH = '{self.fixture_hook}'\n" if self.fixture_hook else "HOOK_PATH = os.getenv('SELF_TEST_FIXTURE_HOOK')\n"
-        )
-        stub_code = (
-            "import importlib, inspect, json, os, dataclasses, enum, typing\n\n"
-            f"SCENARIOS = json.loads('''{json.dumps(tests)}''')\n"
-            f"FIXTURES = json.loads('''{json.dumps(fixtures)}''')\n"
-            f"{hook_line}"
-            "HOOK = None\n"
-            "if HOOK_PATH:\n"
-            "    mod, _, fn = HOOK_PATH.rpartition(':')\n"
-            "    try:\n"
-            "        HOOK = getattr(importlib.import_module(mod), fn)\n"
-            "    except Exception:\n"
-            "        HOOK = None\n\n"
-            "def _resolve(v):\n"
-            "    if isinstance(v, dict) and 'fixture' in v:\n"
-            "        return FIXTURES.get(v['fixture'])\n"
-            "    return v\n\n"
-            "def _dummy_from_ann(t):\n"
+            stub_path = tmp_dir / f"test_{Path(mod).stem}_stub.py"
+            hook_line = (
+                f"HOOK_PATH = '{self.fixture_hook}'\n" if self.fixture_hook else "HOOK_PATH = os.getenv('SELF_TEST_FIXTURE_HOOK')\n"
+            )
+            stub_code = (
+                "import importlib, inspect, json, os, dataclasses, enum, typing\n\n"
+                f"SCENARIOS = json.loads('''{json.dumps(tests)}''')\n"
+                f"FIXTURES = json.loads('''{json.dumps(fixtures)}''')\n"
+                f"{hook_line}"
+                "HOOK = None\n"
+                "if HOOK_PATH:\n"
+                "    mod, _, fn = HOOK_PATH.rpartition(':')\n"
+                "    try:\n"
+                "        HOOK = getattr(importlib.import_module(mod), fn)\n"
+                "    except Exception:\n"
+                "        HOOK = None\n\n"
+                "def _resolve(v):\n"
+                "    if isinstance(v, dict) and 'fixture' in v:\n"
+                "        return FIXTURES.get(v['fixture'])\n"
+                "    return v\n\n"
+                "def _dummy_from_ann(t):\n"
             "    origin = typing.get_origin(t) or t\n"
             "    args = typing.get_args(t)\n"
             "    if origin in (int, float, complex):\n"
@@ -1362,8 +1413,12 @@ class SelfTestService:
             "                except Exception:\n"
             "                    pass\n"
         )
-        stub_path.write_text(stub_code, encoding="utf-8")
-        return stub_path
+            stub_path.write_text(stub_code, encoding="utf-8")
+            result = stub_path
+        finally:
+            if stub_path is None:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+        return result
 
     # ------------------------------------------------------------------
     def _run_module_harness(self, mod: str) -> tuple[bool, list[Any], dict[str, Any]]:
@@ -1451,15 +1506,20 @@ class SelfTestService:
                 extra=log_record(cmd=exc.cmd, timeout=exc.timeout, output=exc.stderr),
             )
             passed = False
-        except Exception:  # pragma: no cover - best effort
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception(
+                "module harness error", extra=log_record(error=exc)
+            )
             passed = False
         finally:
             if stub_path:
                 try:
                     stub_path.unlink()
                     stub_path.parent.rmdir()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self.logger.warning(
+                        "failed to cleanup stub", extra=log_record(path=stub_path.as_posix(), error=exc)
+                    )
         return passed, warnings, metrics
 
     # ------------------------------------------------------------------
@@ -1534,15 +1594,20 @@ class SelfTestService:
                     passed.add(mod)
                 else:
                     failed.add(mod)
-            except Exception:
+            except Exception as exc:
+                self.logger.exception(
+                    "module test failed", extra=log_record(module=mod, error=exc)
+                )
                 failed.add(mod)
             finally:
                 if stub_path:
                     try:
                         stub_path.unlink()
                         stub_path.parent.rmdir()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        self.logger.warning(
+                            "failed to cleanup stub", extra=log_record(path=stub_path.as_posix(), error=exc)
+                        )
         return passed, failed, metrics
 
     # ------------------------------------------------------------------
@@ -1688,8 +1753,10 @@ class SelfTestService:
                 orphan_modules_reclassified_total.inc(len(reclassified))
                 orphan_modules_redundant_total.inc(len(redundant_list))
                 orphan_modules_legacy_total.inc(len(legacy_items))
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.exception(
+                    "failed to update orphan metrics", extra=log_record(error=exc)
+                )
     
             combined_file = list(dict.fromkeys(existing + discovered))
             if combined_file or path.exists():
@@ -1869,72 +1936,93 @@ class SelfTestService:
                     attempts = self.container_retries + 1 if is_container else 1
                     delay = 0.1
                     records: list[dict[str, Any]] = []
-                    for attempt in range(attempts):
-                        proc = await asyncio.create_subprocess_exec(
-                            *cmd,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE,
-                        )
-                        try:
-                            out, err = await asyncio.wait_for(
-                                proc.communicate(),
-                                timeout=self.container_timeout if is_container else None,
+                    tmp_name = tmp
+                    try:
+                        for attempt in range(attempts):
+                            proc = await asyncio.create_subprocess_exec(
+                                *cmd,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
                             )
-                        except asyncio.TimeoutError as exc:
-                            proc.kill()
-                            await proc.wait()
-                            if is_container and name:
-                                await self._force_remove_container(name)
                             try:
-                                self_test_container_timeouts_total.inc()
-                            except Exception:
-                                self.logger.exception("failed to update container timeout metric")
-                            rec = log_record(
-                                attempt=attempt + 1,
-                                error="timeout",
-                                name=name,
-                            )
-                            self.logger.warning("container attempt timed out", extra=rec)
-                            records.append(dict(rec))
-                            if attempt == attempts - 1:
-                                self.logger.error("self test container timed out")
-                                break
-                            await asyncio.sleep(delay)
-                            delay *= 2
-                            continue
+                                out, err = await asyncio.wait_for(
+                                    proc.communicate(),
+                                    timeout=self.container_timeout if is_container else None,
+                                )
+                            except asyncio.TimeoutError as exc:
+                                proc.kill()
+                                await proc.wait()
+                                if is_container and name:
+                                    await self._force_remove_container(name)
+                                try:
+                                    self_test_container_timeouts_total.inc()
+                                except Exception:
+                                    self.logger.exception(
+                                        "failed to update container timeout metric"
+                                    )
+                                rec = log_record(
+                                    attempt=attempt + 1,
+                                    error="timeout",
+                                    name=name,
+                                )
+                                self.logger.warning(
+                                    "container attempt timed out", extra=rec
+                                )
+                                records.append(dict(rec))
+                                if attempt == attempts - 1:
+                                    self.logger.error("self test container timed out")
+                                    break
+                                await asyncio.sleep(delay)
+                                delay *= 2
+                                continue
 
-                        if proc.returncode != 0 and is_container and attempt < attempts - 1:
-                            if name:
-                                await self._force_remove_container(name)
-                            rec = log_record(
-                                attempt=attempt + 1,
-                                error=f"exit {proc.returncode}",
-                                name=name,
-                            )
-                            self.logger.warning("container attempt failed", extra=rec)
-                            records.append(dict(rec))
-                            await asyncio.sleep(delay)
-                            delay *= 2
-                            continue
-                        break
+                            if (
+                                proc.returncode != 0
+                                and is_container
+                                and attempt < attempts - 1
+                            ):
+                                if name:
+                                    await self._force_remove_container(name)
+                                rec = log_record(
+                                    attempt=attempt + 1,
+                                    error=f"exit {proc.returncode}",
+                                    name=name,
+                                )
+                                self.logger.warning(
+                                    "container attempt failed", extra=rec
+                                )
+                                records.append(dict(rec))
+                                await asyncio.sleep(delay)
+                                delay *= 2
+                                continue
+                            break
 
-                    if use_pipe:
-                        data = (out or b"") + (err or b"")
-                        try:
-                            report = json.loads(data.decode()) if data else {}
-                        except Exception:
-                            self.logger.exception("failed to parse json report")
-                    else:
-                        if tmp:
+                        if use_pipe:
+                            data = (out or b"") + (err or b"")
                             try:
-                                report = json.loads(Path(tmp).read_text())
-                            except Exception:
-                                self.logger.exception("failed to parse json report")
-                        if tmp:
+                                report = json.loads(data.decode()) if data else {}
+                            except Exception as exc:
+                                self.logger.exception(
+                                    "failed to parse json report",
+                                    extra=log_record(error=exc),
+                                )
+                        elif tmp_name:
                             try:
-                                os.unlink(tmp)
-                            except Exception:
-                                pass
+                                report = json.loads(Path(tmp_name).read_text())
+                            except Exception as exc:
+                                self.logger.exception(
+                                    "failed to parse json report",
+                                    extra=log_record(path=tmp_name, error=exc),
+                                )
+                    finally:
+                        if tmp_name:
+                            try:
+                                os.unlink(tmp_name)
+                            except Exception as exc:
+                                self.logger.warning(
+                                    "failed to remove temp file",
+                                    extra=log_record(path=tmp_name, error=exc),
+                                )
 
                     summary = report.get("summary", {})
                     pcount = int(summary.get("passed", 0))
@@ -2191,8 +2279,11 @@ class SelfTestService:
 
                 try:
                     orphan_modules_reintroduced_total.inc(integrated_now)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self.logger.exception(
+                        "failed to update reintroduced metric",
+                        extra=log_record(error=exc),
+                    )
 
             if self.results is not None:
                 self.results["integration"] = self.get_integration_details()
@@ -2240,7 +2331,7 @@ class SelfTestService:
             try:
                 await asyncio.wait_for(self._async_stop.wait(), timeout=interval)
             except asyncio.TimeoutError:
-                pass
+                self.logger.debug("self test interval wait elapsed")
 
     # ------------------------------------------------------------------
     def recent_history(self, limit: int = 10) -> list[dict[str, Any]]:
@@ -2363,8 +2454,11 @@ class SelfTestService:
         try:
             result_path.parent.mkdir(parents=True, exist_ok=True)
             result_path.write_text(json.dumps(existing, indent=2))
-        except Exception:  # pragma: no cover - best effort
-            pass
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception(
+                "failed to write orphan results",
+                extra=log_record(path=result_path.as_posix(), error=exc),
+            )
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -2380,8 +2474,12 @@ class SelfTestService:
             data = json.loads(target.read_text()) if target.exists() else {}
             if isinstance(data, dict):
                 return data
-        except Exception:
-            pass
+        except Exception as exc:
+            logger = get_logger(__name__)
+            logger.exception(
+                "failed to load orphan summary",
+                extra=log_record(path=target.as_posix(), error=exc),
+            )
         return {}
 
     # ------------------------------------------------------------------
@@ -2461,7 +2559,7 @@ class SelfTestService:
         try:
             await self._task
         except asyncio.CancelledError:
-            pass
+            self.logger.debug("self test task cancelled")
         finally:
             self._task = None
             self._stop_health_server()
@@ -2884,9 +2982,12 @@ def cli(argv: list[str] | None = None) -> int:
             report_dir=args.report_dir,
         )
         try:
-            service.run_scheduled(interval=args.interval, refresh_orphans=args.refresh_orphans)
-        except KeyboardInterrupt:
-            pass
+            service.run_scheduled(
+                interval=args.interval, refresh_orphans=args.refresh_orphans
+            )
+        except KeyboardInterrupt as exc:
+            logger = get_logger(__name__)
+            logger.info("self test interrupted", extra=log_record(error=exc))
         return 0
 
     if args.cmd == "report":
