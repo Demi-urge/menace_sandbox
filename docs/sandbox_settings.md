@@ -86,3 +86,22 @@ SYNERGY_TRAIN_INTERVAL=20
 ```
 
 Any field listed above can be overridden in the same manner.
+
+## Optional service versions
+
+`SandboxSettings.optional_service_versions` controls which optional services are
+checked during bootstrap and the minimum versions required. The default ensures
+`relevancy_radar` and `quick_fix_engine` are available, but you can override the
+mapping via configuration files or the environment:
+
+```yaml
+optional_service_versions:
+  relevancy_radar: "1.2.0"
+  quick_fix_engine: "1.1.0"
+```
+
+```bash
+export OPTIONAL_SERVICE_VERSIONS='{"relevancy_radar": "1.2.0"}'
+```
+
+Unset modules are ignored.

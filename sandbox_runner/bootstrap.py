@@ -21,12 +21,6 @@ from .cli import main as _cli_main
 logger = logging.getLogger(__name__)
 
 
-OPTIONAL_SERVICE_VERSIONS = {
-    "relevancy_radar": "1.0.0",
-    "quick_fix_engine": "1.0.0",
-}
-
-
 def _ensure_sqlite_db(path: Path) -> None:
     """Ensure an SQLite database exists at ``path``."""
     if not path.exists():
@@ -88,7 +82,7 @@ def initialize_autonomous_sandbox(
     # Verify optional services are importable and meet version requirements
     from importlib import metadata
 
-    for mod, min_version in OPTIONAL_SERVICE_VERSIONS.items():
+    for mod, min_version in settings.optional_service_versions.items():
         try:
             module = importlib.import_module(mod)
         except ModuleNotFoundError:

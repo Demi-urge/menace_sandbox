@@ -29,6 +29,10 @@ class SandboxSettings:
         self.alignment_baseline_metrics_path = alignment_baseline_metrics_path
         self.menace_mode = "test"
         self.menace_env_file = "env"
+        self.optional_service_versions = {
+            "relevancy_radar": "1.0.0",
+            "quick_fix_engine": "1.0.0",
+        }
 
 
 sandbox_settings.SandboxSettings = SandboxSettings
