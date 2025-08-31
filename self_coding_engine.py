@@ -871,6 +871,7 @@ class SelfCodingEngine:
         requesting_bot: str | None = None,
         context_meta: Dict[str, Any] | None = None,
         effort_estimate: float | None = None,
+        suggestion_id: int | None = None,
     ) -> tuple[int | None, bool, float]:
         """Patch file, run CI and benchmark a workflow.
 
@@ -1382,6 +1383,27 @@ class SelfCodingEngine:
                 )
         except Exception:
             self.logger.exception("failed to log patch outcome")
+        if (
+            suggestion_id is not None
+            and self.patch_suggestion_db
+            and patch_id is not None
+        ):
+            try:
+                error_delta = 0.0
+                if self.patch_db:
+                    rec = self.patch_db.get(patch_id)
+                    if rec:
+                        error_delta = float(
+                            (rec.errors_after or 0) - (rec.errors_before or 0)
+                        )
+                self.patch_suggestion_db.log_enhancement_outcome(
+                    suggestion_id,
+                    patch_id,
+                    roi_delta,
+                    error_delta,
+                )
+            except Exception:
+                self.logger.exception("failed to log enhancement outcome")
         if self.cognition_layer and session_id:
             try:
                 self.cognition_layer.record_patch_outcome(
