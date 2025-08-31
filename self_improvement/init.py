@@ -7,6 +7,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from filelock import FileLock
+
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 from sandbox_runner.bootstrap import initialize_autonomous_sandbox
 
@@ -27,33 +29,64 @@ logger = get_logger(__name__)
 settings = SandboxSettings()
 
 
-def _rotate_backups(path: Path) -> None:
-    """Rotate ``path`` backups using ``.bak<N>`` suffixes."""
+def _lock_for(path: Path) -> FileLock:
+    """Return a :class:`FileLock` for ``path`` using a ``.lock`` suffix."""
 
-    count = getattr(settings, "backup_rotation_count", 3)
-    backups = [path.with_suffix(path.suffix + f".bak{i}") for i in range(1, count + 1)]
-    for i in range(count - 1, 0, -1):
-        if backups[i - 1].exists():
-            if backups[i].exists():
-                backups[i].unlink()
-            os.replace(backups[i - 1], backups[i])
-    if path.exists():
-        os.replace(path, backups[0])
+    return FileLock(str(path) + ".lock")
 
 
-def _atomic_write(path: Path, data: bytes | str, *, binary: bool = False) -> None:
-    """Write ``data`` to ``path`` atomically with backup rotation."""
+def _rotate_backups(path: Path, *, lock: FileLock | None = None) -> None:
+    """Rotate ``path`` backups using ``.bak<N>`` suffixes under ``lock``."""
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    mode = "wb" if binary else "w"
-    encoding = None if binary else "utf-8"
-    with tempfile.NamedTemporaryFile(mode, encoding=encoding, dir=path.parent, delete=False) as fh:
-        fh.write(data)
-        fh.flush()
-        os.fsync(fh.fileno())
-        tmp = Path(fh.name)
-    _rotate_backups(path)
-    os.replace(tmp, path)
+    def _do_rotate() -> None:
+        count = getattr(settings, "backup_rotation_count", 3)
+        backups = [path.with_suffix(path.suffix + f".bak{i}") for i in range(1, count + 1)]
+        for i in range(count - 1, 0, -1):
+            if backups[i - 1].exists():
+                if backups[i].exists():
+                    backups[i].unlink()
+                os.replace(backups[i - 1], backups[i])
+        if path.exists():
+            os.replace(path, backups[0])
+
+    lock = lock or _lock_for(path)
+    if lock.is_locked:
+        _do_rotate()
+    else:
+        with lock:
+            _do_rotate()
+
+
+def _atomic_write(
+    path: Path,
+    data: bytes | str,
+    *,
+    binary: bool = False,
+    lock: FileLock | None = None,
+) -> None:
+    """Write ``data`` to ``path`` atomically with backup rotation under ``lock``."""
+
+    lock = lock or _lock_for(path)
+
+    def _do_write() -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        mode = "wb" if binary else "w"
+        encoding = None if binary else "utf-8"
+        with tempfile.NamedTemporaryFile(
+            mode, encoding=encoding, dir=path.parent, delete=False
+        ) as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+            tmp = Path(fh.name)
+        _rotate_backups(path, lock=lock)
+        os.replace(tmp, path)
+
+    if lock.is_locked:
+        _do_write()
+    else:
+        with lock:
+            _do_write()
 
 
 DEFAULT_SYNERGY_WEIGHTS: dict[str, float] = dict(
@@ -103,83 +136,85 @@ def _load_initial_synergy_weights() -> None:
     weights = DEFAULT_SYNERGY_WEIGHTS.copy()
     changed = False
     doc = "Default synergy weights. Adjust values between 0.0 and 10.0."
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        if isinstance(data, dict):
-            doc = str(data.get("_doc", doc))
-            for key, default in weights.items():
-                raw = data.get(key)
-                if isinstance(raw, (int, float)):
-                    value = float(raw)
-                    if not 0.0 <= value <= 10.0:
-                        clipped = min(max(value, 0.0), 10.0)
-                        logger.info(
-                            "normalised synergy weight %s from %s to %s",
+    lock = _lock_for(path)
+    with lock:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                doc = str(data.get("_doc", doc))
+                for key, default in weights.items():
+                    raw = data.get(key)
+                    if isinstance(raw, (int, float)):
+                        value = float(raw)
+                        if not 0.0 <= value <= 10.0:
+                            clipped = min(max(value, 0.0), 10.0)
+                            logger.info(
+                                "normalised synergy weight %s from %s to %s",
+                                key,
+                                value,
+                                clipped,
+                                extra=log_record(weight=key, original=value, normalised=clipped),
+                            )
+                            value = clipped
+                            changed = True
+                        weights[key] = value
+                    else:
+                        logger.warning(
+                            "invalid synergy weight for %s: %r; using default %s",
                             key,
-                            value,
-                            clipped,
-                            extra=log_record(weight=key, original=value, normalised=clipped),
+                            raw,
+                            default,
+                            extra=log_record(weight=key, original=repr(raw)),
                         )
-                        value = clipped
                         changed = True
-                    weights[key] = value
-                else:
-                    logger.warning(
-                        "invalid synergy weight for %s: %r; using default %s",
-                        key,
-                        raw,
-                        default,
-                        extra=log_record(weight=key, original=repr(raw)),
-                    )
-                    changed = True
-        else:
-            logger.warning(
-                "invalid synergy weights %s",
+            else:
+                logger.warning(
+                    "invalid synergy weights %s",
+                    path,
+                    extra=log_record(path=str(path)),
+                )
+                changed = True
+        except FileNotFoundError:
+            logger.info(
+                "synergy weights file %s missing; creating defaults",
                 path,
                 extra=log_record(path=str(path)),
             )
             changed = True
-    except FileNotFoundError:
-        logger.info(
-            "synergy weights file %s missing; creating defaults",
-            path,
-            extra=log_record(path=str(path)),
-        )
-        changed = True
-    except OSError as exc:
-        logger.warning(
-            "I/O error loading synergy weights %s",
-            path,
-            extra=log_record(path=str(path), error=str(exc)),
-            exc_info=exc,
-        )
-        changed = True
-    except ValueError as exc:
-        logger.warning(
-            "invalid synergy weights %s",
-            path,
-            extra=log_record(path=str(path), error=str(exc)),
-            exc_info=exc,
-        )
-        changed = True
-
-    if changed:
-        payload = {"_doc": doc, **weights}
-        try:
-            _atomic_write(path, json.dumps(payload, indent=2))
-            logger.info(
-                "persisted sanitized synergy weights %s",
-                path,
-                extra=log_record(path=str(path)),
-            )
-        except OSError as exc:  # pragma: no cover - best effort
+        except OSError as exc:
             logger.warning(
-                "failed to write sanitized synergy weights %s",
+                "I/O error loading synergy weights %s",
                 path,
                 extra=log_record(path=str(path), error=str(exc)),
                 exc_info=exc,
             )
+            changed = True
+        except ValueError as exc:
+            logger.warning(
+                "invalid synergy weights %s",
+                path,
+                extra=log_record(path=str(path), error=str(exc)),
+                exc_info=exc,
+            )
+            changed = True
+
+        if changed:
+            payload = {"_doc": doc, **weights}
+            try:
+                _atomic_write(path, json.dumps(payload, indent=2), lock=lock)
+                logger.info(
+                    "persisted sanitized synergy weights %s",
+                    path,
+                    extra=log_record(path=str(path)),
+                )
+            except OSError as exc:  # pragma: no cover - best effort
+                logger.warning(
+                    "failed to write sanitized synergy weights %s",
+                    path,
+                    extra=log_record(path=str(path), error=str(exc)),
+                    exc_info=exc,
+                )
 
     settings.synergy_weight_roi = weights["roi"]
     settings.synergy_weight_efficiency = weights["efficiency"]
