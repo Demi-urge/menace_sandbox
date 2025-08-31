@@ -89,21 +89,30 @@ def _atomic_write(
             _do_write()
 
 
-DEFAULT_SYNERGY_WEIGHTS: dict[str, float] = dict(
-    getattr(
-        settings,
-        "default_synergy_weights",
-        {
-            "roi": 1.0,
-            "efficiency": 1.0,
-            "resilience": 1.0,
-            "antifragility": 1.0,
-            "reliability": 1.0,
-            "maintainability": 1.0,
-            "throughput": 1.0,
-        },
+def get_default_synergy_weights() -> dict[str, float]:
+    """Return default synergy weights from :class:`SandboxSettings`.
+
+    A fresh :class:`SandboxSettings` instance is created on each call so that
+    changes to configuration or environment variables are reflected in the
+    returned defaults.
+    """
+
+    cfg = SandboxSettings()
+    return dict(
+        getattr(
+            cfg,
+            "default_synergy_weights",
+            {
+                "roi": 1.0,
+                "efficiency": 1.0,
+                "resilience": 1.0,
+                "antifragility": 1.0,
+                "reliability": 1.0,
+                "maintainability": 1.0,
+                "throughput": 1.0,
+            },
+        )
     )
-)
 
 
 def _repo_path() -> Path:
@@ -133,7 +142,7 @@ def _load_initial_synergy_weights() -> None:
             getattr(settings, "synergy_weights_path", default_path),
         )
     )
-    weights = DEFAULT_SYNERGY_WEIGHTS.copy()
+    weights = get_default_synergy_weights()
     changed = False
     doc = "Default synergy weights. Adjust values between 0.0 and 10.0."
     lock = _lock_for(path)
@@ -260,6 +269,6 @@ __all__ = [
     "_repo_path",
     "_data_dir",
     "_atomic_write",
-    "DEFAULT_SYNERGY_WEIGHTS",
+    "get_default_synergy_weights",
     "reload_synergy_weights",
 ]

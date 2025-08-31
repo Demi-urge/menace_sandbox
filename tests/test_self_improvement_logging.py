@@ -2,9 +2,9 @@ import os
 import sys
 import types
 import importlib.util
-import builtins
-import pytest
 import json
+
+# flake8: noqa
 
 # Create a minimal fake 'menace' package with required submodules
 pkg = types.ModuleType("menace")
@@ -231,7 +231,7 @@ def test_load_invalid_weights_logs_warning(tmp_path, caplog):
     path.write_text("{\"roi\": 1.0, \"efficiency\": \"bad\"}")
     caplog.set_level("WARNING")
     learner = sie.SynergyWeightLearner(path=path)
-    assert learner.weights == sie.DEFAULT_SYNERGY_WEIGHTS
+    assert learner.weights == sie.get_default_synergy_weights()
     assert "invalid synergy weight data" in caplog.text
 
 
@@ -241,7 +241,7 @@ def test_load_corrupted_weights_logs_warning(tmp_path, caplog):
     path.write_text("{broken}")
     caplog.set_level("WARNING")
     learner = sie.SynergyWeightLearner(path=path)
-    assert learner.weights == sie.DEFAULT_SYNERGY_WEIGHTS
+    assert learner.weights == sie.get_default_synergy_weights()
     assert "failed to load synergy weights" in caplog.text
 
 

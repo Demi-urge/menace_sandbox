@@ -59,7 +59,7 @@ from .init import (
     _repo_path,
     _data_dir,
     _atomic_write,
-    DEFAULT_SYNERGY_WEIGHTS,
+    get_default_synergy_weights,
 )
 from ..metrics_exporter import (
     synergy_weight_updates_total,
@@ -530,7 +530,7 @@ class SynergyWeightLearner:
         self.replay_size = int(getattr(settings, "synergy_replay_size", 100))
         self.path = Path(path) if path else Path(settings.synergy_weight_file)
         self.lr = lr
-        self.weights = DEFAULT_SYNERGY_WEIGHTS.copy()
+        self.weights = get_default_synergy_weights()
         hp: Dict[str, Any] = dict(hyperparams or {})
         strat_factory = strategy_factory or (lambda **kw: ActorCriticStrategy(**kw))
         self.strategy = strat_factory(**hp)
@@ -615,7 +615,7 @@ class SynergyWeightLearner:
                         exc2,
                     )
         if data is None:
-            self.weights = DEFAULT_SYNERGY_WEIGHTS.copy()
+            self.weights = get_default_synergy_weights()
             return
 
         valid = isinstance(data, dict) and all(
@@ -625,7 +625,7 @@ class SynergyWeightLearner:
             logger.warning(
                 "invalid synergy weight data in %s - using defaults", self.path
             )
-            self.weights = DEFAULT_SYNERGY_WEIGHTS.copy()
+            self.weights = get_default_synergy_weights()
         else:
             for k in self.weights:
                 self.weights[k] = float(data[k])

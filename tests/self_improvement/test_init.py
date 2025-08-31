@@ -16,6 +16,50 @@ def _load_module(name: str, path: Path):
     return module
 
 
+def test_get_default_synergy_weights_reflects_settings(monkeypatch):
+    menace_pkg = types.ModuleType("menace")
+    menace_pkg.__path__ = []
+    sys.modules["menace"] = menace_pkg
+    si_pkg = types.ModuleType("menace.self_improvement")
+    si_pkg.__path__ = [str(Path("self_improvement"))]
+    sys.modules["menace.self_improvement"] = si_pkg
+
+    monkeypatch.setenv(
+        "DEFAULT_SYNERGY_WEIGHTS",
+        json.dumps(
+            {
+                "roi": 1.0,
+                "efficiency": 1.0,
+                "resilience": 1.0,
+                "antifragility": 1.0,
+                "reliability": 1.0,
+                "maintainability": 1.0,
+                "throughput": 1.0,
+            }
+        ),
+    )
+    init_module = _load_module("menace.self_improvement.init", Path("self_improvement/init.py"))
+    first = init_module.get_default_synergy_weights()
+
+    monkeypatch.setenv(
+        "DEFAULT_SYNERGY_WEIGHTS",
+        json.dumps(
+            {
+                "roi": 2.0,
+                "efficiency": 2.0,
+                "resilience": 2.0,
+                "antifragility": 2.0,
+                "reliability": 2.0,
+                "maintainability": 2.0,
+                "throughput": 2.0,
+            }
+        ),
+    )
+    second = init_module.get_default_synergy_weights()
+    assert first != second
+    assert first["roi"] == 1.0 and second["roi"] == 2.0
+
+
 def test_init_creates_synergy_weights(tmp_path, monkeypatch):
     menace_pkg = types.ModuleType("menace")
     menace_pkg.__path__ = []
@@ -57,7 +101,7 @@ def test_init_creates_synergy_weights(tmp_path, monkeypatch):
     assert settings.synergy_weight_file == str(synergy_file)
 
     data = json.loads(synergy_file.read_text())
-    for key, value in init_module.DEFAULT_SYNERGY_WEIGHTS.items():
+    for key, value in init_module.get_default_synergy_weights().items():
         assert data[key] == value
         assert getattr(settings, f"synergy_weight_{key}") == value
 
