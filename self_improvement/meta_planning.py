@@ -84,7 +84,8 @@ class _FallbackPlanner:
             self.stability_db = None
 
         self.logger = get_logger("FallbackPlanner")
-        self.state_path = Path("sandbox_data/fallback_planner.json")
+        data_dir = Path(SandboxSettings().sandbox_data_dir)
+        self.state_path = data_dir / "fallback_planner.json"
         self.state_lock = SandboxLock(
             str(self.state_path.with_suffix(self.state_path.suffix + ".lock"))
         )
