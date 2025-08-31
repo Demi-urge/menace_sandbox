@@ -29,6 +29,9 @@ class ModelAutomationPipeline: ...
 mapl_stub.AutomationResult = AutomationResult
 mapl_stub.ModelAutomationPipeline = ModelAutomationPipeline
 sys.modules["menace.model_automation_pipeline"] = mapl_stub
+sce_stub = types.ModuleType("menace.self_coding_engine")
+sce_stub.SelfCodingEngine = object
+sys.modules["menace.self_coding_engine"] = sce_stub
 prb_stub = types.ModuleType("menace.pre_execution_roi_bot")
 class ROIResult:
     def __init__(self, roi, errors, proi, perr, risk):
@@ -101,19 +104,21 @@ def test_run_patch_logs_evolution(monkeypatch, tmp_path):
             dst = Path(cmd[3])
             dst.mkdir(exist_ok=True)
             shutil.copy2(file_path, dst / file_path.name)
-            return subprocess.CompletedProcess(cmd, 0)
-        if cmd[0] == "pytest":
-            return subprocess.CompletedProcess(cmd, 0)
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(scm.subprocess, "run", fake_run)
 
-    class DummyRunner:
-        def run(self, workflow, *, safe_mode=False, **kw):
-            workflow()
-            return types.SimpleNamespace(modules=[types.SimpleNamespace(result=True)])
-
-    monkeypatch.setattr(scm, "WorkflowSandboxRunner", lambda: DummyRunner())
+    monkeypatch.setattr(
+        scm,
+        "run_tests",
+        lambda repo, path: types.SimpleNamespace(
+            success=True,
+            failure=None,
+            stdout="",
+            stderr="",
+            duration=0.0,
+        ),
+    )
 
     res = mgr.run_patch(file_path, "add")
     assert engine.calls
@@ -152,19 +157,21 @@ def test_run_patch_logging_error(monkeypatch, tmp_path, caplog):
             dst = Path(cmd[3])
             dst.mkdir(exist_ok=True)
             shutil.copy2(file_path, dst / file_path.name)
-            return subprocess.CompletedProcess(cmd, 0)
-        if cmd[0] == "pytest":
-            return subprocess.CompletedProcess(cmd, 0)
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(scm.subprocess, "run", fake_run)
 
-    class DummyRunner:
-        def run(self, workflow, *, safe_mode=False, **kw):
-            workflow()
-            return types.SimpleNamespace(modules=[types.SimpleNamespace(result=True)])
-
-    monkeypatch.setattr(scm, "WorkflowSandboxRunner", lambda: DummyRunner())
+    monkeypatch.setattr(
+        scm,
+        "run_tests",
+        lambda repo, path: types.SimpleNamespace(
+            success=True,
+            failure=None,
+            stdout="",
+            stderr="",
+            duration=0.0,
+        ),
+    )
 
     def fail(*a, **k):
         raise RuntimeError("boom")

@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 from typing import Dict, Any
 
-from .error_parser import ErrorParser, FailureCache, ErrorReport
+from .error_parser import FailureCache, ErrorReport
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import record_failed_tags
 except Exception:  # pragma: no cover - optional dependency
@@ -16,7 +16,7 @@ except Exception:  # pragma: no cover - optional dependency
     def record_failed_tags(_tags: list[str]) -> None:  # type: ignore
         return None
 
-from .sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
+from .sandbox_runner.test_harness import run_tests, TestHarnessResult
 
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
@@ -119,7 +119,6 @@ class SelfCodingManager:
             subprocess.run(["git", "clone", str(repo_root), tmp], check=True)
             clone_root = Path(tmp)
             cloned_path = clone_root / path.resolve().relative_to(repo_root)
-            runner = WorkflowSandboxRunner()
             attempt = 0
             patch_id: int | None = None
             reverted = False
@@ -142,31 +141,19 @@ class SelfCodingManager:
                     context_meta=ctx_meta,
                 )
 
-                def _run_tests() -> None:
-                    subprocess.run(["pytest", "-q"], check=True, cwd=str(clone_root))
-
-                metrics = runner.run(_run_tests, safe_mode=True)
-                module = metrics.modules[0] if getattr(metrics, "modules", None) else None
-                passed = False
-                if module:
-                    if hasattr(module, "success"):
-                        passed = bool(getattr(module, "success"))
-                    else:
-                        passed = bool(getattr(module, "result", False))
-                if passed:
+                harness_result: TestHarnessResult = run_tests(clone_root, cloned_path)
+                if harness_result.success:
                     break
 
                 if attempt >= max_attempts:
                     raise RuntimeError("patch tests failed")
 
-                trace = getattr(module, "exception", "") or ""
+                failure = harness_result.failure or {}
+                trace = failure.get("stack") or harness_result.stderr or harness_result.stdout or ""
                 if self._failure_cache.seen(trace):
                     raise RuntimeError("patch tests failed")
-                failure = ErrorParser.parse_failure(trace)
                 tags = [t for t in [failure.get("strategy_tag")] if t]
-                self._failure_cache.add(
-                    ErrorReport(trace=failure.get("stack", trace), tags=tags)
-                )
+                self._failure_cache.add(ErrorReport(trace=trace, tags=tags))
                 try:
                     record_failed_tags(list(tags))
                 except Exception:  # pragma: no cover - best effort

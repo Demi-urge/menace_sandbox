@@ -29,6 +29,9 @@ class ModelAutomationPipeline: ...
 mapl_stub.AutomationResult = AutomationResult
 mapl_stub.ModelAutomationPipeline = ModelAutomationPipeline
 sys.modules["menace.model_automation_pipeline"] = mapl_stub
+sce_stub = types.ModuleType("menace.self_coding_engine")
+sce_stub.SelfCodingEngine = object
+sys.modules["menace.self_coding_engine"] = sce_stub
 import menace.self_coding_manager as scm
 from menace.model_automation_pipeline import AutomationResult
 
@@ -98,22 +101,27 @@ def test_retry_rebuilds_context(monkeypatch, tmp_path):
 
     monkeypatch.setattr(scm.subprocess, "run", fake_run)
 
-    class DummyRunner:
-        def __init__(self):
-            self.calls = 0
+    call_state = {"count": 0}
 
-        def run(self, workflow, *, safe_mode=False, **kw):
-            self.calls += 1
-            if self.calls == 1:
-                return types.SimpleNamespace(modules=[types.SimpleNamespace(success=False, exception="AssertionError: boom")])
-            return types.SimpleNamespace(modules=[types.SimpleNamespace(success=True, exception=None)])
+    def run_tests_stub(repo, path):
+        call_state["count"] += 1
+        if call_state["count"] == 1:
+            return types.SimpleNamespace(
+                success=False,
+                failure={"stack": "AssertionError: boom", "strategy_tag": "t1"},
+                stdout="",
+                stderr="",
+                duration=0.0,
+            )
+        return types.SimpleNamespace(
+            success=True,
+            failure=None,
+            stdout="",
+            stderr="",
+            duration=0.0,
+        )
 
-    monkeypatch.setattr(scm, "WorkflowSandboxRunner", DummyRunner)
-
-    def fake_parse(trace):
-        return {"tags": ["t1"]}
-
-    monkeypatch.setattr(scm.ErrorParser, "parse", staticmethod(fake_parse))
+    monkeypatch.setattr(scm, "run_tests", run_tests_stub)
 
     mgr.run_patch(file_path, "desc")
 
@@ -161,16 +169,16 @@ def test_retry_stops_after_max(monkeypatch, tmp_path):
 
     monkeypatch.setattr(scm.subprocess, "run", fake_run)
 
-    class DummyRunner:
-        def run(self, workflow, *, safe_mode=False, **kw):
-            return types.SimpleNamespace(modules=[types.SimpleNamespace(success=False, exception="AssertionError: boom")])
+    def run_tests_stub(repo, path):
+        return types.SimpleNamespace(
+            success=False,
+            failure={"stack": "AssertionError: boom", "strategy_tag": "t1"},
+            stdout="",
+            stderr="",
+            duration=0.0,
+        )
 
-    monkeypatch.setattr(scm, "WorkflowSandboxRunner", DummyRunner)
-
-    def fake_parse(trace):
-        return {"tags": ["t1"]}
-
-    monkeypatch.setattr(scm.ErrorParser, "parse", staticmethod(fake_parse))
+    monkeypatch.setattr(scm, "run_tests", run_tests_stub)
 
     with pytest.raises(RuntimeError):
         mgr.run_patch(file_path, "desc", max_attempts=2)
