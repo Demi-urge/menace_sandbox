@@ -58,8 +58,7 @@ _TARGET_STATS: dict[str, Counter[str]] = defaultdict(Counter)
 MODEL_ENTRY_POINT_GROUP = "sandbox.stub_models"
 
 FALLBACK_MODEL: str
-
-SETTINGS = SandboxSettings()
+_SETTINGS: SandboxSettings | None = None
 
 
 class _SaveTaskManager(AbstractAsyncContextManager):
@@ -120,7 +119,7 @@ def _available_models(settings: Any | None = None) -> set[str]:
     return models
 
 
-def _validate_env() -> None:
+def _validate_env(settings: SandboxSettings) -> None:
     """Validate environment configuration and log warnings."""
 
     def _float_env(name: str, default: float) -> float:
@@ -150,16 +149,16 @@ def _validate_env() -> None:
             return default
 
     global _GEN_TIMEOUT, _GEN_RETRIES, _RETRY_BASE, _RETRY_MAX, _CACHE_MAX, FALLBACK_MODEL
-    _GEN_TIMEOUT = _float_env("SANDBOX_STUB_TIMEOUT", SETTINGS.stub_timeout)
-    _GEN_RETRIES = _int_env("SANDBOX_STUB_RETRIES", SETTINGS.stub_retries)
-    _RETRY_BASE = _float_env("SANDBOX_STUB_RETRY_BASE", SETTINGS.stub_retry_base)
-    _RETRY_MAX = _float_env("SANDBOX_STUB_RETRY_MAX", SETTINGS.stub_retry_max)
-    _CACHE_MAX = _int_env("SANDBOX_STUB_CACHE_MAX", SETTINGS.stub_cache_max)
-    FALLBACK_MODEL = os.getenv("SANDBOX_STUB_FALLBACK_MODEL", SETTINGS.stub_fallback_model)
+    _GEN_TIMEOUT = _float_env("SANDBOX_STUB_TIMEOUT", settings.stub_timeout)
+    _GEN_RETRIES = _int_env("SANDBOX_STUB_RETRIES", settings.stub_retries)
+    _RETRY_BASE = _float_env("SANDBOX_STUB_RETRY_BASE", settings.stub_retry_base)
+    _RETRY_MAX = _float_env("SANDBOX_STUB_RETRY_MAX", settings.stub_retry_max)
+    _CACHE_MAX = _int_env("SANDBOX_STUB_CACHE_MAX", settings.stub_cache_max)
+    FALLBACK_MODEL = os.getenv("SANDBOX_STUB_FALLBACK_MODEL", settings.stub_fallback_model)
 
-    model = SETTINGS.sandbox_stub_model
+    model = settings.sandbox_stub_model
     if model:
-        available = _available_models(SETTINGS)
+        available = _available_models(settings)
         if available and model not in available:
             msg = (
                 f"unknown SANDBOX_STUB_MODEL {model!r}; available: {sorted(available)}"
@@ -172,7 +171,17 @@ def _validate_env() -> None:
             )
 
 
-_validate_env()
+def get_settings(refresh: bool = False) -> SandboxSettings:
+    """Return cached :class:`SandboxSettings`, refreshing if requested."""
+    global _SETTINGS
+    if _SETTINGS is None or refresh:
+        _SETTINGS = SandboxSettings()
+        _validate_env(_SETTINGS)
+    return _SETTINGS
+
+
+# Initialise settings on import for backward compatibility
+SETTINGS = get_settings()
 
 
 async def _call_with_retry(func: Callable[[], Awaitable[Any]]) -> Any:
@@ -533,7 +542,8 @@ async def _aload_generator() -> Any:
     global _GENERATOR
     if _GENERATOR is not None:
         return _GENERATOR
-    model = SETTINGS.sandbox_stub_model
+    settings = get_settings()
+    model = settings.sandbox_stub_model
 
     if model == "openai":
         if not _feature_enabled("SANDBOX_ENABLE_OPENAI"):
@@ -566,7 +576,7 @@ async def _aload_generator() -> Any:
     except ImportError as exc:  # pragma: no cover - library not installed
         raise ModelLoadError("transformers library unavailable") from exc
 
-    hf_token = SETTINGS.huggingface_token
+    hf_token = settings.huggingface_token
     if not model or not hf_token:
         logger.info("Using bundled '%s' model for stub generation", FALLBACK_MODEL)
         try:
