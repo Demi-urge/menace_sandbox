@@ -2894,11 +2894,21 @@ def reconcile_active_containers() -> None:
             try:
                 shutil.rmtree(td)
             except Exception:
-                if os.name == "nt" and _rmtree_windows(td):
-                    pass
+                if os.name == "nt":
+                    if _rmtree_windows(td):
+                        logger.debug(
+                            "temporary directory removed via Windows fallback for %s",
+                            td,
+                        )
+                    else:
+                        logger.warning(
+                            "temporary directory removal failed for %s", td,
+                            exc_info=True,
+                        )
                 else:
-                    logger.exception(
-                        "temporary directory removal failed for %s", td
+                    logger.warning(
+                        "temporary directory removal failed for %s", td,
+                        exc_info=True,
                     )
 
 
