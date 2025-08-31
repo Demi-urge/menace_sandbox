@@ -2,7 +2,9 @@
 
 `sandbox_runner.py` executes self-improvement cycles without creating a fresh
 repository clone. Temporary databases and event logs are created so production
-data remains untouched.
+data remains untouched. The runner requires the `foresight_tracker` package to
+project ROI trends; the full implementation is bundled with the repository and
+must be importable.
 
 The sandbox uses the existing repository defined by `SANDBOX_REPO_PATH`. This is
 expected to be a checkout of `https://github.com/Demi-urge/menace_sandbox` and
