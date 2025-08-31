@@ -70,6 +70,7 @@ class SuggestionRecord:
     rationale: str = ""
     patch_count: int = 0
     module_id: str = ""
+    raroi: float = 0.0
     ts: str = datetime.utcnow().isoformat()
 
 
@@ -116,6 +117,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 rationale TEXT,
                 patch_count INTEGER DEFAULT 0,
                 module_id TEXT,
+                raroi REAL DEFAULT 0,
                 ts TEXT
             )
             """
@@ -135,6 +137,12 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             try:
                 self.conn.execute(
                     "ALTER TABLE suggestions ADD COLUMN module_id TEXT"
+                )
+            except Exception:
+                pass
+            try:
+                self.conn.execute(
+                    "ALTER TABLE suggestions ADD COLUMN raroi REAL DEFAULT 0"
                 )
             except Exception:
                 pass
@@ -201,10 +209,11 @@ class PatchSuggestionDB(EmbeddableDBMixin):
         rationale: str,
         patch_count: int,
         module_id: str,
+        raroi: float,
     ) -> str:
         return (
             f"module={module} module_id={module_id} patches={patch_count} "
-            f"description={description} rationale={rationale}"
+            f"raroi={raroi} description={description} rationale={rationale}"
         )
 
     def license_text(self, rec: Any) -> str | None:
@@ -222,6 +231,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 rec.rationale,
                 rec.patch_count,
                 rec.module_id,
+                rec.raroi,
             )
             return self.encode_text(text)
         if isinstance(rec, dict):
@@ -231,6 +241,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 rec.get("rationale", ""),
                 int(rec.get("patch_count", 0)),
                 rec.get("module_id", ""),
+                float(rec.get("raroi", 0.0)),
             )
             return self.encode_text(text)
         return None
@@ -266,7 +277,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             with self._lock:
                 cur = self.conn.execute(
                     "INSERT INTO suggestions(module, description, score, rationale, "
-                    "patch_count, module_id, ts) VALUES(?,?,?,?,?,?,?)",
+                    "patch_count, module_id, raroi, ts) VALUES(?,?,?,?,?,?,?,?)",
                     (
                         rec.module,
                         rec.description,
@@ -274,6 +285,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                         rec.rationale,
                         rec.patch_count,
                         rec.module_id,
+                        rec.raroi,
                         rec.ts,
                     ),
                 )
@@ -340,6 +352,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 score = float(getattr(sugg, "score", 0.0))
                 patch_count = int(getattr(sugg, "patch_count", 0))
                 module_id = getattr(sugg, "module_id", "")
+                raroi = float(getattr(sugg, "raroi", 0.0))
                 if self._has_similar(module, rationale, score):
                     continue
                 rec = SuggestionRecord(
@@ -349,6 +362,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                     rationale=rationale,
                     patch_count=patch_count,
                     module_id=module_id,
+                    raroi=raroi,
                 )
                 self.add(rec)
             except Exception:  # pragma: no cover - best effort
@@ -427,7 +441,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
         with self._lock:
             rows = self.conn.execute(
                 "SELECT module, description, score, rationale, patch_count, "
-                "module_id, ts FROM suggestions ORDER BY score DESC LIMIT ?",
+                "module_id, raroi, ts FROM suggestions ORDER BY score DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [
@@ -438,7 +452,8 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 rationale=r[3] or "",
                 patch_count=r[4] or 0,
                 module_id=r[5] or "",
-                ts=r[6],
+                raroi=r[6] or 0.0,
+                ts=r[7],
             )
             for r in rows
         ]
@@ -448,7 +463,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
         with self._lock:
             rows = self.conn.execute(
                 "SELECT module, description, score, rationale, patch_count, "
-                "module_id, ts FROM suggestions ORDER BY id"
+                "module_id, raroi, ts FROM suggestions ORDER BY id"
             ).fetchall()
         return [
             SuggestionRecord(
@@ -458,7 +473,8 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 rationale=r[3] or "",
                 patch_count=r[4] or 0,
                 module_id=r[5] or "",
-                ts=r[6],
+                raroi=r[6] or 0.0,
+                ts=r[7],
             )
             for r in rows
         ]
@@ -486,7 +502,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
     # ------------------------------------------------------------------
     def iter_records(self) -> Iterator[tuple[int, Dict[str, str], str]]:
         cur = self.conn.execute(
-            "SELECT id, module, description, rationale, patch_count, module_id FROM suggestions"
+            "SELECT id, module, description, rationale, patch_count, module_id, raroi FROM suggestions"
         )
         for row in cur.fetchall():
             yield row[0], {
@@ -495,6 +511,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 "rationale": row[3],
                 "patch_count": row[4],
                 "module_id": row[5],
+                "raroi": row[6],
             }, "suggestion"
 
     def to_vector_dict(self, rec: SuggestionRecord | Dict[str, str]) -> Dict[str, str]:
@@ -505,6 +522,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 "rationale": rec.rationale,
                 "patch_count": rec.patch_count,
                 "module_id": rec.module_id,
+                "raroi": rec.raroi,
             }
         return {
             "module": rec.get("module", ""),
@@ -512,6 +530,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             "rationale": rec.get("rationale", ""),
             "patch_count": int(rec.get("patch_count", 0)),
             "module_id": rec.get("module_id", ""),
+            "raroi": float(rec.get("raroi", 0.0)),
         }
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:

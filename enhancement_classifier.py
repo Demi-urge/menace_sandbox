@@ -14,6 +14,7 @@ import ast
 import json
 import logging
 import os
+import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
@@ -49,6 +50,7 @@ class EnhancementSuggestion:
     path: str
     score: float
     rationale: str
+    raroi: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +80,7 @@ class EnhancementClassifier:
         weights = {
             "frequency": 1.0,
             "roi": 1.0,
+            "raroi": 1.0,
             "errors": 1.0,
             "complexity": 1.0,
             "cyclomatic": 1.0,
@@ -141,6 +144,8 @@ class EnhancementClassifier:
         float,
         float,
         list[str],
+        float,
+        float,
     ] | None:
         """Return metrics for ``code_id`` or ``None`` when absent."""
 
@@ -156,8 +161,14 @@ class EnhancementClassifier:
             return None
         filename = rows[0][0] or f"id:{code_id}"
         patch_count = len(rows)
-        avg_roi = sum((r[1] or 0.0) for r in rows) / patch_count
-        avg_errors = sum(((r[3] or 0) - (r[2] or 0)) for r in rows) / patch_count
+        roi_deltas = [r[1] or 0.0 for r in rows]
+        error_deltas = [(r[3] or 0) - (r[2] or 0) for r in rows]
+        avg_roi = sum(roi_deltas) / patch_count
+        avg_errors = sum(error_deltas) / patch_count
+        roi_volatility = (
+            statistics.pstdev(roi_deltas) if len(roi_deltas) > 1 else 0.0
+        )
+        raroi = avg_roi / (1.0 + roi_volatility + max(0.0, avg_errors))
         avg_complexity = sum((r[4] or 0.0) for r in rows) / patch_count
         neg_roi_ratio = sum(1 for r in rows if (r[1] or 0.0) < 0) / patch_count
         error_prone_ratio = sum(
@@ -254,6 +265,8 @@ class EnhancementClassifier:
             neg_roi_ratio,
             error_prone_ratio,
             notes,
+            roi_volatility,
+            raroi,
         )
 
     # ------------------------------------------------------------------
@@ -355,6 +368,8 @@ class EnhancementClassifier:
                 neg_roi_ratio,
                 error_prone_ratio,
                 notes,
+                roi_volatility,
+                raroi,
             ) = metrics
             anti_score, anti_notes = self._detect_anti_patterns(cid)
 
@@ -376,6 +391,7 @@ class EnhancementClassifier:
             score = (
                 self.weights["frequency"] * patches
                 + self.weights["roi"] * (-avg_roi)
+                + self.weights["raroi"] * (-raroi)
                 + self.weights["errors"] * avg_errors
                 + self.weights["complexity"] * avg_complexity
                 + self.weights["cyclomatic"] * avg_cc
@@ -395,13 +411,16 @@ class EnhancementClassifier:
             rationale = (
                 f"module {filename} refactored {patches} times; "
                 f"ROI {roi_phrase} {abs(avg_roi):.2f}%; "
-                f"{err_phrase}"
+                f"{err_phrase}; "
+                f"RAROI {raroi:.2f} (vol {roi_volatility:.2f})"
             )
             all_notes = notes + anti_notes
             if all_notes:
                 rationale += "; " + "; ".join(all_notes)
 
-            suggestion = EnhancementSuggestion(path=filename, score=score, rationale=rationale)
+            suggestion = EnhancementSuggestion(
+                path=filename, score=score, rationale=rationale, raroi=raroi
+            )
             try:
                 rec = SuggestionRecord(
                     module=filename,
@@ -410,6 +429,7 @@ class EnhancementClassifier:
                     rationale=rationale,
                     patch_count=patches,
                     module_id=str(cid),
+                    raroi=raroi,
                 )
                 suggestion_db.add(rec)
             except Exception:  # pragma: no cover - best effort
