@@ -276,3 +276,32 @@ def test_trim_tokens_without_tokenizer(monkeypatch):
     text = "Hello, world!"
     assert engine._trim_tokens(text, 3) == text
     assert any("tiktoken" in m for m in messages)
+
+
+def test_prompt_engine_refreshes_after_record(monkeypatch):
+    class StubTrainer:
+        def __init__(self):
+            self.style_weights = {}
+        def train(self):
+            return self.style_weights
+        def record(self, **_):
+            self.style_weights = {
+                "headers": {json.dumps(["H2", "F2"]): 1.0},
+                "example_order": {json.dumps(["success", "failure"]): 1.0},
+            }
+            return True
+
+    trainer = StubTrainer()
+    engine = PromptEngine(trainer=trainer)
+    called: Dict[str, Dict[str, float]] | None = None
+
+    def fake_load(summary=None):
+        nonlocal called
+        called = summary
+
+    monkeypatch.setattr(engine, "_load_trained_config", fake_load)
+    if trainer.record(
+        headers=["h"], example_order=["success"], tone="neutral", success=True
+    ) and getattr(engine, "trainer") is trainer:
+        engine._load_trained_config(trainer.style_weights)
+    assert called == trainer.style_weights

@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import json
 from pathlib import Path
 
 import pytest
@@ -81,3 +82,14 @@ def test_append_records_retrains_and_saves(tmp_path: Path) -> None:
     weights = trainer.style_weights
     assert weights["headers"][hdr_key] == pytest.approx(2 / 7)
     assert state.exists()
+
+
+def test_record_updates_weights(tmp_path: Path) -> None:
+    trainer = PromptMemoryTrainer(memory=object(), patch_db=object(), state_path=tmp_path / "w.json")
+    updated = trainer.record(headers=["H"], example_order=["success"], tone="neutral", success=True)
+    assert updated
+    # second call toggles success rate
+    updated = trainer.record(headers=["H"], example_order=["success"], tone="neutral", success=False)
+    assert updated
+    hdr_key = json.dumps(["H"])
+    assert trainer.style_weights["headers"][hdr_key] == pytest.approx(0.5)
