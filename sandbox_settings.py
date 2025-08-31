@@ -356,6 +356,34 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_CIRCUIT_RESET_TIMEOUT",
         description="Time in seconds before a tripped circuit resets.",
     )
+    required_system_tools: list[str] = Field(
+        default_factory=lambda: ["ffmpeg", "tesseract", "qemu-system-x86_64"],
+        env="SANDBOX_REQUIRED_SYSTEM_TOOLS",
+        description="System commands expected to be available on PATH.",
+    )
+    required_python_packages: list[str] = Field(
+        default_factory=lambda: [
+            "pydantic",
+            "dotenv",
+            "foresight_tracker",
+            "filelock",
+        ],
+        env="SANDBOX_REQUIRED_PYTHON_PKGS",
+        description="Python packages required for sandbox operation.",
+    )
+    optional_python_packages: list[str] = Field(
+        default_factory=lambda: [
+            "matplotlib",
+            "statsmodels",
+            "uvicorn",
+            "fastapi",
+            "sklearn",
+            "stripe",
+            "httpx",
+        ],
+        env="SANDBOX_OPTIONAL_PYTHON_PKGS",
+        description="Optional Python packages used by sandbox utilities.",
+    )
     install_optional_dependencies: bool = Field(
         False,
         env="INSTALL_OPTIONAL_DEPENDENCIES",
@@ -376,6 +404,22 @@ class SandboxSettings(BaseSettings):
     )
     if PYDANTIC_V2:
 
+        @field_validator(
+            "required_system_tools",
+            "required_python_packages",
+            "optional_python_packages",
+            mode="before",
+        )
+        def _parse_dependency_list(cls, v: Any) -> Any:
+            if isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return parsed
+                except Exception:
+                    return [i.strip() for i in v.split(",") if i.strip()]
+            return v
+
         @field_validator("optional_service_versions", mode="before")
         def _parse_optional_service_versions(cls, v: Any) -> Any:
             if isinstance(v, str):
@@ -385,6 +429,22 @@ class SandboxSettings(BaseSettings):
                     return {}
             return v
     else:  # pragma: no cover - pydantic<2
+
+        @field_validator(
+            "required_system_tools",
+            "required_python_packages",
+            "optional_python_packages",
+            pre=True,
+        )
+        def _parse_dependency_list(cls, v: Any) -> Any:  # type: ignore[override]
+            if isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return parsed
+                except Exception:
+                    return [i.strip() for i in v.split(",") if i.strip()]
+            return v
 
         @field_validator("optional_service_versions", pre=True)
         def _parse_optional_service_versions(cls, v: Any) -> Any:  # type: ignore[override]
