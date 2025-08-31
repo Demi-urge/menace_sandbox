@@ -199,6 +199,10 @@ class ActorCriticSettings(BaseModel):
     buffer_size: int = 100
     batch_size: int = 32
     checkpoint_path: str = "actor_critic_state.json"
+    normalize_states: bool = True
+    reward_scale: float = 1.0
+    eval_interval: int = 100
+    checkpoint_interval: int = 100
 
     @field_validator(
         "actor_lr",
@@ -216,6 +220,18 @@ class ActorCriticSettings(BaseModel):
 
     @field_validator("buffer_size", "batch_size")
     def _ac_positive_int(cls, v: int, info: Any) -> int:
+        if v <= 0:
+            raise ValueError(f"{info.field_name} must be a positive integer")
+        return v
+
+    @field_validator("reward_scale")
+    def _ac_positive_float(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("reward_scale must be positive")
+        return v
+
+    @field_validator("eval_interval", "checkpoint_interval")
+    def _ac_interval(cls, v: int, info: Any) -> int:
         if v <= 0:
             raise ValueError(f"{info.field_name} must be a positive integer")
         return v
@@ -930,6 +946,10 @@ class SandboxSettings(BaseSettings):
     ac_checkpoint_path: str = Field(
         "actor_critic_state.json", env="AC_CHECKPOINT_PATH"
     )
+    ac_normalize_states: bool = Field(True, env="AC_NORMALIZE_STATES")
+    ac_reward_scale: float = Field(1.0, env="AC_REWARD_SCALE")
+    ac_eval_interval: int = Field(100, env="AC_EVAL_INTERVAL")
+    ac_checkpoint_interval: int = Field(100, env="AC_CHECKPOINT_INTERVAL")
     workflow_merge_similarity: float = Field(
         0.9,
         env="WORKFLOW_MERGE_SIMILARITY",
@@ -1360,6 +1380,10 @@ class SandboxSettings(BaseSettings):
             buffer_size=self.ac_buffer_size,
             batch_size=self.ac_batch_size,
             checkpoint_path=self.ac_checkpoint_path,
+            normalize_states=self.ac_normalize_states,
+            reward_scale=self.ac_reward_scale,
+            eval_interval=self.ac_eval_interval,
+            checkpoint_interval=self.ac_checkpoint_interval,
         )
 
     model_config = SettingsConfigDict(
