@@ -46,23 +46,13 @@ except Exception:  # pragma: no cover - fallback
         pass
 
 
-REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
-# The sandbox relies on ForesightTracker for ROI forecasting.
-REQUIRED_PYTHON_PKGS = ["pydantic", "dotenv", "foresight_tracker"]
-# Optional packages used by sandbox utilities
-OPTIONAL_PYTHON_PKGS = [
-    "matplotlib",
-    "statsmodels",
-    "uvicorn",
-    "fastapi",
-    "sklearn",
-    "stripe",
-    "httpx",
-]
+def _verify_required_dependencies(settings: "SandboxSettings | None" = None) -> None:
+    """Exit if required or production optional dependencies are missing.
 
-
-def _verify_required_dependencies() -> None:
-    """Exit if required or production optional dependencies are missing."""
+    Dependency lists are drawn from :class:`SandboxSettings` so deployments can
+    override them via configuration or environment variables.  Invalid entries
+    are ignored with a warning.
+    """
 
     def _have_spec(name: str) -> bool:
         try:
@@ -70,17 +60,69 @@ def _verify_required_dependencies() -> None:
         except Exception:
             return name in sys.modules
 
-    missing_sys = [t for t in REQUIRED_SYSTEM_TOOLS if shutil.which(t) is None]
-    missing_req = [p for p in REQUIRED_PYTHON_PKGS if not _have_spec(p)]
-    missing_opt = [p for p in OPTIONAL_PYTHON_PKGS if not _have_spec(p)]
+    if settings is None:
+        try:
+            from sandbox_settings import SandboxSettings, load_sandbox_settings
+
+            path = os.getenv("SANDBOX_SETTINGS_PATH")
+            settings = (
+                load_sandbox_settings(path) if path else SandboxSettings()
+            )
+        except Exception:  # pragma: no cover - fallback when config unavailable
+            settings = None
+
+    def _clean_list(name: str, items: list[str] | None) -> list[str]:
+        valid: list[str] = []
+        invalid: list[str] = []
+        for item in items or []:
+            if isinstance(item, str) and item.strip():
+                valid.append(item.strip())
+            else:
+                invalid.append(str(item))
+        if invalid:
+            logging.warning(
+                "Ignoring unrecognised %s entries: %s", name, ", ".join(invalid)
+            )
+        return valid
+
+    req_tools = _clean_list(
+        "system tool",
+        getattr(settings, "required_system_tools", ["ffmpeg", "tesseract", "qemu-system-x86_64"]),
+    )
+    req_pkgs = _clean_list(
+        "python package",
+        getattr(
+            settings,
+            "required_python_packages",
+            ["pydantic", "dotenv", "foresight_tracker", "filelock"],
+        ),
+    )
+    opt_pkgs = _clean_list(
+        "optional python package",
+        getattr(
+            settings,
+            "optional_python_packages",
+            [
+                "matplotlib",
+                "statsmodels",
+                "uvicorn",
+                "fastapi",
+                "sklearn",
+                "stripe",
+                "httpx",
+            ],
+        ),
+    )
+
+    missing_sys = [t for t in req_tools if shutil.which(t) is None]
+    missing_req = [p for p in req_pkgs if not _have_spec(p)]
+    missing_opt = [p for p in opt_pkgs if not _have_spec(p)]
 
     mode = os.getenv("MENACE_MODE", "test").lower()
 
     messages: list[str] = []
     if missing_sys:
-        messages.append(
-            "Missing system packages: " + ", ".join(missing_sys)
-        )
+        messages.append("Missing system packages: " + ", ".join(missing_sys))
         pkg_line = " ".join(missing_sys)
         messages.append("Install them on Debian/Ubuntu with:")
         messages.append(f"  sudo apt-get install {pkg_line}")

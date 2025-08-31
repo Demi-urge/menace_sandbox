@@ -123,20 +123,6 @@ def initialize_autonomous_sandbox(
     return settings
 
 
-# Dependency verification ----------------------------------------------------
-REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
-REQUIRED_PYTHON_PKGS = ["filelock", "pydantic", "dotenv"]
-OPTIONAL_PYTHON_PKGS = [
-    "matplotlib",
-    "statsmodels",
-    "uvicorn",
-    "fastapi",
-    "sklearn",
-    "stripe",
-    "httpx",
-]
-
-
 def _verify_required_dependencies(settings: SandboxSettings) -> None:
     """Exit if required or production optional dependencies are missing."""
 
@@ -146,9 +132,27 @@ def _verify_required_dependencies(settings: SandboxSettings) -> None:
         except Exception:
             return name in sys.modules
 
-    missing_sys = [t for t in REQUIRED_SYSTEM_TOOLS if shutil.which(t) is None]
-    missing_req = [p for p in REQUIRED_PYTHON_PKGS if not _have_spec(p)]
-    missing_opt = [p for p in OPTIONAL_PYTHON_PKGS if not _have_spec(p)]
+    def _clean_list(name: str, items: list[str]) -> list[str]:
+        valid: list[str] = []
+        invalid: list[str] = []
+        for item in items:
+            if isinstance(item, str) and item.strip():
+                valid.append(item.strip())
+            else:
+                invalid.append(str(item))
+        if invalid:
+            logger.warning(
+                "Ignoring unrecognised %s entries: %s", name, ", ".join(invalid)
+            )
+        return valid
+
+    req_tools = _clean_list("system tool", settings.required_system_tools)
+    req_pkgs = _clean_list("python package", settings.required_python_packages)
+    opt_pkgs = _clean_list("optional python package", settings.optional_python_packages)
+
+    missing_sys = [t for t in req_tools if shutil.which(t) is None]
+    missing_req = [p for p in req_pkgs if not _have_spec(p)]
+    missing_opt = [p for p in opt_pkgs if not _have_spec(p)]
 
     mode = settings.menace_mode.lower()
 
@@ -177,8 +181,7 @@ def _verify_required_dependencies(settings: SandboxSettings) -> None:
 
     if missing_opt:
         logger.warning(
-            "Missing optional Python packages: %s",
-            ", ".join(missing_opt),
+            "Missing optional Python packages: %s", ", ".join(missing_opt)
         )
 
 
