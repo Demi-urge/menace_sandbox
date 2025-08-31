@@ -274,7 +274,7 @@ class SelfCodingEngine:
         try:
             suggestions = list(classifier.scan_repo())
             if self.patch_suggestion_db:
-                self.patch_suggestion_db.queue_suggestions(suggestions)
+                self.patch_suggestion_db.queue_enhancement_suggestions(suggestions)
             if self.event_bus:
                 try:
                     self.event_bus.publish(
