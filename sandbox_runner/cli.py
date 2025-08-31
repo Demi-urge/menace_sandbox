@@ -12,7 +12,7 @@ import shutil
 import math
 import platform
 import subprocess
-from sandbox_settings import SandboxSettings
+from sandbox_settings import SandboxSettings, load_sandbox_settings
 try:  # optional dependency
     from scipy.stats import pearsonr, t, levene
 except Exception:  # pragma: no cover - fallback when scipy is missing
@@ -55,7 +55,34 @@ except Exception:  # pragma: no cover
     generate_presets = lambda n=None: [{}]  # type: ignore
 
 logger = get_logger(__name__)
-settings = SandboxSettings()
+
+_settings_cache: SandboxSettings | None = None
+_settings_mtime: float | None = None
+_settings_path: str | None = None
+
+
+def get_settings() -> SandboxSettings:
+    """Return cached :class:`SandboxSettings`, reloading when the config changes."""
+    global _settings_cache, _settings_mtime, _settings_path
+    path = os.getenv("SANDBOX_SETTINGS_PATH")
+    mtime = None
+    if path:
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            mtime = None
+    if (
+        _settings_cache is None
+        or path != _settings_path
+        or mtime != _settings_mtime
+    ):
+        if path:
+            _settings_cache = load_sandbox_settings(path)
+        else:
+            _settings_cache = SandboxSettings()
+        _settings_path = path
+        _settings_mtime = mtime
+    return _settings_cache
 
 
 def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
@@ -64,6 +91,7 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
         from sandbox_runner import _sandbox_main as sandbox_main
 
     presets = SANDBOX_ENV_PRESETS or [{}]
+    settings = get_settings()
     if presets == [{}] and not settings.sandbox_env_presets:
         if settings.sandbox_generate_presets:
             try:
@@ -1037,6 +1065,7 @@ def install_autopurge_command() -> None:
 def main(argv: List[str] | None = None) -> None:
     """Entry point for command line execution."""
     set_correlation_id(str(uuid.uuid4()))
+    settings = get_settings()
     parser = argparse.ArgumentParser(description="Run Menace sandbox")
     parser.add_argument(
         "--workflow-sim",
@@ -1516,7 +1545,7 @@ def main(argv: List[str] | None = None) -> None:
     if getattr(args, "misuse_stubs", False):
         os.environ["SANDBOX_MISUSE_STUBS"] = "1"
 
-    env_settings = SandboxSettings()
+    env_settings = get_settings()
     auto_include_isolated = bool(
         getattr(env_settings, "auto_include_isolated", True)
         or getattr(args, "auto_include_isolated", False)
