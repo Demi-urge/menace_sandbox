@@ -139,41 +139,14 @@ except ImportError as exc:  # pragma: no cover - explicit guidance for users
     ) from exc
 
 
-from .utils import _load_callable, _call_with_retries
-from .orphan_integration import integrate_orphans, post_round_orphan_scan
-from .meta_planning import self_improvement_cycle
+from .orchestration import (
+    integrate_orphans,
+    post_round_orphan_scan,
+    self_improvement_cycle,
+    start_self_improvement_cycle,
+)
 from .metrics import _update_alignment_baseline
-
-
-
-
-def generate_patch(
-    *args: object, retries: int = 3, delay: float = 0.1, **kwargs: object
-) -> int:
-    """Generate a patch via :mod:`quick_fix_engine`.
-
-    This wrapper ensures the optional dependency is available and converts
-    missing or unsuccessful patch generation into a structured
-    :class:`RuntimeError` with logging instead of returning ``None``.
-    """
-
-    logger = logging.getLogger(__name__)
-    func = _load_callable("quick_fix_engine", "generate_patch")
-    try:
-        patch_id = _call_with_retries(
-            func, *args, retries=retries, delay=delay, **kwargs
-        )
-    except (RuntimeError, OSError) as exc:  # pragma: no cover - best effort logging
-        logger.error(
-            "quick_fix_engine failed",
-            extra=log_record(module=__name__),
-            exc_info=exc,
-        )
-        raise RuntimeError("quick_fix_engine failed to generate patch") from exc
-    if patch_id is None:
-        logger.error("quick_fix_engine returned no patch")
-        raise RuntimeError("quick_fix_engine did not produce a patch")
-    return int(patch_id)
+from .patch_generation import generate_patch
 
 
 from ..self_test_service import SelfTestService

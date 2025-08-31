@@ -16,7 +16,8 @@ import threading
 from pathlib import Path
 
 from ..logging_utils import get_logger, log_record
-from ..sandbox_settings import SandboxSettings, load_sandbox_settings
+from ..sandbox_settings import SandboxSettings
+from . import init as _init
 from ..workflow_stability_db import WorkflowStabilityDB
 from ..roi_results_db import ROIResultsDB
 from ..lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
@@ -61,7 +62,7 @@ class _FallbackPlanner:
     """
 
     def __init__(self) -> None:
-        cfg = load_sandbox_settings()
+        cfg = _init.settings
         roi_window = int(getattr(cfg, "roi_window", getattr(cfg, "roi_cycles", 5) or 5))
         try:
             self.roi_db: ROIResultsDB | None = ROIResultsDB(window=roi_window)
@@ -433,7 +434,23 @@ class _FallbackPlanner:
         return results
 
 
-settings = load_sandbox_settings()
+settings = _init.settings
+
+
+def reload_settings(cfg: SandboxSettings) -> None:
+    """Update module-level settings and derived constants."""
+    global settings, PLANNER_INTERVAL, MUTATION_RATE, ROI_WEIGHT, DOMAIN_PENALTY, ENTROPY_THRESHOLD
+    settings = cfg
+    _validate_config(settings)
+    PLANNER_INTERVAL = getattr(settings, "meta_planning_interval", 0)
+    MUTATION_RATE = settings.meta_mutation_rate
+    ROI_WEIGHT = settings.meta_roi_weight
+    DOMAIN_PENALTY = settings.meta_domain_penalty
+    ENTROPY_THRESHOLD = (
+        settings.meta_entropy_threshold
+        if settings.meta_entropy_threshold is not None
+        else DEFAULT_ENTROPY_THRESHOLD
+    )
 
 
 def _validate_config(cfg: SandboxSettings) -> None:
@@ -445,18 +462,8 @@ def _validate_config(cfg: SandboxSettings) -> None:
             raise ValueError(f"{attr} must be non-negative")
 
 
-_validate_config(settings)
-
-PLANNER_INTERVAL = getattr(settings, "meta_planning_interval", 0)
-MUTATION_RATE = settings.meta_mutation_rate
-ROI_WEIGHT = settings.meta_roi_weight
-DOMAIN_PENALTY = settings.meta_domain_penalty
 DEFAULT_ENTROPY_THRESHOLD = 0.2
-ENTROPY_THRESHOLD = (
-    settings.meta_entropy_threshold
-    if settings.meta_entropy_threshold is not None
-    else DEFAULT_ENTROPY_THRESHOLD
-)
+reload_settings(settings)
 STABLE_WORKFLOWS = WorkflowStabilityDB()
 
 
@@ -493,7 +500,7 @@ async def self_improvement_cycle(
 ) -> None:
     """Background loop evolving ``workflows`` using the meta planner."""
     logger = get_logger("SelfImprovementCycle")
-    cfg = load_sandbox_settings()
+    cfg = _init.settings
     if MetaWorkflowPlanner is None:
         if getattr(cfg, "enable_meta_planner", False):
             raise RuntimeError("MetaWorkflowPlanner required but not installed")
@@ -613,7 +620,7 @@ def start_self_improvement_cycle(
     databases are initialised. The returned thread runs indefinitely as a
     daemon.
     """
-    load_sandbox_settings()
+    _ = _init.settings
     logger_fn = globals().get("get_logger")
     log_record_fn = globals().get("log_record")
     logger = logger_fn(__name__) if logger_fn else None
@@ -649,6 +656,7 @@ def start_self_improvement_cycle(
 __all__ = [
     "self_improvement_cycle",
     "start_self_improvement_cycle",
+    "reload_settings",
     "PLANNER_INTERVAL",
     "MUTATION_RATE",
     "ROI_WEIGHT",

@@ -158,6 +158,12 @@ def init_self_improvement(new_settings: SandboxSettings | None = None) -> Sandbo
     if getattr(settings, "sandbox_central_logging", False):
         setup_logging()
     _load_initial_synergy_weights()
+    try:
+        from . import meta_planning
+
+        meta_planning.reload_settings(settings)
+    except Exception:  # pragma: no cover - best effort
+        pass
     return settings
 
 
