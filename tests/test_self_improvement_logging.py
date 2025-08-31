@@ -146,6 +146,8 @@ sandbox_settings.SandboxSettings = lambda: types.SimpleNamespace(
     enable_alignment_flagger=True,
     alignment_warning_threshold=0.5,
     alignment_failure_threshold=0.9,
+    patch_retries=3,
+    patch_retry_delay=0.1,
 )
 sys.modules["sandbox_settings"] = sandbox_settings
 

@@ -801,6 +801,16 @@ class SandboxSettings(BaseSettings):
         env="PATCH_SCORE_BACKEND",
         description="Module path to patch score backend implementation.",
     )
+    patch_retries: int = Field(
+        3,
+        env="SANDBOX_PATCH_RETRIES",
+        description="Number of attempts made when generating a patch.",
+    )
+    patch_retry_delay: float = Field(
+        0.1,
+        env="SANDBOX_PATCH_RETRY_DELAY",
+        description="Delay in seconds between patch generation attempts.",
+    )
     flakiness_runs: int = Field(
         5,
         env="FLAKINESS_RUNS",
