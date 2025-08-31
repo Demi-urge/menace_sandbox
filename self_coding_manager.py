@@ -169,11 +169,10 @@ class SelfCodingManager:
                     record_failed_tags(list(tags))
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception("failed to record failed tags")
-                patch_db = getattr(self.engine, "patch_suggestion_db", None)
-                if patch_db:
+                if getattr(self.engine, "patch_suggestion_db", None):
                     for tag in tags:
                         try:
-                            patch_db.add_failed_strategy(tag)
+                            self.engine.patch_suggestion_db.add_failed_strategy(tag)
                         except Exception:  # pragma: no cover - best effort
                             self.logger.exception("failed to store failed strategy tag")
                 self.logger.info(
