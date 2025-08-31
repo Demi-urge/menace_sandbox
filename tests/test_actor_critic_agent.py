@@ -46,3 +46,16 @@ def test_actor_critic_learns_and_persists(tmp_path):
     for i, s in enumerate(states):
         assert agent2.select_action(s) == optimal[i]
     assert agent2.actor_lr == cfg.actor_critic.actor_lr
+
+
+def test_state_normalisation_and_reward_scaling(tmp_path):
+    cfg = SandboxSettings(
+        ac_reward_scale=0.5,
+        ac_checkpoint_path=str(tmp_path / "ac_state.json"),
+    )
+    agent = ActorCriticAgent(2, 2, cfg)
+    s = np.array([1.0, 0.0])
+    ns = np.array([0.0, 1.0])
+    agent.store(s, 0, 1.0, ns)
+    assert agent.replay.data[0].reward == 0.5
+    assert not np.allclose(agent.replay.data[0].state, s)
