@@ -93,7 +93,7 @@ def test_self_improvement_cycle_matches_fixture():
                 debug=lambda *a, **k: None,
             ),
             "log_record": lambda **kw: kw,
-            "STABLE_WORKFLOWS": DummyStability(),
+            "get_stable_workflows": lambda: DummyStability(),
             "_init": types.SimpleNamespace(
                 settings=types.SimpleNamespace(
                     meta_mutation_rate=None,
