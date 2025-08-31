@@ -12,6 +12,8 @@ import inspect
 from dataclasses import dataclass
 import threading
 from functools import lru_cache
+import subprocess
+import sys
 
 import pytest
 
@@ -43,6 +45,8 @@ def _load_utils():
     class _StubSettings:
         def __init__(self) -> None:
             self.retry_optional_dependencies = False
+            self.install_optional_dependencies = False
+            self.optional_service_versions: dict[str, str] = {}
             self.sandbox_retry_delay = 0
             self.sandbox_max_retries = 0
             self.menace_offline_install = False
@@ -64,6 +68,8 @@ def _load_utils():
         "dataclass": dataclass,
         "threading": threading,
         "lru_cache": lru_cache,
+        "subprocess": subprocess,
+        "sys": sys,
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns, counter
@@ -115,6 +121,63 @@ def test_load_callable_retry_succeeds_when_enabled():
         fn = utils["_load_callable"]("mod", "attr")
         assert fn() == "ok"
     assert counter.count == 1
+
+
+def test_load_callable_auto_install_success():
+    utils, counter = _load_utils()
+    module = types.SimpleNamespace(attr=lambda: "ok")
+
+    attempts = {"count": 0}
+
+    def side_effect(name):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise ImportError
+        return module
+
+    utils["SandboxSettings"] = lambda: types.SimpleNamespace(
+        retry_optional_dependencies=False,
+        install_optional_dependencies=True,
+        optional_service_versions={},
+        sandbox_retry_delay=0,
+        sandbox_max_retries=3,
+        menace_offline_install=False,
+        sandbox_retry_backoff_multiplier=1.0,
+        sandbox_retry_jitter=0.0,
+    )
+    with patch.object(utils["subprocess"], "check_call") as check_call, patch(
+        "importlib.import_module", side_effect=side_effect
+    ):
+        fn = utils["_load_callable"]("mod", "attr")
+        assert fn() == "ok"
+        assert check_call.called
+    assert utils["_load_callable"].diagnostics["install_attempts"] == 1
+    assert utils["_load_callable"].diagnostics["install_successes"] == 1
+    assert counter.count == 1
+
+
+def test_load_callable_auto_install_failure():
+    utils, counter = _load_utils()
+    utils["time"].sleep = lambda *a, **k: None
+
+    utils["SandboxSettings"] = lambda: types.SimpleNamespace(
+        retry_optional_dependencies=False,
+        install_optional_dependencies=True,
+        optional_service_versions={},
+        sandbox_retry_delay=0,
+        sandbox_max_retries=2,
+        menace_offline_install=False,
+        sandbox_retry_backoff_multiplier=1.0,
+        sandbox_retry_jitter=0.0,
+    )
+    with patch.object(
+        utils["subprocess"], "check_call", side_effect=RuntimeError
+    ), patch("importlib.import_module", side_effect=ImportError):
+        with pytest.raises(RuntimeError):
+            utils["_load_callable"]("mod", "attr")
+    assert utils["_load_callable"].diagnostics["install_attempts"] == 1
+    assert utils["_load_callable"].diagnostics["install_failures"] == 1
+    assert counter.count == 2
 
 
 def test_call_with_retries_records_failure():

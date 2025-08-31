@@ -334,6 +334,11 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_CIRCUIT_RESET_TIMEOUT",
         description="Time in seconds before a tripped circuit resets.",
     )
+    install_optional_dependencies: bool = Field(
+        False,
+        env="INSTALL_OPTIONAL_DEPENDENCIES",
+        description="Automatically attempt to install missing optional modules.",
+    )
     retry_optional_dependencies: bool = Field(
         False,
         env="RETRY_OPTIONAL_DEPENDENCIES",

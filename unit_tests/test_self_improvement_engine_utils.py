@@ -12,6 +12,8 @@ import inspect
 from dataclasses import dataclass
 import threading
 from functools import lru_cache
+import subprocess
+import sys
 
 import pytest
 
@@ -35,6 +37,8 @@ def _load_utils():
     class _StubSettings:
         def __init__(self) -> None:
             self.retry_optional_dependencies = False
+            self.install_optional_dependencies = False
+            self.optional_service_versions: dict[str, str] = {}
             self.sandbox_retry_delay = 0
             self.sandbox_max_retries = 0
             self.menace_offline_install = False
@@ -56,6 +60,8 @@ def _load_utils():
         "dataclass": dataclass,
         "threading": threading,
         "lru_cache": lru_cache,
+        "subprocess": subprocess,
+        "sys": sys,
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns
