@@ -70,6 +70,7 @@ dependencies = [
     ,"sentry-sdk"
     ,"cryptography"
     ,"tiktoken"
+    ,"vaderSentiment"
 ]
 
 [project.scripts]

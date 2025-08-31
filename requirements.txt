@@ -488,6 +488,8 @@ urllib3==2.4.0
     #   requests
     #   selenium
     #   sentry-sdk
+vaderSentiment==3.3.2
+    # via menace (pyproject.toml)
 vine==5.1.0
     # via
     #   amqp
