@@ -209,3 +209,73 @@ def test_approval_logs_audit_failure(monkeypatch, tmp_path, caplog):
     file_path.write_text("x = 1\n")
     assert policy.approve(file_path)
     assert "failed to log healing action" in caplog.text
+
+
+def test_run_patch_records_patch_outcome(monkeypatch, tmp_path):
+    class DummyEngine:
+        def __init__(self):
+            self.cognition_layer = types.SimpleNamespace(calls=[])
+
+        def apply_patch(self, path: Path, desc: str, **_: object):
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write("# patched\n")
+            return 1, False, 0.0
+
+    class DummyPipeline:
+        def run(self, model: str, energy: int = 1) -> mapl.AutomationResult:
+            return mapl.AutomationResult(package=None, roi=None)
+
+    class DummyDataBot:
+        def __init__(self):
+            self._vals = iter([1.0, 2.0])
+
+        def roi(self, _bot: str) -> float:
+            return next(self._vals)
+
+        def log_evolution_cycle(self, *a, **k):
+            pass
+
+    engine = DummyEngine()
+
+    def record_patch_outcome(session_id, success, contribution=0.0):
+        engine.cognition_layer.calls.append((session_id, success, contribution))
+
+    engine.cognition_layer.record_patch_outcome = record_patch_outcome
+    pipeline = DummyPipeline()
+    data_bot = DummyDataBot()
+    mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
+    file_path = tmp_path / "sample.py"
+    file_path.write_text("def x():\n    pass\n")
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        scm,
+        "run_tests",
+        lambda repo, path, **kw: types.SimpleNamespace(
+            success=True, failure=None, stdout="", stderr="", duration=0.0
+        ),
+    )
+    mgr.run_patch(
+        file_path, "add", context_meta={"retrieval_session_id": "sid"}
+    )
+    assert engine.cognition_layer.calls == [("sid", True, pytest.approx(1.0))]
