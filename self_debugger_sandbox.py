@@ -38,7 +38,7 @@ from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
 from .error_cluster_predictor import ErrorClusterPredictor
 from .error_parser import ErrorReport, FailureCache, parse_failure
-from sandbox_runner.environment import create_ephemeral_repo
+from sandbox_runner.environment import create_ephemeral_env
 try:
     from .sandbox_settings import SandboxSettings
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -1252,106 +1252,111 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 best: dict[str, object] | None = None
 
                 async def _eval_candidate(idx: int, code: str) -> dict[str, object] | None:
-                    with create_ephemeral_repo(self._settings) as (repo, run):
+                    repo_src = Path(self._settings.sandbox_repo_path or ".")
+                    with create_ephemeral_env(repo_src) as (repo, run):
                         test_path = repo / "test_auto.py"
                         test_path.write_text(code)
                         env = os.environ.copy()
                         env["PYTHONPATH"] = str(repo)
-                    try:
-                        self.engine.patch_file(test_path, "auto_debug")
-
-                        code_hash: str | None = None
                         try:
-                            with open(test_path, "rb") as fh:
-                                code_hash = _hash_code(fh.read())
-                        except Exception:
-                            code_hash = None
+                            self.engine.patch_file(test_path, "auto_debug")
 
-                        if code_hash:
-                            if code_hash in self._bad_hashes:
-                                self.logger.info(
-                                    "skipping known bad patch",
-                                    extra=log_record(hash=code_hash),
-                                )
-                                return None
-                            if patch_db:
-                                try:
-                                    with self._db_lock:
-                                        if patch_db.has_failed_strategy(code_hash):
-                                            self.logger.info(
-                                                "skipping failed strategy",
-                                                extra=log_record(hash=code_hash),
-                                            )
-                                            self._bad_hashes.add(code_hash)
-                                            return None
-                                        records = patch_db.by_hash(code_hash)
-                                except Exception:
-                                    self.logger.exception("patch history lookup failed")
-                                    records = []
-                                if any(r.reverted or r.roi_delta <= 0 for r in records):
+                            code_hash: str | None = None
+                            try:
+                                with open(test_path, "rb") as fh:
+                                    code_hash = _hash_code(fh.read())
+                            except Exception:
+                                code_hash = None
+
+                            if code_hash:
+                                if code_hash in self._bad_hashes:
                                     self.logger.info(
-                                        "skipping patch due to negative history",
+                                        "skipping known bad patch",
                                         extra=log_record(hash=code_hash),
                                     )
-                                    self._bad_hashes.add(code_hash)
                                     return None
+                                if patch_db:
+                                    try:
+                                        with self._db_lock:
+                                            if patch_db.has_failed_strategy(code_hash):
+                                                self.logger.info(
+                                                    "skipping failed strategy",
+                                                    extra=log_record(hash=code_hash),
+                                                )
+                                                self._bad_hashes.add(code_hash)
+                                                return None
+                                            records = patch_db.by_hash(code_hash)
+                                    except Exception:
+                                        self.logger.exception("patch history lookup failed")
+                                        records = []
+                                    if any(r.reverted or r.roi_delta <= 0 for r in records):
+                                        self.logger.info(
+                                            "skipping patch due to negative history",
+                                            extra=log_record(hash=code_hash),
+                                        )
+                                        self._bad_hashes.add(code_hash)
+                                        return None
 
-                        run(
-                            ["pytest", "-q"],
-                            env=env,
-                            check=True,
-                            timeout=self._test_timeout,
-                            capture_output=True,
-                            text=True,
-                        )
-                    except subprocess.CalledProcessError as exc:
-                        self._record_exception(exc)
-                        failure = parse_failure(exc.stderr or str(exc))
-                        self._record_failed_strategy(failure)
-                        try:
-                            self.error_logger.log(
-                                TelemetryEvent(
-                                    stack_trace=failure.trace,
-                                    root_cause=",".join(failure.tags),
-                                )
+                            run(
+                                ["pytest", "-q"],
+                                env=env,
+                                check=True,
+                                timeout=self._test_timeout,
+                                capture_output=True,
+                                text=True,
                             )
-                        except Exception:
-                            self.logger.exception("failed to log parsed failure")
-                        self.logger.error(
-                            "sandbox tests failed",
-                            extra=log_record(cmd=exc.cmd, rc=exc.returncode, output=exc.stderr),
-                        )
-                        if code_hash and patch_db:
+                        except subprocess.CalledProcessError as exc:
+                            self._record_exception(exc)
+                            failure = parse_failure(exc.stderr or str(exc))
+                            self._record_failed_strategy(failure)
                             try:
-                                with self._db_lock:
-                                    patch_db.record_failed_strategy(code_hash)
-                            except Exception:
-                                self.logger.exception("record failed strategy failed")
-                        return None
-                    except subprocess.TimeoutExpired as exc:
-                        self._record_exception(exc)
-                        failure = parse_failure(exc.stderr or str(exc))
-                        self._record_failed_strategy(failure)
-                        try:
-                            self.error_logger.log(
-                                TelemetryEvent(
-                                    stack_trace=failure.trace,
-                                    root_cause=",".join(failure.tags),
+                                self.error_logger.log(
+                                    TelemetryEvent(
+                                        stack_trace=failure.trace,
+                                        root_cause=",".join(failure.tags),
+                                    )
                                 )
-                            )
-                        except Exception:
-                            self.logger.exception("failed to log parsed failure")
-                        self.logger.error(
-                            "sandbox tests timed out",
-                            extra=log_record(cmd=exc.cmd, timeout=exc.timeout, output=exc.stderr),
-                        )
-                        if code_hash and patch_db:
-                            try:
-                                with self._db_lock:
-                                    patch_db.record_failed_strategy(code_hash)
                             except Exception:
-                                self.logger.exception("record failed strategy failed")
-                        return None
+                                self.logger.exception("failed to log parsed failure")
+                            self.logger.error(
+                                "sandbox tests failed",
+                                extra=log_record(cmd=exc.cmd, rc=exc.returncode, output=exc.stderr),
+                            )
+                            if code_hash and patch_db:
+                                try:
+                                    with self._db_lock:
+                                        patch_db.record_failed_strategy(code_hash)
+                                except Exception:
+                                    self.logger.exception("record failed strategy failed")
+                            return None
+                        except subprocess.TimeoutExpired as exc:
+                            self._record_exception(exc)
+                            failure = parse_failure(exc.stderr or str(exc))
+                            self._record_failed_strategy(failure)
+                            try:
+                                self.error_logger.log(
+                                    TelemetryEvent(
+                                        stack_trace=failure.trace,
+                                        root_cause=",".join(failure.tags),
+                                    )
+                                )
+                            except Exception:
+                                self.logger.exception("failed to log parsed failure")
+                            self.logger.error(
+                                "sandbox tests timed out",
+                                extra=log_record(
+                                    cmd=exc.cmd,
+                                    timeout=exc.timeout,
+                                    output=exc.stderr,
+                                ),
+                            )
+                            if code_hash and patch_db:
+                                try:
+                                    with self._db_lock:
+                                        patch_db.record_failed_strategy(code_hash)
+                                except Exception:
+                                    self.logger.exception("record failed strategy failed")
+                            return None
 
                     root_test = Path(f"test_auto_{idx}.py")
                     root_test.write_text(code)

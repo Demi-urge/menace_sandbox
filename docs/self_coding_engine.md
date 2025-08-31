@@ -49,4 +49,23 @@ Key options mirror those in `GPTMemoryManager`:
 
 See [gpt_memory.md](gpt_memory.md) for more examples and configuration details.
 
+## Ephemeral Test Environments
+
+`SelfCodingEngine` evaluates patches inside isolated environments. The helper
+`create_ephemeral_env` clones the working directory into a temporary virtual
+environment (or Docker container) and installs dependencies from
+`requirements.txt` before running tests.
+
+```python
+from pathlib import Path
+from sandbox_runner.environment import create_ephemeral_env
+
+with create_ephemeral_env(Path(".")) as (repo, run):
+    (repo / "test_example.py").write_text("def test_ok():\n    assert True\n")
+    run(["pytest", "-q"], check=True)
+```
+
+Startup time and installation failures are logged via the sandbox logging
+utilities so that callers can track environment issues.
+
 

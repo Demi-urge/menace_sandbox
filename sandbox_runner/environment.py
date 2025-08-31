@@ -398,6 +398,103 @@ def create_ephemeral_repo(
         yield repo_path, _run
 
 
+@contextmanager
+def create_ephemeral_env(
+    workdir: Path,
+) -> Iterable[tuple[Path, Callable[..., subprocess.CompletedProcess]]]:
+    """Prepare an isolated repo copy with dependencies installed.
+
+    The repository at ``workdir`` is cloned into a temporary location and a
+    Python environment (``venv`` by default, Docker when available and
+    ``SANDBOX_BACKEND=docker``) is initialised with ``requirements.txt``
+    installed. The context manager yields the cloned repository path and a
+    ``run`` helper for executing commands inside the isolated environment.
+
+    Environment startup time and installation failures are logged via
+    :mod:`logging_utils` so metrics can be exported by callers.
+    """
+
+    backend = os.getenv("SANDBOX_BACKEND", "venv").lower()
+    use_docker = backend == "docker" and shutil.which("docker")
+
+    start = time.perf_counter()
+    with tempfile.TemporaryDirectory(prefix="env_") as td:
+        repo_path = Path(td) / "repo"
+        subprocess.check_call(["git", "clone", "--depth", "1", str(workdir), str(repo_path)])
+
+        if use_docker:
+            image = os.getenv("SANDBOX_DOCKER_IMAGE", "python:3.11-slim")
+
+            def _run(cmd: Sequence[str], *, env: Mapping[str, str] | None = None, **kw: Any):
+                env = env or {}
+                env_args: list[str] = []
+                for k, v in env.items():
+                    env_args.extend(["-e", f"{k}={v}"])
+                docker_cmd = [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "-v",
+                    f"{repo_path}:/repo",
+                    "-w",
+                    "/repo",
+                    *env_args,
+                    image,
+                    *cmd,
+                ]
+                return subprocess.run(docker_cmd, **kw)
+
+            req = repo_path / "requirements.txt"
+            if req.exists():
+                try:
+                    _run(
+                        ["pip", "install", "-r", str(req)],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError as exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "dependency install failed",
+                        extra=log_record(rc=exc.returncode, output=exc.stderr),
+                    )
+                    record_error(exc)
+                    raise
+        else:
+            venv_dir = Path(td) / "venv"
+            subprocess.check_call([sys.executable, "-m", "venv", str(venv_dir)])
+            python = venv_dir / ("Scripts" if os.name == "nt" else "bin") / "python"
+            req = repo_path / "requirements.txt"
+            if req.exists():
+                try:
+                    subprocess.run(
+                        [str(python), "-m", "pip", "install", "-r", str(req)],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                        cwd=str(repo_path),
+                    )
+                except subprocess.CalledProcessError as exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "dependency install failed",
+                        extra=log_record(rc=exc.returncode, output=exc.stderr),
+                    )
+                    record_error(exc)
+                    raise
+
+            def _run(cmd: Sequence[str], *, env: Mapping[str, str] | None = None, **kw: Any):
+                env_local = os.environ.copy()
+                env_local["PATH"] = f"{python.parent}{os.pathsep}{env_local.get('PATH', '')}"
+                env_local["VIRTUAL_ENV"] = str(venv_dir)
+                if env:
+                    env_local.update(env)
+                return subprocess.run(cmd, cwd=str(repo_path), env=env_local, **kw)
+
+        elapsed = (time.perf_counter() - start) * 1000.0
+        logger.info("ephemeral env ready", extra=log_record(startup_ms=int(elapsed)))
+        yield repo_path, _run
+
+
 def _update_coverage(module: str, scenario: str) -> None:
     """Increment coverage counter for ``module`` under ``scenario``.
 
