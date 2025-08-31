@@ -68,6 +68,8 @@ class SuggestionRecord:
     description: str
     score: float = 0.0
     rationale: str = ""
+    patch_count: int = 0
+    module_id: str = ""
     ts: str = datetime.utcnow().isoformat()
 
 
@@ -102,6 +104,8 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 description TEXT,
                 score REAL DEFAULT 0,
                 rationale TEXT,
+                patch_count INTEGER DEFAULT 0,
+                module_id TEXT,
                 ts TEXT
             )
             """
@@ -112,6 +116,18 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_suggestions_score ON suggestions(score)"
             )
+            try:
+                self.conn.execute(
+                    "ALTER TABLE suggestions ADD COLUMN patch_count INTEGER DEFAULT 0"
+                )
+            except Exception:
+                pass
+            try:
+                self.conn.execute(
+                    "ALTER TABLE suggestions ADD COLUMN module_id TEXT"
+                )
+            except Exception:
+                pass
             self.conn.execute(
                 """
             CREATE TABLE IF NOT EXISTS decisions(
@@ -149,8 +165,18 @@ class PatchSuggestionDB(EmbeddableDBMixin):
         )
 
     # ------------------------------------------------------------------
-    def _embed_text(self, module: str, description: str, rationale: str) -> str:
-        return f"module={module} description={description} rationale={rationale}"
+    def _embed_text(
+        self,
+        module: str,
+        description: str,
+        rationale: str,
+        patch_count: int,
+        module_id: str,
+    ) -> str:
+        return (
+            f"module={module} module_id={module_id} patches={patch_count} "
+            f"description={description} rationale={rationale}"
+        )
 
     def license_text(self, rec: Any) -> str | None:
         if isinstance(rec, SuggestionRecord):
@@ -161,13 +187,21 @@ class PatchSuggestionDB(EmbeddableDBMixin):
 
     def vector(self, rec: Any) -> List[float] | None:
         if isinstance(rec, SuggestionRecord):
-            text = self._embed_text(rec.module, rec.description, rec.rationale)
+            text = self._embed_text(
+                rec.module,
+                rec.description,
+                rec.rationale,
+                rec.patch_count,
+                rec.module_id,
+            )
             return self.encode_text(text)
         if isinstance(rec, dict):
             text = self._embed_text(
                 rec.get("module", ""),
                 rec.get("description", ""),
                 rec.get("rationale", ""),
+                int(rec.get("patch_count", 0)),
+                rec.get("module_id", ""),
             )
             return self.encode_text(text)
         return None
@@ -200,9 +234,17 @@ class PatchSuggestionDB(EmbeddableDBMixin):
         with self._file_lock:
             with self._lock:
                 cur = self.conn.execute(
-                    "INSERT INTO suggestions(module, description, score, rationale, ts) "
-                    "VALUES(?,?,?,?,?)",
-                    (rec.module, rec.description, rec.score, rec.rationale, rec.ts),
+                    "INSERT INTO suggestions(module, description, score, rationale, patch_count, module_id, ts) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (
+                        rec.module,
+                        rec.description,
+                        rec.score,
+                        rec.rationale,
+                        rec.patch_count,
+                        rec.module_id,
+                        rec.ts,
+                    ),
                 )
                 self.conn.commit()
                 rec_id = int(cur.lastrowid)
@@ -243,26 +285,51 @@ class PatchSuggestionDB(EmbeddableDBMixin):
         desc, _ = Counter(past).most_common(1)[0]
         return desc
 
+    def _has_similar(
+        self, module: str, rationale: str, score: float, tolerance: float = 0.1
+    ) -> bool:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT score FROM suggestions WHERE module=? AND rationale=?",
+                (module, rationale),
+            ).fetchall()
+        for r in rows:
+            existing = r[0] or 0.0
+            if abs(existing - score) <= tolerance:
+                return True
+        return False
+
     # ------------------------------------------------------------------
     def queue_suggestions(self, suggestions: Iterable["EnhancementSuggestion"]) -> None:
         """Store scored enhancement suggestions for later retrieval."""
         for sugg in suggestions:
             try:
+                module = getattr(sugg, "path", "")
+                rationale = getattr(sugg, "rationale", "")
+                score = float(getattr(sugg, "score", 0.0))
+                patch_count = int(getattr(sugg, "patch_count", 0))
+                module_id = getattr(sugg, "module_id", "")
+                if self._has_similar(module, rationale, score):
+                    continue
                 rec = SuggestionRecord(
-                    module=sugg.path,
-                    description=sugg.rationale,
-                    score=float(getattr(sugg, "score", 0.0)),
-                    rationale=sugg.rationale,
+                    module=module,
+                    description=rationale,
+                    score=score,
+                    rationale=rationale,
+                    patch_count=patch_count,
+                    module_id=module_id,
                 )
                 self.add(rec)
             except Exception:  # pragma: no cover - best effort
-                logger.exception("failed queueing suggestion for %s", getattr(sugg, "path", ""))
+                logger.exception(
+                    "failed queueing suggestion for %s", getattr(sugg, "path", "")
+                )
 
     def top_suggestions(self, limit: int = 10) -> List[SuggestionRecord]:
         """Return top scored suggestions ordered by descending score."""
         with self._lock:
             rows = self.conn.execute(
-                "SELECT module, description, score, rationale, ts FROM suggestions "
+                "SELECT module, description, score, rationale, patch_count, module_id, ts FROM suggestions "
                 "ORDER BY score DESC LIMIT ?",
                 (limit,),
             ).fetchall()
@@ -272,7 +339,9 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 description=r[1],
                 score=r[2] or 0.0,
                 rationale=r[3] or "",
-                ts=r[4],
+                patch_count=r[4] or 0,
+                module_id=r[5] or "",
+                ts=r[6],
             )
             for r in rows
         ]
@@ -300,13 +369,15 @@ class PatchSuggestionDB(EmbeddableDBMixin):
     # ------------------------------------------------------------------
     def iter_records(self) -> Iterator[tuple[int, Dict[str, str], str]]:
         cur = self.conn.execute(
-            "SELECT id, module, description, rationale FROM suggestions"
+            "SELECT id, module, description, rationale, patch_count, module_id FROM suggestions"
         )
         for row in cur.fetchall():
             yield row[0], {
                 "module": row[1],
                 "description": row[2],
                 "rationale": row[3],
+                "patch_count": row[4],
+                "module_id": row[5],
             }, "suggestion"
 
     def to_vector_dict(self, rec: SuggestionRecord | Dict[str, str]) -> Dict[str, str]:
@@ -315,11 +386,15 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 "module": rec.module,
                 "description": rec.description,
                 "rationale": rec.rationale,
+                "patch_count": rec.patch_count,
+                "module_id": rec.module_id,
             }
         return {
             "module": rec.get("module", ""),
             "description": rec.get("description", ""),
             "rationale": rec.get("rationale", ""),
+            "patch_count": int(rec.get("patch_count", 0)),
+            "module_id": rec.get("module_id", ""),
         }
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
