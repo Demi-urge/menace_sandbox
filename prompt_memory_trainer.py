@@ -2,7 +2,7 @@ import json
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Iterable, Mapping
 
 from gpt_memory import GPTMemoryManager
 from code_database import PatchHistoryDB
@@ -25,10 +25,15 @@ class PromptMemoryTrainer:
         *,
         memory: GPTMemoryManager | None = None,
         patch_db: PatchHistoryDB | None = None,
+        state_path: str | Path | None = None,
     ) -> None:
         self.memory = memory or GPTMemoryManager(db_path=":memory:")
         self.patch_db = patch_db or PatchHistoryDB(":memory:")
+        self.state_path = Path(state_path) if state_path else None
         self.style_weights: Dict[str, Dict[str, float]] = {}
+        if self.state_path and self.state_path.exists():
+            with self.state_path.open("r", encoding="utf-8") as fh:
+                self.style_weights = json.load(fh)
 
     # ------------------------------------------------------------------
     def _extract_style(self, prompt: str) -> Dict[str, Any]:
@@ -122,6 +127,8 @@ class PromptMemoryTrainer:
             feat: {k: (v["success"] / v["weight"]) if v["weight"] else 0.0 for k, v in m.items()}
             for feat, m in stats.items()
         }
+        if self.state_path:
+            self.save_weights(self.state_path)
         return self.style_weights
 
     # ------------------------------------------------------------------
@@ -144,6 +151,40 @@ class PromptMemoryTrainer:
         trainer = cls()
         trainer.style_weights = weights
         return trainer.style_weights
+
+    # ------------------------------------------------------------------
+    def append_records(self, records: Iterable[Mapping[str, Any]]) -> Dict[str, Dict[str, float]]:
+        """Append ``records`` to the databases and retrain.
+
+        Each record should contain ``prompt``, ``outcome``, ``roi_before``,
+        ``roi_after``, ``complexity_before`` and ``complexity_after`` fields.  A
+        new row is inserted into both :class:`PatchHistoryDB` and
+        :class:`GPTMemoryManager` for every record.  After insertion the trainer
+        retrains and persists the updated ``style_weights``.
+        """
+
+        for rec in records:
+            cur = self.patch_db.conn.execute(
+                (
+                    "INSERT INTO patch_history(outcome, roi_before, roi_after, "
+                    "complexity_before, complexity_after) VALUES(?, ?, ?, ?, ?)"
+                ),
+                (
+                    rec.get("outcome"),
+                    rec.get("roi_before"),
+                    rec.get("roi_after"),
+                    rec.get("complexity_before"),
+                    rec.get("complexity_after"),
+                ),
+            )
+            patch_id = cur.lastrowid
+            prompt_text = f"PATCH:{patch_id}\n{rec.get('prompt', '')}"
+            # ``log_interaction`` stores additional metadata; an empty response
+            # keeps the append logic simple and is sufficient for training.
+            self.memory.log_interaction(prompt_text, "", tags=None)
+        self.patch_db.conn.commit()
+        self.memory.conn.commit()
+        return self.train()
 
     # ------------------------------------------------------------------
     def suggest_style(self) -> Dict[str, Any]:
