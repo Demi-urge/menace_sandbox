@@ -107,8 +107,12 @@ class SelfCodingManager:
         if enhancement_classifier and not getattr(self.engine, "enhancement_classifier", None):
             try:
                 self.engine.enhancement_classifier = enhancement_classifier
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.warning(
+                    "Failed to attach enhancement classifier to engine; enhancement classification disabled: %s",
+                    exc,
+                )
+                self.enhancement_classifier = None
 
     # ------------------------------------------------------------------
     def scan_repo(self) -> None:
