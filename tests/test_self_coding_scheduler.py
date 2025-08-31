@@ -52,6 +52,13 @@ ae_stub = types.ModuleType("menace.advanced_error_management")
 ae_stub.AutomatedRollbackManager = object
 sys.modules.setdefault("menace.advanced_error_management", ae_stub)
 sys.modules.setdefault("git", types.ModuleType("git"))
+db_mod = types.ModuleType("menace.data_bot")
+db_mod.DataBot = object
+sys.modules.setdefault("menace.data_bot", db_mod)
+vs_mod = types.ModuleType("vector_service")
+vs_mod.CognitionLayer = object
+vs_mod.EmbeddableDBMixin = object
+sys.modules.setdefault("vector_service", vs_mod)
 
 import menace.self_coding_scheduler as sched_mod
 from menace.self_coding_scheduler import SelfCodingScheduler
@@ -82,6 +89,11 @@ def test_patch_failure_logged(monkeypatch):
     sched.last_roi = 1.0
     monkeypatch.setattr(sched_mod.time, "sleep", _stop_after_first(sched))
     monkeypatch.setattr(sched, "_current_errors", lambda: 0.0)
+    monkeypatch.setattr(
+        sched_mod.WorkflowSandboxRunner,
+        "run",
+        lambda self, fn, safe_mode=True: (_ for _ in ()).throw(RuntimeError("fail")),
+    )
     sched.running = True
     calls = []
     monkeypatch.setattr(sched, "logger", types.SimpleNamespace(exception=calls.append))
@@ -119,3 +131,25 @@ def test_constructor_overrides_settings():
         settings=cfg,
     )
     assert (sched.interval, sched.roi_drop, sched.error_increase) == (5, -0.2, 1.1)
+
+
+def test_repo_scan_metrics_published(monkeypatch):
+    calls = []
+
+    class Bus:
+        def publish(self, topic, event):
+            calls.append((topic, event))
+
+    class Engine:
+        def __init__(self):
+            self.event_bus = Bus()
+
+        def scan_repo(self):
+            return [1, 2, 3]
+
+    mgr = types.SimpleNamespace(engine=Engine(), bot_name="bot")
+    data_bot = types.SimpleNamespace(roi=lambda b: 0.0, db=types.SimpleNamespace(fetch=lambda l: []))
+    sched = SelfCodingScheduler(mgr, data_bot, scan_interval=1)
+    sched._scan_job()
+    assert calls and calls[0][0] == "self_coding:scan"
+    assert calls[0][1]["suggestions"] == 3
