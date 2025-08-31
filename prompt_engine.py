@@ -20,6 +20,11 @@ from typing import Any, Dict, Iterable, List
 
 from snippet_compressor import compress_snippets
 
+try:  # pragma: no cover - optional runtime dependency
+    from prompt_memory_trainer import PromptMemoryTrainer  # type: ignore
+except Exception:  # pragma: no cover - degrade gracefully
+    PromptMemoryTrainer = None  # type: ignore
+
 try:  # pragma: no cover - optional dependency at runtime
     from audit_logger import log_event as audit_log_event  # type: ignore
 except Exception:  # pragma: no cover - logging only when available
@@ -154,6 +159,8 @@ class PromptEngine:
     failure_header: str = "Avoid {summary} because it caused {outcome}:"
     tone: str = "neutral"
     last_metadata: Dict[str, Any] = field(default_factory=dict, init=False)
+    trained_headers: List[str] | None = field(default=None, init=False)
+    trained_example_order: List[str] | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
         if self.retriever is None:
@@ -176,6 +183,55 @@ class PromptEngine:
                 self.context_builder = None
         if self.roi_tracker is None and self.context_builder is not None:
             self.roi_tracker = getattr(self.context_builder, "roi_tracker", None)
+        self._load_trained_config()
+
+    # ------------------------------------------------------------------
+    def _load_trained_config(self) -> None:
+        """Load formatting preferences from :class:`PromptMemoryTrainer`.
+
+        The trainer aggregates success rates for previously used prompt
+        headers and example orderings.  When the best observed configuration
+        meets :attr:`confidence_threshold` it is cached for future prompts.
+        Missing trainers or training data leave the default formatting
+        untouched.
+        """
+
+        if PromptMemoryTrainer is None:
+            return
+        try:  # pragma: no cover - best effort training lookup
+            summary = PromptMemoryTrainer().train()
+        except Exception:
+            return
+
+        # Determine preferred headers (first entry is success header)
+        headers_summary = summary.get("headers", {}) or {}
+        best_headers: List[str] | None = None
+        best_score = 0.0
+        for raw, score in headers_summary.items():
+            try:
+                hdrs = [str(h) for h in json.loads(raw)]
+                sc = float(score or 0.0)
+            except Exception:
+                continue
+            if sc > best_score:
+                best_headers, best_score = hdrs, sc
+        if best_headers and best_score >= self.confidence_threshold:
+            self.trained_headers = best_headers
+
+        # Determine preferred example order
+        order_summary = summary.get("example_order", {}) or {}
+        best_order: List[str] | None = None
+        best_order_score = 0.0
+        for raw, score in order_summary.items():
+            try:
+                order = [str(x) for x in json.loads(raw)]
+                sc = float(score or 0.0)
+            except Exception:
+                continue
+            if sc > best_order_score:
+                best_order, best_order_score = order, sc
+        if best_order and best_order_score >= self.confidence_threshold:
+            self.trained_example_order = best_order
 
     # ------------------------------------------------------------------
     def build_snippets(self, patches: Iterable[Dict[str, Any]]) -> List[str]:
@@ -221,20 +277,53 @@ class PromptEngine:
         lines: List[str] = []
         headers: List[str] = []
         example_order: List[str] = []
-        if successes:
-            lines.append(self.success_header)
-            headers.append(self.success_header)
-            for _, text in successes:
+        success_header = (
+            self.trained_headers[0]
+            if self.trained_headers
+            else self.success_header
+        )
+        order_pref = self.trained_example_order or ["success", "failure"]
+
+        # Process groups according to preferred order
+        remaining_successes = successes
+        remaining_failures = failures
+        for group in order_pref:
+            if group == "success" and remaining_successes:
+                lines.append(success_header)
+                headers.append(success_header)
+                for _, text in remaining_successes:
+                    lines.extend(text.splitlines())
+                    lines.append("")
+                    example_order.append("success")
+                remaining_successes = []
+            elif group == "failure" and remaining_failures:
+                for _, summary, outcome, text in remaining_failures:
+                    header = self.failure_header.format(
+                        summary=summary, outcome=outcome
+                    )
+                    lines.append(header)
+                    headers.append(header)
+                    lines.extend(text.splitlines())
+                    lines.append("")
+                    example_order.append("failure")
+                remaining_failures = []
+
+        # Append any leftover groups not covered by the learned order
+        if remaining_successes:
+            lines.append(success_header)
+            headers.append(success_header)
+            for _, text in remaining_successes:
                 lines.extend(text.splitlines())
                 lines.append("")
                 example_order.append("success")
-        for _, summary, outcome, text in failures:
-            header = self.failure_header.format(summary=summary, outcome=outcome)
-            lines.append(header)
-            headers.append(header)
-            lines.extend(text.splitlines())
-            lines.append("")
-            example_order.append("failure")
+        if remaining_failures:
+            for _, summary, outcome, text in remaining_failures:
+                header = self.failure_header.format(summary=summary, outcome=outcome)
+                lines.append(header)
+                headers.append(header)
+                lines.extend(text.splitlines())
+                lines.append("")
+                example_order.append("failure")
         self.last_metadata = {
             "headers": headers,
             "example_order": example_order,
