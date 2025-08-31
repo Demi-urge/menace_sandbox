@@ -400,7 +400,12 @@ class SelfCodingEngine:
                     try:
                         tracker.update_db_metrics({o: {"roi": v} for o, v in totals.items()})
                     except Exception:
-                        pass
+                        self.logger.exception(
+                            "update_db_metrics failed (roi_delta=%s, ids=%s, totals=%s)",
+                            roi_delta,
+                            ids,
+                            totals,
+                        )
                 if hasattr(tracker, "metrics"):
                     for o, v in totals.items():
                         tracker.metrics.setdefault(o, {})["roi"] = v
