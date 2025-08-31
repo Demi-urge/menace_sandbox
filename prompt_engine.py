@@ -234,7 +234,7 @@ class PromptEngine:
                         "prompt_style_reverted",
                         {"reason": "load_failed", "path": str(self.weights_path)},
                     )
-                    return
+                    summary = None
             if summary is None and self.trainer is not None:
                 try:  # pragma: no cover - best effort training lookup
                     summary = self.trainer.train()
@@ -346,7 +346,13 @@ class PromptEngine:
 
     # ------------------------------------------------------------------
     def after_patch_cycle(self) -> None:
-        """Retrain :class:`PromptMemoryTrainer` and refresh cached config."""
+        """Backward compatible wrapper for :meth:`refresh_trained_config`."""
+
+        self.refresh_trained_config()
+
+    # ------------------------------------------------------------------
+    def refresh_trained_config(self) -> None:
+        """Re-run trainer and update cached formatting preferences."""
 
         if not self.trainer:
             return

@@ -317,7 +317,7 @@ def test_prompt_engine_refreshes_after_record(monkeypatch):
     engine = PromptEngine(trainer=trainer)
     called: Dict[str, Dict[str, float]] | None = None
 
-    def fake_load(summary=None):
+    def fake_load(summary=None, **kwargs):
         nonlocal called
         called = summary
 

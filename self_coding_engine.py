@@ -342,22 +342,12 @@ class SelfCodingEngine:
         if not self._last_prompt_metadata:
             return
         try:
-            updated = self.prompt_memory.record(
+            self.prompt_memory.record(
                 tone=self._last_prompt_metadata.get("tone", ""),
                 headers=self._last_prompt_metadata.get("headers", []),
                 example_order=self._last_prompt_metadata.get("example_order", []),
                 success=success,
             )
-            if (
-                updated
-                and getattr(self.prompt_engine, "trainer", None) is self.prompt_memory
-            ):
-                try:
-                    self.prompt_engine._load_trained_config(
-                        self.prompt_memory.style_weights
-                    )
-                except Exception:
-                    self.logger.exception("failed to refresh prompt engine weights")
         except Exception:
             self.logger.exception("failed to store prompt format history")
         finally:
@@ -1029,8 +1019,12 @@ class SelfCodingEngine:
                             reason=reason,
                             trigger=trigger,
                             outcome="FAIL",
-                            prompt_headers=json.dumps(self._last_prompt_metadata.get("headers", [])),
-                            prompt_order=json.dumps(self._last_prompt_metadata.get("example_order", [])),
+                            prompt_headers=json.dumps(
+                                self._last_prompt_metadata.get("headers", [])
+                            ),
+                            prompt_order=json.dumps(
+                                self._last_prompt_metadata.get("example_order", [])
+                            ),
                             prompt_tone=self._last_prompt_metadata.get("tone", ""),
                         )
                     )
@@ -1274,8 +1268,12 @@ class SelfCodingEngine:
                         reason=reason,
                         trigger=trigger,
                         outcome="SUCCESS" if not reverted else "FAIL",
-                        prompt_headers=json.dumps(self._last_prompt_metadata.get("headers", [])),
-                        prompt_order=json.dumps(self._last_prompt_metadata.get("example_order", [])),
+                        prompt_headers=json.dumps(
+                            self._last_prompt_metadata.get("headers", [])
+                        ),
+                        prompt_order=json.dumps(
+                            self._last_prompt_metadata.get("example_order", [])
+                        ),
                         prompt_tone=self._last_prompt_metadata.get("tone", ""),
                     )
                 )
@@ -1412,6 +1410,14 @@ class SelfCodingEngine:
             {"path": str(path), "success": not reverted, "patch_id": patch_id},
         )
         self._record_prompt_metadata(not reverted)
+        if not reverted and getattr(self, "prompt_engine", None):
+            try:  # pragma: no cover - best effort refresh
+                self.prompt_engine.refresh_trained_config()
+                self.prompt_tone = getattr(
+                    self.prompt_engine, "tone", self.prompt_tone
+                )
+            except Exception:
+                self.logger.exception("failed to refresh prompt config")
         return patch_id, reverted, roi_delta
 
     def _build_retry_context(
