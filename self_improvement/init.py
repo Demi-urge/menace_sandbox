@@ -162,9 +162,10 @@ def init_self_improvement(new_settings: SandboxSettings | None = None) -> Sandbo
         from . import meta_planning
 
         meta_planning.reload_settings(settings)
-    except Exception:  # pragma: no cover - best effort
-        logger.exception("Failed to reload meta_planning settings")
-        raise
+    except Exception as exc:  # pragma: no cover - best effort
+        message = "failed to reload meta_planning settings"
+        logger.exception(message, extra=log_record(error=str(exc)))
+        raise RuntimeError(message) from exc
     return settings
 
 
