@@ -6,7 +6,7 @@ import threading
 import time
 import logging
 from pathlib import Path
-from typing import Iterable, Optional, List, Dict
+from typing import Iterable, Optional, List, Dict, TYPE_CHECKING
 
 import yaml
 
@@ -17,6 +17,15 @@ from .data_bot import DataBot
 from .advanced_error_management import AutomatedRollbackManager
 from .sandbox_settings import SandboxSettings
 from .error_parser import ErrorParser
+
+try:  # pragma: no cover - optional dependency
+    from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler
+except Exception:  # pragma: no cover - scheduler utilities may be missing
+    _SimpleScheduler = None  # type: ignore[misc]
+    BackgroundScheduler = None  # type: ignore[misc]
+
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from .unified_event_bus import UnifiedEventBus
 
 
 class SelfCodingScheduler:
@@ -41,6 +50,7 @@ class SelfCodingScheduler:
         patch_path: Path | None = None,
         description: str = "auto_patch",
         settings: SandboxSettings | None = None,
+        scan_interval: float | None = None,
     ) -> None:
         self.manager = manager
         self.data_bot = data_bot
@@ -63,6 +73,8 @@ class SelfCodingScheduler:
         self.running = False
         self.logger = logging.getLogger(self.__class__.__name__)
         self._thread: Optional[threading.Thread] = None
+        self.scan_interval = scan_interval
+        self._scan_scheduler: object | None = None
 
     # ------------------------------------------------------------------
     def _current_errors(self) -> float:
@@ -112,6 +124,33 @@ class SelfCodingScheduler:
             path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         except Exception:  # pragma: no cover - best effort
             self.logger.warning("failed to record sandbox metrics", exc_info=True)
+
+    # ------------------------------------------------------------------
+    def _scan_job(self) -> None:
+        start = time.perf_counter()
+        suggestions: List[object] = []
+        success = False
+        try:
+            engine = getattr(self.manager, "engine", None)
+            if engine:
+                suggestions = list(engine.scan_repo())
+                success = True
+        except Exception:
+            self.logger.exception("repo scan failed")
+        duration = time.perf_counter() - start
+        event_bus = getattr(getattr(self.manager, "engine", None), "event_bus", None)
+        if event_bus:
+            try:
+                event_bus.publish(
+                    "self_coding:scan",
+                    {
+                        "duration": duration,
+                        "suggestions": len(suggestions),
+                        "success": success,
+                    },
+                )
+            except Exception:
+                self.logger.exception("failed to publish scan metrics")
 
     # ------------------------------------------------------------------
     def _loop(self) -> None:
@@ -167,6 +206,11 @@ class SelfCodingScheduler:
                 self.logger.exception("self-coding loop failed")
             time.sleep(self.interval)
 
+    def _scan_loop(self) -> None:
+        while self.running and self.scan_interval:
+            time.sleep(self.scan_interval)
+            self._scan_job()
+
     # ------------------------------------------------------------------
     def start(self) -> None:
         if self.running:
@@ -174,12 +218,46 @@ class SelfCodingScheduler:
         self.running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+        if self.scan_interval:
+            try:
+                if BackgroundScheduler:
+                    sched = BackgroundScheduler()
+                    sched.add_job(
+                        self._scan_job,
+                        "interval",
+                        seconds=self.scan_interval,
+                        id="self_coding_repo_scan",
+                    )
+                    sched.start()
+                    self._scan_scheduler = sched
+                elif _SimpleScheduler:
+                    sched = _SimpleScheduler()
+                    sched.add_job(self._scan_job, self.scan_interval, "self_coding_repo_scan")
+                    self._scan_scheduler = sched
+                else:
+                    t = threading.Thread(target=self._scan_loop, daemon=True)
+                    t.start()
+                    self._scan_scheduler = t
+            except Exception:
+                self.logger.exception("failed to schedule repo scans")
 
     def stop(self) -> None:
         self.running = False
         if self._thread:
             self._thread.join(timeout=0)
             self._thread = None
+        sched = self._scan_scheduler
+        if sched:
+            try:
+                if BackgroundScheduler and isinstance(sched, BackgroundScheduler):
+                    sched.shutdown(wait=False)
+                elif hasattr(sched, "shutdown"):
+                    sched.shutdown()
+                elif isinstance(sched, threading.Thread):
+                    sched.join(timeout=0)
+            except Exception:
+                self.logger.exception("failed to stop repo scan scheduler")
+            self._scan_scheduler = None
 
 
 __all__ = ["SelfCodingScheduler"]
