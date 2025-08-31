@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from collections import Counter
 from typing import Any, Dict, Iterable, Iterator, List, Optional, TYPE_CHECKING
@@ -210,6 +210,22 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             )
             self.conn.execute(
                 """
+            CREATE TABLE IF NOT EXISTS enhancement_outcomes(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                suggestion_id INTEGER,
+                patch_id INTEGER,
+                roi_delta REAL,
+                error_delta REAL,
+                ts TEXT
+            )
+            """
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS "
+                "idx_enh_outcome_suggestion ON enhancement_outcomes(suggestion_id)"
+            )
+            self.conn.execute(
+                """
             CREATE TABLE IF NOT EXISTS repo_scans(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT
@@ -340,6 +356,33 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                         "INSERT INTO module_stats(module, roi_ma, success_ma) VALUES(?,?,?)",
                         (module, roi_ma, success_ma),
                     )
+                self.conn.commit()
+
+    def log_enhancement_outcome(
+        self,
+        suggestion_id: int,
+        patch_id: int,
+        roi_delta: float,
+        error_delta: float,
+        ts: str | None = None,
+    ) -> None:
+        """Record outcome metrics for a specific enhancement suggestion."""
+        ts = ts or datetime.utcnow().isoformat()
+        with self._file_lock:
+            with self._lock:
+                self.conn.execute(
+                    """
+                INSERT INTO enhancement_outcomes(suggestion_id, patch_id, roi_delta, error_delta, ts)
+                VALUES(?,?,?,?,?)
+                """,
+                    (
+                        int(suggestion_id),
+                        int(patch_id),
+                        float(roi_delta),
+                        float(error_delta),
+                        ts,
+                    ),
+                )
                 self.conn.commit()
 
     def add(self, rec: SuggestionRecord) -> int:
@@ -583,6 +626,36 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 raroi=r[6] or 0.0,
                 ts=r[7],
             )
+            for r in rows
+        ]
+
+    def enhancement_report(self, days: int = 7) -> List[Dict[str, Any]]:
+        """Summarise enhancement suggestion uptake over the past ``days``."""
+        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        with self._lock:
+            rows = self.conn.execute(
+                """
+            SELECT e.suggestion_id, s.module, s.description,
+                   COUNT(e.patch_id) AS patches,
+                   AVG(e.roi_delta) AS avg_roi,
+                   AVG(e.error_delta) AS avg_err
+              FROM enhancement_outcomes e
+              JOIN suggestions s ON e.suggestion_id = s.id
+             WHERE e.ts >= ?
+             GROUP BY e.suggestion_id, s.module, s.description
+             ORDER BY patches DESC
+                """,
+                (cutoff,),
+            ).fetchall()
+        return [
+            {
+                "suggestion_id": r[0],
+                "module": r[1],
+                "description": r[2],
+                "patch_count": r[3],
+                "avg_roi_delta": r[4] or 0.0,
+                "avg_error_delta": r[5] or 0.0,
+            }
             for r in rows
         ]
 
