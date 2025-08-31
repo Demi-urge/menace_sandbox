@@ -100,4 +100,32 @@ class SelfTestConfig(BaseSettings):
             extra = "ignore"
 
 
-__all__ = ["SelfLearningConfig", "SelfTestConfig"]
+class RepoScanConfig(BaseSettings):
+    """Configuration for repository scanning."""
+
+    enabled: bool = Field(
+        default=True,
+        validation_alias="REPO_SCAN_ENABLED",
+        description="Enable periodic repository scanning for enhancement suggestions.",
+    )
+    interval: int = Field(
+        default=3600,
+        validation_alias="REPO_SCAN_INTERVAL",
+        description="Seconds between repository scans.",
+    )
+
+    @field_validator("interval")
+    @classmethod
+    def _validate_interval(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("interval must be positive")
+        return v
+
+    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
+    if not PYDANTIC_V2:  # pragma: no cover - pydantic v1 fallback
+        class Config:  # type: ignore[no-redef]
+            env_prefix = ""
+            extra = "ignore"
+
+
+__all__ = ["SelfLearningConfig", "SelfTestConfig", "RepoScanConfig"]

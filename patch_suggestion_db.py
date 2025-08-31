@@ -201,10 +201,20 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             """
             )
             self.conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_enh_sugg_unique ON enhancement_suggestions(module, rationale)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "idx_enh_sugg_unique ON enhancement_suggestions(module, rationale)"
             )
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_enh_sugg_score ON enhancement_suggestions(score)"
+                "CREATE INDEX IF NOT EXISTS "
+                "idx_enh_sugg_score ON enhancement_suggestions(score)"
+            )
+            self.conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS repo_scans(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT
+            )
+            """
             )
             self.conn.commit()
 
@@ -332,7 +342,6 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                     )
                 self.conn.commit()
 
-
     def add(self, rec: SuggestionRecord) -> int:
         score = self._adjust_score(rec.module, rec.score)
         if self._has_similar(rec.module, rec.rationale or rec.description, score):
@@ -394,6 +403,17 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                     "INSERT INTO decisions(module, description, accepted, reason, ts) "
                     "VALUES(?,?,?,?,?)",
                     (module, description, int(accepted), reason, ts),
+                )
+                self.conn.commit()
+
+    def log_repo_scan(self, ts: str | None = None) -> None:
+        """Record a repository scan timestamp for auditing purposes."""
+        ts = ts or datetime.utcnow().isoformat()
+        with self._file_lock:
+            with self._lock:
+                self.conn.execute(
+                    "INSERT INTO repo_scans(ts) VALUES(?)",
+                    (ts,),
                 )
                 self.conn.commit()
 
@@ -464,7 +484,9 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             with self._lock:
                 self.conn.execute(
                     """
-                INSERT INTO enhancement_suggestions(module, score, rationale, first_seen, last_seen, occurrences)
+                INSERT INTO enhancement_suggestions(
+                    module, score, rationale, first_seen, last_seen, occurrences
+                )
                 VALUES(?,?,?,?,?,1)
                 ON CONFLICT(module, rationale) DO UPDATE SET
                     score=excluded.score,
@@ -587,7 +609,8 @@ class PatchSuggestionDB(EmbeddableDBMixin):
     # ------------------------------------------------------------------
     def iter_records(self) -> Iterator[tuple[int, Dict[str, str], str]]:
         cur = self.conn.execute(
-            "SELECT id, module, description, rationale, patch_count, module_id, raroi FROM suggestions"
+            "SELECT id, module, description, rationale, patch_count, module_id, raroi "
+            "FROM suggestions"
         )
         for row in cur.fetchall():
             yield row[0], {
