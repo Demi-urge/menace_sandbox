@@ -3,6 +3,11 @@
 This module provides internal helpers used across the self-improvement
 submodules to dynamically load optional dependencies and execute calls with
 retry semantics.
+
+Imports performed via :func:`_load_callable` are memoised using an
+``functools.lru_cache`` limited to 128 entries to avoid unbounded memory
+growth. The cache state can be reset manually with
+``clear_import_cache()`` when modules change at runtime or during tests.
 """
 from __future__ import annotations
 
@@ -27,7 +32,7 @@ _diagnostics = {
 }
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=128)
 def _import_callable(module: str, attr: str) -> Callable[..., Any]:
     mod = importlib.import_module(module)
     return getattr(mod, attr)
@@ -62,6 +67,22 @@ def _load_callable(
         raise RuntimeError(
             f"{module} dependency is required for {attr}. {guide}"
         ) from exc
+
+
+def clear_import_cache() -> None:
+    """Clear cached imports and reset diagnostic counters.
+
+    ``_import_callable`` uses an :func:`functools.lru_cache` to memoise
+    import lookups. This helper exposes a manual way to wipe that cache and
+    update the exported diagnostics, which is useful for tests or when
+    dependencies change at runtime.
+    """
+
+    _import_callable.cache_clear()
+    with _diagnostics_lock:
+        _diagnostics["cache_hits"] = 0
+        _diagnostics["cache_misses"] = 0
+    _load_callable.diagnostics = _diagnostics
 
 
 def _call_with_retries(
