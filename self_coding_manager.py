@@ -6,7 +6,9 @@ from pathlib import Path
 import logging
 import subprocess
 import tempfile
-from typing import Dict, Any
+import threading
+import time
+from typing import Dict, Any, TYPE_CHECKING
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
 try:  # pragma: no cover - optional dependency
@@ -32,6 +34,9 @@ try:  # pragma: no cover - allow package/flat imports
     from .patch_suggestion_db import PatchSuggestionDB
 except Exception:  # pragma: no cover - fallback for flat layout
     from patch_suggestion_db import PatchSuggestionDB  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from .enhancement_classifier import EnhancementClassifier
 
 
 class PatchApprovalPolicy:
@@ -84,6 +89,7 @@ class SelfCodingManager:
         data_bot: DataBot | None = None,
         approval_policy: "PatchApprovalPolicy | None" = None,
         suggestion_db: PatchSuggestionDB | None = None,
+        enhancement_classifier: "EnhancementClassifier" | None = None,
     ) -> None:
         self.engine = self_coding_engine
         self.pipeline = pipeline
@@ -95,6 +101,54 @@ class SelfCodingManager:
         self._last_event_id: int | None = None
         self._failure_cache = FailureCache()
         self.suggestion_db = suggestion_db or getattr(self.engine, "patch_suggestion_db", None)
+        self.enhancement_classifier = (
+            enhancement_classifier or getattr(self.engine, "enhancement_classifier", None)
+        )
+        if enhancement_classifier and not getattr(self.engine, "enhancement_classifier", None):
+            try:
+                self.engine.enhancement_classifier = enhancement_classifier
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    def scan_repo(self) -> None:
+        """Invoke the enhancement classifier and queue suggestions."""
+        if not self.enhancement_classifier:
+            return
+        try:
+            suggestions = list(self.enhancement_classifier.scan_repo())
+            db = self.suggestion_db or getattr(self.engine, "patch_suggestion_db", None)
+            if db:
+                db.queue_suggestions(suggestions)
+            event_bus = getattr(self.engine, "event_bus", None)
+            if event_bus:
+                try:
+                    event_bus.publish(
+                        "enhancement:suggestions",
+                        {
+                            "count": len(suggestions),
+                            "suggestions": [s.path for s in suggestions],
+                        },
+                    )
+                except Exception:
+                    self.logger.exception("failed to publish enhancement suggestions")
+        except Exception:
+            self.logger.exception("repo scan failed")
+
+    def schedule_repo_scan(self, interval: float = 3600.0) -> None:
+        """Run :meth:`scan_repo` on a background scheduler."""
+        if not self.enhancement_classifier:
+            return
+
+        def _loop() -> None:
+            while True:
+                time.sleep(interval)
+                try:
+                    self.scan_repo()
+                except Exception:
+                    self.logger.exception("scheduled repo scan failed")
+
+        threading.Thread(target=_loop, daemon=True).start()
 
     # ------------------------------------------------------------------
     def run_patch(
@@ -391,6 +445,7 @@ class SelfCodingManager:
                 self.logger.exception(
                     "failed to log evolution cycle: %s", exc
                 )
+        self.scan_repo()
         try:
             load_failed_tags()
         except Exception:  # pragma: no cover - best effort

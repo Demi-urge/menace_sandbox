@@ -58,6 +58,8 @@ from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
 from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
 from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
+    from .enhancement_classifier import EnhancementClassifier, EnhancementSuggestion
 try:  # pragma: no cover - optional dependency
     from .sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 except Exception:  # pragma: no cover - graceful degradation
@@ -154,6 +156,7 @@ class SelfCodingEngine:
         rollback_mgr: Optional[RollbackManager] = None,
         formal_verifier: Optional[FormalVerifier] = None,
         patch_suggestion_db: "PatchSuggestionDB" | None = None,
+        enhancement_classifier: "EnhancementClassifier" | None = None,
         patch_logger: PatchLogger | None = None,
         cognition_layer: CognitionLayer | None = None,
         bot_roles: Optional[Dict[str, str]] = None,
@@ -213,6 +216,7 @@ class SelfCodingEngine:
         self.logger = logging.getLogger("SelfCodingEngine")
         self.event_bus = event_bus
         self.patch_suggestion_db = patch_suggestion_db
+        self.enhancement_classifier = enhancement_classifier
         tracker = ROITracker()
         if patch_logger is not None and getattr(patch_logger, "roi_tracker", None) is None:
             try:
@@ -257,6 +261,32 @@ class SelfCodingEngine:
         # store tracebacks from failed attempts for retry prompts
         self._last_retry_trace: str | None = None
         self._failure_cache = FailureCache()
+
+    # ------------------------------------------------------------------
+    def scan_repo(self) -> list["EnhancementSuggestion"]:
+        """Run the enhancement classifier and queue suggestions."""
+        classifier = getattr(self, "enhancement_classifier", None)
+        if not classifier:
+            return []
+        suggestions: list["EnhancementSuggestion"] = []
+        try:
+            suggestions = list(classifier.scan_repo())
+            if self.patch_suggestion_db:
+                self.patch_suggestion_db.queue_suggestions(suggestions)
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "enhancement:suggestions",
+                        {
+                            "count": len(suggestions),
+                            "suggestions": [s.path for s in suggestions],
+                        },
+                    )
+                except Exception:
+                    self.logger.exception("event bus publish failed")
+        except Exception:
+            self.logger.exception("enhancement repo scan failed")
+        return suggestions
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
