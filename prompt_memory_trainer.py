@@ -1,6 +1,7 @@
 import json
 import re
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict, Mapping
 
 from gpt_memory import GPTMemoryManager
@@ -87,7 +88,11 @@ class PromptMemoryTrainer:
                 continue
             patch_id = int(match.group(1))
             row = self.patch_db.conn.execute(
-                "SELECT outcome, roi_before, roi_after, complexity_before, complexity_after FROM patch_history WHERE id=?",
+                (
+                    "SELECT outcome, roi_before, roi_after, "
+                    "complexity_before, complexity_after "
+                    "FROM patch_history WHERE id=?"
+                ),
                 (patch_id,),
             ).fetchone()
             if not row:
@@ -118,6 +123,27 @@ class PromptMemoryTrainer:
             for feat, m in stats.items()
         }
         return self.style_weights
+
+    # ------------------------------------------------------------------
+    def save_weights(self, path: str | Path) -> None:
+        """Persist :attr:`style_weights` to ``path`` as JSON."""
+
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("w", encoding="utf-8") as fh:
+            json.dump(self.style_weights, fh)
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def load_weights(cls, path: str | Path) -> Dict[str, Dict[str, float]]:
+        """Return weights loaded from JSON ``path``."""
+
+        p = Path(path)
+        with p.open("r", encoding="utf-8") as fh:
+            weights: Dict[str, Dict[str, float]] = json.load(fh)
+        trainer = cls()
+        trainer.style_weights = weights
+        return trainer.style_weights
 
     # ------------------------------------------------------------------
     def suggest_style(self) -> Dict[str, Any]:

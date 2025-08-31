@@ -155,6 +155,14 @@ class PromptEngine:
             "coding_standards;repository_layout;metadata;version_control;testing",
         ).split(";"),
     )
+    weights_path: Path = Path(
+        os.getenv(
+            "PROMPT_MEMORY_WEIGHTS_PATH",
+            Path(__file__).resolve().parent
+            / "config"
+            / "prompt_memory_weights.json",
+        )
+    )
     success_header: str = "Given the following pattern:"
     failure_header: str = "Avoid {summary} because it caused {outcome}:"
     tone: str = "neutral"
@@ -198,10 +206,24 @@ class PromptEngine:
 
         if PromptMemoryTrainer is None:
             return
-        try:  # pragma: no cover - best effort training lookup
-            summary = PromptMemoryTrainer().train()
-        except Exception:
-            return
+        summary: Dict[str, Dict[str, float]] | None = None
+        if self.weights_path.exists():
+            try:
+                summary = PromptMemoryTrainer.load_weights(  # type: ignore[attr-defined]
+                    self.weights_path
+                )
+            except Exception:
+                summary = None
+        if summary is None:
+            try:  # pragma: no cover - best effort training lookup
+                trainer = PromptMemoryTrainer()
+                summary = trainer.train()
+                try:
+                    trainer.save_weights(self.weights_path)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            except Exception:
+                return
 
         # Determine preferred headers (first entry is success header)
         headers_summary = summary.get("headers", {}) or {}
