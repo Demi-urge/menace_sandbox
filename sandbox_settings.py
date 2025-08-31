@@ -547,6 +547,21 @@ class SandboxSettings(BaseSettings):
             " Defaults to 0.2 when unset."
         ),
     )
+    meta_search_depth: int = Field(
+        3,
+        env="META_SEARCH_DEPTH",
+        description="Maximum depth explored by fallback planner heuristic search.",
+    )
+    meta_beam_width: int = Field(
+        5,
+        env="META_BEAM_WIDTH",
+        description="Number of top candidates kept during heuristic search.",
+    )
+    meta_entropy_weight: float = Field(
+        0.0,
+        env="META_ENTROPY_WEIGHT",
+        description="Weight penalising workflow entropy when scoring chains.",
+    )
     workflows_db: str = Field(
         "workflows.db",
         env="WORKFLOWS_DB",
@@ -753,6 +768,18 @@ class SandboxSettings(BaseSettings):
     def _validate_meta_entropy_threshold(cls, v: float | None) -> float | None:
         if v is not None and not 0 <= v <= 1:
             raise ValueError("meta_entropy_threshold must be between 0 and 1")
+        return v
+
+    @field_validator("meta_entropy_weight")
+    def _validate_meta_entropy_weight(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("meta_entropy_weight must be non-negative")
+        return v
+
+    @field_validator("meta_search_depth", "meta_beam_width")
+    def _validate_meta_search_params(cls, v: int, info: Any) -> int:
+        if v <= 0:
+            raise ValueError(f"{info.field_name} must be a positive integer")
         return v
 
     @field_validator("meta_planning_interval", "meta_planning_period")
