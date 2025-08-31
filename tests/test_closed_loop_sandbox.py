@@ -165,9 +165,9 @@ def test_closed_loop_patch(monkeypatch, tmp_path, backend):
 
     def fake_parse(trace: str):
         parse_calls.append(trace)
-        return {"tags": ["boom"]}
+        return types.SimpleNamespace(tags=["boom"], trace=trace)
 
-    monkeypatch.setattr(scm.ErrorParser, "parse", staticmethod(fake_parse), raising=False)
+    monkeypatch.setattr(scm, "parse_failure", fake_parse)
     monkeypatch.setattr(scm.MutationLogger, "log_mutation", lambda *a, **k: 1)
     monkeypatch.setattr(scm.MutationLogger, "record_mutation_outcome", lambda *a, **k: None)
 
@@ -180,14 +180,68 @@ def test_closed_loop_patch(monkeypatch, tmp_path, backend):
 
     mgr.run_patch(file_path, "change")
 
-    # ErrorParser tags should be forwarded to the context builder only once
+    # Failure tags should be forwarded to the context builder only once
     assert parse_calls and builder.calls == [["boom"]]
     # The harness executes tests inside the sandbox
     assert runner.calls == 2 and len(pytest_calls) == 1
     assert runner.safe_mode is True
     # Patch commit and ROI tracking side effects
-    assert pushes and pushes[-1][-1].endswith("main")
+    assert pushes and pushes[-1][-1].startswith("review/")
     assert data_bot.logged and data_bot.logged[0]["roi_delta"] == 1.0
     assert logger.calls and logger.calls[0][1]["contribution"] == 1.0
     # Source file should have been modified by the dummy patch
     assert "# patched" in file_path.read_text(encoding="utf-8")
+
+
+def test_run_patch_failure_no_attribute_error(monkeypatch, tmp_path):
+    file_path = tmp_path / "sample.py"
+    file_path.write_text("def x():\n    return 1\n", encoding="utf-8")
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    def fake_run(cmd, *a, cwd=None, check=None, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(scm.tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    class FailRunner:
+        def run(self, workflow, *, safe_mode=False, **kw):
+            mod = types.SimpleNamespace(success=False, exception="AssertionError: boom")
+            return types.SimpleNamespace(modules=[mod])
+
+    monkeypatch.setattr(scm, "WorkflowSandboxRunner", lambda: FailRunner())
+
+    parse_calls: list[str] = []
+
+    def fake_parse(trace: str):
+        parse_calls.append(trace)
+        return types.SimpleNamespace(tags=["boom"], trace=trace)
+
+    monkeypatch.setattr(scm, "parse_failure", fake_parse)
+
+    builder = DummyContextBuilder()
+    logger = DummyPatchLogger()
+    engine = DummyEngine(builder, logger)
+    pipeline = DummyPipeline()
+    data_bot = DummyDataBot()
+    mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
+
+    with pytest.raises(RuntimeError):
+        mgr.run_patch(file_path, "change", max_attempts=2)
+
+    assert parse_calls
