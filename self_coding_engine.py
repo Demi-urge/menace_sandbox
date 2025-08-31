@@ -724,6 +724,8 @@ class SelfCodingEngine:
             harness_result.stdout,
             harness_result.stderr,
             harness_result.duration,
+            harness_result.failure,
+            harness_result.path,
         )
 
     def _current_errors(self) -> int:

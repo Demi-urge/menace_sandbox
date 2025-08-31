@@ -245,3 +245,84 @@ def test_run_patch_failure_no_attribute_error(monkeypatch, tmp_path):
         mgr.run_patch(file_path, "change", max_attempts=2)
 
     assert parse_calls
+
+
+def _prepare_repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "mod.py").write_text("def mod():\n    return 1\n", encoding="utf-8")
+    tests = repo / "tests"
+    tests.mkdir()
+    (tests / "test_mod.py").write_text(
+        "from mod import mod\n\n" "def test_mod():\n    assert mod() == 1\n",
+        encoding="utf-8",
+    )
+    (tests / "test_other.py").write_text(
+        "def test_other():\n    assert True\n", encoding="utf-8"
+    )
+    return repo, tests
+
+
+def test_harness_filters_specific_test_file(monkeypatch, tmp_path):
+    import importlib
+
+    repo, tests = _prepare_repo(tmp_path)
+    th = importlib.import_module("menace.sandbox_runner.test_harness")
+    monkeypatch.setattr(th, "_python_bin", lambda v: Path(sys.executable))
+
+    pytest_cmds = []
+
+    def fake_run(cmd, *a, cwd=None, capture_output=None, text=None, check=None):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            shutil.copytree(repo, dst, dirs_exist_ok=True)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[0] == sys.executable and cmd[1:3] == ["-m", "venv"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[0] == sys.executable and cmd[1:3] == ["-m", "pip"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[0] == sys.executable and cmd[1:3] == ["-m", "pytest"]:
+            pytest_cmds.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = th.run_tests(repo, tests / "test_mod.py")
+
+    assert pytest_cmds and str(Path("tests/test_mod.py")) in pytest_cmds[0]
+    assert "-k" not in pytest_cmds[0]
+    assert result.path == "tests/test_mod.py"
+
+
+def test_harness_uses_k_filter_for_module(monkeypatch, tmp_path):
+    import importlib
+
+    repo, tests = _prepare_repo(tmp_path)
+    th = importlib.import_module("menace.sandbox_runner.test_harness")
+    monkeypatch.setattr(th, "_python_bin", lambda v: Path(sys.executable))
+
+    pytest_cmds = []
+
+    def fake_run(cmd, *a, cwd=None, capture_output=None, text=None, check=None):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            shutil.copytree(repo, dst, dirs_exist_ok=True)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[0] == sys.executable and cmd[1:3] == ["-m", "venv"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[0] == sys.executable and cmd[1:3] == ["-m", "pip"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[0] == sys.executable and cmd[1:3] == ["-m", "pytest"]:
+            pytest_cmds.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = th.run_tests(repo, repo / "mod.py")
+
+    assert pytest_cmds and "-k" in pytest_cmds[0]
+    k_index = pytest_cmds[0].index("-k") + 1
+    assert pytest_cmds[0][k_index] == "mod"
+    assert result.path == "mod.py"
