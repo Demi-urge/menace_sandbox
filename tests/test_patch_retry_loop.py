@@ -44,15 +44,24 @@ from menace.model_automation_pipeline import AutomationResult  # noqa: E402
 
 
 class DummyEngine:
-    def __init__(self, builder):
+    def __init__(self, builder, patch_db=None):
         self.calls = []
         self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+        self.patch_suggestion_db = patch_db
 
     def apply_patch(self, path: Path, desc: str, **kwargs):
         self.calls.append(kwargs.get("context_meta"))
         with open(path, "a", encoding="utf-8") as fh:
             fh.write("# patched\n")
         return 1, False, 0.0
+
+
+class DummyPatchDB:
+    def __init__(self):
+        self.tags = []
+
+    def add_failed_strategy(self, tag):
+        self.tags.append(tag)
 
 
 class DummyPipeline:
@@ -79,7 +88,8 @@ def test_retry_rebuilds_context(monkeypatch, tmp_path):
             return "ctx", "sid"
 
     builder = DummyContextBuilder()
-    engine = DummyEngine(builder)
+    patch_db = DummyPatchDB()
+    engine = DummyEngine(builder, patch_db)
     pipeline = DummyPipeline()
     mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot")
     file_path = _setup_repo(tmp_path)
@@ -137,6 +147,7 @@ def test_retry_rebuilds_context(monkeypatch, tmp_path):
 
     mgr.run_patch(file_path, "desc")
 
+    assert patch_db.tags == ["t1"]
     assert len(engine.calls) == 2
     assert query_calls == [["t1"]]
     assert pipeline.calls == [("bot", 1)]

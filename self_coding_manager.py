@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 from typing import Dict, Any
 
-from .error_parser import FailureCache, ErrorReport
+from .error_parser import FailureCache, ErrorReport, ErrorParser
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import record_failed_tags, load_failed_tags
 except Exception:  # pragma: no cover - optional dependency
@@ -152,7 +152,14 @@ class SelfCodingManager:
                     raise RuntimeError("patch tests failed")
 
                 failure = harness_result.failure or {}
-                trace = failure.get("trace") or harness_result.stderr or harness_result.stdout or ""
+                trace = (
+                    failure.get("trace")
+                    or harness_result.stderr
+                    or harness_result.stdout
+                    or ""
+                )
+                if not failure:
+                    failure = ErrorParser.parse(trace)
                 if self._failure_cache.seen(trace):
                     raise RuntimeError("patch tests failed")
                 tags = failure.get("tags", [])
@@ -161,6 +168,13 @@ class SelfCodingManager:
                     record_failed_tags(list(tags))
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception("failed to record failed tags")
+                patch_db = getattr(self.engine, "patch_suggestion_db", None)
+                if patch_db:
+                    for tag in tags:
+                        try:
+                            patch_db.add_failed_strategy(tag)
+                        except Exception:  # pragma: no cover - best effort
+                            self.logger.exception("failed to store failed strategy tag")
                 self.logger.info(
                     "rebuilding context",
                     extra={"tags": tags, "attempt": attempt},
