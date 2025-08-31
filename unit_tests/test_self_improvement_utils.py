@@ -21,7 +21,12 @@ import pytest
 def _load_utils():
     src = Path("self_improvement/utils.py").read_text()
     tree = ast.parse(src)
-    wanted_funcs = {"_load_callable", "_call_with_retries", "_import_callable"}
+    wanted_funcs = {
+        "_load_callable",
+        "_call_with_retries",
+        "_import_callable",
+        "clear_import_cache",
+    }
     wanted_assigns = {"_diagnostics_lock", "_diagnostics"}
     nodes: list[ast.stmt] = []
     for n in tree.body:
@@ -86,6 +91,20 @@ def test_load_callable_success_and_cache():
     assert utils["_load_callable"].diagnostics["cache_hits"] == 1
     assert utils["_load_callable"].diagnostics["cache_misses"] == 1
     assert counter.count == 0
+
+
+def test_clear_import_cache_resets_cache_and_diagnostics():
+    utils, _ = _load_utils()
+    module = types.SimpleNamespace(attr=lambda: "ok")
+    with patch("importlib.import_module", return_value=module) as mod:
+        utils["_load_callable"]("mod", "attr")
+        utils["_load_callable"]("mod", "attr")
+        assert mod.call_count == 1
+        utils["clear_import_cache"]()
+        utils["_load_callable"]("mod", "attr")
+        assert mod.call_count == 2
+        assert utils["_load_callable"].diagnostics["cache_hits"] == 0
+        assert utils["_load_callable"].diagnostics["cache_misses"] == 1
 
 
 def test_load_callable_missing_raises_runtime_error_and_records_metric():
