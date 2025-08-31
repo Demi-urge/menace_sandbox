@@ -213,6 +213,8 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             logger.exception("embedding hook failed for %s", rec_id)
 
     def add(self, rec: SuggestionRecord) -> int:
+        if self._has_similar(rec.module, rec.rationale or rec.description, rec.score):
+            return 0
         risks = find_semantic_risks(
             rec.description.splitlines(), threshold=self._semantic_threshold
         )
@@ -234,8 +236,8 @@ class PatchSuggestionDB(EmbeddableDBMixin):
         with self._file_lock:
             with self._lock:
                 cur = self.conn.execute(
-                    "INSERT INTO suggestions(module, description, score, rationale, patch_count, module_id, ts) "
-                    "VALUES(?,?,?,?,?,?,?)",
+                    "INSERT INTO suggestions(module, description, score, rationale, "
+                    "patch_count, module_id, ts) VALUES(?,?,?,?,?,?,?)",
                     (
                         rec.module,
                         rec.description,
@@ -329,9 +331,29 @@ class PatchSuggestionDB(EmbeddableDBMixin):
         """Return top scored suggestions ordered by descending score."""
         with self._lock:
             rows = self.conn.execute(
-                "SELECT module, description, score, rationale, patch_count, module_id, ts FROM suggestions "
-                "ORDER BY score DESC LIMIT ?",
+                "SELECT module, description, score, rationale, patch_count, "
+                "module_id, ts FROM suggestions ORDER BY score DESC LIMIT ?",
                 (limit,),
+            ).fetchall()
+        return [
+            SuggestionRecord(
+                module=r[0],
+                description=r[1],
+                score=r[2] or 0.0,
+                rationale=r[3] or "",
+                patch_count=r[4] or 0,
+                module_id=r[5] or "",
+                ts=r[6],
+            )
+            for r in rows
+        ]
+
+    def queued_suggestions(self) -> List[SuggestionRecord]:
+        """Return all stored suggestions ordered by insertion."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT module, description, score, rationale, patch_count, "
+                "module_id, ts FROM suggestions ORDER BY id"
             ).fetchall()
         return [
             SuggestionRecord(
