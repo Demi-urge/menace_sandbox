@@ -1,5 +1,6 @@
 from typing import Any, Dict, List
 
+import json
 import pytest
 
 from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
@@ -73,6 +74,47 @@ def test_prompt_engine_custom_headers():
     assert "Incorrect example:" in prompt
     assert "Given the following pattern:" not in prompt
     assert "Avoid bad because it caused a failure:" not in prompt
+
+
+def test_prompt_engine_applies_trained_preferences(monkeypatch):
+    records = [
+        _record(0.9, summary="good", tests_passed=True, ts=1),
+        _record(0.8, summary="bad", outcome="oops", tests_passed=False, ts=2),
+    ]
+
+    class StubTrainer:
+        def __init__(self, *a, **k):
+            pass
+
+        def train(self):
+            return {
+                "headers": {
+                    json.dumps(
+                        ["Preferred header:", "Avoid {summary} because it caused {outcome}:"]
+                    ): 0.9
+                },
+                "example_order": {json.dumps(["failure", "success"]): 0.9},
+            }
+
+    import prompt_engine as pe
+
+    monkeypatch.setattr(pe, "PromptMemoryTrainer", StubTrainer)
+
+    engine = pe.PromptEngine(
+        retriever=DummyRetriever(records),
+        patch_retriever=DummyRetriever(records),
+        context_builder=object(),
+        top_n=2,
+        confidence_threshold=0.0,
+    )
+    prompt = engine.build_prompt("desc")
+
+    # learned success header is used
+    assert "Preferred header:" in prompt
+    # failure example appears before success example per learned order
+    assert prompt.index("Avoid bad because it caused oops:") < prompt.index(
+        "Preferred header:"
+    )
 
 
 def test_prompt_engine_handles_retry_trace():
