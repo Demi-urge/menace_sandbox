@@ -50,11 +50,17 @@ class PromptMemoryTrainer:
 
         Besides the original header, example ordering and tone heuristics the
         method now records whether the prompt contains fenced code blocks,
-        bullet lists and ``System``/``User`` sections.
+        bullet lists and ``System``/``User`` sections.  The analyser also looks
+        for common structured sections such as "Constraints" or "Resources",
+        counts the number of examples and their placement and classifies the
+        overall verbosity of the prompt.
         """
 
         headers = re.findall(r"^#+\s*(.+)$", prompt, flags=re.MULTILINE)
-        example_order = re.findall(r"Example\s*([\w-]+)", prompt, flags=re.IGNORECASE)
+        example_matches = list(
+            re.finditer(r"Example\s*([\w-]+)", prompt, flags=re.IGNORECASE)
+        )
+        example_order = [m.group(1) for m in example_matches]
         tone = (
             "polite"
             if re.search(r"\b(?:please|kindly)\b", prompt, re.IGNORECASE)
@@ -68,6 +74,35 @@ class PromptMemoryTrainer:
             m.group(1).lower()
             for m in re.finditer(r"^(System|User):", prompt, flags=re.MULTILINE)
         ]
+        structured_sections = [
+            name.lower()
+            for name in ("Constraints", "Resources")
+            if re.search(
+                rf"^(?:#+\s*)?{name}\s*:",
+                prompt,
+                flags=re.IGNORECASE | re.MULTILINE,
+            )
+        ]
+        example_count = len(example_matches)
+        if example_count:
+            first_line = prompt[: example_matches[0].start()].count("\n")
+            total_lines = prompt.count("\n") + 1
+            ratio = first_line / max(total_lines, 1)
+            if ratio < 0.33:
+                example_place = "start"
+            elif ratio < 0.66:
+                example_place = "middle"
+            else:
+                example_place = "end"
+        else:
+            example_place = "none"
+        word_count = len(re.findall(r"\w+", prompt))
+        if word_count < 50:
+            length = "short"
+        elif word_count < 150:
+            length = "medium"
+        else:
+            length = "long"
         return {
             "headers": headers,
             "example_order": example_order,
@@ -75,6 +110,10 @@ class PromptMemoryTrainer:
             "has_code": has_code,
             "has_bullets": has_bullets,
             "sections": sections,
+            "structured_sections": structured_sections,
+            "example_count": example_count,
+            "example_placement": example_place,
+            "length": length,
         }
 
     # ------------------------------------------------------------------
@@ -93,6 +132,14 @@ class PromptMemoryTrainer:
             "has_code": defaultdict(lambda: {"success": 0.0, "weight": 0.0}),
             "has_bullets": defaultdict(lambda: {"success": 0.0, "weight": 0.0}),
             "sections": defaultdict(lambda: {"success": 0.0, "weight": 0.0}),
+            "structured_sections": defaultdict(
+                lambda: {"success": 0.0, "weight": 0.0}
+            ),
+            "example_count": defaultdict(lambda: {"success": 0.0, "weight": 0.0}),
+            "example_placement": defaultdict(
+                lambda: {"success": 0.0, "weight": 0.0}
+            ),
+            "length": defaultdict(lambda: {"success": 0.0, "weight": 0.0}),
         }
 
         cur = self.memory.conn.execute("SELECT prompt FROM interactions")
@@ -202,15 +249,22 @@ class PromptMemoryTrainer:
         if not self.style_weights:
             self.train()
         suggestion: Dict[str, Any] = {}
+        list_feats = {"headers", "example_order", "sections", "structured_sections"}
+        int_feats = {"example_count"}
         for feat, mapping in self.style_weights.items():
             if not mapping:
                 continue
             best_val, _ = max(mapping.items(), key=lambda kv: kv[1])
-            if feat in {"headers", "example_order"}:
+            if feat in list_feats:
                 try:
                     suggestion[feat] = json.loads(best_val)
                 except Exception:
                     suggestion[feat] = [best_val]
+            elif feat in int_feats:
+                try:
+                    suggestion[feat] = int(float(best_val))
+                except Exception:
+                    suggestion[feat] = 0
             else:
                 suggestion[feat] = best_val
         return suggestion

@@ -170,6 +170,10 @@ class PromptEngine:
     last_metadata: Dict[str, Any] = field(default_factory=dict, init=False)
     trained_headers: List[str] | None = field(default=None, init=False)
     trained_example_order: List[str] | None = field(default=None, init=False)
+    trained_structured_sections: List[str] | None = field(default=None, init=False)
+    trained_example_count: int | None = field(default=None, init=False)
+    trained_example_placement: str | None = field(default=None, init=False)
+    trained_length: str | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
         if self.retriever is None:
@@ -266,6 +270,49 @@ class PromptEngine:
         if best_order and best_order_score >= self.confidence_threshold:
             self.trained_example_order = best_order
 
+        # Structured sections
+        sect_summary = summary.get("structured_sections", {}) or {}
+        best_sects: List[str] | None = None
+        best_sect_score = 0.0
+        for raw, score in sect_summary.items():
+            try:
+                sects = [str(s) for s in json.loads(raw)]
+                sc = float(score or 0.0)
+            except Exception:
+                continue
+            if sc > best_sect_score:
+                best_sects, best_sect_score = sects, sc
+        if best_sects and best_sect_score >= self.confidence_threshold:
+            self.trained_structured_sections = best_sects
+
+        # Example count
+        count_summary = summary.get("example_count", {}) or {}
+        if count_summary:
+            val, score = max(count_summary.items(), key=lambda kv: kv[1])
+            if score >= self.confidence_threshold:
+                try:
+                    self.trained_example_count = int(float(val))
+                except Exception:
+                    pass
+
+        # Example placement
+        place_summary = summary.get("example_placement", {}) or {}
+        if place_summary:
+            val, score = max(place_summary.items(), key=lambda kv: kv[1])
+            if score >= self.confidence_threshold:
+                self.trained_example_placement = val
+
+        # Length / verbosity
+        length_summary = summary.get("length", {}) or {}
+        if length_summary:
+            val, score = max(length_summary.items(), key=lambda kv: kv[1])
+            if score >= self.confidence_threshold:
+                self.trained_length = val
+                if val == "short":
+                    self.max_tokens = min(self.max_tokens, 100)
+                elif val == "long":
+                    self.max_tokens = max(self.max_tokens, 300)
+
     # ------------------------------------------------------------------
     def build_snippets(self, patches: Iterable[Dict[str, Any]]) -> List[str]:
         """Return formatted snippet lines ordered by weighted scoring.
@@ -317,20 +364,31 @@ class PromptEngine:
         )
         order_pref = self.trained_example_order or ["success", "failure"]
 
-        # Process groups according to preferred order
+        # Process groups according to preferred order with optional limit
         remaining_successes = successes
         remaining_failures = failures
+        limit = self.trained_example_count
+        used = 0
         for group in order_pref:
+            if limit is not None and used >= limit:
+                break
             if group == "success" and remaining_successes:
                 lines.append(success_header)
                 headers.append(success_header)
-                for _, text in remaining_successes:
+                take = remaining_successes
+                if limit is not None:
+                    take = take[: max(0, limit - used)]
+                for _, text in take:
                     lines.extend(text.splitlines())
                     lines.append("")
                     example_order.append("success")
+                used += len(take)
                 remaining_successes = []
             elif group == "failure" and remaining_failures:
-                for _, summary, outcome, text in remaining_failures:
+                take = remaining_failures
+                if limit is not None:
+                    take = take[: max(0, limit - used)]
+                for _, summary, outcome, text in take:
                     header = self.failure_header.format(
                         summary=summary, outcome=outcome
                     )
@@ -339,28 +397,44 @@ class PromptEngine:
                     lines.extend(text.splitlines())
                     lines.append("")
                     example_order.append("failure")
+                used += len(take)
                 remaining_failures = []
 
         # Append any leftover groups not covered by the learned order
-        if remaining_successes:
-            lines.append(success_header)
-            headers.append(success_header)
-            for _, text in remaining_successes:
-                lines.extend(text.splitlines())
-                lines.append("")
-                example_order.append("success")
-        if remaining_failures:
-            for _, summary, outcome, text in remaining_failures:
-                header = self.failure_header.format(summary=summary, outcome=outcome)
-                lines.append(header)
-                headers.append(header)
-                lines.extend(text.splitlines())
-                lines.append("")
-                example_order.append("failure")
+        if limit is None or used < limit:
+            if remaining_successes:
+                lines.append(success_header)
+                headers.append(success_header)
+                take = remaining_successes
+                if limit is not None:
+                    take = take[: max(0, limit - used)]
+                for _, text in take:
+                    lines.extend(text.splitlines())
+                    lines.append("")
+                    example_order.append("success")
+                used += len(take)
+            if (limit is None or used < limit) and remaining_failures:
+                take = remaining_failures
+                if limit is not None:
+                    take = take[: max(0, limit - used)]
+                for _, summary, outcome, text in take:
+                    header = self.failure_header.format(
+                        summary=summary, outcome=outcome
+                    )
+                    lines.append(header)
+                    headers.append(header)
+                    lines.extend(text.splitlines())
+                    lines.append("")
+                    example_order.append("failure")
+                used += len(take)
         self.last_metadata = {
             "headers": headers,
             "example_order": example_order,
             "tone": self.tone,
+            "structured_sections": self.trained_structured_sections or [],
+            "example_count": len(example_order),
+            "example_placement": self.trained_example_placement or "end",
+            "length": self.trained_length or "unknown",
         }
         return [line for line in lines if line]
 
@@ -440,16 +514,34 @@ class PromptEngine:
             )
             return self._static_prompt()
 
+        snippet_lines = self.build_snippets(ranked)
         lines: List[str] = []
+
+        for section in self.trained_structured_sections or []:
+            lines.append(f"{section.capitalize()}:")
+            lines.append("")
+
+        if self.trained_example_placement == "start":
+            lines.extend(snippet_lines)
+            lines.append("")
+
         if retrieval_context:
             lines.append(retrieval_context.strip())
             lines.append("")
         if context:
             lines.append(context.strip())
             lines.append("")
+
+        if self.trained_example_placement == "middle":
+            lines.extend(snippet_lines)
+            lines.append("")
+
         lines.append(f"Given the following pattern, {task}")
         lines.append("")
-        lines.extend(self.build_snippets(ranked))
+
+        if self.trained_example_placement not in {"start", "middle"}:
+            lines.extend(snippet_lines)
+
         if retry_trace:
             lines.extend(self._format_retry_trace(retry_trace))
         return "\n".join(line for line in lines if line)
