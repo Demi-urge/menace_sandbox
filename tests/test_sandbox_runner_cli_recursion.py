@@ -4,10 +4,10 @@ import types
 
 
 def _load_cli(monkeypatch):
-    env_mod = types.SimpleNamespace(
-        SANDBOX_ENV_PRESETS=[{}],
-        simulate_full_environment=lambda *a, **k: None,
-    )
+    env_mod = types.SimpleNamespace()
+    env_mod.SANDBOX_ENV_PRESETS = [{}]
+    env_mod.load_presets = lambda: env_mod.SANDBOX_ENV_PRESETS
+    env_mod.simulate_full_environment = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
     import sandbox_runner.cli as cli
 

@@ -19,6 +19,9 @@ import os
 
 SANDBOX_ENV_PRESETS = [{}]
 
+def load_presets():
+    return SANDBOX_ENV_PRESETS
+
 def simulate_full_environment(*a, **k):
     pass
 

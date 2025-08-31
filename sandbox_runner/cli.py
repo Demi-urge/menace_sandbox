@@ -47,7 +47,7 @@ from menace.metrics_dashboard import MetricsDashboard
 from logging_utils import get_logger, setup_logging, set_correlation_id
 
 from foresight_tracker import ForesightTracker
-from .environment import SANDBOX_ENV_PRESETS, simulate_full_environment
+from .environment import load_presets, simulate_full_environment
 
 try:  # optional import for tests
     from menace.environment_generator import generate_presets
@@ -90,7 +90,7 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
     if sandbox_main is None:
         from sandbox_runner import _sandbox_main as sandbox_main
 
-    presets = SANDBOX_ENV_PRESETS or [{}]
+    presets = load_presets()
     settings = get_settings()
     if presets == [{}] and not settings.sandbox_env_presets:
         if settings.sandbox_generate_presets:
