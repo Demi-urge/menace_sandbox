@@ -7,7 +7,8 @@
     "cyclomatic": 1.0,
     "duplication": 1.0,
     "length": 1.0,
-    "anti": 1.0
+    "anti": 1.0,
+    "history": 1.0
   },
   "thresholds": {
     "min_patches": 3,

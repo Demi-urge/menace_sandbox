@@ -84,6 +84,7 @@ class EnhancementClassifier:
             "duplication": 1.0,
             "length": 1.0,
             "anti": 1.0,
+            "history": 1.0,
         }
         thresholds = {
             "min_patches": 3.0,
@@ -109,12 +110,38 @@ class EnhancementClassifier:
                 "using default enhancement classifier weights and thresholds",
                 exc_info=True,
             )
+        for key in weights:
+            env = os.getenv(f"ENHANCEMENT_WEIGHT_{key.upper()}")
+            if env is not None:
+                try:
+                    weights[key] = float(env)
+                except ValueError:  # pragma: no cover - ignore bad overrides
+                    pass
+        for key in thresholds:
+            env = os.getenv(f"ENHANCEMENT_THRESHOLD_{key.upper()}")
+            if env is not None:
+                try:
+                    thresholds[key] = float(env)
+                except ValueError:  # pragma: no cover - ignore bad overrides
+                    pass
         return weights, thresholds
 
     # ------------------------------------------------------------------
     def _gather_metrics(
         self, code_id: int
-    ) -> tuple[str, int, float, float, float, float, int, int, list[str]] | None:
+    ) -> tuple[
+        str,
+        int,
+        float,
+        float,
+        float,
+        float,
+        float,
+        int,
+        float,
+        float,
+        list[str],
+    ] | None:
         """Return metrics for ``code_id`` or ``None`` when absent."""
 
         with self.patch_db._connect() as conn:  # type: ignore[attr-defined]
@@ -132,9 +159,14 @@ class EnhancementClassifier:
         avg_roi = sum((r[1] or 0.0) for r in rows) / patch_count
         avg_errors = sum(((r[3] or 0) - (r[2] or 0)) for r in rows) / patch_count
         avg_complexity = sum((r[4] or 0.0) for r in rows) / patch_count
+        neg_roi_ratio = sum(1 for r in rows if (r[1] or 0.0) < 0) / patch_count
+        error_prone_ratio = sum(
+            1 for r in rows if (r[3] or 0) > (r[2] or 0)
+        ) / patch_count
 
         avg_cc = 0.0
         dup_count = 0
+        total_funcs = 0
         long_funcs = 0
         notes: list[str] = []
 
@@ -190,6 +222,7 @@ class EnhancementClassifier:
             hashes: dict[str, int] = {}
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    total_funcs += 1
                     body_repr = ast.dump(
                         ast.Module(body=node.body, type_ignores=[]),
                         include_attributes=False,
@@ -203,8 +236,11 @@ class EnhancementClassifier:
                             f"function {node.name} is long ({length} lines)"
                         )
             dup_count = sum(v - 1 for v in hashes.values() if v > 1)
+            dup_ratio = dup_count / total_funcs if total_funcs else 0.0
             if dup_count:
                 notes.append(f"{dup_count} duplicated function(s)")
+        else:
+            dup_ratio = 0.0
 
         return (
             filename,
@@ -213,8 +249,10 @@ class EnhancementClassifier:
             avg_errors,
             avg_complexity,
             avg_cc,
-            dup_count,
+            dup_ratio,
             long_funcs,
+            neg_roi_ratio,
+            error_prone_ratio,
             notes,
         )
 
@@ -312,8 +350,10 @@ class EnhancementClassifier:
                 avg_errors,
                 avg_complexity,
                 avg_cc,
-                dup_count,
+                dup_ratio,
                 long_funcs,
+                neg_roi_ratio,
+                error_prone_ratio,
                 notes,
             ) = metrics
             anti_score, anti_notes = self._detect_anti_patterns(cid)
@@ -324,27 +364,32 @@ class EnhancementClassifier:
                 or avg_roi < self.thresholds["roi_cutoff"]
                 or avg_complexity > self.thresholds["complexity_delta"]
                 or avg_cc > 0
-                or dup_count > 0
+                or dup_ratio > 0
                 or long_funcs > 0
                 or anti_score > 0
+                or neg_roi_ratio > 0
+                or error_prone_ratio > 0
             ):
                 continue
 
+            history_corr = (neg_roi_ratio + error_prone_ratio) * (avg_cc + dup_ratio)
             score = (
                 self.weights["frequency"] * patches
                 + self.weights["roi"] * (-avg_roi)
                 + self.weights["errors"] * avg_errors
                 + self.weights["complexity"] * avg_complexity
                 + self.weights["cyclomatic"] * avg_cc
-                + self.weights["duplication"] * dup_count
+                + self.weights["duplication"] * dup_ratio
                 + self.weights["length"] * long_funcs
                 + self.weights["anti"] * anti_score
+                + self.weights["history"] * history_corr
             )
 
             rationale = (
                 f"{patches} patches, avg ROI delta {avg_roi:.2f}, "
                 f"avg error delta {avg_errors:.2f}, avg complexity delta {avg_complexity:.2f}, "
-                f"avg cyclomatic {avg_cc:.2f}, duplicates {dup_count}, long functions {long_funcs}"
+                f"avg cyclomatic {avg_cc:.2f}, duplication ratio {dup_ratio:.2f}, long functions {long_funcs}, "
+                f"low ROI ratio {neg_roi_ratio:.2f}, error-prone ratio {error_prone_ratio:.2f}"
             )
             all_notes = notes + anti_notes
             if all_notes:
