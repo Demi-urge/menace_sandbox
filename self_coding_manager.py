@@ -250,6 +250,17 @@ class SelfCodingManager:
                     )
                 except Exception:
                     self.logger.exception("track_contributors failed")
+            session_id = ""
+            if ctx_meta:
+                session_id = ctx_meta.get("retrieval_session_id", "")
+            clayer = getattr(self.engine, "cognition_layer", None)
+            if clayer is not None and session_id:
+                try:
+                    clayer.record_patch_outcome(
+                        session_id, True, contribution=roi_delta
+                    )
+                except Exception:
+                    self.logger.exception("failed to record patch outcome")
             conf = 1.0
             if result is not None and getattr(result, "roi", None) is not None:
                 conf = getattr(result.roi, "confidence", None)  # type: ignore[attr-defined]
