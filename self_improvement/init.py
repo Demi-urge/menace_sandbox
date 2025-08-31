@@ -86,7 +86,11 @@ def _data_dir() -> Path:
 
 
 def _load_initial_synergy_weights() -> None:
-    """Populate ``settings`` with persisted synergy weights."""
+    """Populate ``settings`` with persisted synergy weights.
+
+    Each weight is clamped to the inclusive range ``0``–``10``. Any
+    normalisation is logged and the sanitized result written back to disk.
+    """
 
     default_path = Path(getattr(settings, "sandbox_data_dir", ".")) / "synergy_weights.json"
     path = Path(
@@ -97,34 +101,52 @@ def _load_initial_synergy_weights() -> None:
         )
     )
     weights = DEFAULT_SYNERGY_WEIGHTS.copy()
+    changed = False
+    doc = "Default synergy weights. Adjust values between 0.0 and 10.0."
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        valid = isinstance(data, dict) and all(
-            k in data and isinstance(data.get(k), (int, float)) for k in weights
-        )
-        if valid:
-            for k in weights:
-                weights[k] = float(data[k])
+        if isinstance(data, dict):
+            doc = str(data.get("_doc", doc))
+            for key, default in weights.items():
+                raw = data.get(key)
+                if isinstance(raw, (int, float)):
+                    value = float(raw)
+                    if not 0.0 <= value <= 10.0:
+                        clipped = min(max(value, 0.0), 10.0)
+                        logger.info(
+                            "normalised synergy weight %s from %s to %s",
+                            key,
+                            value,
+                            clipped,
+                            extra=log_record(weight=key, original=value, normalised=clipped),
+                        )
+                        value = clipped
+                        changed = True
+                    weights[key] = value
+                else:
+                    logger.warning(
+                        "invalid synergy weight for %s: %r; using default %s",
+                        key,
+                        raw,
+                        default,
+                        extra=log_record(weight=key, original=repr(raw)),
+                    )
+                    changed = True
+        else:
+            logger.warning(
+                "invalid synergy weights %s",
+                path,
+                extra=log_record(path=str(path)),
+            )
+            changed = True
     except FileNotFoundError:
         logger.info(
             "synergy weights file %s missing; creating defaults",
             path,
             extra=log_record(path=str(path)),
         )
-        payload = {
-            "_doc": "Default synergy weights. Adjust values between 0.0 and 10.0.",
-            **weights,
-        }
-        try:
-            _atomic_write(path, json.dumps(payload, indent=2))
-        except OSError as exc:  # pragma: no cover - best effort
-            logger.warning(
-                "failed to write default synergy weights %s",
-                path,
-                extra=log_record(path=str(path), error=str(exc)),
-                exc_info=exc,
-            )
+        changed = True
     except OSError as exc:
         logger.warning(
             "I/O error loading synergy weights %s",
@@ -132,6 +154,7 @@ def _load_initial_synergy_weights() -> None:
             extra=log_record(path=str(path), error=str(exc)),
             exc_info=exc,
         )
+        changed = True
     except ValueError as exc:
         logger.warning(
             "invalid synergy weights %s",
@@ -139,6 +162,25 @@ def _load_initial_synergy_weights() -> None:
             extra=log_record(path=str(path), error=str(exc)),
             exc_info=exc,
         )
+        changed = True
+
+    if changed:
+        payload = {"_doc": doc, **weights}
+        try:
+            _atomic_write(path, json.dumps(payload, indent=2))
+            logger.info(
+                "persisted sanitized synergy weights %s",
+                path,
+                extra=log_record(path=str(path)),
+            )
+        except OSError as exc:  # pragma: no cover - best effort
+            logger.warning(
+                "failed to write sanitized synergy weights %s",
+                path,
+                extra=log_record(path=str(path), error=str(exc)),
+                exc_info=exc,
+            )
+
     settings.synergy_weight_roi = weights["roi"]
     settings.synergy_weight_efficiency = weights["efficiency"]
     settings.synergy_weight_resilience = weights["resilience"]
@@ -149,6 +191,12 @@ def _load_initial_synergy_weights() -> None:
     settings.synergy_weight_file = str(path)
 
 
+def reload_synergy_weights() -> None:
+    """Reload synergy weights from disk for dynamic tuning."""
+
+    _load_initial_synergy_weights()
+
+
 def init_self_improvement(new_settings: SandboxSettings | None = None) -> SandboxSettings:
     """Initialise the self-improvement subsystem explicitly."""
 
@@ -157,14 +205,16 @@ def init_self_improvement(new_settings: SandboxSettings | None = None) -> Sandbo
     initialize_autonomous_sandbox(settings)
     if getattr(settings, "sandbox_central_logging", False):
         setup_logging()
-    _load_initial_synergy_weights()
+    reload_synergy_weights()
     try:
         from . import meta_planning
 
         meta_planning.reload_settings(settings)
     except Exception as exc:  # pragma: no cover - best effort
         message = "failed to reload meta_planning settings"
-        logger.exception(message, extra=log_record(error=str(exc)))
+        logging.getLogger(__name__).exception(  # ensure real logging backend
+            message, extra=log_record(error=str(exc))
+        )
         raise RuntimeError(message) from exc
     return settings
 
@@ -176,4 +226,5 @@ __all__ = [
     "_data_dir",
     "_atomic_write",
     "DEFAULT_SYNERGY_WEIGHTS",
+    "reload_synergy_weights",
 ]
