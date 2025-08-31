@@ -7160,7 +7160,15 @@ class SelfImprovementEngine:
                     if logs is None:
                         try:
                             logs = get_recent_events(limit=20)
-                        except Exception:
+                        except Exception as exc:
+                            self.logger.warning(
+                                "failed to get recent events: %s",
+                                exc,
+                                extra=log_record(
+                                    workflow_id=locals().get("workflow_id", "self_improvement"),
+                                    attempt=self._cycle_count,
+                                ),
+                            )
                             logs = None
                     try:
                         info_proc = subprocess.run(
