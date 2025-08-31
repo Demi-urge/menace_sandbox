@@ -10,12 +10,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import logging
 import subprocess
 import sys
 import tempfile
 import time
 
 from ..error_parser import ErrorParser
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -132,8 +136,8 @@ def run_tests(
             if rel_paths:
                 try:
                     rel_paths = [p.relative_to(repo_path) for p in rel_paths]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to resolve relative paths %s: %s", rel_paths, exc)
                 if len(rel_paths) == 1:
                     rel = rel_paths[0]
                     selected = rel.as_posix()
@@ -160,8 +164,8 @@ def run_tests(
             if rel_paths:
                 try:
                     rel_paths = [p.relative_to(repo_path) for p in rel_paths]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to resolve relative paths %s: %s", rel_paths, exc)
                 if len(rel_paths) == 1:
                     rel = rel_paths[0]
                     selected = rel.as_posix()
