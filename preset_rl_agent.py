@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-"""Reinforcement learning agent for adjusting sandbox presets."""
+"""Reinforcement learning agent for adjusting sandbox presets.
+
+The agent persists its last action/state to ``<path>.state.json`` and keeps
+rotating ``.bak`` backups.  If the primary JSON file becomes corrupted, the
+loader will automatically attempt to restore from the most recent backup before
+falling back to a clean slate.  Administrators can manually recover by copying
+``<path>.state.json.bak`` over the main file and restarting the agent.
+"""
 
 import json
 import os
@@ -48,9 +55,12 @@ class PresetRLAgent:
     def _load_state(self) -> None:
         if not os.path.exists(self.state_file):
             return
+        data: dict[str, object] | None = None
         try:
             with open(self.state_file) as fh:
                 data = json.load(fh)
+            if not isinstance(data, dict) or "state" not in data or "action" not in data:
+                raise ValueError("missing keys")
         except Exception as exc:
             logger.warning("Failed to load RL state: %s", exc)
             bak = f"{self.state_file}.bak"
@@ -58,21 +68,35 @@ class PresetRLAgent:
                 try:
                     with open(bak) as fh:
                         data = json.load(fh)
+                    if not isinstance(data, dict) or "state" not in data or "action" not in data:
+                        raise ValueError("missing keys")
+                    os.replace(bak, self.state_file)
                 except Exception as exc2:
                     logger.warning("Failed to load backup RL state: %s", exc2)
+                    try:
+                        os.remove(self.state_file)
+                    except OSError:
+                        pass
                     return
             else:
+                try:
+                    os.remove(self.state_file)
+                except OSError:
+                    pass
                 return
-        st = data.get("state")
-        self.prev_state = tuple(st) if st is not None else None
-        self.prev_action = data.get("action")
+        st = data.get("state") if data is not None else None
+        self.prev_state = tuple(st) if isinstance(st, (list, tuple)) else None
+        self.prev_action = data.get("action") if data is not None else None
 
     def _save_state(self) -> None:
         tmp_file = f"{self.state_file}.tmp"
         bak_file = f"{self.state_file}.bak"
+        old_bak = f"{bak_file}.1"
         try:
             with open(tmp_file, "w") as fh:
                 json.dump({"state": self.prev_state, "action": self.prev_action}, fh)
+            if os.path.exists(bak_file):
+                os.replace(bak_file, old_bak)
             if os.path.exists(self.state_file):
                 os.replace(self.state_file, bak_file)
             os.replace(tmp_file, self.state_file)

@@ -24,7 +24,7 @@ sys.modules.pop("torch.nn", None)
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
-from menace_sandbox.preset_rl_agent import PresetRLAgent
+from menace_sandbox.preset_rl_agent import PresetRLAgent  # noqa: E402
 
 
 def test_state_file_backup(tmp_path):
@@ -61,9 +61,32 @@ def test_load_state_from_backup(tmp_path):
     agent._save_state()
 
     state_file = path.parent / (path.name + ".state.json")
-    bak_file = path.parent / (path.name + ".state.json.bak")
     state_file.write_text("{bad json")
 
     loaded = PresetRLAgent(str(path))
     assert loaded.prev_state == (1, 1)
     assert loaded.prev_action == 1
+
+
+def test_backup_rotation(tmp_path):
+    path = tmp_path / "policy.pkl"
+    agent = PresetRLAgent(str(path))
+    agent.prev_state = (1, 1)
+    agent.prev_action = 1
+    agent._save_state()
+    state_file = path.parent / (path.name + ".state.json")
+    first = state_file.read_text()
+
+    agent.prev_state = (2, 2)
+    agent.prev_action = 2
+    agent._save_state()
+    second = state_file.read_text()
+
+    agent.prev_state = (3, 3)
+    agent.prev_action = 3
+    agent._save_state()
+
+    bak_file = path.parent / (path.name + ".state.json.bak")
+    bak1_file = path.parent / (path.name + ".state.json.bak.1")
+    assert bak_file.read_text() == second
+    assert bak1_file.read_text() == first
