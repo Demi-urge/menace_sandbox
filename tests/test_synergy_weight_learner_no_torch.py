@@ -38,6 +38,8 @@ modules = [
     "menace.mutation_logger",
     "menace.pre_execution_roi_bot",
     "menace.env_config",
+    "adaptive_roi_predictor",
+    "sandbox_runner.environment",
     "relevancy_radar",
 ]
 for name in modules:
@@ -75,6 +77,8 @@ sys.modules["menace.self_test_service"].SelfTestService = object
 sys.modules["menace.mutation_logger"] = types.ModuleType("menace.mutation_logger")
 rr = types.ModuleType("relevancy_radar")
 rr.tracked_import = __import__
+rr.RelevancyRadar = object
+rr.track_usage = lambda *a, **k: None
 sys.modules["relevancy_radar"] = rr
 pre_mod = sys.modules["menace.pre_execution_roi_bot"]
 pre_mod.PreExecutionROIBot = object
@@ -84,6 +88,11 @@ env_mod = sys.modules["menace.env_config"]
 env_mod.PRE_ROI_SCALE = 1.0
 env_mod.PRE_ROI_BIAS = 0.0
 env_mod.PRE_ROI_CAP = 1.0
+sr_env = sys.modules["sandbox_runner.environment"]
+sr_env.SANDBOX_ENV_PRESETS = {}
+sr_env.simulate_full_environment = lambda *a, **k: None
+ar_mod = sys.modules["adaptive_roi_predictor"]
+ar_mod.load_training_data = lambda *a, **k: []
 
 jinja_mod = types.ModuleType("jinja2")
 jinja_mod.Template = lambda *a, **k: None

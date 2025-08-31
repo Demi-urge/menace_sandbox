@@ -212,17 +212,96 @@ class SarsaStrategy(RLStrategy):
 @dataclass
 class ActorCriticConfig(RLConfig):
     """Configuration for :class:`ActorCriticStrategy`."""
+    hidden_dim: int = 32
+    actor_lr: float = 1e-3
+    critic_lr: float = 1e-3
+    entropy_beta: float = 0.01
 
 
 class ActorCriticStrategy(RLStrategy):
-    """Simplified actor-critic update."""
+    """Actor-critic strategy with separate networks and advantage estimation.
+
+    Falls back to a tabular implementation when PyTorch is unavailable."""
 
     Config = ActorCriticConfig
 
     def __init__(self, config: ActorCriticConfig | None = None) -> None:
         super().__init__(config or self.Config())
-        self.state_values: Dict[Tuple[int, ...], float] = {}
+        if torch is None:  # pragma: no cover - torch not available
+            self.state_values: Dict[Tuple[int, ...], float] = {}
+        else:
+            cfg = self.config
+            self.state_dim = cfg.state_dim
+            self.action_dim = cfg.action_dim or 2
+            self.hidden_dim = cfg.hidden_dim
+            self.actor_lr = cfg.actor_lr
+            self.critic_lr = cfg.critic_lr
+            self.entropy_beta = cfg.entropy_beta
+            self.actor: Optional[nn.Module] = None
+            self.critic: Optional[nn.Module] = None
+            self.actor_opt: Optional[torch.optim.Optimizer] = None
+            self.critic_opt: Optional[torch.optim.Optimizer] = None
 
+    # ------------------------------------------------------------------
+    def _ensure_model(self, dim: int) -> None:
+        if torch is None:
+            return
+        if self.actor is None or self.critic is None:
+            if self.config.state_dim is not None and dim != self.config.state_dim:
+                raise ValueError(
+                    f"state has dimension {dim} but expected {self.config.state_dim}"
+                )
+            self.state_dim = dim
+            self.config.state_dim = dim
+            self.actor = nn.Sequential(
+                nn.Linear(dim, self.hidden_dim),
+                nn.ReLU(),
+                nn.Linear(self.hidden_dim, self.action_dim),
+            )
+            self.critic = nn.Sequential(
+                nn.Linear(dim, self.hidden_dim),
+                nn.ReLU(),
+                nn.Linear(self.hidden_dim, 1),
+            )
+            self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.actor_lr)
+            self.critic_opt = torch.optim.Adam(
+                self.critic.parameters(), lr=self.critic_lr
+            )
+
+    # ------------------------------------------------------------------
+    def predict(self, state: Tuple[int, ...]) -> torch.Tensor:
+        self._ensure_model(len(state))
+        assert torch is not None and self.actor is not None
+        with torch.no_grad():
+            s = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+            logits = self.actor(s)
+        return logits.squeeze(0)
+
+    # ------------------------------------------------------------------
+    def select_action(
+        self,
+        state: Tuple[int, ...],
+        *,
+        epsilon: float = 0.1,
+        temperature: float = 1.0,
+        exploration: str = "epsilon_greedy",
+    ) -> int:
+        if torch is None or self.actor is None:
+            actions = list(range(self.config.action_dim or 2))
+            if random.random() < epsilon:
+                return random.choice(actions)
+            return actions[0]
+        logits = self.predict(state)
+        actions = list(range(self.action_dim))
+        if exploration == "softmax":
+            t = max(0.01, temperature)
+            probs = F.softmax(logits / t, dim=0).tolist()
+            return random.choices(actions, weights=probs, k=1)[0]
+        if random.random() < epsilon:
+            return random.choice(actions)
+        return int(torch.argmax(logits).item())
+
+    # ------------------------------------------------------------------
     def update(
         self,
         table: Dict[Tuple[int, ...], Dict[int, float]],
@@ -234,14 +313,48 @@ class ActorCriticStrategy(RLStrategy):
         gamma: float,
     ) -> float:
         self._validate(state, action)
-        state_table = table.setdefault(state, {})
-        q = state_table.get(action, 0.0)
-        v = self.state_values.get(state, 0.0)
-        next_v = self.state_values.get(next_state, 0.0) if next_state is not None else 0.0
-        td_error = reward + gamma * next_v - v
-        self.state_values[state] = v + alpha * td_error
-        state_table[action] = q + alpha * td_error
-        return state_table[action]
+        if torch is None or self.actor is None or self.critic is None:
+            state_table = table.setdefault(state, {})
+            q = state_table.get(action, 0.0)
+            v = getattr(self, "state_values", {}).get(state, 0.0)
+            next_v = (
+                getattr(self, "state_values", {}).get(next_state, 0.0)
+                if next_state is not None
+                else 0.0
+            )
+            td_error = reward + gamma * next_v - v
+            getattr(self, "state_values", {})[state] = v + alpha * td_error
+            state_table[action] = q + alpha * td_error
+            return state_table[action]
+
+        self._ensure_model(len(state))
+        assert self.actor_opt is not None and self.critic_opt is not None
+        s_t = torch.tensor(state, dtype=torch.float32)
+        v = self.critic(s_t).squeeze(0)
+        logits = self.actor(s_t)
+        dist = torch.distributions.Categorical(logits=logits)
+        log_prob = dist.log_prob(torch.tensor(action))
+        entropy = dist.entropy()
+        with torch.no_grad():
+            if next_state is not None:
+                ns_t = torch.tensor(next_state, dtype=torch.float32)
+                next_v = self.critic(ns_t).squeeze(0)
+            else:
+                next_v = torch.tensor(0.0)
+            advantage = reward + gamma * next_v - v
+
+        actor_loss = -(log_prob * advantage.detach() + self.entropy_beta * entropy)
+        critic_loss = advantage.pow(2)
+
+        self.actor_opt.zero_grad()
+        actor_loss.backward()
+        self.actor_opt.step()
+
+        self.critic_opt.zero_grad()
+        critic_loss.backward()
+        self.critic_opt.step()
+
+        return float(v.detach().item())
 
 
 @dataclass
@@ -917,50 +1030,106 @@ class SelfImprovementPolicy:
         return policy
 
     def save_dqn_weights(self, base: str) -> None:
-        if torch is None or not hasattr(self.strategy, "model"):
+        if torch is None:
             return
-        model = getattr(self.strategy, "model", None)
+        strat = self.strategy
+        model = getattr(strat, "model", None)
         if model is not None:
             torch.save(model.state_dict(), base + ".pt")
-        target = getattr(self.strategy, "target_model", None)
+        target = getattr(strat, "target_model", None)
         if target is not None:
             torch.save(target.state_dict(), base + ".target.pt")
+        optimizer = getattr(strat, "optimizer", None)
+        if optimizer is not None:
+            torch.save(optimizer.state_dict(), base + ".opt.pt")
+        actor = getattr(strat, "actor", None)
+        if actor is not None:
+            torch.save(actor.state_dict(), base + ".actor.pt")
+        critic = getattr(strat, "critic", None)
+        if critic is not None:
+            torch.save(critic.state_dict(), base + ".critic.pt")
+        actor_opt = getattr(strat, "actor_opt", None)
+        if actor_opt is not None:
+            torch.save(actor_opt.state_dict(), base + ".actor.opt.pt")
+        critic_opt = getattr(strat, "critic_opt", None)
+        if critic_opt is not None:
+            torch.save(critic_opt.state_dict(), base + ".critic.opt.pt")
 
     def load_dqn_weights(self, base: str) -> None:
-        if torch is None or not hasattr(self.strategy, "model"):
+        if torch is None:
             return
+        strat = self.strategy
+
+        def ensure(dim: int) -> None:
+            if hasattr(strat, "_ensure_model"):
+                strat._ensure_model(dim)  # type: ignore[attr-defined]
+
+        def infer_dim(state_dict: Dict[str, torch.Tensor]) -> int:
+            first = next(iter(state_dict.values()))
+            return int(first.shape[1]) if first.ndim > 1 else int(first.shape[0])
+
         model_path = base + ".pt"
         if os.path.exists(model_path):
             state_dict = torch.load(model_path, map_location="cpu")
-            if hasattr(self.strategy, "_ensure_model"):
-                if (
-                    getattr(self.strategy, "config", None)
-                    and self.strategy.config.state_dim is None
-                ):
-                    first = next(iter(state_dict.values()))
-                    dim = first.shape[1]
-                else:
-                    dim = getattr(self.strategy.config, "state_dim", 1)
-                self.strategy._ensure_model(dim)  # type: ignore[attr-defined]
-            model = getattr(self.strategy, "model", None)
+            if getattr(strat, "config", None) and getattr(strat.config, "state_dim", None) is None:
+                dim = infer_dim(state_dict)
+                ensure(dim)
+            else:
+                ensure(getattr(strat.config, "state_dim", 1))
+            model = getattr(strat, "model", None)
             if model is not None:
                 model.load_state_dict(state_dict)
         target_path = base + ".target.pt"
-        if os.path.exists(target_path) and hasattr(self.strategy, "target_model"):
+        if os.path.exists(target_path) and hasattr(strat, "target_model"):
             target_state = torch.load(target_path, map_location="cpu")
-            if hasattr(self.strategy, "_ensure_model"):
-                if (
-                    getattr(self.strategy, "config", None)
-                    and self.strategy.config.state_dim is None
-                ):
-                    first = next(iter(target_state.values()))
-                    dim = first.shape[1]
-                else:
-                    dim = getattr(self.strategy.config, "state_dim", 1)
-                self.strategy._ensure_model(dim)  # type: ignore[attr-defined]
-            target = getattr(self.strategy, "target_model", None)
+            if getattr(strat, "config", None) and getattr(strat.config, "state_dim", None) is None:
+                dim = infer_dim(target_state)
+                ensure(dim)
+            else:
+                ensure(getattr(strat.config, "state_dim", 1))
+            target = getattr(strat, "target_model", None)
             if target is not None:
                 target.load_state_dict(target_state)
+        opt_path = base + ".opt.pt"
+        if os.path.exists(opt_path) and hasattr(strat, "optimizer"):
+            opt_state = torch.load(opt_path, map_location="cpu")
+            optimizer = getattr(strat, "optimizer", None)
+            if optimizer is not None:
+                optimizer.load_state_dict(opt_state)
+        actor_path = base + ".actor.pt"
+        if os.path.exists(actor_path):
+            state_dict = torch.load(actor_path, map_location="cpu")
+            if getattr(strat, "config", None) and getattr(strat.config, "state_dim", None) is None:
+                dim = infer_dim(state_dict)
+                ensure(dim)
+            else:
+                ensure(getattr(strat.config, "state_dim", 1))
+            actor = getattr(strat, "actor", None)
+            if actor is not None:
+                actor.load_state_dict(state_dict)
+        critic_path = base + ".critic.pt"
+        if os.path.exists(critic_path):
+            state_dict = torch.load(critic_path, map_location="cpu")
+            if getattr(strat, "config", None) and getattr(strat.config, "state_dim", None) is None:
+                dim = infer_dim(state_dict)
+                ensure(dim)
+            else:
+                ensure(getattr(strat.config, "state_dim", 1))
+            critic = getattr(strat, "critic", None)
+            if critic is not None:
+                critic.load_state_dict(state_dict)
+        actor_opt_path = base + ".actor.opt.pt"
+        if os.path.exists(actor_opt_path) and hasattr(strat, "actor_opt"):
+            actor_opt_state = torch.load(actor_opt_path, map_location="cpu")
+            actor_opt = getattr(strat, "actor_opt", None)
+            if actor_opt is not None:
+                actor_opt.load_state_dict(actor_opt_state)
+        critic_opt_path = base + ".critic.opt.pt"
+        if os.path.exists(critic_opt_path) and hasattr(strat, "critic_opt"):
+            critic_opt_state = torch.load(critic_opt_path, map_location="cpu")
+            critic_opt = getattr(strat, "critic_opt", None)
+            if critic_opt is not None:
+                critic_opt.load_state_dict(critic_opt_state)
 
     def save(self, path: Optional[str] = None) -> None:
         fp = path or self.path
