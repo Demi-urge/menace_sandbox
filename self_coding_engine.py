@@ -108,7 +108,7 @@ except Exception:  # pragma: no cover - defensive fallback
 from .roi_tracker import ROITracker
 from .patch_provenance import record_patch_metadata
 from .prompt_engine import PromptEngine
-from .error_parser import ErrorParser
+from .error_parser import ErrorParser, ErrorReport, parse_failure
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -1176,7 +1176,7 @@ class SelfCodingEngine:
                 try:
                     subprocess.run(["git", "push", "origin", "HEAD:main"], check=True)
                 except Exception as exc:
-                    self.logger.exception("git push failed", exc_info=True)
+                    self.logger.exception("git push failed: %s", exc)
             try:
                 from sandbox_runner import post_round_orphan_scan
                 post_round_orphan_scan(Path.cwd(), router=self.router)
@@ -1276,6 +1276,98 @@ class SelfCodingEngine:
             {"path": str(path), "success": not reverted, "patch_id": patch_id},
         )
         return patch_id, reverted, roi_delta
+
+    def _build_retry_context(
+        self, description: str, report: "ErrorReport" | None
+    ) -> Dict[str, Any]:
+        """Return retrieval metadata incorporating failure details."""
+
+        meta: Dict[str, Any] = {}
+        builder = getattr(self.cognition_layer, "context_builder", None)
+        failure_obj = None
+        exclude: List[str] | None = None
+        if report is not None:
+            from types import SimpleNamespace
+
+            failure_obj = SimpleNamespace(
+                error_type=report.tags[0] if report.tags else "",
+                reproduction_steps=[report.trace],
+            )
+            exclude = list(report.tags)
+            meta["retry_trace"] = report.trace
+        if builder is None:
+            return meta
+        failed_tags: list[str] = []
+        if self.patch_suggestion_db:
+            try:
+                failed_tags = self.patch_suggestion_db.failed_strategy_tags()
+                builder.exclude_failed_strategies(failed_tags)
+            except Exception:
+                self.logger.exception("failed to apply strategy exclusions")
+        try:
+            ctx, sid = builder.query(
+                description,
+                exclude_tags=exclude,
+                failure=failure_obj,
+            )
+            meta.update({"retrieval_context": ctx, "retrieval_session_id": sid})
+        except Exception:
+            meta.update({"retrieval_context": "", "retrieval_session_id": ""})
+        return meta
+
+    def apply_patch_with_retry(
+        self,
+        path: Path,
+        description: str,
+        *,
+        max_attempts: int = 1,
+        report: "ErrorReport" | None = None,
+        **kwargs: Any,
+    ) -> tuple[int | None, bool, float]:
+        """Retry :meth:`apply_patch` until tests pass or ``max_attempts`` reached."""
+
+        attempts = 0
+        current = report
+        failures: List[ErrorReport] = []
+        context_meta = kwargs.pop("context_meta", None)
+        while attempts < max_attempts:
+            attempts += 1
+            meta = context_meta if attempts == 1 and context_meta is not None else None
+            if current or meta is None:
+                meta = self._build_retry_context(description, current)
+            pid, reverted, delta = self.apply_patch(
+                path,
+                description,
+                context_meta=meta,
+                **kwargs,
+            )
+            if pid is not None:
+                if failures and self.patch_db:
+                    try:
+                        self.patch_db.record_vector_metrics(
+                            "",
+                            [],
+                            patch_id=pid,
+                            contribution=0.0,
+                            roi_delta=0.0,
+                            win=not reverted,
+                            regret=reverted,
+                            errors=[{"trace": f.trace, "tags": f.tags} for f in failures],
+                            error_trace_count=len(failures),
+                        )
+                    except Exception:
+                        self.logger.exception("failed to record failure traces")
+                return pid, reverted, delta
+            trace = self._last_retry_trace or ""
+            current = parse_failure(trace)
+            failures.append(current)
+            try:
+                self.audit_trail.record(
+                    {"failure_trace": current.trace, "tags": current.tags}
+                )
+            except Exception:
+                self.logger.exception("audit trail logging failed")
+        return None, False, 0.0
 
     def rollback_patch(self, patch_id: str) -> None:
         """Revert a previously applied patch identified by *patch_id*."""
