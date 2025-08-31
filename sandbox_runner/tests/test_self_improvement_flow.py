@@ -7,8 +7,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-import pytest
-from sandbox_settings import SandboxSettings
+from sandbox_settings import SandboxSettings  # noqa: E402
 
 
 def _load_module(name: str, path: Path):
@@ -78,7 +77,7 @@ def test_init_creates_and_clamps_synergy_weights(tmp_path, monkeypatch):
     assert data["roi"] == 10.0
     assert data["efficiency"] == 0.0
     # defaults applied for missing keys and clamped into range
-    for key in init_module.DEFAULT_SYNERGY_WEIGHTS:
+    for key in init_module.get_default_synergy_weights():
         assert 0.0 <= data[key] <= 10.0
 
 
@@ -143,7 +142,9 @@ def test_start_self_improvement_cycle_thread(tmp_path, monkeypatch):
     monkeypatch.setattr(meta_planning, "self_improvement_cycle", fake_cycle)
 
     thread = meta_planning.start_self_improvement_cycle(
-        {"w": lambda: None}, event_bus=types.SimpleNamespace(publish=lambda *a, **k: None), interval=0
+        {"w": lambda: None},
+        event_bus=types.SimpleNamespace(publish=lambda *a, **k: None),
+        interval=0,
     )
 
     assert thread.daemon

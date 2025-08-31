@@ -300,7 +300,7 @@ def test_load_invalid_file_uses_defaults(tmp_path, caplog):
     path.write_text("{\"roi\": 1.0}")
     caplog.set_level("WARNING")
     learner = sie.SynergyWeightLearner(path=path)
-    assert learner.weights == sie.DEFAULT_SYNERGY_WEIGHTS
+    assert learner.weights == sie.get_default_synergy_weights()
     assert "invalid synergy weight data" in caplog.text
 
 
