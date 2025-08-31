@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from .utils import _load_callable, _call_with_retries
+from ..sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - simplified environments
     from ..logging_utils import log_record
@@ -13,8 +14,14 @@ except Exception:  # pragma: no cover - best effort
         return fields
 
 
+_settings = SandboxSettings()
+
+
 def generate_patch(
-    *args: object, retries: int = 3, delay: float = 0.1, **kwargs: object
+    *args: object,
+    retries: int = _settings.patch_retries,
+    delay: float = _settings.patch_retry_delay,
+    **kwargs: object,
 ) -> int:
     """Generate a patch via :mod:`quick_fix_engine`.
 

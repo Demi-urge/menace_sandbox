@@ -146,6 +146,8 @@ def _load_engine():
         growth_multiplier_linear=1.0,
         growth_multiplier_marginal=0.8,
         sandbox_data_dir=".",
+        patch_retries=3,
+        patch_retry_delay=0.1,
     )
     sys.modules["sandbox_settings"] = sandbox_settings
 

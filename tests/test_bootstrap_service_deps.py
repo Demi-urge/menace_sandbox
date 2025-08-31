@@ -33,6 +33,8 @@ class SandboxSettings:
             "relevancy_radar": "1.0.0",
             "quick_fix_engine": "1.0.0",
         }
+        self.patch_retries = 3
+        self.patch_retry_delay = 0.1
 
 
 sandbox_settings.SandboxSettings = SandboxSettings

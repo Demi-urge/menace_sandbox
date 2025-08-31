@@ -1876,6 +1876,8 @@ class SelfImprovementEngine:
         action: str,
         *,
         tags: Sequence[str] | None = None,
+        retries: int | None = None,
+        delay: float | None = None,
     ) -> int | None:
         start = time.perf_counter()
         history = self._memory_summaries(module)
@@ -1915,7 +1917,14 @@ class SelfImprovementEngine:
                     "gpt suggestion failed", extra=log_record(module=module)
                 )
         try:
-            patch_id = self._patch_generator(module, self.self_coding_engine)
+            gen_kwargs: dict[str, object] = {}
+            if retries is not None:
+                gen_kwargs["retries"] = retries
+            if delay is not None:
+                gen_kwargs["delay"] = delay
+            patch_id = self._patch_generator(
+                module, self.self_coding_engine, **gen_kwargs
+            )
         except RuntimeError as exc:
             self.logger.error("quick_fix_engine unavailable: %s", exc)
             raise
@@ -5995,7 +6004,13 @@ class SelfImprovementEngine:
         """Return latest module relevancy flags for downstream pipelines."""
         return dict(self.relevancy_flags)
 
-    def _handle_relevancy_flags(self, flags: dict[str, str]) -> None:
+    def _handle_relevancy_flags(
+        self,
+        flags: dict[str, str],
+        *,
+        retries: int | None = None,
+        delay: float | None = None,
+    ) -> None:
         """Process relevancy radar flags and trigger follow-up actions."""
         service = ModuleRetirementService(_repo_path())
         try:
@@ -6051,8 +6066,15 @@ class SelfImprovementEngine:
             if self.self_coding_engine:
                 try:
                     context = {"synergy_cluster": list(cluster)} if cluster else None
+                    gen_kwargs: dict[str, object] = {}
+                    if context is not None:
+                        gen_kwargs["context"] = context
+                    if retries is not None:
+                        gen_kwargs["retries"] = retries
+                    if delay is not None:
+                        gen_kwargs["delay"] = delay
                     task_id = self._patch_generator(
-                        mod, self.self_coding_engine, context=context
+                        mod, self.self_coding_engine, **gen_kwargs
                     )
                 except RuntimeError as exc:
                     self.logger.error("quick_fix_engine unavailable: %s", exc)

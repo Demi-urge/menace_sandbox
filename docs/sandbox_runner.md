@@ -441,6 +441,8 @@ Network behaviour can be tuned with:
   posture.
 - `SANDBOX_PATCH_RETRIES` – number of patch attempts `SelfDebuggerSandbox`
   performs before giving up (default `3`).
+- `SANDBOX_PATCH_RETRY_DELAY` – delay in seconds between patch attempts
+  (default `0.1`).
 - `VISUAL_AGENT_TOKEN` – authentication token passed to `menace_visual_agent_2.py`.
 - `SANDBOX_REPO_PATH` – local path of the sandbox repository clone.
 - `SANDBOX_DATA_DIR` – directory used for ROI history and patch records.
