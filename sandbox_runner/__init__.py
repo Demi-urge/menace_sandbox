@@ -121,7 +121,10 @@ if not _LIGHT_IMPORTS:
 
 from .resource_tuner import ResourceTuner  # noqa: E402
 from .workflow_sandbox_runner import WorkflowSandboxRunner  # noqa: E402
-from .test_harness import run_tests, TestHarnessResult  # noqa: E402
+if _LIGHT_IMPORTS:
+    run_tests = TestHarnessResult = None  # type: ignore[assignment]
+else:
+    from .test_harness import run_tests, TestHarnessResult  # noqa: E402
 if _LIGHT_IMPORTS:
     def _run_sandbox(*_a, **_k):
         raise RuntimeError("CLI disabled in light import mode")

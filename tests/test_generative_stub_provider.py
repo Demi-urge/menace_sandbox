@@ -4,6 +4,7 @@ import subprocess
 import sys
 import importlib
 import time
+import types
 import pytest
 import logging
 from pathlib import Path
@@ -15,6 +16,11 @@ if str(ROOT) not in sys.path:
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 sys.modules.pop("sandbox_runner", None)
+# stub out heavy test harness dependency to avoid package import issues
+th_stub = types.ModuleType("sandbox_runner.test_harness")
+th_stub.run_tests = lambda *a, **k: None
+th_stub.TestHarnessResult = object
+sys.modules.setdefault("sandbox_runner.test_harness", th_stub)
 import sandbox_runner.generative_stub_provider as gsp  # noqa: E402
 
 
@@ -352,7 +358,7 @@ def test_cache_persist_after_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(gsp_mod, "_aload_generator", loader_ok)
 
     calls: list[str] = []
-    orig_asave = gsp_mod._asave_cache
+    orig_asave = gsp_mod._async_save_cache
 
     async def slow_asave():
         calls.append("start")
@@ -360,7 +366,7 @@ def test_cache_persist_after_failure(monkeypatch, tmp_path):
         await orig_asave()
         calls.append("end")
 
-    monkeypatch.setattr(gsp_mod, "_asave_cache", slow_asave)
+    monkeypatch.setattr(gsp_mod, "_async_save_cache", slow_asave)
 
     def target(x: int) -> None:
         pass
@@ -392,10 +398,9 @@ def test_cache_persist_after_failure(monkeypatch, tmp_path):
                 )
             )
     finally:
+        gsp_mod._atexit_save_cache()
+        loop.close()
         asyncio.set_event_loop(None)
-
-    gsp_mod._atexit_save_cache()
-    loop.close()
 
     assert path.exists()
     assert calls == ["start", "end"]
@@ -437,3 +442,43 @@ async def test_concurrent_stub_generation(monkeypatch, tmp_path):
     with gsp_mod._CACHE_LOCK:
         assert len(gsp_mod._CACHE) == 1
     assert dummy.calls >= 1
+
+
+def test_load_generator_openai_missing_key(monkeypatch):
+    monkeypatch.setenv("SANDBOX_ENABLE_OPENAI", "1")
+    monkeypatch.setenv("SANDBOX_STUB_MODEL", "openai")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "openai", types.ModuleType("openai"))
+    gsp_mod = importlib.reload(gsp)
+    with pytest.raises(gsp_mod.ModelLoadError):
+        asyncio.run(gsp_mod._aload_generator())
+
+
+def test_load_generator_transformers_disabled(monkeypatch):
+    monkeypatch.setenv("SANDBOX_ENABLE_TRANSFORMERS", "0")
+    gsp_mod = importlib.reload(gsp)
+    with pytest.raises(gsp_mod.ModelLoadError):
+        asyncio.run(gsp_mod._aload_generator())
+
+
+def test_load_generator_fallback_failure(monkeypatch):
+    monkeypatch.setenv("SANDBOX_ENABLE_TRANSFORMERS", "1")
+    gsp_mod = importlib.reload(gsp)
+
+    def bad_pipeline(*_a, **_k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(gsp_mod, "pipeline", bad_pipeline)
+    with pytest.raises(gsp_mod.ModelLoadError):
+        asyncio.run(gsp_mod._aload_generator())
+
+
+def test_stub_generation_aborts_on_model_error(monkeypatch):
+    gsp_mod = importlib.reload(gsp)
+
+    async def loader():
+        raise gsp_mod.ModelLoadError("no model")
+
+    monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
+    ctx = {"strategy": "synthetic", "target": None}
+    assert gsp_mod.generate_stubs([{"x": 1}], ctx) == [{"x": 1}]

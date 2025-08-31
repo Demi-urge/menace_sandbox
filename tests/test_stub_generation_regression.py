@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
+import types
 
+th_stub = types.ModuleType("sandbox_runner.test_harness")
+th_stub.run_tests = lambda *a, **k: None
+th_stub.TestHarnessResult = object
+sys.modules.setdefault("sandbox_runner.test_harness", th_stub)
 import sandbox_runner.generative_stub_provider as gsp
 
 
