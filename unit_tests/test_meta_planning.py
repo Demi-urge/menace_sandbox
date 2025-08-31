@@ -94,7 +94,16 @@ def test_cycle_uses_fallback_planner_when_missing():
                 meta_entropy_threshold=0.2,
                 enable_meta_planner=False,
             ),
-            "STABLE_WORKFLOWS": types.SimpleNamespace(),
+            "_init": types.SimpleNamespace(
+                settings=types.SimpleNamespace(
+                    meta_mutation_rate=0.0,
+                    meta_roi_weight=0.0,
+                    meta_domain_penalty=0.0,
+                    meta_entropy_threshold=0.2,
+                    enable_meta_planner=False,
+                )
+            ),
+            "get_stable_workflows": lambda: types.SimpleNamespace(),
         }
     )
 
@@ -124,7 +133,16 @@ def test_cycle_fails_when_enabled_but_missing():
                 meta_entropy_threshold=0.2,
                 enable_meta_planner=True,
             ),
-            "STABLE_WORKFLOWS": types.SimpleNamespace(),
+            "_init": types.SimpleNamespace(
+                settings=types.SimpleNamespace(
+                    meta_mutation_rate=0.0,
+                    meta_roi_weight=0.0,
+                    meta_domain_penalty=0.0,
+                    meta_entropy_threshold=0.2,
+                    enable_meta_planner=True,
+                )
+            ),
+            "get_stable_workflows": lambda: types.SimpleNamespace(),
             "_FallbackPlanner": object,
         }
     )

@@ -120,7 +120,7 @@ def test_full_self_improvement_cycle(monkeypatch):
                     meta_entropy_threshold=None,
                 )
             ),
-            "STABLE_WORKFLOWS": global_db,
+            "get_stable_workflows": lambda: global_db,
         }
     )
 

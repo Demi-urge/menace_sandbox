@@ -530,7 +530,24 @@ def _validate_config(cfg: SandboxSettings) -> None:
 
 DEFAULT_ENTROPY_THRESHOLD = 0.2
 reload_settings(settings)
-STABLE_WORKFLOWS = WorkflowStabilityDB()
+_stable_workflows: WorkflowStabilityDB | None = None
+
+
+def get_stable_workflows() -> WorkflowStabilityDB:
+    """Return the cached :class:`WorkflowStabilityDB` instance.
+
+    The database connection is created lazily on first access and wrapped in a
+    ``try``/``except`` block so callers receive a descriptive ``RuntimeError``
+    if initialisation fails.
+    """
+
+    global _stable_workflows
+    if _stable_workflows is None:
+        try:
+            _stable_workflows = WorkflowStabilityDB()
+        except Exception as exc:  # pragma: no cover - best effort
+            raise RuntimeError("WorkflowStabilityDB initialisation failed") from exc
+    return _stable_workflows
 
 
 def _get_entropy_threshold(
@@ -587,7 +604,8 @@ async def self_improvement_cycle(
         if hasattr(planner, name):
             setattr(planner, name, value)
 
-    entropy_threshold = _get_entropy_threshold(cfg, STABLE_WORKFLOWS)
+    stability_db = get_stable_workflows()
+    entropy_threshold = _get_entropy_threshold(cfg, stability_db)
 
     async def _log(record: Mapping[str, Any]) -> None:
         chain = record.get("chain", [])
@@ -656,7 +674,7 @@ async def self_improvement_cycle(
                     active.append(chain)
                     chain_id = "->".join(chain)
                     try:
-                        STABLE_WORKFLOWS.record_metrics(
+                        stability_db.record_metrics(
                             chain_id, roi, failures, entropy, roi_delta=roi
                         )
                     except Exception as exc:  # pragma: no cover - best effort
