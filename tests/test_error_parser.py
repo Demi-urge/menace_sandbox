@@ -1,6 +1,6 @@
 import traceback
 
-from error_parser import parse_failure
+from error_parser import ErrorParser
 
 
 def test_parse_pytest_assertion():
@@ -9,8 +9,11 @@ def test_parse_pytest_assertion():
         "    assert 1 == 2\n"
         "E   AssertionError: assert 1 == 2\n"
     )
-    report = parse_failure(trace)
-    assert report.tags == ["assertion_error"]
+    result = ErrorParser.parse(trace)
+    assert result["error_type"] == "assertion_error"
+    assert result["files"] == ["tests/test_sample.py"]
+    assert result["tags"] == ["assertion_error"]
+    assert result["signature"]
 
 
 def test_parse_runtime_error():
@@ -18,5 +21,14 @@ def test_parse_runtime_error():
         1 / 0
     except ZeroDivisionError:
         trace = traceback.format_exc()
-    report = parse_failure(trace)
-    assert "zero_division_error" in report.tags
+    result = ErrorParser.parse(trace)
+    assert "zero_division_error" in result["tags"]
+    assert result["error_type"] == "zero_division_error"
+
+
+def test_parse_duplicate_skipped():
+    trace = "Traceback\nValueError: boom"
+    first = ErrorParser.parse(trace)
+    second = ErrorParser.parse(trace)
+    assert first
+    assert second == {}

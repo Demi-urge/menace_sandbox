@@ -106,7 +106,7 @@ def run_tests(repo_path: Path, changed_path: Path | None = None) -> TestHarnessR
         stdout_parts.append(tests.stdout)
         failure = None
         if tests.returncode != 0:
-            failure = ErrorParser.parse_failure(tests.stdout + tests.stderr)
+            failure = ErrorParser.parse(tests.stdout + tests.stderr)
         return TestHarnessResult(
             success=tests.returncode == 0,
             stdout="".join(stdout_parts),
@@ -116,4 +116,3 @@ def run_tests(repo_path: Path, changed_path: Path | None = None) -> TestHarnessR
         )
     finally:
         tmpdir_obj.cleanup()
-

@@ -152,10 +152,10 @@ class SelfCodingManager:
                     raise RuntimeError("patch tests failed")
 
                 failure = harness_result.failure or {}
-                trace = failure.get("stack") or harness_result.stderr or harness_result.stdout or ""
+                trace = failure.get("trace") or harness_result.stderr or harness_result.stdout or ""
                 if self._failure_cache.seen(trace):
                     raise RuntimeError("patch tests failed")
-                tags = [t for t in [failure.get("strategy_tag")] if t]
+                tags = failure.get("tags", [])
                 self._failure_cache.add(ErrorReport(trace=trace, tags=tags))
                 try:
                     record_failed_tags(list(tags))
