@@ -92,7 +92,8 @@ def main(
             try:
                 cur = gpt_mem.conn.execute("SELECT COUNT(*) FROM interactions")
                 count = cur.fetchone()[0]
-            except Exception:
+            except Exception as exc:
+                logger.exception("interaction count failed", exc_info=exc)
                 count = 0
             if count - last >= prune_interval:
                 try:
