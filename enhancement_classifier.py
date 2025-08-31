@@ -33,6 +33,11 @@ try:  # pragma: no cover - allow package/flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from code_database import CodeDB, PatchHistoryDB  # type: ignore
 
+try:  # pragma: no cover - allow patch suggestion imports
+    from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
+except Exception:  # pragma: no cover - fallback for flat layout
+    from patch_suggestion_db import PatchSuggestionDB, SuggestionRecord  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -228,7 +233,8 @@ class EnhancementClassifier:
                 for block in blocks:
                     if block.complexity > 10:
                         issues.append(
-                            f"function {block.name} exhibits high cyclomatic complexity ({block.complexity})"
+                            f"function {block.name} exhibits high cyclomatic complexity "
+                            f"({block.complexity})"
                         )
                         penalty += block.complexity - 10
                 return penalty, issues
@@ -277,7 +283,7 @@ class EnhancementClassifier:
     # ------------------------------------------------------------------
     def scan_repo(self) -> Iterator[EnhancementSuggestion]:
         """Yield scored suggestions for modules that warrant attention."""
-
+        suggestion_db = PatchSuggestionDB()
         with self.code_db._connect() as conn:  # type: ignore[attr-defined]
             code_ids = [row[0] for row in conn.execute("SELECT id FROM code").fetchall()]
 
@@ -330,8 +336,20 @@ class EnhancementClassifier:
             if all_notes:
                 rationale += "; " + "; ".join(all_notes)
 
-            yield EnhancementSuggestion(path=filename, score=score, rationale=rationale)
+            suggestion = EnhancementSuggestion(path=filename, score=score, rationale=rationale)
+            try:
+                rec = SuggestionRecord(
+                    module=filename,
+                    description=rationale,
+                    score=score,
+                    rationale=rationale,
+                    patch_count=patches,
+                    module_id=str(cid),
+                )
+                suggestion_db.add(rec)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed recording suggestion for %s", filename)
+            yield suggestion
 
 
 __all__ = ["EnhancementClassifier", "EnhancementSuggestion"]
-
