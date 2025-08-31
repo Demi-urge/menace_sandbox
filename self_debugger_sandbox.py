@@ -37,7 +37,7 @@ from .code_database import PatchHistoryDB, _hash_code
 from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
 from .error_cluster_predictor import ErrorClusterPredictor
-from .error_parser import FailureCache, ParsedFailure, parse_failure
+from .error_parser import ErrorParser, FailureCache
 from sandbox_runner.environment import create_ephemeral_repo
 try:
     from .sandbox_settings import SandboxSettings
@@ -430,8 +430,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     # ------------------------------------------------------------------
     def _run_tests(
         self, path: Path, env: dict[str, str] | None = None
-    ) -> tuple[float, float] | tuple[float, float, ParsedFailure]:
-        """Return coverage and runtime and optionally a :class:`ParsedFailure`."""
+    ) -> tuple[float, float] | tuple[float, float, dict]:
+        """Return coverage and runtime and optionally a parsed failure dict."""
         test_paths = [path]
         tmp: Path | None = None
         self._last_test_log = None
@@ -450,7 +450,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             self.logger.exception("failed to create telemetry tests")
 
         start = time.perf_counter()
-        failure: ParsedFailure | None = None
+        failure: dict | None = None
         try:
             percent = with_retry(
                 lambda: asyncio.run(self._coverage_percent(test_paths, env)),
@@ -467,16 +467,16 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 self._last_test_log = log_file
             except Exception:
                 self.logger.exception("failed to write test log")
-            failure = parse_failure(output)
-            if not self._failure_cache.seen(failure.signature):
+            failure = ErrorParser.parse_failure(output)
+            if not self._failure_cache.seen(failure["signature"]):
                 self._failure_cache.add(failure)
             self._record_exception(exc)
             percent = 0.0
         except Exception as exc:
             runtime = time.perf_counter() - start
             output = str(exc)
-            failure = parse_failure(output)
-            if not self._failure_cache.seen(failure.signature):
+            failure = ErrorParser.parse_failure(output)
+            if not self._failure_cache.seen(failure["signature"]):
                 self._failure_cache.add(failure)
             percent = 0.0
             self._record_exception(exc)
@@ -604,7 +604,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         return s_roi, s_eff, s_res, s_af
 
     # ------------------------------------------------------------------
-    def _retry_with_feedback(self, parsed_failure: ParsedFailure) -> list[str]:
+    def _retry_with_feedback(self, parsed_failure: dict) -> list[str]:
         """Fetch new examples excluding previously failed strategies."""
 
         if ContextBuilder is None:
@@ -1497,7 +1497,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 roi_delta = 0.0
                 runtime_delta = 0.0
                 reason = None
-                failure: ParsedFailure | None = None
+                failure: dict | None = None
                 try:
                     res = self._run_tests(root_test)
                     before_cov, before_runtime = res[:2]
@@ -1579,12 +1579,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         patched = not reverted and patch_score >= self.score_threshold
                 except RuntimeError as exc:
                     reason = f"sandbox tests failed: {exc}"
-                    failure = parse_failure(str(exc))
+                    failure = ErrorParser.parse_failure(str(exc))
                     self._record_exception(exc)
                     self.logger.error("sandbox tests failed", exc_info=exc)
                 except Exception as exc:
                     reason = f"{type(exc).__name__}: {exc}"
-                    failure = parse_failure(str(exc))
+                    failure = ErrorParser.parse_failure(str(exc))
                     self._record_exception(exc)
                     self.logger.exception("patch failed")
                 finally:

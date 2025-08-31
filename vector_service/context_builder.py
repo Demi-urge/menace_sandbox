@@ -6,7 +6,9 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
-from error_parser import ParsedFailure
+# ``ParsedFailure`` previously provided structured failure info.  The new parser
+# returns dictionaries so we reference the type indirectly to avoid tight
+# coupling.
 import logging
 import asyncio
 import uuid
@@ -895,7 +897,7 @@ class ContextBuilder:
         prioritise: str | None = None,
         exclude_tags: Iterable[str] | None = None,
         exclude_strategies: Iterable[str] | None = None,
-        failure: ParsedFailure | None = None,
+        failure: dict | None = None,
         **_: Any,
     ) -> Any:
         """Return a compact JSON context for ``query``.
@@ -1190,7 +1192,7 @@ class ContextBuilder:
         prioritise: str | None = None,
         exclude_tags: Iterable[str] | None = None,
         exclude_strategies: Iterable[str] | None = None,
-        failure: ParsedFailure | None = None,
+        failure: dict | None = None,
         **kwargs: Any,
     ) -> Any:
         """Alias for :meth:`build_context` with optional tag exclusion."""
