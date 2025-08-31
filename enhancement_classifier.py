@@ -64,11 +64,13 @@ class EnhancementClassifier:
     ) -> None:
         self.code_db = code_db or CodeDB()
         self.patch_db = patch_db or PatchHistoryDB()
-        self.weights = self._load_weights(config_path)
+        self.weights, self.thresholds = self._load_weights(config_path)
 
     # ------------------------------------------------------------------
-    def _load_weights(self, config_path: str | None) -> dict[str, float]:
-        """Load metric weights from a JSON or YAML configuration file."""
+    def _load_weights(
+        self, config_path: str | None
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        """Load metric weights and scan thresholds from a configuration file."""
 
         path = config_path or os.getenv(
             "ENHANCEMENT_CLASSIFIER_CONFIG", "enhancement_classifier_config.json"
@@ -83,19 +85,31 @@ class EnhancementClassifier:
             "length": 1.0,
             "anti": 1.0,
         }
+        thresholds = {
+            "min_patches": 3.0,
+            "roi_cutoff": 0.0,
+            "complexity_delta": 0.0,
+        }
         try:
             text = Path(path).read_text()
             if path.endswith((".yaml", ".yml")) and yaml is not None:
                 data = yaml.safe_load(text) or {}
             else:
                 data = json.loads(text)
-            data = data.get("weights", data)
+            weight_data = data.get("weights", data)
             for key in weights:
-                if key in data:
-                    weights[key] = float(data[key])
+                if key in weight_data:
+                    weights[key] = float(weight_data[key])
+            threshold_data = data.get("thresholds", {})
+            for key in thresholds:
+                if key in threshold_data:
+                    thresholds[key] = float(threshold_data[key])
         except Exception:  # pragma: no cover - fall back to defaults
-            logger.debug("using default enhancement classifier weights", exc_info=True)
-        return weights
+            logger.debug(
+                "using default enhancement classifier weights and thresholds",
+                exc_info=True,
+            )
+        return weights, thresholds
 
     # ------------------------------------------------------------------
     def _gather_metrics(
@@ -283,7 +297,7 @@ class EnhancementClassifier:
     # ------------------------------------------------------------------
     def scan_repo(self) -> Iterator[EnhancementSuggestion]:
         """Yield scored suggestions for modules that warrant attention."""
-        suggestion_db = PatchSuggestionDB()
+        suggestion_db = PatchSuggestionDB(Path("suggestions.db").resolve())
         with self.code_db._connect() as conn:  # type: ignore[attr-defined]
             code_ids = [row[0] for row in conn.execute("SELECT id FROM code").fetchall()]
 
@@ -306,9 +320,9 @@ class EnhancementClassifier:
 
             # Heuristics: flag if any inefficiency indicator is observed
             if not (
-                patches >= 3
-                or avg_roi < 0
-                or avg_complexity > 0
+                patches >= self.thresholds["min_patches"]
+                or avg_roi < self.thresholds["roi_cutoff"]
+                or avg_complexity > self.thresholds["complexity_delta"]
                 or avg_cc > 0
                 or dup_count > 0
                 or long_funcs > 0

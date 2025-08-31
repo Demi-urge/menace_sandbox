@@ -70,6 +70,7 @@ def test_scan_repo_generates_suggestions() -> None:
     # Frequency=3, ROI=-0.116..., errors=2, complexity=0.4 -> score ~5.52
     assert sugg.score > 5.5
     assert "avg ROI delta -0.12" in sugg.rationale
+    assert classifier.thresholds["min_patches"] == 3
 
 
 def test_ast_metrics_and_scoring(tmp_path: Path) -> None:
@@ -114,7 +115,7 @@ def test_ast_metrics_and_scoring(tmp_path: Path) -> None:
 
     cfg = tmp_path / "cfg.json"
     cfg.write_text(
-        """{\n  \"weights\": {\n    \"frequency\": 1.0,\n    \"roi\": 1.0,\n    \"errors\": 1.0,\n    \"complexity\": 1.0,\n    \"cyclomatic\": 1.0,\n    \"duplication\": 1.0,\n    \"length\": 1.0,\n    \"anti\": 1.0\n  }\n}\n"""
+        """{\n  \"weights\": {\n    \"frequency\": 1.0,\n    \"roi\": 1.0,\n    \"errors\": 1.0,\n    \"complexity\": 1.0,\n    \"cyclomatic\": 1.0,\n    \"duplication\": 1.0,\n    \"length\": 1.0,\n    \"anti\": 1.0\n  },\n  \"thresholds\": {\n    \"min_patches\": 5,\n    \"roi_cutoff\": -0.5,\n    \"complexity_delta\": 0.0\n  }\n}\n"""
     )
 
     classifier = EnhancementClassifier(
@@ -144,6 +145,7 @@ def test_ast_metrics_and_scoring(tmp_path: Path) -> None:
 
     suggestions = list(classifier.scan_repo())
     assert suggestions and suggestions[0].path == "mod.py"
+    assert classifier.thresholds["min_patches"] == 5
     expected = (
         classifier.weights["frequency"] * patches
         + classifier.weights["roi"] * (-avg_roi)
