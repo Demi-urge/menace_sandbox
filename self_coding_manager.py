@@ -8,7 +8,13 @@ import subprocess
 import tempfile
 from typing import Dict, Any
 
-from .error_parser import parse_failure
+from .error_parser import ErrorParser, FailureCache, ErrorReport
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder import record_failed_tags
+except Exception:  # pragma: no cover - optional dependency
+
+    def record_failed_tags(_tags: list[str]) -> None:  # type: ignore
+        return None
 
 from .sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
@@ -78,6 +84,7 @@ class SelfCodingManager:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
+        self._failure_cache = FailureCache()
 
     # ------------------------------------------------------------------
     def run_patch(
@@ -153,15 +160,25 @@ class SelfCodingManager:
                     raise RuntimeError("patch tests failed")
 
                 trace = getattr(module, "exception", "") or ""
-                report = parse_failure(trace)
+                if self._failure_cache.seen(trace):
+                    raise RuntimeError("patch tests failed")
+                failure = ErrorParser.parse_failure(trace)
+                tags = [t for t in [failure.get("strategy_tag")] if t]
+                self._failure_cache.add(
+                    ErrorReport(trace=failure.get("stack", trace), tags=tags)
+                )
+                try:
+                    record_failed_tags(list(tags))
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("failed to record failed tags")
                 self.logger.info(
                     "rebuilding context",
-                    extra={"tags": report.tags, "attempt": attempt},
+                    extra={"tags": tags, "attempt": attempt},
                 )
-                if not builder or not report.tags:
+                if not builder or not tags:
                     raise RuntimeError("patch tests failed")
                 try:
-                    ctx, sid = builder.query(description, exclude_tags=report.tags)
+                    ctx, sid = builder.query(description, exclude_tags=tags)
                     ctx_meta = {
                         "retrieval_context": ctx,
                         "retrieval_session_id": sid,
