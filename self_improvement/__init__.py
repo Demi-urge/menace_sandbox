@@ -674,10 +674,18 @@ class SynergyWeightLearner:
             return
         self._save_count += 1
         if self._save_count % self.checkpoint_interval == 0:
-            try:
-                shutil.copy(self.path, self.checkpoint_path)
-            except Exception as exc:
-                logger.warning("failed to checkpoint synergy weights: %s", exc)
+            for attempt in range(3):
+                try:
+                    shutil.copy(self.path, self.checkpoint_path)
+                    break
+                except Exception:
+                    logger.exception(
+                        "failed to checkpoint synergy weights on attempt %s",
+                        attempt + 1,
+                    )
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.1)
         try:
             pkl = Path(base + ".policy.pkl")
             _atomic_write(pkl, pickle.dumps(self.strategy), binary=True)
