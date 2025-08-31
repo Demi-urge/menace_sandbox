@@ -7,3 +7,5 @@ extra_metrics:
   orphan_modules_added: 0.0
   synergy_update_success: 0.0
   intent_update_success: 0.0
+  self_coding_cycle_success: 0.0
+  self_coding_cycle_retries: 0.0
