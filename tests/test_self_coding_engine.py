@@ -15,6 +15,7 @@ vec_mod.ContextBuilder = object  # type: ignore[attr-defined]
 vec_mod.ErrorResult = object  # type: ignore[attr-defined]
 vec_mod.PatchLogger = object  # type: ignore[attr-defined]
 vec_mod.VectorServiceError = _VSError
+vec_mod.CognitionLayer = object  # type: ignore[attr-defined]
 
 
 class _EmbeddableDBMixin:
@@ -71,7 +72,15 @@ sys.modules.setdefault("bot_database", types.SimpleNamespace(BotDB=object))
 sys.modules.setdefault("task_handoff_bot", types.SimpleNamespace(WorkflowDB=object))
 sys.modules.setdefault("error_bot", types.SimpleNamespace(ErrorDB=object))
 sys.modules.setdefault("failure_learning_system", types.SimpleNamespace(DiscrepancyDB=object))
-sys.modules.setdefault("code_database", types.SimpleNamespace(CodeDB=object))
+sys.modules.setdefault(
+    "code_database",
+    types.SimpleNamespace(
+        CodeDB=object,
+        CodeRecord=object,
+        PatchHistoryDB=object,
+        PatchRecord=object,
+    ),
+)
 sys.modules.setdefault(
     "gpt_memory",
     types.SimpleNamespace(
@@ -164,11 +173,13 @@ th_stub = types.ModuleType("sandbox_runner.test_harness")
 
 
 class _THResult:
-    def __init__(self, success, stdout="", stderr="", duration=0.0):
+    def __init__(self, success, stdout="", stderr="", duration=0.0, failure=None, path=None):
         self.success = success
         self.stdout = stdout
         self.stderr = stderr
         self.duration = duration
+        self.failure = failure
+        self.path = path
 
 
 def _run_tests(*_a, **_k):
@@ -205,6 +216,7 @@ class _MMM:
 
 
 mm_stub.MenaceMemoryManager = _MMM
+mm_stub.MemoryEntry = object
 sys.modules.setdefault("menace_memory_manager", mm_stub)
 sys.modules.setdefault("menace.menace_memory_manager", mm_stub)
 sys.modules.setdefault(

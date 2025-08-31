@@ -38,6 +38,7 @@ class TestHarnessResult:
     stderr: str
     duration: float
     failure: dict | None = None
+    path: str | None = None
 
     def __bool__(self) -> bool:  # pragma: no cover - trivial
         return self.success
@@ -60,8 +61,11 @@ def run_tests(repo_path: Path, changed_path: Path | None = None) -> TestHarnessR
         Path to the repository that should be tested.  The repository is
         cloned into a temporary directory to avoid side effects.
     changed_path:
-        Path to the patched file.  Currently unused but accepted to mirror the
-        interface expected by :meth:`SelfCodingEngine._run_ci`.
+        Optional path to the patched file.  When supplied the pytest invocation
+        is narrowed to the impacted tests by either executing the specific test
+        file or applying a ``-k`` expression based on the file stem.  When
+        multiple paths are supplied via a newline separated file, a combined
+        ``-k`` expression is used.
     """
 
     start = time.time()
@@ -95,8 +99,45 @@ def run_tests(repo_path: Path, changed_path: Path | None = None) -> TestHarnessR
             stdout_parts.append(install.stdout)
             stdout_parts.append(install.stderr)
 
+        pytest_cmd = [str(python), "-m", "pytest", "-q"]
+        rel_paths: list[Path] = []
+        if changed_path:
+            # ``changed_path`` may be either a single file or a file containing
+            # a newline separated list of changed files.  The latter is used
+            # when multiple files are touched by a patch.
+            try:
+                if changed_path.is_file() and changed_path.suffix == ".txt":
+                    lines = [
+                        Path(l.strip())
+                        for l in changed_path.read_text(encoding="utf-8").splitlines()
+                        if l.strip()
+                    ]
+                    rel_paths.extend(lines)
+                else:
+                    rel_paths.append(changed_path)
+            except Exception:
+                rel_paths.append(changed_path)
+
+        selected: str | None = None
+        if rel_paths:
+            try:
+                rel_paths = [p.relative_to(repo_path) for p in rel_paths]
+            except Exception:
+                pass
+            if len(rel_paths) == 1:
+                rel = rel_paths[0]
+                selected = rel.as_posix()
+                if ("tests" in rel.parts or rel.name.startswith("test_")) and rel.suffix == ".py":
+                    pytest_cmd.insert(3, selected)
+                else:
+                    pytest_cmd.extend(["-k", rel.stem])
+            else:
+                expr = " or ".join(p.stem for p in rel_paths)
+                pytest_cmd.extend(["-k", expr])
+                selected = " ".join(p.as_posix() for p in rel_paths)
+
         tests = subprocess.run(
-            [str(python), "-m", "pytest", "-q"],
+            pytest_cmd,
             cwd=tmpdir,
             capture_output=True,
             text=True,
@@ -113,6 +154,7 @@ def run_tests(repo_path: Path, changed_path: Path | None = None) -> TestHarnessR
             stderr=tests.stderr,
             duration=duration,
             failure=failure,
+            path=selected,
         )
     finally:
         tmpdir_obj.cleanup()
