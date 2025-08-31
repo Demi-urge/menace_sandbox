@@ -67,12 +67,11 @@ def _load_utils():
     return ns
 
 
-def test_missing_dependency_returns_stub():
+def test_missing_dependency_raises_runtime_error():
     utils = _load_utils()
     with patch("importlib.import_module", side_effect=ModuleNotFoundError):
-        fn = utils["_load_callable"]("mod", "attr")
         with pytest.raises(RuntimeError):
-            fn()
+            utils["_load_callable"]("mod", "attr")
 
 
 def test_retry_succeeds_after_transient_failure():
@@ -90,27 +89,6 @@ def test_retry_succeeds_after_transient_failure():
     assert attempts["count"] == 2
 
 
-def test_load_callable_retry_when_enabled():
-    utils = _load_utils()
-    utils["time"].sleep = lambda *a, **k: None
-
-    attempts = {"count": 0}
-
-    def side_effect(name):
-        attempts["count"] += 1
-        if attempts["count"] == 1:
-            raise ModuleNotFoundError
-        return types.SimpleNamespace(attr=lambda: "ok")
-
-    with patch("importlib.import_module", side_effect=side_effect):
-        utils["SandboxSettings"] = lambda: types.SimpleNamespace(
-            retry_optional_dependencies=True,
-            sandbox_retry_delay=0,
-            sandbox_max_retries=3,
-            menace_offline_install=False,
-        )
-        fn = utils["_load_callable"]("mod", "attr")
-        assert fn() == "ok"
 
 
 def test_retry_fails_after_all_attempts():

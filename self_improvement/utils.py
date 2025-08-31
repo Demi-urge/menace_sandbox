@@ -13,9 +13,6 @@ import asyncio
 import inspect
 import random
 import threading
-import subprocess
-import sys
-from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Callable, Awaitable
 
@@ -27,9 +24,6 @@ _diagnostics_lock = threading.Lock()
 _diagnostics = {
     "cache_hits": 0,
     "cache_misses": 0,
-    "install_attempts": 0,
-    "install_successes": 0,
-    "install_failures": 0,
 }
 
 
@@ -46,11 +40,8 @@ def _load_callable(
     """Dynamically import ``attr`` from ``module`` with logging and caching.
 
     Successful imports are cached for future lookups. When the dependency is
-    missing a stub is returned or an automatic installation is attempted based
-    on :class:`SandboxSettings`. The stub carries a structured error object and,
-    depending on ``SandboxSettings``, may attempt to lazily retry the import on
-    first use. If auto-installation is enabled, failures surface immediately
-    with detailed diagnostics so callers can react before runtime.
+    missing the function now fails fast with a descriptive ``RuntimeError``
+    instead of attempting automatic installation or returning a stub.
     """
 
     logger = logging.getLogger(__name__)
@@ -66,110 +57,11 @@ def _load_callable(
     except (ImportError, AttributeError) as exc:  # pragma: no cover - best effort logging
         logger.exception("missing dependency %s.%s", module, attr)
         self_improvement_failure_total.labels(reason="missing_dependency").inc()
-
-        settings = SandboxSettings()
-
-        install_attempted = False
-        install_error: Exception | None = None
-
-        if (
-            getattr(settings, "install_optional_dependencies", False)
-            and not getattr(settings, "menace_offline_install", False)
-        ):
-            package = module.split(".")[0]
-            version = getattr(settings, "optional_service_versions", {}).get(
-                package
-            )
-            package_spec = f"{package}>={version}" if version else package
-
-            with _diagnostics_lock:
-                _diagnostics["install_attempts"] += 1
-            install_attempted = True
-
-            attempts = {"count": 0}
-
-            def _install() -> None:
-                attempts["count"] += 1
-                logger.info(
-                    "pip installing %s (attempt %s/%s)",
-                    package_spec,
-                    attempts["count"],
-                    getattr(settings, "sandbox_max_retries", 3) or 3,
-                )
-                cmd = [sys.executable, "-m", "pip", "install", package_spec]
-                subprocess.check_call(cmd)
-
-            try:
-                _call_with_retries(
-                    _install,
-                    retries=getattr(settings, "sandbox_max_retries", 3) or 3,
-                    delay=getattr(settings, "sandbox_retry_delay", 1.0),
-                    backoff=lambda attempt, base: base * (2 ** (attempt - 1)),
-                    logger=logger,
-                )
-                with _diagnostics_lock:
-                    _diagnostics["install_successes"] += 1
-                func = _import_callable(module, attr)
-                with _diagnostics_lock:
-                    info = _import_callable.cache_info()
-                    _diagnostics["cache_hits"] = info.hits
-                    _diagnostics["cache_misses"] = info.misses
-                _load_callable.diagnostics = _diagnostics
-                return func
-            except Exception as install_exc:  # pragma: no cover - best effort
-                install_error = install_exc
-                with _diagnostics_lock:
-                    _diagnostics["install_failures"] += 1
-                _load_callable.diagnostics = _diagnostics
-                logger.error(
-                    "automatic installation of %s failed", package_spec, exc_info=True
-                )
-                raise RuntimeError(
-                    f"Automatic installation of {package_spec} failed; please install manually"
-                ) from install_exc
-
-        @dataclass
-        class MissingDependencyError:
-            module: str
-            attr: str
-            exc: Exception
-            install_attempted: bool
-            install_error: Exception | None
-
-        error = MissingDependencyError(
-            module,
-            attr,
-            exc,
-            install_attempted,
-            install_error,
-        )
         guide = f"Install it via `pip install {module.split('.')[0]}` to use {attr}"
-
-        if not getattr(settings, "retry_optional_dependencies", False):
-            def _stub(*_args: Any, **_kwargs: Any) -> Any:
-                raise RuntimeError(
-                    f"{module} dependency is required for {attr}. {guide}"
-                )
-
-            _stub.error = error
-            _load_callable.diagnostics = _diagnostics
-            return _stub
-
-        def _retry_stub(*args: Any, **kwargs: Any) -> Any:
-            def _load_and_call() -> Any:
-                mod_inner = importlib.import_module(module)
-                func_inner = getattr(mod_inner, attr)
-                return func_inner(*args, **kwargs)
-
-            return _call_with_retries(
-                _load_and_call,
-                retries=getattr(settings, "sandbox_max_retries", 3) or 3,
-                delay=getattr(settings, "sandbox_retry_delay", 0.1),
-            )
-
-        _retry_stub.error = error
         _load_callable.diagnostics = _diagnostics
-        return _retry_stub
+        raise RuntimeError(
+            f"{module} dependency is required for {attr}. {guide}"
+        ) from exc
 
 
 def _call_with_retries(
