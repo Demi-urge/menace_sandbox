@@ -8,5 +8,10 @@
     "duplication": 1.0,
     "length": 1.0,
     "anti": 1.0
+  },
+  "thresholds": {
+    "min_patches": 3,
+    "roi_cutoff": 0.0,
+    "complexity_delta": 0.0
   }
 }

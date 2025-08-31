@@ -1731,6 +1731,28 @@ Performance isn’t a luxury; it’s a multiplier on ROI. Each critical function
 
 Technically, this layer relies on `psutil` for cross-platform metrics and `sqlite3` for zero-setup storage. For heavier loads, export to Prometheus + Grafana so you can watch Menace’s pulse in real time. The scanner feeds its findings into the Resource Allocation Optimizer, ensuring slow code is either optimized or throttled.
 
+### Enhancement classifier configuration
+
+`enhancement_classifier.py` scores modules based on patch history and code metrics.
+Weights and thresholds live in `enhancement_classifier_config.json`:
+
+```json
+{
+  "weights": {"frequency": 1.0, ...},
+  "thresholds": {
+    "min_patches": 3,
+    "roi_cutoff": 0.0,
+    "complexity_delta": 0.0
+  }
+}
+```
+
+- **min_patches** – minimum number of patches before a file is evaluated.
+- **roi_cutoff** – average ROI delta below which a module is flagged.
+- **complexity_delta** – minimum average complexity increase to trigger a suggestion.
+
+Tune these values to control how aggressively the classifier surfaces potential improvements.
+
 ### Meta-Logging & Replay Training
 
 All inputs, outputs and decisions flow into Kafka topics with the prefix `menace.events.*`. A nightly Spark job (`ReplayTrainer`) aggregates sequences of `error` → `fix` → `success` and trains a lightweight gradient-boosted tree to predict failure likelihood from prompt features and context tokens. The resulting model updates the Prompt Rewriter so history informs future decisions.
