@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 import json
 import pytest
-import sqlite3
+import sqlite3 as sq3
 import sys
 import types
 
@@ -10,9 +10,9 @@ import types
 sys.modules.setdefault("gpt_memory", types.SimpleNamespace(GPTMemoryManager=object))
 sys.modules.setdefault("code_database", types.SimpleNamespace(PatchHistoryDB=object))
 
-from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
-from prompt_memory_trainer import PromptMemoryTrainer
-from vector_service.retriever import FallbackResult
+from prompt_engine import PromptEngine, DEFAULT_TEMPLATE  # noqa: E402
+from prompt_memory_trainer import PromptMemoryTrainer  # noqa: E402
+from vector_service.retriever import FallbackResult  # noqa: E402
 
 
 class DummyRetriever:
@@ -102,6 +102,7 @@ def test_prompt_engine_applies_trained_preferences(monkeypatch):
                     ): 0.9
                 },
                 "example_order": {json.dumps(["failure", "success"]): 0.9},
+                "tone": {"excited": 0.9},
             }
 
     import prompt_engine as pe
@@ -123,6 +124,9 @@ def test_prompt_engine_applies_trained_preferences(monkeypatch):
     assert prompt.index("Avoid bad because it caused oops:") < prompt.index(
         "Preferred header:"
     )
+    # tone preference applied
+    assert engine.tone == "excited"
+    assert engine.last_metadata["tone"] == "excited"
 
 
 def test_prompt_engine_handles_retry_trace():
@@ -222,23 +226,30 @@ def test_prompt_memory_trainer_extracts_new_cues():
 def test_prompt_memory_trainer_weights_success_by_roi_or_complexity():
     class Mem:
         def __init__(self):
-            self.conn = sqlite3.connect(":memory:")
+            self.conn = sq3.connect(":memory:")
             self.conn.execute("CREATE TABLE interactions(prompt TEXT)")
 
     class PDB:
         def __init__(self):
-            self.conn = sqlite3.connect(":memory:")
+            self.conn = sq3.connect(":memory:")
             self.conn.execute(
-                "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, outcome TEXT, roi_before REAL, roi_after REAL, complexity_before REAL, complexity_after REAL)"
+                "CREATE TABLE patch_history("
+                "id INTEGER PRIMARY KEY, outcome TEXT, "
+                "roi_before REAL, roi_after REAL, "
+                "complexity_before REAL, complexity_after REAL)"
             )
 
     mem = Mem()
     pdb = PDB()
     pdb.conn.execute(
-        "INSERT INTO patch_history(id, outcome, roi_before, roi_after, complexity_before, complexity_after) VALUES (1, 'SUCCESS', 0.0, 2.0, 10.0, 5.0)"
+        "INSERT INTO patch_history("
+        "id, outcome, roi_before, roi_after, complexity_before, complexity_after)"
+        " VALUES (1, 'SUCCESS', 0.0, 2.0, 10.0, 5.0)"
     )
     pdb.conn.execute(
-        "INSERT INTO patch_history(id, outcome, roi_before, roi_after, complexity_before, complexity_after) VALUES (2, 'FAIL', 0.0, 0.0, 10.0, 5.0)"
+        "INSERT INTO patch_history("
+        "id, outcome, roi_before, roi_after, complexity_before, complexity_after)"
+        " VALUES (2, 'FAIL', 0.0, 0.0, 10.0, 5.0)"
     )
     mem.conn.execute("INSERT INTO interactions(prompt) VALUES ('PATCH:1\n# H')")
     mem.conn.execute("INSERT INTO interactions(prompt) VALUES ('PATCH:2\n# H')")
@@ -280,16 +291,22 @@ def test_trim_tokens_without_tokenizer(monkeypatch):
 
 def test_prompt_engine_refreshes_after_record(monkeypatch):
     class StubTrainer:
+
         def __init__(self):
             self.style_weights = {}
+
         def train(self):
             return self.style_weights
+
         def record(self, **_):
             self.style_weights = {
                 "headers": {json.dumps(["H2", "F2"]): 1.0},
                 "example_order": {json.dumps(["success", "failure"]): 1.0},
             }
             return True
+
+        def save_weights(self, *_a, **_k):
+            pass
 
     trainer = StubTrainer()
     engine = PromptEngine(trainer=trainer)
@@ -300,8 +317,6 @@ def test_prompt_engine_refreshes_after_record(monkeypatch):
         called = summary
 
     monkeypatch.setattr(engine, "_load_trained_config", fake_load)
-    if trainer.record(
-        headers=["h"], example_order=["success"], tone="neutral", success=True
-    ) and getattr(engine, "trainer") is trainer:
-        engine._load_trained_config(trainer.style_weights)
+    trainer.record(headers=["h"], example_order=["success"], tone="neutral", success=True)
+    engine.after_patch_cycle()
     assert called == trainer.style_weights
