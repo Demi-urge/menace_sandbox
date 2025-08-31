@@ -1148,6 +1148,17 @@ class PatchHistoryDB:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS branch_log(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                patch_id TEXT,
+                branch TEXT,
+                action TEXT,
+                ts TEXT
+            )
+            """
+        )
         cols = [r[1] for r in conn.execute("PRAGMA table_info(patch_history)").fetchall()]
         migrations = {
             "errors_before": "ALTER TABLE patch_history ADD COLUMN errors_before INTEGER DEFAULT 0",
@@ -1729,6 +1740,17 @@ class PatchHistoryDB:
             return [(v, float(i), s) for v, i, s in rows]
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    def log_branch_event(self, patch_id: str, branch: str, action: str) -> None:
+        """Record branch-related actions for a patch."""
+
+        def op(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "INSERT INTO branch_log(patch_id, branch, action, ts) VALUES(?,?,?,?)",
+                (patch_id, branch, action, datetime.utcnow().isoformat()),
+            )
+
+        with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
     def get_ancestry(self, patch_id: int) -> List[Tuple[str, str, float, str | None, str | None, str | None]]:
         """Return ancestry rows for ``patch_id`` ordered by influence."""

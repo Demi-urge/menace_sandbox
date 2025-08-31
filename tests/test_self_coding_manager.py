@@ -120,7 +120,7 @@ def test_run_patch_logs_evolution(monkeypatch, tmp_path):
     assert pipeline.calls
     assert "# patched" in file_path.read_text()
     rows = hist.fetch()
-    assert rows and rows[0][0].startswith("self_coding")
+    assert any(r[0].startswith("self_coding") for r in rows)
     assert isinstance(res, mapl.AutomationResult)
 
 

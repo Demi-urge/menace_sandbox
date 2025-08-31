@@ -10,13 +10,14 @@ from typing import Dict, Any
 
 from .error_parser import ErrorParser
 
-from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
+from .sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
 from .data_bot import DataBot
 from .advanced_error_management import FormalVerifier, AutomatedRollbackManager
 from . import mutation_logger as MutationLogger
+from .rollback_manager import RollbackManager
 
 
 class PatchApprovalPolicy:
@@ -88,15 +89,17 @@ class SelfCodingManager:
         context_meta: Dict[str, Any] | None = None,
         max_attempts: int = 3,
         confidence_threshold: float = 0.5,
+        review_branch: str | None = None,
+        auto_merge: bool = False,
     ) -> AutomationResult:
         """Patch *path* then deploy using the automation pipeline.
 
         ``max_attempts`` controls how many times the patch is retried when tests
         fail.  Context will be rebuilt for each retry excluding tags extracted
         from the failing traceback.  After a successful patch the change is
-        committed in a sandbox clone and pushed to ``review/<patch_id>`` when
-        the ROI confidence falls below ``confidence_threshold`` otherwise it is
-        merged directly into ``main``.
+        committed in a sandbox clone, pushed to ``review_branch`` and merged
+        into ``main`` when ``auto_merge`` is ``True`` and the confidence score
+        exceeds ``confidence_threshold``.
         """
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
@@ -164,6 +167,7 @@ class SelfCodingManager:
                     raise RuntimeError("patch tests failed")
 
             path.write_text(cloned_path.read_text(encoding="utf-8"), encoding="utf-8")
+            branch_name = review_branch or f"review/{patch_id}"
             try:
                 subprocess.run(
                     ["git", "config", "user.email", "bot@example.com"],
@@ -175,6 +179,11 @@ class SelfCodingManager:
                     check=True,
                     cwd=str(clone_root),
                 )
+                subprocess.run(
+                    ["git", "checkout", "-b", branch_name],
+                    check=True,
+                    cwd=str(clone_root),
+                )
                 subprocess.run(["git", "add", "-A"], check=True, cwd=str(clone_root))
                 subprocess.run(
                     ["git", "commit", "-m", f"patch {patch_id}: {description}"],
@@ -183,6 +192,11 @@ class SelfCodingManager:
                 )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.error("git commit failed: %s", exc)
+                try:
+                    RollbackManager().rollback(str(patch_id), requesting_bot=self.bot_name)
+                except Exception:
+                    self.logger.exception("rollback failed")
+                raise
 
             result = self.pipeline.run(self.bot_name, energy=energy)
             after_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
@@ -210,15 +224,70 @@ class SelfCodingManager:
                             conf = 1.0
                 if conf is None:
                     conf = 1.0
-            branch = f"review/{patch_id}" if conf < confidence_threshold else "main"
+            patch_db = getattr(self.engine, "patch_db", None)
             try:
                 subprocess.run(
-                    ["git", "push", "origin", f"HEAD:{branch}"],
+                    ["git", "push", "origin", branch_name],
                     check=True,
                     cwd=str(clone_root),
                 )
+                MutationLogger.log_mutation(
+                    change="patch_branch",
+                    reason=description,
+                    trigger=path.name,
+                    performance=0.0,
+                    workflow_id=0,
+                    parent_id=self._last_event_id,
+                )
+                if patch_db is not None:
+                    try:
+                        patch_db.log_branch_event(str(patch_id), branch_name, "pushed")
+                    except Exception:
+                        self.logger.exception("failed to log branch event")
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.error("git push failed: %s", exc)
+                try:
+                    RollbackManager().rollback(str(patch_id), requesting_bot=self.bot_name)
+                except Exception:
+                    self.logger.exception("rollback failed")
+                raise
+
+            if auto_merge and conf >= confidence_threshold:
+                try:
+                    subprocess.run(
+                        ["git", "checkout", "main"],
+                        check=True,
+                        cwd=str(clone_root),
+                    )
+                    subprocess.run(
+                        ["git", "merge", "--no-ff", branch_name],
+                        check=True,
+                        cwd=str(clone_root),
+                    )
+                    subprocess.run(
+                        ["git", "push", "origin", "main"],
+                        check=True,
+                        cwd=str(clone_root),
+                    )
+                    MutationLogger.log_mutation(
+                        change="patch_merge",
+                        reason=description,
+                        trigger=path.name,
+                        performance=roi_delta,
+                        workflow_id=0,
+                        parent_id=self._last_event_id,
+                    )
+                    if patch_db is not None:
+                        try:
+                            patch_db.log_branch_event(str(patch_id), "main", "merged")
+                        except Exception:
+                            self.logger.exception("failed to log merge event")
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.error("merge to main failed: %s", exc)
+                    try:
+                        RollbackManager().rollback(str(patch_id), requesting_bot=self.bot_name)
+                    except Exception:
+                        self.logger.exception("rollback failed")
         event_id = MutationLogger.log_mutation(
             change=f"self_coding_patch_{patch_id}",
             reason=description,
