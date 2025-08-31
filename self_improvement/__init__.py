@@ -144,6 +144,7 @@ from .orchestration import (
     post_round_orphan_scan,
     self_improvement_cycle,
     start_self_improvement_cycle,
+    stop_self_improvement_cycle,
 )
 from .metrics import _update_alignment_baseline
 from .patch_generation import generate_patch

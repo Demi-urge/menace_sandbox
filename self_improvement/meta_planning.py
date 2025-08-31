@@ -14,6 +14,7 @@ import os
 import time
 import threading
 import queue
+import inspect
 from pathlib import Path
 from contextlib import contextmanager, nullcontext
 
@@ -23,6 +24,10 @@ from . import init as _init
 from ..workflow_stability_db import WorkflowStabilityDB
 from ..roi_results_db import ROIResultsDB
 from ..lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
+
+
+_cycle_thread: Any | None = None
+_stop_event: threading.Event | None = None
 
 try:  # pragma: no cover - optional dependency
     from ..unified_event_bus import UnifiedEventBus
@@ -599,6 +604,7 @@ async def self_improvement_cycle(
     *,
     interval: float = PLANNER_INTERVAL,
     event_bus: UnifiedEventBus | None = None,
+    stop_event: threading.Event | None = None,
 ) -> None:
     """Background loop evolving ``workflows`` using the meta planner."""
     logger = get_logger("SelfImprovementCycle")
@@ -678,6 +684,8 @@ async def self_improvement_cycle(
                 )
 
     while True:
+        if stop_event is not None and stop_event.is_set():
+            break
         try:
             records = planner.discover_and_persist(workflows)
             active: list[list[str]] = []
@@ -725,20 +733,29 @@ def start_self_improvement_cycle(
     coroutine.
     """
 
+    stop_event = threading.Event()
+
     class _CycleThread:
         def __init__(self) -> None:
             self._loop = asyncio.new_event_loop()
             self._task: asyncio.Task[None] | None = None
             self._exc: queue.Queue[BaseException] = queue.Queue()
             self._thread = threading.Thread(target=self._run, daemon=True)
+            self._stop_event = stop_event
 
         # --------------------------------------------------
         def _run(self) -> None:
+            from inspect import signature
+
             asyncio.set_event_loop(self._loop)
+            kwargs: dict[str, Any] = {
+                "interval": interval,
+                "event_bus": event_bus,
+            }
+            if "stop_event" in signature(self_improvement_cycle).parameters:
+                kwargs["stop_event"] = self._stop_event
             self._task = self._loop.create_task(
-                self_improvement_cycle(
-                    workflows, interval=interval, event_bus=event_bus
-                )
+                self_improvement_cycle(workflows, **kwargs)
             )
             self._task.add_done_callback(self._finished)
             try:
@@ -767,6 +784,7 @@ def start_self_improvement_cycle(
                 raise self._exc.get()
 
         def stop(self) -> None:
+            self._stop_event.set()
             self._loop.call_soon_threadsafe(
                 lambda: self._task.cancel() if self._task is not None else None
             )
@@ -797,12 +815,29 @@ def start_self_improvement_cycle(
             )
         raise RuntimeError("WorkflowStabilityDB initialisation failed") from exc
 
-    return _CycleThread()
+    thread = _CycleThread()
+    global _cycle_thread, _stop_event
+    _cycle_thread = thread
+    _stop_event = stop_event
+    return thread
+
+
+def stop_self_improvement_cycle() -> None:
+    """Signal the background self improvement cycle to stop and wait for it."""
+    global _cycle_thread, _stop_event
+    if _cycle_thread is None:
+        return
+    if _stop_event is not None:
+        _stop_event.set()
+    _cycle_thread.stop()
+    _cycle_thread = None
+    _stop_event = None
 
 
 __all__ = [
     "self_improvement_cycle",
     "start_self_improvement_cycle",
+    "stop_self_improvement_cycle",
     "reload_settings",
     "PLANNER_INTERVAL",
     "MUTATION_RATE",
