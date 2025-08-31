@@ -304,6 +304,16 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_STUB_RETRY_MAX",
         description="Maximum delay for exponential backoff in seconds.",
     )
+    stub_cache_max: int = Field(
+        1024,
+        env="SANDBOX_STUB_CACHE_MAX",
+        description="Maximum number of stub responses cached.",
+    )
+    stub_fallback_model: str = Field(
+        "distilgpt2",
+        env="SANDBOX_STUB_FALLBACK_MODEL",
+        description="Model name to fall back to when the preferred generator fails.",
+    )
     stub_providers: list[str] | None = Field(
         None,
         env="SANDBOX_STUB_PROVIDERS",
