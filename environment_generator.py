@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-"""Generate sandbox environment presets for scenario testing."""
+"""Generate sandbox environment presets for scenario testing.
+
+Adaptive preset agents persist their state to ``<path>.state.json`` and keep a
+rolling ``.bak`` history.  On startup the loader attempts to recover from the
+backup if the primary JSON file is corrupted.  Administrators can manually
+restore by copying ``<path>.state.json.bak`` over the main file and restarting
+the service.
+"""
 
 import random
 import os
@@ -12,6 +19,7 @@ from logging_utils import log_record
 import yaml
 
 logger = logging.getLogger(__name__)
+debug = os.getenv("PRESET_DEBUG") == "1"
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .roi_tracker import ROITracker
@@ -367,6 +375,7 @@ def suggest_profiles_for_module(module_name: str) -> List[str]:
             unique.append(prof)
             seen.add(prof)
     return unique
+
 
 # probability of injecting a random profile when none specified
 _PROFILE_PROB = 0.3
@@ -737,10 +746,6 @@ def generate_presets(
                 logger.debug(
                     "RL actions %s", actions, extra=log_record(agent="rl", actions=actions)
                 )
-            if debug:
-                logger.debug(
-                    "RL actions %s", actions, extra=log_record(agent="rl", actions=actions)
-                )
 
             def _nxt(seq: List[Any], cur: Any, up: bool) -> Any:
                 lookup = [str(x) for x in seq]
@@ -863,11 +868,14 @@ class AdaptivePresetAgent:
     def _load_state(self) -> None:
         if not self.state_file or not os.path.exists(self.state_file):
             return
+        data: dict[str, object] | None = None
         try:
             with open(self.state_file) as fh:
                 data = json.load(fh)
+            if not isinstance(data, dict) or "state" not in data or "action" not in data:
+                raise ValueError("missing keys")
         except Exception as exc:
-            logger.warning(
+            logging.warning(
                 "Failed to load RL state from %s: %s",
                 self.state_file,
                 exc,
@@ -877,32 +885,46 @@ class AdaptivePresetAgent:
                 try:
                     with open(bak) as fh:
                         data = json.load(fh)
+                    if not isinstance(data, dict) or "state" not in data or "action" not in data:
+                        raise ValueError("missing keys")
+                    os.replace(bak, self.state_file)
                 except Exception as exc2:
-                    logger.warning(
+                    logging.warning(
                         "Failed to load backup RL state from %s: %s",
                         bak,
                         exc2,
                     )
+                    try:
+                        os.remove(self.state_file)
+                    except OSError:
+                        pass
                     return
             else:
+                try:
+                    os.remove(self.state_file)
+                except OSError:
+                    pass
                 return
-        st = data.get("state")
-        self.prev_state = tuple(st) if st is not None else None
-        self.prev_action = data.get("action")
+        st = data.get("state") if data is not None else None
+        self.prev_state = tuple(st) if isinstance(st, (list, tuple)) else None
+        self.prev_action = data.get("action") if data is not None else None
 
     def _save_state(self) -> None:
         if not self.state_file:
             return
         tmp_file = f"{self.state_file}.tmp"
         bak_file = f"{self.state_file}.bak"
+        old_bak = f"{bak_file}.1"
         try:
             with open(tmp_file, "w") as fh:
                 json.dump({"state": self.prev_state, "action": self.prev_action}, fh)
+            if os.path.exists(bak_file):
+                os.replace(bak_file, old_bak)
             if os.path.exists(self.state_file):
                 os.replace(self.state_file, bak_file)
             os.replace(tmp_file, self.state_file)
         except Exception as exc:
-            logger.warning(
+            logging.warning(
                 "Failed to save RL state to %s: %s",
                 self.state_file,
                 exc,
@@ -1043,7 +1065,6 @@ def adapt_presets(
     mechanisms. Low scores decrease the intensity accordingly.
     """
 
-    debug = os.getenv("PRESET_DEBUG") == "1"
     actions: list[str] = []
     agent = None
     rl_path = os.getenv("SANDBOX_PRESET_RL_PATH")
