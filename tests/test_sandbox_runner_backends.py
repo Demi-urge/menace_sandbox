@@ -30,6 +30,7 @@ def test_run_tests_supports_backends(monkeypatch, tmp_path):
     )
     th = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    sys.modules[spec.name] = th
     spec.loader.exec_module(th)
     monkeypatch.setattr(th, "_python_bin", lambda v: Path(sys.executable))
 

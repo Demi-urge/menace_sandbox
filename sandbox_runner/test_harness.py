@@ -93,6 +93,10 @@ def run_tests(
         )
         stdout_parts.append(clone.stdout)
         stdout_parts.append(clone.stderr)
+        if clone.returncode != 0:
+            msg = f"git clone failed with code {clone.returncode}: {clone.stderr}"
+            logger.error(msg.strip())
+            raise RuntimeError(msg)
 
         if backend not in {"venv", "docker"}:
             raise ValueError(f"unknown backend: {backend}")
@@ -106,9 +110,9 @@ def run_tests(
             try:
                 if changed_path.is_file() and changed_path.suffix == ".txt":
                     lines = [
-                        Path(l.strip())
-                        for l in changed_path.read_text(encoding="utf-8").splitlines()
-                        if l.strip()
+                        Path(line.strip())
+                        for line in changed_path.read_text(encoding="utf-8").splitlines()
+                        if line.strip()
                     ]
                     rel_paths.extend(lines)
                 else:
@@ -131,6 +135,13 @@ def run_tests(
                 )
                 stdout_parts.append(install.stdout)
                 stdout_parts.append(install.stderr)
+                if install.returncode != 0:
+                    msg = (
+                        "dependency installation failed with code "
+                        f"{install.returncode}: {install.stderr}"
+                    )
+                    logger.error(msg.strip())
+                    raise RuntimeError(msg)
 
             pytest_cmd = [str(python), "-m", "pytest", "-q"]
             if rel_paths:
