@@ -264,6 +264,16 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             getattr(self.engine, "name", None),
         )
 
+    def _record_failed_strategy(self, failure: dict) -> None:
+        """Persist strategy tag from ``failure`` when available."""
+        tag = failure.get("strategy_tag")
+        db = getattr(self.engine, "patch_suggestion_db", None)
+        if tag and db is not None:
+            try:
+                db.add_failed_strategy(tag)
+            except Exception:
+                self.logger.exception("failed to store failed strategy tag")
+
     # ------------------------------------------------------------------
     def preemptive_fix_high_risk_modules(self, limit: int = 5) -> None:
         """Apply fixes for modules predicted to be high risk."""
@@ -470,6 +480,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             failure = ErrorParser.parse_failure(output)
             if not self._failure_cache.seen(failure["signature"]):
                 self._failure_cache.add(failure)
+            self._record_failed_strategy(failure)
             self._record_exception(exc)
             percent = 0.0
         except Exception as exc:
@@ -478,6 +489,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             failure = ErrorParser.parse_failure(output)
             if not self._failure_cache.seen(failure["signature"]):
                 self._failure_cache.add(failure)
+            self._record_failed_strategy(failure)
             percent = 0.0
             self._record_exception(exc)
             self.logger.exception("coverage generation failed")
@@ -617,8 +629,17 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     exclude = list(self._score_db.failed_strategy_hashes())
             except Exception:
                 self.logger.exception("failed strategy lookup failed")
+        failed_tags: list[str] = []
+        db = getattr(self.engine, "patch_suggestion_db", None)
+        if db is not None:
+            try:
+                failed_tags = db.failed_strategy_tags()
+            except Exception:
+                self.logger.exception("failed strategy tag lookup failed")
         try:
             builder = ContextBuilder()
+            if failed_tags:
+                builder.exclude_failed_strategies(failed_tags)
         except Exception:
             return []
         try:
@@ -1580,11 +1601,13 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 except RuntimeError as exc:
                     reason = f"sandbox tests failed: {exc}"
                     failure = ErrorParser.parse_failure(str(exc))
+                    self._record_failed_strategy(failure)
                     self._record_exception(exc)
                     self.logger.error("sandbox tests failed", exc_info=exc)
                 except Exception as exc:
                     reason = f"{type(exc).__name__}: {exc}"
                     failure = ErrorParser.parse_failure(str(exc))
+                    self._record_failed_strategy(failure)
                     self._record_exception(exc)
                     self.logger.exception("patch failed")
                 finally:

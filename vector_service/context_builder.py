@@ -174,8 +174,9 @@ class ContextBuilder:
         self.license_denylist = set(license_denylist or ())
         self.memory = memory_manager
         self.summariser = summariser or (lambda text: text)
-        self._cache: Dict[Tuple[str, int, Tuple[str, ...]], str] = {}
+        self._cache: Dict[Tuple[str, int, Tuple[str, ...], Tuple[str, ...]], str] = {}
         self._summary_cache: Dict[int, Dict[str, str]] = {}
+        self._excluded_failed_strategies: set[str] = set()
         self.db_weights = db_weights or {}
         if not self.db_weights:
             try:
@@ -210,6 +211,13 @@ class ContextBuilder:
             self.retriever.license_denylist = self.license_denylist
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    def exclude_failed_strategies(self, tags: List[str]) -> None:
+        """Remember strategy tags that should be excluded from results."""
+        for tag in tags:
+            if isinstance(tag, str) and tag:
+                self._excluded_failed_strategies.add(tag)
 
     # ------------------------------------------------------------------
     def refresh_db_weights(
@@ -957,6 +965,7 @@ class ContextBuilder:
         query = redact_text(query)
         exclude = set(exclude_tags or [])
         exclude_strats = set(exclude_strategies or [])
+        exclude_strats.update(getattr(self, "_excluded_failed_strategies", set()))
         cache_key = (query, top_k, tuple(sorted(exclude)), tuple(sorted(exclude_strats)))
         if not include_vectors and not return_metadata and cache_key in self._cache:
             return self._cache[cache_key]
