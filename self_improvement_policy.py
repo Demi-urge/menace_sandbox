@@ -13,9 +13,12 @@ import random
 import math
 import statistics
 import warnings
+import logging
 from typing import List
 from dataclasses import dataclass, asdict
 from sandbox_settings import SandboxSettings
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - optional dependency
     import torch
@@ -409,7 +412,7 @@ class DQNStrategy(RLStrategy):
             try:
                 self._save_callback()
             except Exception:
-                pass
+                logger.exception("save callback failed during atexit")
 
     # ------------------------------------------------------------------
     def _ensure_model(self, dim: int) -> None:
@@ -509,7 +512,7 @@ class DQNStrategy(RLStrategy):
             try:
                 self._save_callback()
             except Exception:
-                pass
+                logger.exception("save callback failed during update")
         return float(cur_q.item())
 
     # ------------------------------------------------------------------
@@ -944,7 +947,7 @@ class SelfImprovementPolicy:
             try:
                 self.save_model(self.path)
             except Exception:
-                pass
+                logger.exception("failed to save model to %s", self.path)
 
     def _graceful_shutdown(self) -> None:
         self._save_model_if_path()
