@@ -48,6 +48,36 @@ UniversalRetriever = Retriever
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Failed tag tracking
+# ---------------------------------------------------------------------------
+_FAILED_TAG_CACHE: set[str] = set()
+
+
+def record_failed_tags(tags: List[str]) -> None:
+    """Record strategy or ROI tags that led to failures.
+
+    The tags are stored in a module-level cache so subsequent context builds
+    can automatically exclude vectors associated with past failures.  The
+    cache is intentionally lightweight; callers that require persistence can
+    extend this helper to write to disk or a database.
+    """
+
+    for tag in tags:
+        if isinstance(tag, str) and tag:
+            _FAILED_TAG_CACHE.add(tag)
+
+
+def _get_failed_tags() -> set[str]:
+    """Return a copy of the cached failed tags.
+
+    Exposed for testability; external modules should rely on
+    :func:`record_failed_tags` to mutate the cache.
+    """
+
+    return set(_FAILED_TAG_CACHE)
+
+
 try:  # pragma: no cover - optional dependency
     from . import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when undefined
@@ -964,6 +994,7 @@ class ContextBuilder:
             query = " ".join(parts)
         query = redact_text(query)
         exclude = set(exclude_tags or [])
+        exclude.update(_get_failed_tags())
         exclude_strats = set(exclude_strategies or [])
         exclude_strats.update(getattr(self, "_excluded_failed_strategies", set()))
         cache_key = (query, top_k, tuple(sorted(exclude)), tuple(sorted(exclude_strats)))
@@ -1227,4 +1258,4 @@ class ContextBuilder:
         return await asyncio.to_thread(self.build_context, query, **kwargs)
 
 
-__all__ = ["ContextBuilder"]
+__all__ = ["ContextBuilder", "record_failed_tags"]
