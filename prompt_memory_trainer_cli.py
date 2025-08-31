@@ -17,6 +17,12 @@ DEFAULT_STATE_PATH = Path(
         Path(__file__).resolve().parent / "config" / "prompt_memory_weights.json",
     )
 )
+DEFAULT_DB_PATH = Path(
+    os.getenv(
+        "PROMPT_STYLE_DB_PATH",
+        Path(__file__).resolve().parent / "prompt_styles.db",
+    )
+)
 
 
 # ---------------------------------------------------------------------------
@@ -32,13 +38,19 @@ def cli(argv: Iterable[str] | None = None) -> int:
         help="File storing persistent style weights",
     )
     parser.add_argument(
+        "--db-path",
+        type=Path,
+        default=DEFAULT_DB_PATH,
+        help="SQLite database for prompt style statistics",
+    )
+    parser.add_argument(
         "--records",
         type=Path,
         help="JSON file containing new records to append before retraining",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    trainer = PromptMemoryTrainer(state_path=args.state_path)
+    trainer = PromptMemoryTrainer(state_path=args.state_path, db_path=args.db_path)
     if args.records:
         with args.records.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -49,7 +61,7 @@ def cli(argv: Iterable[str] | None = None) -> int:
         trainer.append_records(records)
     else:
         trainer.train()
-    print(f"Saved weights to {args.state_path}")
+    print(f"Saved weights to {args.state_path} and stats to {args.db_path}")
     return 0
 
 

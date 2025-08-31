@@ -75,8 +75,9 @@ def test_trainer_persists_and_loads_weights(tmp_path: Path) -> None:
     mem = Mem()
     pdb = PDB()
     state = tmp_path / "weights.json"
+    db = tmp_path / "styles.db"
     trainer = PromptMemoryTrainer(
-        memory=mem, patch_db=pdb, state_path=state
+        memory=mem, patch_db=pdb, state_path=state, db_path=db
     )
     trainer.append_records(
         [
@@ -91,7 +92,10 @@ def test_trainer_persists_and_loads_weights(tmp_path: Path) -> None:
         ]
     )
     assert state.exists()
-    trainer2 = PromptMemoryTrainer(memory=mem, patch_db=pdb, state_path=state)
+    assert db.exists()
+    trainer2 = PromptMemoryTrainer(
+        memory=mem, patch_db=pdb, state_path=state, db_path=db
+    )
     assert trainer2.style_weights == trainer.style_weights
 
 
@@ -99,8 +103,9 @@ def test_append_records_retrains_and_saves(tmp_path: Path) -> None:
     mem = Mem()
     pdb = PDB()
     state = tmp_path / "weights.json"
+    db = tmp_path / "styles.db"
     trainer = PromptMemoryTrainer(
-        memory=mem, patch_db=pdb, state_path=state
+        memory=mem, patch_db=pdb, state_path=state, db_path=db
     )
     trainer.append_records(
         [
@@ -126,11 +131,14 @@ def test_append_records_retrains_and_saves(tmp_path: Path) -> None:
     weights = trainer.style_weights
     assert weights["headers"][hdr_key] == pytest.approx(2 / 7)
     assert state.exists()
+    assert db.exists()
 
 
 def test_record_updates_weights(tmp_path: Path) -> None:
     trainer = PromptMemoryTrainer(
-        memory=object(), patch_db=object(), state_path=tmp_path / "w.json"
+        memory=object(), patch_db=object(),
+        state_path=tmp_path / "w.json",
+        db_path=tmp_path / "s.db",
     )
     updated = trainer.record(
         headers=["H"],
@@ -160,10 +168,10 @@ def test_record_updates_weights(tmp_path: Path) -> None:
     assert trainer.style_weights["example_count"]["2"] == pytest.approx(0.5)
 
 
-def test_new_features_influence_weights() -> None:
+def test_new_features_influence_weights(tmp_path: Path) -> None:
     mem = Mem()
     pdb = PDB()
-    trainer = PromptMemoryTrainer(memory=mem, patch_db=pdb)
+    trainer = PromptMemoryTrainer(memory=mem, patch_db=pdb, db_path=tmp_path / "s.db")
     long_text = "word " * 160
     trainer.append_records(
         [
@@ -197,3 +205,16 @@ def test_new_features_influence_weights() -> None:
     assert weights["length"]["long"] == pytest.approx(0.0)
     assert weights["has_bullets"]["True"] == pytest.approx(1.0)
     assert weights["has_bullets"]["False"] == pytest.approx(0.0)
+
+
+def test_style_metrics_exposes_counts(tmp_path: Path) -> None:
+    trainer = PromptMemoryTrainer(
+        memory=object(),
+        patch_db=object(),
+        state_path=tmp_path / "w.json",
+        db_path=tmp_path / "s.db",
+    )
+    trainer.record(headers=["H"], success=True)
+    metrics = trainer.style_metrics()
+    hdr_key = json.dumps(["H"])
+    assert metrics["headers"][hdr_key]["count"] == 1.0

@@ -4,6 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Tuple
 import sqlite3
+import time
 
 try:  # pragma: no cover - optional dependency
     from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -12,6 +13,7 @@ except Exception:  # pragma: no cover - allow running without dependency
 
 from gpt_memory import GPTMemoryManager
 from code_database import PatchHistoryDB
+from db_router import init_db_router
 
 
 class PromptMemoryTrainer:
@@ -33,14 +35,26 @@ class PromptMemoryTrainer:
         memory: GPTMemoryManager | None = None,
         patch_db: PatchHistoryDB | None = None,
         state_path: str | Path | None = Path("prompt_style_weights.json"),
+        db_path: str | Path | None = Path("prompt_styles.db"),
     ) -> None:
         self.memory = memory or GPTMemoryManager(db_path=":memory:")
         self.patch_db = patch_db or PatchHistoryDB(":memory:")
         self.state_path = Path(state_path) if state_path else None
+        self.db_path = Path(db_path) if db_path else None
         self._sentiment = (
             SentimentIntensityAnalyzer() if SentimentIntensityAnalyzer else None
         )
         self.style_weights: Dict[str, Dict[str, float]] = {}
+        self._stats: Dict[str, Dict[str, list[int]]] = {
+            "headers": defaultdict(lambda: [0, 0]),
+            "example_order": defaultdict(lambda: [0, 0]),
+            "tone": defaultdict(lambda: [0, 0]),
+            "has_bullets": defaultdict(lambda: [0, 0]),
+            "has_code": defaultdict(lambda: [0, 0]),
+            "example_count": defaultdict(lambda: [0, 0]),
+        }
+
+        # optional JSON weight loading for backwards compatibility
         if self.state_path and self.state_path.exists():
             try:
                 with self.state_path.open("r", encoding="utf-8") as fh:
@@ -53,18 +67,57 @@ class PromptMemoryTrainer:
                     self.style_weights = data["weights"]
             except Exception:
                 self.style_weights = {}
-        self._stats: Dict[str, Dict[str, list[int]]] = {
-            "headers": defaultdict(lambda: [0, 0]),
-            "example_order": defaultdict(lambda: [0, 0]),
-            "tone": defaultdict(lambda: [0, 0]),
-            "has_bullets": defaultdict(lambda: [0, 0]),
-            "has_code": defaultdict(lambda: [0, 0]),
-            "example_count": defaultdict(lambda: [0, 0]),
-        }
+
+        # initialise sqlite persistence
+        self.router = init_db_router(
+            "prompt_styles",
+            str(self.db_path or Path("prompt_styles.db")),
+            str(self.db_path or Path("prompt_styles.db")),
+        )
+        self._db = self.router.local_conn
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS style_stats(
+                feature TEXT NOT NULL,
+                value TEXT NOT NULL,
+                success REAL NOT NULL,
+                total REAL NOT NULL,
+                PRIMARY KEY(feature, value)
+            )
+            """
+        )
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS prompt_records(
+                ts REAL,
+                tone TEXT,
+                headers TEXT,
+                example_order TEXT,
+                has_bullets INTEGER,
+                has_code INTEGER,
+                example_count INTEGER,
+                success INTEGER,
+                weight REAL
+            )
+            """
+        )
+        self._db.commit()
+
+        # load existing stats from DB
+        cur = self._db.execute(
+            "SELECT feature, value, success, total FROM style_stats"
+        )
+        for feat, val, suc, tot in cur.fetchall():
+            if feat not in self._stats:
+                self._stats[feat] = defaultdict(lambda: [0, 0])
+            self._stats[feat][val] = [int(suc), int(tot)]
+            if tot:
+                self.style_weights.setdefault(feat, {})[val] = suc / tot
+
         for feat, mapping in self.style_weights.items():
             if feat in self._stats:
                 for key, val in mapping.items():
-                    self._stats[feat][key] = [int(round(val)), 1]
+                    self._stats[feat].setdefault(key, [int(round(val)), 1])
 
     # ------------------------------------------------------------------
     def _extract_style(self, prompt: str) -> Dict[str, Any]:
@@ -231,9 +284,28 @@ class PromptMemoryTrainer:
                     d["success"] += weight
 
         self.style_weights = {
-            feat: {k: (v["success"] / v["weight"]) if v["weight"] else 0.0 for k, v in m.items()}
+            feat: {
+                k: (v["success"] / v["weight"]) if v["weight"] else 0.0
+                for k, v in m.items()
+            }
             for feat, m in stats.items()
         }
+
+        # persist stats to database for future incremental updates
+        self._stats = {
+            feat: defaultdict(lambda: [0, 0]) for feat in self._stats.keys()
+        }
+        self._db.execute("DELETE FROM style_stats")
+        for feat, m in stats.items():
+            for k, v in m.items():
+                self._stats.setdefault(feat, defaultdict(lambda: [0, 0]))
+                self._stats[feat][k] = [v["success"], v["weight"]]
+                self._db.execute(
+                    "INSERT INTO style_stats(feature, value, success, total) VALUES(?,?,?,?)",
+                    (feat, k, v["success"], v["weight"]),
+                )
+        self._db.commit()
+
         if self.state_path:
             self.save_weights(self.state_path)
         return self.style_weights
@@ -339,6 +411,7 @@ class PromptMemoryTrainer:
         has_code: bool | None = None,
         example_count: int | None = None,
         success: bool = False,
+        weight: float = 1.0,
         **_: Any,
     ) -> bool:
         """Incrementally update style weights and persist when changed.
@@ -357,22 +430,64 @@ class PromptMemoryTrainer:
             "has_code": str(has_code) if has_code is not None else None,
             "example_count": str(example_count) if example_count is not None else None,
         }
+
+        # log full record for monitoring
+        self._db.execute(
+            (
+                "INSERT INTO prompt_records(ts, tone, headers, example_order, "
+                "has_bullets, has_code, example_count, success, weight) VALUES(?,?,?,?,?,?,?,?,?)"
+            ),
+            (
+                time.time(),
+                tone or None,
+                json.dumps(list(headers)) if headers else None,
+                json.dumps(list(example_order)) if example_order else None,
+                1 if has_bullets else 0 if has_bullets is not None else None,
+                1 if has_code else 0 if has_code is not None else None,
+                example_count,
+                1 if success else 0,
+                float(weight),
+            ),
+        )
+
         for feat, key in feats.items():
             if not key:
                 continue
             stats = self._stats[feat][key]
-            stats[1] += 1
+            stats[1] += weight
             if success:
-                stats[0] += 1
+                stats[0] += weight
             score = stats[0] / max(stats[1], 1)
             mapping = self.style_weights.setdefault(feat, {})
             prev = mapping.get(key)
             if prev != score:
                 mapping[key] = score
                 updated = True
+            self._db.execute(
+                (
+                    "INSERT INTO style_stats(feature, value, success, total) "
+                    "VALUES(?,?,?,?) ON CONFLICT(feature, value) DO UPDATE SET "
+                    "success=excluded.success, total=excluded.total"
+                ),
+                (feat, key, stats[0], stats[1]),
+            )
+        self._db.commit()
         if updated and self.state_path:
             self.save_weights(self.state_path)
         return updated
+
+    # ------------------------------------------------------------------
+    def style_metrics(self) -> Dict[str, Dict[str, Dict[str, float]]]:
+        """Return success rates and observation counts for each style."""
+
+        metrics: Dict[str, Dict[str, Dict[str, float]]] = {}
+        for feat, mapping in self.style_weights.items():
+            feat_metrics: Dict[str, Dict[str, float]] = {}
+            for key, score in mapping.items():
+                count = self._stats.get(feat, {}).get(key, [0, 0])[1]
+                feat_metrics[key] = {"score": score, "count": float(count)}
+            metrics[feat] = feat_metrics
+        return metrics
 
 
 __all__ = ["PromptMemoryTrainer"]
