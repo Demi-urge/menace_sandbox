@@ -5752,69 +5752,76 @@ def _scenario_specific_metrics(
 
 
 # ----------------------------------------------------------------------
-def _preset_concurrency_spike(multiplier: int = 4) -> Dict[str, Any]:
+def _preset_concurrency_spike(multiplier: int | None = None) -> Dict[str, Any]:
     """Preset stressing concurrency limits."""
 
+    settings = SandboxSettings()
+    mult = multiplier if multiplier is not None else settings.preset_concurrency_multiplier
     return {
         "SCENARIO_NAME": "concurrency_spike",
         "FAILURE_MODES": "concurrency_spike",
-        "CONCURRENCY_MULTIPLIER": multiplier,
-        "CONCURRENCY_LEVEL": 8,
+        "CONCURRENCY_MULTIPLIER": mult,
+        "CONCURRENCY_LEVEL": settings.preset_concurrency_level,
     }
 
 
 def _preset_hostile_input() -> Dict[str, Any]:
     """Preset injecting adversarial or malformed inputs."""
 
+    settings = SandboxSettings()
     return {
         "SCENARIO_NAME": "hostile_input",
         "FAILURE_MODES": "hostile_input",
-        "SANDBOX_STUB_STRATEGY": "hostile",
-        "HOSTILE_INPUT": True,
+        "SANDBOX_STUB_STRATEGY": settings.preset_hostile_stub_strategy,
+        "HOSTILE_INPUT": settings.preset_hostile_input,
     }
 
 
 def _preset_schema_drift() -> Dict[str, Any]:
     """Preset simulating legacy or mismatched schemas."""
 
+    settings = SandboxSettings()
     return {
         "SCENARIO_NAME": "schema_drift",
         "FAILURE_MODES": "schema_drift",
-        "SANDBOX_STUB_STRATEGY": "legacy_schema",
-        "SCHEMA_MISMATCHES": 5,
-        "SCHEMA_CHECKS": 100,
+        "SANDBOX_STUB_STRATEGY": settings.preset_schema_stub_strategy,
+        "SCHEMA_MISMATCHES": settings.preset_schema_mismatches,
+        "SCHEMA_CHECKS": settings.preset_schema_checks,
     }
 
 
 def _preset_flaky_upstream() -> Dict[str, Any]:
     """Preset emulating unreliable upstream dependencies."""
 
+    settings = SandboxSettings()
     return {
         "SCENARIO_NAME": "flaky_upstream",
         "FAILURE_MODES": "flaky_upstream",
-        "UPSTREAM_FAILURES": 1,
-        "UPSTREAM_REQUESTS": 20,
-        "SANDBOX_STUB_STRATEGY": "flaky_upstream",
-        "API_LATENCY_MS": 500,
+        "UPSTREAM_FAILURES": settings.preset_upstream_failures,
+        "UPSTREAM_REQUESTS": settings.preset_upstream_requests,
+        "SANDBOX_STUB_STRATEGY": settings.preset_flaky_stub_strategy,
+        "API_LATENCY_MS": settings.preset_api_latency_ms,
     }
 
 
 def _preset_high_latency() -> Dict[str, Any]:
     """Preset introducing artificial network delays."""
 
+    settings = SandboxSettings()
     return {
         "SCENARIO_NAME": "high_latency",
-        "NETWORK_LATENCY_MS": 500,
+        "NETWORK_LATENCY_MS": settings.preset_network_latency_ms,
     }
 
 
 def _preset_resource_strain() -> Dict[str, Any]:
     """Preset throttling compute and disk resources."""
 
+    settings = SandboxSettings()
     return {
         "SCENARIO_NAME": "resource_strain",
-        "CPU_LIMIT": 0.5,
-        "DISK_LIMIT": "512mb",
+        "CPU_LIMIT": settings.preset_cpu_limit,
+        "DISK_LIMIT": settings.preset_disk_limit,
     }
 
 
