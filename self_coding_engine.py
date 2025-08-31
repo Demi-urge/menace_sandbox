@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping
 import subprocess
-import sys
 import json
 import base64
 import logging
@@ -65,13 +64,45 @@ from .sandbox_settings import SandboxSettings
 try:  # pragma: no cover - optional dependency
     from vector_service import CognitionLayer, PatchLogger, VectorServiceError
 except Exception:  # pragma: no cover - defensive fallback
-    CognitionLayer = None  # type: ignore
     PatchLogger = object  # type: ignore
 
     class VectorServiceError(Exception):
-        """Fallback VectorServiceError when vector service is unavailable."""
+        """Raised when the vector service dependency is missing."""
 
-        pass
+        def __init__(
+            self,
+            message: str,
+            *,
+            missing_dependency: str | None = None,
+            suggested_fix: str | None = None,
+        ) -> None:
+            super().__init__(message)
+            self.missing_dependency = missing_dependency
+            self.suggested_fix = suggested_fix
+
+    class CognitionLayer:  # type: ignore[override]
+        """Stub cognition layer used when vector service is unavailable."""
+
+        def __init__(self, *_, **kwargs):
+            self.patch_logger = kwargs.get("patch_logger")
+            self.roi_tracker = kwargs.get("roi_tracker")
+            logging.getLogger(__name__).warning(
+                "vector service dependency missing; CognitionLayer disabled"
+            )
+
+        def query(self, *_args, **_kwargs):
+            raise VectorServiceError(
+                "CognitionLayer unavailable",
+                missing_dependency="vector_service",
+                suggested_fix="install the vector_service package",
+            )
+
+        def record_patch_outcome(self, *_args, **_kwargs):
+            raise VectorServiceError(
+                "CognitionLayer unavailable",
+                missing_dependency="vector_service",
+                suggested_fix="install the vector_service package",
+            )
 
 from .roi_tracker import ROITracker
 from .prompt_engine import PromptEngine
@@ -169,7 +200,14 @@ class SelfCodingEngine:
                 )
         if cognition_layer is None:
             try:
-                cognition_layer = CognitionLayer(patch_logger=patch_logger, roi_tracker=tracker)
+                cognition_layer = CognitionLayer(
+                    patch_logger=patch_logger, roi_tracker=tracker
+                )
+            except VectorServiceError as exc:
+                self.logger.warning(
+                    "cognition layer unavailable during init: %s", exc
+                )
+                cognition_layer = None
             except Exception:
                 cognition_layer = None
         else:
@@ -666,7 +704,12 @@ class SelfCodingEngine:
             if not harness_result.success:
                 self.logger.error("tests failed")
                 self._last_retry_trace = harness_result.stderr or harness_result.stdout
-        return TestHarnessResult(success, harness_result.stdout, harness_result.stderr, harness_result.duration)
+        return TestHarnessResult(
+            success,
+            harness_result.stdout,
+            harness_result.stderr,
+            harness_result.duration,
+        )
 
     def _current_errors(self) -> int:
         """Return the latest recorded error count for the bot."""
@@ -764,6 +807,12 @@ class SelfCodingEngine:
                     "retrieval_context": ctx,
                     "retrieval_session_id": sid,
                 }
+            except VectorServiceError as exc:
+                self.logger.warning("cognition layer query failed: %s", exc)
+                context_meta = {
+                    "retrieval_context": "",
+                    "retrieval_session_id": "",
+                }
             except Exception:
                 context_meta = {
                     "retrieval_context": "",
@@ -791,6 +840,8 @@ class SelfCodingEngine:
             if self.cognition_layer and session_id:
                 try:
                     self.cognition_layer.record_patch_outcome(session_id, False)
+                except VectorServiceError as exc:
+                    self.logger.warning("cognition layer unavailable: %s", exc)
                 except Exception:
                     self.logger.exception("failed to record patch outcome")
             self._log_attempt(
@@ -1148,6 +1199,8 @@ class SelfCodingEngine:
                     contribution=roi_delta,
                     effort_estimate=effort_estimate,
                 )
+            except VectorServiceError as exc:
+                self.logger.warning("cognition layer unavailable: %s", exc)
             except Exception:
                 self.logger.exception("failed to record patch outcome")
         self._track_contributors(
