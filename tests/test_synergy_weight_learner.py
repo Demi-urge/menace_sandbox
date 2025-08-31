@@ -36,6 +36,14 @@ modules = [
     "menace.pre_execution_roi_bot",
     "menace.env_config",
     "relevancy_radar",
+    "menace.gpt_memory",
+    "gpt_memory",
+    "menace.local_knowledge_module",
+    "menace.gpt_knowledge_service",
+    "gpt_memory_interface",
+    "menace.intent_clusterer",
+    "sandbox_runner.bootstrap",
+    "sandbox_runner.environment",
 ]
 for name in modules:
     sys.modules.setdefault(name, types.ModuleType(name))
@@ -74,6 +82,22 @@ sys.modules["menace.mutation_logger"] = types.ModuleType("menace.mutation_logger
 rr = types.ModuleType("relevancy_radar")
 rr.tracked_import = __import__
 sys.modules["relevancy_radar"] = rr
+sys.modules["sandbox_runner.bootstrap"].initialize_autonomous_sandbox = lambda *a, **k: None
+env_mod = sys.modules["sandbox_runner.environment"]
+env_mod.SANDBOX_ENV_PRESETS = [{}]
+env_mod.simulate_full_environment = lambda *a, **k: None
+env_mod.auto_include_modules = lambda *a, **k: (None, [])
+env_mod.run_workflow_simulations = lambda *a, **k: (None, [])
+env_mod.try_integrate_into_workflows = lambda *a, **k: None
+sys.modules["menace.gpt_memory"].GPTMemoryManager = object
+sys.modules["gpt_memory"] = sys.modules["menace.gpt_memory"]
+sys.modules["menace.gpt_memory"].STANDARD_TAGS = {}
+lk_mod = sys.modules["menace.local_knowledge_module"]
+lk_mod.init_local_knowledge = lambda *a, **k: None
+lk_mod.LocalKnowledgeModule = object
+sys.modules["gpt_memory_interface"].GPTMemoryInterface = object
+sys.modules["menace.gpt_knowledge_service"].GPTKnowledgeService = object
+sys.modules["menace.intent_clusterer"].IntentClusterer = object
 policy_mod = sys.modules["menace.self_improvement_policy"]
 policy_mod.SelfImprovementPolicy = object
 policy_mod.ConfigurableSelfImprovementPolicy = lambda *a, **k: object()
@@ -482,3 +506,28 @@ def test_synergy_weight_logging_info(tmp_path, caplog):
     text = caplog.text
     assert "updated synergy weights" in text
     assert "saved synergy weights" in text
+
+
+def test_synergy_weight_checkpoint_failure(tmp_path, monkeypatch, caplog):
+    path = tmp_path / "w.json"
+    settings = types.SimpleNamespace(
+        synergy_weight_file=str(path),
+        synergy_checkpoint_interval=1,
+        synergy_python_fallback=True,
+        synergy_python_max_replay=1000,
+        synergy_train_interval=10,
+        synergy_replay_size=10,
+    )
+    learner = sie.SynergyWeightLearner(path=path, lr=0.1, settings=settings)
+
+    def fail_copy(*a, **k):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(sie.shutil, "copy", fail_copy)
+    monkeypatch.setattr(sie.time, "sleep", lambda *_: None)
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(PermissionError):
+            learner.save()
+
+    assert "failed to checkpoint synergy weights" in caplog.text
