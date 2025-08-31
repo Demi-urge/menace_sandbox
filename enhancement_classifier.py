@@ -385,11 +385,17 @@ class EnhancementClassifier:
                 + self.weights["history"] * history_corr
             )
 
+            roi_phrase = "dropped" if avg_roi < 0 else "improved"
+            if avg_errors > 0:
+                err_phrase = f"errors increased by {avg_errors:.2f}"
+            elif avg_errors < 0:
+                err_phrase = f"errors decreased by {abs(avg_errors):.2f}"
+            else:
+                err_phrase = "errors unchanged"
             rationale = (
-                f"{patches} patches, avg ROI delta {avg_roi:.2f}, "
-                f"avg error delta {avg_errors:.2f}, avg complexity delta {avg_complexity:.2f}, "
-                f"avg cyclomatic {avg_cc:.2f}, duplication ratio {dup_ratio:.2f}, long functions {long_funcs}, "
-                f"low ROI ratio {neg_roi_ratio:.2f}, error-prone ratio {error_prone_ratio:.2f}"
+                f"module {filename} refactored {patches} times; "
+                f"ROI {roi_phrase} {abs(avg_roi):.2f}%; "
+                f"{err_phrase}"
             )
             all_notes = notes + anti_notes
             if all_notes:
