@@ -13,7 +13,9 @@ import json
 import os
 import time
 import threading
+import heapq
 from pathlib import Path
+from contextlib import contextmanager, nullcontext
 
 from ..logging_utils import get_logger, log_record
 from ..sandbox_settings import SandboxSettings
@@ -95,16 +97,24 @@ class _FallbackPlanner:
         self.domain_transition_penalty = getattr(
             cfg, "domain_transition_penalty", getattr(cfg, "meta_domain_penalty", 1.0)
         )
+        self.exploration_depth = getattr(cfg, "meta_search_depth", 3)
+        self.beam_width = getattr(cfg, "meta_beam_width", 5)
+        self.entropy_weight = getattr(cfg, "meta_entropy_weight", 0.0)
         self.roi_window = roi_window
         self._load_state()
 
     # ------------------------------------------------------------------
-    def _load_state(self) -> None:
-        """Load planner state from disk with inter-process locking."""
+    def _load_state(self, *, lock: bool = True) -> None:
+        """Load planner state from disk with optional locking."""
 
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.state_lock.acquire(timeout=LOCK_TIMEOUT):
+            ctx = (
+                self.state_lock.acquire(timeout=LOCK_TIMEOUT)
+                if lock
+                else nullcontext()
+            )
+            with ctx:
                 if self.state_path.exists():
                     data = json.loads(self.state_path.read_text())
                 else:
@@ -125,7 +135,7 @@ class _FallbackPlanner:
             )
             self.cluster_map = {}
 
-    def _save_state(self) -> None:
+    def _save_state(self, *, lock: bool = True) -> None:
         """Persist planner state to disk atomically.
 
         A file lock guards against concurrent writers.  Data is first written to
@@ -136,7 +146,12 @@ class _FallbackPlanner:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
             data = {"|".join(k): v for k, v in self.cluster_map.items()}
             tmp_path = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
-            with self.state_lock.acquire(timeout=LOCK_TIMEOUT):
+            ctx = (
+                self.state_lock.acquire(timeout=LOCK_TIMEOUT)
+                if lock
+                else nullcontext()
+            )
+            with ctx:
                 tmp_path.write_text(json.dumps(data, indent=2))
                 os.replace(tmp_path, self.state_path)
         except Timeout as exc:  # pragma: no cover - lock contention
@@ -151,6 +166,25 @@ class _FallbackPlanner:
                 extra=log_record(path=str(self.state_path)),
                 exc_info=exc,
             )
+
+    # ------------------------------------------------------------------
+    @contextmanager
+    def _state_update(self) -> Any:
+        """Context manager providing atomic load/modify/save of state."""
+
+        try:
+            with self.state_lock.acquire(timeout=LOCK_TIMEOUT):
+                self._load_state(lock=False)
+                yield
+                self._save_state(lock=False)
+        except Timeout as exc:  # pragma: no cover - lock contention
+            self.logger.warning(
+                "state lock acquisition timed out",
+                extra=log_record(path=str(self.state_path)),
+                exc_info=exc,
+            )
+            self.cluster_map = {}
+            yield
 
     # ------------------------------------------------------------------
     def begin_run(self, workflow_id: str, run_id: str) -> None:
@@ -199,55 +233,75 @@ class _FallbackPlanner:
     def _domain(self, wid: str) -> str:
         return wid.split(".", 1)[0]
 
-    def _score(self, chain: Sequence[str], roi: float) -> float:
+    def _score(self, chain: Sequence[str], roi: float, entropy: float) -> float:
         transitions = sum(
             1
             for i in range(1, len(chain))
             if self._domain(chain[i]) != self._domain(chain[i - 1])
         )
-        return self.roi_weight * roi - self.domain_transition_penalty * transitions
+        return (
+            self.roi_weight * roi
+            - self.domain_transition_penalty * transitions
+            - self.entropy_weight * abs(entropy)
+        )
+
+    # ------------------------------------------------------------------
+    def _beam_search(
+        self, workflows: Mapping[str, Callable[[], Any]]
+    ) -> list[Mapping[str, Any]]:
+        """Explore workflow chains using a simple beam search."""
+
+        evaluated: dict[tuple[str, ...], Mapping[str, Any]] = {}
+        beam: list[tuple[float, list[str]]] = []
+
+        for chain_key in list(self.cluster_map):
+            rec = self._evaluate_chain(list(chain_key))
+            if rec:
+                evaluated[tuple(rec["chain"])] = rec
+                heapq.heappush(beam, (-rec["score"], rec["chain"]))
+
+        for wid in workflows:
+            key = (wid,)
+            if key in evaluated:
+                continue
+            rec = self._evaluate_chain([wid])
+            if rec:
+                evaluated[key] = rec
+                heapq.heappush(beam, (-rec["score"], rec["chain"]))
+
+        beam = heapq.nsmallest(self.beam_width, beam)
+        heapq.heapify(beam)
+
+        depth = 1
+        while depth < self.exploration_depth and beam:
+            next_beam: list[tuple[float, list[str]]] = []
+            while beam:
+                _, chain = heapq.heappop(beam)
+                for wid in workflows:
+                    if wid in chain:
+                        continue
+                    new_chain = chain + [wid]
+                    key = tuple(new_chain)
+                    if key in evaluated:
+                        continue
+                    rec = self._evaluate_chain(new_chain)
+                    if rec:
+                        evaluated[key] = rec
+                        heapq.heappush(next_beam, (-rec["score"], new_chain))
+            beam = heapq.nsmallest(self.beam_width, next_beam)
+            heapq.heapify(beam)
+            depth += 1
+
+        return sorted(evaluated.values(), key=lambda r: r["score"], reverse=True)
 
     # ------------------------------------------------------------------
     def discover_and_persist(
         self, workflows: Mapping[str, Callable[[], Any]]
     ) -> list[Mapping[str, Any]]:
-        """Explore pipelines via mutation, splitting and merging."""
+        """Explore pipelines via heuristic beam search and persist state."""
 
-        evaluated: set[tuple[str, ...]] = set()
-        records: list[dict[str, Any]] = []
-
-        for chain_key in list(self.cluster_map):
-            rec = self._evaluate_chain(list(chain_key))
-            if rec:
-                records.append(rec)
-                evaluated.add(tuple(rec["chain"]))
-
-        for wid in workflows:
-            chain = (wid,)
-            if chain in evaluated:
-                continue
-            rec = self._evaluate_chain(list(chain))
-            if rec:
-                records.append(rec)
-                evaluated.add(chain)
-
-        candidates = list(records)
-        for rec in list(records):
-            candidates.extend(self.mutate_pipeline(rec["chain"], workflows))
-            if len(rec["chain"]) > 1:
-                candidates.extend(self.split_pipeline(rec["chain"], workflows))
-
-        pipelines = [c["chain"] for c in candidates][:5]
-        candidates.extend(self.remerge_pipelines(pipelines, workflows))
-
-        dedup: dict[tuple[str, ...], dict[str, Any]] = {}
-        for rec in candidates:
-            key = tuple(rec["chain"])
-            if key not in dedup or rec["score"] > dedup[key]["score"]:
-                dedup[key] = rec
-
-        results = sorted(dedup.values(), key=lambda r: r["score"], reverse=True)
-        self._save_state()
+        with self._state_update():
+            results = self._beam_search(workflows)
         return results
 
     # ------------------------------------------------------------------
@@ -299,7 +353,7 @@ class _FallbackPlanner:
 
         chain_roi = fmean(roi_values)
         chain_entropy = fmean(entropies) if entropies else 0.0
-        score = self._score(chain, chain_roi)
+        score = self._score(chain, chain_roi, chain_entropy)
         record = {
             "chain": list(chain),
             "roi_gain": chain_roi,
@@ -440,13 +494,16 @@ settings = _init.settings
 
 def reload_settings(cfg: SandboxSettings) -> None:
     """Update module-level settings and derived constants."""
-    global settings, PLANNER_INTERVAL, MUTATION_RATE, ROI_WEIGHT, DOMAIN_PENALTY, ENTROPY_THRESHOLD
+    global settings, PLANNER_INTERVAL, MUTATION_RATE, ROI_WEIGHT, DOMAIN_PENALTY, ENTROPY_THRESHOLD, SEARCH_DEPTH, BEAM_WIDTH, ENTROPY_WEIGHT
     settings = cfg
     _validate_config(settings)
     PLANNER_INTERVAL = getattr(settings, "meta_planning_interval", 0)
     MUTATION_RATE = settings.meta_mutation_rate
     ROI_WEIGHT = settings.meta_roi_weight
     DOMAIN_PENALTY = settings.meta_domain_penalty
+    ENTROPY_WEIGHT = settings.meta_entropy_weight
+    SEARCH_DEPTH = settings.meta_search_depth
+    BEAM_WIDTH = settings.meta_beam_width
     ENTROPY_THRESHOLD = (
         settings.meta_entropy_threshold
         if settings.meta_entropy_threshold is not None
@@ -458,9 +515,17 @@ def _validate_config(cfg: SandboxSettings) -> None:
     """Validate meta planning configuration on import."""
     if cfg.meta_entropy_threshold is not None and not 0 <= cfg.meta_entropy_threshold <= 1:
         raise ValueError("meta_entropy_threshold must be between 0 and 1")
-    for attr in ("meta_mutation_rate", "meta_roi_weight", "meta_domain_penalty"):
+    for attr in (
+        "meta_mutation_rate",
+        "meta_roi_weight",
+        "meta_domain_penalty",
+        "meta_entropy_weight",
+    ):
         if getattr(cfg, attr) < 0:
             raise ValueError(f"{attr} must be non-negative")
+    for attr in ("meta_search_depth", "meta_beam_width"):
+        if getattr(cfg, attr) <= 0:
+            raise ValueError(f"{attr} must be positive")
 
 
 DEFAULT_ENTROPY_THRESHOLD = 0.2
@@ -663,4 +728,7 @@ __all__ = [
     "ROI_WEIGHT",
     "DOMAIN_PENALTY",
     "ENTROPY_THRESHOLD",
+    "SEARCH_DEPTH",
+    "BEAM_WIDTH",
+    "ENTROPY_WEIGHT",
 ]
