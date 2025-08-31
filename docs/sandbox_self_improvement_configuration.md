@@ -12,6 +12,13 @@ advice for common setup problems.
 - Some sandbox features rely on external binaries like `ffmpeg` and `tesseract`.
   Verify they are on your `PATH` after installing the Python environment.
 
+## Policy hyperparameters
+- `POLICY_ALPHA` – learning rate applied during policy updates.
+- `POLICY_GAMMA` – discount factor for future rewards.
+- `POLICY_EPSILON` – exploration rate for epsilon-greedy strategies.
+- `POLICY_TEMPERATURE` – temperature for softmax exploration.
+- `POLICY_EXPLORATION` – exploration strategy to use, such as `epsilon_greedy`.
+
 ## Security considerations
 - Resource and network limits are controlled through environment variables.
   `SECURITY_LEVEL` and `THREAT_INTENSITY` tune the simulated security posture,

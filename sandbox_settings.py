@@ -237,6 +237,28 @@ class ActorCriticSettings(BaseModel):
         return v
 
 
+class PolicySettings(BaseModel):
+    """Default hyperparameters for self-improvement policies."""
+
+    alpha: float = 0.5
+    gamma: float = 0.9
+    epsilon: float = 0.1
+    temperature: float = 1.0
+    exploration: str = "epsilon_greedy"
+
+    @field_validator("alpha", "gamma", "epsilon")
+    def _policy_unit_range(cls, v: float, info: Any) -> float:
+        if not 0 <= v <= 1:
+            raise ValueError(f"{info.field_name} must be between 0 and 1")
+        return v
+
+    @field_validator("temperature")
+    def _policy_temperature(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("temperature must be positive")
+        return v
+
+
 class SandboxSettings(BaseSettings):
     """Environment configuration for sandbox runners."""
 
@@ -767,6 +789,31 @@ class SandboxSettings(BaseSettings):
     exploration_strategy: str = Field("epsilon_greedy", env="EXPLORATION_STRATEGY")
     exploration_epsilon: float = Field(0.1, env="EXPLORATION_EPSILON")
     exploration_temperature: float = Field(1.0, env="EXPLORATION_TEMPERATURE")
+    policy_alpha: float = Field(
+        0.5,
+        env="POLICY_ALPHA",
+        description="Learning rate for self-improvement policy updates.",
+    )
+    policy_gamma: float = Field(
+        0.9,
+        env="POLICY_GAMMA",
+        description="Discount factor for future rewards in policy updates.",
+    )
+    policy_epsilon: float = Field(
+        0.1,
+        env="POLICY_EPSILON",
+        description="Exploration rate for epsilon-greedy policy strategies.",
+    )
+    policy_temperature: float = Field(
+        1.0,
+        env="POLICY_TEMPERATURE",
+        description="Temperature parameter for softmax exploration policies.",
+    )
+    policy_exploration: str = Field(
+        "epsilon_greedy",
+        env="POLICY_EXPLORATION",
+        description="Exploration strategy for policy selection (e.g., 'epsilon_greedy').",
+    )
     default_module_timeout: float | None = Field(
         None,
         env="SANDBOX_TIMEOUT",
@@ -811,6 +858,18 @@ class SandboxSettings(BaseSettings):
     def _validate_exploration_temperature(cls, v: float) -> float:
         if v <= 0:
             raise ValueError("exploration_temperature must be positive")
+        return v
+
+    @field_validator("policy_alpha", "policy_gamma", "policy_epsilon")
+    def _validate_policy_unit_range(cls, v: float, info: Any) -> float:
+        if not 0 <= v <= 1:
+            raise ValueError(f"{info.field_name} must be between 0 and 1")
+        return v
+
+    @field_validator("policy_temperature")
+    def _validate_policy_temperature(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("policy_temperature must be positive")
         return v
 
     @field_validator("meta_entropy_threshold")
@@ -1424,6 +1483,9 @@ class SandboxSettings(BaseSettings):
     actor_critic: ActorCriticSettings = Field(
         default_factory=ActorCriticSettings, exclude=True
     )
+    policy: PolicySettings = Field(
+        default_factory=PolicySettings, exclude=True
+    )
 
     def __init__(self, **data: Any) -> None:  # pragma: no cover - simple wiring
         super().__init__(**data)
@@ -1489,6 +1551,13 @@ class SandboxSettings(BaseSettings):
             reward_scale=self.ac_reward_scale,
             eval_interval=self.ac_eval_interval,
             checkpoint_interval=self.ac_checkpoint_interval,
+        )
+        self.policy = PolicySettings(
+            alpha=self.policy_alpha,
+            gamma=self.policy_gamma,
+            epsilon=self.policy_epsilon,
+            temperature=self.policy_temperature,
+            exploration=self.policy_exploration,
         )
 
     model_config = SettingsConfigDict(

@@ -67,3 +67,19 @@ def test_policy_config_serialization(tmp_path):
     policy.save_model(str(path))
     loaded = SelfImprovementPolicy.load_model(str(path))
     assert loaded.get_config() == cfg
+
+
+def test_policy_config_defaults_from_settings():
+    settings = SandboxSettings(
+        policy_alpha=0.3,
+        policy_gamma=0.8,
+        policy_epsilon=0.2,
+        policy_temperature=1.5,
+        policy_exploration="softmax",
+    )
+    cfg = PolicyConfig(settings=settings)
+    assert cfg.alpha == settings.policy_alpha
+    assert cfg.gamma == settings.policy_gamma
+    assert cfg.epsilon == settings.policy_epsilon
+    assert cfg.temperature == settings.policy_temperature
+    assert cfg.exploration == settings.policy_exploration
