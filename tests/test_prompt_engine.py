@@ -2,8 +2,16 @@ from typing import Any, Dict, List
 
 import json
 import pytest
+import sqlite3
+import sys
+import types
+
+# Stub heavy dependencies before importing the trainer
+sys.modules.setdefault("gpt_memory", types.SimpleNamespace(GPTMemoryManager=object))
+sys.modules.setdefault("code_database", types.SimpleNamespace(PatchHistoryDB=object))
 
 from prompt_engine import PromptEngine, DEFAULT_TEMPLATE
+from prompt_memory_trainer import PromptMemoryTrainer
 from vector_service.retriever import FallbackResult
 
 
@@ -198,6 +206,49 @@ def test_roi_tag_weights_adjust_ranking():
     engine.roi_tag_weights = {"high-ROI": -1.0, "bug-introduced": 1.0}
     ranked = engine._rank_records(records)
     assert ranked[0]["metadata"]["summary"] == "bad"
+
+
+def test_prompt_memory_trainer_extracts_new_cues():
+    trainer = PromptMemoryTrainer(memory=object(), patch_db=object())
+    prompt = (
+        "System: guidelines\nUser: do this\n- bullet\n```python\npass\n```"
+    )
+    feats = trainer._extract_style(prompt)
+    assert feats["has_code"]
+    assert feats["has_bullets"]
+    assert feats["sections"] == ["system", "user"]
+
+
+def test_prompt_memory_trainer_weights_success_by_roi_or_complexity():
+    class Mem:
+        def __init__(self):
+            self.conn = sqlite3.connect(":memory:")
+            self.conn.execute("CREATE TABLE interactions(prompt TEXT)")
+
+    class PDB:
+        def __init__(self):
+            self.conn = sqlite3.connect(":memory:")
+            self.conn.execute(
+                "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, outcome TEXT, roi_before REAL, roi_after REAL, complexity_before REAL, complexity_after REAL)"
+            )
+
+    mem = Mem()
+    pdb = PDB()
+    pdb.conn.execute(
+        "INSERT INTO patch_history(id, outcome, roi_before, roi_after, complexity_before, complexity_after) VALUES (1, 'SUCCESS', 0.0, 2.0, 10.0, 5.0)"
+    )
+    pdb.conn.execute(
+        "INSERT INTO patch_history(id, outcome, roi_before, roi_after, complexity_before, complexity_after) VALUES (2, 'FAIL', 0.0, 0.0, 10.0, 5.0)"
+    )
+    mem.conn.execute("INSERT INTO interactions(prompt) VALUES ('PATCH:1\n# H')")
+    mem.conn.execute("INSERT INTO interactions(prompt) VALUES ('PATCH:2\n# H')")
+    mem.conn.commit()
+    pdb.conn.commit()
+
+    trainer = PromptMemoryTrainer(memory=mem, patch_db=pdb)
+    weights = trainer.train()
+    hdr_key = json.dumps(["H"])
+    assert weights["headers"][hdr_key] == pytest.approx(2 / 7)
 
 
 def test_trim_tokens_with_tokenizer():
