@@ -5223,8 +5223,12 @@ def _load_strategy_hook(env_var: str) -> Callable[..., Any] | None:
 
 
 def _random_strategy(
-    count: int, conf: Dict[str, Any] | None = None
+    count: int,
+    conf: Dict[str, Any] | None = None,
+    *,
+    rng: random.Random | None = None,
 ) -> List[Dict[str, Any]]:
+    rng = rng or random
     conf = conf or {}
     hook = conf.get("hook") or _load_strategy_hook("SANDBOX_RANDOM_STRATEGY_HOOK")
     if hook:
@@ -5239,7 +5243,7 @@ def _random_strategy(
     if history is None:
         history = _load_history(os.getenv("SANDBOX_INPUT_HISTORY"))
     if history:
-        return [dict(random.choice(history)) for _ in range(count)]
+        return [dict(rng.choice(history)) for _ in range(count)]
 
     modes = conf.get("modes", ["default", "alt", "stress"])
     level_range = conf.get("level_range", [1, 5])
@@ -5248,17 +5252,19 @@ def _random_strategy(
     stubs: List[Dict[str, Any]] = []
     for _ in range(count):
         stub = {
-            "mode": random.choice(modes),
-            "level": random.randint(int(level_range[0]), int(level_range[1])),
+            "mode": rng.choice(modes),
+            "level": rng.randint(int(level_range[0]), int(level_range[1])),
         }
-        if random.random() < flag_prob and flags:
-            stub["flag"] = random.choice(flags)
+        if rng.random() < flag_prob and flags:
+            stub["flag"] = rng.choice(flags)
         stubs.append(stub)
     return stubs
 
 
 def _hostile_strategy(
-    count: int, target: Callable[..., Any] | None = None
+    count: int,
+    target: Callable[..., Any] | None = None,
+    rng: random.Random | None = None,
 ) -> List[Dict[str, Any]]:
     """Return adversarial input dictionaries.
 
@@ -5353,7 +5359,7 @@ def _hostile_strategy(
             except Exception:
                 logger.exception("failed to load hostile templates: %s", p)
 
-    base = _stub_from_signature(target) if target else {}
+    base = _stub_from_signature(target, rng=rng) if target else {}
     keys = list(base) or ["payload"]
     stubs: List[Dict[str, Any]] = []
     for i in range(count):
@@ -5380,11 +5386,14 @@ def _wrong_type(val: Any) -> Any:
 
 
 def _misuse_strategy(
-    count: int, target: Callable[..., Any] | None = None
+    count: int,
+    target: Callable[..., Any] | None = None,
+    *,
+    rng: random.Random | None = None,
 ) -> List[Dict[str, Any]]:
     """Return stubs with missing fields or wrong types."""
 
-    base = _stub_from_signature(target) if target else {}
+    base = _stub_from_signature(target, rng=rng) if target else {}
     keys = list(base) or ["value"]
     stubs: List[Dict[str, Any]] = []
     for i in range(count):
@@ -5413,7 +5422,8 @@ def _misuse_provider(
         return stubs or []
     count = len(stubs or []) or 1
     target = ctx.get("target") if isinstance(ctx, dict) else None
-    hostile = _hostile_strategy(count, target)
+    rng = ctx.get("rng") if isinstance(ctx, dict) else None
+    hostile = _hostile_strategy(count, target, rng=rng)
     return (stubs or []) + hostile
 
 
@@ -5445,28 +5455,36 @@ def _validate_stubs(
     return valid or (stubs or [])
 
 
-def _smart_value(name: str, hint: Any) -> Any:
+def _smart_value(name: str, hint: Any, rng: random.Random | None = None) -> Any:
     """Return a realistic value for ``name`` with type ``hint``."""
     val = None
     if _FAKER is not None:
-        if hint is str:
-            lowered = name.lower()
-            if "email" in lowered:
-                val = _FAKER.email()
-            elif "name" in lowered:
-                val = _FAKER.name()
-            elif "url" in lowered:
-                val = _FAKER.url()
-            else:
-                val = _FAKER.word()
-        elif hint is int:
-            val = _FAKER.random_int(min=0, max=1000)
-        elif hint is float:
-            val = float(_FAKER.pyfloat(left_digits=2, right_digits=2, positive=True))
-        elif hint is bool:
-            val = _FAKER.pybool()
-        elif hint is datetime:
-            val = _FAKER.date_time()
+        faker_random = None
+        if rng is not None:
+            faker_random = _FAKER.random
+            _FAKER.random = rng
+        try:
+            if hint is str:
+                lowered = name.lower()
+                if "email" in lowered:
+                    val = _FAKER.email()
+                elif "name" in lowered:
+                    val = _FAKER.name()
+                elif "url" in lowered:
+                    val = _FAKER.url()
+                else:
+                    val = _FAKER.word()
+            elif hint is int:
+                val = _FAKER.random_int(min=0, max=1000)
+            elif hint is float:
+                val = float(_FAKER.pyfloat(left_digits=2, right_digits=2, positive=True))
+            elif hint is bool:
+                val = _FAKER.pybool()
+            elif hint is datetime:
+                val = _FAKER.date_time()
+        finally:
+            if faker_random is not None:
+                _FAKER.random = faker_random
     if val is None and _hyp_strats is not None and hint is not inspect._empty:
         try:
             val = _hyp_strats.from_type(hint).example()
@@ -5476,7 +5494,7 @@ def _smart_value(name: str, hint: Any) -> Any:
 
 
 def _stub_from_signature(
-    func: Callable[..., Any], *, smart: bool = False
+    func: Callable[..., Any], *, smart: bool = False, rng: random.Random | None = None
 ) -> Dict[str, Any]:
     """Return an input stub derived from ``func`` signature."""
     stub: Dict[str, Any] = {}
@@ -5491,7 +5509,7 @@ def _stub_from_signature(
         hint = param.annotation
         val: Any = None
         if smart:
-            val = _smart_value(name, hint)
+            val = _smart_value(name, hint, rng=rng)
         if hint is not inspect._empty and val is None:
             origin = get_origin(hint)
             if origin is list or hint is list:
@@ -5548,12 +5566,22 @@ def generate_input_stubs(
     if strategy is None:
         strategy = settings.stub_strategy
 
+    if seed is None:
+        seed = settings.stub_seed
+    if seed is None:
+        rng = random
+    else:
+        rng = random.Random(seed)
+        random.seed(seed)
+    if _FAKER is not None:
+        _FAKER.random = rng
+
     if SANDBOX_INPUT_STUBS:
         stubs = [dict(s) for s in SANDBOX_INPUT_STUBS]
         providers = providers or discover_stub_providers()
         for prov in providers:
             try:
-                new = prov(stubs, {"strategy": "env", "target": target})
+                new = prov(stubs, {"strategy": "env", "target": target, "rng": rng})
                 if new:
                     stubs = [dict(s) for s in new if isinstance(s, dict)]
             except Exception:
@@ -5561,11 +5589,6 @@ def generate_input_stubs(
                     "stub provider %s failed", getattr(prov, "__name__", "?")
                 )
         return stubs
-
-    if seed is None:
-        seed = settings.stub_seed
-    if seed is not None:
-        random.seed(seed)
 
     num = 2 if count is None else max(0, count)
 
@@ -5599,7 +5622,7 @@ def generate_input_stubs(
     for strat in strategy_order:
         if strat == "history":
             if history:
-                stubs = [dict(random.choice(history)) for _ in range(num)]
+                stubs = [dict(rng.choice(history)) for _ in range(num)]
             elif settings.input_history:
                 agg = aggregate_history_stubs()
                 if agg:
@@ -5610,11 +5633,11 @@ def generate_input_stubs(
         elif strat == "failures":
             failures = recent_failure_stubs()
             if failures:
-                stubs = [dict(random.choice(failures)) for _ in range(num)]
+                stubs = [dict(rng.choice(failures)) for _ in range(num)]
                 chosen = "failures"
                 break
         elif strat == "signature" and target is not None:
-            base = _stub_from_signature(target, smart=False)
+            base = _stub_from_signature(target, smart=False, rng=rng)
             stubs = [dict(base) for _ in range(num)]
             chosen = "signature"
             break
@@ -5623,30 +5646,30 @@ def generate_input_stubs(
             if templates is None:
                 templates = _load_templates(settings.input_templates_file)
             if templates:
-                stubs = [dict(random.choice(templates)) for _ in range(num)]
+                stubs = [dict(rng.choice(templates)) for _ in range(num)]
                 chosen = "templates"
                 break
         elif strat == "smart" and target is not None:
-            base = _stub_from_signature(target, smart=True)
+            base = _stub_from_signature(target, smart=True, rng=rng)
             stubs = [dict(base) for _ in range(num)]
             chosen = "smart"
             break
         elif strat == "synthetic" and target is not None:
-            base = _stub_from_signature(target, smart=True)
+            base = _stub_from_signature(target, smart=True, rng=rng)
             stubs = [dict(base) for _ in range(num)]
             chosen = "synthetic"
             break
         elif strat == "hostile":
-            stubs = _hostile_strategy(num, target)
+            stubs = _hostile_strategy(num, target, rng=rng)
             chosen = "hostile"
             break
         elif strat == "misuse":
-            stubs = _misuse_strategy(num, target)
+            stubs = _misuse_strategy(num, target, rng=rng)
             chosen = "misuse"
             break
         elif strat == "random":
             conf = settings.stub_random_config
-            stubs = _random_strategy(num, conf) or [{}]
+            stubs = _random_strategy(num, conf, rng=rng) or [{}]
             chosen = "random"
             break
 
@@ -5659,13 +5682,15 @@ def generate_input_stubs(
         try:
             from . import generative_stub_provider as gsp  # local import
 
-            stubs = gsp.generate_stubs(stubs, {"strategy": chosen, "target": target})
+            stubs = gsp.generate_stubs(
+                stubs, {"strategy": chosen, "target": target, "rng": rng}
+            )
         except Exception:
             logger.exception("%s stub generation failed", chosen)
 
     for prov in providers:
         try:
-            new = prov(stubs, {"strategy": chosen, "target": target})
+            new = prov(stubs, {"strategy": chosen, "target": target, "rng": rng})
             if new:
                 stubs = [dict(s) for s in new if isinstance(s, dict)]
         except Exception:
