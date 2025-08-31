@@ -214,3 +214,66 @@ def test_retry_stops_after_max(monkeypatch, tmp_path):
     assert len(engine.calls) == 2
     assert builder.calls == [["t1"]]
     assert not pipeline.calls
+
+
+def test_retry_skips_duplicate_trace(monkeypatch, tmp_path):
+    class DummyContextBuilder:
+        def __init__(self):
+            self.calls = []
+
+        def query(self, q, *, exclude_tags=None):
+            self.calls.append(exclude_tags)
+            return "ctx", "sid"
+
+    builder = DummyContextBuilder()
+    engine = DummyEngine(builder)
+    pipeline = DummyPipeline()
+    mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot")
+    file_path = _setup_repo(tmp_path)
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            for p in tmpdir_path.iterdir():
+                p.unlink()
+            tmpdir_path.rmdir()
+
+    monkeypatch.setattr(scm.tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            (dst / file_path.name).write_text(file_path.read_text())
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    def run_tests_stub(repo, path):
+        return types.SimpleNamespace(
+            success=False,
+            failure={
+                "trace": "AssertionError: boom",
+                "tags": ["t1"],
+                "error_type": "t1",
+                "signature": "s1",
+            },
+            stdout="",
+            stderr="",
+            duration=0.0,
+        )
+
+    monkeypatch.setattr(scm, "run_tests", run_tests_stub)
+
+    with pytest.raises(RuntimeError):
+        mgr.run_patch(file_path, "desc", max_attempts=3)
+
+    assert len(engine.calls) == 2
+    assert builder.calls == [["t1"]]
+    assert not pipeline.calls

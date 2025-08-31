@@ -108,7 +108,7 @@ except Exception:  # pragma: no cover - defensive fallback
 from .roi_tracker import ROITracker
 from .patch_provenance import record_patch_metadata
 from .prompt_engine import PromptEngine
-from .error_parser import ErrorParser, ErrorReport, parse_failure
+from .error_parser import ErrorParser, ErrorReport, parse_failure, FailureCache
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -233,6 +233,7 @@ class SelfCodingEngine:
         self.router = kwargs.get("router")
         # store tracebacks from failed attempts for retry prompts
         self._last_retry_trace: str | None = None
+        self._failure_cache = FailureCache()
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
@@ -1362,7 +1363,10 @@ class SelfCodingEngine:
                         self.logger.exception("failed to record failure traces")
                 return pid, reverted, delta
             trace = self._last_retry_trace or ""
+            if self._failure_cache.seen(trace):
+                break
             current = parse_failure(trace)
+            self._failure_cache.add(current)
             failures.append(current)
             try:
                 self.audit_trail.record(

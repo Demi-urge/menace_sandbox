@@ -158,10 +158,10 @@ class SelfCodingManager:
                     or harness_result.stdout
                     or ""
                 )
-                if not failure:
-                    failure = ErrorParser.parse(trace)
                 if self._failure_cache.seen(trace):
                     raise RuntimeError("patch tests failed")
+                if not failure:
+                    failure = ErrorParser.parse(trace)
                 tags = failure.get("tags", [])
                 self._failure_cache.add(ErrorReport(trace=trace, tags=tags))
                 try:
