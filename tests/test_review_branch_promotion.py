@@ -122,6 +122,7 @@ def test_pushes_to_review_branch(monkeypatch, tmp_path):
 
 def test_merges_to_main(monkeypatch, tmp_path):
     mgr, file_path, patch_logger, pushes = setup(monkeypatch, tmp_path, confidence=0.9)
-    mgr.run_patch(file_path, "change", confidence_threshold=0.5)
+    mgr.run_patch(file_path, "change", confidence_threshold=0.5, auto_merge=True)
+    assert any("review/1" in cmd[-1] for cmd in pushes)
     assert any(cmd[-1].endswith("main") for cmd in pushes)
     assert patch_logger.calls and patch_logger.calls[0][1]["contribution"] == 1.0

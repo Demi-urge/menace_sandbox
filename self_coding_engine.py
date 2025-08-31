@@ -58,8 +58,8 @@ from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
 from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
 from typing import TYPE_CHECKING
-from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
-from sandbox_runner.test_harness import run_tests, TestHarnessResult
+from .sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
+from .sandbox_runner.test_harness import run_tests, TestHarnessResult
 from .sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - optional dependency
