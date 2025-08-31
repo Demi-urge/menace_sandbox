@@ -5,6 +5,7 @@ import pytest
 import sqlite3 as sq3
 import sys
 import types
+import tempfile
 
 # Stub heavy dependencies before importing the trainer
 sys.modules.setdefault("gpt_memory", types.SimpleNamespace(GPTMemoryManager=object))
@@ -213,7 +214,9 @@ def test_roi_tag_weights_adjust_ranking():
 
 
 def test_prompt_memory_trainer_extracts_new_cues():
-    trainer = PromptMemoryTrainer(memory=object(), patch_db=object())
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp.close()
+    trainer = PromptMemoryTrainer(memory=object(), patch_db=object(), db_path=tmp.name)
     prompt = (
         "System: guidelines\nUser: do this\n- bullet\n```python\npass\n```"
     )
@@ -256,7 +259,9 @@ def test_prompt_memory_trainer_weights_success_by_roi_or_complexity():
     mem.conn.commit()
     pdb.conn.commit()
 
-    trainer = PromptMemoryTrainer(memory=mem, patch_db=pdb)
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp.close()
+    trainer = PromptMemoryTrainer(memory=mem, patch_db=pdb, db_path=tmp.name)
     weights = trainer.train()
     hdr_key = json.dumps(["H"])
     assert weights["headers"][hdr_key] == pytest.approx(2 / 7)
