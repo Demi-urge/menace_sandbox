@@ -1144,6 +1144,78 @@ class SandboxSettings(BaseSettings):
         description="Raise an error when canonical scenarios are missing coverage.",
     )
 
+    # Scenario preset defaults
+    preset_concurrency_multiplier: int = Field(
+        4,
+        env="SANDBOX_PRESET_CONCURRENCY_MULTIPLIER",
+        description="Multiplier applied to base concurrency in spike scenarios.",
+    )
+    preset_concurrency_level: int = Field(
+        8,
+        env="SANDBOX_PRESET_CONCURRENCY_LEVEL",
+        description="Base concurrency level used in spike scenarios.",
+    )
+    preset_hostile_stub_strategy: str = Field(
+        "hostile",
+        env="SANDBOX_PRESET_HOSTILE_STUB_STRATEGY",
+        description="Stub strategy employed for hostile input scenarios.",
+    )
+    preset_hostile_input: bool = Field(
+        True,
+        env="SANDBOX_PRESET_HOSTILE_INPUT",
+        description="Toggle to inject adversarial inputs in hostile scenarios.",
+    )
+    preset_schema_stub_strategy: str = Field(
+        "legacy_schema",
+        env="SANDBOX_PRESET_SCHEMA_STUB_STRATEGY",
+        description="Stub strategy used to emulate legacy schemas.",
+    )
+    preset_schema_mismatches: int = Field(
+        5,
+        env="SANDBOX_PRESET_SCHEMA_MISMATCHES",
+        description="Number of schema mismatches injected in schema drift scenarios.",
+    )
+    preset_schema_checks: int = Field(
+        100,
+        env="SANDBOX_PRESET_SCHEMA_CHECKS",
+        description="Total schema checks performed in schema drift scenarios.",
+    )
+    preset_upstream_failures: int = Field(
+        1,
+        env="SANDBOX_PRESET_UPSTREAM_FAILURES",
+        description="Number of simulated upstream failures in flaky scenarios.",
+    )
+    preset_upstream_requests: int = Field(
+        20,
+        env="SANDBOX_PRESET_UPSTREAM_REQUESTS",
+        description="Total upstream requests made in flaky scenarios.",
+    )
+    preset_flaky_stub_strategy: str = Field(
+        "flaky_upstream",
+        env="SANDBOX_PRESET_FLAKY_STUB_STRATEGY",
+        description="Stub strategy used to emulate flaky upstream dependencies.",
+    )
+    preset_api_latency_ms: int = Field(
+        500,
+        env="SANDBOX_PRESET_API_LATENCY_MS",
+        description="API latency in milliseconds for flaky upstream scenarios.",
+    )
+    preset_network_latency_ms: int = Field(
+        500,
+        env="SANDBOX_PRESET_NETWORK_LATENCY_MS",
+        description="Network latency in milliseconds for latency scenarios.",
+    )
+    preset_cpu_limit: float = Field(
+        0.5,
+        env="SANDBOX_PRESET_CPU_LIMIT",
+        description="CPU limit used for resource strain scenarios.",
+    )
+    preset_disk_limit: str = Field(
+        "512mb",
+        env="SANDBOX_PRESET_DISK_LIMIT",
+        description="Disk limit used for resource strain scenarios.",
+    )
+
     alignment_rules: AlignmentRules = Field(
         default_factory=AlignmentRules,
         description="Thresholds for human-alignment checks used by flaggers.",
