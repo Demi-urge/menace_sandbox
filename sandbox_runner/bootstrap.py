@@ -5,7 +5,6 @@ import importlib.util
 import logging
 import os
 import shutil
-import sqlite3
 import sys
 from pathlib import Path
 from typing import Callable
@@ -13,6 +12,7 @@ from typing import Callable
 from packaging.version import Version
 
 from menace.auto_env_setup import ensure_env
+from menace.default_config_manager import DefaultConfigManager
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 
 from .cli import main as _cli_main
@@ -21,7 +21,7 @@ from .cli import main as _cli_main
 logger = logging.getLogger(__name__)
 
 
-REQUIRED_SERVICE_VERSIONS = {
+OPTIONAL_SERVICE_VERSIONS = {
     "relevancy_radar": "1.0.0",
     "quick_fix_engine": "1.0.0",
 }
@@ -31,7 +31,7 @@ def _ensure_sqlite_db(path: Path) -> None:
     """Ensure an SQLite database exists at ``path``."""
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        sqlite3.connect(path).close()
+        path.touch()
 
 
 def initialize_autonomous_sandbox(
@@ -46,6 +46,14 @@ def initialize_autonomous_sandbox(
     """
 
     settings = settings or load_sandbox_settings()
+
+    # Populate environment defaults without prompting the user.  This creates
+    # a minimal ``.env`` file when missing and exports essential configuration
+    # variables to the process environment.
+    try:
+        DefaultConfigManager(getattr(settings, "menace_env_file", ".env")).apply_defaults()
+    except Exception:  # pragma: no cover - best effort
+        logger.warning("failed to ensure default configuration", exc_info=True)
 
     data_dir = Path(settings.sandbox_data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -80,28 +88,37 @@ def initialize_autonomous_sandbox(
     # Verify optional services are importable and meet version requirements
     from importlib import metadata
 
-    for mod, min_version in REQUIRED_SERVICE_VERSIONS.items():
+    for mod, min_version in OPTIONAL_SERVICE_VERSIONS.items():
         try:
             module = importlib.import_module(mod)
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                f"{mod} service is required but missing. "
-                f"Install it with 'pip install {mod}>={min_version}'."
-            ) from exc
+        except ModuleNotFoundError:
+            logger.warning(
+                "%s service not found; install with 'pip install %s>=%s' to enable it",
+                mod,
+                mod,
+                min_version,
+            )
+            continue
         version: str | None
         try:
             version = metadata.version(mod)
         except Exception:
             version = getattr(module, "__version__", None)
         if version is None:
-            raise RuntimeError(
-                f"Unable to determine {mod} version. "
-                f"Reinstall or upgrade with 'pip install --upgrade {mod}'."
+            logger.warning(
+                "unable to determine %s version; reinstall with 'pip install --upgrade %s'",
+                mod,
+                mod,
             )
+            continue
         if Version(version) < Version(min_version):
-            raise RuntimeError(
-                f"{mod} service version {version} is too old; "
-                f"install {mod}>={min_version} with 'pip install --upgrade {mod}'."
+            logger.warning(
+                "%s service version %s is too old; install %s>=%s with 'pip install --upgrade %s'",
+                mod,
+                version,
+                mod,
+                min_version,
+                mod,
             )
 
     return settings
@@ -181,16 +198,20 @@ def bootstrap_environment(
     env_file = Path(settings.menace_env_file)
     created_env = not env_file.exists()
     ensure_env(str(env_file))
+    # populate defaults for any missing configuration values without prompting
+    DefaultConfigManager(str(env_file)).apply_defaults()
     if created_env:
         logger.info("created env file at %s", env_file)
     (verifier or _verify_required_dependencies)(settings)
     return initialize_autonomous_sandbox(settings)
 
 
-def launch_sandbox(settings: SandboxSettings | None = None) -> None:
+def launch_sandbox(
+    settings: SandboxSettings | None = None,
+    verifier: Callable[[SandboxSettings], None] | None = None,
+) -> None:
     """Run the sandbox runner using ``settings`` for configuration."""
-    if settings is None:
-        settings = load_sandbox_settings()
+    settings = bootstrap_environment(settings, verifier)
     # propagate core settings through environment variables
     os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
     os.environ.setdefault("SANDBOX_DATA_DIR", settings.sandbox_data_dir)
