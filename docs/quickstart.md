@@ -14,6 +14,8 @@ This guide walks you through the common Menace workflows using the new `menace` 
    menace setup
    ```
    The command wraps `scripts/setup_autonomous.sh` and creates a basic `.env` file.
+   This installs all required packages, including the `foresight_tracker`
+   module used for stability forecasting.
 3. **Run the tests** (optional)
    ```bash
    menace test
