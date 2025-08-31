@@ -2046,7 +2046,9 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
     def _noop():
         return None
 
-    start_self_improvement_cycle({"bootstrap": _noop}, event_bus=bus)
+    cycle_thread = start_self_improvement_cycle({"bootstrap": _noop}, event_bus=bus)
+    cycle_thread.start()
+    cleanup_funcs.append(cycle_thread.stop)
 
     def _cleanup() -> None:
         for func in cleanup_funcs:

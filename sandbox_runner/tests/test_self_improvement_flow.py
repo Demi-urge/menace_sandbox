@@ -133,7 +133,7 @@ def test_start_self_improvement_cycle_thread(tmp_path, monkeypatch, in_memory_db
         interval=0,
     )
 
-    assert thread.daemon
+    thread.start()
     thread.join(timeout=1)
     assert calls["count"] >= 1
     assert InMemoryROI.instances[0].records

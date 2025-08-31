@@ -2,8 +2,10 @@ import ast
 import asyncio
 import threading
 import types
+import queue
 from pathlib import Path
 from typing import Any, Callable, Mapping
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,6 +24,7 @@ def _load_module():
     ns = {
         "asyncio": asyncio,
         "threading": threading,
+        "queue": queue,
         "PLANNER_INTERVAL": 0.0,
         "Mapping": Mapping,
         "Callable": Callable,
@@ -73,8 +76,41 @@ def test_start_self_improvement_cycle_runs_background_thread(monkeypatch):
         {"wf": workflow}, event_bus=DummyBus(), interval=0.0
     )
 
-    assert thread.ident is not None
+    thread.start()
     thread.join(timeout=1.0)
     assert cycle_ran.is_set()
     assert workflow_calls
-    assert not thread.is_alive()
+
+
+def test_stop_cancels_cycle(monkeypatch):
+    mod = _load_module()
+    stopped = threading.Event()
+
+    async def fake_cycle(workflows: Mapping[str, Callable[[], Any]], interval=0.0, event_bus=None):
+        try:
+            while True:
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            stopped.set()
+            raise
+
+    mod["self_improvement_cycle"] = fake_cycle
+
+    thread = mod["start_self_improvement_cycle"]({"wf": lambda: None}, interval=0.0)
+    thread.start()
+    thread.stop()
+    assert stopped.is_set()
+
+
+def test_cycle_exception_propagated(monkeypatch):
+    mod = _load_module()
+
+    async def fake_cycle(workflows: Mapping[str, Callable[[], Any]], interval=0.0, event_bus=None):
+        raise RuntimeError("boom")
+
+    mod["self_improvement_cycle"] = fake_cycle
+
+    thread = mod["start_self_improvement_cycle"]({"wf": lambda: None}, interval=0.0)
+    thread.start()
+    with pytest.raises(RuntimeError):
+        thread.join(timeout=1.0)
