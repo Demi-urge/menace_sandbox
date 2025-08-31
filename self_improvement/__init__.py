@@ -666,12 +666,11 @@ class SynergyWeightLearner:
                     shutil.copy(self.checkpoint_path, self.path)
                 except Exception as restore_exc:
                     logger.exception(
-                        "failed to restore synergy weights from checkpoint %s: %s",
+                        "failed to restore synergy weights from checkpoint %s",
                         self.checkpoint_path,
-                        restore_exc,
                         extra=log_record(checkpoint_path=str(self.checkpoint_path)),
                     )
-                    raise
+                    raise restore_exc
             return
         self._save_count += 1
         if self._save_count % self.checkpoint_interval == 0:
