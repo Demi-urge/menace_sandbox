@@ -19,6 +19,7 @@ from .foresight_tracker import ForesightTracker
 from .upgrade_forecaster import UpgradeForecaster
 from .workflow_synthesizer import WorkflowSynthesizer
 from .workflow_synergy_comparator import WorkflowSynergyComparator
+from .llm_interface import LLMClient, LLMResult, Prompt
 
 from . import metrics_exporter
 
@@ -374,6 +375,10 @@ __all__ = [
     "variant_manager",
     "cognition_layer",
     "CompositeWorkflowScorer",
+    "Prompt",
+    "LLMResult",
+    "LLMClient",
+    "llm_interface",
 ]
 __all__.append("readiness_index")
 __version__ = "0.1.0"
