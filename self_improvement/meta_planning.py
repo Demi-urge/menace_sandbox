@@ -13,6 +13,7 @@ import json
 import os
 import time
 import threading
+import queue
 from pathlib import Path
 from contextlib import contextmanager, nullcontext
 
@@ -715,13 +716,62 @@ def start_self_improvement_cycle(
     *,
     event_bus: UnifiedEventBus | None = None,
     interval: float = PLANNER_INTERVAL,
-) -> threading.Thread:
-    """Launch `self_improvement_cycle` in a background thread.
+):
+    """Prepare a background thread running :func:`self_improvement_cycle`.
 
-    Sandbox settings are loaded to validate configuration and ensure required
-    databases are initialised. The returned thread runs indefinitely as a
-    daemon.
+    The returned object exposes ``start()``, ``join()`` and ``stop()`` methods.
+    It captures exceptions raised inside the background task and re-raises them
+    when ``join()`` is invoked.  ``stop()`` gracefully cancels the running
+    coroutine.
     """
+
+    class _CycleThread:
+        def __init__(self) -> None:
+            self._loop = asyncio.new_event_loop()
+            self._task: asyncio.Task[None] | None = None
+            self._exc: queue.Queue[BaseException] = queue.Queue()
+            self._thread = threading.Thread(target=self._run, daemon=True)
+
+        # --------------------------------------------------
+        def _run(self) -> None:
+            asyncio.set_event_loop(self._loop)
+            self._task = self._loop.create_task(
+                self_improvement_cycle(
+                    workflows, interval=interval, event_bus=event_bus
+                )
+            )
+            self._task.add_done_callback(self._finished)
+            try:
+                self._loop.run_forever()
+            finally:
+                self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+                self._loop.close()
+
+        def _finished(self, task: asyncio.Task[None]) -> None:
+            if task.cancelled():
+                pass
+            else:
+                try:
+                    task.result()
+                except BaseException as exc:  # pragma: no cover - best effort
+                    self._exc.put(exc)
+            self._loop.call_soon_threadsafe(self._loop.stop)
+
+        # --------------------------------------------------
+        def start(self) -> None:
+            self._thread.start()
+
+        def join(self, timeout: float | None = None) -> None:
+            self._thread.join(timeout)
+            if not self._exc.empty():
+                raise self._exc.get()
+
+        def stop(self) -> None:
+            self._loop.call_soon_threadsafe(
+                lambda: self._task.cancel() if self._task is not None else None
+            )
+            self.join()
+
     _ = _init.settings
     logger_fn = globals().get("get_logger")
     log_record_fn = globals().get("log_record")
@@ -747,12 +797,7 @@ def start_self_improvement_cycle(
             )
         raise RuntimeError("WorkflowStabilityDB initialisation failed") from exc
 
-    def _runner() -> None:
-        asyncio.run(self_improvement_cycle(workflows, interval=interval, event_bus=event_bus))
-
-    thread = threading.Thread(target=_runner, daemon=True)
-    thread.start()
-    return thread
+    return _CycleThread()
 
 
 __all__ = [

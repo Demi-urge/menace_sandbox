@@ -143,9 +143,11 @@ def test_start_self_improvement_cycle_thread(tmp_path, monkeypatch):
     monkeypatch.setattr(meta_planning, "self_improvement_cycle", fake_cycle)
 
     thread = meta_planning.start_self_improvement_cycle(
-        {"w": lambda: None}, event_bus=types.SimpleNamespace(publish=lambda *a, **k: None), interval=0
+        {"w": lambda: None},
+        event_bus=types.SimpleNamespace(publish=lambda *a, **k: None),
+        interval=0,
     )
 
-    assert thread.daemon
+    thread.start()
     thread.join(timeout=1)
     assert calls["count"] >= 1
