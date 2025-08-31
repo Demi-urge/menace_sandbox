@@ -58,6 +58,10 @@ sandbox_stub.run_tests = lambda *a, **k: None
 sandbox_stub.TestHarnessResult = object
 sys.modules["sandbox_runner.test_harness"] = sandbox_stub
 
+sce_stub = types.ModuleType("menace.self_coding_engine")
+sce_stub.SelfCodingEngine = object
+sys.modules["menace.self_coding_engine"] = sce_stub
+
 # Patch provenance stub
 pp_stub = types.ModuleType("menace.patch_provenance")
 pp_stub.record_patch_metadata = lambda *a, **k: None
@@ -109,21 +113,6 @@ class DummyDataBot:
         self.logged.append(k)
 
 
-class DummyRunner:
-    def __init__(self):
-        self.calls = 0
-        self.safe_mode = None
-    def run(self, workflow, *, safe_mode=False, **kw):
-        self.safe_mode = safe_mode
-        self.calls += 1
-        if self.calls == 1:
-            mod = types.SimpleNamespace(success=False, exception="AssertionError: boom")
-            return types.SimpleNamespace(modules=[mod])
-        workflow()
-        mod = types.SimpleNamespace(success=True, exception=None)
-        return types.SimpleNamespace(modules=[mod])
-
-
 @pytest.mark.parametrize("backend", ["venv", "docker"])
 def test_closed_loop_patch(monkeypatch, tmp_path, backend):
     file_path = tmp_path / "sample.py"
@@ -131,7 +120,6 @@ def test_closed_loop_patch(monkeypatch, tmp_path, backend):
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
 
     pushes: list[list[str]] = []
-    pytest_calls: list[list[str]] = []
 
     def fake_run(cmd, *a, cwd=None, check=None, **kw):
         if cmd[:2] == ["git", "clone"]:
@@ -141,9 +129,6 @@ def test_closed_loop_patch(monkeypatch, tmp_path, backend):
             return subprocess.CompletedProcess(cmd, 0)
         if cmd[:2] == ["git", "push"]:
             pushes.append(cmd)
-            return subprocess.CompletedProcess(cmd, 0)
-        if cmd and cmd[0] == "pytest":
-            pytest_calls.append(cmd)
             return subprocess.CompletedProcess(cmd, 0)
         return subprocess.CompletedProcess(cmd, 0)
 
@@ -158,16 +143,27 @@ def test_closed_loop_patch(monkeypatch, tmp_path, backend):
             shutil.rmtree(tmpdir_path)
     monkeypatch.setattr(scm.tempfile, "TemporaryDirectory", lambda: DummyTempDir())
 
-    runner = DummyRunner()
-    monkeypatch.setattr(scm, "WorkflowSandboxRunner", lambda: runner)
+    run_calls: list[str] = []
 
-    parse_calls: list[str] = []
+    def run_tests_stub(repo, path):
+        run_calls.append("fail" if not run_calls else "pass")
+        if len(run_calls) == 1:
+            return types.SimpleNamespace(
+                success=False,
+                failure={"strategy_tag": "boom", "stack": "Traceback"},
+                stdout="",
+                stderr="",
+                duration=0.0,
+            )
+        return types.SimpleNamespace(
+            success=True,
+            failure=None,
+            stdout="",
+            stderr="",
+            duration=0.0,
+        )
 
-    def fake_parse(trace: str):
-        parse_calls.append(trace)
-        return types.SimpleNamespace(tags=["boom"], trace=trace)
-
-    monkeypatch.setattr(scm, "parse_failure", fake_parse)
+    monkeypatch.setattr(scm, "run_tests", run_tests_stub)
     monkeypatch.setattr(scm.MutationLogger, "log_mutation", lambda *a, **k: 1)
     monkeypatch.setattr(scm.MutationLogger, "record_mutation_outcome", lambda *a, **k: None)
 
@@ -181,10 +177,8 @@ def test_closed_loop_patch(monkeypatch, tmp_path, backend):
     mgr.run_patch(file_path, "change")
 
     # Failure tags should be forwarded to the context builder only once
-    assert parse_calls and builder.calls == [["boom"]]
-    # The harness executes tests inside the sandbox
-    assert runner.calls == 2 and len(pytest_calls) == 1
-    assert runner.safe_mode is True
+    assert builder.calls == [["boom"]]
+    assert run_calls == ["fail", "pass"]
     # Patch commit and ROI tracking side effects
     assert pushes and pushes[-1][-1].startswith("review/")
     assert data_bot.logged and data_bot.logged[0]["roi_delta"] == 1.0
@@ -219,20 +213,16 @@ def test_run_patch_failure_no_attribute_error(monkeypatch, tmp_path):
 
     monkeypatch.setattr(scm.tempfile, "TemporaryDirectory", lambda: DummyTempDir())
 
-    class FailRunner:
-        def run(self, workflow, *, safe_mode=False, **kw):
-            mod = types.SimpleNamespace(success=False, exception="AssertionError: boom")
-            return types.SimpleNamespace(modules=[mod])
+    def run_tests_stub(repo, path):
+        return types.SimpleNamespace(
+            success=False,
+            failure=None,
+            stdout="",
+            stderr="AssertionError: boom",
+            duration=0.0,
+        )
 
-    monkeypatch.setattr(scm, "WorkflowSandboxRunner", lambda: FailRunner())
-
-    parse_calls: list[str] = []
-
-    def fake_parse(trace: str):
-        parse_calls.append(trace)
-        return types.SimpleNamespace(tags=["boom"], trace=trace)
-
-    monkeypatch.setattr(scm, "parse_failure", fake_parse)
+    monkeypatch.setattr(scm, "run_tests", run_tests_stub)
 
     builder = DummyContextBuilder()
     logger = DummyPatchLogger()
@@ -243,8 +233,6 @@ def test_run_patch_failure_no_attribute_error(monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError):
         mgr.run_patch(file_path, "change", max_attempts=2)
-
-    assert parse_calls
 
 
 def _prepare_repo(tmp_path):

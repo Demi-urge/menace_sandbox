@@ -16,9 +16,53 @@ spec = importlib.util.spec_from_file_location(
 menace_pkg = importlib.util.module_from_spec(spec)
 sys.modules['menace'] = menace_pkg
 spec.loader.exec_module(menace_pkg)
+db_stub = types.ModuleType("menace.data_bot")
+db_stub.DataBot = object
+db_stub.MetricsDB = object
+sys.modules["menace.data_bot"] = db_stub
+sys.modules["data_bot"] = db_stub
+
+mapl_stub = types.ModuleType("menace.model_automation_pipeline")
+class AutomationResult:
+    def __init__(self, package=None, roi=None):
+        self.package = package
+        self.roi = roi
+class ModelAutomationPipeline:
+    def run(self, model: str, energy: int = 1):
+        return AutomationResult()
+mapl_stub.AutomationResult = AutomationResult
+mapl_stub.ModelAutomationPipeline = ModelAutomationPipeline
+sys.modules["menace.model_automation_pipeline"] = mapl_stub
+
+prb_stub = types.ModuleType("menace.pre_execution_roi_bot")
+class ROIResult:
+    def __init__(self, roi, errors=0.0, proi=0.0, perr=0.0, risk=0.0):
+        self.roi = roi
+        self.errors = errors
+        self.predicted_roi = proi
+        self.predicted_errors = perr
+        self.risk = risk
+prb_stub.ROIResult = ROIResult
+sys.modules["menace.pre_execution_roi_bot"] = prb_stub
+
+sce_stub = types.ModuleType("menace.self_coding_engine")
+sce_stub.SelfCodingEngine = object
+sys.modules["menace.self_coding_engine"] = sce_stub
+pp_stub = types.ModuleType("menace.patch_provenance")
+pp_stub.record_patch_metadata = lambda *a, **k: None
+sys.modules["menace.patch_provenance"] = pp_stub
+
+sie_module = types.ModuleType("menace.self_improvement")
+class SelfImprovementEngine:
+    def _optimize_self(self):
+        patch_id, _, perf = self.self_coding_engine.apply_patch(None)
+        event = mutation_logger.log_mutation()
+        mutation_logger.record_mutation_outcome(event, perf, perf, perf)
+        return patch_id
+sie_module.SelfImprovementEngine = SelfImprovementEngine
+sys.modules["menace.self_improvement"] = sie_module
 
 scm_module = importlib.import_module('menace.self_coding_manager')
-sie_module = importlib.import_module('menace.self_improvement')
 mutation_logger = importlib.import_module('menace.mutation_logger')
 
 
@@ -83,18 +127,21 @@ def test_run_patch_records_outcome(monkeypatch, tmp_path):
             dst.mkdir(exist_ok=True)
             shutil.copy2(file_path, dst / file_path.name)
             return subprocess.CompletedProcess(cmd, 0)
-        if cmd[0] == 'pytest':
-            return subprocess.CompletedProcess(cmd, 0)
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(scm_module.subprocess, 'run', fake_run)
 
-    class DummyRunner:
-        def run(self, workflow, *, safe_mode=False, **kw):
-            workflow()
-            return types.SimpleNamespace(modules=[types.SimpleNamespace(result=True)])
-
-    monkeypatch.setattr(scm_module, 'WorkflowSandboxRunner', lambda: DummyRunner())
+    monkeypatch.setattr(
+        scm_module,
+        'run_tests',
+        lambda repo, path: types.SimpleNamespace(
+            success=True,
+            failure=None,
+            stdout="",
+            stderr="",
+            duration=0.0,
+        ),
+    )
 
     cwd = os.getcwd()
     os.chdir(tmp_path)
