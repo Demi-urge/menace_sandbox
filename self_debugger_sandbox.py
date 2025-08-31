@@ -37,7 +37,7 @@ from .code_database import PatchHistoryDB, _hash_code
 from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
 from .error_cluster_predictor import ErrorClusterPredictor
-from .error_parser import ErrorParser, FailureCache
+from .error_parser import ErrorReport, FailureCache, parse_failure
 from sandbox_runner.environment import create_ephemeral_repo
 try:
     from .sandbox_settings import SandboxSettings
@@ -264,11 +264,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             getattr(self.engine, "name", None),
         )
 
-    def _record_failed_strategy(self, failure: dict) -> None:
-        """Persist strategy tag from ``failure`` when available."""
-        tag = failure.get("strategy_tag")
+    def _record_failed_strategy(self, report: ErrorReport) -> None:
+        """Persist canonical tags from ``report`` when available."""
         db = getattr(self.engine, "patch_suggestion_db", None)
-        if tag and db is not None:
+        if not db:
+            return
+        for tag in report.tags:
             try:
                 db.add_failed_strategy(tag)
             except Exception:
@@ -440,8 +441,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     # ------------------------------------------------------------------
     def _run_tests(
         self, path: Path, env: dict[str, str] | None = None
-    ) -> tuple[float, float] | tuple[float, float, dict]:
-        """Return coverage and runtime and optionally a parsed failure dict."""
+    ) -> tuple[float, float] | tuple[float, float, ErrorReport]:
+        """Return coverage, runtime and optionally an :class:`ErrorReport`."""
         test_paths = [path]
         tmp: Path | None = None
         self._last_test_log = None
@@ -460,7 +461,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             self.logger.exception("failed to create telemetry tests")
 
         start = time.perf_counter()
-        failure: dict | None = None
+        failure: ErrorReport | None = None
         try:
             percent = with_retry(
                 lambda: asyncio.run(self._coverage_percent(test_paths, env)),
@@ -477,19 +478,37 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 self._last_test_log = log_file
             except Exception:
                 self.logger.exception("failed to write test log")
-            failure = ErrorParser.parse_failure(output)
-            if not self._failure_cache.seen(failure["signature"]):
+            failure = parse_failure(output)
+            if not self._failure_cache.seen(failure):
                 self._failure_cache.add(failure)
             self._record_failed_strategy(failure)
+            try:
+                self.error_logger.log(
+                    TelemetryEvent(
+                        stack_trace=failure.trace,
+                        root_cause=",".join(failure.tags),
+                    )
+                )
+            except Exception:
+                self.logger.exception("failed to log parsed failure")
             self._record_exception(exc)
             percent = 0.0
         except Exception as exc:
             runtime = time.perf_counter() - start
             output = str(exc)
-            failure = ErrorParser.parse_failure(output)
-            if not self._failure_cache.seen(failure["signature"]):
+            failure = parse_failure(output)
+            if not self._failure_cache.seen(failure):
                 self._failure_cache.add(failure)
             self._record_failed_strategy(failure)
+            try:
+                self.error_logger.log(
+                    TelemetryEvent(
+                        stack_trace=failure.trace,
+                        root_cause=",".join(failure.tags),
+                    )
+                )
+            except Exception:
+                self.logger.exception("failed to log parsed failure")
             percent = 0.0
             self._record_exception(exc)
             self.logger.exception("coverage generation failed")
@@ -616,7 +635,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         return s_roi, s_eff, s_res, s_af
 
     # ------------------------------------------------------------------
-    def _retry_with_feedback(self, parsed_failure: dict) -> list[str]:
+    def _retry_with_feedback(self, report: ErrorReport) -> list[str]:
         """Fetch new examples excluding previously failed strategies."""
 
         if ContextBuilder is None:
@@ -644,10 +663,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             return []
         try:
             ctx, meta = builder.query(
-                parsed_failure.message or "",
+                report.trace,
                 top_k=5,
                 return_metadata=True,
-                failure=parsed_failure,
+                failure=report,
                 exclude_strategies=exclude,
             )
         except Exception:
@@ -1281,6 +1300,17 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         )
                     except subprocess.CalledProcessError as exc:
                         self._record_exception(exc)
+                        failure = parse_failure(exc.stderr or str(exc))
+                        self._record_failed_strategy(failure)
+                        try:
+                            self.error_logger.log(
+                                TelemetryEvent(
+                                    stack_trace=failure.trace,
+                                    root_cause=",".join(failure.tags),
+                                )
+                            )
+                        except Exception:
+                            self.logger.exception("failed to log parsed failure")
                         self.logger.error(
                             "sandbox tests failed",
                             extra=log_record(cmd=exc.cmd, rc=exc.returncode, output=exc.stderr),
@@ -1294,6 +1324,17 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         return None
                     except subprocess.TimeoutExpired as exc:
                         self._record_exception(exc)
+                        failure = parse_failure(exc.stderr or str(exc))
+                        self._record_failed_strategy(failure)
+                        try:
+                            self.error_logger.log(
+                                TelemetryEvent(
+                                    stack_trace=failure.trace,
+                                    root_cause=",".join(failure.tags),
+                                )
+                            )
+                        except Exception:
+                            self.logger.exception("failed to log parsed failure")
                         self.logger.error(
                             "sandbox tests timed out",
                             extra=log_record(cmd=exc.cmd, timeout=exc.timeout, output=exc.stderr),
@@ -1322,6 +1363,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     try:
                         res = await asyncio.to_thread(self._run_tests, root_test)
                         before_cov, before_runtime = res[:2]
+                        if len(res) == 3:
+                            return None
                         before_err = getattr(
                             self.engine, "_current_errors", lambda: 0
                         )()
@@ -1346,6 +1389,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             )
                         res = await asyncio.to_thread(self._run_tests, root_test)
                         after_cov, after_runtime = res[:2]
+                        if len(res) == 3:
+                            return None
                         after_err = getattr(self.engine, "_current_errors", lambda: 0)()
                         coverage_delta = (
                             (after_cov - before_cov)
@@ -1518,12 +1563,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 roi_delta = 0.0
                 runtime_delta = 0.0
                 reason = None
-                failure: dict | None = None
                 try:
                     res = self._run_tests(root_test)
                     before_cov, before_runtime = res[:2]
                     if len(res) > 2:
-                        failure = res[2]
+                        return None
                     before_err = getattr(self.engine, "_current_errors", lambda: 0)()
                     pid, reverted, roi_delta = self.engine.apply_patch(
                         root_test,
@@ -1548,7 +1592,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     res = self._run_tests(root_test)
                     after_cov, after_runtime = res[:2]
                     if len(res) > 2:
-                        failure = res[2]
+                        return None
                     after_err = getattr(self.engine, "_current_errors", lambda: 0)()
                     coverage_delta = (
                         (after_cov - before_cov)
@@ -1600,15 +1644,33 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         patched = not reverted and patch_score >= self.score_threshold
                 except RuntimeError as exc:
                     reason = f"sandbox tests failed: {exc}"
-                    failure = ErrorParser.parse_failure(str(exc))
+                    failure = parse_failure(str(exc))
                     self._record_failed_strategy(failure)
                     self._record_exception(exc)
+                    try:
+                        self.error_logger.log(
+                            TelemetryEvent(
+                                stack_trace=failure.trace,
+                                root_cause=",".join(failure.tags),
+                            )
+                        )
+                    except Exception:
+                        self.logger.exception("failed to log parsed failure")
                     self.logger.error("sandbox tests failed", exc_info=exc)
                 except Exception as exc:
                     reason = f"{type(exc).__name__}: {exc}"
-                    failure = ErrorParser.parse_failure(str(exc))
+                    failure = parse_failure(str(exc))
                     self._record_failed_strategy(failure)
                     self._record_exception(exc)
+                    try:
+                        self.error_logger.log(
+                            TelemetryEvent(
+                                stack_trace=failure.trace,
+                                root_cause=",".join(failure.tags),
+                            )
+                        )
+                    except Exception:
+                        self.logger.exception("failed to log parsed failure")
                     self.logger.exception("patch failed")
                 finally:
                     self._log_patch(
