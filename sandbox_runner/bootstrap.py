@@ -16,6 +16,7 @@ from menace.default_config_manager import DefaultConfigManager
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 
 from .cli import main as _cli_main
+from .cycle import ensure_vector_service
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,10 @@ def initialize_autonomous_sandbox(
         DefaultConfigManager(getattr(settings, "menace_env_file", ".env")).apply_defaults()
     except Exception:  # pragma: no cover - best effort
         logger.warning("failed to ensure default configuration", exc_info=True)
+
+    # Ensure the mandatory vector_service dependency is available before
+    # proceeding with further sandbox initialisation.
+    ensure_vector_service()
 
     data_dir = Path(settings.sandbox_data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)

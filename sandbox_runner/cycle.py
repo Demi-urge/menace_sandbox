@@ -20,26 +20,63 @@ from typing import Any, Dict, Mapping, TYPE_CHECKING
 from types import SimpleNamespace
 from sandbox_settings import SandboxSettings
 from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT, ERROR_FIX
-from memory_logging import log_with_tags
-from memory_aware_gpt_client import ask_with_memory
 from foresight_tracker import ForesightTracker
 from db_router import GLOBAL_ROUTER, init_db_router
 from alert_dispatcher import dispatch_alert
 
 
-try:  # pragma: no cover - vector_service is a required dependency
+# ``vector_service`` is an essential dependency but importing it at module load
+# time makes error handling awkward for callers that want to check
+# requirements up-front.  The import is therefore deferred to
+# :func:`ensure_vector_service`, which initialises the required classes on
+# demand.
+if TYPE_CHECKING:  # pragma: no cover - only for static type checking
     from vector_service import (
-        Retriever,
-        FallbackResult,
-        ErrorResult,
-        PatchLogger,
-        VectorServiceError,
+        Retriever as _Retriever,
+        FallbackResult as _FallbackResult,
+        ErrorResult as _ErrorResult,
+        PatchLogger as _PatchLogger,
+        VectorServiceError as _VectorServiceError,
     )
-except ImportError as exc:  # pragma: no cover - provide actionable guidance
-    raise RuntimeError(
-        "The 'vector_service' package is required for sandbox operation. "
-        "Install or enable the 'vector_service' dependency before running the sandbox."
-    ) from exc
+
+
+Retriever: Any | None = None
+FallbackResult: Any | None = None
+ErrorResult: Any | None = None
+PatchLogger: Any | None = None
+VectorServiceError: Any | None = None
+
+
+def ensure_vector_service() -> None:
+    """Import required classes from :mod:`vector_service`.
+
+    Raises:
+        SystemExit: If the ``vector_service`` package cannot be imported.  The
+            message includes installation guidance.
+    """
+
+    global Retriever, FallbackResult, ErrorResult, PatchLogger, VectorServiceError
+    if Retriever is not None:  # already imported
+        return
+    try:  # pragma: no cover - dependency presence validated elsewhere
+        from vector_service import (
+            Retriever as _Retriever,
+            FallbackResult as _FallbackResult,
+            ErrorResult as _ErrorResult,
+            PatchLogger as _PatchLogger,
+            VectorServiceError as _VectorServiceError,
+        )
+    except ModuleNotFoundError as exc:  # pragma: no cover - provide guidance
+        raise SystemExit(
+            "Missing required package 'vector_service'.\n"
+            "Install it with 'pip install vector_service' before running the sandbox."
+        ) from exc
+
+    Retriever = _Retriever
+    FallbackResult = _FallbackResult
+    ErrorResult = _ErrorResult
+    PatchLogger = _PatchLogger
+    VectorServiceError = _VectorServiceError
 
 
 router = GLOBAL_ROUTER or init_db_router("sandbox_cycle")
@@ -51,11 +88,7 @@ if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
 try:
     from radon.metrics import mi_visit  # type: ignore
 except ImportError as exc:  # pragma: no cover - optional dependency
-    get_logger(__name__).warning(
-        "radon metrics unavailable",  # noqa: TRY300
-        extra=log_record(module=__name__, dependency="radon"),
-        exc_info=exc,
-    )
+    get_logger(__name__).warning("radon metrics unavailable", exc_info=exc)
     mi_visit = None  # type: ignore
 
 try:
@@ -63,22 +96,14 @@ try:
     from pylint.reporters.text import TextReporter  # type: ignore
     from io import StringIO
 except ImportError as exc:  # pragma: no cover - optional dependency
-    get_logger(__name__).warning(
-        "pylint unavailable",  # noqa: TRY300
-        extra=log_record(module=__name__, dependency="pylint"),
-        exc_info=exc,
-    )
+    get_logger(__name__).warning("pylint unavailable", exc_info=exc)
     PylintRun = None  # type: ignore
     TextReporter = None  # type: ignore
 
 try:
     import psutil  # type: ignore
 except ImportError as exc:  # pragma: no cover - optional dependency
-    get_logger(__name__).warning(
-        "psutil unavailable",  # noqa: TRY300
-        extra=log_record(module=__name__, dependency="psutil"),
-        exc_info=exc,
-    )
+    get_logger(__name__).warning("psutil unavailable", exc_info=exc)
     psutil = None  # type: ignore
 
 # ``VectorMetricsDB`` was previously used for logging patch outcomes but has
@@ -1357,6 +1382,7 @@ def _sandbox_cycle_runner(
                     prompt_text = (
                         f"{history_text}\nuser: {prompt}" if history_text else prompt
                     )
+                    from memory_aware_gpt_client import ask_with_memory
                     resp = ask_with_memory(
                         ctx.gpt_client,
                         f"sandbox_runner.cycle.{memory_key}",
@@ -1453,12 +1479,14 @@ def _sandbox_cycle_runner(
                     if gpt_mem:
                         try:
                             result_text = "success" if patch_id else "failure"
+                            from memory_logging import log_with_tags
                             log_with_tags(
                                 gpt_mem,
                                 f"sandbox_runner.cycle.{memory_key}.patch_id",
                                 str(patch_id),
                                 tags=[f"sandbox_runner.cycle.{memory_key}", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                             )
+                            from memory_logging import log_with_tags
                             log_with_tags(
                                 gpt_mem,
                                 f"sandbox_runner.cycle.{memory_key}.result",
@@ -1609,6 +1637,7 @@ def _sandbox_cycle_runner(
                         prompt_text = (
                             f"{history_text}\nuser: {prompt}" if history_text else prompt
                         )
+                        from memory_aware_gpt_client import ask_with_memory
                         resp = ask_with_memory(
                             ctx.gpt_client,
                             "sandbox_runner.cycle.brainstorm",
@@ -1711,6 +1740,7 @@ def _sandbox_cycle_runner(
                     prompt_text = (
                         f"{history_text}\nuser: {prompt}" if history_text else prompt
                     )
+                    from memory_aware_gpt_client import ask_with_memory
                     resp = ask_with_memory(
                         ctx.gpt_client,
                         "sandbox_runner.cycle.brainstorm",
