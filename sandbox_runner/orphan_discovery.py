@@ -37,12 +37,13 @@ SAFE_CALLS: dict[tuple[str, ...], Any] = {
 }
 
 
-def _log_unresolved(node: ast.AST, lineno: int) -> None:
-    logger.debug(
-        "Unresolved expression at line %s: %s",
-        lineno,
-        ast.dump(node, include_attributes=False),
-    )
+def _log_unresolved(node: ast.AST, lineno: int, error: Exception | None = None) -> None:
+    msg = "Unresolved expression at line %s: %s"
+    args: list[object] = [lineno, ast.dump(node, include_attributes=False)]
+    if error is not None:
+        msg += " (%s)"
+        args.append(error)
+    logger.debug(msg, *args)
 
 
 def _eval_simple(
@@ -56,8 +57,8 @@ def _eval_simple(
             return value
         if isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
             return list(value)
-    except Exception:
-        pass
+    except Exception as error:
+        _log_unresolved(node, lineno, error)
 
     if isinstance(node, ast.Name):
         assigned = _resolve_assignment(assignments, node.id, lineno)
