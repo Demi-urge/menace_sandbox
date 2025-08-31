@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 from typing import Dict, Any
 
-from .error_parser import ErrorParser
+from .error_parser import parse_failure
 
 from .sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
@@ -117,7 +117,11 @@ class SelfCodingManager:
             patch_id: int | None = None
             reverted = False
             ctx_meta = context_meta
-            builder = getattr(getattr(self.engine, "cognition_layer", None), "context_builder", None)
+            builder = getattr(
+                getattr(self.engine, "cognition_layer", None),
+                "context_builder",
+                None,
+            )
 
             while attempt < max_attempts:
                 attempt += 1
@@ -149,15 +153,15 @@ class SelfCodingManager:
                     raise RuntimeError("patch tests failed")
 
                 trace = getattr(module, "exception", "") or ""
-                info = ErrorParser.parse(trace)
-                tags = info.get("tags", []) if isinstance(info, dict) else []
+                report = parse_failure(trace)
                 self.logger.info(
-                    "rebuilding context", extra={"tags": tags, "attempt": attempt}
+                    "rebuilding context",
+                    extra={"tags": report.tags, "attempt": attempt},
                 )
-                if not builder or not tags:
+                if not builder or not report.tags:
                     raise RuntimeError("patch tests failed")
                 try:
-                    ctx, sid = builder.query(description, exclude_tags=tags)
+                    ctx, sid = builder.query(description, exclude_tags=report.tags)
                     ctx_meta = {
                         "retrieval_context": ctx,
                         "retrieval_session_id": sid,
