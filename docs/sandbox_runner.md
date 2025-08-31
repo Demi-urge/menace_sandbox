@@ -492,6 +492,17 @@ When no `input_stubs` argument is supplied the function calls `generate_input_st
 
 The `hostile` strategy generates adversarial examples such as SQL injection strings, XSS payloads, oversized values and malformed JSON. The `misuse` strategy omits required fields or provides values of incorrect types to mimic user errors. Presets with the `hostile_input` failure mode automatically set `SANDBOX_STUB_STRATEGY=hostile` and `_inject_failure_modes` replaces any lower-case stub variables with these malicious payloads before execution.
 Presets that include the `user_misuse` failure mode set `SANDBOX_STUB_STRATEGY=misuse` and attempt to call functions with incorrect argument counts and touch disallowed files. These errors are printed to `stderr` but execution proceeds so the sandbox can observe misuse safely.
+### Stub generation settings
+
+The generative stub provider exposes several knobs via environment variables:
+
+- `SANDBOX_STUB_TIMEOUT` – maximum time in seconds to wait for stub generation.
+- `SANDBOX_STUB_RETRIES` – number of retry attempts when generation fails.
+- `SANDBOX_STUB_RETRY_BASE` – initial delay for exponential back-off in seconds.
+- `SANDBOX_STUB_RETRY_MAX` – ceiling for the back-off delay.
+- `SANDBOX_STUB_CACHE_MAX` – maximum number of cached stub responses.
+- `SANDBOX_STUB_FALLBACK_MODEL` – model name used when the preferred provider is unavailable.
+
 The `concurrency_spike` failure mode starts bursts of threads and async tasks. The sandbox records how many threads and tasks were spawned in the metrics.
 
 Sections with declining ROI trigger dedicated improvement cycles. Only the flagged section is iteratively modified while metrics are tracked. When progress stalls the sandbox issues a GPT‑4 brainstorming request if `SANDBOX_BRAINSTORM_INTERVAL` is set. Consecutive low‑ROI cycles before brainstorming can be tuned via `SANDBOX_BRAINSTORM_RETRIES`.

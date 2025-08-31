@@ -50,7 +50,7 @@ _TARGET_STATS: dict[str, Counter[str]] = defaultdict(Counter)
 # Entry-point group for discovering available text generation models
 MODEL_ENTRY_POINT_GROUP = "sandbox.stub_models"
 
-FALLBACK_MODEL = "distilgpt2"
+FALLBACK_MODEL: str
 
 SETTINGS = SandboxSettings()
 
@@ -87,11 +87,11 @@ def _feature_enabled(name: str) -> bool:
 
 
 _RATE_LIMIT = asyncio.Semaphore(int(os.getenv("SANDBOX_STUB_MAX_CONCURRENCY", "1")))
-_GEN_TIMEOUT = 10.0
-_GEN_RETRIES = 2
-_RETRY_BASE = 0.5
-_RETRY_MAX = 30.0
-_CACHE_MAX = 1024
+_GEN_TIMEOUT: float
+_GEN_RETRIES: int
+_RETRY_BASE: float
+_RETRY_MAX: float
+_CACHE_MAX: int
 
 
 def _available_models(settings: Any | None = None) -> set[str]:
@@ -142,12 +142,13 @@ def _validate_env() -> None:
             logger.warning("invalid %s=%r; using default %s", name, val, default)
             return default
 
-    global _GEN_TIMEOUT, _GEN_RETRIES, _RETRY_BASE, _RETRY_MAX, _CACHE_MAX
-    _GEN_TIMEOUT = _float_env("SANDBOX_STUB_TIMEOUT", 10.0)
-    _GEN_RETRIES = _int_env("SANDBOX_STUB_RETRIES", 2)
-    _RETRY_BASE = _float_env("SANDBOX_STUB_RETRY_BASE", 0.5)
-    _RETRY_MAX = _float_env("SANDBOX_STUB_RETRY_MAX", 30.0)
-    _CACHE_MAX = _int_env("SANDBOX_STUB_CACHE_MAX", 1024)
+    global _GEN_TIMEOUT, _GEN_RETRIES, _RETRY_BASE, _RETRY_MAX, _CACHE_MAX, FALLBACK_MODEL
+    _GEN_TIMEOUT = _float_env("SANDBOX_STUB_TIMEOUT", SETTINGS.stub_timeout)
+    _GEN_RETRIES = _int_env("SANDBOX_STUB_RETRIES", SETTINGS.stub_retries)
+    _RETRY_BASE = _float_env("SANDBOX_STUB_RETRY_BASE", SETTINGS.stub_retry_base)
+    _RETRY_MAX = _float_env("SANDBOX_STUB_RETRY_MAX", SETTINGS.stub_retry_max)
+    _CACHE_MAX = _int_env("SANDBOX_STUB_CACHE_MAX", SETTINGS.stub_cache_max)
+    FALLBACK_MODEL = os.getenv("SANDBOX_STUB_FALLBACK_MODEL", SETTINGS.stub_fallback_model)
 
     model = SETTINGS.sandbox_stub_model
     if model:
@@ -658,8 +659,9 @@ async def async_generate_stubs(
             stub_key = None
             if cached is not None:
                 try:
-                    _CACHE.move_to_end(key)
-                except KeyError as exc:
+                    if hasattr(_CACHE, "move_to_end"):
+                        _CACHE.move_to_end(key)
+                except Exception as exc:
                     logger.warning(
                         "failed to update cache LRU for key %s: %s", key, exc
                     )
@@ -747,8 +749,9 @@ async def async_generate_stubs(
                     with _CACHE_LOCK:
                         _CACHE[key] = data
                         try:
-                            _CACHE.move_to_end(key)
-                        except KeyError as exc:
+                            if hasattr(_CACHE, "move_to_end"):
+                                _CACHE.move_to_end(key)
+                        except Exception as exc:
                             logger.warning(
                                 "failed to update cache LRU for key %s: %s", key, exc
                             )
