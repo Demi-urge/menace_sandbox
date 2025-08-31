@@ -53,6 +53,8 @@ if "sentence_transformers" not in sys.modules:
 # Provide a lightweight sandbox_runner stub to avoid dependency checks
 sandbox_env = types.ModuleType("sandbox_runner.environment")
 sandbox_env.simulate_temporal_trajectory = lambda *a, **k: None
+sandbox_env.SANDBOX_ENV_PRESETS = [{}]
+sandbox_env.load_presets = lambda: sandbox_env.SANDBOX_ENV_PRESETS
 sandbox_pkg = types.ModuleType("sandbox_runner")
 sandbox_pkg.environment = sandbox_env
 sandbox_pkg.__path__ = [str(ROOT / "sandbox_runner")]

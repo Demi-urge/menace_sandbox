@@ -5047,15 +5047,48 @@ SANDBOX_EXTRA_METRICS: Dict[str, float] = _load_metrics_file(
     os.getenv("SANDBOX_METRICS_FILE", str(ROOT / "sandbox_metrics.yaml"))
 )
 
-_preset_env = os.getenv("SANDBOX_ENV_PRESETS", "[]")
-try:
-    SANDBOX_ENV_PRESETS: List[Dict[str, Any]] = json.loads(_preset_env)
-    if isinstance(SANDBOX_ENV_PRESETS, dict):
-        SANDBOX_ENV_PRESETS = [SANDBOX_ENV_PRESETS]
-    SANDBOX_ENV_PRESETS = [dict(p) for p in SANDBOX_ENV_PRESETS]
-except Exception:
-    SANDBOX_ENV_PRESETS = [{}]
-if not SANDBOX_ENV_PRESETS:
+
+def load_presets() -> List[Dict[str, Any]]:
+    """Return sandbox environment presets from ``SANDBOX_ENV_PRESETS``.
+
+    The environment variable is expected to contain a JSON encoded list of
+    mappings.  A single mapping is also accepted and automatically wrapped in a
+    list.  If the variable is missing or empty a list with one empty mapping is
+    returned.  When decoding fails a :class:`ValueError` is raised and the error
+    is logged for debugging purposes.
+    """
+
+    raw = os.getenv("SANDBOX_ENV_PRESETS", "[]")
+    if not raw:
+        return [{}]
+    try:
+        data = json.loads(raw)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error(
+            "failed to parse SANDBOX_ENV_PRESETS", extra={"value": raw}, exc_info=exc
+        )
+        raise ValueError("SANDBOX_ENV_PRESETS is not valid JSON") from exc
+
+    if isinstance(data, dict):
+        data = [data]
+    try:
+        presets = [dict(p) for p in data]
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error(
+            "invalid preset structure in SANDBOX_ENV_PRESETS",
+            extra={"value": raw},
+            exc_info=exc,
+        )
+        raise ValueError("SANDBOX_ENV_PRESETS must be a list of objects") from exc
+
+    if not presets:
+        presets = [{}]
+    return presets
+
+
+try:  # maintain legacy global for callers that mutate it in-place
+    SANDBOX_ENV_PRESETS: List[Dict[str, Any]] = load_presets()
+except ValueError:  # pragma: no cover - fallback when env value is invalid
     SANDBOX_ENV_PRESETS = [{}]
 
 _stub_env = os.getenv("SANDBOX_INPUT_STUBS", "")
