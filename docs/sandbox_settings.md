@@ -61,6 +61,13 @@ settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 - `improvement_failure_threshold`: `0.9`
 - `baseline_metrics_path`: `sandbox_metrics.yaml`
 
+## Policy defaults
+- `alpha`: `0.5`
+- `gamma`: `0.9`
+- `epsilon`: `0.1`
+- `temperature`: `1.0`
+- `exploration`: `epsilon_greedy`
+
 See [`sandbox_config.sample.yaml`](sandbox_config.sample.yaml) for a complete
 example configuration file.
 

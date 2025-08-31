@@ -13,6 +13,7 @@ import statistics
 import warnings
 from typing import List
 from dataclasses import dataclass, asdict
+from sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - optional dependency
     import torch
@@ -70,7 +71,7 @@ class RLStrategy(abc.ABC):
         return max(values.values()) if values else 0.0
 
 
-@dataclass
+@dataclass(eq=True, init=False)
 class PolicyConfig:
     """Configuration for :class:`SelfImprovementPolicy` hyperparameters."""
 
@@ -80,6 +81,28 @@ class PolicyConfig:
     temperature: float = 1.0
     exploration: str = "epsilon_greedy"
     adaptive: bool = False
+
+    def __init__(
+        self,
+        alpha: float | None = None,
+        gamma: float | None = None,
+        epsilon: float | None = None,
+        temperature: float | None = None,
+        exploration: str | None = None,
+        adaptive: bool = False,
+        settings: SandboxSettings | None = None,
+    ) -> None:
+        settings = settings or SandboxSettings()
+        self.alpha = settings.policy_alpha if alpha is None else alpha
+        self.gamma = settings.policy_gamma if gamma is None else gamma
+        self.epsilon = settings.policy_epsilon if epsilon is None else epsilon
+        self.temperature = (
+            settings.policy_temperature if temperature is None else temperature
+        )
+        self.exploration = (
+            settings.policy_exploration if exploration is None else exploration
+        )
+        self.adaptive = adaptive
 
 
 @dataclass
