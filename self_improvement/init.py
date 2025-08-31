@@ -163,7 +163,7 @@ def init_self_improvement(new_settings: SandboxSettings | None = None) -> Sandbo
 
         meta_planning.reload_settings(settings)
     except Exception:  # pragma: no cover - best effort
-        pass
+        logger.exception("Failed to reload meta_planning settings")
     return settings
 
 
@@ -175,4 +175,3 @@ __all__ = [
     "_atomic_write",
     "DEFAULT_SYNERGY_WEIGHTS",
 ]
-
