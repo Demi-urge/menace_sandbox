@@ -109,7 +109,8 @@ class SelfCodingManager:
                 self.engine.enhancement_classifier = enhancement_classifier
             except Exception as exc:
                 self.logger.warning(
-                    "Failed to attach enhancement classifier to engine; enhancement classification disabled: %s",
+                    "Failed to attach enhancement classifier to engine; "
+                    "enhancement classification disabled: %s",
                     exc,
                 )
                 self.enhancement_classifier = None
@@ -127,12 +128,15 @@ class SelfCodingManager:
             event_bus = getattr(self.engine, "event_bus", None)
             if event_bus:
                 try:
+                    top_scores = [
+                        getattr(s, "score", 0.0)
+                        for s in sorted(
+                            suggestions, key=lambda s: getattr(s, "score", 0.0), reverse=True
+                        )[:5]
+                    ]
                     event_bus.publish(
                         "enhancement:suggestions",
-                        {
-                            "count": len(suggestions),
-                            "suggestions": [s.path for s in suggestions],
-                        },
+                        {"count": len(suggestions), "top_scores": top_scores},
                     )
                 except Exception:
                     self.logger.exception("failed to publish enhancement suggestions")
@@ -149,6 +153,9 @@ class SelfCodingManager:
                 time.sleep(interval)
                 try:
                     self.scan_repo()
+                    db = self.suggestion_db or getattr(self.engine, "patch_suggestion_db", None)
+                    if db:
+                        db.log_repo_scan()
                 except Exception:
                     self.logger.exception("scheduled repo scan failed")
 
