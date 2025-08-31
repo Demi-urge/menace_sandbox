@@ -3,6 +3,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping
+import sqlite3
 
 try:  # pragma: no cover - optional dependency
     from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -161,17 +162,32 @@ class PromptMemoryTrainer:
             if not match:
                 continue
             patch_id = int(match.group(1))
-            row = self.patch_db.conn.execute(
-                (
-                    "SELECT outcome, roi_before, roi_after, "
-                    "complexity_before, complexity_after "
-                    "FROM patch_history WHERE id=?"
-                ),
-                (patch_id,),
-            ).fetchone()
-            if not row:
-                continue
-            outcome, roi_before, roi_after, c_before, c_after = row
+            try:
+                row = self.patch_db.conn.execute(
+                    (
+                        "SELECT outcome, roi_before, roi_after, "
+                        "complexity_before, complexity_after, "
+                        "prompt_headers, prompt_order, prompt_tone "
+                        "FROM patch_history WHERE id=?"
+                    ),
+                    (patch_id,),
+                ).fetchone()
+                if not row:
+                    continue
+                outcome, roi_before, roi_after, c_before, c_after, p_headers, p_order, p_tone = row
+            except sqlite3.Error:
+                row = self.patch_db.conn.execute(
+                    (
+                        "SELECT outcome, roi_before, roi_after, "
+                        "complexity_before, complexity_after "
+                        "FROM patch_history WHERE id=?"
+                    ),
+                    (patch_id,),
+                ).fetchone()
+                if not row:
+                    continue
+                outcome, roi_before, roi_after, c_before, c_after = row
+                p_headers = p_order = p_tone = None
             roi_before = roi_before or 0.0
             roi_after = roi_after or 0.0
             c_before = c_before or 0.0
@@ -185,6 +201,18 @@ class PromptMemoryTrainer:
 
             success = (outcome or "").upper() == "SUCCESS"
             feats = self._extract_style(text)
+            if p_headers:
+                try:
+                    feats["headers"] = json.loads(p_headers)
+                except Exception:
+                    feats["headers"] = []
+            if p_order:
+                try:
+                    feats["example_order"] = json.loads(p_order)
+                except Exception:
+                    feats["example_order"] = []
+            if p_tone:
+                feats["tone"] = p_tone
             for key, val in feats.items():
                 val_key = json.dumps(val) if isinstance(val, list) else str(val)
                 d = stats[key][val_key]

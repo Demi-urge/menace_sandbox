@@ -1028,6 +1028,10 @@ class SelfCodingEngine:
                             parent_patch_id=parent_patch_id,
                             reason=reason,
                             trigger=trigger,
+                            outcome="FAIL",
+                            prompt_headers=json.dumps(self._last_prompt_metadata.get("headers", [])),
+                            prompt_order=json.dumps(self._last_prompt_metadata.get("example_order", [])),
+                            prompt_tone=self._last_prompt_metadata.get("tone", ""),
                         )
                     )
                 except Exception:
@@ -1269,6 +1273,10 @@ class SelfCodingEngine:
                         parent_patch_id=parent_patch_id,
                         reason=reason,
                         trigger=trigger,
+                        outcome="SUCCESS" if not reverted else "FAIL",
+                        prompt_headers=json.dumps(self._last_prompt_metadata.get("headers", [])),
+                        prompt_order=json.dumps(self._last_prompt_metadata.get("example_order", [])),
+                        prompt_tone=self._last_prompt_metadata.get("tone", ""),
                     )
                 )
             except Exception as exc:
