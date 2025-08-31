@@ -11,6 +11,7 @@ import logging
 import ast
 import tempfile
 import py_compile
+import re
 from datetime import datetime
 
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
@@ -105,6 +106,7 @@ except Exception:  # pragma: no cover - defensive fallback
             )
 
 from .roi_tracker import ROITracker
+from .patch_provenance import record_patch_metadata
 from .prompt_engine import PromptEngine
 from .error_parser import ErrorParser
 
@@ -286,6 +288,7 @@ class SelfCodingEngine:
         patch_id: int | None = None,
         retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
         roi_delta: float | None = None,
+        roi_deltas: Mapping[str, float] | None = None,
     ) -> None:
         """Forward vector contribution data to :class:`PatchLogger`.
 
@@ -313,6 +316,8 @@ class SelfCodingEngine:
             if roi_delta is not None:
                 kwargs["roi_delta"] = roi_delta
                 kwargs["contribution"] = roi_delta
+            if roi_deltas:
+                kwargs["roi_deltas"] = dict(roi_deltas)
             self.patch_logger.track_contributors(ids, result, **kwargs)
         except Exception:
             self.logger.exception("track_contributors failed")
@@ -957,7 +962,8 @@ class SelfCodingEngine:
                 {"path": str(path), "success": False, "patch_id": patch_id},
             )
             return patch_id, True, roi_delta
-        if not self._run_ci(path):
+        ci_result = self._run_ci(path)
+        if not ci_result:
             self.logger.error("CI checks failed; skipping commit")
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
@@ -1045,6 +1051,18 @@ class SelfCodingEngine:
                 self.pipeline.run(self.bot_name)
             except Exception as exc:
                 self.logger.error("pipeline run failed: %s", exc)
+        # Extract a simple test coverage ratio from pytest output
+        coverage = 0.0
+        try:
+            passed_match = re.search(r"(\d+)\s+passed", ci_result.stdout)
+            failed_match = re.search(r"(\d+)\s+failed", ci_result.stdout)
+            passed = int(passed_match.group(1)) if passed_match else 0
+            failed = int(failed_match.group(1)) if failed_match else 0
+            total = passed + failed
+            coverage = passed / total if total else 0.0
+        except Exception:
+            coverage = 1.0 if ci_result.success else 0.0
+
         after_roi = before_roi
         after_complexity = before_complexity
         if self.data_bot:
@@ -1078,6 +1096,15 @@ class SelfCodingEngine:
                 pred_after_roi = pred_before_roi
                 pred_after_err = pred_before_err
         roi_delta = after_roi - before_roi
+        roi_deltas_map: Mapping[str, float] | None = None
+        if self.roi_tracker:
+            try:
+                self.roi_tracker.update(before_roi, after_roi)
+                if getattr(self.roi_tracker, "roi_history", None):
+                    roi_delta = float(self.roi_tracker.roi_history[-1])
+                roi_deltas_map = self.roi_tracker.origin_db_deltas()
+            except Exception:
+                self.logger.exception("roi tracker update failed")
         complexity_delta = after_complexity - before_complexity
         pred_roi_delta = pred_after_roi - pred_before_roi
         pred_err_delta = pred_after_err - pred_before_err
@@ -1127,22 +1154,29 @@ class SelfCodingEngine:
                         self.logger.exception("event bus publish failed")
                 patch_id = None
         patch_key = str(patch_id) if patch_id is not None else description
+        branch_name = "main"
         if not reverted:
             if patch_id is not None:
                 self._active_patches[patch_key] = (path, original, session_id, list(vectors))
                 if self.rollback_mgr:
                     self.rollback_mgr.register_patch(patch_key, self.bot_name)
-            try:
-                subprocess.run(["./sync_git.sh"], check=True)
-            except Exception as exc:
-                self.logger.exception("git sync failed", exc_info=True)
-                if self.event_bus:
+            roi_thr = _settings.auto_merge.roi_threshold
+            cov_thr = _settings.auto_merge.coverage_threshold
+            if roi_delta < roi_thr or coverage < cov_thr:
+                if patch_id is not None:
+                    branch_name = f"review/{patch_id}"
                     try:
-                        self.event_bus.publish(
-                            "patch:sync_failed", {"error": str(exc)}
+                        subprocess.run(
+                            ["git", "push", "origin", f"HEAD:{branch_name}"],
+                            check=True,
                         )
                     except Exception:
-                        self.logger.exception("event bus publish failed")
+                        self.logger.exception("review branch update failed")
+            else:
+                try:
+                    subprocess.run(["git", "push", "origin", "HEAD:main"], check=True)
+                except Exception as exc:
+                    self.logger.exception("git push failed", exc_info=True)
             try:
                 from sandbox_runner import post_round_orphan_scan
                 post_round_orphan_scan(Path.cwd(), router=self.router)
@@ -1150,6 +1184,15 @@ class SelfCodingEngine:
                 self.logger.exception(
                     "post_round_orphan_scan after apply_patch failed"
                 )
+            if patch_id is not None:
+                try:
+                    record_patch_metadata(
+                        patch_id,
+                        {"branch": branch_name, "roi_delta": roi_delta, "coverage": coverage},
+                        patch_db=self.patch_db,
+                    )
+                except Exception:
+                    self.logger.exception("failed to record patch metadata")
         elif patch_id is not None and self.rollback_mgr:
             self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
         if (
@@ -1225,6 +1268,7 @@ class SelfCodingEngine:
             patch_id=patch_id,
             retrieval_metadata=retrieval_metadata,
             roi_delta=roi_delta,
+            roi_deltas=roi_deltas_map,
         )
         self._log_attempt(
             requesting_bot,

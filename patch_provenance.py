@@ -2,8 +2,9 @@ from __future__ import annotations
 
 """Helpers for querying patch vector ancestry information."""
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 import json
+import logging
 
 from code_database import PatchHistoryDB
 from vector_service import PatchLogger
@@ -84,6 +85,29 @@ def get_roi_history(
         ),
         "roi_deltas": {k: float(v) for k, v in roi_deltas.items()},
     }
+
+
+# ---------------------------------------------------------------------------
+def record_patch_metadata(
+    patch_id: int,
+    metadata: Mapping[str, Any],
+    *,
+    patch_db: PatchHistoryDB | None = None,
+) -> None:
+    """Persist arbitrary metadata for ``patch_id`` in ``patch_history``.
+
+    The metadata is serialised to JSON and stored in the ``summary`` field so
+    :mod:`patch_provenance` queries can later reconstruct the full context of a
+    patch.
+    """
+
+    db = patch_db or PatchHistoryDB()
+    try:
+        db.record_vector_metrics(
+            "", [], patch_id=patch_id, contribution=0.0, win=False, regret=False, summary=json.dumps(metadata)
+        )
+    except Exception:
+        logging.getLogger(__name__).exception("failed to record patch metadata")
 
 
 # ---------------------------------------------------------------------------
@@ -233,5 +257,6 @@ __all__ = [
     "search_patches",
     "build_chain",
     "PatchLogger",
+    "record_patch_metadata",
 ]
 
