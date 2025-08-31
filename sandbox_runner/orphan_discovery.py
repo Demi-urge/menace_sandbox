@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Iterable, List, Dict, Mapping, Sequence
+from typing import Any, Iterable, List, Dict, Mapping, Sequence, Tuple
 import concurrent.futures
 
 import orphan_analyzer
@@ -101,8 +101,8 @@ def _eval_simple(
                 if isinstance(right, list):
                     return left % tuple(right)
                 return left % right
-        except Exception:
-            return _log_unresolved(node, lineno)
+        except Exception as error:
+            return _log_unresolved(node, lineno, error)
         return _log_unresolved(node, lineno)
 
     if isinstance(node, ast.Call):
@@ -128,8 +128,8 @@ def _eval_simple(
             if isinstance(base_val, str) and hasattr(base_val, func.attr):
                 try:
                     return getattr(base_val, func.attr)(*args, **kwargs)
-                except Exception:
-                    return _log_unresolved(node, lineno)
+                except Exception as error:
+                    return _log_unresolved(node, lineno, error)
 
             # walk attribute chain to lookup in SAFE_CALLS
             path: List[str] = [func.attr]
@@ -144,16 +144,16 @@ def _eval_simple(
                 if target is not None:
                     try:
                         return target(*args, **kwargs)
-                    except Exception:
-                        return _log_unresolved(node, lineno)
+                    except Exception as error:
+                        return _log_unresolved(node, lineno, error)
         elif isinstance(func, ast.Name):
             key = (func.id,)
             target = SAFE_CALLS.get(key)
             if target is not None:
                 try:
                     return target(*args, **kwargs)
-                except Exception:
-                    return _log_unresolved(node, lineno)
+                except Exception as error:
+                    return _log_unresolved(node, lineno, error)
         return _log_unresolved(node, lineno)
 
     return _log_unresolved(node, lineno)
@@ -522,7 +522,6 @@ def prune_orphan_cache(
         _save_orphan_cache(repo, data)
 
 
-
 def discover_orphan_modules(
     repo_path: str, recursive: bool = True, skip_dirs: Iterable[str] | None = None
 ) -> List[str]:
@@ -632,7 +631,6 @@ def _parse_file(args: tuple[str, str]) -> tuple[str, set[str]] | None:
                 imports.add(mod_name)
 
     return module, imports
-
 
 
 def discover_recursive_orphans(
