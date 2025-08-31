@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import argparse
 import ast
+import io
+import keyword
 import logging
+import math
+import tokenize
 from pathlib import Path
 from typing import Any, Dict, Iterable, Sequence
 
@@ -12,7 +16,7 @@ import yaml
 try:  # pragma: no cover - radon is an optional dependency
     from radon.complexity import cc_visit
     from radon.metrics import mi_visit
-except ImportError:  # pragma: no cover
+except ImportError:  # pragma: no cover - fall back to AST-based metrics
     cc_visit = mi_visit = None
 
 from ..sandbox_settings import SandboxSettings
@@ -73,7 +77,7 @@ def _collect_metrics(
                 file_mi = float(mi_visit(code, False))
             except Exception as exc:  # pragma: no cover - radon may raise various errors
                 logger.warning("Radon metrics failed for %s: %s", rel, exc)
-        else:  # fallback to AST-based estimation
+        else:  # fallback to AST-based estimation using MI formula
             try:
                 tree = ast.parse(code)
                 for node in ast.walk(tree):
@@ -94,7 +98,49 @@ def _collect_metrics(
                             ):
                                 score += 1
                         file_complexity += score
-                file_mi = 100.0
+
+                ops: set[str] = set()
+                operands: set[str] = set()
+                N1 = N2 = 0
+                sloc_lines: set[int] = set()
+                for tok in tokenize.generate_tokens(io.StringIO(code).readline):
+                    if tok.type in (
+                        tokenize.NL,
+                        tokenize.NEWLINE,
+                        tokenize.INDENT,
+                        tokenize.DEDENT,
+                        tokenize.COMMENT,
+                        tokenize.ENCODING,
+                    ):
+                        continue
+                    sloc_lines.add(tok.start[0])
+                    if tok.type == tokenize.OP or (
+                        tok.type == tokenize.NAME and tok.string in keyword.kwlist
+                    ):
+                        ops.add(tok.string)
+                        N1 += 1
+                    elif tok.type in (
+                        tokenize.NAME,
+                        tokenize.NUMBER,
+                        tokenize.STRING,
+                    ):
+                        operands.add(tok.string)
+                        N2 += 1
+
+                n1, n2 = len(ops), len(operands)
+                n = n1 + n2
+                N = N1 + N2
+                volume = N * math.log2(n) if n else 0.0
+                sloc = len(sloc_lines)
+                if volume > 0 and sloc > 0:
+                    file_mi = max(
+                        0.0,
+                        (171 - 5.2 * math.log(volume) - 0.23 * file_complexity - 16.2 * math.log(sloc))
+                        * 100
+                        / 171,
+                    )
+                else:
+                    file_mi = 100.0
             except (SyntaxError, ValueError) as exc:
                 logger.warning("AST metrics failed for %s: %s", rel, exc)
 
