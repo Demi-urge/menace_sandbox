@@ -28,6 +28,11 @@ from .advanced_error_management import FormalVerifier, AutomatedRollbackManager
 from . import mutation_logger as MutationLogger
 from .rollback_manager import RollbackManager
 
+try:  # pragma: no cover - allow package/flat imports
+    from .patch_suggestion_db import PatchSuggestionDB
+except Exception:  # pragma: no cover - fallback for flat layout
+    from patch_suggestion_db import PatchSuggestionDB  # type: ignore
+
 
 class PatchApprovalPolicy:
     """Run formal verification and tests before patching."""
@@ -78,6 +83,7 @@ class SelfCodingManager:
         bot_name: str = "menace",
         data_bot: DataBot | None = None,
         approval_policy: "PatchApprovalPolicy | None" = None,
+        suggestion_db: PatchSuggestionDB | None = None,
     ) -> None:
         self.engine = self_coding_engine
         self.pipeline = pipeline
@@ -88,6 +94,7 @@ class SelfCodingManager:
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
         self._failure_cache = FailureCache()
+        self.suggestion_db = suggestion_db or getattr(self.engine, "patch_suggestion_db", None)
 
     # ------------------------------------------------------------------
     def run_patch(
@@ -389,6 +396,51 @@ class SelfCodingManager:
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to refresh failed tags")
         return result
+
+    # ------------------------------------------------------------------
+    def idle_cycle(self) -> None:
+        """Poll suggestion DB and schedule queued enhancements."""
+        if not self.suggestion_db:
+            return
+        try:
+            rows = self.suggestion_db.conn.execute(
+                "SELECT id, module, description FROM suggestions ORDER BY id"
+            ).fetchall()
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to fetch suggestions")
+            return
+        for sid, module, description in rows:
+            path = Path(module)
+            try:
+                if getattr(self.engine, "audit_trail", None):
+                    try:
+                        score_part, rationale = description.split(" - ", 1)
+                        score = float(score_part.split("=", 1)[1])
+                    except Exception:
+                        score = 0.0
+                        rationale = description
+                    try:
+                        self.engine.audit_trail.record(
+                            {
+                                "event": "queued_enhancement",
+                                "module": module,
+                                "score": round(score, 2),
+                                "rationale": rationale,
+                            }
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception("failed to record audit log for %s", module)
+                self.run_patch(path, description)
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to apply suggestion for %s", module)
+            finally:
+                try:
+                    self.suggestion_db.conn.execute(
+                        "DELETE FROM suggestions WHERE id=?", (sid,)
+                    )
+                    self.suggestion_db.conn.commit()
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("failed to delete suggestion %s", sid)
 
 
 __all__ = ["SelfCodingManager", "PatchApprovalPolicy"]

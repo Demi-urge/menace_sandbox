@@ -14,9 +14,14 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from chatgpt_enhancement_bot import EnhancementDB  # type: ignore
 
 try:  # pragma: no cover - allow package/flat imports
-    from .patch_suggestion_db import SuggestionRecord
+    from .patch_suggestion_db import SuggestionRecord, PatchSuggestionDB
 except Exception:  # pragma: no cover - fallback for flat layout
-    from patch_suggestion_db import SuggestionRecord  # type: ignore
+    from patch_suggestion_db import SuggestionRecord, PatchSuggestionDB  # type: ignore
+
+try:  # pragma: no cover - allow package/flat imports
+    from .audit_trail import AuditTrail
+except Exception:  # pragma: no cover - fallback for flat layout
+    from audit_trail import AuditTrail  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +40,14 @@ class EnhancementClassifier:
         code_db: CodeDB | None = None,
         patch_db: PatchHistoryDB | None = None,
         enhancement_db: EnhancementDB | None = None,
+        suggestion_db: PatchSuggestionDB | None = None,
+        audit_trail: AuditTrail | None = None,
     ) -> None:
         self.code_db = code_db or CodeDB()
         self.patch_db = patch_db or PatchHistoryDB()
         self.enhancement_db = enhancement_db or EnhancementDB()
+        self.suggestion_db = suggestion_db or PatchSuggestionDB()
+        self.audit_trail = audit_trail or AuditTrail("enhancement_audit.log")
 
     # ------------------------------------------------------------------
     def _module_stats(
@@ -107,7 +116,23 @@ class EnhancementClassifier:
             )
             description = f"score={score:.2f} - {rationale}"
             logger.debug("suggestion", extra={"module": filename, "score": score})
-            yield SuggestionRecord(module=filename, description=description)
+            rec = SuggestionRecord(module=filename, description=description)
+            try:
+                self.suggestion_db.add(rec)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to persist suggestion for %s", filename)
+            try:
+                self.audit_trail.record(
+                    {
+                        "event": "suggestion_queued",
+                        "module": filename,
+                        "score": round(score, 2),
+                        "rationale": rationale,
+                    }
+                )
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to record audit trail for %s", filename)
+            yield rec
 
 
 __all__ = ["EnhancementClassifier"]
