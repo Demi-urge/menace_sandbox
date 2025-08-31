@@ -3,6 +3,8 @@ from __future__ import annotations
 """Q-learning policy predicting ROI improvement from self-improvement cycles."""
 
 import abc
+import atexit
+import hashlib
 from typing import Dict, Tuple, Optional, Callable
 import pickle
 import os
@@ -23,6 +25,14 @@ except Exception:  # pragma: no cover - fallback if torch missing
     torch = None  # type: ignore
     nn = None  # type: ignore
     F = None  # type: ignore
+
+
+def _compute_checksum(fp: str) -> str:
+    h = hashlib.sha256()
+    with open(fp, "rb") as fh:
+        for chunk in iter(lambda: fh.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 @dataclass
@@ -366,6 +376,7 @@ class DQNConfig(RLConfig):
     batch_size: int = 32
     capacity: int = 1000
     target_sync: int = 10
+    save_interval: int = 0
 
 
 class DQNStrategy(RLStrategy):
@@ -382,9 +393,23 @@ class DQNStrategy(RLStrategy):
         self.lr = cfg.lr
         self.batch_size = cfg.batch_size
         self.capacity = cfg.capacity
+        self.save_interval = cfg.save_interval
         self.memory: List[Tuple[torch.Tensor, int, float, Optional[torch.Tensor], bool]] = []
         self.model: Optional[nn.Module] = None
         self.optimizer: Optional[torch.optim.Optimizer] = None
+        self._save_callback: Optional[Callable[[], None]] = None
+        self._updates = 0
+        atexit.register(self._atexit_save)
+
+    def set_save_callback(self, cb: Callable[[], None]) -> None:
+        self._save_callback = cb
+
+    def _atexit_save(self) -> None:
+        if self._save_callback is not None:
+            try:
+                self._save_callback()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     def _ensure_model(self, dim: int) -> None:
@@ -475,6 +500,16 @@ class DQNStrategy(RLStrategy):
 
         with torch.no_grad():
             cur_q = self.model(s_t.unsqueeze(0))[0, action]
+        self._updates += 1
+        if (
+            self.save_interval
+            and self._save_callback is not None
+            and self._updates % self.save_interval == 0
+        ):
+            try:
+                self._save_callback()
+            except Exception:
+                pass
         return float(cur_q.item())
 
     # ------------------------------------------------------------------
@@ -731,11 +766,9 @@ if torch is None:
         Config = DQNConfig
         _deterministic_fallback = True
 
-
-    DeepQLearningStrategy = _FallbackDQNStrategy
-    DQNStrategy = _FallbackDQNStrategy
-    DoubleDQNStrategy = _FallbackDQNStrategy
-
+    DeepQLearningStrategy = _FallbackDQNStrategy  # noqa: F811
+    DQNStrategy = _FallbackDQNStrategy  # noqa: F811
+    DoubleDQNStrategy = _FallbackDQNStrategy  # noqa: F811
 
 # ---------------------------------------------------------------------------
 # RL strategy factory utilities
@@ -809,6 +842,7 @@ class SelfImprovementPolicy:
         epsilon_schedule: Optional[Callable[[int, float], float]] = None,
         temperature_schedule: Optional[Callable[[int, float], float]] = None,
         config: PolicyConfig | None = None,
+        save_interval: int = 0,
     ) -> None:
         if config is not None:
             alpha = config.alpha
@@ -832,10 +866,21 @@ class SelfImprovementPolicy:
         if getattr(self.strategy, "_deterministic_fallback", False):
             self.epsilon = 0.0
             self.exploration = "epsilon_greedy"
+        random.seed(0)
+        if torch is not None:
+            torch.manual_seed(0)
         self.values: Dict[Tuple[int, ...], Dict[int, float]] = {}
         self.path = path
         self.episodes = 0
         self.rewards: list[float] = []
+        self.save_interval = save_interval
+        if hasattr(self.strategy, "save_interval") and not getattr(
+            self.strategy, "save_interval", 0
+        ):
+            setattr(self.strategy, "save_interval", save_interval)
+        if hasattr(self.strategy, "set_save_callback"):
+            self.strategy.set_save_callback(self._save_model_if_path)
+        atexit.register(self._graceful_shutdown)
         if self.path:
             self.load(self.path)
 
@@ -890,9 +935,19 @@ class SelfImprovementPolicy:
             self.epsilon = self.epsilon_schedule(self.episodes, self.epsilon)
         if self.temperature_schedule:
             self.temperature = self.temperature_schedule(self.episodes, self.temperature)
-        if self.path:
-            self.save(self.path)
+        if self.path and self.save_interval and self.episodes % self.save_interval == 0:
+            self.save_model(self.path)
         return q
+
+    def _save_model_if_path(self) -> None:
+        if self.path:
+            try:
+                self.save_model(self.path)
+            except Exception:
+                pass
+
+    def _graceful_shutdown(self) -> None:
+        self._save_model_if_path()
 
     def score(self, state: Tuple[int, ...]) -> float:
         """Return the learned value for ``state``."""
@@ -945,11 +1000,13 @@ class SelfImprovementPolicy:
     def to_json(self) -> str:
         """Serialize policy configuration and values to JSON."""
         data: Dict[str, object] = {
+            "version": 1,
             "hyperparameters": asdict(self.get_config()),
             "strategy": self.strategy.__class__.__name__,
             "values": [
                 {"state": list(k), "actions": v} for k, v in self.values.items()
             ],
+            "save_interval": self.save_interval,
         }
         cfg = getattr(self.strategy, "config", None)
         if cfg is not None:
@@ -960,6 +1017,7 @@ class SelfImprovementPolicy:
     def from_json(cls, data: str) -> "SelfImprovementPolicy":
         """Deserialize a policy from JSON produced by :meth:`to_json`."""
         obj = json.loads(data)
+        obj.get("version", 1)
         strat_name = obj.get("strategy")
         strat_cls = _STRATEGY_CLASSES.get(str(strat_name).lower(), QLearningStrategy)
         cfg_dict = obj.get("strategy_config")
@@ -969,9 +1027,10 @@ class SelfImprovementPolicy:
         else:
             strat = strat_cls()
         hyper = obj.get("hyperparameters")
+        save_interval = int(obj.get("save_interval", 0))
         if hyper:
             hp = PolicyConfig(**hyper)
-            policy = cls(config=hp, strategy=strat)
+            policy = cls(config=hp, strategy=strat, save_interval=save_interval)
         else:
             policy = cls(
                 alpha=obj.get("alpha", 0.5),
@@ -981,6 +1040,7 @@ class SelfImprovementPolicy:
                 exploration=obj.get("exploration", "epsilon_greedy"),
                 adaptive=obj.get("adaptive", False),
                 strategy=strat,
+                save_interval=save_interval,
             )
         values: Dict[Tuple[int, ...], Dict[int, float]] = {}
         for item in obj.get("values", []):
@@ -1011,11 +1071,26 @@ class SelfImprovementPolicy:
 
     def save_model(self, path: str) -> None:
         """Save policy and strategy weights to ``path`` as JSON."""
-
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(self.to_json())
         base = os.path.splitext(path)[0]
         self.save_dqn_weights(base)
+        checksums: Dict[str, str] = {os.path.basename(path): _compute_checksum(path)}
+        for ext in [
+            ".pt",
+            ".target.pt",
+            ".opt.pt",
+            ".actor.pt",
+            ".critic.pt",
+            ".actor.opt.pt",
+            ".critic.opt.pt",
+            ".replay.pkl",
+        ]:
+            fp = base + ext
+            if os.path.exists(fp):
+                checksums[os.path.basename(fp)] = _compute_checksum(fp)
+        with open(base + ".checksum", "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "files": checksums}, fh)
 
     @classmethod
     def load_model(cls, path: str) -> "SelfImprovementPolicy":
@@ -1026,6 +1101,20 @@ class SelfImprovementPolicy:
         policy = cls.from_json(data)
         policy.path = path
         base = os.path.splitext(path)[0]
+        checksum_path = base + ".checksum"
+        if os.path.exists(checksum_path):
+            with open(checksum_path, "r", encoding="utf-8") as fh:
+                info = json.load(fh)
+            files = info.get("files", {})
+            expected = files.get(os.path.basename(path))
+            if expected and expected != _compute_checksum(path):
+                raise ValueError("Checksum mismatch for policy file")
+            for ext, fp in files.items():
+                if ext == os.path.basename(path):
+                    continue
+                full = os.path.join(os.path.dirname(path), ext)
+                if os.path.exists(full) and fp != _compute_checksum(full):
+                    raise ValueError(f"Checksum mismatch for {ext}")
         policy.load_dqn_weights(base)
         return policy
 
@@ -1054,6 +1143,13 @@ class SelfImprovementPolicy:
         critic_opt = getattr(strat, "critic_opt", None)
         if critic_opt is not None:
             torch.save(critic_opt.state_dict(), base + ".critic.opt.pt")
+        memory = getattr(strat, "memory", None)
+        if memory is not None:
+            if torch is not None:
+                torch.save(memory, base + ".replay.pkl")
+            else:
+                with open(base + ".replay.pkl", "wb") as fh:
+                    pickle.dump(memory, fh)
 
     def load_dqn_weights(self, base: str) -> None:
         if torch is None:
@@ -1130,6 +1226,13 @@ class SelfImprovementPolicy:
             critic_opt = getattr(strat, "critic_opt", None)
             if critic_opt is not None:
                 critic_opt.load_state_dict(critic_opt_state)
+        replay_path = base + ".replay.pkl"
+        if os.path.exists(replay_path) and hasattr(strat, "memory"):
+            if torch is not None:
+                strat.memory = torch.load(replay_path, map_location="cpu")
+            else:
+                with open(replay_path, "rb") as fh:
+                    strat.memory = pickle.load(fh)
 
     def save(self, path: Optional[str] = None) -> None:
         fp = path or self.path
