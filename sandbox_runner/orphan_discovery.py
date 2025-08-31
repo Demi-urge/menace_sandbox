@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import ast
+import concurrent.futures
 import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Iterable, List, Dict, Mapping, Sequence, Tuple
-import concurrent.futures
+from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import orphan_analyzer
 
