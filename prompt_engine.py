@@ -270,6 +270,17 @@ class PromptEngine:
         if best_order and best_order_score >= self.confidence_threshold:
             self.trained_example_order = best_order
 
+        # Preferred tone
+        tone_summary = summary.get("tone", {}) or {}
+        if tone_summary:
+            val, score = max(tone_summary.items(), key=lambda kv: kv[1])
+            try:
+                sc = float(score)
+            except Exception:
+                sc = 0.0
+            if sc >= self.confidence_threshold:
+                self.tone = str(val)
+
         # Structured sections
         sect_summary = summary.get("structured_sections", {}) or {}
         best_sects: List[str] | None = None
@@ -312,6 +323,22 @@ class PromptEngine:
                     self.max_tokens = min(self.max_tokens, 100)
                 elif val == "long":
                     self.max_tokens = max(self.max_tokens, 300)
+
+    # ------------------------------------------------------------------
+    def after_patch_cycle(self) -> None:
+        """Retrain :class:`PromptMemoryTrainer` and refresh cached config."""
+
+        if not self.trainer:
+            return
+        try:  # pragma: no cover - best effort retraining
+            summary = self.trainer.train()
+        except Exception:
+            return
+        try:
+            self.trainer.save_weights(self.weights_path)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        self._load_trained_config(summary)
 
     # ------------------------------------------------------------------
     def build_snippets(self, patches: Iterable[Dict[str, Any]]) -> List[str]:
