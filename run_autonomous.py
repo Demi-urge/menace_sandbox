@@ -1985,7 +1985,10 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
     from pydantic import ValidationError
     from sandbox_settings import load_sandbox_settings
     from self_improvement import init_self_improvement
-    from self_improvement.orchestration import start_self_improvement_cycle
+    from self_improvement.orchestration import (
+        start_self_improvement_cycle,
+        stop_self_improvement_cycle,
+    )
     from unified_event_bus import UnifiedEventBus
     from roi_results_db import ROIResultsDB
     from workflow_stability_db import WorkflowStabilityDB
@@ -2048,7 +2051,7 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
 
     cycle_thread = start_self_improvement_cycle({"bootstrap": _noop}, event_bus=bus)
     cycle_thread.start()
-    cleanup_funcs.append(cycle_thread.stop)
+    cleanup_funcs.append(stop_self_improvement_cycle)
 
     def _cleanup() -> None:
         for func in cleanup_funcs:
