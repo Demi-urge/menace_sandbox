@@ -130,12 +130,12 @@ class PromptEngine:
     recency_weight: float = 0.1
     roi_tag_weights: Dict[str, float] = field(
         default_factory=lambda: {
-            RoiTag.HIGH_ROI.value: 1.0,
-            RoiTag.SUCCESS.value: 0.5,
-            RoiTag.LOW_ROI.value: -0.5,
-            RoiTag.NEEDS_REVIEW.value: -0.5,
-            RoiTag.BUG_INTRODUCED.value: -1.0,
-            RoiTag.BLOCKED.value: -1.0,
+            getattr(RoiTag.HIGH_ROI, "value", RoiTag.HIGH_ROI): 1.0,
+            getattr(RoiTag.SUCCESS, "value", RoiTag.SUCCESS): 0.5,
+            getattr(RoiTag.LOW_ROI, "value", RoiTag.LOW_ROI): -0.5,
+            getattr(RoiTag.NEEDS_REVIEW, "value", RoiTag.NEEDS_REVIEW): -0.5,
+            getattr(RoiTag.BUG_INTRODUCED, "value", RoiTag.BUG_INTRODUCED): -1.0,
+            getattr(RoiTag.BLOCKED, "value", RoiTag.BLOCKED): -1.0,
         }
     )
     template_path: Path = Path(
@@ -152,6 +152,8 @@ class PromptEngine:
     )
     success_header: str = "Given the following pattern:"
     failure_header: str = "Avoid {summary} because it caused {outcome}:"
+    tone: str = "neutral"
+    last_metadata: Dict[str, Any] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
         if self.retriever is None:
@@ -217,16 +219,27 @@ class PromptEngine:
         failures.sort(key=lambda x: x[0], reverse=True)
 
         lines: List[str] = []
+        headers: List[str] = []
+        example_order: List[str] = []
         if successes:
             lines.append(self.success_header)
+            headers.append(self.success_header)
             for _, text in successes:
                 lines.extend(text.splitlines())
                 lines.append("")
+                example_order.append("success")
         for _, summary, outcome, text in failures:
             header = self.failure_header.format(summary=summary, outcome=outcome)
             lines.append(header)
+            headers.append(header)
             lines.extend(text.splitlines())
             lines.append("")
+            example_order.append("failure")
+        self.last_metadata = {
+            "headers": headers,
+            "example_order": example_order,
+            "tone": self.tone,
+        }
         return [line for line in lines if line]
 
     # ------------------------------------------------------------------
@@ -237,6 +250,7 @@ class PromptEngine:
         context: str | None = None,
         retrieval_context: str | None = None,
         retry_trace: str | None = None,
+        tone: str | None = None,
     ) -> str:
         """Return a prompt for *task* using retrieved patch examples.
 
@@ -250,6 +264,8 @@ class PromptEngine:
         ``confidence_threshold`` a static fallback template is returned.
         """
 
+        if tone is not None:
+            self.tone = tone
         retriever = self.patch_retriever or self.retriever
         if retriever is None:
             logging.info("No retriever available; falling back to static template")
@@ -574,6 +590,7 @@ class PromptEngine:
         roi_tracker: Any | None = None,
         success_header: str = "Given the following pattern:",
         failure_header: str = "Avoid {summary} because it caused {outcome}:",
+        tone: str = "neutral",
     ) -> str:
         """Class method wrapper used by existing callers and tests."""
 
@@ -585,12 +602,14 @@ class PromptEngine:
             top_n=top_n,
             success_header=success_header,
             failure_header=failure_header,
+            tone=tone,
         )
         return engine.build_prompt(
             goal,
             context=context,
             retrieval_context=retrieval_context,
             retry_trace=retry_trace,
+            tone=tone,
         )
 
 
@@ -603,6 +622,7 @@ def build_prompt(
     top_n: int = 5,
     success_header: str = "Given the following pattern:",
     failure_header: str = "Avoid {summary} because it caused {outcome}:",
+    tone: str = "neutral",
 ) -> str:
     """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`."""
 
@@ -614,6 +634,7 @@ def build_prompt(
         top_n=top_n,
         success_header=success_header,
         failure_header=failure_header,
+        tone=tone,
     )
 
 
