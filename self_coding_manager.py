@@ -10,11 +10,14 @@ from typing import Dict, Any
 
 from .error_parser import FailureCache, ErrorReport
 try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import record_failed_tags
+    from vector_service.context_builder import record_failed_tags, load_failed_tags
 except Exception:  # pragma: no cover - optional dependency
 
     def record_failed_tags(_tags: list[str]) -> None:  # type: ignore
         return None
+
+    def load_failed_tags() -> set[str]:  # type: ignore
+        return set()
 
 from .sandbox_runner.test_harness import run_tests, TestHarnessResult
 
@@ -343,6 +346,10 @@ class SelfCodingManager:
                 self.logger.exception(
                     "failed to log evolution cycle: %s", exc
                 )
+        try:
+            load_failed_tags()
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to refresh failed tags")
         return result
 
 

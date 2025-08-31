@@ -13,6 +13,10 @@ import logging
 import asyncio
 import uuid
 import time
+import threading
+from pathlib import Path
+
+from filelock import FileLock
 
 from redaction_utils import redact_text
 
@@ -52,20 +56,57 @@ logger = logging.getLogger(__name__)
 # Failed tag tracking
 # ---------------------------------------------------------------------------
 _FAILED_TAG_CACHE: set[str] = set()
+_FAILED_TAG_FILE = Path(__file__).with_name("failed_tags.json")
+_FAILED_TAG_LOCK = threading.Lock()
+_FAILED_TAG_FILE_LOCK = FileLock(str(_FAILED_TAG_FILE) + ".lock")
+
+
+def load_failed_tags() -> set[str]:
+    """Load persisted failed tags into the cache."""
+
+    with _FAILED_TAG_LOCK, _FAILED_TAG_FILE_LOCK:
+        try:
+            if _FAILED_TAG_FILE.exists():
+                data = json.loads(_FAILED_TAG_FILE.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    _FAILED_TAG_CACHE.update(
+                        str(t) for t in data if isinstance(t, str) and t
+                    )
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to load failed tags")
+    return set(_FAILED_TAG_CACHE)
 
 
 def record_failed_tags(tags: List[str]) -> None:
     """Record strategy or ROI tags that led to failures.
 
     The tags are stored in a module-level cache so subsequent context builds
-    can automatically exclude vectors associated with past failures.  The
-    cache is intentionally lightweight; callers that require persistence can
-    extend this helper to write to disk or a database.
+    can automatically exclude vectors associated with past failures.  Tags are
+    also persisted to disk so failures are remembered across runs.
     """
 
-    for tag in tags:
-        if isinstance(tag, str) and tag:
-            _FAILED_TAG_CACHE.add(tag)
+    valid = [tag for tag in tags if isinstance(tag, str) and tag]
+    if not valid:
+        return
+
+    with _FAILED_TAG_LOCK, _FAILED_TAG_FILE_LOCK:
+        try:
+            if _FAILED_TAG_FILE.exists():
+                data = json.loads(_FAILED_TAG_FILE.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    _FAILED_TAG_CACHE.update(
+                        str(t) for t in data if isinstance(t, str) and t
+                    )
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to read failed tag store")
+
+        _FAILED_TAG_CACHE.update(valid)
+        try:
+            _FAILED_TAG_FILE.write_text(
+                json.dumps(sorted(_FAILED_TAG_CACHE)), encoding="utf-8"
+            )
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to write failed tag store")
 
 
 def _get_failed_tags() -> set[str]:
@@ -76,6 +117,12 @@ def _get_failed_tags() -> set[str]:
     """
 
     return set(_FAILED_TAG_CACHE)
+
+
+try:  # pragma: no cover - best effort
+    load_failed_tags()
+except Exception:
+    pass
 
 
 try:  # pragma: no cover - optional dependency
@@ -1258,4 +1305,4 @@ class ContextBuilder:
         return await asyncio.to_thread(self.build_context, query, **kwargs)
 
 
-__all__ = ["ContextBuilder", "record_failed_tags"]
+__all__ = ["ContextBuilder", "record_failed_tags", "load_failed_tags"]
