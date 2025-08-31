@@ -133,12 +133,14 @@ def test_ast_metrics_and_scoring(tmp_path: Path) -> None:
         avg_errors,
         avg_complexity,
         avg_cc,
-        dup_count,
+        dup_ratio,
         long_funcs,
+        neg_roi_ratio,
+        error_prone_ratio,
         notes,
     ) = metrics
     assert filename == "mod.py"
-    assert dup_count == 1
+    assert dup_ratio == pytest.approx(1 / 3)
     assert long_funcs == 1
     assert avg_cc > 1.0
     assert notes
@@ -152,10 +154,31 @@ def test_ast_metrics_and_scoring(tmp_path: Path) -> None:
         + classifier.weights["errors"] * avg_errors
         + classifier.weights["complexity"] * avg_complexity
         + classifier.weights["cyclomatic"] * avg_cc
-        + classifier.weights["duplication"] * dup_count
+        + classifier.weights["duplication"] * dup_ratio
         + classifier.weights["length"] * long_funcs
+        + classifier.weights["history"] * (neg_roi_ratio + error_prone_ratio) * (avg_cc + dup_ratio)
     )
     assert suggestions[0].score == pytest.approx(expected)
     assert "duplicated" in suggestions[0].rationale
     assert "long" in suggestions[0].rationale
+
+
+def test_env_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code_conn = sqlite3.connect(":memory:")
+    code_conn.execute("CREATE TABLE code (id INTEGER PRIMARY KEY)")
+    patch_conn = sqlite3.connect(":memory:")
+    patch_conn.execute(
+        "CREATE TABLE patch_history (code_id INTEGER, filename TEXT, roi_delta REAL, errors_before INTEGER, errors_after INTEGER, complexity_delta REAL)"
+    )
+    cfg = tmp_path / "cfg.json"
+    cfg.write_text("{}")
+    monkeypatch.setenv("ENHANCEMENT_WEIGHT_FREQUENCY", "2.5")
+    monkeypatch.setenv("ENHANCEMENT_THRESHOLD_MIN_PATCHES", "1.5")
+    classifier = EnhancementClassifier(
+        code_db=_CtxConnWrapper(code_conn),
+        patch_db=_CtxConnWrapper(patch_conn),
+        config_path=str(cfg),
+    )
+    assert classifier.weights["frequency"] == 2.5
+    assert classifier.thresholds["min_patches"] == 1.5
 
