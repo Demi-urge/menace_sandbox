@@ -2,8 +2,33 @@ import json
 import sqlite3
 import json
 from pathlib import Path
+import types
+import sys
 
 import pytest
+
+
+class _DummyMem:
+    def __init__(self, db_path=":memory:") -> None:
+        self.conn = sqlite3.connect(db_path)
+        self.conn.execute(
+            "CREATE TABLE interactions(prompt TEXT, response TEXT, tags TEXT, ts TEXT, embedding TEXT, alerts TEXT)"
+        )
+
+    def log_interaction(self, *a, **k) -> None:
+        pass
+
+
+class _DummyPatchDB:
+    def __init__(self, path=":memory:") -> None:
+        self.conn = sqlite3.connect(path)
+        self.conn.execute(
+            "CREATE TABLE patch_history(id INTEGER PRIMARY KEY AUTOINCREMENT, outcome TEXT, roi_before REAL, roi_after REAL, complexity_before REAL, complexity_after REAL)"
+        )
+
+
+sys.modules.setdefault("gpt_memory", types.SimpleNamespace(GPTMemoryManager=_DummyMem))
+sys.modules.setdefault("code_database", types.SimpleNamespace(PatchHistoryDB=_DummyPatchDB))
 
 from prompt_memory_trainer import PromptMemoryTrainer
 
@@ -93,3 +118,40 @@ def test_record_updates_weights(tmp_path: Path) -> None:
     assert updated
     hdr_key = json.dumps(["H"])
     assert trainer.style_weights["headers"][hdr_key] == pytest.approx(0.5)
+
+
+def test_new_features_influence_weights() -> None:
+    mem = Mem()
+    pdb = PDB()
+    trainer = PromptMemoryTrainer(memory=mem, patch_db=pdb)
+    long_text = "word " * 160
+    trainer.append_records(
+        [
+            {
+                "prompt": "Example good\nConstraints:\n- A\nResources:\n- B\nExample again",
+                "outcome": "SUCCESS",
+                "roi_before": 0.0,
+                "roi_after": 1.0,
+                "complexity_before": 1.0,
+                "complexity_after": 0.0,
+            },
+            {
+                "prompt": f"{long_text}\nExample end",
+                "outcome": "FAIL",
+                "roi_before": 0.0,
+                "roi_after": 0.0,
+                "complexity_before": 2.0,
+                "complexity_after": 1.0,
+            },
+        ]
+    )
+    weights = trainer.style_weights
+    sect_key = json.dumps(["constraints", "resources"])
+    assert weights["structured_sections"][sect_key] == pytest.approx(1.0)
+    assert weights["structured_sections"][json.dumps([])] == pytest.approx(0.0)
+    assert weights["example_count"]["2"] == pytest.approx(1.0)
+    assert weights["example_count"]["1"] == pytest.approx(0.0)
+    assert weights["example_placement"]["start"] == pytest.approx(1.0)
+    assert weights["example_placement"]["end"] == pytest.approx(0.0)
+    assert weights["length"]["short"] == pytest.approx(1.0)
+    assert weights["length"]["long"] == pytest.approx(0.0)
