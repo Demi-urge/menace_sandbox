@@ -11,7 +11,7 @@ sys.modules.setdefault("environment_bootstrap", stub_env)
 db_stub = types.ModuleType("data_bot")
 db_stub.MetricsDB = object
 sys.modules.setdefault("data_bot", db_stub)
-import menace.data_bot as db
+import menace.data_bot as db  # noqa: E402
 sys.modules["data_bot"] = db
 sys.modules["menace"].RAISE_ERRORS = False
 ns = types.ModuleType("neurosales")
@@ -21,19 +21,26 @@ ns.get_recent_messages = lambda *a, **k: []
 ns.list_conversations = lambda *a, **k: []
 sys.modules.setdefault("neurosales", ns)
 mapl_stub = types.ModuleType("menace.model_automation_pipeline")
+
+
 class AutomationResult:
     def __init__(self, package=None, roi=None):
         self.package = package
         self.roi = roi
-class ModelAutomationPipeline: ...
+
+
+class ModelAutomationPipeline:
+    ...
+
+
 mapl_stub.AutomationResult = AutomationResult
 mapl_stub.ModelAutomationPipeline = ModelAutomationPipeline
 sys.modules["menace.model_automation_pipeline"] = mapl_stub
 sce_stub = types.ModuleType("menace.self_coding_engine")
 sce_stub.SelfCodingEngine = object
 sys.modules["menace.self_coding_engine"] = sce_stub
-import menace.self_coding_manager as scm
-from menace.model_automation_pipeline import AutomationResult
+import menace.self_coding_manager as scm  # noqa: E402
+from menace.model_automation_pipeline import AutomationResult  # noqa: E402
 
 
 class DummyEngine:
@@ -108,7 +115,12 @@ def test_retry_rebuilds_context(monkeypatch, tmp_path):
         if call_state["count"] == 1:
             return types.SimpleNamespace(
                 success=False,
-                failure={"stack": "AssertionError: boom", "strategy_tag": "t1"},
+                failure={
+                    "trace": "AssertionError: boom",
+                    "tags": ["t1"],
+                    "error_type": "t1",
+                    "signature": "s1",
+                },
                 stdout="",
                 stderr="",
                 duration=0.0,
@@ -172,7 +184,12 @@ def test_retry_stops_after_max(monkeypatch, tmp_path):
     def run_tests_stub(repo, path):
         return types.SimpleNamespace(
             success=False,
-            failure={"stack": "AssertionError: boom", "strategy_tag": "t1"},
+            failure={
+                "trace": "AssertionError: boom",
+                "tags": ["t1"],
+                "error_type": "t1",
+                "signature": "s1",
+            },
             stdout="",
             stderr="",
             duration=0.0,

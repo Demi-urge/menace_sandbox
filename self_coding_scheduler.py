@@ -142,9 +142,9 @@ class SelfCodingScheduler:
                             break
                         trace = getattr(module, "exception", "") or ""
                         if trace:
-                            failure = ErrorParser.parse_failure(str(trace))
-                            exc = failure.get("exception", "")
-                            if exc in {"SyntaxError", "ImportError"}:
+                            failure = ErrorParser.parse(str(trace))
+                            exc = failure.get("error_type", "")
+                            if exc in {"syntax_error", "import_error"}:
                                 break
 
                     after = self.data_bot.roi(self.manager.bot_name)

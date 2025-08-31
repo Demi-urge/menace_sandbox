@@ -712,8 +712,9 @@ class SelfCodingEngine:
                 self._last_retry_trace = harness_result.stderr or harness_result.stdout
             trace = self._last_retry_trace or ""
             try:
-                failure = ErrorParser.parse_failure(trace)
-                tag = failure.get("strategy_tag")
+                failure = ErrorParser.parse(trace)
+                tags = failure.get("tags", [])
+                tag = tags[0] if tags else ""
                 if tag and self.patch_suggestion_db:
                     self.patch_suggestion_db.add_failed_strategy(tag)
             except Exception:

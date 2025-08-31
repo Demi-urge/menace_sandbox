@@ -67,6 +67,8 @@ class FailureCache:
 class ErrorParser:
     """Backward compatible dictionary interface."""
 
+    _cache = FailureCache()
+
     @staticmethod
     def parse_failure(output: str) -> dict[str, Optional[str]]:
         report = parse_failure(output)
@@ -80,6 +82,44 @@ class ErrorParser:
             "signature": _signature(report.trace),
             "timestamp": datetime.utcnow().isoformat(),
             "stack": report.trace,
+        }
+
+    @staticmethod
+    def parse(trace: str) -> dict:
+        """Parse ``trace`` into a structured dictionary.
+
+        The result contains canonical ``tags`` derived from :func:`parse_failure`,
+        the primary ``error_type`` (first tag), a list of referenced ``files`` and
+        a ``signature`` uniquely identifying the trace.  Duplicate traces are
+        skipped using :class:`FailureCache` and return an empty dictionary.
+        """
+
+        report = parse_failure(trace)
+        if ErrorParser._cache.seen(report):
+            return {}
+        ErrorParser._cache.add(report)
+
+        files: list[str] = []
+        for line in report.trace.splitlines():
+            m = re.match(r'File "([^"]+)", line \d+', line)
+            if m:
+                files.append(m.group(1))
+                continue
+            m = re.match(r'([^:\s]+\.py):\d+:', line)
+            if m:
+                files.append(m.group(1))
+        # remove duplicates while preserving order
+        seen_files: dict[str, None] = {}
+        for f in files:
+            seen_files.setdefault(f, None)
+
+        first_tag = report.tags[0] if report.tags else ""
+        return {
+            "error_type": first_tag,
+            "files": list(seen_files.keys()),
+            "tags": report.tags,
+            "signature": _signature(report.trace),
+            "trace": report.trace,
         }
 
 
