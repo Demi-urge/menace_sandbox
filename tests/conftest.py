@@ -1,8 +1,10 @@
+# flake8: noqa
 import os
 import sys
 import logging
 import importlib.util
 from pathlib import Path
+import pytest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -159,6 +161,79 @@ if "sklearn" not in sys.modules and _importlib_util.find_spec("sklearn") is None
     sys.modules["sklearn.preprocessing"] = skl.preprocessing
     sys.modules["sklearn.linear_model"] = skl.linear_model
 
+
+@pytest.fixture
+def in_memory_dbs(monkeypatch):
+    """Provide in-memory implementations of ROI and stability DBs."""
+
+    from roi_results_db import ROIResult
+
+    class InMemoryROIResultsDB:
+        instances: list["InMemoryROIResultsDB"] = []
+
+        def __init__(self, *a, **k):
+            self.records: list[ROIResult] = []
+            self.__class__.instances.append(self)
+
+        def log_result(self, **kwargs):
+            self.records.append(ROIResult(**kwargs))
+
+        def fetch_results(self, workflow_id: str, run_id: str | None = None):
+            return [
+                r
+                for r in self.records
+                if r.workflow_id == workflow_id and (run_id is None or r.run_id == run_id)
+            ]
+
+    class InMemoryWorkflowStabilityDB:
+        instances: list["InMemoryWorkflowStabilityDB"] = []
+
+        def __init__(self, *a, **k):
+            self.data: dict[str, dict[str, float]] = {}
+            self.__class__.instances.append(self)
+
+        def record_metrics(
+            self,
+            workflow_id: str,
+            roi: float,
+            failures: float,
+            entropy: float,
+            *,
+            roi_delta: float | None = None,
+            roi_var: float = 0.0,
+            failures_var: float = 0.0,
+            entropy_var: float = 0.0,
+        ) -> None:
+            prev = self.data.get(workflow_id, {}).get("roi", 0.0)
+            delta = roi - prev if roi_delta is None else roi_delta
+            self.data[workflow_id] = {
+                "roi": roi,
+                "roi_delta": delta,
+                "roi_var": roi_var,
+                "failures": failures,
+                "failures_var": failures_var,
+                "entropy": entropy,
+                "entropy_var": entropy_var,
+            }
+
+        def is_stable(
+            self, workflow_id: str, current_roi: float | None = None, threshold: float | None = None
+        ) -> bool:
+            entry = self.data.get(workflow_id)
+            if not entry:
+                return False
+            if current_roi is not None and threshold is not None:
+                if abs(current_roi - entry["roi"]) > threshold:
+                    del self.data[workflow_id]
+                    return False
+            return True
+
+    roi_mod = types.SimpleNamespace(ROIResultsDB=InMemoryROIResultsDB, ROIResult=ROIResult)
+    stability_mod = types.SimpleNamespace(WorkflowStabilityDB=InMemoryWorkflowStabilityDB)
+    monkeypatch.setitem(sys.modules, "menace.roi_results_db", roi_mod)
+    monkeypatch.setitem(sys.modules, "menace.workflow_stability_db", stability_mod)
+    return InMemoryROIResultsDB, InMemoryWorkflowStabilityDB
+
 # Provide lightweight stubs for optional heavy dependencies
 if "pulp" not in sys.modules:
     import types
@@ -205,7 +280,6 @@ if "menace.preliminary_research_bot" not in sys.modules:
     pr_stub.PreliminaryResearchBot = PreliminaryResearchBot
     sys.modules["menace.preliminary_research_bot"] = pr_stub
 
-import pytest
 
 
 @pytest.fixture(autouse=True)

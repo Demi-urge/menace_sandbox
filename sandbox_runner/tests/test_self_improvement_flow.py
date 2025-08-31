@@ -83,27 +83,13 @@ def test_init_creates_and_clamps_synergy_weights(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------------------
 
-def test_start_self_improvement_cycle_thread(tmp_path, monkeypatch):
+def test_start_self_improvement_cycle_thread(tmp_path, monkeypatch, in_memory_dbs):
     _setup_base_packages()
     bootstrap = types.ModuleType("sandbox_runner.bootstrap")
     bootstrap.initialize_autonomous_sandbox = lambda s: None
     sys.modules["sandbox_runner.bootstrap"] = bootstrap
 
-    # stub modules required by meta_planning
-    class DummyDB:
-        def __init__(self, *a, **k):
-            pass
-
-        def log_result(self, *a, **k):
-            pass
-
-        def record_metrics(self, *a, **k):
-            pass
-
-    sys.modules["menace.workflow_stability_db"] = types.SimpleNamespace(
-        WorkflowStabilityDB=DummyDB
-    )
-    sys.modules["menace.roi_results_db"] = types.SimpleNamespace(ROIResultsDB=DummyDB)
+    InMemoryROI, InMemoryStability = in_memory_dbs
     sys.modules["menace.lock_utils"] = types.SimpleNamespace(
         SandboxLock=lambda *a, **k: types.SimpleNamespace(
             __enter__=lambda self: self, __exit__=lambda self, exc_type, exc, tb: False
@@ -150,3 +136,5 @@ def test_start_self_improvement_cycle_thread(tmp_path, monkeypatch):
     assert thread.daemon
     thread.join(timeout=1)
     assert calls["count"] >= 1
+    assert InMemoryROI.instances[0].records
+    assert InMemoryStability.instances[0].data
