@@ -6,12 +6,17 @@ import threading
 import time
 import logging
 from pathlib import Path
-from typing import Iterable, Optional, List
+from typing import Iterable, Optional, List, Dict
+
+import yaml
+
+from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
 from .self_coding_manager import SelfCodingManager
 from .data_bot import DataBot
 from .advanced_error_management import AutomatedRollbackManager
 from .sandbox_settings import SandboxSettings
+from .error_parser import ErrorParser
 
 
 class SelfCodingScheduler:
@@ -87,6 +92,28 @@ class SelfCodingScheduler:
         return str(row[0]) if row else None
 
     # ------------------------------------------------------------------
+    def _record_cycle_metrics(self, success: bool, retries: int) -> None:
+        """Persist outcome of a self-coding cycle to ``sandbox_metrics.yaml``."""
+
+        path = Path("sandbox_metrics.yaml")
+        data: Dict[str, Dict[str, float]] = {}
+        try:
+            if path.exists():
+                data = yaml.safe_load(path.read_text()) or {}
+        except Exception:  # pragma: no cover - best effort
+            self.logger.warning("failed to load sandbox metrics", exc_info=True)
+            data = {}
+
+        extra = data.setdefault("extra_metrics", {})
+        extra["self_coding_cycle_success"] = 1.0 if success else 0.0
+        extra["self_coding_cycle_retries"] = float(retries)
+
+        try:
+            path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        except Exception:  # pragma: no cover - best effort
+            self.logger.warning("failed to record sandbox metrics", exc_info=True)
+
+    # ------------------------------------------------------------------
     def _loop(self) -> None:
         while self.running:
             try:
@@ -97,7 +124,29 @@ class SelfCodingScheduler:
                     or errors - self.last_errors >= self.error_increase
                 ):
                     before = roi
-                    self.manager.run_patch(self.patch_path, self.description)
+                    runner = WorkflowSandboxRunner()
+                    attempt = 0
+                    success = False
+                    while attempt < 3 and not success:
+                        attempt += 1
+
+                        def _run_patch() -> None:
+                            self.manager.run_patch(self.patch_path, self.description)
+
+                        metrics = runner.run(_run_patch, safe_mode=True)
+                        module = metrics.modules[0] if getattr(metrics, "modules", None) else None
+                        success = bool(
+                            getattr(module, "success", getattr(module, "result", False))
+                        )
+                        if success:
+                            break
+                        trace = getattr(module, "exception", "") or ""
+                        if trace:
+                            failure = ErrorParser.parse_failure(str(trace))
+                            exc = failure.get("exception", "")
+                            if exc in {"SyntaxError", "ImportError"}:
+                                break
+
                     after = self.data_bot.roi(self.manager.bot_name)
                     if after < before:
                         pid = self._latest_patch_id()
@@ -110,6 +159,7 @@ class SelfCodingScheduler:
                                     self.logger.exception("auto rollback failed")
                     self.last_roi = after
                     self.last_errors = errors
+                    self._record_cycle_metrics(success, attempt - 1)
                 else:
                     self.last_roi = roi
                     self.last_errors = errors
