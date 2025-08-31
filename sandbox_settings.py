@@ -188,6 +188,39 @@ class AutoMergeSettings(BaseModel):
         return v
 
 
+class ActorCriticSettings(BaseModel):
+    """Hyperparameters for the actor-critic learning agent."""
+
+    actor_lr: float = 0.01
+    critic_lr: float = 0.02
+    gamma: float = 0.95
+    epsilon: float = 0.1
+    epsilon_decay: float = 0.99
+    buffer_size: int = 100
+    batch_size: int = 32
+    checkpoint_path: str = "actor_critic_state.json"
+
+    @field_validator(
+        "actor_lr",
+        "critic_lr",
+        "gamma",
+        "epsilon",
+        "epsilon_decay",
+    )
+    def _ac_unit_range(cls, v: float, info: Any) -> float:
+        if v <= 0:
+            raise ValueError(f"{info.field_name} must be positive")
+        if info.field_name in {"gamma", "epsilon", "epsilon_decay"} and v > 1:
+            raise ValueError(f"{info.field_name} must be between 0 and 1")
+        return v
+
+    @field_validator("buffer_size", "batch_size")
+    def _ac_positive_int(cls, v: int, info: Any) -> int:
+        if v <= 0:
+            raise ValueError(f"{info.field_name} must be a positive integer")
+        return v
+
+
 class SandboxSettings(BaseSettings):
     """Environment configuration for sandbox runners."""
 
@@ -860,6 +893,16 @@ class SandboxSettings(BaseSettings):
     auto_merge_coverage_threshold: float = Field(
         1.0, env="AUTO_MERGE_COVERAGE_THRESHOLD"
     )
+    ac_actor_lr: float = Field(0.01, env="AC_ACTOR_LR")
+    ac_critic_lr: float = Field(0.02, env="AC_CRITIC_LR")
+    ac_gamma: float = Field(0.95, env="AC_GAMMA")
+    ac_epsilon: float = Field(0.1, env="AC_EPSILON")
+    ac_epsilon_decay: float = Field(0.99, env="AC_EPSILON_DECAY")
+    ac_buffer_size: int = Field(100, env="AC_BUFFER_SIZE")
+    ac_batch_size: int = Field(32, env="AC_BATCH_SIZE")
+    ac_checkpoint_path: str = Field(
+        "actor_critic_state.json", env="AC_CHECKPOINT_PATH"
+    )
     workflow_merge_similarity: float = Field(
         0.9,
         env="WORKFLOW_MERGE_SIMILARITY",
@@ -1226,6 +1269,9 @@ class SandboxSettings(BaseSettings):
     auto_merge: AutoMergeSettings = Field(
         default_factory=AutoMergeSettings, exclude=True
     )
+    actor_critic: ActorCriticSettings = Field(
+        default_factory=ActorCriticSettings, exclude=True
+    )
 
     def __init__(self, **data: Any) -> None:  # pragma: no cover - simple wiring
         super().__init__(**data)
@@ -1277,6 +1323,16 @@ class SandboxSettings(BaseSettings):
         self.auto_merge = AutoMergeSettings(
             roi_threshold=self.auto_merge_roi_threshold,
             coverage_threshold=self.auto_merge_coverage_threshold,
+        )
+        self.actor_critic = ActorCriticSettings(
+            actor_lr=self.ac_actor_lr,
+            critic_lr=self.ac_critic_lr,
+            gamma=self.ac_gamma,
+            epsilon=self.ac_epsilon,
+            epsilon_decay=self.ac_epsilon_decay,
+            buffer_size=self.ac_buffer_size,
+            batch_size=self.ac_batch_size,
+            checkpoint_path=self.ac_checkpoint_path,
         )
 
     model_config = SettingsConfigDict(
