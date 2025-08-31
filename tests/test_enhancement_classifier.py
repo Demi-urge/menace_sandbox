@@ -139,7 +139,13 @@ def test_ast_metrics_and_scoring(tmp_path: Path) -> None:
         long_funcs,
         neg_roi_ratio,
         error_prone_ratio,
+        func_churn,
+        style_violations,
+        refactor_count,
+        anti_pattern_hits,
         notes,
+        roi_volatility,
+        raroi,
     ) = metrics
     assert filename == "mod.py"
     assert dup_ratio == pytest.approx(1 / 3)
@@ -153,12 +159,17 @@ def test_ast_metrics_and_scoring(tmp_path: Path) -> None:
     expected = (
         classifier.weights["frequency"] * patches
         + classifier.weights["roi"] * (-avg_roi)
+        + classifier.weights["raroi"] * (-raroi)
         + classifier.weights["errors"] * avg_errors
         + classifier.weights["complexity"] * avg_complexity
         + classifier.weights["cyclomatic"] * avg_cc
         + classifier.weights["duplication"] * dup_ratio
         + classifier.weights["length"] * long_funcs
         + classifier.weights["history"] * (neg_roi_ratio + error_prone_ratio) * (avg_cc + dup_ratio)
+        + classifier.weights["churn"] * func_churn
+        + classifier.weights["style"] * style_violations
+        + classifier.weights["refactor"] * refactor_count
+        + classifier.weights["anti_log"] * anti_pattern_hits
     )
     assert suggestions[0].score == pytest.approx(expected)
     assert "duplicated" in suggestions[0].rationale

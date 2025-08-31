@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import statistics
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
@@ -23,6 +24,11 @@ try:  # pragma: no cover - optional dependency
     import yaml  # type: ignore
 except Exception:  # pragma: no cover - used when PyYAML isn't installed
     yaml = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency for style checks
+    import pycodestyle  # type: ignore
+except Exception:  # pragma: no cover - pycodestyle may be missing
+    pycodestyle = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from radon.complexity import cc_visit  # type: ignore
@@ -88,11 +94,19 @@ class EnhancementClassifier:
             "length": 1.0,
             "anti": 1.0,
             "history": 1.0,
+            "churn": 1.0,
+            "style": 1.0,
+            "refactor": 1.0,
+            "anti_log": 1.0,
         }
         thresholds = {
             "min_patches": 3.0,
             "roi_cutoff": 0.0,
             "complexity_delta": 0.0,
+            "churn": 0.0,
+            "style": 0.0,
+            "refactor": 0.0,
+            "anti_pattern": 0.0,
         }
         try:
             text = Path(path).read_text()
@@ -143,6 +157,10 @@ class EnhancementClassifier:
         int,
         float,
         float,
+        float,
+        int,
+        int,
+        int,
         list[str],
         float,
         float,
@@ -150,13 +168,23 @@ class EnhancementClassifier:
         """Return metrics for ``code_id`` or ``None`` when absent."""
 
         with self.patch_db._connect() as conn:  # type: ignore[attr-defined]
-            rows = conn.execute(
-                """
-                SELECT filename, roi_delta, errors_before, errors_after, complexity_delta
-                FROM patch_history WHERE code_id=?
-                """,
-                (code_id,),
-            ).fetchall()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT filename, roi_delta, errors_before, errors_after, complexity_delta, description
+                    FROM patch_history WHERE code_id=?
+                    """,
+                    (code_id,),
+                ).fetchall()
+            except Exception:
+                base_rows = conn.execute(
+                    """
+                    SELECT filename, roi_delta, errors_before, errors_after, complexity_delta
+                    FROM patch_history WHERE code_id=?
+                    """,
+                    (code_id,),
+                ).fetchall()
+                rows = [r + (None,) for r in base_rows]
         if not rows:
             return None
         filename = rows[0][0] or f"id:{code_id}"
@@ -180,6 +208,7 @@ class EnhancementClassifier:
         total_funcs = 0
         long_funcs = 0
         notes: list[str] = []
+        style_violations = 0
 
         try:
             with self.code_db._connect() as conn:  # type: ignore[attr-defined]
@@ -250,8 +279,40 @@ class EnhancementClassifier:
             dup_ratio = dup_count / total_funcs if total_funcs else 0.0
             if dup_count:
                 notes.append(f"{dup_count} duplicated function(s)")
+            if pycodestyle is not None:
+                try:
+                    checker = pycodestyle.Checker(lines=source.splitlines())  # type: ignore[arg-type]
+                    style_violations = checker.check_all()
+                except Exception:
+                    style_violations = 0
         else:
             dup_ratio = 0.0
+            total_funcs = total_funcs or 1
+
+        func_churn = patch_count / max(total_funcs, 1)
+
+        refactor_count = sum(
+            1 for r in rows if r[5] and "refactor" in str(r[5]).lower()
+        )
+        if refactor_count == 0:
+            refactor_count = patch_count
+
+        anti_pattern_hits = 0
+        try:
+            error_db_path = os.getenv("ERROR_DB_PATH", "errors.db")
+            with sqlite3.connect(error_db_path) as econn:
+                cur = econn.execute(
+                    "SELECT COUNT(*) FROM errors WHERE category='anti-pattern' AND message LIKE ?",
+                    (f"%{filename}%",),
+                )
+                anti_pattern_hits = int(cur.fetchone()[0])
+        except Exception:
+            anti_pattern_hits = 0
+
+        if refactor_count:
+            notes.append(f"{refactor_count} refactor(s)")
+        if anti_pattern_hits:
+            notes.append(f"{anti_pattern_hits} anti-pattern log(s)")
 
         return (
             filename,
@@ -264,6 +325,10 @@ class EnhancementClassifier:
             long_funcs,
             neg_roi_ratio,
             error_prone_ratio,
+            func_churn,
+            style_violations,
+            refactor_count,
+            anti_pattern_hits,
             notes,
             roi_volatility,
             raroi,
@@ -367,11 +432,18 @@ class EnhancementClassifier:
                 long_funcs,
                 neg_roi_ratio,
                 error_prone_ratio,
+                func_churn,
+                style_violations,
+                refactor_count,
+                anti_pattern_hits,
                 notes,
                 roi_volatility,
                 raroi,
             ) = metrics
             anti_score, anti_notes = self._detect_anti_patterns(cid)
+            anti_score += anti_pattern_hits
+            if anti_pattern_hits:
+                anti_notes.append("anti-pattern logged")
 
             # Heuristics: flag if any inefficiency indicator is observed
             if not (
@@ -384,6 +456,10 @@ class EnhancementClassifier:
                 or anti_score > 0
                 or neg_roi_ratio > 0
                 or error_prone_ratio > 0
+                or func_churn > self.thresholds["churn"]
+                or style_violations > self.thresholds["style"]
+                or refactor_count > self.thresholds["refactor"]
+                or anti_pattern_hits > self.thresholds["anti_pattern"]
             ):
                 continue
 
@@ -399,6 +475,10 @@ class EnhancementClassifier:
                 + self.weights["length"] * long_funcs
                 + self.weights["anti"] * anti_score
                 + self.weights["history"] * history_corr
+                + self.weights["churn"] * func_churn
+                + self.weights["style"] * style_violations
+                + self.weights["refactor"] * refactor_count
+                + self.weights["anti_log"] * anti_pattern_hits
             )
 
             roi_phrase = "dropped" if avg_roi < 0 else "improved"
@@ -414,7 +494,20 @@ class EnhancementClassifier:
                 f"{err_phrase}; "
                 f"RAROI {raroi:.2f} (vol {roi_volatility:.2f})"
             )
+            triggers: list[str] = []
+            if refactor_count > self.thresholds["refactor"]:
+                triggers.append(f"{refactor_count} refactors")
+            if avg_complexity > self.thresholds["complexity_delta"]:
+                triggers.append(f"complexity +{avg_complexity:.2f}%")
+            if func_churn > self.thresholds["churn"]:
+                triggers.append(f"churn {func_churn:.2f}")
+            if style_violations > self.thresholds["style"]:
+                triggers.append(f"{style_violations} style violations")
+            if anti_pattern_hits > self.thresholds["anti_pattern"]:
+                triggers.append(f"{anti_pattern_hits} anti-pattern errors")
             all_notes = notes + anti_notes
+            if triggers:
+                rationale += "; triggers: " + ", ".join(triggers)
             if all_notes:
                 rationale += "; " + "; ".join(all_notes)
 
