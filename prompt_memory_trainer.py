@@ -1,7 +1,7 @@
 import json
 import re
 from collections import defaultdict
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, Mapping
 
 from gpt_memory import GPTMemoryManager
 from code_database import PatchHistoryDB
@@ -11,10 +11,12 @@ class PromptMemoryTrainer:
     """Analyse historical prompts and patch outcomes to learn formatting.
 
     The trainer reads prompts from :class:`GPTMemoryManager` and correlates
-    them with patch outcomes stored in :class:`PatchHistoryDB`.  Simple regex
-    heuristics extract style features (headers, example order and tone) from
-    each prompt.  Success rates are aggregated per style and exposed as
-    weighted metrics.
+    them with patch outcomes stored in :class:`PatchHistoryDB`.  Regex based
+    heuristics extract style features – headers, example order and tone – and
+    additional cues such as code blocks, bullet lists and explicit ``System:``
+    / ``User:`` sections.  Success rates are aggregated per style using ROI or
+    patch complexity improvement as weights, exposing the resulting metrics via
+    :attr:`style_weights`.
     """
 
     def __init__(
@@ -29,21 +31,53 @@ class PromptMemoryTrainer:
 
     # ------------------------------------------------------------------
     def _extract_style(self, prompt: str) -> Dict[str, Any]:
-        """Return formatting features for ``prompt``."""
+        """Return formatting features for ``prompt``.
+
+        Besides the original header, example ordering and tone heuristics the
+        method now records whether the prompt contains fenced code blocks,
+        bullet lists and ``System``/``User`` sections.
+        """
 
         headers = re.findall(r"^#+\s*(.+)$", prompt, flags=re.MULTILINE)
         example_order = re.findall(r"Example\s*([\w-]+)", prompt, flags=re.IGNORECASE)
-        tone = "polite" if re.search(r"\b(?:please|kindly)\b", prompt, re.IGNORECASE) else "direct"
-        return {"headers": headers, "example_order": example_order, "tone": tone}
+        tone = (
+            "polite"
+            if re.search(r"\b(?:please|kindly)\b", prompt, re.IGNORECASE)
+            else "direct"
+        )
+        has_code = bool(re.search(r"```.+?```", prompt, flags=re.DOTALL))
+        has_bullets = bool(
+            re.search(r"^\s*(?:[-*]|\d+\.)\s+", prompt, flags=re.MULTILINE)
+        )
+        sections = [
+            m.group(1).lower()
+            for m in re.finditer(r"^(System|User):", prompt, flags=re.MULTILINE)
+        ]
+        return {
+            "headers": headers,
+            "example_order": example_order,
+            "tone": tone,
+            "has_code": has_code,
+            "has_bullets": has_bullets,
+            "sections": sections,
+        }
 
     # ------------------------------------------------------------------
     def train(self) -> Dict[str, Dict[str, float]]:
-        """Compute success rates for observed prompt styles."""
+        """Compute success rates for observed prompt styles.
 
-        stats: Dict[str, Dict[str, Mapping[str, int]]] = {
-            "headers": defaultdict(lambda: {"success": 0, "count": 0}),
-            "example_order": defaultdict(lambda: {"success": 0, "count": 0}),
-            "tone": defaultdict(lambda: {"success": 0, "count": 0}),
+        Each observation is weighted by either ROI improvement or, when ROI is
+        unchanged, the reduction in patch complexity.  This emphasises styles
+        associated with more impactful patches.
+        """
+
+        stats: Dict[str, Dict[str, Mapping[str, float]]] = {
+            "headers": defaultdict(lambda: {"success": 0.0, "weight": 0.0}),
+            "example_order": defaultdict(lambda: {"success": 0.0, "weight": 0.0}),
+            "tone": defaultdict(lambda: {"success": 0.0, "weight": 0.0}),
+            "has_code": defaultdict(lambda: {"success": 0.0, "weight": 0.0}),
+            "has_bullets": defaultdict(lambda: {"success": 0.0, "weight": 0.0}),
+            "sections": defaultdict(lambda: {"success": 0.0, "weight": 0.0}),
         }
 
         cur = self.memory.conn.execute("SELECT prompt FROM interactions")
@@ -53,22 +87,34 @@ class PromptMemoryTrainer:
                 continue
             patch_id = int(match.group(1))
             row = self.patch_db.conn.execute(
-                "SELECT outcome FROM patch_history WHERE id=?", (patch_id,)
+                "SELECT outcome, roi_before, roi_after, complexity_before, complexity_after FROM patch_history WHERE id=?",
+                (patch_id,),
             ).fetchone()
             if not row:
                 continue
-            outcome = row[0] or ""
-            success = outcome.upper() == "SUCCESS"
+            outcome, roi_before, roi_after, c_before, c_after = row
+            roi_before = roi_before or 0.0
+            roi_after = roi_after or 0.0
+            c_before = c_before or 0.0
+            c_after = c_after or 0.0
+
+            roi_improvement = roi_after - roi_before
+            complexity_improvement = c_before - c_after
+            weight = roi_improvement if roi_improvement > 0 else complexity_improvement
+            if weight <= 0:
+                weight = 1.0
+
+            success = (outcome or "").upper() == "SUCCESS"
             feats = self._extract_style(text)
             for key, val in feats.items():
                 val_key = json.dumps(val) if isinstance(val, list) else str(val)
                 d = stats[key][val_key]
-                d["count"] += 1
+                d["weight"] += weight
                 if success:
-                    d["success"] += 1
+                    d["success"] += weight
 
         self.style_weights = {
-            feat: {k: (v["success"] / v["count"]) if v["count"] else 0.0 for k, v in m.items()}
+            feat: {k: (v["success"] / v["weight"]) if v["weight"] else 0.0 for k, v in m.items()}
             for feat, m in stats.items()
         }
         return self.style_weights

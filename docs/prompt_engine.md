@@ -67,3 +67,12 @@ Correct example:
 Incorrect example:
 <failing snippet>
 ```
+
+## Learning from history
+
+`PromptMemoryTrainer` analyses previous prompts and patch outcomes to infer
+effective formatting.  The trainer now detects additional cues such as the
+presence of fenced code blocks, bullet lists and separate `System`/`User`
+sections.  Success rates for each observed style are weighted by the ROI or
+patch complexity improvement recorded for the corresponding patch, allowing
+the prompt engine to favour styles linked to more impactful changes.
