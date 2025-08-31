@@ -6,6 +6,7 @@ import ast
 import io
 import keyword
 import logging
+import os
 import math
 import tokenize
 from pathlib import Path
@@ -20,6 +21,7 @@ except ImportError:  # pragma: no cover - fall back to AST-based metrics
     cc_visit = mi_visit = None
 
 from ..sandbox_settings import SandboxSettings
+from ..logging_utils import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -226,8 +228,14 @@ def _update_alignment_baseline(
         return {}
 
 
-def main(argv: Iterable[str] | None = None) -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     """CLI entry point for updating or displaying baseline metrics."""
+
+    settings = SandboxSettings()
+    os.environ["SANDBOX_CENTRAL_LOGGING"] = (
+        "1" if settings.sandbox_central_logging else "0"
+    )
+    setup_logging()
 
     parser = argparse.ArgumentParser(description="Self-improvement metrics utilities")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -238,9 +246,9 @@ def main(argv: Iterable[str] | None = None) -> None:
 
     if args.cmd == "update":
         metrics = _update_alignment_baseline(files=args.files)
-        print(yaml.safe_dump(metrics))
+        logger.info(yaml.safe_dump(metrics))
     elif args.cmd == "show":
-        print(yaml.safe_dump(get_alignment_metrics()))
+        logger.info(yaml.safe_dump(get_alignment_metrics()))
 
 
 __all__ = ["_update_alignment_baseline", "get_alignment_metrics", "main"]
