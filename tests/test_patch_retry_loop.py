@@ -125,12 +125,7 @@ def test_retry_rebuilds_context(monkeypatch, tmp_path):
         if call_state["count"] == 1:
             return types.SimpleNamespace(
                 success=False,
-                failure={
-                    "trace": "AssertionError: boom",
-                    "tags": ["t1"],
-                    "error_type": "t1",
-                    "signature": "s1",
-                },
+                failure={"strategy_tag": "t1", "stack": "AssertionError: boom"},
                 stdout="",
                 stderr="",
                 duration=0.0,
@@ -151,6 +146,7 @@ def test_retry_rebuilds_context(monkeypatch, tmp_path):
     assert len(engine.calls) == 2
     assert query_calls == [["t1"]]
     assert pipeline.calls == [("bot", 1)]
+    assert call_state["count"] == 2
 
 
 def test_retry_stops_after_max(monkeypatch, tmp_path):
@@ -195,12 +191,7 @@ def test_retry_stops_after_max(monkeypatch, tmp_path):
     def run_tests_stub(repo, path):
         return types.SimpleNamespace(
             success=False,
-            failure={
-                "trace": "AssertionError: boom",
-                "tags": ["t1"],
-                "error_type": "t1",
-                "signature": "s1",
-            },
+            failure={"strategy_tag": "t1", "stack": "AssertionError: boom"},
             stdout="",
             stderr="",
             duration=0.0,
@@ -258,12 +249,7 @@ def test_retry_skips_duplicate_trace(monkeypatch, tmp_path):
     def run_tests_stub(repo, path):
         return types.SimpleNamespace(
             success=False,
-            failure={
-                "trace": "AssertionError: boom",
-                "tags": ["t1"],
-                "error_type": "t1",
-                "signature": "s1",
-            },
+            failure={"strategy_tag": "t1", "stack": "AssertionError: boom"},
             stdout="",
             stderr="",
             duration=0.0,

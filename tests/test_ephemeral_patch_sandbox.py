@@ -1,8 +1,47 @@
 import os
+import sys
 from pathlib import Path
 import types
 import tempfile
 import shutil
+
+
+db_stub = types.ModuleType("menace.data_bot")
+db_stub.DataBot = object
+db_stub.MetricsDB = object
+sys.modules["menace.data_bot"] = db_stub
+sys.modules["data_bot"] = db_stub
+
+sce_stub = types.ModuleType("menace.self_coding_engine")
+sce_stub.SelfCodingEngine = object
+sys.modules["menace.self_coding_engine"] = sce_stub
+pp_stub = types.ModuleType("menace.patch_provenance")
+pp_stub.record_patch_metadata = lambda *a, **k: None
+sys.modules["menace.patch_provenance"] = pp_stub
+
+mapl_stub = types.ModuleType("menace.model_automation_pipeline")
+class AutomationResult:
+    def __init__(self, package=None, roi=None):
+        self.package = package
+        self.roi = roi
+class ModelAutomationPipeline:
+    def run(self, model: str, energy: int = 1):
+        return AutomationResult()
+mapl_stub.AutomationResult = AutomationResult
+mapl_stub.ModelAutomationPipeline = ModelAutomationPipeline
+sys.modules["menace.model_automation_pipeline"] = mapl_stub
+
+prb_stub = types.ModuleType("menace.pre_execution_roi_bot")
+class ROIResult:
+    def __init__(self, roi, confidence=1.0, errors=0.0, proi=0.0, perr=0.0, risk=0.0):
+        self.roi = roi
+        self.confidence = confidence
+        self.errors = errors
+        self.predicted_roi = proi
+        self.predicted_errors = perr
+        self.risk = risk
+prb_stub.ROIResult = ROIResult
+sys.modules["menace.pre_execution_roi_bot"] = prb_stub
 
 import menace.self_coding_manager as scm
 import menace.model_automation_pipeline as mapl
@@ -48,36 +87,28 @@ def test_ephemeral_clone_removed(monkeypatch, tmp_path):
 
     monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
 
-    clone_run = {}
-
     def fake_run(cmd, *a, **kw):
         if cmd[:2] == ["git", "clone"]:
             dst = Path(cmd[3])
             dst.mkdir(exist_ok=True)
             shutil.copy2(file_path, dst / file_path.name)
             return types.SimpleNamespace(returncode=0)
-        if cmd[0] == "pytest":
-            clone_run["cwd"] = kw.get("cwd")
-            return types.SimpleNamespace(returncode=0)
         return types.SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(scm.subprocess, "run", fake_run)
+    run_calls: list[tuple] = []
 
-    class DummyRunner:
-        def __init__(self):
-            self.safe_mode = None
-            self.calls = 0
+    def run_tests_stub(repo, path):
+        run_calls.append((repo, path))
+        return types.SimpleNamespace(
+            success=True,
+            failure=None,
+            stdout="",
+            stderr="",
+            duration=0.0,
+        )
 
-        def run(self, workflow, *, safe_mode=False, **kwargs):
-            self.safe_mode = safe_mode
-            self.calls += 1
-            workflow()
-            return types.SimpleNamespace(modules=[types.SimpleNamespace(result=True)])
-
-    runner = DummyRunner()
-    monkeypatch.setattr(
-        scm, "WorkflowSandboxRunner", lambda: runner
-    )
+    monkeypatch.setattr(scm, "run_tests", run_tests_stub)
 
     engine = DummyEngine()
     pipeline = DummyPipeline()
@@ -89,8 +120,6 @@ def test_ephemeral_clone_removed(monkeypatch, tmp_path):
     finally:
         os.chdir(cwd)
 
-    assert runner.calls == 1
-    assert runner.safe_mode is True
-    assert clone_run.get("cwd") == str(tmpdir_path)
+    assert len(run_calls) == 1
     assert not tmpdir_path.exists()
     assert "# patched" in file_path.read_text()

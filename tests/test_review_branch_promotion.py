@@ -46,6 +46,13 @@ class ROIResult:
 prb_stub.ROIResult = ROIResult
 sys.modules["menace.pre_execution_roi_bot"] = prb_stub
 
+sce_stub = types.ModuleType("menace.self_coding_engine")
+sce_stub.SelfCodingEngine = object
+sys.modules["menace.self_coding_engine"] = sce_stub
+pp_stub = types.ModuleType("menace.patch_provenance")
+pp_stub.record_patch_metadata = lambda *a, **k: None
+sys.modules["menace.patch_provenance"] = pp_stub
+
 import menace.self_coding_manager as scm
 from menace.self_coding_manager import SelfCodingManager
 
@@ -105,24 +112,40 @@ def setup(monkeypatch, tmp_path, confidence):
     monkeypatch.setattr(scm.MutationLogger, "log_mutation", lambda *a, **k: 1)
     monkeypatch.setattr(scm.MutationLogger, "record_mutation_outcome", lambda *a, **k: None)
 
+    run_calls: list[tuple] = []
+
+    def run_tests_stub(repo, path):
+        run_calls.append((repo, path))
+        return types.SimpleNamespace(
+            success=True,
+            failure=None,
+            stdout="",
+            stderr="",
+            duration=0.0,
+        )
+
+    monkeypatch.setattr(scm, "run_tests", run_tests_stub)
+
     patch_logger = DummyPatchLogger()
     engine = DummyEngine(patch_logger)
     pipeline = DummyPipeline(confidence)
     data_bot = DummyDataBot()
     mgr = SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
-    return mgr, file_path, patch_logger, pushes
+    return mgr, file_path, patch_logger, pushes, run_calls
 
 
 def test_pushes_to_review_branch(monkeypatch, tmp_path):
-    mgr, file_path, patch_logger, pushes = setup(monkeypatch, tmp_path, confidence=0.4)
+    mgr, file_path, patch_logger, pushes, calls = setup(monkeypatch, tmp_path, confidence=0.4)
     mgr.run_patch(file_path, "change", confidence_threshold=0.5)
     assert any("review/1" in cmd[-1] for cmd in pushes)
     assert patch_logger.calls and patch_logger.calls[0][1]["contribution"] == 1.0
+    assert len(calls) == 1
 
 
 def test_merges_to_main(monkeypatch, tmp_path):
-    mgr, file_path, patch_logger, pushes = setup(monkeypatch, tmp_path, confidence=0.9)
+    mgr, file_path, patch_logger, pushes, calls = setup(monkeypatch, tmp_path, confidence=0.9)
     mgr.run_patch(file_path, "change", confidence_threshold=0.5, auto_merge=True)
     assert any("review/1" in cmd[-1] for cmd in pushes)
     assert any(cmd[-1].endswith("main") for cmd in pushes)
     assert patch_logger.calls and patch_logger.calls[0][1]["contribution"] == 1.0
+    assert len(calls) == 1

@@ -108,21 +108,24 @@ def test_run_patch_logs_evolution(monkeypatch, tmp_path):
 
     monkeypatch.setattr(scm.subprocess, "run", fake_run)
 
-    monkeypatch.setattr(
-        scm,
-        "run_tests",
-        lambda repo, path: types.SimpleNamespace(
+    calls: list[tuple] = []
+
+    def run_tests_stub(repo, path):
+        calls.append((repo, path))
+        return types.SimpleNamespace(
             success=True,
             failure=None,
             stdout="",
             stderr="",
             duration=0.0,
-        ),
-    )
+        )
+
+    monkeypatch.setattr(scm, "run_tests", run_tests_stub)
 
     res = mgr.run_patch(file_path, "add")
     assert engine.calls
     assert pipeline.calls
+    assert calls
     assert "# patched" in file_path.read_text()
     rows = hist.fetch()
     assert any(r[0].startswith("self_coding") for r in rows)

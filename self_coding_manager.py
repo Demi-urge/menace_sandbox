@@ -164,6 +164,14 @@ class SelfCodingManager:
                     failure = ErrorParser.parse_failure(trace)
                 tag = failure.get("strategy_tag", "")
                 tags = [tag] if tag else []
+                self.logger.error(
+                    "patch tests failed",
+                    extra={
+                        "stdout": harness_result.stdout,
+                        "stderr": harness_result.stderr,
+                        "tags": tags,
+                    },
+                )
                 self._failure_cache.add(ErrorReport(trace=trace, tags=tags))
                 try:
                     record_failed_tags(list(tags))
