@@ -120,7 +120,7 @@ def test_retry_rebuilds_context(monkeypatch, tmp_path):
 
     call_state = {"count": 0}
 
-    def run_tests_stub(repo, path):
+    def run_tests_stub(repo, path, *, backend="venv"):
         call_state["count"] += 1
         if call_state["count"] == 1:
             return types.SimpleNamespace(
@@ -188,7 +188,7 @@ def test_retry_stops_after_max(monkeypatch, tmp_path):
 
     monkeypatch.setattr(scm.subprocess, "run", fake_run)
 
-    def run_tests_stub(repo, path):
+    def run_tests_stub(repo, path, *, backend="venv"):
         return types.SimpleNamespace(
             success=False,
             failure={"strategy_tag": "t1", "stack": "AssertionError: boom"},
@@ -246,7 +246,7 @@ def test_retry_skips_duplicate_trace(monkeypatch, tmp_path):
 
     monkeypatch.setattr(scm.subprocess, "run", fake_run)
 
-    def run_tests_stub(repo, path):
+    def run_tests_stub(repo, path, *, backend="venv"):
         return types.SimpleNamespace(
             success=False,
             failure={"strategy_tag": "t1", "stack": "AssertionError: boom"},

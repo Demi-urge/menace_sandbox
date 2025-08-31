@@ -52,7 +52,12 @@ def _python_bin(venv: Path) -> Path:
     return venv / "bin" / "python"
 
 
-def run_tests(repo_path: Path, changed_path: Path | None = None) -> TestHarnessResult:
+def run_tests(
+    repo_path: Path,
+    changed_path: Path | None = None,
+    *,
+    backend: str = "venv",
+) -> TestHarnessResult:
     """Execute unit tests for ``repo_path`` inside an isolated environment.
 
     Parameters
@@ -66,6 +71,10 @@ def run_tests(repo_path: Path, changed_path: Path | None = None) -> TestHarnessR
         file or applying a ``-k`` expression based on the file stem.  When
         multiple paths are supplied via a newline separated file, a combined
         ``-k`` expression is used.
+    backend:
+        Execution backend.  ``"venv"`` creates a virtual environment and runs
+        tests within it.  ``"docker"`` executes tests inside a temporary Docker
+        container.  Defaults to ``"venv"`` for backward compatibility.
     """
 
     start = time.time()
@@ -81,25 +90,10 @@ def run_tests(repo_path: Path, changed_path: Path | None = None) -> TestHarnessR
         stdout_parts.append(clone.stdout)
         stdout_parts.append(clone.stderr)
 
-        venv_dir = tmpdir / "venv"
-        subprocess.run(
-            [sys.executable, "-m", "venv", str(venv_dir)],
-            check=True,
-        )
-        python = _python_bin(venv_dir)
+        if backend not in {"venv", "docker"}:
+            raise ValueError(f"unknown backend: {backend}")
 
         req_file = tmpdir / "requirements.txt"
-        if req_file.exists():
-            install = subprocess.run(
-                [str(python), "-m", "pip", "install", "-r", "requirements.txt"],
-                cwd=tmpdir,
-                capture_output=True,
-                text=True,
-            )
-            stdout_parts.append(install.stdout)
-            stdout_parts.append(install.stderr)
-
-        pytest_cmd = [str(python), "-m", "pytest", "-q"]
         rel_paths: list[Path] = []
         if changed_path:
             # ``changed_path`` may be either a single file or a file containing
@@ -119,29 +113,92 @@ def run_tests(repo_path: Path, changed_path: Path | None = None) -> TestHarnessR
                 rel_paths.append(changed_path)
 
         selected: str | None = None
-        if rel_paths:
-            try:
-                rel_paths = [p.relative_to(repo_path) for p in rel_paths]
-            except Exception:
-                pass
-            if len(rel_paths) == 1:
-                rel = rel_paths[0]
-                selected = rel.as_posix()
-                if ("tests" in rel.parts or rel.name.startswith("test_")) and rel.suffix == ".py":
-                    pytest_cmd.insert(3, selected)
-                else:
-                    pytest_cmd.extend(["-k", rel.stem])
-            else:
-                expr = " or ".join(p.stem for p in rel_paths)
-                pytest_cmd.extend(["-k", expr])
-                selected = " ".join(p.as_posix() for p in rel_paths)
+        if backend == "venv":
+            venv_dir = tmpdir / "venv"
+            subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
+            python = _python_bin(venv_dir)
 
-        tests = subprocess.run(
-            pytest_cmd,
-            cwd=tmpdir,
-            capture_output=True,
-            text=True,
-        )
+            if req_file.exists():
+                install = subprocess.run(
+                    [str(python), "-m", "pip", "install", "-r", "requirements.txt"],
+                    cwd=tmpdir,
+                    capture_output=True,
+                    text=True,
+                )
+                stdout_parts.append(install.stdout)
+                stdout_parts.append(install.stderr)
+
+            pytest_cmd = [str(python), "-m", "pytest", "-q"]
+            if rel_paths:
+                try:
+                    rel_paths = [p.relative_to(repo_path) for p in rel_paths]
+                except Exception:
+                    pass
+                if len(rel_paths) == 1:
+                    rel = rel_paths[0]
+                    selected = rel.as_posix()
+                    if (
+                        "tests" in rel.parts
+                        or rel.name.startswith("test_")
+                    ) and rel.suffix == ".py":
+                        pytest_cmd.insert(3, selected)
+                    else:
+                        pytest_cmd.extend(["-k", rel.stem])
+                else:
+                    expr = " or ".join(p.stem for p in rel_paths)
+                    pytest_cmd.extend(["-k", expr])
+                    selected = " ".join(p.as_posix() for p in rel_paths)
+
+            tests = subprocess.run(
+                pytest_cmd,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+            )
+        else:  # backend == "docker"
+            pytest_cmd = ["python", "-m", "pytest", "-q"]
+            if rel_paths:
+                try:
+                    rel_paths = [p.relative_to(repo_path) for p in rel_paths]
+                except Exception:
+                    pass
+                if len(rel_paths) == 1:
+                    rel = rel_paths[0]
+                    selected = rel.as_posix()
+                    if (
+                        "tests" in rel.parts
+                        or rel.name.startswith("test_")
+                    ) and rel.suffix == ".py":
+                        pytest_cmd.insert(3, selected)
+                    else:
+                        pytest_cmd.extend(["-k", rel.stem])
+                else:
+                    expr = " or ".join(p.stem for p in rel_paths)
+                    pytest_cmd.extend(["-k", expr])
+                    selected = " ".join(p.as_posix() for p in rel_paths)
+
+            inner_cmds: list[str] = []
+            if req_file.exists():
+                inner_cmds.append("pip install -r requirements.txt")
+            inner_cmds.append(" ".join(pytest_cmd))
+            docker_cmd = [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{tmpdir}:/repo",
+                "-w",
+                "/repo",
+                "python:3.11-slim",
+                "bash",
+                "-lc",
+                " && ".join(inner_cmds),
+            ]
+            tests = subprocess.run(
+                docker_cmd,
+                capture_output=True,
+                text=True,
+            )
 
         duration = time.time() - start
         stdout_parts.append(tests.stdout)

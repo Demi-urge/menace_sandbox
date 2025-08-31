@@ -98,8 +98,8 @@ def test_ephemeral_clone_removed(monkeypatch, tmp_path):
     monkeypatch.setattr(scm.subprocess, "run", fake_run)
     run_calls: list[tuple] = []
 
-    def run_tests_stub(repo, path):
-        run_calls.append((repo, path))
+    def run_tests_stub(repo, path, *, backend="venv"):
+        run_calls.append((repo, path, backend))
         return types.SimpleNamespace(
             success=True,
             failure=None,
