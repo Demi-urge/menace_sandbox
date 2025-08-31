@@ -2,7 +2,7 @@ import json
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping
+from typing import Any, Dict, Iterable, Mapping, Tuple
 import sqlite3
 
 try:  # pragma: no cover - optional dependency
@@ -15,6 +15,7 @@ from code_database import PatchHistoryDB
 
 
 class PromptMemoryTrainer:
+    STYLE_VERSION = 1
     """Analyse historical prompts and patch outcomes to learn formatting.
 
     The trainer reads prompts from :class:`GPTMemoryManager` and correlates
@@ -41,8 +42,17 @@ class PromptMemoryTrainer:
         )
         self.style_weights: Dict[str, Dict[str, float]] = {}
         if self.state_path and self.state_path.exists():
-            with self.state_path.open("r", encoding="utf-8") as fh:
-                self.style_weights = json.load(fh)
+            try:
+                with self.state_path.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if (
+                    isinstance(data, dict)
+                    and data.get("version") == self.STYLE_VERSION
+                    and isinstance(data.get("weights"), dict)
+                ):
+                    self.style_weights = data["weights"]
+            except Exception:
+                self.style_weights = {}
         self._stats: Dict[str, Dict[str, list[int]]] = {
             "headers": defaultdict(lambda: [0, 0]),
             "example_order": defaultdict(lambda: [0, 0]),
@@ -230,24 +240,29 @@ class PromptMemoryTrainer:
 
     # ------------------------------------------------------------------
     def save_weights(self, path: str | Path) -> None:
-        """Persist :attr:`style_weights` to ``path`` as JSON."""
+        """Persist :attr:`style_weights` and version to ``path`` as JSON."""
 
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
+        data = {"version": self.STYLE_VERSION, "weights": self.style_weights}
         with p.open("w", encoding="utf-8") as fh:
-            json.dump(self.style_weights, fh)
+            json.dump(data, fh)
 
     # ------------------------------------------------------------------
     @classmethod
-    def load_weights(cls, path: str | Path) -> Dict[str, Dict[str, float]]:
-        """Return weights loaded from JSON ``path``."""
+    def load_weights(cls, path: str | Path) -> Tuple[int, Dict[str, Dict[str, float]]]:
+        """Return ``(version, weights)`` loaded from JSON ``path``."""
 
         p = Path(path)
         with p.open("r", encoding="utf-8") as fh:
-            weights: Dict[str, Dict[str, float]] = json.load(fh)
-        trainer = cls()
+            data = json.load(fh)
+        version = data.get("version")
+        weights = data.get("weights") if isinstance(data, dict) else None
+        if version != cls.STYLE_VERSION or not isinstance(weights, dict):
+            raise ValueError("Incompatible prompt style weights version")
+        trainer = cls(state_path=None)
         trainer.style_weights = weights
-        return trainer.style_weights
+        return version, trainer.style_weights
 
     # ------------------------------------------------------------------
     def append_records(self, records: Iterable[Mapping[str, Any]]) -> Dict[str, Dict[str, float]]:

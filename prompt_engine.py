@@ -157,10 +157,8 @@ class PromptEngine:
     )
     weights_path: Path = Path(
         os.getenv(
-            "PROMPT_MEMORY_WEIGHTS_PATH",
-            Path(__file__).resolve().parent
-            / "config"
-            / "prompt_memory_weights.json",
+            "PROMPT_STYLE_WEIGHTS_PATH",
+            Path(__file__).resolve().parent / "prompt_style_weights.json",
         )
     )
     trainer: PromptMemoryTrainer | None = None
@@ -174,6 +172,7 @@ class PromptEngine:
     trained_example_count: int | None = field(default=None, init=False)
     trained_example_placement: str | None = field(default=None, init=False)
     trained_length: str | None = field(default=None, init=False)
+    style_version: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
         if self.retriever is None:
@@ -205,7 +204,10 @@ class PromptEngine:
 
     # ------------------------------------------------------------------
     def _load_trained_config(
-        self, summary: Dict[str, Dict[str, float]] | None = None
+        self,
+        summary: Dict[str, Dict[str, float]] | None = None,
+        *,
+        version: int | None = None,
     ) -> None:
         """Load formatting preferences from :class:`PromptMemoryTrainer`.
 
@@ -221,24 +223,42 @@ class PromptEngine:
         if summary is None:
             if self.trainer and getattr(self.trainer, "style_weights", None):
                 summary = self.trainer.style_weights
-            if not summary and self.weights_path.exists():
+                version = getattr(self.trainer, "STYLE_VERSION", 0)
+            if (not summary or version is None) and self.weights_path.exists():
                 try:
-                    summary = PromptMemoryTrainer.load_weights(  # type: ignore[attr-defined]
+                    version, summary = PromptMemoryTrainer.load_weights(
                         self.weights_path
-                    )
+                    )  # type: ignore[attr-defined]
                 except Exception:
-                    summary = None
+                    audit_log_event(
+                        "prompt_style_reverted",
+                        {"reason": "load_failed", "path": str(self.weights_path)},
+                    )
+                    return
             if summary is None and self.trainer is not None:
                 try:  # pragma: no cover - best effort training lookup
                     summary = self.trainer.train()
+                    version = getattr(self.trainer, "STYLE_VERSION", 0)
                     try:
                         self.trainer.save_weights(self.weights_path)  # type: ignore[attr-defined]
                     except Exception:
                         pass
                 except Exception:
                     return
+        else:
+            if version is None:
+                version = getattr(PromptMemoryTrainer, "STYLE_VERSION", 0)
         if not summary:
+            audit_log_event("prompt_style_reverted", {"reason": "missing_data"})
             return
+        expected = getattr(PromptMemoryTrainer, "STYLE_VERSION", 0)
+        if version != expected:
+            audit_log_event(
+                "prompt_style_reverted",
+                {"reason": "incompatible_version", "expected": expected, "found": version},
+            )
+            return
+        self.style_version = version
 
         # Determine preferred headers (first entry is success header)
         headers_summary = summary.get("headers", {}) or {}
@@ -338,7 +358,9 @@ class PromptEngine:
             self.trainer.save_weights(self.weights_path)  # type: ignore[attr-defined]
         except Exception:
             pass
-        self._load_trained_config(summary)
+        self._load_trained_config(
+            summary, version=getattr(self.trainer, "STYLE_VERSION", 0)
+        )
 
     # ------------------------------------------------------------------
     def build_snippets(self, patches: Iterable[Dict[str, Any]]) -> List[str]:
