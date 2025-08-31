@@ -482,3 +482,40 @@ def test_stub_generation_aborts_on_model_error(monkeypatch):
     monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
     ctx = {"strategy": "synthetic", "target": None}
     assert gsp_mod.generate_stubs([{"x": 1}], ctx) == [{"x": 1}]
+
+
+def test_env_reload_updates_retries(monkeypatch, tmp_path):
+    monkeypatch.setenv("SANDBOX_STUB_CACHE", str(tmp_path / "cache.json"))
+    monkeypatch.setenv("SANDBOX_STUB_RETRY_BASE", "0.001")
+    monkeypatch.setenv("SANDBOX_STUB_RETRY_MAX", "0.001")
+
+    gsp_mod = importlib.reload(gsp)
+
+    class FailGen:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, *a, **k):
+            self.calls += 1
+            raise RuntimeError("boom")
+
+    def run_expected_calls():
+        gen = FailGen()
+
+        async def loader():
+            return gen
+
+        monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
+        gsp_mod._CACHE = {}
+        ctx = {"strategy": "synthetic", "target": None}
+        with pytest.raises(RuntimeError):
+            gsp_mod.generate_stubs([{"x": 1}], ctx)
+        return gen.calls
+
+    monkeypatch.setenv("SANDBOX_STUB_RETRIES", "1")
+    gsp_mod.get_settings(refresh=True)
+    assert run_expected_calls() == 1
+
+    monkeypatch.setenv("SANDBOX_STUB_RETRIES", "3")
+    gsp_mod.get_settings(refresh=True)
+    assert run_expected_calls() == 3
