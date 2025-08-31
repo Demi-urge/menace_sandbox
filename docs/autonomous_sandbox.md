@@ -19,6 +19,9 @@ running the fully autonomous sandbox.
   knowledge module (default `600`).
 - `MENACE_LOCAL_DB_PATH` and `MENACE_SHARED_DB_PATH` – override default SQLite
   database locations.
+- `OPTIONAL_SERVICE_VERSIONS` – JSON mapping of optional service modules to
+  minimum versions, e.g.
+  `{"relevancy_radar": "1.2.0", "quick_fix_engine": "1.1.0"}`.
 
 The `.env` file referenced by `MENACE_ENV_FILE` is loaded automatically when
 present. Additional configuration files such as synergy weights or self‑test

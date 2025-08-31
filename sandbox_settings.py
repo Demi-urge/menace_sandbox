@@ -339,6 +339,34 @@ class SandboxSettings(BaseSettings):
         env="RETRY_OPTIONAL_DEPENDENCIES",
         description="Retry loading optional modules instead of using a stub.",
     )
+    optional_service_versions: dict[str, str] = Field(
+        default_factory=lambda: {
+            "relevancy_radar": "1.0.0",
+            "quick_fix_engine": "1.0.0",
+        },
+        env="OPTIONAL_SERVICE_VERSIONS",
+        description="Mapping of optional service modules to minimum versions.",
+    )
+    if PYDANTIC_V2:
+
+        @field_validator("optional_service_versions", mode="before")
+        def _parse_optional_service_versions(cls, v: Any) -> Any:
+            if isinstance(v, str):
+                try:
+                    return json.loads(v) if v else {}
+                except Exception:
+                    return {}
+            return v
+    else:  # pragma: no cover - pydantic<2
+
+        @field_validator("optional_service_versions", pre=True)
+        def _parse_optional_service_versions(cls, v: Any) -> Any:  # type: ignore[override]
+            if isinstance(v, str):
+                try:
+                    return json.loads(v) if v else {}
+                except Exception:
+                    return {}
+            return v
     openai_api_key: str | None = Field(
         None, env="OPENAI_API_KEY", description="API key for OpenAI access."
     )
