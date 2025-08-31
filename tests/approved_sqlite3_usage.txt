@@ -59,3 +59,4 @@ tests/test_db_dedup_concurrent.py
 tests/test_db_router_logging.py
 tests/integration/test_workflow_policy_integration.py
 tests/test_enhancement_classifier_queue.py
+tests/test_prompt_memory_trainer_incremental.py

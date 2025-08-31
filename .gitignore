@@ -14,6 +14,7 @@ clipped/*.mp4
 # BLOCK EVERYTHING JSON EXCEPT clip_projects.json
 clipped/*.json
 !clipped/clip_projects.json
+prompt_style_weights.json
 
 # Global media ignore (safety)
 *.mp4

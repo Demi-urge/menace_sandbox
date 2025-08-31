@@ -4,6 +4,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping
 
+try:  # pragma: no cover - optional dependency
+    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+except Exception:  # pragma: no cover - allow running without dependency
+    SentimentIntensityAnalyzer = None  # type: ignore
+
 from gpt_memory import GPTMemoryManager
 from code_database import PatchHistoryDB
 
@@ -12,11 +17,11 @@ class PromptMemoryTrainer:
     """Analyse historical prompts and patch outcomes to learn formatting.
 
     The trainer reads prompts from :class:`GPTMemoryManager` and correlates
-    them with patch outcomes stored in :class:`PatchHistoryDB`.  Regex based
-    heuristics extract style features – headers, example order and tone – and
-    additional cues such as code blocks, bullet lists and explicit ``System:``
-    / ``User:`` sections.  Success rates are aggregated per style using ROI or
-    patch complexity improvement as weights, exposing the resulting metrics via
+    them with patch outcomes stored in :class:`PatchHistoryDB`.  Sentiment
+    analysis classifies tone while heuristics extract style features – headers,
+    example order, bullet lists, code blocks and explicit ``System:`` / ``User``
+    sections.  Success rates are aggregated per style using ROI or patch
+    complexity improvement as weights, exposing the resulting metrics via
     :attr:`style_weights`.
     """
 
@@ -25,11 +30,14 @@ class PromptMemoryTrainer:
         *,
         memory: GPTMemoryManager | None = None,
         patch_db: PatchHistoryDB | None = None,
-        state_path: str | Path | None = None,
+        state_path: str | Path | None = Path("prompt_style_weights.json"),
     ) -> None:
         self.memory = memory or GPTMemoryManager(db_path=":memory:")
         self.patch_db = patch_db or PatchHistoryDB(":memory:")
         self.state_path = Path(state_path) if state_path else None
+        self._sentiment = (
+            SentimentIntensityAnalyzer() if SentimentIntensityAnalyzer else None
+        )
         self.style_weights: Dict[str, Dict[str, float]] = {}
         if self.state_path and self.state_path.exists():
             with self.state_path.open("r", encoding="utf-8") as fh:
@@ -38,6 +46,9 @@ class PromptMemoryTrainer:
             "headers": defaultdict(lambda: [0, 0]),
             "example_order": defaultdict(lambda: [0, 0]),
             "tone": defaultdict(lambda: [0, 0]),
+            "has_bullets": defaultdict(lambda: [0, 0]),
+            "has_code": defaultdict(lambda: [0, 0]),
+            "example_count": defaultdict(lambda: [0, 0]),
         }
         for feat, mapping in self.style_weights.items():
             if feat in self._stats:
@@ -48,12 +59,12 @@ class PromptMemoryTrainer:
     def _extract_style(self, prompt: str) -> Dict[str, Any]:
         """Return formatting features for ``prompt``.
 
-        Besides the original header, example ordering and tone heuristics the
-        method now records whether the prompt contains fenced code blocks,
-        bullet lists and ``System``/``User`` sections.  The analyser also looks
-        for common structured sections such as "Constraints" or "Resources",
-        counts the number of examples and their placement and classifies the
-        overall verbosity of the prompt.
+        Besides the original header and example ordering cues, the method now
+        applies sentiment analysis for tone and records whether the prompt
+        contains fenced code blocks, bullet lists and ``System``/``User``
+        sections.  The analyser also looks for common structured sections such
+        as "Constraints" or "Resources", counts the number of examples and
+        their placement and classifies the overall verbosity of the prompt.
         """
 
         headers = re.findall(r"^#+\s*(.+)$", prompt, flags=re.MULTILINE)
@@ -61,11 +72,13 @@ class PromptMemoryTrainer:
             re.finditer(r"Example\s*([\w-]+)", prompt, flags=re.IGNORECASE)
         )
         example_order = [m.group(1) for m in example_matches]
-        tone = (
-            "polite"
-            if re.search(r"\b(?:please|kindly)\b", prompt, re.IGNORECASE)
-            else "direct"
-        )
+        tone = "neutral"
+        if self._sentiment:
+            score = self._sentiment.polarity_scores(prompt)["compound"]
+            if score > 0.05:
+                tone = "positive"
+            elif score < -0.05:
+                tone = "negative"
         has_code = bool(re.search(r"```.+?```", prompt, flags=re.DOTALL))
         has_bullets = bool(
             re.search(r"^\s*(?:[-*]|\d+\.)\s+", prompt, flags=re.MULTILINE)
@@ -251,6 +264,7 @@ class PromptMemoryTrainer:
         suggestion: Dict[str, Any] = {}
         list_feats = {"headers", "example_order", "sections", "structured_sections"}
         int_feats = {"example_count"}
+        bool_feats = {"has_code", "has_bullets"}
         for feat, mapping in self.style_weights.items():
             if not mapping:
                 continue
@@ -265,6 +279,8 @@ class PromptMemoryTrainer:
                     suggestion[feat] = int(float(best_val))
                 except Exception:
                     suggestion[feat] = 0
+            elif feat in bool_feats:
+                suggestion[feat] = best_val.lower() == "true"
             else:
                 suggestion[feat] = best_val
         return suggestion
@@ -276,16 +292,27 @@ class PromptMemoryTrainer:
         tone: str = "",
         headers: Iterable[str] | None = None,
         example_order: Iterable[str] | None = None,
+        has_bullets: bool | None = None,
+        has_code: bool | None = None,
+        example_count: int | None = None,
         success: bool = False,
         **_: Any,
     ) -> bool:
-        """Incrementally update style weights and persist when changed."""
+        """Incrementally update style weights and persist when changed.
+
+        Parameters allow overriding features such as bullet usage, code block
+        presence and example count so the trainer can update its statistics
+        without a full retraining pass.
+        """
 
         updated = False
         feats = {
             "tone": tone or None,
             "headers": json.dumps(list(headers)) if headers else None,
             "example_order": json.dumps(list(example_order)) if example_order else None,
+            "has_bullets": str(has_bullets) if has_bullets is not None else None,
+            "has_code": str(has_code) if has_code is not None else None,
+            "example_count": str(example_count) if example_count is not None else None,
         }
         for feat, key in feats.items():
             if not key:
