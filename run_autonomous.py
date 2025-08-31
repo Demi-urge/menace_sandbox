@@ -211,13 +211,18 @@ def _start_local_knowledge_refresh(cleanup_funcs: List[Callable[[], None]]) -> N
     """Start background thread to periodically refresh local knowledge."""
 
     def _loop() -> None:
+        run = 0
         while not _LKM_REFRESH_STOP.wait(LOCAL_KNOWLEDGE_REFRESH_INTERVAL):
+            run += 1
             if LOCAL_KNOWLEDGE_MODULE is not None:
                 try:
                     LOCAL_KNOWLEDGE_MODULE.refresh()
                     LOCAL_KNOWLEDGE_MODULE.memory.conn.commit()
                 except Exception:
-                    logger.exception("failed to refresh local knowledge module")
+                    logger.exception(
+                        "failed to refresh local knowledge module",
+                        extra=log_record(run=run),
+                    )
 
     global _LKM_REFRESH_THREAD
     if _LKM_REFRESH_THREAD is None:
@@ -225,9 +230,16 @@ def _start_local_knowledge_refresh(cleanup_funcs: List[Callable[[], None]]) -> N
         _LKM_REFRESH_THREAD.start()
 
         def _stop() -> None:
+            global _LKM_REFRESH_THREAD
             _LKM_REFRESH_STOP.set()
-            _LKM_REFRESH_THREAD and _LKM_REFRESH_THREAD.join(timeout=1.0)
-            _LKM_REFRESH_THREAD = None
+            if _LKM_REFRESH_THREAD is not None:
+                _LKM_REFRESH_THREAD.join(timeout=1.0)
+                if _LKM_REFRESH_THREAD.is_alive():
+                    logger.warning(
+                        "local knowledge refresh thread did not exit within timeout",
+                        extra=log_record(timeout=1.0),
+                    )
+                _LKM_REFRESH_THREAD = None
             _LKM_REFRESH_STOP.clear()
 
         cleanup_funcs.append(_stop)
