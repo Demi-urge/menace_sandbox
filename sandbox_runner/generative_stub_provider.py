@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-"""Stub provider using a language model via ``transformers``."""
+"""Stub provider using a language model via ``transformers``.
+
+The module persists generated stubs on disk and coordinates concurrent access
+to the cache using a :class:`filelock.FileLock`.  Loads and saves retry lock
+acquisition briefly and emit log messages when contention is encountered so
+that potential concurrency issues can be diagnosed.
+"""
 
 from typing import Any, Dict, List, Tuple, Callable, Awaitable
 import asyncio
@@ -20,6 +26,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import get_origin, get_args, Union
 import ast
 import dataclasses
+from filelock import FileLock, Timeout
 
 from .input_history_db import InputHistoryDB
 from sandbox_settings import SandboxSettings
@@ -388,14 +395,66 @@ def _save_cache() -> None:
         logger.exception("failed to save stub cache", exc_info=exc)
 
 
-async def _aload_cache() -> Dict[Tuple[str, str], Dict[str, Any]]:
-    """Asynchronously load stub cache from disk."""
-    return await asyncio.to_thread(_load_cache)
+async def _async_load_cache() -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """Asynchronously load stub cache from disk with a file lock."""
+
+    async def _locked_load() -> Dict[Tuple[str, str], Dict[str, Any]]:
+        return await asyncio.to_thread(_load_cache)
+
+    lock_path = str(_STUB_CACHE_PATH) + ".lock"
+    delay = 0.05
+    for attempt in range(3):
+        lock = FileLock(lock_path)
+        try:
+            lock.acquire(timeout=0.1)
+            try:
+                return await _locked_load()
+            finally:
+                lock.release()
+        except Timeout:
+            logger.warning(
+                "stub cache load lock busy (attempt %d)", attempt + 1
+            )
+            await asyncio.sleep(delay)
+            delay *= 2
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("unexpected cache load error", exc_info=exc)
+            break
+    logger.warning("loading stub cache without lock after retries")
+    return await _locked_load()
 
 
-async def _asave_cache() -> None:
-    """Asynchronously persist stub cache to disk."""
-    await asyncio.to_thread(_save_cache)
+async def _async_save_cache() -> None:
+    """Asynchronously persist stub cache to disk with a file lock."""
+
+    async def _locked_save() -> None:
+        await asyncio.to_thread(_save_cache)
+
+    lock_path = str(_STUB_CACHE_PATH) + ".lock"
+    delay = 0.05
+    for attempt in range(3):
+        lock = FileLock(lock_path)
+        try:
+            lock.acquire(timeout=0.1)
+            try:
+                await _locked_save()
+                return
+            finally:
+                lock.release()
+        except Timeout:
+            logger.warning(
+                "stub cache save lock busy (attempt %d)", attempt + 1
+            )
+            await asyncio.sleep(delay)
+            delay *= 2
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("unexpected cache save error", exc_info=exc)
+            return
+    logger.error("giving up on saving stub cache after lock timeouts")
+
+# backward compatible aliases
+_aload_cache = _async_load_cache
+_asave_cache = _async_save_cache
 
 
 def _cache_evict() -> None:
@@ -415,7 +474,7 @@ def _schedule_cache_persist() -> None:
 
     async def _runner() -> None:
         try:
-            await asyncio.shield(_asave_cache())
+            await asyncio.shield(_async_save_cache())
         except Exception as exc:
             logger.exception("failed to save stub cache", exc_info=exc)
 
@@ -611,7 +670,7 @@ async def async_generate_stubs(
 
     if not _CACHE:
         try:
-            loaded = await _aload_cache()
+            loaded = await _async_load_cache()
             with _CACHE_LOCK:
                 if not _CACHE:
                     _CACHE.update(loaded)
