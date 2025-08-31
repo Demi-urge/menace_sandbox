@@ -7,7 +7,9 @@ to run self-improvement cycles inside the sandbox.
 
 - Install core dependencies with `./setup_env.sh` or `pip install -r requirements.txt`.
 - `sandbox_runner` and `quick_fix_engine` provide the execution harness and patch
-generation.
+  generation. These packages are **not** installed automatically; if they are
+  missing the self-improvement utilities raise a ``RuntimeError`` with guidance
+  to install them manually (e.g. ``pip install sandbox_runner quick_fix_engine``).
 
 ## Optional packages
 

@@ -24,7 +24,17 @@ def generate_patch(
     """
 
     logger = logging.getLogger(__name__)
-    func = _load_callable("quick_fix_engine", "generate_patch")
+    try:
+        func = _load_callable("quick_fix_engine", "generate_patch")
+    except RuntimeError as exc:  # pragma: no cover - best effort logging
+        logger.error(
+            "quick_fix_engine missing",
+            extra=log_record(module=__name__),
+            exc_info=exc,
+        )
+        raise RuntimeError(
+            "quick_fix_engine is required for patch generation. Install it via `pip install quick_fix_engine`."
+        ) from exc
     try:
         patch_id = _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
     except (RuntimeError, OSError) as exc:  # pragma: no cover - best effort logging
