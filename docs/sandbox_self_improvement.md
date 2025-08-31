@@ -20,6 +20,7 @@ generation.
 - `SANDBOX_REPO_PATH` – path to the local sandbox repository clone.
 - `SANDBOX_DATA_DIR` – directory for metrics and state files.
 - `SANDBOX_ENV_PRESETS` – comma separated scenario preset files.
+- `SANDBOX_STUB_SEED` – seed value for deterministic stub generation.
 - `AUTO_TRAIN_INTERVAL`, `SYNERGY_TRAIN_INTERVAL`,
   `ADAPTIVE_ROI_RETRAIN_INTERVAL` – control retraining frequency.
 - `ENABLE_META_PLANNER` – require meta-planning support when set to `true`.
