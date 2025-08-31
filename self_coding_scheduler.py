@@ -142,8 +142,8 @@ class SelfCodingScheduler:
                             break
                         trace = getattr(module, "exception", "") or ""
                         if trace:
-                            failure = ErrorParser.parse(str(trace))
-                            exc = failure.get("error_type", "")
+                            failure = ErrorParser.parse_failure(str(trace))
+                            exc = failure.get("strategy_tag", "")
                             if exc in {"syntax_error", "import_error"}:
                                 break
 
