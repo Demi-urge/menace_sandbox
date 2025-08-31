@@ -202,11 +202,15 @@ def test_background_self_improvement_loop(monkeypatch):
     orphan_mod = types.ModuleType("orphan_integration")
     orphan_mod.integrate_orphans = lambda *a, **k: None
     orphan_mod.post_round_orphan_scan = lambda *a, **k: None
+    bootstrap_mod = types.ModuleType("bootstrap")
+    bootstrap_mod.initialize_autonomous_sandbox = lambda *a, **k: None
     sandbox_pkg.environment = env_mod
     sandbox_pkg.orphan_integration = orphan_mod
+    sandbox_pkg.bootstrap = bootstrap_mod
     monkeypatch.setitem(sys.modules, "sandbox_runner", sandbox_pkg)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
     monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_integration", orphan_mod)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.bootstrap", bootstrap_mod)
 
     orphan_disc = types.ModuleType("orphan_discovery")
     orphan_disc.append_orphan_cache = lambda *a, **k: None
@@ -239,6 +243,33 @@ def test_background_self_improvement_loop(monkeypatch):
     auto_rev.AutomatedReviewer = object
     monkeypatch.setitem(sys.modules, "automated_reviewer", auto_rev)
 
+    data_bot = types.ModuleType("data_bot")
+    data_bot.MetricsDB = object
+    data_bot.DataBot = object
+    data_bot.ErrorDB = object
+    data_bot.ErrorLogger = object
+    data_bot.KnowledgeGraph = object
+    monkeypatch.setitem(sys.modules, "data_bot", data_bot)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.data_bot", data_bot)
+
+    sts_mod = types.ModuleType("self_test_service")
+    sts_mod.SelfTestService = object
+    monkeypatch.setitem(sys.modules, "self_test_service", sts_mod)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.self_test_service", sts_mod)
+
+    log_utils = types.ModuleType("logging_utils")
+    log_utils.log_record = lambda **kw: kw
+    log_utils.get_logger = lambda name: types.SimpleNamespace(
+        warning=lambda *a, **k: None,
+        exception=lambda *a, **k: None,
+        debug=lambda *a, **k: None,
+        error=lambda *a, **k: None,
+    )
+    log_utils.setup_logging = lambda: None
+    log_utils.set_correlation_id = lambda _: None
+    monkeypatch.setitem(sys.modules, "logging_utils", log_utils)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.logging_utils", log_utils)
+
     js = types.ModuleType("jsonschema")
     class _VE(Exception):
         pass
@@ -247,6 +278,7 @@ def test_background_self_improvement_loop(monkeypatch):
     monkeypatch.setitem(sys.modules, "jsonschema", js)
 
     from menace_sandbox import self_improvement as sie  # delayed import
+    sie.init_self_improvement()
 
     planner = DummyPlanner()
     monkeypatch.setattr(sie, "MetaWorkflowPlanner", lambda: planner)

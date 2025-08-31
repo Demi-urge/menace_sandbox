@@ -33,7 +33,14 @@ def _load_meta_planning():
         "Callable": Callable,
         "Mapping": Mapping,
         "DEFAULT_ENTROPY_THRESHOLD": 0.2,
-        "load_sandbox_settings": lambda: None,
+        "_init": types.SimpleNamespace(
+            settings=types.SimpleNamespace(
+                meta_mutation_rate=0,
+                meta_roi_weight=0,
+                meta_domain_penalty=0,
+                meta_entropy_threshold=None,
+            )
+        ),
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns
@@ -52,6 +59,7 @@ def test_self_improvement_cycle_matches_fixture():
     class DummyStability:
         def __init__(self):
             self.recorded = []
+            self.data = {}
 
         def record_metrics(self, wf, roi, failures, entropy, roi_delta=None):
             self.recorded.append((wf, roi, entropy))
@@ -80,15 +88,19 @@ def test_self_improvement_cycle_matches_fixture():
         {
             "MetaWorkflowPlanner": DummyPlanner,
             "get_logger": lambda name: types.SimpleNamespace(
-                warning=lambda *a, **k: None, exception=lambda *a, **k: None
+                warning=lambda *a, **k: None,
+                exception=lambda *a, **k: None,
+                debug=lambda *a, **k: None,
             ),
             "log_record": lambda **kw: kw,
             "STABLE_WORKFLOWS": DummyStability(),
-            "load_sandbox_settings": lambda: types.SimpleNamespace(
-                meta_mutation_rate=None,
-                meta_roi_weight=None,
-                meta_domain_penalty=None,
-                meta_entropy_threshold=None,
+            "_init": types.SimpleNamespace(
+                settings=types.SimpleNamespace(
+                    meta_mutation_rate=None,
+                    meta_roi_weight=None,
+                    meta_domain_penalty=None,
+                    meta_entropy_threshold=None,
+                )
             ),
         }
     )

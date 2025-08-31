@@ -1972,7 +1972,8 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
     """
     from pydantic import ValidationError
     from sandbox_settings import load_sandbox_settings
-    from self_improvement.meta_planning import start_self_improvement_cycle
+    from self_improvement import init_self_improvement
+    from self_improvement.orchestration import start_self_improvement_cycle
     from unified_event_bus import UnifiedEventBus
     from roi_results_db import ROIResultsDB
     from workflow_stability_db import WorkflowStabilityDB
@@ -1991,6 +1992,8 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
     bootstrap_environment(settings, _verify_required_dependencies)
     os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
     os.environ.setdefault("SANDBOX_DATA_DIR", settings.sandbox_data_dir)
+
+    init_self_improvement(settings)
 
     try:
         ROIResultsDB()

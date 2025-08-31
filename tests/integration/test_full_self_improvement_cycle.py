@@ -35,7 +35,14 @@ def _load_meta_planning():
         "Callable": Callable,
         "Mapping": Mapping,
         "DEFAULT_ENTROPY_THRESHOLD": 0.2,
-        "load_sandbox_settings": lambda: None,
+        "_init": types.SimpleNamespace(
+            settings=types.SimpleNamespace(
+                meta_mutation_rate=0,
+                meta_roi_weight=0,
+                meta_domain_penalty=0,
+                meta_entropy_threshold=None,
+            )
+        ),
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns
@@ -105,11 +112,13 @@ def test_full_self_improvement_cycle(monkeypatch):
                 warning=lambda *a, **k: None, exception=lambda *a, **k: None
             ),
             "log_record": lambda **kw: kw,
-            "load_sandbox_settings": lambda: types.SimpleNamespace(
-                meta_mutation_rate=None,
-                meta_roi_weight=None,
-                meta_domain_penalty=None,
-                meta_entropy_threshold=None,
+            "_init": types.SimpleNamespace(
+                settings=types.SimpleNamespace(
+                    meta_mutation_rate=None,
+                    meta_roi_weight=None,
+                    meta_domain_penalty=None,
+                    meta_entropy_threshold=None,
+                )
             ),
             "STABLE_WORKFLOWS": global_db,
         }

@@ -26,10 +26,18 @@ def _load_module():
         "Mapping": Mapping,
         "Callable": Callable,
         "Any": Any,
-        "load_sandbox_settings": lambda: None,
         "ROIResultsDB": lambda *a, **k: None,
         "WorkflowStabilityDB": lambda *a, **k: None,
         "UnifiedEventBus": object,
+        "_init": types.SimpleNamespace(
+            settings=types.SimpleNamespace(
+                meta_planning_interval=0.0,
+                meta_mutation_rate=0,
+                meta_roi_weight=0,
+                meta_domain_penalty=0,
+                meta_entropy_threshold=None,
+            )
+        ),
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns
