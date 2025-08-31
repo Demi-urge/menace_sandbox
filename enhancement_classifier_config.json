@@ -8,11 +8,19 @@
     "duplication": 1.0,
     "length": 1.0,
     "anti": 1.0,
-    "history": 1.0
+    "history": 1.0,
+    "churn": 1.0,
+    "style": 1.0,
+    "refactor": 1.0,
+    "anti_log": 1.0
   },
   "thresholds": {
     "min_patches": 3,
     "roi_cutoff": 0.0,
-    "complexity_delta": 0.0
+    "complexity_delta": 0.0,
+    "churn": 0.0,
+    "style": 0.0,
+    "refactor": 0.0,
+    "anti_pattern": 0.0
   }
 }
