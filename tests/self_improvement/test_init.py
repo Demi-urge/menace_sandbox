@@ -4,6 +4,7 @@ import types
 import importlib.util
 from pathlib import Path
 
+import pytest
 from sandbox_settings import SandboxSettings
 
 
@@ -59,3 +60,43 @@ def test_init_creates_synergy_weights(tmp_path, monkeypatch):
     for key, value in init_module.DEFAULT_SYNERGY_WEIGHTS.items():
         assert data[key] == value
         assert getattr(settings, f"synergy_weight_{key}") == value
+
+
+def test_init_meta_planning_failure(tmp_path, monkeypatch, caplog):
+    menace_pkg = types.ModuleType("menace")
+    menace_pkg.__path__ = []
+    sys.modules["menace"] = menace_pkg
+    si_pkg = types.ModuleType("menace.self_improvement")
+    si_pkg.__path__ = [str(Path("self_improvement"))]
+    sys.modules["menace.self_improvement"] = si_pkg
+
+    bootstrap = types.ModuleType("sandbox_runner.bootstrap")
+    bootstrap.initialize_autonomous_sandbox = lambda s: None
+    sys.modules["sandbox_runner.bootstrap"] = bootstrap
+
+    meta_stub = types.ModuleType("menace.self_improvement.meta_planning")
+
+    def fail(cfg):  # pragma: no cover - test behaviour
+        raise ValueError("boom")
+
+    meta_stub.reload_settings = fail
+    sys.modules["menace.self_improvement.meta_planning"] = meta_stub
+
+    init_module = _load_module("menace.self_improvement.init", Path("self_improvement/init.py"))
+
+    settings = SandboxSettings()
+    settings.sandbox_data_dir = str(tmp_path)
+    settings.synergy_weight_file = str(tmp_path / "synergy_weights.json")
+    settings.sandbox_central_logging = False
+
+    monkeypatch.setattr(init_module, "load_sandbox_settings", lambda: settings)
+
+    caplog.set_level("ERROR")
+    with pytest.raises(RuntimeError) as err:
+        init_module.init_self_improvement()
+
+    assert "failed to reload meta_planning settings" in str(err.value)
+    record = next(
+        r for r in caplog.records if r.message == "failed to reload meta_planning settings"
+    )
+    assert record.error == "boom"
