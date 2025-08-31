@@ -1,10 +1,11 @@
 import contextlib
 import sqlite3
-import contextlib
-import sqlite3
 import sys
 import types
 from pathlib import Path
+
+import pytest
+import textwrap
 
 
 class _CtxConnWrapper:
@@ -66,7 +67,93 @@ def test_scan_repo_generates_suggestions() -> None:
     sugg = suggestions[0]
     assert isinstance(sugg, EnhancementSuggestion)
     assert sugg.path == "mod.py"
-    # Frequency=3, ROI=-0.116..., errors=2 -> score ~5.12
-    assert sugg.score > 5
+    # Frequency=3, ROI=-0.116..., errors=2, complexity=0.4 -> score ~5.52
+    assert sugg.score > 5.5
     assert "avg ROI delta -0.12" in sugg.rationale
+
+
+def test_ast_metrics_and_scoring(tmp_path: Path) -> None:
+    code_src = textwrap.dedent('''
+    def a(x):
+        if x > 1:
+            return 1
+        else:
+            return 2
+
+    def b(x):
+        if x > 1:
+            return 1
+        else:
+            return 2
+
+    def long_function():
+        """long"""
+    {}''').format("\n    pass" * 60)
+
+    code_conn = sqlite3.connect(":memory:")
+    code_conn.execute("CREATE TABLE code (id INTEGER PRIMARY KEY, code TEXT)")
+    code_conn.execute("INSERT INTO code (id, code) VALUES (1, ?)", (code_src,))
+
+    patch_conn = sqlite3.connect(":memory:")
+    patch_conn.execute(
+        """
+        CREATE TABLE patch_history (
+            code_id INTEGER,
+            filename TEXT,
+            roi_delta REAL,
+            errors_before INTEGER,
+            errors_after INTEGER,
+            complexity_delta REAL
+        )
+        """
+    )
+    patch_conn.executemany(
+        "INSERT INTO patch_history VALUES (1, 'mod.py', ?, ?, ?, ?)",
+        [(-1.0, 0, 1, 0.5), (-1.0, 0, 1, 0.5), (-1.0, 0, 1, 0.5)],
+    )
+
+    cfg = tmp_path / "cfg.json"
+    cfg.write_text(
+        """{\n  \"weights\": {\n    \"frequency\": 1.0,\n    \"roi\": 1.0,\n    \"errors\": 1.0,\n    \"complexity\": 1.0,\n    \"cyclomatic\": 1.0,\n    \"duplication\": 1.0,\n    \"length\": 1.0,\n    \"anti\": 1.0\n  }\n}\n"""
+    )
+
+    classifier = EnhancementClassifier(
+        code_db=_CtxConnWrapper(code_conn),
+        patch_db=_CtxConnWrapper(patch_conn),
+        config_path=str(cfg),
+    )
+
+    metrics = classifier._gather_metrics(1)
+    assert metrics is not None
+    (
+        filename,
+        patches,
+        avg_roi,
+        avg_errors,
+        avg_complexity,
+        avg_cc,
+        dup_count,
+        long_funcs,
+        notes,
+    ) = metrics
+    assert filename == "mod.py"
+    assert dup_count == 1
+    assert long_funcs == 1
+    assert avg_cc > 1.0
+    assert notes
+
+    suggestions = list(classifier.scan_repo())
+    assert suggestions and suggestions[0].path == "mod.py"
+    expected = (
+        classifier.weights["frequency"] * patches
+        + classifier.weights["roi"] * (-avg_roi)
+        + classifier.weights["errors"] * avg_errors
+        + classifier.weights["complexity"] * avg_complexity
+        + classifier.weights["cyclomatic"] * avg_cc
+        + classifier.weights["duplication"] * dup_count
+        + classifier.weights["length"] * long_funcs
+    )
+    assert suggestions[0].score == pytest.approx(expected)
+    assert "duplicated" in suggestions[0].rationale
+    assert "long" in suggestions[0].rationale
 
