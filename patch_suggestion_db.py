@@ -73,6 +73,16 @@ class SuggestionRecord:
     ts: str = datetime.utcnow().isoformat()
 
 
+@dataclass
+class EnhancementSuggestionRecord:
+    module: str
+    score: float
+    rationale: str
+    first_seen: str
+    last_seen: str
+    occurrences: int = 1
+
+
 class PatchSuggestionDB(EmbeddableDBMixin):
     """Store successful patch descriptions per module with embeddings."""
 
@@ -147,6 +157,25 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 ts TEXT
             )
             """
+            )
+            self.conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS enhancement_suggestions(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                module TEXT,
+                score REAL,
+                rationale TEXT,
+                first_seen TEXT,
+                last_seen TEXT,
+                occurrences INTEGER DEFAULT 1
+            )
+            """
+            )
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_enh_sugg_unique ON enhancement_suggestions(module, rationale)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_enh_sugg_score ON enhancement_suggestions(score)"
             )
             self.conn.commit()
 
@@ -327,6 +356,72 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                     "failed queueing suggestion for %s", getattr(sugg, "path", "")
                 )
 
+    def upsert_enhancement_suggestion(
+        self, module: str, score: float, rationale: str
+    ) -> None:
+        """Insert or update an enhancement suggestion occurrence."""
+        ts = datetime.utcnow().isoformat()
+        with self._file_lock:
+            with self._lock:
+                self.conn.execute(
+                    """
+                INSERT INTO enhancement_suggestions(module, score, rationale, first_seen, last_seen, occurrences)
+                VALUES(?,?,?,?,?,1)
+                ON CONFLICT(module, rationale) DO UPDATE SET
+                    score=excluded.score,
+                    last_seen=excluded.last_seen,
+                    occurrences=enhancement_suggestions.occurrences + 1
+                """,
+                    (module, score, rationale, ts, ts),
+                )
+                self.conn.commit()
+
+    def queue_enhancement_suggestions(
+        self, suggestions: Iterable["EnhancementSuggestion"]
+    ) -> None:
+        """Upsert enhancement suggestions, counting occurrences."""
+        for sugg in suggestions:
+            try:
+                module = getattr(sugg, "path", "")
+                rationale = getattr(sugg, "rationale", "")
+                score = float(getattr(sugg, "score", 0.0))
+                self.upsert_enhancement_suggestion(module, score, rationale)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception(
+                    "failed upserting enhancement suggestion for %s",
+                    getattr(sugg, "path", ""),
+                )
+
+    def fetch_top_enhancement_suggestions(
+        self, limit: int = 10
+    ) -> List[EnhancementSuggestionRecord]:
+        """Return and remove top scored enhancement suggestions."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT id, module, score, rationale, first_seen, last_seen, occurrences "
+                "FROM enhancement_suggestions ORDER BY score DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            ids = [r[0] for r in rows]
+            if ids:
+                q_marks = ",".join("?" for _ in ids)
+                self.conn.execute(
+                    f"DELETE FROM enhancement_suggestions WHERE id IN ({q_marks})",
+                    ids,
+                )
+                self.conn.commit()
+        return [
+            EnhancementSuggestionRecord(
+                module=r[1],
+                score=r[2] or 0.0,
+                rationale=r[3] or "",
+                first_seen=r[4],
+                last_seen=r[5],
+                occurrences=r[6] or 0,
+            )
+            for r in rows
+        ]
+
     def top_suggestions(self, limit: int = 10) -> List[SuggestionRecord]:
         """Return top scored suggestions ordered by descending score."""
         with self._lock:
@@ -423,4 +518,8 @@ class PatchSuggestionDB(EmbeddableDBMixin):
         EmbeddableDBMixin.backfill_embeddings(self)
 
 
-__all__ = ["PatchSuggestionDB", "SuggestionRecord"]
+__all__ = [
+    "PatchSuggestionDB",
+    "SuggestionRecord",
+    "EnhancementSuggestionRecord",
+]
