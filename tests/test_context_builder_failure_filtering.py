@@ -10,7 +10,7 @@ class DummyRetriever:
                 "record_id": 1,
                 "score": 1.0,
                 "text": "bad",
-                "metadata": {"redacted": True, "tags": ["skip"]},
+                "metadata": {"redacted": True, "tags": ["skip"], "strategy_hash": "deadbeef"},
             },
             {
                 "origin_db": "information",
@@ -27,6 +27,16 @@ def test_context_builder_filters_excluded_tags():
     ctx = builder.query("q", exclude_tags=["skip"])
     data = json.loads(ctx)
     assert "information" in data
+    infos = data["information"]
+    assert len(infos) == 1
+    assert infos[0]["id"] == 2
+
+
+def test_exclude_failed_strategies():
+    builder = ContextBuilder(retriever=DummyRetriever())
+    builder.exclude_failed_strategies(["deadbeef"])
+    ctx = builder.query("q")
+    data = json.loads(ctx)
     infos = data["information"]
     assert len(infos) == 1
     assert infos[0]["id"] == 2

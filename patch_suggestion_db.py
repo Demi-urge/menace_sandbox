@@ -73,6 +73,14 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             )
             """
             )
+            self.conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS failed_strategies(
+                tag TEXT PRIMARY KEY,
+                ts TEXT
+            )
+            """
+            )
             self.conn.commit()
 
         index_path = (
@@ -177,6 +185,26 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             return None
         desc, _ = Counter(past).most_common(1)[0]
         return desc
+
+    # ------------------------------------------------------------------
+    def add_failed_strategy(self, tag: str) -> None:
+        """Persist a failed strategy tag for future exclusion."""
+        ts = datetime.utcnow().isoformat()
+        with self._file_lock:
+            with self._lock:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO failed_strategies(tag, ts) VALUES(?,?)",
+                    (tag, ts),
+                )
+                self.conn.commit()
+
+    def failed_strategy_tags(self) -> List[str]:
+        """Return all recorded failed strategy tags."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT tag FROM failed_strategies"
+            ).fetchall()
+        return [r[0] for r in rows]
 
     # ------------------------------------------------------------------
     def iter_records(self) -> Iterator[tuple[int, Dict[str, str], str]]:

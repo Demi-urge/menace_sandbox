@@ -106,6 +106,7 @@ except Exception:  # pragma: no cover - defensive fallback
 
 from .roi_tracker import ROITracker
 from .prompt_engine import PromptEngine
+from .error_parser import ErrorParser
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -704,6 +705,14 @@ class SelfCodingEngine:
             if not harness_result.success:
                 self.logger.error("tests failed")
                 self._last_retry_trace = harness_result.stderr or harness_result.stdout
+            trace = self._last_retry_trace or ""
+            try:
+                failure = ErrorParser.parse_failure(trace)
+                tag = failure.get("strategy_tag")
+                if tag and self.patch_suggestion_db:
+                    self.patch_suggestion_db.add_failed_strategy(tag)
+            except Exception:
+                self.logger.exception("failed to store strategy tag")
         return TestHarnessResult(
             success,
             harness_result.stdout,
@@ -801,6 +810,12 @@ class SelfCodingEngine:
                 self.logger.error("complexity query failed: %s", exc)
                 before_complexity = 0.0
         if context_meta is None and self.cognition_layer is not None:
+            if self.patch_suggestion_db:
+                try:
+                    tags = self.patch_suggestion_db.failed_strategy_tags()
+                    self.cognition_layer.context_builder.exclude_failed_strategies(tags)
+                except Exception:
+                    self.logger.exception("failed to apply strategy exclusions")
             try:
                 ctx, sid = self.cognition_layer.query(description)
                 context_meta = {
