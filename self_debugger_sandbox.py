@@ -642,7 +642,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         return s_roi, s_eff, s_res, s_af
 
     # ------------------------------------------------------------------
-    def _retry_with_feedback(self, report: ErrorReport) -> list[str]:
+    def _context_feedback(self, report: ErrorReport) -> list[str]:
         """Fetch new examples excluding previously failed strategies."""
 
         if ContextBuilder is None:
@@ -680,15 +680,18 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             self.logger.exception("context feedback query failed")
             return []
         examples: list[str] = []
-        try:
-            if isinstance(meta, dict):
-                for bucket in meta.values():
-                    for entry in bucket:
+        if isinstance(meta, dict):
+            for bucket in meta.values():
+                for entry in bucket:
+                    try:
                         ex = entry.get("example") or entry.get("code")
-                        if isinstance(ex, str):
-                            examples.append(ex)
-        except Exception:
-            pass
+                    except Exception:
+                        self.logger.exception(
+                            "malformed context metadata: %r", entry
+                        )
+                        continue
+                    if isinstance(ex, str):
+                        examples.append(ex)
         return examples
 
     # ------------------------------------------------------------------
@@ -1726,7 +1729,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         except Exception:
                             self.logger.exception("record failed strategy failed")
                     if failure:
-                        tests.extend(self._retry_with_feedback(failure))
+                        tests.extend(self._context_feedback(failure))
                     attempt += 1
                 else:
                     break
