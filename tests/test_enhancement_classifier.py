@@ -69,7 +69,9 @@ def test_scan_repo_generates_suggestions() -> None:
     assert sugg.path == "mod.py"
     # Frequency=3, ROI=-0.116..., errors=2, complexity=0.4 -> score ~5.52
     assert sugg.score > 5.5
-    assert "avg ROI delta -0.12" in sugg.rationale
+    assert "module mod.py refactored 3 times" in sugg.rationale
+    assert "ROI dropped 0.12%" in sugg.rationale
+    assert "errors increased by 2.00" in sugg.rationale
     assert classifier.thresholds["min_patches"] == 3
 
 
