@@ -524,8 +524,12 @@ def _cache_key(func_name: str, stub: Dict[str, Any]) -> Tuple[str, str]:
     return func_name, stub_key
 
 
-async def _aload_generator():
-    """Return a text generation pipeline, the OpenAI module or ``None``."""
+class ModelLoadError(RuntimeError):
+    """Raised when no suitable stub generation model can be loaded."""
+
+
+async def _aload_generator() -> Any:
+    """Return a text generation pipeline or raise :class:`ModelLoadError`."""
     global _GENERATOR
     if _GENERATOR is not None:
         return _GENERATOR
@@ -533,41 +537,34 @@ async def _aload_generator():
 
     if model == "openai":
         if not _feature_enabled("SANDBOX_ENABLE_OPENAI"):
-            logger.error("openai support disabled; falling back to %s", FALLBACK_MODEL)
-        elif not os.getenv("OPENAI_API_KEY"):
-            logger.error(
-                "OPENAI_API_KEY missing for openai usage; falling back to %s",
-                FALLBACK_MODEL,
+            raise ModelLoadError(
+                "openai support disabled; set SANDBOX_ENABLE_OPENAI=1"
             )
-        else:
-            try:
-                global openai
-                if openai is None:
-                    openai = importlib.import_module("openai")  # type: ignore
-            except ImportError as exc:
-                logger.error(
-                    "openai library unavailable; falling back to %s", FALLBACK_MODEL,
-                    exc_info=exc,
-                )
-            else:
-                openai.api_key = os.getenv("OPENAI_API_KEY")
-                _GENERATOR = openai
-                await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
-                return _GENERATOR
-        model = None
+        if not os.getenv("OPENAI_API_KEY"):
+            raise ModelLoadError("OPENAI_API_KEY missing for openai usage")
+        try:
+            global openai
+            if openai is None:
+                openai = importlib.import_module("openai")  # type: ignore
+        except ImportError as exc:  # pragma: no cover - library not installed
+            raise ModelLoadError("openai library unavailable") from exc
+        openai.api_key = os.getenv("OPENAI_API_KEY")
+        _GENERATOR = openai
+        await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
+        return _GENERATOR
 
     if not _feature_enabled("SANDBOX_ENABLE_TRANSFORMERS"):
-        logger.error("transformers support disabled; set SANDBOX_ENABLE_TRANSFORMERS=1")
-        return None
+        raise ModelLoadError(
+            "transformers support disabled; set SANDBOX_ENABLE_TRANSFORMERS=1"
+        )
 
     try:
         global pipeline
         if pipeline is None:
             transformers = importlib.import_module("transformers")
             pipeline = transformers.pipeline  # type: ignore[attr-defined]
-    except ImportError as exc:
-        logger.error("transformers library unavailable", exc_info=exc)
-        return None
+    except ImportError as exc:  # pragma: no cover - library not installed
+        raise ModelLoadError("transformers library unavailable") from exc
 
     hf_token = SETTINGS.huggingface_token
     if not model or not hf_token:
@@ -581,8 +578,9 @@ async def _aload_generator():
             )
             await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
         except Exception as exc:  # pragma: no cover - model load failures
-            logger.exception("failed to load fallback model %s", FALLBACK_MODEL, exc_info=exc)
-            _GENERATOR = None
+            raise ModelLoadError(
+                f"failed to load fallback model {FALLBACK_MODEL}"
+            ) from exc
         return _GENERATOR
 
     try:
@@ -595,7 +593,7 @@ async def _aload_generator():
         await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
     except Exception as exc:  # pragma: no cover - model load failures
         logger.exception(
-            "failed to load model %s; falling back to %s", model, FALLBACK_MODEL,
+            "failed to load model %s; attempting fallback %s", model, FALLBACK_MODEL,
             exc_info=exc,
         )
         try:
@@ -606,9 +604,10 @@ async def _aload_generator():
                 local_files_only=True,
             )
             await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
-        except Exception as exc:  # pragma: no cover - model load failures
-            logger.exception("failed to load fallback model %s", FALLBACK_MODEL, exc_info=exc)
-            _GENERATOR = None
+        except Exception as exc2:  # pragma: no cover - model load failures
+            raise ModelLoadError(
+                f"failed to load model {model} and fallback {FALLBACK_MODEL}"
+            ) from exc2
     return _GENERATOR
 
 
@@ -688,7 +687,11 @@ async def async_generate_stubs(
             return [dict(hist) for _ in range(max(1, len(stubs)))]
         return stubs
 
-    gen = await _aload_generator()
+    try:
+        gen = await _aload_generator()
+    except ModelLoadError as exc:
+        logger.error("stub generation unavailable: %s", exc)
+        return stubs
     use_openai = gen is openai
     if gen is None:
         func = ctx.get("target")
