@@ -130,6 +130,7 @@ class Retriever:
         max_alert_severity: float = 1.0,
         max_alerts: int | None = None,
         license_denylist: set[str] | None = None,
+        exclude_tags: Iterable[str] | None = None,
     ) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
         filtered = 0
@@ -139,6 +140,7 @@ class Retriever:
         ps.max_alert_severity = max_alert_severity
         ps.max_alerts = alert_limit
         ps.license_denylist = denylist
+        excluded = set(exclude_tags or [])
         for h in hits:
             meta = getattr(h, "metadata", {})
             if not isinstance(meta, dict) or not meta.get("redacted"):
@@ -208,6 +210,14 @@ class Retriever:
                 item["roi_tag"] = roi_tag
                 if isinstance(item.get("metadata"), dict):
                     item["metadata"]["roi_tag"] = roi_tag
+            tags = meta.get("tags") if isinstance(meta, dict) else None
+            tag_set = (
+                {str(t) for t in tags}
+                if isinstance(tags, (list, tuple, set))
+                else {str(tags)} if tags else set()
+            )
+            if excluded and tag_set & excluded:
+                continue
             item["score"] = score
             results.append(item)
         if filtered:
@@ -226,6 +236,7 @@ class Retriever:
         max_alert_severity: float = 1.0,
         max_alerts: int | None = None,
         license_denylist: set[str] | None = None,
+        exclude_tags: Iterable[str] | None = None,
     ) -> List[Dict[str, Any]]:
         query = redact(pii_redact_text(query))
         try:  # pragma: no cover - best effort import
@@ -244,6 +255,7 @@ class Retriever:
         ps.max_alert_severity = max_alert_severity
         ps.max_alerts = alert_limit
         ps.license_denylist = denylist
+        excluded = set(exclude_tags or [])
         for row in rows:
             text = str(row.get("code") or row.get("summary") or "")
             governed = govern_retrieval(text, max_alert_severity=max_alert_severity)
@@ -276,6 +288,14 @@ class Retriever:
                 item["license_fingerprint"] = fp
                 if isinstance(item.get("metadata"), dict):
                     item["metadata"]["license_fingerprint"] = fp
+            tags = meta.get("tags") if isinstance(meta, dict) else None
+            tag_set = (
+                {str(t) for t in tags}
+                if isinstance(tags, (list, tuple, set))
+                else {str(tags)} if tags else set()
+            )
+            if excluded and tag_set & excluded:
+                continue
             penalty = 0.0
             sev = meta.get("alignment_severity")
             if sev is not None:
@@ -307,6 +327,7 @@ class Retriever:
         dbs: Sequence[str] | None = None,
         use_fts_fallback: bool | None = None,
         max_alert_severity: float | None = None,
+        exclude_tags: Iterable[str] | None = None,
     ) -> List[Dict[str, Any]] | FallbackResult:
         """Perform semantic search and return normalised results.
 
@@ -377,6 +398,7 @@ class Retriever:
                     max_alert_severity=sev_limit,
                     max_alerts=self.max_alerts,
                     license_denylist=self.license_denylist,
+                    exclude_tags=exclude_tags,
                 )
                 if results:
                     if self.cache:
@@ -400,6 +422,7 @@ class Retriever:
             max_alert_severity=sev_limit,
             max_alerts=self.max_alerts,
             license_denylist=self.license_denylist,
+            exclude_tags=exclude_tags,
         )
         merged: List[Dict[str, Any]] = []
         seen = set()
@@ -424,6 +447,7 @@ class Retriever:
         dbs: Sequence[str] | None = None,
         use_fts_fallback: bool | None = None,
         max_alert_severity: float | None = None,
+        exclude_tags: Iterable[str] | None = None,
     ) -> List[Dict[str, Any]] | FallbackResult:
         """Asynchronous wrapper for :meth:`search`.
 
@@ -441,6 +465,7 @@ class Retriever:
             dbs=dbs,
             use_fts_fallback=use_fts_fallback,
             max_alert_severity=max_alert_severity,
+            exclude_tags=exclude_tags,
         )
 
     # ------------------------------------------------------------------
@@ -623,7 +648,13 @@ class PatchRetriever:
     # ------------------------------------------------------------------
 
     @log_and_measure
-    def search(self, query: str, *, top_k: int | None = None) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query: str,
+        *,
+        top_k: int | None = None,
+        exclude_tags: Iterable[str] | None = None,
+    ) -> List[Dict[str, Any]]:
         if self.store is None or self.vector_service is None:
             return []
         vec = self.vector_service.vectorise("text", {"text": query})
@@ -632,6 +663,7 @@ class PatchRetriever:
         meta = getattr(self.store, "meta", [])
         backend = self.store.__class__.__name__.lower()
         results: List[Dict[str, Any]] = []
+        excluded = set(exclude_tags or [])
         for vid, dist in self.store.query(vec, top_k=top_k or self.top_k):
             md: Dict[str, Any] = {}
             text_val = ""
@@ -686,6 +718,14 @@ class PatchRetriever:
                 if isinstance(md, dict):
                     md["roi_tag"] = roi_tag
 
+            tags = md.get("tags") if isinstance(md, dict) else None
+            tag_set = (
+                {str(t) for t in tags}
+                if isinstance(tags, (list, tuple, set))
+                else {str(tags)} if tags else set()
+            )
+            if excluded and tag_set & excluded:
+                continue
             item = {
                 "origin_db": origin,
                 "record_id": str(vid),
@@ -715,7 +755,9 @@ def _get_patch_retriever() -> PatchRetriever:
     return _patch_retriever
 
 
-def search_patches(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+def search_patches(
+    query: str, top_k: int = 5, *, exclude_tags: Iterable[str] | None = None
+) -> List[Dict[str, Any]]:
     """Retrieve patch examples for ``query``.
 
     This adapter wraps :class:`PatchRetriever.search` and initialises the
@@ -725,7 +767,9 @@ def search_patches(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     are selected via configuration.
     """
 
-    return _get_patch_retriever().search(query, top_k=top_k)
+    return _get_patch_retriever().search(
+        query, top_k=top_k, exclude_tags=exclude_tags
+    )
 
 
 def fts_search(

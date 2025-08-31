@@ -49,8 +49,12 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from sandbox_runner import post_round_orphan_scan  # type: ignore
 try:
     from vector_service import ContextBuilder
+    from vector_service.context_builder import record_failed_tags
 except Exception:  # pragma: no cover - optional dependency
     ContextBuilder = None  # type: ignore
+
+    def record_failed_tags(_tags):  # type: ignore
+        return None
 
 
 class CoverageSubprocessError(RuntimeError):
@@ -267,13 +271,16 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     def _record_failed_strategy(self, report: ErrorReport) -> None:
         """Persist canonical tags from ``report`` when available."""
         db = getattr(self.engine, "patch_suggestion_db", None)
-        if not db:
-            return
         for tag in report.tags:
             try:
-                db.add_failed_strategy(tag)
+                if db:
+                    db.add_failed_strategy(tag)
             except Exception:
                 self.logger.exception("failed to store failed strategy tag")
+        try:
+            record_failed_tags(list(report.tags))
+        except Exception:
+            self.logger.exception("failed to record failed tags")
 
     # ------------------------------------------------------------------
     def preemptive_fix_high_risk_modules(self, limit: int = 5) -> None:
@@ -1260,7 +1267,6 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         except Exception:
                             code_hash = None
 
-        
                         if code_hash:
                             if code_hash in self._bad_hashes:
                                 self.logger.info(
@@ -1626,7 +1632,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 self._record_exception(exc)
                                 self.logger.exception("rollback failed")
                         result = "reverted"
-                        reason = f"score {patch_score:.3f} below threshold {self.score_threshold:.3f}"
+                        reason = (
+                            f"score {patch_score:.3f} below threshold {self.score_threshold:.3f}"
+                        )
                     elif (
                         not reverted
                         and pid is not None
