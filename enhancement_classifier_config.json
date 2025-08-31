@@ -2,6 +2,11 @@
   "weights": {
     "frequency": 1.0,
     "roi": 1.0,
-    "errors": 1.0
+    "errors": 1.0,
+    "complexity": 1.0,
+    "cyclomatic": 1.0,
+    "duplication": 1.0,
+    "length": 1.0,
+    "anti": 1.0
   }
 }

@@ -23,6 +23,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - used when PyYAML isn't installed
     yaml = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from radon.complexity import cc_visit  # type: ignore
+except Exception:  # pragma: no cover - radon may be missing
+    cc_visit = None  # type: ignore
+
 try:  # pragma: no cover - allow package/flat imports
     from .code_database import CodeDB, PatchHistoryDB
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -63,7 +68,16 @@ class EnhancementClassifier:
         path = config_path or os.getenv(
             "ENHANCEMENT_CLASSIFIER_CONFIG", "enhancement_classifier_config.json"
         )
-        weights = {"frequency": 1.0, "roi": 1.0, "errors": 1.0, "anti": 1.0}
+        weights = {
+            "frequency": 1.0,
+            "roi": 1.0,
+            "errors": 1.0,
+            "complexity": 1.0,
+            "cyclomatic": 1.0,
+            "duplication": 1.0,
+            "length": 1.0,
+            "anti": 1.0,
+        }
         try:
             text = Path(path).read_text()
             if path.endswith((".yaml", ".yml")) and yaml is not None:
@@ -81,7 +95,7 @@ class EnhancementClassifier:
     # ------------------------------------------------------------------
     def _gather_metrics(
         self, code_id: int
-    ) -> tuple[str, int, float, float, float] | None:
+    ) -> tuple[str, int, float, float, float, float, int, int, list[str]] | None:
         """Return metrics for ``code_id`` or ``None`` when absent."""
 
         with self.patch_db._connect() as conn:  # type: ignore[attr-defined]
@@ -99,7 +113,91 @@ class EnhancementClassifier:
         avg_roi = sum((r[1] or 0.0) for r in rows) / patch_count
         avg_errors = sum(((r[3] or 0) - (r[2] or 0)) for r in rows) / patch_count
         avg_complexity = sum((r[4] or 0.0) for r in rows) / patch_count
-        return filename, patch_count, avg_roi, avg_errors, avg_complexity
+
+        avg_cc = 0.0
+        dup_count = 0
+        long_funcs = 0
+        notes: list[str] = []
+
+        try:
+            with self.code_db._connect() as conn:  # type: ignore[attr-defined]
+                row = conn.execute("SELECT code FROM code WHERE id=?", (code_id,)).fetchone()
+        except Exception:  # pragma: no cover - tolerant to schema mismatch
+            row = None
+
+        source = row[0] if row and row[0] else None
+        if source:
+            tree: ast.AST | None = None
+            if cc_visit is not None:
+                try:
+                    blocks = cc_visit(source)  # type: ignore[call-arg]
+                    if blocks:
+                        avg_cc = sum(b.complexity for b in blocks) / len(blocks)
+                except Exception:  # pragma: no cover - radon may fail on edge cases
+                    tree = ast.parse(source)
+            if avg_cc == 0.0:
+                tree = tree or ast.parse(source)
+
+                def _complexity(node: ast.AST) -> int:
+                    count = 1
+                    for child in ast.walk(node):
+                        if isinstance(
+                            child,
+                            (
+                                ast.If,
+                                ast.For,
+                                ast.While,
+                                ast.Try,
+                                ast.With,
+                                ast.IfExp,
+                                ast.ExceptHandler,
+                                ast.BoolOp,
+                            ),
+                        ):
+                            if isinstance(child, ast.BoolOp):
+                                count += max(0, len(child.values) - 1)
+                            else:
+                                count += 1
+                    return count
+
+                complexities = []
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        complexities.append(_complexity(node))
+                if complexities:
+                    avg_cc = sum(complexities) / len(complexities)
+
+            tree = tree or ast.parse(source)
+            hashes: dict[str, int] = {}
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    body_repr = ast.dump(
+                        ast.Module(body=node.body, type_ignores=[]),
+                        include_attributes=False,
+                    )
+                    hashes[body_repr] = hashes.get(body_repr, 0) + 1
+                    end = getattr(node, "end_lineno", node.lineno) or node.lineno
+                    length = end - node.lineno + 1
+                    if length > 50:
+                        long_funcs += 1
+                        notes.append(
+                            f"function {node.name} is long ({length} lines)"
+                        )
+            dup_count = sum(v - 1 for v in hashes.values() if v > 1)
+            if dup_count:
+                notes.append(f"{dup_count} duplicated function(s)")
+
+        return (
+            filename,
+            patch_count,
+            avg_roi,
+            avg_errors,
+            avg_complexity,
+            avg_cc,
+            dup_count,
+            long_funcs,
+            notes,
+        )
 
     # ------------------------------------------------------------------
     def _detect_anti_patterns(self, code_id: int) -> tuple[float, list[str]]:
@@ -121,13 +219,27 @@ class EnhancementClassifier:
         if not row or not row[0]:
             return 0.0, []
         source = row[0]
+        issues: list[str] = []
+        penalty = 0.0
+
+        if cc_visit is not None:
+            try:
+                blocks = cc_visit(source)  # type: ignore[call-arg]
+                for block in blocks:
+                    if block.complexity > 10:
+                        issues.append(
+                            f"function {block.name} exhibits high cyclomatic complexity ({block.complexity})"
+                        )
+                        penalty += block.complexity - 10
+                return penalty, issues
+            except Exception:  # pragma: no cover - radon may fail on malformed input
+                issues = []
+                penalty = 0.0
+
         try:
             tree = ast.parse(source)
         except Exception:  # pragma: no cover - invalid source
             return 0.0, []
-
-        issues: list[str] = []
-        penalty = 0.0
 
         def complexity(node: ast.AST) -> int:
             count = 1
@@ -173,12 +285,28 @@ class EnhancementClassifier:
             metrics = self._gather_metrics(cid)
             if not metrics:
                 continue
-            filename, patches, avg_roi, avg_errors, avg_complexity = metrics
+            (
+                filename,
+                patches,
+                avg_roi,
+                avg_errors,
+                avg_complexity,
+                avg_cc,
+                dup_count,
+                long_funcs,
+                notes,
+            ) = metrics
             anti_score, anti_notes = self._detect_anti_patterns(cid)
 
             # Heuristics: flag if any inefficiency indicator is observed
             if not (
-                patches >= 3 or avg_roi < 0 or avg_complexity > 0 or anti_score > 0
+                patches >= 3
+                or avg_roi < 0
+                or avg_complexity > 0
+                or avg_cc > 0
+                or dup_count > 0
+                or long_funcs > 0
+                or anti_score > 0
             ):
                 continue
 
@@ -186,15 +314,21 @@ class EnhancementClassifier:
                 self.weights["frequency"] * patches
                 + self.weights["roi"] * (-avg_roi)
                 + self.weights["errors"] * avg_errors
+                + self.weights["complexity"] * avg_complexity
+                + self.weights["cyclomatic"] * avg_cc
+                + self.weights["duplication"] * dup_count
+                + self.weights["length"] * long_funcs
                 + self.weights["anti"] * anti_score
             )
 
             rationale = (
                 f"{patches} patches, avg ROI delta {avg_roi:.2f}, "
-                f"avg error delta {avg_errors:.2f}, avg complexity delta {avg_complexity:.2f}"
+                f"avg error delta {avg_errors:.2f}, avg complexity delta {avg_complexity:.2f}, "
+                f"avg cyclomatic {avg_cc:.2f}, duplicates {dup_count}, long functions {long_funcs}"
             )
-            if anti_notes:
-                rationale += "; " + "; ".join(anti_notes)
+            all_notes = notes + anti_notes
+            if all_notes:
+                rationale += "; " + "; ".join(all_notes)
 
             yield EnhancementSuggestion(path=filename, score=score, rationale=rationale)
 
