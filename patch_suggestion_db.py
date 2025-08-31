@@ -168,6 +168,27 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             )
             self.conn.execute(
                 """
+            CREATE TABLE IF NOT EXISTS suggestion_outcomes(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                module TEXT,
+                description TEXT,
+                success INTEGER,
+                roi_delta REAL,
+                ts TEXT
+            )
+            """
+            )
+            self.conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS module_stats(
+                module TEXT PRIMARY KEY,
+                roi_ma REAL DEFAULT 0,
+                success_ma REAL DEFAULT 0
+            )
+            """
+            )
+            self.conn.execute(
+                """
             CREATE TABLE IF NOT EXISTS enhancement_suggestions(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 module TEXT,
@@ -252,8 +273,69 @@ class PatchSuggestionDB(EmbeddableDBMixin):
         except Exception:  # pragma: no cover - best effort
             logger.exception("embedding hook failed for %s", rec_id)
 
+    # ------------------------------------------------------------------
+    def get_module_stats(self, module: str) -> tuple[float, float]:
+        """Return ``(roi_ma, success_ma)`` for ``module``."""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT roi_ma, success_ma FROM module_stats WHERE module=?",
+                (module,),
+            ).fetchone()
+        if not row:
+            return 0.0, 0.0
+        return float(row[0] or 0.0), float(row[1] or 0.0)
+
+    def _adjust_score(self, module: str, score: float) -> float:
+        """Scale ``score`` using historical ROI and success rates."""
+        roi_ma, success_ma = self.get_module_stats(module)
+        return score * (0.5 + success_ma) + roi_ma
+
+    def log_outcome(
+        self,
+        module: str,
+        description: str,
+        success: bool,
+        roi_delta: float,
+        ts: str | None = None,
+        *,
+        alpha: float = 0.1,
+    ) -> None:
+        """Record outcome of an acted-upon suggestion and update moving averages."""
+        ts = ts or datetime.utcnow().isoformat()
+        with self._file_lock:
+            with self._lock:
+                self.conn.execute(
+                    """
+                INSERT INTO suggestion_outcomes(module, description, success, roi_delta, ts)
+                VALUES(?,?,?,?,?)
+                """,
+                    (module, description, int(success), float(roi_delta), ts),
+                )
+                row = self.conn.execute(
+                    "SELECT roi_ma, success_ma FROM module_stats WHERE module=?",
+                    (module,),
+                ).fetchone()
+                success_val = 1.0 if success else 0.0
+                if row:
+                    roi_ma = float(row[0] or 0.0) * (1 - alpha) + float(roi_delta) * alpha
+                    success_ma = float(row[1] or 0.0) * (1 - alpha) + success_val * alpha
+                    self.conn.execute(
+                        "UPDATE module_stats SET roi_ma=?, success_ma=? WHERE module=?",
+                        (roi_ma, success_ma, module),
+                    )
+                else:
+                    roi_ma = float(roi_delta)
+                    success_ma = success_val
+                    self.conn.execute(
+                        "INSERT INTO module_stats(module, roi_ma, success_ma) VALUES(?,?,?)",
+                        (module, roi_ma, success_ma),
+                    )
+                self.conn.commit()
+
+
     def add(self, rec: SuggestionRecord) -> int:
-        if self._has_similar(rec.module, rec.rationale or rec.description, rec.score):
+        score = self._adjust_score(rec.module, rec.score)
+        if self._has_similar(rec.module, rec.rationale or rec.description, score):
             return 0
         risks = find_semantic_risks(
             rec.description.splitlines(), threshold=self._semantic_threshold
@@ -281,7 +363,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                     (
                         rec.module,
                         rec.description,
-                        rec.score,
+                        score,
                         rec.rationale,
                         rec.patch_count,
                         rec.module_id,
@@ -292,6 +374,8 @@ class PatchSuggestionDB(EmbeddableDBMixin):
                 self.conn.commit()
                 rec_id = int(cur.lastrowid)
         self.log_decision(rec.module, rec.description, True, "", rec.ts)
+        # update record with adjusted score for embedding and return value
+        rec.score = score
         self._embed_record_on_write(rec_id, rec)
         return rec_id
 
@@ -349,10 +433,11 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             try:
                 module = getattr(sugg, "path", "")
                 rationale = getattr(sugg, "rationale", "")
-                score = float(getattr(sugg, "score", 0.0))
+                raw_score = float(getattr(sugg, "score", 0.0))
                 patch_count = int(getattr(sugg, "patch_count", 0))
                 module_id = getattr(sugg, "module_id", "")
                 raroi = float(getattr(sugg, "raroi", 0.0))
+                score = self._adjust_score(module, raw_score)
                 if self._has_similar(module, rationale, score):
                     continue
                 rec = SuggestionRecord(

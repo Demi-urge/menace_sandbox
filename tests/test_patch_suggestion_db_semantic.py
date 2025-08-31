@@ -81,3 +81,20 @@ def test_queue_skips_duplicates(tmp_path):
     db.queue_suggestions(suggs)
     top = db.top_suggestions(10)
     assert len(top) == 1
+
+
+def test_outcome_adjusts_scoring(tmp_path):
+    db = PatchSuggestionDB(tmp_path / "s.db")
+    db.log_outcome("m.py", "prev", True, 1.0)
+    suggs = [
+        EnhancementSuggestion(path="m.py", score=1.0, rationale="m"),
+        EnhancementSuggestion(path="o.py", score=1.0, rationale="o"),
+    ]
+    db.queue_suggestions(suggs)
+    top = db.top_suggestions(2)
+    assert top[0].module == "m.py"
+    with db._lock:
+        count = db.conn.execute(
+            "SELECT COUNT(*) FROM suggestion_outcomes"
+        ).fetchone()[0]
+    assert count == 1
