@@ -169,6 +169,25 @@ class AlignmentSettings(BaseModel):
         return v
 
 
+class AutoMergeSettings(BaseModel):
+    """Thresholds controlling automatic merges."""
+
+    roi_threshold: float = 0.0
+    coverage_threshold: float = 1.0
+
+    @field_validator("roi_threshold")
+    def _roi_non_negative(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("roi_threshold must be non-negative")
+        return v
+
+    @field_validator("coverage_threshold")
+    def _cov_unit_range(cls, v: float) -> float:
+        if not 0 <= v <= 1:
+            raise ValueError("coverage_threshold must be between 0 and 1")
+        return v
+
+
 class SandboxSettings(BaseSettings):
     """Environment configuration for sandbox runners."""
 
@@ -835,6 +854,12 @@ class SandboxSettings(BaseSettings):
     synergy_threshold: float | None = Field(None, env="SYNERGY_THRESHOLD")
     roi_confidence: float | None = Field(None, env="ROI_CONFIDENCE")
     synergy_confidence: float | None = Field(None, env="SYNERGY_CONFIDENCE")
+    auto_merge_roi_threshold: float = Field(
+        0.0, env="AUTO_MERGE_ROI_THRESHOLD"
+    )
+    auto_merge_coverage_threshold: float = Field(
+        1.0, env="AUTO_MERGE_COVERAGE_THRESHOLD"
+    )
     workflow_merge_similarity: float = Field(
         0.9,
         env="WORKFLOW_MERGE_SIMILARITY",
@@ -1198,6 +1223,9 @@ class SandboxSettings(BaseSettings):
     alignment: AlignmentSettings = Field(
         default_factory=AlignmentSettings, exclude=True
     )
+    auto_merge: AutoMergeSettings = Field(
+        default_factory=AutoMergeSettings, exclude=True
+    )
 
     def __init__(self, **data: Any) -> None:  # pragma: no cover - simple wiring
         super().__init__(**data)
@@ -1245,6 +1273,10 @@ class SandboxSettings(BaseSettings):
             improvement_warning_threshold=self.improvement_warning_threshold,
             improvement_failure_threshold=self.improvement_failure_threshold,
             baseline_metrics_path=self.alignment_baseline_metrics_path,
+        )
+        self.auto_merge = AutoMergeSettings(
+            roi_threshold=self.auto_merge_roi_threshold,
+            coverage_threshold=self.auto_merge_coverage_threshold,
         )
 
     model_config = SettingsConfigDict(
