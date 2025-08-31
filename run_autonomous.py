@@ -1978,6 +1978,10 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
     from workflow_stability_db import WorkflowStabilityDB
     from sandbox_runner import launch_sandbox
     from sandbox_runner.bootstrap import bootstrap_environment
+    from self_learning_service import run_background as run_learning_background
+    from self_test_service import SelfTestService
+    import asyncio
+    import threading
 
     try:
         settings = load_sandbox_settings(config_path)
@@ -2000,11 +2004,48 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
         bus = None
         logger.warning("UnifiedEventBus unavailable")
 
+    cleanup_funcs: list[Callable[[], None]] = []
+
+    learn_start, learn_stop = run_learning_background()
+    learn_start()
+    cleanup_funcs.append(learn_stop)
+
+    tester = SelfTestService()
+    test_loop = asyncio.new_event_loop()
+
+    def _tester_thread() -> None:
+        asyncio.set_event_loop(test_loop)
+        tester.run_continuous(loop=test_loop)
+        test_loop.run_forever()
+
+    t = threading.Thread(target=_tester_thread, daemon=True)
+    t.start()
+
+    def _stop_tests() -> None:
+        test_loop.call_soon_threadsafe(lambda: asyncio.create_task(tester.stop()))
+        test_loop.call_soon_threadsafe(test_loop.stop)
+        t.join(timeout=1.0)
+
+    cleanup_funcs.append(_stop_tests)
+
     def _noop():
         return None
 
     start_self_improvement_cycle({"bootstrap": _noop}, event_bus=bus)
-    launch_sandbox(settings=settings)
+
+    def _cleanup() -> None:
+        for func in cleanup_funcs:
+            try:
+                func()
+            except Exception:
+                logger.exception("cleanup failed")
+
+    atexit.register(_cleanup)
+
+    try:
+        launch_sandbox(settings=settings)
+    finally:
+        _cleanup()
 
 
 if __name__ == "__main__":
