@@ -255,7 +255,9 @@ class SelfCodingEngine:
         self.knowledge_service = knowledge_service
         # expose ROI tracker to the prompt engine so retrieved examples can
         # carry risk-adjusted ROI hints when available
-        self.prompt_engine = PromptEngine(roi_tracker=tracker, tone=prompt_tone)
+        self.prompt_engine = PromptEngine(
+            roi_tracker=tracker, tone=prompt_tone, trainer=self.prompt_memory
+        )
         self._last_prompt_metadata: Dict[str, Any] = {}
         self.router = kwargs.get("router")
         # store tracebacks from failed attempts for retry prompts
@@ -340,12 +342,22 @@ class SelfCodingEngine:
         if not self._last_prompt_metadata:
             return
         try:
-            self.prompt_memory.record(
+            updated = self.prompt_memory.record(
                 tone=self._last_prompt_metadata.get("tone", ""),
                 headers=self._last_prompt_metadata.get("headers", []),
                 example_order=self._last_prompt_metadata.get("example_order", []),
                 success=success,
             )
+            if (
+                updated
+                and getattr(self.prompt_engine, "trainer", None) is self.prompt_memory
+            ):
+                try:
+                    self.prompt_engine._load_trained_config(
+                        self.prompt_memory.style_weights
+                    )
+                except Exception:
+                    self.logger.exception("failed to refresh prompt engine weights")
         except Exception:
             self.logger.exception("failed to store prompt format history")
         finally:

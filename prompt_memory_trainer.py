@@ -34,6 +34,15 @@ class PromptMemoryTrainer:
         if self.state_path and self.state_path.exists():
             with self.state_path.open("r", encoding="utf-8") as fh:
                 self.style_weights = json.load(fh)
+        self._stats: Dict[str, Dict[str, list[int]]] = {
+            "headers": defaultdict(lambda: [0, 0]),
+            "example_order": defaultdict(lambda: [0, 0]),
+            "tone": defaultdict(lambda: [0, 0]),
+        }
+        for feat, mapping in self.style_weights.items():
+            if feat in self._stats:
+                for key, val in mapping.items():
+                    self._stats[feat][key] = [int(round(val)), 1]
 
     # ------------------------------------------------------------------
     def _extract_style(self, prompt: str) -> Dict[str, Any]:
@@ -207,10 +216,39 @@ class PromptMemoryTrainer:
         return suggestion
 
     # ------------------------------------------------------------------
-    def record(self, **_: Any) -> None:  # pragma: no cover - compatibility shim
-        """Existing callers may invoke :meth:`record`; it is a no-op."""
+    def record(
+        self,
+        *,
+        tone: str = "",
+        headers: Iterable[str] | None = None,
+        example_order: Iterable[str] | None = None,
+        success: bool = False,
+        **_: Any,
+    ) -> bool:
+        """Incrementally update style weights and persist when changed."""
 
-        return None
+        updated = False
+        feats = {
+            "tone": tone or None,
+            "headers": json.dumps(list(headers)) if headers else None,
+            "example_order": json.dumps(list(example_order)) if example_order else None,
+        }
+        for feat, key in feats.items():
+            if not key:
+                continue
+            stats = self._stats[feat][key]
+            stats[1] += 1
+            if success:
+                stats[0] += 1
+            score = stats[0] / max(stats[1], 1)
+            mapping = self.style_weights.setdefault(feat, {})
+            prev = mapping.get(key)
+            if prev != score:
+                mapping[key] = score
+                updated = True
+        if updated and self.state_path:
+            self.save_weights(self.state_path)
+        return updated
 
 
 __all__ = ["PromptMemoryTrainer"]

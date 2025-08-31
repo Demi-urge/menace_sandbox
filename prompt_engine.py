@@ -163,6 +163,7 @@ class PromptEngine:
             / "prompt_memory_weights.json",
         )
     )
+    trainer: PromptMemoryTrainer | None = None
     success_header: str = "Given the following pattern:"
     failure_header: str = "Avoid {summary} because it caused {outcome}:"
     tone: str = "neutral"
@@ -191,10 +192,17 @@ class PromptEngine:
                 self.context_builder = None
         if self.roi_tracker is None and self.context_builder is not None:
             self.roi_tracker = getattr(self.context_builder, "roi_tracker", None)
+        if self.trainer is None and PromptMemoryTrainer is not None:
+            try:
+                self.trainer = PromptMemoryTrainer()
+            except Exception:
+                self.trainer = None
         self._load_trained_config()
 
     # ------------------------------------------------------------------
-    def _load_trained_config(self) -> None:
+    def _load_trained_config(
+        self, summary: Dict[str, Dict[str, float]] | None = None
+    ) -> None:
         """Load formatting preferences from :class:`PromptMemoryTrainer`.
 
         The trainer aggregates success rates for previously used prompt
@@ -206,24 +214,27 @@ class PromptEngine:
 
         if PromptMemoryTrainer is None:
             return
-        summary: Dict[str, Dict[str, float]] | None = None
-        if self.weights_path.exists():
-            try:
-                summary = PromptMemoryTrainer.load_weights(  # type: ignore[attr-defined]
-                    self.weights_path
-                )
-            except Exception:
-                summary = None
         if summary is None:
-            try:  # pragma: no cover - best effort training lookup
-                trainer = PromptMemoryTrainer()
-                summary = trainer.train()
+            if self.trainer and getattr(self.trainer, "style_weights", None):
+                summary = self.trainer.style_weights
+            if not summary and self.weights_path.exists():
                 try:
-                    trainer.save_weights(self.weights_path)  # type: ignore[attr-defined]
+                    summary = PromptMemoryTrainer.load_weights(  # type: ignore[attr-defined]
+                        self.weights_path
+                    )
                 except Exception:
-                    pass
-            except Exception:
-                return
+                    summary = None
+            if summary is None and self.trainer is not None:
+                try:  # pragma: no cover - best effort training lookup
+                    summary = self.trainer.train()
+                    try:
+                        self.trainer.save_weights(self.weights_path)  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                except Exception:
+                    return
+        if not summary:
+            return
 
         # Determine preferred headers (first entry is success header)
         headers_summary = summary.get("headers", {}) or {}
@@ -702,6 +713,7 @@ class PromptEngine:
         success_header: str = "Given the following pattern:",
         failure_header: str = "Avoid {summary} because it caused {outcome}:",
         tone: str = "neutral",
+        trainer: PromptMemoryTrainer | None = None,
     ) -> str:
         """Class method wrapper used by existing callers and tests."""
 
@@ -714,6 +726,7 @@ class PromptEngine:
             success_header=success_header,
             failure_header=failure_header,
             tone=tone,
+            trainer=trainer,
         )
         return engine.build_prompt(
             goal,
@@ -729,11 +742,12 @@ def build_prompt(
     retry_trace: str | None = None,
     *,
     context: str | None = None,
-    retrieval_context: str | None = None,
-    top_n: int = 5,
-    success_header: str = "Given the following pattern:",
-    failure_header: str = "Avoid {summary} because it caused {outcome}:",
-    tone: str = "neutral",
+        retrieval_context: str | None = None,
+        top_n: int = 5,
+        success_header: str = "Given the following pattern:",
+        failure_header: str = "Avoid {summary} because it caused {outcome}:",
+        tone: str = "neutral",
+        trainer: PromptMemoryTrainer | None = None,
 ) -> str:
     """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`."""
 
@@ -746,6 +760,7 @@ def build_prompt(
         success_header=success_header,
         failure_header=failure_header,
         tone=tone,
+        trainer=trainer,
     )
 
 
