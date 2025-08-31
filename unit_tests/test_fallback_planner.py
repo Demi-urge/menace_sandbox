@@ -32,10 +32,22 @@ class DummyStability:
         self.data = data
         self.logged: list[tuple[str, float, int, float, float | None]] = []
 
-    def is_stable(self, wid: str, current_roi: float | None = None, threshold: float | None = None) -> bool:  # noqa: D401
+    def is_stable(
+        self,
+        wid: str,
+        current_roi: float | None = None,
+        threshold: float | None = None,
+    ) -> bool:  # noqa: D401
         return wid in self.data
 
-    def record_metrics(self, wid: str, roi: float, failures: int, entropy: float, roi_delta: float | None = None) -> None:  # noqa: D401
+    def record_metrics(
+        self,
+        wid: str,
+        roi: float,
+        failures: int,
+        entropy: float,
+        roi_delta: float | None = None,
+    ) -> None:  # noqa: D401
         self.logged.append((wid, roi, failures, entropy, roi_delta))
 
 
@@ -62,6 +74,16 @@ def _load_fallback_planner():
     module = ast.Module(nodes, type_ignores=[])
     module = ast.fix_missing_locations(module)
     logger = DummyLogger()
+    from contextlib import contextmanager, nullcontext
+    import json
+    import os
+    import time
+
+    class DummyLock:
+        @contextmanager
+        def acquire(self, timeout: float | None = None):
+            yield
+
     ns: dict[str, Any] = {
         "Any": Any,
         "Callable": Callable,
@@ -72,9 +94,34 @@ def _load_fallback_planner():
         "WorkflowStabilityDB": DummyStability,
         "get_logger": lambda name: logger,
         "log_record": lambda **kw: kw,
+        "contextmanager": contextmanager,
+        "nullcontext": nullcontext,
+        "SandboxLock": DummyLock,
+        "LOCK_TIMEOUT": 1,
+        "Timeout": Exception,
+        "json": json,
+        "os": os,
+        "time": time,
     }
     exec(compile(module, "<ast>", "exec"), ns)
-    return ns["_FallbackPlanner"], logger
+    Fallback = ns["_FallbackPlanner"]
+
+    def simple_init(self):
+        self.logger = logger
+        self.state_path = Path("state.json")
+        self.state_lock = DummyLock()
+        self.cluster_map = {}
+        self.mutation_rate = 1.0
+        self.roi_weight = 1.0
+        self.domain_transition_penalty = 1.0
+        self.entropy_weight = 0.0
+        self.roi_window = 5
+        self.state_capacity = 1000
+        self.roi_db = None
+        self.stability_db = None
+
+    Fallback.__init__ = simple_init  # type: ignore
+    return Fallback, logger
 
 
 def test_mutate_pipeline_scores_with_weights_and_penalty():
@@ -121,3 +168,32 @@ def test_discover_and_persist_handles_db_failures():
     records = planner.discover_and_persist({"a": lambda: None})
     assert records == []
     assert logger.warnings  # failure path logged
+
+
+def test_evaluate_chain_rejects_duplicate_chain():
+    Fallback, _ = _load_fallback_planner()
+    planner = Fallback()
+    planner.roi_db = DummyROI({"a": [0.1]})
+    planner.stability_db = DummyStability({"a": {"failures": 0, "entropy": 0.1}})
+    assert planner._evaluate_chain(["a", "a"]) is None
+    assert not planner.cluster_map
+
+
+def test_discover_and_persist_ranks_and_prunes():
+    Fallback, _ = _load_fallback_planner()
+    planner = Fallback()
+    planner.roi_db = DummyROI(
+        {"w1": [0.2], "w2": [0.9], "w3": [0.1]}
+    )
+    planner.stability_db = DummyStability(
+        {
+            "w1": {"failures": 0, "entropy": 0.1},
+            "w2": {"failures": 0, "entropy": 0.1},
+            "w3": {"failures": 0, "entropy": 0.1},
+        }
+    )
+    planner.state_capacity = 2
+    workflows = {wid: (lambda wid=wid: None) for wid in planner.roi_db.data}
+    results = planner.discover_and_persist(workflows)
+    assert results[0]["chain"] == ["w2"]
+    assert len(planner.cluster_map) == 2
