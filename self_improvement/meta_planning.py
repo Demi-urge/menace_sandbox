@@ -13,7 +13,6 @@ import json
 import os
 import time
 import threading
-import heapq
 from pathlib import Path
 from contextlib import contextmanager, nullcontext
 
@@ -92,13 +91,12 @@ class _FallbackPlanner:
             str(self.state_path.with_suffix(self.state_path.suffix + ".lock"))
         )
         self.cluster_map: dict[tuple[str, ...], dict[str, Any]] = {}
+        self.state_capacity = getattr(cfg, "meta_state_capacity", 1000)
         self.mutation_rate = getattr(cfg, "mutation_rate", getattr(cfg, "meta_mutation_rate", 1.0))
         self.roi_weight = getattr(cfg, "roi_weight", getattr(cfg, "meta_roi_weight", 1.0))
         self.domain_transition_penalty = getattr(
             cfg, "domain_transition_penalty", getattr(cfg, "meta_domain_penalty", 1.0)
         )
-        self.exploration_depth = getattr(cfg, "meta_search_depth", 3)
-        self.beam_width = getattr(cfg, "meta_beam_width", 5)
         self.entropy_weight = getattr(cfg, "meta_entropy_weight", 0.0)
         self.roi_window = roi_window
         self._load_state()
@@ -187,6 +185,21 @@ class _FallbackPlanner:
             yield
 
     # ------------------------------------------------------------------
+    def _prune_state(self) -> None:
+        """Trim ``cluster_map`` to ``state_capacity`` most recent entries."""
+
+        if self.state_capacity <= 0:
+            return
+        if len(self.cluster_map) <= self.state_capacity:
+            return
+        items = sorted(
+            self.cluster_map.items(),
+            key=lambda kv: float(kv[1].get("ts", 0.0)),
+            reverse=True,
+        )
+        self.cluster_map = dict(items[: self.state_capacity])
+
+    # ------------------------------------------------------------------
     def begin_run(self, workflow_id: str, run_id: str) -> None:
         """Record the start of a workflow run.
 
@@ -245,67 +258,71 @@ class _FallbackPlanner:
             - self.entropy_weight * abs(entropy)
         )
 
-    # ------------------------------------------------------------------
-    def _beam_search(
-        self, workflows: Mapping[str, Callable[[], Any]]
-    ) -> list[Mapping[str, Any]]:
-        """Explore workflow chains using a simple beam search."""
-
-        evaluated: dict[tuple[str, ...], Mapping[str, Any]] = {}
-        beam: list[tuple[float, list[str]]] = []
-
-        for chain_key in list(self.cluster_map):
-            rec = self._evaluate_chain(list(chain_key))
-            if rec:
-                evaluated[tuple(rec["chain"])] = rec
-                heapq.heappush(beam, (-rec["score"], rec["chain"]))
-
-        for wid in workflows:
-            key = (wid,)
-            if key in evaluated:
-                continue
-            rec = self._evaluate_chain([wid])
-            if rec:
-                evaluated[key] = rec
-                heapq.heappush(beam, (-rec["score"], rec["chain"]))
-
-        beam = heapq.nsmallest(self.beam_width, beam)
-        heapq.heapify(beam)
-
-        depth = 1
-        while depth < self.exploration_depth and beam:
-            next_beam: list[tuple[float, list[str]]] = []
-            while beam:
-                _, chain = heapq.heappop(beam)
-                for wid in workflows:
-                    if wid in chain:
-                        continue
-                    new_chain = chain + [wid]
-                    key = tuple(new_chain)
-                    if key in evaluated:
-                        continue
-                    rec = self._evaluate_chain(new_chain)
-                    if rec:
-                        evaluated[key] = rec
-                        heapq.heappush(next_beam, (-rec["score"], new_chain))
-            beam = heapq.nsmallest(self.beam_width, next_beam)
-            heapq.heapify(beam)
-            depth += 1
-
-        return sorted(evaluated.values(), key=lambda r: r["score"], reverse=True)
-
-    # ------------------------------------------------------------------
     def discover_and_persist(
         self, workflows: Mapping[str, Callable[[], Any]]
     ) -> list[Mapping[str, Any]]:
-        """Explore pipelines via heuristic beam search and persist state."""
+        """Explore pipelines via heuristic mutations and persist state."""
 
+        results: list[Mapping[str, Any]] = []
         with self._state_update():
-            results = self._beam_search(workflows)
-        return results
+            evaluated: set[tuple[str, ...]] = set()
+
+            existing = [list(k) for k in self.cluster_map.keys()]
+
+            for chain in existing:
+                rec = self._evaluate_chain(chain, allow_existing=True)
+                if rec:
+                    key = tuple(rec["chain"])
+                    evaluated.add(key)
+                    results.append(rec)
+
+            for wid in workflows:
+                key = (wid,)
+                if key in evaluated:
+                    continue
+                rec = self._evaluate_chain([wid])
+                if rec:
+                    evaluated.add(key)
+                    results.append(rec)
+                    existing.append([wid])
+
+            for chain in existing:
+                for rec in self.mutate_pipeline(chain, workflows):
+                    key = tuple(rec["chain"])
+                    if key not in evaluated:
+                        evaluated.add(key)
+                        results.append(rec)
+
+                for rec in self.split_pipeline(chain, workflows):
+                    key = tuple(rec["chain"])
+                    if key not in evaluated:
+                        evaluated.add(key)
+                        results.append(rec)
+
+            if len(existing) >= 2:
+                for rec in self.remerge_pipelines(existing, workflows):
+                    key = tuple(rec["chain"])
+                    if key not in evaluated:
+                        evaluated.add(key)
+                        results.append(rec)
+
+            self._prune_state()
+
+        return sorted(results, key=lambda r: r["score"], reverse=True)
 
     # ------------------------------------------------------------------
-    def _evaluate_chain(self, chain: Sequence[str]) -> dict[str, Any] | None:
+    def _evaluate_chain(
+        self, chain: Sequence[str], *, allow_existing: bool = False
+    ) -> dict[str, Any] | None:
+        if len(chain) != len(set(chain)):
+            self.logger.debug(
+                "rejecting chain %s due to cycle", "->".join(chain),
+                extra=log_record(workflow_id="->".join(chain)),
+            )
+            return None
+        if not allow_existing and tuple(chain) in self.cluster_map:
+            return None
+
         roi_values: list[float] = []
         entropies: list[float] = []
         failures = 0
@@ -494,7 +511,8 @@ settings = _init.settings
 
 def reload_settings(cfg: SandboxSettings) -> None:
     """Update module-level settings and derived constants."""
-    global settings, PLANNER_INTERVAL, MUTATION_RATE, ROI_WEIGHT, DOMAIN_PENALTY, ENTROPY_THRESHOLD, SEARCH_DEPTH, BEAM_WIDTH, ENTROPY_WEIGHT
+    global settings, PLANNER_INTERVAL, MUTATION_RATE, ROI_WEIGHT, DOMAIN_PENALTY, ENTROPY_THRESHOLD
+    global SEARCH_DEPTH, BEAM_WIDTH, ENTROPY_WEIGHT
     settings = cfg
     _validate_config(settings)
     PLANNER_INTERVAL = getattr(settings, "meta_planning_interval", 0)
