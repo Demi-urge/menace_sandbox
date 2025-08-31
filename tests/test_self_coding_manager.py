@@ -110,8 +110,8 @@ def test_run_patch_logs_evolution(monkeypatch, tmp_path):
 
     calls: list[tuple] = []
 
-    def run_tests_stub(repo, path):
-        calls.append((repo, path))
+    def run_tests_stub(repo, path, *, backend="venv"):
+        calls.append((repo, path, backend))
         return types.SimpleNamespace(
             success=True,
             failure=None,

@@ -114,8 +114,8 @@ def setup(monkeypatch, tmp_path, confidence):
 
     run_calls: list[tuple] = []
 
-    def run_tests_stub(repo, path):
-        run_calls.append((repo, path))
+    def run_tests_stub(repo, path, *, backend="venv"):
+        run_calls.append((repo, path, backend))
         return types.SimpleNamespace(
             success=True,
             failure=None,

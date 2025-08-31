@@ -145,7 +145,7 @@ def test_closed_loop_patch(monkeypatch, tmp_path, backend):
 
     run_calls: list[str] = []
 
-    def run_tests_stub(repo, path):
+    def run_tests_stub(repo, path, *, backend="venv"):
         run_calls.append("fail" if not run_calls else "pass")
         if len(run_calls) == 1:
             return types.SimpleNamespace(
@@ -213,7 +213,7 @@ def test_run_patch_failure_no_attribute_error(monkeypatch, tmp_path):
 
     monkeypatch.setattr(scm.tempfile, "TemporaryDirectory", lambda: DummyTempDir())
 
-    def run_tests_stub(repo, path):
+    def run_tests_stub(repo, path, *, backend="venv"):
         return types.SimpleNamespace(
             success=False,
             failure=None,

@@ -101,6 +101,7 @@ class SelfCodingManager:
         confidence_threshold: float = 0.5,
         review_branch: str | None = None,
         auto_merge: bool = False,
+        backend: str = "venv",
     ) -> AutomationResult:
         """Patch *path* then deploy using the automation pipeline.
 
@@ -109,7 +110,9 @@ class SelfCodingManager:
         from the failing traceback.  After a successful patch the change is
         committed in a sandbox clone, pushed to ``review_branch`` and merged
         into ``main`` when ``auto_merge`` is ``True`` and the confidence score
-        exceeds ``confidence_threshold``.
+        exceeds ``confidence_threshold``.  ``backend`` selects the test
+        execution environment; ``"venv"`` uses a virtual environment while
+        ``"docker"`` runs tests inside a Docker container.
         """
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
@@ -144,7 +147,9 @@ class SelfCodingManager:
                     context_meta=ctx_meta,
                 )
 
-                harness_result: TestHarnessResult = run_tests(clone_root, cloned_path)
+                harness_result: TestHarnessResult = run_tests(
+                    clone_root, cloned_path, backend=backend
+                )
                 if harness_result.success:
                     break
 

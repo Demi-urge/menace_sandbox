@@ -83,7 +83,7 @@ class HarnessResult:
         self.stderr = stderr
         self.duration = duration
 
-def run_tests(repo, path):
+def run_tests(repo, path, *, backend="venv"):
     return HarnessResult(True)
 thr_mod.TestHarnessResult = HarnessResult
 thr_mod.run_tests = run_tests
@@ -147,8 +147,11 @@ def test_failed_tags_recorded(monkeypatch, tmp_path):
         failure=None,
         stdout="",
         stderr="Traceback (most recent call last):\nValueError: boom",
+        duration=0.0,
     )
-    monkeypatch.setattr(scm, "run_tests", lambda repo, path: failure_result)
+    monkeypatch.setattr(
+        scm, "run_tests", lambda repo, path, *, backend="venv": failure_result
+    )
 
     with pytest.raises(RuntimeError):
         mgr.run_patch(file_path, "add", max_attempts=2)
