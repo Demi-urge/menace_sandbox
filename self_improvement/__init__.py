@@ -6772,8 +6772,8 @@ class SelfImprovementEngine:
                         logs: list[dict[str, Any]] | None = None
                         try:
                             logs = get_recent_events(limit=20)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("Failed to get recent events: %s", exc)
                         warnings = agent.evaluate_changes(actions, metrics, logs, None)
                         if any(warnings.values()):
                             scorecard["alignment"] = {
