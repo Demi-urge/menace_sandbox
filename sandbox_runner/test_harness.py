@@ -15,6 +15,8 @@ import sys
 import tempfile
 import time
 
+from ..error_parser import ErrorParser
+
 
 @dataclass
 class TestHarnessResult:
@@ -35,6 +37,7 @@ class TestHarnessResult:
     stdout: str
     stderr: str
     duration: float
+    failure: dict | None = None
 
     def __bool__(self) -> bool:  # pragma: no cover - trivial
         return self.success
@@ -101,11 +104,15 @@ def run_tests(repo_path: Path, changed_path: Path | None = None) -> TestHarnessR
 
         duration = time.time() - start
         stdout_parts.append(tests.stdout)
+        failure = None
+        if tests.returncode != 0:
+            failure = ErrorParser.parse_failure(tests.stdout + tests.stderr)
         return TestHarnessResult(
             success=tests.returncode == 0,
             stdout="".join(stdout_parts),
             stderr=tests.stderr,
             duration=duration,
+            failure=failure,
         )
     finally:
         tmpdir_obj.cleanup()

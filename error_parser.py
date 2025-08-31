@@ -1,25 +1,47 @@
-"""Utilities for parsing Python failure logs.
+"""Utilities for parsing and storing structured error information.
 
-This module provides a lightweight :func:`parse_failure` helper that extracts
-useful information from test logs such as stack traces and the final error
-type.  A tiny SQLite backed :class:`FailureCache` is also exposed so callers can
-persist failure signatures and avoid repeatedly attempting identical
-reproductions.
+This module exposes :class:`ErrorParser` with a :meth:`parse_failure` helper
+that extracts key details from a raw traceback string.  The extracted data is
+persisted to ``errors.db`` so that other components can analyse recurring
+failures.
+
+The parser returns a dictionary with the following keys:
+
+``exception``
+    Name of the raised exception, e.g. ``ValueError``.
+``file`` / ``line``
+    Location of the innermost stack frame.
+``context``
+    Source line from the failing file when available.
+``strategy_tag``
+    Deterministic tag derived from the failure which can be used for grouping
+    similar issues.
+``signature``
+    SHA1 hash of the extracted information.
+``timestamp``
+    ISO formatted time when the record was stored.
+``stack``
+    Original log or stack trace passed to the parser.
+
+The data is stored in an ``errors.db`` SQLite database using a very small table
+named ``parsed_failures``.  The table is created on first use.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass  # kept for FailureCache convenience
+from datetime import datetime
 import hashlib
 import re
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, Optional
+
 try:  # pragma: no cover - optional dependency
     from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 except Exception:  # pragma: no cover - fallback when db_router unavailable
     import sqlite3  # type: ignore
 
-    class DBRouter:  # type: ignore
+    class DBRouter:  # type: ignore[override]
         def __init__(self, path: str) -> None:
             self.path = path
 
@@ -35,94 +57,109 @@ except Exception:  # pragma: no cover - fallback when db_router unavailable
 class ErrorParser:
     """Parse traceback strings for quick error analysis."""
 
-    # Match ``File "..."`` entries from standard Python tracebacks or bare
-    # ``path/to/file.py`` lines from pytest output.
-    _FILE_RE = re.compile(r'File "([^"]+)"|^([\w./-]+\.py)', re.MULTILINE)
+    # ``File "...", line 123`` from Python tracebacks
+    _TRACE_RE = re.compile(r'File "(?P<file>[^"\n]+)", line (?P<line>\d+)')
 
-    # Match the final error type such as ``ValueError`` or ``AssertionError``.
-    _ERROR_RE = re.compile(
-        r'^\s*(?:E\s+)?(?P<error>\w+(?:Error|Exception|Failed))', re.MULTILINE
-    )
+    # final ``ValueError: message`` style line
+    _EXC_RE = re.compile(r'(?P<exc>\w+(?:Error|Exception))(?::|\s|$)')
 
-    # Heuristic mapping from error types to suggested tags.
-    _TAG_MAP = {
-        "AssertionError": ["test", "assertion"],
-        "Failed": ["test"],
-        "SyntaxError": ["syntax"],
-        "TypeError": ["runtime"],
-        "ValueError": ["runtime"],
-        "ZeroDivisionError": ["runtime", "math"],
-        "ModuleNotFoundError": ["missing-dependency"],
-        "ImportError": ["missing-dependency"],
-        "RuntimeError": ["runtime"],
-    }
+    _DB_PATH = Path("errors.db")
+    _conn = None
 
     @classmethod
-    def parse(cls, trace: str) -> Dict[str, object]:
-        """Parse ``trace`` and return extracted information.
+    def _get_conn(cls):
+        if cls._conn is None:
+            p = cls._DB_PATH.resolve()
+            router = GLOBAL_ROUTER or init_db_router("errors_db", str(p), str(p))
+            cls._conn = router.get_connection("errors")
+            cls._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS parsed_failures(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file TEXT,
+                    line INTEGER,
+                    context TEXT,
+                    exception TEXT,
+                    strategy_tag TEXT,
+                    ts TEXT
+                )
+                """
+            )
+            cls._conn.commit()
+        return cls._conn
 
-        The return value is ``{"files": list[str], "error_type": str | None,
-        "tags": list[str]}``.
+    @staticmethod
+    def _strategy_tag(exc: str, file: str, line: int) -> str:
+        src = f"{exc}:{file}:{line}"
+        return hashlib.sha1(src.encode("utf-8")).hexdigest()[:8]
+
+    @classmethod
+    def parse_failure(cls, log: str) -> Dict[str, Any]:
+        """Return structured information extracted from ``log``.
+
+        The resulting dictionary is also stored in ``errors.db``.
         """
 
-        files: List[str] = []
-        for match in cls._FILE_RE.finditer(trace):
-            path = match.group(1) or match.group(2)
-            if path and path not in files:
-                files.append(path)
+        file: Optional[str] = None
+        line_no: Optional[int] = None
+        for m in cls._TRACE_RE.finditer(log):
+            file = m.group("file")
+            line_no = int(m.group("line"))
 
-        error_type = None
-        last_line = trace.splitlines()[-1] if trace.splitlines() else ""
-        match = cls._ERROR_RE.search(last_line)
-        if not match:
-            match = cls._ERROR_RE.search(trace)
-        if match:
-            error_type = match.group("error")
+        context = ""
+        if file and line_no is not None:
+            try:
+                src = Path(file).read_text(encoding="utf-8").splitlines()
+                context = src[line_no - 1].strip()
+            except Exception:  # pragma: no cover - best effort
+                context = ""
 
-        tags = cls._TAG_MAP.get(error_type, [])
-        return {"files": files, "error_type": error_type, "tags": tags}
+        exc: Optional[str] = None
+        for ln in reversed(log.splitlines()):
+            m = cls._EXC_RE.search(ln.strip())
+            if m:
+                exc = m.group("exc")
+                break
+
+        strategy = cls._strategy_tag(exc or "", file or "", line_no or 0)
+        signature = hashlib.sha1(
+            f"{exc}:{file}:{line_no}:{context}".encode("utf-8")
+        ).hexdigest()
+        ts = datetime.utcnow().isoformat()
+
+        conn = cls._get_conn()
+        conn.execute(
+            "INSERT INTO parsed_failures(file,line,context,exception,strategy_tag,ts)"
+            " VALUES(?,?,?,?,?,?)",
+            (file, line_no, context, exc, strategy, ts),
+        )
+        conn.commit()
+
+        return {
+            "exception": exc,
+            "file": file,
+            "line": line_no,
+            "context": context,
+            "strategy_tag": strategy,
+            "signature": signature,
+            "timestamp": ts,
+            "stack": log,
+        }
 
 
-@dataclass
-class ParsedFailure:
-    """Structured representation of a failure log."""
+def parse_failure(log: str) -> Dict[str, Any]:
+    """Module level convenience wrapper around :class:`ErrorParser`."""
 
-    stack_trace: str
-    error_type: str | None
-    reproduction_steps: List[str]
-    signature: str
-
-
-def parse_failure(log: str) -> ParsedFailure:
-    """Return :class:`ParsedFailure` extracted from ``log``.
-
-    Parameters
-    ----------
-    log:
-        Raw stderr or traceback output from a failing command.
-    """
-
-    frames: List[str] = []
-    for m in ErrorParser._FILE_RE.finditer(log):
-        path = m.group(1) or m.group(2)
-        if path:
-            line_match = re.search(r"line (\d+)", log[m.start():m.end() + 40])
-            if line_match:
-                frames.append(f"{path}:{line_match.group(1)}")
-            else:
-                frames.append(path)
-
-    parsed = ErrorParser.parse(log)
-    error_type = parsed.get("error_type") if isinstance(parsed, dict) else None
-    reproduction_steps = frames[-1:]  # minimal reproduction from last frame
-    stack_trace = "\n".join(frames)
-    sig_src = (error_type or "") + stack_trace
-    signature = hashlib.sha1(sig_src.encode("utf-8")).hexdigest()
-    return ParsedFailure(stack_trace, error_type, reproduction_steps, signature)
+    return ErrorParser.parse_failure(log)
 
 
 class FailureCache:
-    """Tiny SQLite backed cache for parsed failures."""
+    """Tiny SQLite backed cache for parsed failures.
+
+    This is used by :mod:`self_debugger_sandbox` to avoid repeated processing
+    of the same failure signature.  The cache itself is separate from the main
+    ``errors.db`` telemetry and defaults to ``failures.db``.
+    """
 
     def __init__(
         self,
@@ -136,8 +173,8 @@ class FailureCache:
         )
         self.conn = self.router.get_connection("parsed_failures")
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS parsed_failures(" "signature TEXT PRIMARY KEY, "
-            "error_type TEXT, stack TEXT)"
+            "CREATE TABLE IF NOT EXISTS parsed_failures(""" "signature TEXT PRIMARY KEY,"
+            " stack TEXT)"
         )
         self.conn.commit()
 
@@ -147,12 +184,13 @@ class FailureCache:
         )
         return cur.fetchone() is not None
 
-    def add(self, failure: ParsedFailure) -> None:
+    def add(self, failure: Dict[str, Any]) -> None:
         self.conn.execute(
-            "INSERT OR IGNORE INTO parsed_failures(signature, error_type, stack) VALUES(?,?,?)",
-            (failure.signature, failure.error_type, failure.stack_trace),
+            "INSERT OR IGNORE INTO parsed_failures(signature, stack) VALUES(?,?)",
+            (failure["signature"], failure["stack"]),
         )
         self.conn.commit()
 
 
-__all__ = ["ErrorParser", "ParsedFailure", "parse_failure", "FailureCache"]
+__all__ = ["ErrorParser", "parse_failure", "FailureCache"]
+
