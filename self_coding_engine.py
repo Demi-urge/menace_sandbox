@@ -58,8 +58,18 @@ from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
 from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
 from typing import TYPE_CHECKING
-from .sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
-from .sandbox_runner.test_harness import run_tests, TestHarnessResult
+try:  # pragma: no cover - optional dependency
+    from .sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
+except Exception:  # pragma: no cover - graceful degradation
+    WorkflowSandboxRunner = object  # type: ignore[misc]
+try:  # pragma: no cover - optional dependency
+    from .sandbox_runner.test_harness import run_tests, TestHarnessResult
+except Exception:  # pragma: no cover - graceful degradation
+    run_tests = None  # type: ignore
+
+    class TestHarnessResult:  # type: ignore[misc]
+        success = False
+        stdout = ""
 from .sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - optional dependency
@@ -106,8 +116,13 @@ except Exception:  # pragma: no cover - defensive fallback
             )
 
 from .roi_tracker import ROITracker
-from .patch_provenance import record_patch_metadata
+try:  # pragma: no cover - optional dependency
+    from .patch_provenance import record_patch_metadata
+except Exception:  # pragma: no cover - graceful degradation
+    def record_patch_metadata(*_a: Any, **_k: Any) -> None:  # type: ignore
+        return None
 from .prompt_engine import PromptEngine
+from .prompt_memory_trainer import PromptMemoryTrainer
 from .error_parser import ErrorParser, ErrorReport, parse_failure, FailureCache
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
@@ -147,6 +162,8 @@ class SelfCodingEngine:
         event_bus: UnifiedEventBus | None = None,
         gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
         knowledge_service: GPTKnowledgeService | None = None,
+        prompt_memory: PromptMemoryTrainer | None = None,
+        prompt_tone: str = "neutral",
         **kwargs: Any,
     ) -> None:
         self.code_db = code_db
@@ -158,11 +175,16 @@ class SelfCodingEngine:
         self.patch_db = patch_db
         self.trend_predictor = trend_predictor
         self.bot_name = bot_name
+        self.prompt_memory = prompt_memory or PromptMemoryTrainer()
+        self.prompt_tone = prompt_tone
         self.safety_monitor = safety_monitor
         if llm_client is None and _settings.openai_api_key:
-            llm_client = ChatGPTClient(
-                _settings.openai_api_key, gpt_memory=self.gpt_memory
-            )
+            try:
+                llm_client = ChatGPTClient(
+                    _settings.openai_api_key, gpt_memory=self.gpt_memory
+                )
+            except Exception:
+                llm_client = None
         self.llm_client = llm_client
         if self.llm_client:
             self.llm_client.gpt_memory = self.gpt_memory
@@ -229,7 +251,8 @@ class SelfCodingEngine:
         self.knowledge_service = knowledge_service
         # expose ROI tracker to the prompt engine so retrieved examples can
         # carry risk-adjusted ROI hints when available
-        self.prompt_engine = PromptEngine(roi_tracker=tracker)
+        self.prompt_engine = PromptEngine(roi_tracker=tracker, tone=prompt_tone)
+        self._last_prompt_metadata: Dict[str, Any] = {}
         self.router = kwargs.get("router")
         # store tracebacks from failed attempts for retry prompts
         self._last_retry_trace: str | None = None
@@ -281,6 +304,23 @@ class SelfCodingEngine:
         except Exception:
             self.logger.exception("memory logging failed")
 
+    def _record_prompt_metadata(self, success: bool) -> None:
+        if not self.prompt_memory:
+            return
+        if not self._last_prompt_metadata:
+            return
+        try:
+            self.prompt_memory.record(
+                tone=self._last_prompt_metadata.get("tone", ""),
+                headers=self._last_prompt_metadata.get("headers", []),
+                example_order=self._last_prompt_metadata.get("example_order", []),
+                success=success,
+            )
+        except Exception:
+            self.logger.exception("failed to store prompt format history")
+        finally:
+            self._last_prompt_metadata = {}
+
     def _track_contributors(
         self,
         session_id: str,
@@ -320,6 +360,20 @@ class SelfCodingEngine:
             if roi_deltas:
                 kwargs["roi_deltas"] = dict(roi_deltas)
             self.patch_logger.track_contributors(ids, result, **kwargs)
+            tracker = getattr(self.patch_logger, "roi_tracker", None)
+            if tracker is not None:
+                totals: dict[str, float] = {}
+                for vid, _ in ids:
+                    origin = vid.split(":", 1)[0] if ":" in vid else ""
+                    totals[origin] = totals.get(origin, 0.0) + (roi_delta or 0.0)
+                if hasattr(tracker, "update_db_metrics"):
+                    try:
+                        tracker.update_db_metrics({o: {"roi": v} for o, v in totals.items()})
+                    except Exception:
+                        pass
+                if hasattr(tracker, "metrics"):
+                    for o, v in totals.items():
+                        tracker.metrics.setdefault(o, {})["roi"] = v
         except Exception:
             self.logger.exception("track_contributors failed")
 
@@ -401,12 +455,22 @@ class SelfCodingEngine:
         func = f"auto_{description.replace(' ', '_')}"
         repo_layout = repo_layout or self._get_repo_layout(VA_REPO_LAYOUT_LINES)
         retry_trace = self._last_retry_trace
-        body = self.prompt_engine.build_prompt(
-            description,
-            context="\n".join([p for p in (context.strip(), repo_layout) if p]),
-            retrieval_context=retrieval_context or "",
-            retry_trace=retry_trace,
-        )
+        try:
+            body = self.prompt_engine.build_prompt(
+                description,
+                context="\n".join([p for p in (context.strip(), repo_layout) if p]),
+                retrieval_context=retrieval_context or "",
+                retry_trace=retry_trace,
+                tone=self.prompt_tone,
+            )
+        except TypeError:
+            body = self.prompt_engine.build_prompt(
+                description,
+                context="\n".join([p for p in (context.strip(), repo_layout) if p]),
+                retrieval_context=retrieval_context or "",
+                retry_trace=retry_trace,
+            )
+        self._last_prompt_metadata = getattr(self.prompt_engine, "last_metadata", {})
         if VA_PROMPT_TEMPLATE:
             try:
                 text = Path(VA_PROMPT_TEMPLATE).read_text()
@@ -507,10 +571,20 @@ class SelfCodingEngine:
                 context=context_block,
                 retrieval_context=retrieval_context,
                 retry_trace=retry_trace,
+                tone=self.prompt_tone,
+            )
+        except TypeError:
+            prompt = self.prompt_engine.build_prompt(
+                description,
+                context=context_block,
+                retrieval_context=retrieval_context,
+                retry_trace=retry_trace,
             )
         except Exception as exc:
             self._last_retry_trace = str(exc)
+            self._last_prompt_metadata = {}
             return _fallback()
+        self._last_prompt_metadata = getattr(self.prompt_engine, "last_metadata", {})
 
         # Incorporate past patch outcomes from memory
         history = ""
@@ -872,6 +946,7 @@ class SelfCodingEngine:
                 "apply_patch_result",
                 {"path": str(path), "success": False},
             )
+            self._record_prompt_metadata(False)
             return None, False, 0.0
         if self.formal_verifier and not self.formal_verifier.verify(path):
             path.write_text(original, encoding="utf-8")
@@ -964,6 +1039,7 @@ class SelfCodingEngine:
                 "apply_patch_result",
                 {"path": str(path), "success": False, "patch_id": patch_id},
             )
+            self._record_prompt_metadata(False)
             return patch_id, True, roi_delta
         ci_result = self._run_ci(path)
         if not ci_result:
@@ -1007,6 +1083,7 @@ class SelfCodingEngine:
                 "apply_patch_result",
                 {"path": str(path), "success": False},
             )
+            self._record_prompt_metadata(False)
             return None, False, 0.0
         if self.safety_monitor and not self.safety_monitor.validate_bot(self.bot_name):
             path.write_text(original, encoding="utf-8")
@@ -1048,6 +1125,7 @@ class SelfCodingEngine:
                 "apply_patch_result",
                 {"path": str(path), "success": False},
             )
+            self._record_prompt_metadata(False)
             return None, False, 0.0
         if self.pipeline:
             try:
@@ -1278,6 +1356,7 @@ class SelfCodingEngine:
             "apply_patch_result",
             {"path": str(path), "success": not reverted, "patch_id": patch_id},
         )
+        self._record_prompt_metadata(not reverted)
         return patch_id, reverted, roi_delta
 
     def _build_retry_context(
