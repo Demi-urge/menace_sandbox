@@ -23,6 +23,8 @@ class EnhancementSuggestion:
     path: str
     score: float
     rationale: str
+    patch_count: int = 0
+    module_id: str = ""
 
 
 def test_add_safe_suggestion(tmp_path):
@@ -54,11 +56,28 @@ def test_failed_strategy_storage(tmp_path):
 def test_queue_and_top_suggestions(tmp_path):
     db = PatchSuggestionDB(tmp_path / "s.db")
     suggs = [
-        EnhancementSuggestion(path="a.py", score=1.0, rationale="a"),
-        EnhancementSuggestion(path="b.py", score=5.0, rationale="b"),
-        EnhancementSuggestion(path="c.py", score=3.0, rationale="c"),
+        EnhancementSuggestion(path="a.py", score=1.0, rationale="a", patch_count=1, module_id="a1"),
+        EnhancementSuggestion(path="b.py", score=5.0, rationale="b", patch_count=2, module_id="b1"),
+        EnhancementSuggestion(path="c.py", score=3.0, rationale="c", patch_count=3, module_id="c1"),
     ]
     db.queue_suggestions(suggs)
     top = db.top_suggestions(2)
     assert [s.module for s in top] == ["b.py", "c.py"]
     assert top[0].rationale == "b"
+    assert top[0].patch_count == 2
+    assert top[0].module_id == "b1"
+
+
+def test_queue_skips_duplicates(tmp_path):
+    db = PatchSuggestionDB(tmp_path / "s.db")
+    suggs = [
+        EnhancementSuggestion(
+            path="a.py", score=1.0, rationale="r", patch_count=1, module_id="m"
+        ),
+        EnhancementSuggestion(
+            path="a.py", score=1.05, rationale="r", patch_count=2, module_id="m"
+        ),
+    ]
+    db.queue_suggestions(suggs)
+    top = db.top_suggestions(10)
+    assert len(top) == 1
