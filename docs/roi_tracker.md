@@ -484,9 +484,11 @@ Sandbox runs record additional metrics in the tracker:
 
 Forecasts for these values help prioritise improvements when ROI alone is stable.
 
-`maintainability` is computed using `radon.metrics.mi_visit` and averages the
-Maintainability Index of the source files touched in the current section. The
-`code_quality` metric uses `pylint`'s global rating for those files.
+`maintainability` is computed using `radon.metrics.mi_visit` when available and
+averages the Maintainability Index of the source files touched in the current
+section. When `radon` is missing an AST-based implementation of the standard
+Maintainability Index formula is used instead. The `code_quality` metric uses
+`pylint`'s global rating for those files.
 
 Example forecasting extended metrics:
 ```python
