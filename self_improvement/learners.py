@@ -133,10 +133,18 @@ class TorchReplayStrategy:
             buf = io.BytesIO()
             sip_torch.save(self.optimizer.state_dict(), buf)
             _atomic_write(Path(base + ".optim.pt"), buf.getvalue(), binary=True)
+            data = [
+                {
+                    "state": s.tolist(),
+                    "reward": r,
+                    "next_state": n.tolist(),
+                    "done": d,
+                }
+                for s, r, n, d in self.buffer
+            ]
             _atomic_write(
-                Path(base + ".replay.pkl"),
-                pickle.dumps(list(self.buffer)),
-                binary=True,
+                Path(base + ".replay.json"),
+                json.dumps(data),
             )
         except Exception as exc:  # pragma: no cover - disk errors
             logger.exception("failed to save strategy state: %s", exc)
@@ -173,11 +181,38 @@ class TorchReplayStrategy:
                     self.optimizer.load_state_dict(sip_torch.load(optim_file))
                 except Exception as exc:
                     logger.warning("skipping optimizer checkpoint: %s", exc)
-            replay_file = Path(base + ".replay.pkl")
+            replay_file = Path(base + ".replay.json")
             if replay_file.exists():
-                with open(replay_file, "rb") as fh:
-                    items = pickle.load(fh)
-                self.buffer = deque(items, maxlen=self.buffer.maxlen)
+                try:
+                    items = json.loads(replay_file.read_text("utf-8"))
+                    buf = deque(maxlen=self.buffer.maxlen)
+                    if not isinstance(items, list):
+                        raise ValueError("invalid replay data")
+                    for it in items:
+                        if not isinstance(it, dict):
+                            raise ValueError("invalid replay item")
+                        state = it.get("state")
+                        reward = it.get("reward")
+                        next_state = it.get("next_state")
+                        done = it.get("done")
+                        if not (
+                            isinstance(state, list)
+                            and isinstance(reward, (int, float))
+                            and isinstance(next_state, list)
+                            and isinstance(done, bool)
+                        ):
+                            raise ValueError("invalid replay item")
+                        buf.append(
+                            (
+                                sip_torch.tensor(state, dtype=sip_torch.float32),
+                                float(reward),
+                                sip_torch.tensor(next_state, dtype=sip_torch.float32),
+                                bool(done),
+                            )
+                        )
+                    self.buffer = buf
+                except Exception as exc:
+                    logger.warning("skipping replay buffer: %s", exc)
         except Exception as exc:  # pragma: no cover - disk errors
             logger.warning("failed to load strategy state: %s", exc)
 
