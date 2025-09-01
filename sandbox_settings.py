@@ -99,6 +99,7 @@ class SynergySettings(BaseModel):
     train_interval: int = 10
     replay_size: int = 100
     batch_size: int = 32
+    gamma: float = 0.99
     noise: float = 0.1
     hidden_size: int = 32
     layers: int = 1
@@ -116,6 +117,7 @@ class SynergySettings(BaseModel):
         "stationarity_confidence",
         "std_threshold",
         "variance_confidence",
+        "gamma",
     )
     def _synergy_unit_range(cls, v: float | None, info: Any) -> float | None:
         if v is not None and not 0 <= v <= 1:
@@ -1379,6 +1381,11 @@ class SandboxSettings(BaseSettings):
         env="SYNERGY_BATCH_SIZE",
         description="Mini-batch size for RL learner updates.",
     )
+    synergy_gamma: float = Field(
+        0.99,
+        env="SYNERGY_GAMMA",
+        description="Discount factor for RL learner updates.",
+    )
     synergy_noise: float = Field(
         0.1,
         env="SYNERGY_NOISE",
@@ -1759,6 +1766,7 @@ class SandboxSettings(BaseSettings):
             train_interval=self.synergy_train_interval,
             replay_size=self.synergy_replay_size,
             batch_size=self.synergy_batch_size,
+            gamma=self.synergy_gamma,
             noise=self.synergy_noise,
             hidden_size=self.synergy_hidden_size,
             layers=self.synergy_layers,

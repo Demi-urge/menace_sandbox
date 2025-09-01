@@ -52,6 +52,8 @@ settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 - `weights_lr`: `0.1`
 - `train_interval`: `10`
 - `replay_size`: `100`
+- `batch_size`: `32`
+- `gamma`: `0.99`
 
 ## Alignment defaults
 - `enable_flagger`: `True`

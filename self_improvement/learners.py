@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import pickle
+import random
 from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, Dict
@@ -57,6 +58,8 @@ class TorchReplayStrategy:
         lr: float,
         train_interval: int,
         replay_size: int,
+        gamma: float,
+        batch_size: int,
         optimizer_kwargs: Mapping[str, Any] | None = None,
         net_kwargs: Mapping[str, Any] | None = None,
     ) -> None:
@@ -70,7 +73,13 @@ class TorchReplayStrategy:
         )
         self.loss_fn = sip_torch.nn.MSELoss()
         self.train_interval = max(1, int(train_interval))
-        self.buffer: deque[tuple[Any, float]] = deque(maxlen=int(replay_size))
+        self.gamma = float(gamma)
+        self.batch_size = int(batch_size)
+        self.buffer: deque[tuple[Any, float, Any, bool]] = deque(
+            maxlen=int(replay_size)
+        )
+        self.target_model = net_factory(dim, dim, **(net_kwargs or {}))
+        self.target_model.load_state_dict(self.model.state_dict())
         self.steps = 0
         self.eval_loss = 0.0
 
@@ -78,6 +87,8 @@ class TorchReplayStrategy:
         self,
         state: Sequence[float],
         reward: float,
+        next_state: Sequence[float],
+        done: bool = False,
         extra: Mapping[str, float] | None = None,
     ) -> list[float]:
         self.steps += 1
@@ -85,21 +96,28 @@ class TorchReplayStrategy:
             reward *= 1.0 + float(extra.get("avg_roi", 0.0))
             reward *= 1.0 + float(extra.get("pass_rate", 0.0))
         state_tensor = sip_torch.tensor(state, dtype=sip_torch.float32)
-        self.buffer.append((state_tensor, float(reward)))
-        if self.steps % self.train_interval == 0 and self.buffer:
-            states, rewards = zip(*self.buffer)
+        next_tensor = sip_torch.tensor(next_state, dtype=sip_torch.float32)
+        self.buffer.append((state_tensor, float(reward), next_tensor, bool(done)))
+        if (
+            self.steps % self.train_interval == 0
+            and len(self.buffer) >= self.batch_size
+        ):
+            batch = random.sample(self.buffer, self.batch_size)
+            states, rewards, next_states, dones = zip(*batch)
             states_batch = sip_torch.stack(states)
-            rewards_batch = (
-                sip_torch.tensor(rewards, dtype=sip_torch.float32).unsqueeze(1)
-            )
-            targets = states_batch * rewards_batch
+            rewards_batch = sip_torch.tensor(rewards, dtype=sip_torch.float32).unsqueeze(1)
+            next_batch = sip_torch.stack(next_states)
+            dones_batch = sip_torch.tensor(dones, dtype=sip_torch.float32).unsqueeze(1)
+            with sip_torch.no_grad():
+                next_q = self.target_model(next_batch).max(dim=1, keepdim=True)[0]
+                targets = rewards_batch + self.gamma * next_q * (1 - dones_batch)
             preds = self.model(states_batch)
             loss = self.loss_fn(preds, targets)
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+            self.target_model.load_state_dict(self.model.state_dict())
             self.eval_loss = float(loss.item())
-            self.buffer.clear()
         with sip_torch.no_grad():
             q_vals = self.model(state_tensor).clamp(0.0, 10.0).tolist()
         return [float(v) for v in q_vals]
@@ -109,6 +127,9 @@ class TorchReplayStrategy:
             buf = io.BytesIO()
             sip_torch.save(self.model.state_dict(), buf)
             _atomic_write(Path(base + ".model.pt"), buf.getvalue(), binary=True)
+            buf = io.BytesIO()
+            sip_torch.save(self.target_model.state_dict(), buf)
+            _atomic_write(Path(base + ".target.pt"), buf.getvalue(), binary=True)
             buf = io.BytesIO()
             sip_torch.save(self.optimizer.state_dict(), buf)
             _atomic_write(Path(base + ".optim.pt"), buf.getvalue(), binary=True)
@@ -131,6 +152,7 @@ class TorchReplayStrategy:
     def load(self, base: str) -> None:
         try:
             model_file = Path(base + ".model.pt")
+            target_file = Path(base + ".target.pt")
             optim_file = Path(base + ".optim.pt")
             if model_file.exists():
                 state = sip_torch.load(model_file)
@@ -141,6 +163,11 @@ class TorchReplayStrategy:
                     self.model.load_state_dict(state)
                 except Exception as exc:
                     logger.warning("skipping model checkpoint: %s", exc)
+            if target_file.exists():
+                try:
+                    self.target_model.load_state_dict(sip_torch.load(target_file))
+                except Exception as exc:
+                    logger.warning("skipping target checkpoint: %s", exc)
             if optim_file.exists():
                 try:
                     self.optimizer.load_state_dict(sip_torch.load(optim_file))
@@ -179,6 +206,8 @@ class SynergyWeightLearner:
                 weights_lr=getattr(settings, "synergy_weights_lr", 0.1),
                 train_interval=getattr(settings, "synergy_train_interval", 10),
                 replay_size=getattr(settings, "synergy_replay_size", 100),
+                batch_size=getattr(settings, "synergy_batch_size", 32),
+                gamma=getattr(settings, "synergy_gamma", 0.99),
                 checkpoint_interval=getattr(
                     settings, "synergy_checkpoint_interval", 50
                 ),
@@ -258,6 +287,8 @@ class SynergyWeightLearner:
                 lr=self.lr,
                 train_interval=self.train_interval,
                 replay_size=self.replay_size,
+                gamma=float(sy.gamma),
+                batch_size=int(sy.batch_size),
                 optimizer_kwargs=opt_kwargs,
                 net_kwargs=net_kwargs,
             )
