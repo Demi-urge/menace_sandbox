@@ -5,6 +5,7 @@ import importlib.util
 import logging
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Callable
@@ -123,8 +124,15 @@ def initialize_autonomous_sandbox(
     return settings
 
 
-def _verify_required_dependencies(settings: SandboxSettings) -> None:
-    """Exit if required or production optional dependencies are missing."""
+def _verify_required_dependencies(
+    settings: SandboxSettings, auto_install: bool = True
+) -> None:
+    """Exit if required or production optional dependencies are missing.
+
+    When ``auto_install`` is ``True`` missing Python packages are installed via
+    ``pip`` with progress logged.  Installation failures still result in a
+    :class:`SystemExit` for required packages.
+    """
 
     def _have_spec(name: str) -> bool:
         try:
@@ -150,9 +158,29 @@ def _verify_required_dependencies(settings: SandboxSettings) -> None:
     req_pkgs = _clean_list("python package", settings.required_python_packages)
     opt_pkgs = _clean_list("optional python package", settings.optional_python_packages)
 
+    def _pip_install(pkg: str) -> bool:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", pkg],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            logger.info("installed %s", pkg)
+            return True
+        logger.warning("failed to install %s: %s", pkg, result.stderr.strip())
+        return False
+
     missing_sys = [t for t in req_tools if shutil.which(t) is None]
     missing_req = [p for p in req_pkgs if not _have_spec(p)]
     missing_opt = [p for p in opt_pkgs if not _have_spec(p)]
+
+    if auto_install:
+        for pkg in list(missing_req):
+            if _pip_install(pkg) and _have_spec(pkg):
+                missing_req.remove(pkg)
+        for pkg in list(missing_opt):
+            if _pip_install(pkg) and _have_spec(pkg):
+                missing_opt.remove(pkg)
 
     mode = settings.menace_mode.lower()
 
@@ -187,7 +215,9 @@ def _verify_required_dependencies(settings: SandboxSettings) -> None:
 
 def bootstrap_environment(
     settings: SandboxSettings | None = None,
-    verifier: Callable[[SandboxSettings], None] | None = None,
+    verifier: Callable[..., None] | None = None,
+    *,
+    auto_install: bool = True,
 ) -> SandboxSettings:
     """Fully prepare the autonomous sandbox environment.
 
@@ -204,13 +234,19 @@ def bootstrap_environment(
     DefaultConfigManager(str(env_file)).apply_defaults()
     if created_env:
         logger.info("created env file at %s", env_file)
-    (verifier or _verify_required_dependencies)(settings)
+    if verifier:
+        try:
+            verifier(settings, auto_install)  # type: ignore[misc]
+        except TypeError:
+            verifier(settings)  # type: ignore[misc]
+    else:
+        _verify_required_dependencies(settings, auto_install=auto_install)
     return initialize_autonomous_sandbox(settings)
 
 
 def launch_sandbox(
     settings: SandboxSettings | None = None,
-    verifier: Callable[[SandboxSettings], None] | None = None,
+    verifier: Callable[..., None] | None = None,
 ) -> None:
     """Run the sandbox runner using ``settings`` for configuration."""
     settings = bootstrap_environment(settings, verifier)
