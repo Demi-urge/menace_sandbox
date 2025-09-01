@@ -1087,11 +1087,23 @@ class SelfImprovementEngine:
                         extra=log_record(workflow_id=chain_id),
                     )
             if self.data_bot:
+                baseline_roi = 0.0
+                try:
+                    baseline_roi = self.data_bot.roi(self.bot_name)
+                    self.logger.info(
+                        "baseline ROI",
+                        extra=log_record(workflow_id=chain_id, roi=baseline_roi),
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "baseline ROI lookup failed",
+                        extra=log_record(workflow_id=chain_id),
+                    )
                 try:
                     self.data_bot.log_workflow_evolution(
                         workflow_id=abs(hash(chain_id)) % (10**9),
                         variant="meta",
-                        baseline_roi=0.0,
+                        baseline_roi=baseline_roi,
                         variant_roi=roi,
                     )
                 except Exception:
@@ -2499,6 +2511,21 @@ class SelfImprovementEngine:
                 hist_roi = float(getattr(res, "roi", 0.0))
             except Exception:
                 self.logger.exception("pre ROI forecast failed for %s", module)
+        if hist_roi == 0.0 and self.patch_db:
+            try:
+                conn = self.patch_db.router.get_connection("patch_history")
+                row = conn.execute(
+                    "SELECT roi_after FROM patch_history WHERE filename=? ORDER BY id DESC LIMIT 1",
+                    (module,),
+                ).fetchone()
+                if row and row[0] is not None:
+                    hist_roi = float(row[0])
+                    self.logger.info(
+                        "historical ROI",
+                        extra=log_record(module=module, roi=hist_roi),
+                    )
+            except Exception:
+                self.logger.exception("patch history lookup failed for %s", module)
 
         # Recent deltas for core metrics
         perf_delta = self._metric_delta("synergy_roi")
@@ -5894,6 +5921,15 @@ class SelfImprovementEngine:
                 except Exception as exc:
                     self.logger.exception("profit lookup failed: %s", exc)
                     before_roi = 0.0
+            if before_roi == 0.0 and self.data_bot:
+                try:
+                    before_roi = self.data_bot.roi(self.bot_name)
+                    self.logger.info(
+                        "initial ROI",
+                        extra=log_record(roi=before_roi),
+                    )
+                except Exception as exc:
+                    self.logger.exception("ROI lookup failed: %s", exc)
             if self.capital_bot:
                 try:
                     energy = int(
