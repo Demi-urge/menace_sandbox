@@ -351,3 +351,74 @@ class PromptOptimizer:
         if self.stats_path.exists():
             self._load_stats()
         return self.aggregate()
+
+DEFAULT_WEIGHTS_PATH = Path("prompt_format_weights.json")
+
+
+def load_logs(success_path: str | Path, failure_path: str | Path) -> List[Dict[str, Any]]:
+    """Aggregate statistics from ``success_path`` and ``failure_path``.
+
+    Parameters
+    ----------
+    success_path, failure_path:
+        Paths to log files containing successful and failed prompt entries.
+
+    Returns
+    -------
+    list of dict
+        Serialised statistics for each unique prompt configuration.
+    """
+
+    optimizer = PromptOptimizer(success_path, failure_path, stats_path=DEFAULT_WEIGHTS_PATH)
+    return [asdict(stat) for stat in optimizer.stats.values()]
+
+
+def rank_formats() -> List[Dict[str, Any]]:
+    """Return formatting strategies ordered by performance.
+
+    The persisted statistics are loaded from ``prompt_format_weights.json`` and
+    ranked using the combined score of success rate and weighted ROI.
+    """
+
+    path = DEFAULT_WEIGHTS_PATH
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+    ranked: List[Dict[str, Any]] = []
+    for item in data:
+        total = max(int(item.get("total", 0)), 1)
+        success = int(item.get("success", 0))
+        roi_sum = float(item.get("roi_sum", 0.0))
+        weighted_roi_sum = float(item.get("weighted_roi_sum", 0.0))
+        weight_sum = float(item.get("weight_sum", 0.0))
+        success_rate = success / total
+        if weight_sum:
+            weighted_roi = weighted_roi_sum / weight_sum
+        else:
+            weighted_roi = roi_sum / total
+        score = success_rate * max(weighted_roi, 0.0)
+        ranked.append(
+            {
+                "headers": item.get("header_set", []),
+                "tone": item.get("tone", "neutral"),
+                "example_placement": item.get("example_placement", "none"),
+                "success_rate": success_rate,
+                "weighted_roi": weighted_roi,
+                "score": score,
+            }
+        )
+
+    ranked.sort(key=lambda x: x["score"], reverse=True)
+    return ranked
+
+
+def select_format() -> Dict[str, Any]:
+    """Return the single best-performing format configuration."""
+
+    ranked = rank_formats()
+    return ranked[0] if ranked else {}
+
