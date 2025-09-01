@@ -16,7 +16,7 @@ class OpenAILLMClient(LLMClient):
     """Simple client for the OpenAI chat completions API."""
 
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
-        super().__init__(model or "gpt-4o")
+        super().__init__(model or os.getenv("OPENAI_MODEL", "gpt-4o"))
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is required")

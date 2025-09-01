@@ -196,14 +196,24 @@ class LLMClient:
         model: str | None = None,
         *,
         backend: "LLMBackend" | None = None,
+        backends: list["LLMBackend"] | None = None,
         log_prompts: bool = True,
     ) -> None:
-        if model is None and backend is None:
-            raise ValueError("model or backend must be provided")
-        if model is None and backend is not None:
-            model = backend.model
+        if backend and backends:
+            raise ValueError("backend and backends are mutually exclusive")
+        if backends:
+            if model is None:
+                model = backends[0].model
+            self.backends = list(backends)
+            self.backend = None
+        else:
+            if model is None and backend is None:
+                raise ValueError("model or backend must be provided")
+            if model is None and backend is not None:
+                model = backend.model
+            self.backend = backend
+            self.backends = []
         self.model = model or "unknown"
-        self.backend = backend
         self._log_prompts = log_prompts
         if log_prompts:
             from prompt_db import PromptDB
@@ -214,6 +224,27 @@ class LLMClient:
 
     # ------------------------------------------------------------------
     def _generate(self, prompt: Prompt) -> Completion:
+        if self.backends:
+            small = bool(
+                getattr(prompt, "metadata", {}).get("small_task")
+                or getattr(prompt, "metadata", {}).get("small-task")
+            )
+            start = 1 if small and len(self.backends) > 1 else 0
+            errors: list[Exception] = []
+            for backend in self.backends[start:]:
+                try:
+                    return backend.generate(prompt)
+                except Exception as exc:
+                    errors.append(exc)
+            if start:
+                for backend in self.backends[:start]:
+                    try:
+                        return backend.generate(prompt)
+                    except Exception as exc:
+                        errors.append(exc)
+            if errors:
+                raise errors[-1]
+            raise RuntimeError("No available LLM backends")
         if self.backend is None:
             raise NotImplementedError(
                 "Subclasses must implement _generate or provide a backend"
@@ -237,6 +268,35 @@ class LLMClient:
             return result, result.raw
         return result
 
+    # ------------------------------------------------------------------
+    @classmethod
+    def from_env(cls) -> "LLMClient":
+        """Construct a client based on environment variables.
+
+        ``LLM_BACKEND_ORDER`` defines a comma separated list of backend names
+        such as ``"openai,ollama"``.  Model names for individual backends can be
+        customised via ``OPENAI_MODEL``, ``OLLAMA_MODEL`` and ``VLLM_MODEL``.
+        """
+
+        order = os.getenv("LLM_BACKEND_ORDER", "openai,ollama")
+        backends: list[LLMBackend] = []
+        for name in [b.strip().lower() for b in order.split(",") if b.strip()]:
+            if name == "openai":
+                from openai_client import OpenAILLMClient
+
+                backends.append(OpenAILLMClient())
+            elif name == "ollama":
+                from local_backend import OllamaBackend
+
+                backends.append(OllamaBackend())
+            elif name == "vllm":
+                from local_backend import VLLMBackend
+
+                backends.append(VLLMBackend())
+        if not backends:
+            raise RuntimeError("No LLM backends configured via LLM_BACKEND_ORDER")
+        return cls(backends=backends)
+
 
 class OpenAIBackend(LLMClient):
     """Minimal OpenAI chat completion backend using GPT-4o."""
@@ -250,7 +310,7 @@ class OpenAIBackend(LLMClient):
         timeout: float = 30.0,
         max_retries: int = 5,
     ) -> None:
-        super().__init__(model or "gpt-4o")
+        super().__init__(model or os.getenv("OPENAI_MODEL", "gpt-4o"))
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is required")
