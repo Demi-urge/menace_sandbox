@@ -17,8 +17,8 @@ try:  # pragma: no cover - simplified environments may lack full init helpers
     from .self_improvement.init import FileLock, _atomic_write
 except Exception as exc:  # pragma: no cover - fail fast when helpers unavailable
     raise ImportError(
-        "self_learning_coordinator requires self_improvement.init._atomic_write for"
-        " atomic file operations"
+        "self_learning_coordinator requires self_improvement.init._atomic_write "
+        "for atomic file operations"
     ) from exc
 from .unified_event_bus import EventBus
 from .data_bot import MetricsDB

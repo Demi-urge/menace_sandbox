@@ -17,6 +17,9 @@ stub_modules = {
     "menace.error_bot": types.ModuleType("menace.error_bot"),
     "menace.curriculum_builder": types.ModuleType("menace.curriculum_builder"),
     "sandbox_settings": types.ModuleType("sandbox_settings"),
+    "sandbox_runner.bootstrap": types.ModuleType("sandbox_runner.bootstrap"),
+    "menace.self_improvement": types.ModuleType("menace.self_improvement"),
+    "menace.self_improvement.init": types.ModuleType("menace.self_improvement.init"),
 }
 
 stub_modules["menace.unified_event_bus"].EventBus = DummyBus
@@ -57,6 +60,22 @@ class SandboxSettings:
         self.sandbox_data_dir = os.getenv("SANDBOX_DATA_DIR", ".")
 
 stub_modules["sandbox_settings"].SandboxSettings = SandboxSettings
+stub_modules["sandbox_settings"].load_sandbox_settings = lambda: SandboxSettings()
+stub_modules["sandbox_runner.bootstrap"].initialize_autonomous_sandbox = lambda settings=None: settings
+from filelock import FileLock as RealFileLock
+
+
+def atomic_write(path, data, *, lock=None, binary=False):
+    lock = lock or RealFileLock(str(path) + ".lock")
+    mode = "wb" if binary else "w"
+    with lock:
+        with open(path, mode) as fh:
+            fh.write(data)
+
+
+stub_modules["menace.self_improvement.init"].FileLock = RealFileLock
+stub_modules["menace.self_improvement.init"]._atomic_write = atomic_write
+stub_modules["menace.self_improvement"].init = stub_modules["menace.self_improvement.init"]
 
 for name, mod in stub_modules.items():
     sys.modules.setdefault(name, mod)
