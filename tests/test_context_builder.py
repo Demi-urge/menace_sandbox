@@ -3,6 +3,8 @@ import sys
 import types
 from dataclasses import dataclass
 
+from llm_interface import LLMResult
+
 # Stub heavy dependencies before importing the targets
 
 @dataclass
@@ -24,7 +26,15 @@ sys.modules.setdefault(
     "menace.bot_database", types.SimpleNamespace(BotDB=object, BotRecord=_BotRecord)
 )
 sys.modules.setdefault("menace.task_handoff_bot", types.SimpleNamespace(WorkflowDB=object))
-sys.modules.setdefault("menace.db_router", types.SimpleNamespace(DBRouter=object))
+sys.modules.setdefault(
+    "menace.db_router",
+    types.SimpleNamespace(
+        DBRouter=object,
+        GLOBAL_ROUTER=None,
+        LOCAL_TABLES=set(),
+        init_db_router=lambda *a, **k: None,
+    ),
+)
 sys.modules.setdefault("menace.unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
 sys.modules.setdefault("menace.trend_predictor", types.SimpleNamespace(TrendPredictor=object))
 sys.modules.setdefault("menace.menace_memory_manager", types.SimpleNamespace(MenaceMemoryManager=object))
@@ -54,6 +64,12 @@ sys.modules.setdefault(
 sys.modules.setdefault(
     "menace.gpt_knowledge_service", types.SimpleNamespace(GPTKnowledgeService=object)
 )
+sys.modules.setdefault("vector_metrics_db", types.SimpleNamespace(VectorMetricsDB=object))
+pylint_mod = types.ModuleType("pylint")
+pylint_mod.lint = types.SimpleNamespace(Run=lambda *a, **k: None)
+sys.modules.setdefault("pylint", pylint_mod)
+sys.modules.setdefault("pylint.lint", pylint_mod.lint)
+sys.modules.setdefault("pylint.reporters", types.SimpleNamespace(BaseReporter=object))
 for name in [
     "shared_gpt_memory",
     "shared_knowledge_module",
@@ -111,9 +127,9 @@ class DummyClient:
     def __init__(self):
         self.last_prompt = ""
 
-    def ask(self, messages, **kwargs):
-        self.last_prompt = messages[0]["content"]
-        return {"choices": [{"message": {"content": "pass"}}]}
+    def generate(self, prompt):
+        self.last_prompt = getattr(prompt, "text", str(prompt))
+        return LLMResult(text="pass")
 
 
 class MemDB:

@@ -3,6 +3,8 @@ import sys
 import types
 from pathlib import Path
 
+from llm_interface import LLMResult
+
 # Lightweight stubs to satisfy imports
 vec_mod = types.ModuleType("vector_service")
 class _VSError(Exception):
@@ -121,7 +123,7 @@ def test_roi_tracker_logging(caplog):
 
 
 def test_knowledge_service_logging(monkeypatch, caplog):
-    llm = types.SimpleNamespace(gpt_memory=None)
+    llm = types.SimpleNamespace(gpt_memory=None, generate=lambda prompt: LLMResult(text=""))
     engine = SelfCodingEngine(
         object(),
         DummyMemory(),
@@ -137,7 +139,6 @@ def test_knowledge_service_logging(monkeypatch, caplog):
     monkeypatch.setattr(sce, "recent_feedback", boom)
     monkeypatch.setattr(sce, "recent_improvement_path", boom)
     monkeypatch.setattr(sce, "recent_error_fix", boom)
-    monkeypatch.setattr(sce, "ask_with_memory", lambda *a, **k: {})
     monkeypatch.setattr(sce.SelfCodingEngine, "_get_repo_layout", lambda self, lines: "")
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", staticmethod(lambda *a, **k: ""))
     monkeypatch.setattr(
