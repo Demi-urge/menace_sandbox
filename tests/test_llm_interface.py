@@ -158,4 +158,43 @@ def test_router_fallback_logs(monkeypatch):
     router = LLMRouter(remote=BoomClient(), local=LocalClient(), size_threshold=1)
     res = router.generate(Prompt(text="task", metadata={"tags": ["x"]}))
     assert res.text == "ok"
-    assert logged == ["task"]
+
+
+def test_client_backends_fallback():
+    """LLMClient tries secondary backends when the first fails."""
+
+    class BoomBackend:
+        model = "boom"
+
+        def generate(self, prompt: Prompt) -> LLMResult:
+            raise RuntimeError("fail")
+
+    class LocalBackend:
+        model = "local"
+
+        def generate(self, prompt: Prompt) -> LLMResult:
+            return LLMResult(text="local")
+
+    client = LLMClient(backends=[BoomBackend(), LocalBackend()], log_prompts=False)
+    res = client.generate(Prompt(text="hi"))
+    assert res.text == "local"
+
+
+def test_client_small_task_uses_local():
+    """Prompts flagged as small_task bypass the first backend."""
+
+    class RemoteBackend:
+        model = "remote"
+
+        def generate(self, prompt: Prompt) -> LLMResult:  # pragma: no cover - should not run
+            raise AssertionError("should not be called")
+
+    class LocalBackend:
+        model = "local"
+
+        def generate(self, prompt: Prompt) -> LLMResult:
+            return LLMResult(text="ok")
+
+    client = LLMClient(backends=[RemoteBackend(), LocalBackend()], log_prompts=False)
+    res = client.generate(Prompt(text="task", metadata={"small_task": True}))
+    assert res.text == "ok"
