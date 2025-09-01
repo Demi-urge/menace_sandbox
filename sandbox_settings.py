@@ -610,6 +610,16 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_STUB_RANDOM_CONFIG",
         description="JSON-encoded configuration for the random strategy.",
     )
+    stub_random_config_file: str | None = Field(
+        None,
+        env="SANDBOX_RANDOM_CONFIG_FILE",
+        description="Path to JSON/YAML file providing random strategy parameters.",
+    )
+    stub_random_generator: str | None = Field(
+        None,
+        env="SANDBOX_RANDOM_GENERATOR",
+        description="Import path to callable producing random input stubs.",
+    )
     misuse_stubs: bool = Field(
         False,
         env="SANDBOX_MISUSE_STUBS",
@@ -630,6 +640,12 @@ class SandboxSettings(BaseSettings):
                     return json.loads(v) if v else {}
                 except Exception:
                     return {}
+            return v
+
+        @field_validator("stub_random_config_file", "stub_random_generator", mode="before")
+        def _clean_random_fields(cls, v: Any) -> Any:
+            if isinstance(v, str) and not v.strip():
+                return None
             return v
 
         @field_validator("input_history", mode="before")
@@ -653,6 +669,12 @@ class SandboxSettings(BaseSettings):
                     return json.loads(v) if v else {}
                 except Exception:
                     return {}
+            return v
+
+        @field_validator("stub_random_config_file", "stub_random_generator", pre=True)
+        def _clean_random_fields(cls, v: Any) -> Any:  # type: ignore[override]
+            if isinstance(v, str) and not v.strip():
+                return None
             return v
 
         @field_validator("input_history", pre=True)

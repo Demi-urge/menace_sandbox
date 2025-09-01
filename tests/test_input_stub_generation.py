@@ -1,5 +1,6 @@
 import os
 import sys
+import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -7,11 +8,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-sys.modules.pop("sandbox_runner", None)
 
 import importlib  # noqa: E402
 import sandbox_runner.input_history_db as ih  # noqa: E402
 import sandbox_runner.environment as env  # noqa: E402
+import sandbox_runner as sr  # noqa: E402
 
 
 def test_aggregate_history_stubs(tmp_path, monkeypatch):
@@ -47,6 +48,13 @@ def test_generate_input_stubs_use_history(monkeypatch, tmp_path):
 
 
 def test_generate_input_stubs_misuse_env(monkeypatch, tmp_path):
+    class DummyLogger:
+        def __init__(self, *a, **k):
+            pass
+
+    monkeypatch.setitem(
+        sys.modules, "error_logger", types.SimpleNamespace(ErrorLogger=DummyLogger)
+    )
     monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
     monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "random")
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")

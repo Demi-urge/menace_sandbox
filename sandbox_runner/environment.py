@@ -5192,15 +5192,13 @@ def recent_failure_stubs(limit: int = 10) -> List[Dict[str, Any]]:
     return stubs
 
 
-def _load_strategy_hook(env_var: str) -> Callable[..., Any] | None:
-    """Load a strategy hook specified by ``env_var``.
+def _load_callable(path: str | None) -> Callable[..., Any] | None:
+    """Return a callable referenced by ``path``.
 
-    The environment variable should contain ``"module:attr"`` pointing to a
-    callable accepting the same parameters as the corresponding strategy
-    function.
+    ``path`` should be of the form ``"module:attr"``.  When import or
+    resolution fails ``None`` is returned and the exception is logged.
     """
 
-    path = os.getenv(env_var)
     if not path:
         return None
     mod_name, _, attr = path.partition(":")
@@ -5214,6 +5212,12 @@ def _load_strategy_hook(env_var: str) -> Callable[..., Any] | None:
     return None
 
 
+def _load_strategy_hook(env_var: str) -> Callable[..., Any] | None:
+    """Load a strategy hook specified by environment variable ``env_var``."""
+
+    return _load_callable(os.getenv(env_var))
+
+
 def _random_strategy(
     count: int,
     conf: Dict[str, Any] | None = None,
@@ -5222,10 +5226,17 @@ def _random_strategy(
 ) -> List[Dict[str, Any]]:
     rng = rng or random
     conf = conf or {}
-    hook = conf.get("hook") or _load_strategy_hook("SANDBOX_RANDOM_STRATEGY_HOOK")
-    if hook:
+    gen = conf.get("generator") or conf.get("hook")
+    if isinstance(gen, str):
+        gen = _load_callable(gen)
+    if gen is None:
+        gen = _load_strategy_hook("SANDBOX_RANDOM_STRATEGY_HOOK")
+    if gen:
         try:
-            res = hook(count, conf)
+            try:
+                res = gen(count, conf, rng=rng)
+            except TypeError:
+                res = gen(count, conf)
             if res:
                 return [dict(r) for r in res if isinstance(r, dict)]
         except Exception:
@@ -5237,17 +5248,44 @@ def _random_strategy(
     if history:
         return [dict(rng.choice(history)) for _ in range(count)]
 
-    modes = conf.get("modes", ["default", "alt", "stress"])
-    level_range = conf.get("level_range", [1, 5])
-    flags = conf.get("flags", ["A", "B", "C"])
-    flag_prob = float(conf.get("flag_prob", 0.3))
+    config = conf.get("config") or {}
+    if not config:
+        cfg_path = conf.get("config_file")
+        if cfg_path:
+            p = Path(cfg_path)
+            if p.exists():
+                try:
+                    with open(p, "r", encoding="utf-8") as fh:
+                        if p.suffix.lower() in {".yml", ".yaml"}:
+                            data = yaml.safe_load(fh)
+                        else:
+                            data = json.load(fh)
+                    if isinstance(data, dict):
+                        config = dict(data)
+                except Exception:
+                    logger.exception(
+                        "failed to load random strategy config: %s", p
+                    )
+    if not config:
+        agg = aggregate_history_stubs()
+        if agg:
+            return [dict(agg) for _ in range(count)]
+        return [{} for _ in range(count)]
+
+    modes = config.get("modes") or []
+    level_range = config.get("level_range") or []
+    flags = config.get("flags") or []
+    flag_prob = float(config.get("flag_prob", 0.0))
     stubs: List[Dict[str, Any]] = []
     for _ in range(count):
-        stub = {
-            "mode": rng.choice(modes),
-            "level": rng.randint(int(level_range[0]), int(level_range[1])),
-        }
-        if rng.random() < flag_prob and flags:
+        stub: Dict[str, Any] = {}
+        if modes:
+            stub["mode"] = rng.choice(modes)
+        if level_range:
+            start = int(level_range[0])
+            end = int(level_range[1]) if len(level_range) > 1 else start
+            stub["level"] = rng.randint(start, end)
+        if flags and rng.random() < flag_prob:
             stub["flag"] = rng.choice(flags)
         stubs.append(stub)
     return stubs
@@ -5661,7 +5699,11 @@ def generate_input_stubs(
             chosen = "misuse"
             break
         elif strat == "random":
-            conf = settings.stub_random_config
+            conf = dict(settings.stub_random_config)
+            if settings.stub_random_config_file:
+                conf.setdefault("config_file", settings.stub_random_config_file)
+            if settings.stub_random_generator:
+                conf.setdefault("generator", settings.stub_random_generator)
             stubs = _random_strategy(num, conf, rng=rng) or [{}]
             chosen = "random"
             break
