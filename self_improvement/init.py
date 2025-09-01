@@ -2,11 +2,12 @@
 
 The routines expect auxiliary packages to be installed:
 
-* ``quick_fix_engine`` – generates corrective patches.
-* ``sandbox_runner.orphan_integration`` – reintroduces orphaned modules.
+* ``quick_fix_engine`` >=1.0 – generates corrective patches.
+* ``sandbox_runner`` >=1.0 – provides sandbox orchestration helpers.
+* ``neurosales`` – supplies predictive sales models.
 
 Missing dependencies raise :class:`RuntimeError` with guidance on how to
-install them.
+install or upgrade them.
 
 Configuration is provided via :class:`sandbox_settings.SandboxSettings` with
 notable options:
@@ -66,10 +67,24 @@ def verify_dependencies() -> None:
         "quick_fix_engine": {
             "modules": ("quick_fix_engine",),
             "install": "pip install quick_fix_engine",
+            "version": ">=1.0",
+        },
+        "sandbox_runner": {
+            "modules": ("sandbox_runner",),
+            "install": "pip install sandbox_runner",
+            "version": ">=1.0",
         },
         "sandbox_runner.orphan_integration": {
             "modules": ("sandbox_runner.orphan_integration",),
-            "install": "Install the sandbox_runner package or ensure it is on PYTHONPATH.",
+            "install": "pip install sandbox_runner",
+        },
+        "sandbox_runner.environment": {
+            "modules": ("sandbox_runner.environment",),
+            "install": "pip install sandbox_runner",
+        },
+        "neurosales": {
+            "modules": ("neurosales",),
+            "install": "pip install neurosales",
         },
         "relevancy_radar": {
             "modules": ("relevancy_radar",),
@@ -121,8 +136,11 @@ def verify_dependencies() -> None:
             except Exception:
                 installed = "unknown"
             if installed == "unknown" or installed not in SpecifierSet(requirement):
+                cmd = cfg["install"]
+                if cmd.startswith("pip install") and "--upgrade" not in cmd:
+                    cmd += " --upgrade"
                 mismatched.append(
-                    f"{pkg} (installed {installed}, required {requirement})"
+                    f"{pkg} (installed {installed}, required {requirement}) – {cmd}"
                 )
 
     if missing or mismatched:
