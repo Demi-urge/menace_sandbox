@@ -48,6 +48,7 @@ import threading
 import _thread
 import logging
 import multiprocessing
+import pickle
 import traceback
 from dataclasses import dataclass, field
 from time import perf_counter, process_time
@@ -240,6 +241,15 @@ class WorkflowSandboxRunner:
                 file_data[key] = value
 
         if use_subprocess:
+            if audit_hook is not None:
+                try:
+                    pickle.dumps(audit_hook)
+                except Exception as exc:
+                    msg = (
+                        "audit_hook must be picklable when use_subprocess is True: "
+                        f"{exc}"
+                    )
+                    raise ValueError(msg) from exc
             parent_conn, child_conn = multiprocessing.Pipe()
             params = {
                 "safe_mode": safe_mode,
