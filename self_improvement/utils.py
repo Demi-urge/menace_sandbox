@@ -8,6 +8,12 @@ Imports performed via :func:`_load_callable` are memoised using an
 ``functools.lru_cache`` limited to 128 entries to avoid unbounded memory
 growth. The cache state can be reset manually with
 ``clear_import_cache()`` when modules change at runtime or during tests.
+
+The retry helper implements exponential backoff with optional jitter and a
+maximum delay. Delays start at ``base`` and grow as ``base * 2 **
+(``attempt`` - 1)`` for successive attempts. Each delay is randomly jittered
+by up to ``jitter`` percent (for example ``jitter=0.1`` applies ±10% noise)
+before being capped by ``max_delay`` when provided.
 """
 from __future__ import annotations
 
@@ -19,7 +25,7 @@ import inspect
 import random
 import threading
 from functools import lru_cache
-from typing import Any, Callable, Awaitable
+from typing import Any, Callable
 
 from ..metrics_exporter import self_improvement_failure_total
 from ..sandbox_settings import SandboxSettings
@@ -102,8 +108,8 @@ def _call_with_retries(
     ``func`` may be synchronous or return an awaitable. Delays between retries
     can be customised via ``backoff`` (which receives the attempt number and
     base ``delay``), bounded by ``max_delay`` and extended with a random
-    ``jitter``. Logging supports an optional ``context`` dictionary which is
-    attached to each log record via :class:`logging.LoggerAdapter`.
+    ``jitter`` percentage. Logging supports an optional ``context`` dictionary
+    which is attached to each log record via :class:`logging.LoggerAdapter`.
     """
 
     logger = logger or logging.getLogger(__name__)
@@ -113,7 +119,11 @@ def _call_with_retries(
     settings = SandboxSettings()
     if backoff is None:
         factor = getattr(settings, "sandbox_retry_backoff_multiplier", 1.0)
-        backoff = lambda attempt, base: base * attempt * factor
+
+        def default_backoff(attempt: int, base: float, *, _factor=factor) -> float:
+            return base * (2 ** (attempt - 1)) * _factor
+
+        backoff = default_backoff
     if jitter is None:
         jitter = getattr(settings, "sandbox_retry_jitter", 0.0)
 
@@ -143,7 +153,7 @@ def _call_with_retries(
                 if attempt < retries:
                     sleep_for = backoff(attempt, delay)
                     if jitter:
-                        sleep_for += random.uniform(0, jitter)
+                        sleep_for *= random.uniform(1 - jitter, 1 + jitter)
                     if max_delay is not None:
                         sleep_for = min(sleep_for, max_delay)
                     await asyncio.sleep(sleep_for)
@@ -173,7 +183,7 @@ def _call_with_retries(
             if attempt < retries:
                 sleep_for = backoff(attempt, delay)
                 if jitter:
-                    sleep_for += random.uniform(0, jitter)
+                    sleep_for *= random.uniform(1 - jitter, 1 + jitter)
                 if max_delay is not None:
                     sleep_for = min(sleep_for, max_delay)
                 time.sleep(sleep_for)
