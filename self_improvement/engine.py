@@ -361,6 +361,7 @@ from .. import synergy_weight_cli
 from .. import synergy_history_db as shd
 try:  # pragma: no cover - optional dependency
     from ..adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
+    _HAS_ADAPTIVE_ROI_PREDICTOR = True
 except ImportError as exc:  # pragma: no cover - fallback for tests
     get_logger(__name__).warning(
         "adaptive_roi_predictor unavailable",  # noqa: TRY300
@@ -371,6 +372,8 @@ except ImportError as exc:  # pragma: no cover - fallback for tests
 
     def load_training_data(*a, **k):  # type: ignore
         return []
+
+    _HAS_ADAPTIVE_ROI_PREDICTOR = False
 from ..adaptive_roi_dataset import build_dataset
 from ..roi_tracker import ROITracker
 from ..foresight_tracker import ForesightTracker
@@ -899,23 +902,30 @@ class SelfImprovementEngine:
         )
         self.use_adaptive_roi = getattr(settings, "adaptive_roi_prioritization", True)
         if self.use_adaptive_roi:
-            self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
-            self.roi_tracker = roi_tracker or ROITracker(
-                confidence_threshold=self.tau,
-                raroi_borderline_threshold=self.borderline_raroi_threshold,
-                borderline_bucket=self.borderline_bucket,
-            )
-            self._adaptive_roi_last_train = time.time()
-            self.adaptive_roi_train_interval = getattr(
-                settings, "adaptive_roi_train_interval", 3600
-            )
+            if _HAS_ADAPTIVE_ROI_PREDICTOR:
+                self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
+                self.roi_tracker = roi_tracker or ROITracker(
+                    confidence_threshold=self.tau,
+                    raroi_borderline_threshold=self.borderline_raroi_threshold,
+                    borderline_bucket=self.borderline_bucket,
+                )
+                self._adaptive_roi_last_train = time.time()
+            else:
+                logger.warning(
+                    "adaptive_roi_predictor missing - disabling adaptive ROI",
+                    extra=log_record(module=__name__),
+                )
+                self.use_adaptive_roi = False
+                self.roi_predictor = None
+                self.roi_tracker = None
+                self._adaptive_roi_last_train = 0.0
         else:
             self.roi_predictor = None
             self.roi_tracker = None
             self._adaptive_roi_last_train = 0.0
-            self.adaptive_roi_train_interval = getattr(
-                settings, "adaptive_roi_train_interval", 3600
-            )
+        self.adaptive_roi_train_interval = getattr(
+            settings, "adaptive_roi_train_interval", 3600
+        )
         metrics_db = data_bot.db if data_bot else MetricsDB()
         self.pathway_db = PathwayDB()
         self.workflow_scorer = CompositeWorkflowScorer(
