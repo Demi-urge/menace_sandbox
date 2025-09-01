@@ -342,6 +342,9 @@ class SandboxSettings(BaseSettings):
     sandbox_module_threshold: float | None = Field(None, env="SANDBOX_MODULE_THRESHOLD")
     sandbox_semantic_modules: bool = Field(False, env="SANDBOX_SEMANTIC_MODULES")
     sandbox_stub_model: str | None = Field(None, env="SANDBOX_STUB_MODEL")
+    risk_weight_commit: float = Field(0.2, env="RISK_WEIGHT_COMMIT")
+    risk_weight_complexity: float = Field(0.4, env="RISK_WEIGHT_COMPLEXITY")
+    risk_weight_failures: float = Field(0.4, env="RISK_WEIGHT_FAILURES")
     llm_backend: str = Field("openai", env="LLM_BACKEND")
     llm_fallback_backend: str | None = Field(None, env="LLM_FALLBACK_BACKEND")
     preferred_llm_backend: str = Field(

@@ -70,6 +70,13 @@ settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 - `temperature`: `1.0`
 - `exploration`: `epsilon_greedy`
 
+## Risk analysis defaults
+- `risk_weight_commit`: `0.2`
+- `risk_weight_complexity`: `0.4`
+- `risk_weight_failures`: `0.4`
+
+These weights influence the risk score produced by `_analyse_module`.
+
 ## Prompt logging defaults
 - `prompt_success_log_path`: `prompt_success_log.json` (`PROMPT_SUCCESS_LOG_PATH`)
 - `prompt_failure_log_path`: `prompt_failure_log.json` (`PROMPT_FAILURE_LOG_PATH`)

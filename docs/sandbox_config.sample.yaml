@@ -47,3 +47,6 @@ alignment:
     comment_density_severity: 2
     network_call_severity: 3
     rule_modules: []
+risk_weight_commit: 0.2
+risk_weight_complexity: 0.4
+risk_weight_failures: 0.4
