@@ -1368,7 +1368,11 @@ class SelfImprovementEngine:
                     if row:
                         roi_meta["tests_passed"] = bool(row[0])
                 except Exception:
-                    pass
+                    self.logger.exception(
+                        "failed to fetch patch test result",
+                        extra=log_record(module=module, patch_id=patch_id),
+                    )
+                    raise
         if not success:
             fails: List[str] = []
             if error_trace:
