@@ -72,11 +72,17 @@ def test_router_fallback_on_error():
 def test_openai_provider_retry_and_logging(monkeypatch):
     """OpenAIProvider retries on 429 responses and logs the interaction."""
 
-    from llm_interface import OpenAIProvider, requests, time as llm_time, Prompt, LLMResult
+    from llm_interface import OpenAIProvider, requests, Prompt, LLMResult, rate_limit
 
     # Capture sleep calls to assert backoff behaviour
     sleeps: list[float] = []
-    monkeypatch.setattr(llm_time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(
+        rate_limit,
+        "sleep_with_backoff",
+        lambda attempt, base=1.0, max_delay=60.0: sleeps.append(
+            min(base * (2**attempt), max_delay)
+        ),
+    )
     monkeypatch.setattr(random, "uniform", lambda a, b: 0)
 
     # Stub PromptDB to record log invocations
