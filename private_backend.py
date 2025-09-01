@@ -3,19 +3,26 @@ from __future__ import annotations
 """Backend loading local model weights via HuggingFace transformers."""
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, AsyncGenerator
+import asyncio
 import time
+import threading
 
 import llm_config
 import rate_limit
 from llm_interface import Prompt, LLMResult, LLMBackend, LLMClient
 
 try:  # pragma: no cover - optional dependency
-    from transformers import AutoModelForCausalLM, AutoTokenizer  # type: ignore
+    from transformers import (  # type: ignore
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        TextIteratorStreamer,
+    )
     import torch  # type: ignore
 except Exception:  # pragma: no cover - transformers may not be installed
     AutoModelForCausalLM = None  # type: ignore
     AutoTokenizer = None  # type: ignore
+    TextIteratorStreamer = None  # type: ignore
     torch = None  # type: ignore
 
 
@@ -75,9 +82,59 @@ class LocalWeightsBackend(LLMBackend):
 
         raise RuntimeError("Failed to obtain completion from local weights backend")
 
+    async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+        cfg = llm_config.get_config()
+        retries = cfg.max_retries
+        prompt_tokens = rate_limit.estimate_tokens(prompt.text, model=self.model)
+
+        for attempt in range(retries):
+            self._rate_limiter.update_rate(cfg.tokens_per_minute)
+            self._rate_limiter.consume(prompt_tokens)
+            try:
+                inputs = self._tokenizer(prompt.text, return_tensors="pt")
+                if torch is not None:
+                    inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+                streamer = TextIteratorStreamer(
+                    self._tokenizer, skip_prompt=True, skip_special_tokens=True
+                )
+
+                def run_generate() -> None:
+                    self._model.generate(
+                        **inputs, max_new_tokens=256, streamer=streamer
+                    )
+
+                thread = threading.Thread(target=run_generate)
+                thread.start()
+
+                text_parts: list[str] = []
+                while True:
+                    chunk = await asyncio.to_thread(lambda: next(streamer, None))
+                    if chunk is None:
+                        break
+                    text_parts.append(chunk)
+                    yield chunk
+
+                thread.join()
+                completion_tokens = rate_limit.estimate_tokens(
+                    "".join(text_parts), model=self.model
+                )
+                self._rate_limiter.consume(completion_tokens)
+                return
+            except Exception:  # pragma: no cover - generation failure
+                if attempt == retries - 1:
+                    raise
+            rate_limit.sleep_with_backoff(attempt)
+
+        raise RuntimeError("Failed to obtain completion from local weights backend")
+
 
 def local_weights_client(model: str | None = None, device: str = "cpu") -> LLMClient:
-    """Return an :class:`LLMClient` using :class:`LocalWeightsBackend`."""
+    """Return an :class:`LLMClient` using :class:`LocalWeightsBackend`.
+
+    The returned client's :meth:`LLMClient.async_generate` method can be used to
+    stream tokens incrementally from the local model.
+    """
 
     model = model or llm_config.get_config().model
     backend = LocalWeightsBackend(model=model, device=device)
