@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List
 
 from db_router import DBRouter, LOCAL_TABLES
-from llm_interface import Prompt, LLMResult
+from llm_interface import Completion, Prompt
 
 # Ensure the prompts table is treated as local
 LOCAL_TABLES.add("prompts")
@@ -45,10 +45,12 @@ class PromptDB:
     def log_prompt(
         self,
         prompt: Prompt,
-        result: LLMResult,
-        outcome_tags: List[str],
-        vector_confidences: List[float],
+        result: Completion,
+        outcome_tags: List[str] | None = None,
+        vector_confidences: List[float] | None = None,
     ) -> None:
+        vector_confidences = vector_confidences or prompt.vector_confidences
+        outcome_tags = outcome_tags or prompt.outcome_tags
         cur = self.conn.cursor()
         cur.execute(
             """
