@@ -29,9 +29,15 @@ from llm_interface import Prompt
 from snippet_compressor import compress_snippets
 
 try:  # pragma: no cover - optional runtime dependency
-    from prompt_optimizer import PromptOptimizer  # type: ignore
+    from prompt_optimizer import (
+        PromptOptimizer,
+        select_format as _select_optimizer_format,
+    )  # type: ignore
 except Exception:  # pragma: no cover - degrade gracefully
     PromptOptimizer = None  # type: ignore
+
+    def _select_optimizer_format(*_a: Any, **_k: Any) -> Dict[str, Any]:  # type: ignore
+        return {}
 
 try:  # pragma: no cover - optional runtime dependency
     from prompt_memory_trainer import PromptMemoryTrainer  # type: ignore
@@ -231,6 +237,22 @@ class PromptEngine:
             except Exception:
                 self.optimizer = None
         self._load_trained_config()
+        # Apply persisted optimiser preferences
+        fmt: Dict[str, Any] = {}
+        if self.optimizer and hasattr(self.optimizer, "select_format"):
+            try:  # pragma: no cover - best effort
+                fmt = self.optimizer.select_format(__name__, "build_prompt")
+            except Exception:
+                fmt = {}
+        else:
+            try:  # pragma: no cover - best effort
+                fmt = _select_optimizer_format()
+                if fmt.get("headers") and "structured_sections" not in fmt:
+                    fmt["structured_sections"] = fmt.pop("headers")
+            except Exception:
+                fmt = {}
+        if fmt:
+            self._apply_optimizer_preferences(fmt)
 
     # ------------------------------------------------------------------
     def _load_trained_config(
@@ -375,6 +397,31 @@ class PromptEngine:
                     self.max_tokens = max(self.max_tokens, 300)
 
     # ------------------------------------------------------------------
+    def _apply_optimizer_preferences(self, prefs: Dict[str, Any]) -> None:
+        """Update formatting parameters from optimiser ``prefs``.
+
+        The mapping may contain ``tone``, ``headers`` or ``structured_sections``,
+        ``example_order`` and ``example_placement`` keys. Missing keys leave the
+        existing configuration untouched.
+        """
+
+        tone = prefs.get("tone")
+        if isinstance(tone, str):
+            self.tone = tone
+        headers = prefs.get("headers")
+        if isinstance(headers, list) and headers:
+            self.trained_headers = [str(h) for h in headers]
+        structured = prefs.get("structured_sections")
+        if isinstance(structured, list) and structured:
+            self.trained_structured_sections = [str(s) for s in structured]
+        order = prefs.get("example_order")
+        if isinstance(order, list) and order:
+            self.trained_example_order = [str(o) for o in order]
+        placement = prefs.get("example_placement")
+        if isinstance(placement, str):
+            self.trained_example_placement = placement
+
+    # ------------------------------------------------------------------
     def after_patch_cycle(self) -> None:
         """Backward compatible wrapper for :meth:`refresh_trained_config`."""
 
@@ -397,28 +444,21 @@ class PromptEngine:
         self._load_trained_config(
             summary, version=getattr(self.trainer, "STYLE_VERSION", 0)
         )
-        if self.optimizer:
+        prefs: Dict[str, Any] = {}
+        if self.optimizer and hasattr(self.optimizer, "select_format"):
             try:  # pragma: no cover - best effort suggestions
-                opts = self.optimizer.suggest_format(__name__, "build_prompt", limit=1)
+                prefs = self.optimizer.select_format(__name__, "build_prompt")
             except Exception:
-                opts = []
-            if opts:
-                fmt = opts[0]
-                tone = fmt.get("tone")
-                if isinstance(tone, str):
-                    self.tone = tone
-                headers = fmt.get("headers")
-                if isinstance(headers, list) and headers:
-                    self.trained_headers = [str(h) for h in headers]
-                order = fmt.get("example_order")
-                if isinstance(order, list) and order:
-                    self.trained_example_order = [str(o) for o in order]
-                structured = fmt.get("structured_sections")
-                if isinstance(structured, list) and structured:
-                    self.trained_structured_sections = [str(s) for s in structured]
-                placement = fmt.get("example_placement")
-                if isinstance(placement, str):
-                    self.trained_example_placement = placement
+                prefs = {}
+        else:
+            try:  # pragma: no cover - best effort suggestions
+                prefs = _select_optimizer_format()
+                if prefs.get("headers") and "structured_sections" not in prefs:
+                    prefs["structured_sections"] = prefs.pop("headers")
+            except Exception:
+                prefs = {}
+        if prefs:
+            self._apply_optimizer_preferences(prefs)
 
     # ------------------------------------------------------------------
     def refresh_optimizer(self) -> None:
@@ -426,8 +466,13 @@ class PromptEngine:
 
         if not self.optimizer:
             return
+        func = getattr(self.optimizer, "refresh", None)
+        if func is None:
+            func = getattr(self.optimizer, "aggregate", None)
+        if not func:
+            return
         try:  # pragma: no cover - best effort
-            self.optimizer.refresh()
+            func()
         except Exception:
             pass
 
@@ -595,25 +640,21 @@ class PromptEngine:
         ``confidence_threshold`` a static fallback template is returned.
         """
         self._maybe_refresh_optimizer()
-        if self.optimizer:
+        prefs: Dict[str, Any] = {}
+        if self.optimizer and hasattr(self.optimizer, "select_format"):
             try:  # pragma: no cover - best effort
-                opts = self.optimizer.suggest_format(__name__, "build_prompt", limit=1)
+                prefs = self.optimizer.select_format(__name__, "build_prompt")
             except Exception:
-                opts = []
-            if opts:
-                prefs = opts[0]
-                if tone is None and prefs.get("tone"):
-                    self.tone = prefs["tone"]
-                headers = prefs.get("headers")
-                if isinstance(headers, list) and headers:
-                    self.trained_headers = [str(h) for h in headers]
-                order = prefs.get("example_order")
-                if isinstance(order, list) and order:
-                    self.trained_example_order = [str(o) for o in order]
-                if prefs.get("structured_sections"):
-                    self.trained_structured_sections = prefs["structured_sections"]
-                if prefs.get("example_placement"):
-                    self.trained_example_placement = prefs["example_placement"]
+                prefs = {}
+        else:
+            try:  # pragma: no cover - best effort
+                prefs = _select_optimizer_format()
+                if prefs.get("headers") and "structured_sections" not in prefs:
+                    prefs["structured_sections"] = prefs.pop("headers")
+            except Exception:
+                prefs = {}
+        if prefs:
+            self._apply_optimizer_preferences(prefs)
         if tone is not None:
             self.tone = tone
         retriever = self.patch_retriever or self.retriever
