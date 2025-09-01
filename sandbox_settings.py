@@ -340,7 +340,7 @@ class SandboxSettings(BaseSettings):
     )
     available_backends: dict[str, str] = Field(
         default_factory=lambda: {
-            "openai": "openai_client.OpenAILLMClient",
+            "openai": "llm_interface.OpenAIProvider",
             "ollama": "local_client.OllamaClient",
             "vllm": "local_client.VLLMClient",
         },

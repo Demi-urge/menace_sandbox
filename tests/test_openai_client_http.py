@@ -1,11 +1,10 @@
 import json
 import requests
+import rate_limit
 
-import openai_client
 import local_backend
-from openai_client import OpenAILLMClient
 from local_backend import OllamaBackend
-from llm_interface import Prompt, LLMClient
+from llm_interface import Prompt, LLMClient, OpenAIProvider
 
 
 class DummyResp:
@@ -22,11 +21,12 @@ class DummyResp:
 
 
 def test_openai_success_logging_and_parsing(monkeypatch, tmp_path):
+    monkeypatch.setattr(OpenAIProvider, "generate", LLMClient.generate)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("PROMPT_DB_PATH", str(tmp_path / "prompts.db"))
-    client = OpenAILLMClient(model="gpt-test")
+    client = OpenAIProvider(model="gpt-test")
 
-    resp = DummyResp(200, {"choices": [{"message": {"content": "{\"a\": 1}"}}]})
+    resp = DummyResp(200, {"choices": [{"message": {"content": json.dumps({"a": 1})}}]})
     monkeypatch.setattr(
         client._session,
         "post",
@@ -47,12 +47,13 @@ def test_openai_success_logging_and_parsing(monkeypatch, tmp_path):
 
 
 def test_openai_rate_limit_retry(monkeypatch, tmp_path):
+    monkeypatch.setattr(OpenAIProvider, "generate", LLMClient.generate)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("PROMPT_DB_PATH", str(tmp_path / "prompts.db"))
-    client = OpenAILLMClient(model="gpt-test")
+    client = OpenAIProvider(model="gpt-test")
     sleeps: list[float] = []
     monkeypatch.setattr(
-        openai_client.rate_limit,
+        rate_limit,
         "sleep_with_backoff",
         lambda attempt, base=1.0, max_delay=60.0: sleeps.append(
             min(base * (2**attempt), max_delay)
@@ -76,14 +77,15 @@ def test_openai_rate_limit_retry(monkeypatch, tmp_path):
 
 
 def test_client_fallback_to_local_backend(monkeypatch, tmp_path):
+    monkeypatch.setattr(OpenAIProvider, "generate", LLMClient.generate)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("PROMPT_DB_PATH", str(tmp_path / "prompts.db"))
 
-    openai_backend = OpenAILLMClient(model="gpt-test")
+    openai_backend = OpenAIProvider(model="gpt-test")
     openai_backend._log_prompts = False
     openai_backend.db = None
     monkeypatch.setattr(
-        openai_client.rate_limit,
+        rate_limit,
         "sleep_with_backoff",
         lambda attempt, base=1.0, max_delay=60.0: None,
     )
@@ -95,7 +97,7 @@ def test_client_fallback_to_local_backend(monkeypatch, tmp_path):
 
     local = OllamaBackend(model="local", base_url="http://llm")
 
-    resp = DummyResp(200, {"text": "{\"b\": 2}"})
+    resp = DummyResp(200, {"text": json.dumps({"b": 2})})
 
     def local_post(url, json=None, timeout=None):
         return resp

@@ -7,7 +7,7 @@ from typing import Dict, Type
 from llm_interface import LLMClient
 
 try:  # pragma: no cover - optional dependencies
-    from openai_client import OpenAILLMClient as OpenAIClient
+    from llm_interface import OpenAIProvider as OpenAIClient
 except Exception:  # pragma: no cover - if module missing
     OpenAIClient = None  # type: ignore[assignment]
 

@@ -1,9 +1,9 @@
+
 import json
 import os
 
 from prompt_db import PromptDB
-from llm_interface import Prompt, LLMResult
-from openai_client import OpenAILLMClient
+from llm_interface import Prompt, LLMResult, OpenAIProvider, LLMClient
 
 
 def test_log(tmp_path):
@@ -39,12 +39,13 @@ def test_log(tmp_path):
 def test_openai_client_logs_prompt(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "dummy")
     monkeypatch.setenv("PROMPT_DB_PATH", str(tmp_path / "prompts.db"))
-    client = OpenAILLMClient(model="gpt-test")
+    monkeypatch.setattr(OpenAIProvider, "generate", LLMClient.generate)
+    client = OpenAIProvider(model="gpt-test")
 
-    def fake_request(self, payload):
-        return {"choices": [{"message": {"content": "world"}}]}
+    def fake_generate(self, prompt):
+        return LLMResult(text="world", raw={"choices": [{"message": {"content": "world"}}]})
 
-    monkeypatch.setattr(OpenAILLMClient, "_request", fake_request)
+    monkeypatch.setattr(OpenAIProvider, "_generate", fake_generate)
     prompt = Prompt(text="hi", metadata={"tags": ["t"], "vector_confidences": [0.9]})
     res = client.generate(prompt)
     assert res.text == "world"
