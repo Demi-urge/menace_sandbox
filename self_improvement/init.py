@@ -55,74 +55,52 @@ def verify_dependencies() -> None:
     checks = {
         "quick_fix_engine": (
             ("quick_fix_engine",),
-            "quick_fix_engine",
             "Install it with 'pip install quick_fix_engine'.",
         ),
         "sandbox_runner.orphan_integration": (
             ("sandbox_runner.orphan_integration",),
-            "sandbox_runner",
             "Install the sandbox_runner package or ensure it is on PYTHONPATH.",
         ),
         "relevancy_radar": (
             ("relevancy_radar",),
-            "relevancy_radar",
             "Install it with 'pip install relevancy_radar'.",
         ),
         "error_logger": (
             ("error_logger",),
-            "error_logger",
             "Ensure the error_logger module is available.",
         ),
         "telemetry_feedback": (
             ("telemetry_feedback",),
-            "telemetry_feedback",
             "Ensure telemetry helpers are available.",
         ),
         "telemetry_backend": (
             ("telemetry_backend",),
-            "telemetry_backend",
             "Ensure telemetry helpers are available.",
         ),
         "torch": (
             ("torch", "pytorch"),
-            "torch",
             "Install PyTorch with 'pip install torch' to enable reinforcement-learning components.",
         ),
     }
 
-    import subprocess
-    import sys
-
     missing: list[str] = []
-    for name, (modules, pkg, guidance) in checks.items():
+    for name, (modules, guidance) in checks.items():
         if isinstance(modules, str):
             modules = (modules,)
-        available = False
         last_exc: Exception | None = None
         for module in modules:  # pragma: no cover - import guidance
             try:
                 importlib.import_module(module)
-                available = True
                 break
-            except Exception:
-                try:
-                    subprocess.check_call(
-                        [sys.executable, "-m", "pip", "install", pkg],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    importlib.import_module(module)
-                    available = True
-                    break
-                except Exception as exc:
-                    last_exc = exc
-                    logger.debug(
-                        "auto-install for %s failed",
-                        module,
-                        extra=log_record(dependency=module, package=pkg, error=str(exc)),
-                        exc_info=exc,
-                    )
-        if not available:
+            except Exception as exc:
+                last_exc = exc
+                logger.debug(
+                    "import for %s failed",
+                    module,
+                    extra=log_record(dependency=module, error=str(exc)),
+                    exc_info=exc,
+                )
+        else:
             msg = f"{name} – {guidance}"
             if last_exc:
                 msg += f" ({last_exc})"
