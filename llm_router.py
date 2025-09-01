@@ -2,35 +2,23 @@ from __future__ import annotations
 
 """Routing helpers for language model backends."""
 
-from typing import Dict, Callable
+from importlib import import_module
+from typing import Callable, Dict
 
 from llm_interface import Prompt, LLMResult, LLMClient
 from sandbox_settings import SandboxSettings
 
-# Deferred imports to avoid pulling in heavy dependencies on module import.
 ClientFactory = Callable[[], LLMClient]
 
 
-def _openai_factory() -> LLMClient:  # pragma: no cover - simple wrapper
-    from openai_client import OpenAILLMClient
-    return OpenAILLMClient()
-
-
-def _ollama_factory() -> LLMClient:  # pragma: no cover - simple wrapper
-    from local_client import OllamaClient
-    return OllamaClient()
-
-
-def _vllm_factory() -> LLMClient:  # pragma: no cover - simple wrapper
-    from local_client import VLLMClient
-    return VLLMClient()
-
-
-_FACTORIES: Dict[str, ClientFactory] = {
-    "openai": _openai_factory,
-    "ollama": _ollama_factory,
-    "vllm": _vllm_factory,
-}
+def _factory_from_path(path: str) -> ClientFactory:
+    """Resolve *path* to a callable returning an :class:`LLMClient`."""
+    module_name, attr_name = path.rsplit(".", 1)
+    module = import_module(module_name)
+    factory = getattr(module, attr_name)
+    if not callable(factory):  # pragma: no cover - defensive
+        raise TypeError(f"Backend factory at {path!r} is not callable")
+    return factory
 
 
 class LLMRouter(LLMClient):
@@ -55,32 +43,38 @@ class LLMRouter(LLMClient):
             return fallback.generate(prompt)
 
 
-def client_from_settings(settings: SandboxSettings | None = None, *, size_threshold: int = 1000) -> LLMClient:
+def client_from_settings(
+    settings: SandboxSettings | None = None, *, size_threshold: int = 1000
+) -> LLMClient:
     """Create an :class:`LLMClient` based on :class:`SandboxSettings`.
 
-    When a fallback backend is configured, an :class:`LLMRouter` is returned
-    that dispatches between the primary (assumed remote) and fallback
-    (assumed local) backends.
+    ``SandboxSettings.available_backends`` maps backend names to dotted import
+    paths referencing factories or classes returning :class:`LLMClient`
+    instances.  The ``preferred_llm_backend`` selects the primary backend while
+    ``llm_fallback_backend`` optionally specifies a secondary backend used by
+    :class:`LLMRouter` as a fallback.
     """
     settings = settings or SandboxSettings()
-    backend = settings.llm_backend.lower()
+    backends: Dict[str, str] = {
+        k.lower(): v for k, v in settings.available_backends.items()
+    }
+    backend = settings.preferred_llm_backend or settings.llm_backend
+    backend = backend.lower()
     fallback = settings.llm_fallback_backend
     fallback = fallback.lower() if fallback else None
 
-    try:
-        primary_factory = _FACTORIES[backend]
-    except KeyError as exc:  # pragma: no cover - defensive
-        raise ValueError(f"Unknown LLM backend: {backend}") from exc
-    primary = primary_factory()
+    def _make(name: str) -> LLMClient:
+        try:
+            path = backends[name]
+        except KeyError as exc:  # pragma: no cover - defensive
+            raise ValueError(f"Unknown LLM backend: {name}") from exc
+        factory = _factory_from_path(path)
+        return factory()
 
+    primary = _make(backend)
     if not fallback:
         return primary
-
-    try:
-        fallback_factory = _FACTORIES[fallback]
-    except KeyError as exc:  # pragma: no cover - defensive
-        raise ValueError(f"Unknown fallback backend: {fallback}") from exc
-    fallback_client = fallback_factory()
+    fallback_client = _make(fallback)
     return LLMRouter(remote=primary, local=fallback_client, size_threshold=size_threshold)
 
 

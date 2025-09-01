@@ -320,6 +320,20 @@ class SandboxSettings(BaseSettings):
     sandbox_stub_model: str | None = Field(None, env="SANDBOX_STUB_MODEL")
     llm_backend: str = Field("openai", env="LLM_BACKEND")
     llm_fallback_backend: str | None = Field(None, env="LLM_FALLBACK_BACKEND")
+    preferred_llm_backend: str = Field(
+        "openai",
+        env="PREFERRED_LLM_BACKEND",
+        description="Primary LLM backend to use when multiple are available.",
+    )
+    available_backends: dict[str, str] = Field(
+        default_factory=lambda: {
+            "openai": "openai_client.OpenAILLMClient",
+            "ollama": "local_client.OllamaClient",
+            "vllm": "local_client.VLLMClient",
+        },
+        env="AVAILABLE_LLM_BACKENDS",
+        description="Mapping of backend names to import paths for LLM client factories.",
+    )
     huggingface_token: str | None = Field(
         None, env=["HUGGINGFACE_API_TOKEN", "HF_TOKEN"]
     )
@@ -430,6 +444,15 @@ class SandboxSettings(BaseSettings):
                 except Exception:
                     return {}
             return v
+
+        @field_validator("available_backends", mode="before")
+        def _parse_available_backends(cls, v: Any) -> Any:
+            if isinstance(v, str):
+                try:
+                    return json.loads(v) if v else {}
+                except Exception:
+                    return {}
+            return v
     else:  # pragma: no cover - pydantic<2
 
         @field_validator(
@@ -450,6 +473,15 @@ class SandboxSettings(BaseSettings):
 
         @field_validator("optional_service_versions", pre=True)
         def _parse_optional_service_versions(cls, v: Any) -> Any:  # type: ignore[override]
+            if isinstance(v, str):
+                try:
+                    return json.loads(v) if v else {}
+                except Exception:
+                    return {}
+            return v
+
+        @field_validator("available_backends", pre=True)
+        def _parse_available_backends(cls, v: Any) -> Any:  # type: ignore[override]
             if isinstance(v, str):
                 try:
                     return json.loads(v) if v else {}
