@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -48,69 +50,116 @@ settings = SandboxSettings()
 
 
 def verify_dependencies() -> None:
-    """Ensure optional helper packages for self-improvement are available.
+    """Validate required helper modules and their versions.
 
-    The function only validates the presence of known helper packages and
-    collects a list of missing ones.  No installation attempts are performed;
-    instead, clear instructions on how to install the dependencies are
-    provided in the raised error.
+    When ``settings.auto_install_dependencies`` is ``True`` missing or
+    mismatched dependencies trigger a ``pip install`` attempt.  Offline mode is
+    respected via ``settings.menace_offline_install`` and results in actionable
+    error messages instead of install attempts.
     """
 
-    import importlib.util
+    import importlib
+    from importlib import metadata
+    from packaging.specifiers import SpecifierSet
 
-    checks = {
-        "quick_fix_engine": (
-            ("quick_fix_engine",),
-            "Install it with 'pip install quick_fix_engine'.",
-        ),
-        "sandbox_runner.orphan_integration": (
-            ("sandbox_runner.orphan_integration",),
-            "Install the sandbox_runner package or ensure it is on PYTHONPATH.",
-        ),
-        "relevancy_radar": (
-            ("relevancy_radar",),
-            "Install it with 'pip install relevancy_radar'.",
-        ),
-        "error_logger": (
-            ("error_logger",),
-            "Ensure the error_logger module is available.",
-        ),
-        "telemetry_feedback": (
-            ("telemetry_feedback",),
-            "Ensure telemetry helpers are available.",
-        ),
-        "telemetry_backend": (
-            ("telemetry_backend",),
-            "Ensure telemetry helpers are available.",
-        ),
-        "torch": (
-            ("torch", "pytorch"),
-            "Install PyTorch with 'pip install torch' to enable reinforcement-learning components.",
-        ),
+    checks: dict[str, dict[str, Any]] = {
+        "quick_fix_engine": {
+            "modules": ("quick_fix_engine",),
+            "install": "pip install quick_fix_engine",
+        },
+        "sandbox_runner.orphan_integration": {
+            "modules": ("sandbox_runner.orphan_integration",),
+            "install": "Install the sandbox_runner package or ensure it is on PYTHONPATH.",
+        },
+        "relevancy_radar": {
+            "modules": ("relevancy_radar",),
+            "install": "pip install relevancy_radar",
+        },
+        "error_logger": {
+            "modules": ("error_logger",),
+            "install": "Ensure the error_logger module is available.",
+        },
+        "telemetry_feedback": {
+            "modules": ("telemetry_feedback",),
+            "install": "Ensure telemetry helpers are available.",
+        },
+        "telemetry_backend": {
+            "modules": ("telemetry_backend",),
+            "install": "Ensure telemetry helpers are available.",
+        },
+        "torch": {
+            "modules": ("torch", "pytorch"),
+            "install": "pip install torch",
+            "version": ">=2.0",  # Reinforcement learning components require modern torch
+        },
     }
 
     missing: list[str] = []
-    for name, (modules, guidance) in checks.items():
-        if isinstance(modules, str):
-            modules = (modules,)
+    mismatched: list[str] = []
 
-        for module in modules:  # pragma: no cover - availability check
-            spec = importlib.util.find_spec(module)
-            if spec is not None:
+    for pkg, cfg in checks.items():
+        modules = cfg["modules"]
+        requirement = cfg.get("version")
+        found = None
+        for mod in modules:
+            try:
+                importlib.import_module(mod)
+                found = mod
                 break
-            logger.debug(
-                "module %s not found",
-                module,
-                extra=log_record(dependency=module),
-            )
-        else:
-            missing.append(f"{name} – {guidance}")
+            except Exception:
+                logger.debug(
+                    "module %s not found",
+                    mod,
+                    extra=log_record(dependency=mod),
+                )
+        if not found:
+            missing.append(f"{pkg} – {cfg['install']}")
+            continue
+        if requirement:
+            try:
+                installed = metadata.version(pkg.split(".")[0])
+            except Exception:
+                installed = "unknown"
+            if installed == "unknown" or installed not in SpecifierSet(requirement):
+                mismatched.append(
+                    f"{pkg} (installed {installed}, required {requirement})"
+                )
 
-    if missing:
-        message = (
-            "Missing dependencies for self-improvement:\n  - "
-            + "\n  - ".join(missing)
-        )
+    if missing or mismatched:
+        lines: list[str] = []
+        if missing:
+            lines.append("Missing dependencies for self-improvement:\n  - " + "\n  - ".join(missing))
+        if mismatched:
+            lines.append("Version mismatches:\n  - " + "\n  - ".join(mismatched))
+        message = "\n".join(lines)
+
+        if missing and settings.auto_install_dependencies:
+            if settings.menace_offline_install:
+                message += "\nOffline mode is enabled; install the dependencies manually."
+                raise RuntimeError(message)
+            for pkg in missing:
+                name = pkg.split(" – ", 1)[0]
+                requirement = checks[name].get("version") or ""
+                req = f"{name}{requirement}" if requirement else name
+                try:
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", req])
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.warning(
+                        "auto install failed for %s: %s",
+                        name,
+                        exc,
+                        extra=log_record(dependency=name, error=str(exc)),
+                    )
+                    raise RuntimeError(message) from exc
+            # Re-run to verify after installation
+            original = settings.auto_install_dependencies
+            settings.auto_install_dependencies = False
+            try:
+                verify_dependencies()
+            finally:
+                settings.auto_install_dependencies = original
+            return
+
         raise RuntimeError(message)
 
 

@@ -75,3 +75,44 @@ def test_verify_dependencies_does_not_attempt_install(monkeypatch):
     assert "quick_fix_engine" in str(err.value)
     assert calls["import"] == 1
 
+
+def test_verify_dependencies_attempts_install_when_enabled(monkeypatch):
+    _prepare_modules(missing=("quick_fix_engine",))
+    init_mod = _load_module(
+        "menace.self_improvement.init", Path("self_improvement/init.py")
+    )
+
+    calls = {"pip": 0}
+
+    def fake_pip(*args, **kwargs):
+        calls["pip"] += 1
+        raise subprocess.CalledProcessError(1, "pip")
+
+    monkeypatch.setattr(subprocess, "check_call", fake_pip)
+    init_mod.settings.auto_install_dependencies = True
+    init_mod.settings.menace_offline_install = False
+
+    with pytest.raises(RuntimeError):
+        init_mod.verify_dependencies()
+
+    assert calls["pip"] == 1
+
+
+def test_verify_dependencies_reports_version_mismatch(monkeypatch):
+    _prepare_modules()
+    init_mod = _load_module(
+        "menace.self_improvement.init", Path("self_improvement/init.py")
+    )
+
+    def fake_version(name):
+        if name == "torch":
+            return "1.0.0"
+        return "0"
+
+    monkeypatch.setattr(importlib.metadata, "version", fake_version)
+
+    with pytest.raises(RuntimeError) as err:
+        init_mod.verify_dependencies()
+
+    assert "torch" in str(err.value)
+

@@ -52,7 +52,11 @@ def test_verify_dependencies_reports_all_missing(monkeypatch):
             return types.ModuleType(name)
         return original_import(name, package)
 
+    def fake_version(name):
+        return "2.0.0"
+
     monkeypatch.setattr(importlib, "import_module", fake_import)
+    monkeypatch.setattr(importlib.metadata, "version", fake_version)
 
     with pytest.raises(RuntimeError) as excinfo:
         verify_dependencies()

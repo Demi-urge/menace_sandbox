@@ -286,6 +286,11 @@ class SandboxSettings(BaseSettings):
     menace_offline_install: bool = Field(False, env="MENACE_OFFLINE_INSTALL")
     menace_wheel_dir: str | None = Field(None, env="MENACE_WHEEL_DIR")
     menace_light_imports: bool = Field(False, env="MENACE_LIGHT_IMPORTS")
+    auto_install_dependencies: bool = Field(
+        False,
+        env="AUTO_INSTALL_DEPENDENCIES",
+        description="Automatically install missing Python packages when possible.",
+    )
     roi_cycles: int | None = Field(None, env="ROI_CYCLES")
     synergy_cycles: int | None = Field(None, env="SYNERGY_CYCLES")
     save_synergy_history: bool | None = Field(None, env="SAVE_SYNERGY_HISTORY")
