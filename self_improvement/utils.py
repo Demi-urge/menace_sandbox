@@ -24,6 +24,8 @@ import asyncio
 import inspect
 import random
 import threading
+import shutil
+from pathlib import Path
 from functools import lru_cache
 from typing import Any, Callable
 
@@ -89,6 +91,21 @@ def clear_import_cache() -> None:
         _diagnostics["cache_hits"] = 0
         _diagnostics["cache_misses"] = 0
     _load_callable.diagnostics = _diagnostics
+
+
+def remove_import_cache_files(base: str | Path | None = None) -> None:
+    """Delete ``__pycache__`` directories to free disk space."""
+
+    root = Path(base) if base is not None else Path(__file__).resolve().parent
+    for pycache in root.rglob("__pycache__"):
+        try:
+            shutil.rmtree(pycache)
+        except FileNotFoundError:
+            continue
+        except Exception:  # pragma: no cover - best effort
+            logging.getLogger(__name__).debug(
+                "failed to remove cache directory %s", pycache, exc_info=True
+            )
 
 
 def _call_with_retries(

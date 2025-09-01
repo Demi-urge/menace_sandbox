@@ -688,6 +688,60 @@ def _atexit_save_cache() -> None:
 atexit.register(_atexit_save_cache)
 
 
+def flush_caches(config: StubProviderConfig | None = None) -> None:
+    """Persist and clear in-memory caches."""
+
+    cfg = config or get_config()
+
+    async def _wait() -> None:
+        async with _SAVE_TASKS:
+            pass
+
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None or loop.is_closed():
+            asyncio.run(_wait())
+        else:  # pragma: no cover - requires running loop
+            loop.run_until_complete(_wait())
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.exception("failed to await cache tasks", exc_info=exc)
+
+    with _CACHE_LOCK:
+        try:
+            if _CACHE:
+                _save_cache(cfg)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("failed to save stub cache", exc_info=exc)
+        finally:
+            _CACHE.clear()
+            _TARGET_STATS.clear()
+
+
+def cleanup_cache_files(config: StubProviderConfig | None = None) -> None:
+    """Remove obsolete on-disk cache artefacts."""
+
+    cfg = config or get_config()
+    with _CACHE_LOCK:
+        if _CACHE:
+            return
+
+    paths = [
+        cfg.cache_path,
+        cfg.cache_path.with_suffix(".tmp"),
+        Path(str(cfg.cache_path) + ".lock"),
+    ]
+    for path in paths:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.debug("failed to remove cache file %s: %s", path, exc)
+
+
 def _cache_key(func_name: str, stub: Dict[str, Any]) -> Tuple[str, str]:
     """Return a stable cache key for *func_name* and *stub*."""
     try:

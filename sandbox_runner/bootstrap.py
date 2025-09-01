@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable
 from packaging.version import Version
 
 from menace.auto_env_setup import ensure_env
+from menace.default_config_manager import DefaultConfigManager
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 
 from .cli import main as _cli_main
@@ -210,6 +211,20 @@ def shutdown_autonomous_sandbox(timeout: float | None = None) -> None:
     inner = getattr(thread, "_thread", thread)
     if hasattr(inner, "is_alive") and inner.is_alive():
         raise RuntimeError("self-improvement thread failed to shut down")
+    try:
+        from sandbox_runner import generative_stub_provider as _gsp
+
+        _gsp.flush_caches()
+        _gsp.cleanup_cache_files()
+    except Exception:  # pragma: no cover - best effort cleanup
+        logger.debug("stub cache cleanup failed", exc_info=True)
+    try:
+        from self_improvement import utils as _si_utils
+
+        _si_utils.clear_import_cache()
+        _si_utils.remove_import_cache_files()
+    except Exception:  # pragma: no cover - best effort cleanup
+        logger.debug("self-improvement cache cleanup failed", exc_info=True)
     _SELF_IMPROVEMENT_THREAD = None
     _INITIALISED = False
 
