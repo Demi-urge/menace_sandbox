@@ -10,7 +10,14 @@ retrying requests.
 
 import threading
 import time
-from typing import Optional
+from typing import Optional, Dict, Any
+
+try:  # pragma: no cover - optional dependency
+    import tiktoken
+except Exception:  # pragma: no cover - optional dependency
+    tiktoken = None  # type: ignore
+
+_ENCODER_CACHE: Dict[str, Any] = {}
 
 
 class TokenBucket:
@@ -48,10 +55,36 @@ class TokenBucket:
             time.sleep(wait)
 
 
-def estimate_tokens(text: str) -> int:
-    """Very small heuristic to estimate token usage from *text*."""
+def _get_encoder(model: str | None) -> Any | None:
+    """Return a tiktoken encoder for *model* if available."""
 
-    # Rough heuristic: assume 4 characters per token
+    if not tiktoken:
+        return None
+    key = model or "cl100k_base"
+    enc = _ENCODER_CACHE.get(key)
+    if enc is not None:
+        return enc
+    try:
+        if model:
+            enc = tiktoken.encoding_for_model(model)
+        else:
+            enc = tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        enc = tiktoken.get_encoding("cl100k_base")
+    _ENCODER_CACHE[key] = enc
+    return enc
+
+
+def estimate_tokens(text: str, model: str | None = None) -> int:
+    """Estimate token usage for *text* using the model's tokenizer."""
+
+    enc = _get_encoder(model)
+    if enc:
+        try:
+            return len(enc.encode(text))
+        except Exception:
+            pass
+    # Fallback heuristic: assume 4 characters per token
     return max(1, len(text) // 4)
 
 

@@ -51,7 +51,8 @@ class OpenAILLMClient(LLMClient):
         retries = cfg.max_retries
         for attempt in range(retries):
             tokens = rate_limit.estimate_tokens(
-                " ".join(m.get("content", "") for m in payload.get("messages", []))
+                " ".join(m.get("content", "") for m in payload.get("messages", [])),
+                model=self.model,
             )
             self._rate_limiter.consume(tokens)
             try:
