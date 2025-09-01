@@ -4,12 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, Type
 
-from llm_interface import LLMClient
-
-try:  # pragma: no cover - optional dependencies
-    from llm_interface import OpenAIProvider as OpenAIClient
-except Exception:  # pragma: no cover - if module missing
-    OpenAIClient = None  # type: ignore[assignment]
+from llm_interface import LLMClient, OpenAIProvider
 
 try:  # pragma: no cover - optional dependencies
     from local_client import OllamaClient, VLLMClient
@@ -18,8 +13,7 @@ except Exception:  # pragma: no cover - if module missing
 
 
 MODEL_REGISTRY: Dict[str, Type[LLMClient]] = {}
-if OpenAIClient is not None:
-    MODEL_REGISTRY["openai"] = OpenAIClient
+MODEL_REGISTRY["openai"] = OpenAIProvider
 if OllamaClient is not None:
     MODEL_REGISTRY["ollama"] = OllamaClient
 if VLLMClient is not None:
@@ -45,4 +39,3 @@ def get_client(name: str, **kwargs) -> LLMClient:
 
 
 __all__ = ["MODEL_REGISTRY", "get_client"]
-
