@@ -8,8 +8,6 @@ import time
 import logging
 import threading
 import tempfile
-import errno
-from contextlib import suppress
 from collections import deque
 from concurrent.futures import Future
 from typing import Iterable, Dict, Any, Callable, Deque, Tuple
@@ -20,7 +18,7 @@ from . import metrics_exporter
 
 from .audit_logger import log_event
 
-from .lock_utils import SandboxLock, LOCK_TIMEOUT
+from .lock_utils import SandboxLock
 
 # Backwards compatibility for tests importing the old name
 _ContextFileLock = SandboxLock
@@ -60,6 +58,7 @@ class VisualAgentError(RuntimeError):
 class VisualAgentConnectionError(VisualAgentError):
     """Raised when communication with the visual agent repeatedly fails."""
 
+
 # Default instructions prepended before messages sent to the visual agent.
 DEFAULT_MESSAGE_PREFIX = (
     "Improve Menace by enhancing error handling and modifying existing bots."
@@ -90,12 +89,15 @@ class VisualAgentClient:
         status_interval: float | None = None,
         flush_interval: float | None = None,
     ) -> None:
-        default_urls = (
-            os.getenv("VISUAL_AGENT_URLS")
-            or os.getenv("VISUAL_DESKTOP_URL", "http://127.0.0.1:8001")
-        ).split(";")
+        env_urls = os.getenv("VISUAL_AGENT_URLS") or os.getenv("VISUAL_DESKTOP_URL")
+        default_urls = env_urls.split(";") if env_urls else []
         self.urls = list(filter(None, urls or default_urls))
+        if not self.urls:
+            raise ValueError("VISUAL_AGENT_URLS is required")
+
         self.token = token or os.getenv("VISUAL_AGENT_TOKEN", "")
+        if not self.token:
+            raise ValueError("VISUAL_AGENT_TOKEN is required")
         self.poll_interval = poll_interval or float(
             os.getenv("VISUAL_AGENT_POLL_INTERVAL", "5")
         )
@@ -243,7 +245,7 @@ class VisualAgentClient:
 
         try:
             with open(tmp_path, "r", encoding="utf-8") as fh:
-                items = [json.loads(l) for l in fh if l.strip()]
+                items = [json.loads(line) for line in fh if line.strip()]
         except Exception as exc:  # pragma: no cover - read errors
             logger.warning("failed to load local queue: %s", exc)
             items = []
@@ -401,7 +403,10 @@ class VisualAgentClient:
                         if attempt == 2:
                             msg = f"connection error after {attempt + 1} attempts: {exc}"
                             logger.error(msg)
-                            _queue_local_task(self._local_queue, {"action": "run", "prompt": prompt})
+                            _queue_local_task(
+                                self._local_queue,
+                                {"action": "run", "prompt": prompt},
+                            )
                             return True, msg
                         time.sleep(delay)
                         delay *= 2
@@ -429,7 +434,10 @@ class VisualAgentClient:
                         if attempt == 2:
                             msg = f"server error status {resp.status_code}"
                             logger.error(msg)
-                            _queue_local_task(self._local_queue, {"action": "run", "prompt": prompt})
+                            _queue_local_task(
+                                self._local_queue,
+                                {"action": "run", "prompt": prompt},
+                            )
                             return True, msg
                         time.sleep(delay)
                         delay *= 2
@@ -641,4 +649,3 @@ __all__ = [
     "VisualAgentError",
     "VisualAgentConnectionError",
 ]
-
