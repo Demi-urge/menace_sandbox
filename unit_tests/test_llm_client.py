@@ -282,3 +282,73 @@ def test_vllm_backend_retries(monkeypatch):
     assert result.text == "ok"
     assert len(calls) == 2
     assert backoff == [0]
+
+
+def test_local_weights_streaming(monkeypatch):
+    import asyncio
+    import queue
+    import types
+    import sys
+    import importlib
+
+    class DummyTokenizer:
+        @classmethod
+        def from_pretrained(cls, model):
+            return cls()
+
+        def __call__(self, text, return_tensors=None):
+            return {"input_ids": [0]}
+
+    class DummyModel:
+        @classmethod
+        def from_pretrained(cls, model):
+            return cls()
+
+        def generate(self, *args, **kwargs):
+            streamer = kwargs.get("streamer")
+            if streamer is not None:
+                streamer.put("hello ")
+                streamer.put("world")
+                streamer.end()
+            else:
+                return [[0]]
+
+    class DummyStreamer:
+        def __init__(self, *args, **kwargs):
+            self.q = queue.Queue()
+
+        def put(self, val):
+            self.q.put(val)
+
+        def end(self):
+            self.q.put(None)
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            item = self.q.get()
+            if item is None:
+                raise StopIteration
+            return item
+
+    dummy_tf = types.ModuleType("transformers")
+    dummy_tf.AutoTokenizer = DummyTokenizer
+    dummy_tf.AutoModelForCausalLM = DummyModel
+    dummy_tf.TextIteratorStreamer = DummyStreamer
+
+    monkeypatch.setitem(sys.modules, "transformers", dummy_tf)
+    monkeypatch.setitem(sys.modules, "torch", types.ModuleType("torch"))
+
+    pb = importlib.import_module("private_backend")
+    monkeypatch.setattr(pb, "torch", None)
+    client = pb.local_weights_client(model="m")
+
+    async def collect():
+        parts = []
+        async for part in client.async_generate(Prompt("hi")):
+            parts.append(part)
+        return "".join(parts)
+
+    text = asyncio.run(collect())
+    assert text == "hello world"
