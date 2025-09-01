@@ -89,18 +89,18 @@ def test_openai_provider_retry_and_logging(monkeypatch):
     monkeypatch.setattr(random, "uniform", lambda a, b: 0)
 
     # Stub PromptDB to record log invocations
-    logged: list[tuple[Prompt, LLMResult]] = []
+    logged: list[tuple[Prompt, LLMResult, str | None]] = []
 
     class DummyDB:
         def __init__(self, *_a, **_k):
             pass
 
         def log(self, prompt, result, backend=None):
-            logged.append((prompt, result))
+            logged.append((prompt, result, backend))
 
-    import llm_router as lr
+    import prompt_db as pdb
 
-    monkeypatch.setattr(lr, "PromptDB", DummyDB)
+    monkeypatch.setattr(pdb, "PromptDB", DummyDB)
 
     # Fake HTTP responses: first a rate limit, then success
     class Resp:
@@ -143,7 +143,9 @@ def test_openai_provider_retry_and_logging(monkeypatch):
     assert not responses
     assert sleeps == [1.0]
     assert result.parsed == {"a": 1}
+    assert result.raw["backend"] == "openai"
     assert logged and logged[0][0] is prompt
+    assert logged[0][2] == "openai"
     assert result.prompt_tokens == 3
     assert result.completion_tokens == 2
     assert result.latency_ms == 1000.0
@@ -182,6 +184,7 @@ def test_router_fallback_logs(monkeypatch):
     router = LLMRouter(remote=BoomClient(), local=LocalClient(), size_threshold=1)
     res = router.generate(Prompt(text="task", metadata={"tags": ["x"]}))
     assert res.text == "ok"
+    assert res.raw["backend"] == "local"
     assert logged == ["local"]
 
 
@@ -257,14 +260,14 @@ def test_generate_parse_fn_error_ignored():
 def test_successful_call_logs_and_returns_raw_and_parsed(monkeypatch):
     """LLMClient logs prompts and exposes raw and parsed responses."""
 
-    logged: list[tuple[Prompt, LLMResult]] = []
+    logged: list[tuple[Prompt, LLMResult, str | None]] = []
 
     class DummyDB:
         def __init__(self, *_a, **_k):
             pass
 
         def log(self, prompt: Prompt, result: LLMResult, backend=None) -> None:
-            logged.append((prompt, result))
+            logged.append((prompt, result, backend))
 
     import prompt_db
 
@@ -275,15 +278,15 @@ def test_successful_call_logs_and_returns_raw_and_parsed(monkeypatch):
             super().__init__("dummy")
 
         def _generate(self, prompt: Prompt) -> LLMResult:
-            return LLMResult(raw={"x": 1}, text="{\"a\":1}")
+            return LLMResult(raw={"x": 1, "backend": "dummy"}, text="{\"a\":1}")
 
     client = DummyClient()
     prompt = Prompt(text="hi")
     result = client.generate(prompt, parse_fn=parse_json)
 
-    assert result.raw == {"x": 1}
+    assert result.raw == {"x": 1, "backend": "dummy"}
     assert result.parsed == {"a": 1}
-    assert logged == [(prompt, result)]
+    assert logged == [(prompt, result, "dummy")]
 
 
 def test_openai_provider_retries_on_server_error(monkeypatch):
