@@ -6,14 +6,17 @@ from llm_interface import Prompt, LLMResult
 from openai_client import OpenAILLMClient
 
 
-def test_log_prompt(tmp_path):
+def test_log(tmp_path):
     os.environ["PROMPT_DB_PATH"] = str(tmp_path / "prompts.db")
     db = PromptDB(model="gpt-test")
-    prompt = Prompt(text="hi", examples=["ex1"])
+    prompt = Prompt(
+        text="hi", examples=["ex1"], outcome_tags=["test"], vector_confidences=[0.5]
+    )
     result = LLMResult(raw={"data": 1}, text="hello")
-    db.log_prompt(prompt, result, ["test"], [0.5])
+    db.log(prompt, result)
     row = db.conn.execute(
-        "SELECT text, examples, vector_confidences, outcome_tags, response_text, model FROM prompts"
+        "SELECT text, examples, vector_confidences, outcome_tags, response_text, model "
+        "FROM prompts",
     ).fetchone()
     assert row[0] == "hi"
     assert json.loads(row[1]) == ["ex1"]
@@ -36,7 +39,8 @@ def test_openai_client_logs_prompt(monkeypatch, tmp_path):
     res = client.generate(prompt)
     assert res.text == "world"
     row = client.db.conn.execute(
-        "SELECT text, outcome_tags, vector_confidences, response_text, model FROM prompts"
+        "SELECT text, outcome_tags, vector_confidences, response_text, model "
+        "FROM prompts",
     ).fetchone()
     assert row[0] == "hi"
     assert json.loads(row[1]) == ["t"]
