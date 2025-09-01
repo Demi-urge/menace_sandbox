@@ -77,6 +77,10 @@ class LLMRouter(LLMClient):
             result.raw = dict(result.raw or {})
             result.raw.setdefault("model", chosen.model)
             result.raw["backend"] = chosen.model
+            if getattr(prompt, "tags", None):
+                result.raw.setdefault("tags", list(prompt.tags))
+            if getattr(prompt, "vector_confidence", None) is not None:
+                result.raw.setdefault("vector_confidence", prompt.vector_confidence)
             try:
                 self.db.log(prompt, result, backend=chosen.model)
             except Exception:
@@ -107,10 +111,12 @@ class LLMRouter(LLMClient):
                 yield part
 
         if getattr(self, "db", None):  # pragma: no cover - logging is best effort
-            result = LLMResult(
-                raw={"backend": chosen.model, "model": chosen.model},
-                text="".join(chunks),
-            )
+            raw = {"backend": chosen.model, "model": chosen.model}
+            if getattr(prompt, "tags", None):
+                raw["tags"] = list(prompt.tags)
+            if getattr(prompt, "vector_confidence", None) is not None:
+                raw["vector_confidence"] = prompt.vector_confidence
+            result = LLMResult(raw=raw, text="".join(chunks))
             try:
                 self.db.log(prompt, result, backend=chosen.model)
             except Exception:
