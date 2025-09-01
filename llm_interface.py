@@ -53,6 +53,9 @@ class LLMResult:
     parsed: Any | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost: float | None = None
     latency_ms: float | None = None
 
 
@@ -347,10 +350,18 @@ class OpenAIProvider(LLMClient):
                 completion_tokens = usage.get("completion_tokens") or rate_limit.estimate_tokens(
                     text, model=self.model
                 )
+                input_tokens = usage.get("input_tokens") or prompt_tokens
+                output_tokens = usage.get("output_tokens") or completion_tokens
+                cost = usage.get("cost")
                 total = (prompt_tokens or 0) + (completion_tokens or 0)
                 extra = max(0, total - prompt_tokens_est)
                 if extra:
                     self._rate_limiter.consume(extra)
+                usage.setdefault("input_tokens", input_tokens)
+                usage.setdefault("output_tokens", output_tokens)
+                if cost is not None:
+                    usage.setdefault("cost", cost)
+                raw["usage"] = usage
                 raw.setdefault("model", self.model)
                 raw["backend"] = "openai"
                 return LLMResult(
@@ -359,6 +370,9 @@ class OpenAIProvider(LLMClient):
                     parsed=parsed,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost=cost,
                     latency_ms=latency_ms,
                 )
 
@@ -467,12 +481,23 @@ class OpenAIProvider(LLMClient):
                 parsed = None
 
         result = LLMResult(
-            raw={"backend": "openai", "model": self.model},
+            raw={
+                "backend": "openai",
+                "model": self.model,
+                "usage": {
+                    "input_tokens": prompt_tokens,
+                    "output_tokens": completion_tokens,
+                    "cost": None,
+                },
+            },
             text=text,
             parsed=parsed,
             latency_ms=latency_ms,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+            cost=None,
         )
         self._log(prompt, result, backend="openai")
         return result

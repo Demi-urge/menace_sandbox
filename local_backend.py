@@ -83,11 +83,22 @@ class _RESTBackend(LLMBackend):
                 )
                 completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
                 self._rate_limiter.consume(completion_tokens)
+                raw.setdefault(
+                    "usage",
+                    {
+                        "input_tokens": prompt_tokens,
+                        "output_tokens": completion_tokens,
+                        "cost": 0.0,
+                    },
+                )
                 return Completion(
                     raw=raw,
                     text=text,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    input_tokens=prompt_tokens,
+                    output_tokens=completion_tokens,
+                    cost=0.0,
                     latency_ms=latency_ms,
                 )
 

@@ -90,11 +90,19 @@ class AnthropicClient(LLMClient):
                 completion_tokens = usage.get("output_tokens") or rate_limit.estimate_tokens(
                     text, model=self.model
                 )
+                input_tokens = usage.get("input_tokens") or prompt_tokens
+                output_tokens = usage.get("output_tokens") or completion_tokens
+                cost = usage.get("cost")
                 extra = max(
                     0, (prompt_tokens or 0) + (completion_tokens or 0) - prompt_tokens_est
                 )
                 if extra:
                     self._rate_limiter.consume(extra)
+                usage.setdefault("input_tokens", input_tokens)
+                usage.setdefault("output_tokens", output_tokens)
+                if cost is not None:
+                    usage.setdefault("cost", cost)
+                raw["usage"] = usage
                 raw.setdefault("model", self.model)
                 raw["backend"] = "anthropic"
                 return LLMResult(
@@ -102,6 +110,9 @@ class AnthropicClient(LLMClient):
                     text=text,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost=cost,
                     latency_ms=latency_ms,
                 )
         raise RuntimeError("Anthropic request failed")
