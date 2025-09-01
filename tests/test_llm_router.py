@@ -1,7 +1,9 @@
 from llm_interface import Prompt, LLMResult, LLMClient
+from llm_interface import Prompt, LLMResult, LLMClient
 from llm_router import LLMRouter, client_from_settings
 from sandbox_settings import SandboxSettings
 import llm_router
+from llm_registry import backend, create_backend
 
 
 class StubClient(LLMClient):
@@ -98,6 +100,11 @@ def custom_factory() -> StubClient:
     return StubClient("custom")
 
 
+@backend("decorator")
+def decorator_factory() -> StubClient:
+    return StubClient("decorator")
+
+
 def test_client_from_settings_dynamic_backend(monkeypatch):
     settings = SandboxSettings(
         preferred_llm_backend="custom",
@@ -106,3 +113,9 @@ def test_client_from_settings_dynamic_backend(monkeypatch):
     client = client_from_settings(settings)
     res = client.generate(Prompt(text="hi"))
     assert res.text == "custom"
+
+
+def test_registry_decorator_helper():
+    client = create_backend("decorator")
+    res = client.generate(Prompt(text="hi"))
+    assert res.text == "decorator"

@@ -2,26 +2,14 @@ from __future__ import annotations
 
 """Routing helpers for language model backends."""
 
-from importlib import import_module
-from typing import Callable, Dict, Tuple
+from typing import Dict, Tuple
 import time
 
 from llm_interface import Prompt, LLMResult, LLMClient
+from llm_registry import create_backend, register_backend_from_path
 from sandbox_settings import SandboxSettings
 from rate_limit import estimate_tokens
 from prompt_db import PromptDB
-
-ClientFactory = Callable[[], LLMClient]
-
-
-def _factory_from_path(path: str) -> ClientFactory:
-    """Resolve *path* to a callable returning an :class:`LLMClient`."""
-    module_name, attr_name = path.rsplit(".", 1)
-    module = import_module(module_name)
-    factory = getattr(module, attr_name)
-    if not callable(factory):  # pragma: no cover - defensive
-        raise TypeError(f"Backend factory at {path!r} is not callable")
-    return factory
 
 
 class LLMRouter(LLMClient):
@@ -103,31 +91,27 @@ def client_from_settings(
 
     ``SandboxSettings.available_backends`` maps backend names to dotted import
     paths referencing factories or classes returning :class:`LLMClient`
-    instances.  The ``preferred_llm_backend`` selects the primary backend while
+    instances.  Entries in this mapping are automatically registered with
+    :mod:`llm_registry` allowing the router to instantiate them by name.  The
+    ``preferred_llm_backend`` selects the primary backend while
     ``llm_fallback_backend`` optionally specifies a secondary backend used by
     :class:`LLMRouter` as a fallback.
     """
     settings = settings or SandboxSettings()
-    backends: Dict[str, str] = {
-        k.lower(): v for k, v in settings.available_backends.items()
-    }
-    backend = settings.preferred_llm_backend or settings.llm_backend
-    backend = backend.lower()
+
+    # Populate registry from settings so custom backends can be provided via
+    # configuration without touching the codebase.
+    for name, path in settings.available_backends.items():
+        register_backend_from_path(name, path)
+
+    backend = (settings.preferred_llm_backend or settings.llm_backend).lower()
     fallback = settings.llm_fallback_backend
     fallback = fallback.lower() if fallback else None
 
-    def _make(name: str) -> LLMClient:
-        try:
-            path = backends[name]
-        except KeyError as exc:  # pragma: no cover - defensive
-            raise ValueError(f"Unknown LLM backend: {name}") from exc
-        factory = _factory_from_path(path)
-        return factory()
-
-    primary = _make(backend)
+    primary = create_backend(backend)
     if not fallback:
         return primary
-    fallback_client = _make(fallback)
+    fallback_client = create_backend(fallback)
     return LLMRouter(remote=primary, local=fallback_client, size_threshold=size_threshold)
 
 

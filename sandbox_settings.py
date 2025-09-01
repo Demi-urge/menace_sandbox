@@ -352,7 +352,10 @@ class SandboxSettings(BaseSettings):
             "llama3": "local_backend.llama3_client",
         },
         env="AVAILABLE_LLM_BACKENDS",
-        description="Mapping of backend names to import paths for LLM client factories.",
+        description=(
+            "Mapping of backend names to import paths for LLM client factories."
+            " Entries are automatically registered with llm_registry."
+        ),
     )
     huggingface_token: str | None = Field(
         None, env=["HUGGINGFACE_API_TOKEN", "HF_TOKEN"]
