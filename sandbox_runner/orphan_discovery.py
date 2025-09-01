@@ -8,7 +8,16 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
-import orphan_analyzer
+try:  # pragma: no cover - executed during import
+    import orphan_analyzer
+except ModuleNotFoundError as exc:  # pragma: no cover - import-time guard
+    logging.getLogger(__name__).error(
+        "Failed to import 'orphan_analyzer'. Please install or configure the module.",
+    )
+    raise RuntimeError(
+        "orphan_analyzer is required for orphan discovery. "
+        "Ensure it is installed and properly configured.",
+    ) from exc
 
 
 logger = logging.getLogger(__name__)
