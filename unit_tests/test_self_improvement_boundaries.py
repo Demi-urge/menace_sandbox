@@ -1,0 +1,81 @@
+import importlib.util
+import sys
+import types
+from pathlib import Path
+
+PKG_DIR = Path(__file__).resolve().parents[1] / "self_improvement"
+
+
+def load_module(module_name: str, file_name: str, deps: dict[str, types.ModuleType] | None = None):
+    pkg = sys.modules.setdefault("self_improvement", types.ModuleType("self_improvement"))
+    pkg.__path__ = [str(PKG_DIR)]
+    if deps:
+        for name, mod in deps.items():
+            sys.modules[name] = mod
+    spec = importlib.util.spec_from_file_location(module_name, PKG_DIR / file_name)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)  # type: ignore[arg-type]
+    return module
+
+
+def test_update_alignment_baseline_delegates():
+    called = {}
+    metrics_stub = types.ModuleType("self_improvement.metrics")
+
+    def fake_update(settings):
+        called['settings'] = settings
+        return 'ok'
+
+    metrics_stub._update_alignment_baseline = fake_update
+    module = load_module("self_improvement.roi_tracking", "roi_tracking.py", {"self_improvement.metrics": metrics_stub})
+    assert module.update_alignment_baseline('cfg') == 'ok'
+    assert called['settings'] == 'cfg'
+
+
+def test_generate_patch_delegates():
+    record = {}
+    patch_stub = types.ModuleType("self_improvement.patch_generation")
+
+    def fake_generate(*args, **kwargs):
+        record['args'] = args
+        record['kwargs'] = kwargs
+        return 'patch'
+
+    patch_stub.generate_patch = fake_generate
+    module = load_module(
+        "self_improvement.patch_application",
+        "patch_application.py",
+        {"self_improvement.patch_generation": patch_stub},
+    )
+    assert module.generate_patch('a', key='v') == 'patch'
+    assert record['args'] == ('a',)
+    assert record['kwargs'] == {'key': 'v'}
+
+
+def test_orphan_handlers_delegate():
+    calls = {}
+    utils_stub = types.ModuleType("self_improvement.utils")
+
+    def call_with_retries(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    utils_stub._call_with_retries = call_with_retries
+    module = load_module(
+        "self_improvement.orphan_handling",
+        "orphan_handling.py",
+        {"self_improvement.utils": utils_stub},
+    )
+
+    def loader(name):
+        def _func(*args, **kwargs):
+            calls[name] = (args, kwargs)
+            return name
+        return _func
+
+    module._load_orphan_module = loader
+
+    assert module.integrate_orphans(1) == 'integrate_orphans'
+    assert calls['integrate_orphans'] == ((1,), {'retries': 3, 'delay': 0.1})
+    assert module.post_round_orphan_scan() == 'post_round_orphan_scan'
+    assert calls['post_round_orphan_scan'] == ((), {'retries': 3, 'delay': 0.1})

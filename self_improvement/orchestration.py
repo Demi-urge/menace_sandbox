@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Orchestration helpers for the self-improvement engine."""
 
-from .orphan_integration import integrate_orphans, post_round_orphan_scan
+from .orphan_handling import integrate_orphans, post_round_orphan_scan
 from .meta_planning import (
     self_improvement_cycle,
     start_self_improvement_cycle,

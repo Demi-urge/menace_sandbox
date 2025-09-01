@@ -1,4 +1,4 @@
-"""Orphan integration helpers.
+"""Orphan handling helpers for the self-improvement engine.
 
 Functions in this module wrap optional ``sandbox_runner`` hooks used to
 integrate and reclassify orphaned modules.  The wrappers provide consistent

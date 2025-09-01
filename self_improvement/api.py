@@ -17,8 +17,8 @@ from .orchestration import (
     start_self_improvement_cycle,
     stop_self_improvement_cycle,
 )
-from .patch_integration import generate_patch
-from .telemetry import _update_alignment_baseline
+from .patch_application import generate_patch
+from .roi_tracking import update_alignment_baseline
 from .data_stores import router, STABLE_WORKFLOWS
 from .engine import (
     SelfImprovementEngine,
@@ -44,7 +44,7 @@ __all__ = [
     "start_self_improvement_cycle",
     "stop_self_improvement_cycle",
     "generate_patch",
-    "_update_alignment_baseline",
+    "update_alignment_baseline",
     "router",
     "STABLE_WORKFLOWS",
     "SelfImprovementEngine",
