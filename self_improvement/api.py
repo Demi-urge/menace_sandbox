@@ -20,15 +20,13 @@ from .orchestration import (
 from .patch_application import generate_patch
 from .roi_tracking import update_alignment_baseline
 from .data_stores import router, STABLE_WORKFLOWS
-from .engine import (
-    SelfImprovementEngine,
-    SACSynergyLearner,
-    TD3SynergyLearner,
-)
+from .engine import SelfImprovementEngine
 from .learners import (
     SynergyWeightLearner,
     DQNSynergyLearner,
     DoubleDQNSynergyLearner,
+    SACSynergyLearner,
+    TD3SynergyLearner,
 )
 from .dashboards import (
     SynergyDashboard,
