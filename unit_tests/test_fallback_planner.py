@@ -115,6 +115,8 @@ def _load_fallback_planner():
         self.roi_weight = 1.0
         self.domain_transition_penalty = 1.0
         self.entropy_weight = 0.0
+        self.stability_weight = 1.0
+        self.state_prune_strategy = "recent"
         self.roi_window = 5
         self.state_capacity = 1000
         self.roi_db = None
@@ -137,19 +139,20 @@ def test_mutate_pipeline_scores_with_weights_and_penalty():
     planner.stability_db = DummyStability(
         {
             "domA.1": {"failures": 0, "entropy": 0.1},
-            "domA.2": {"failures": 0, "entropy": 0.1},
+            "domA.2": {"failures": 1, "entropy": 0.1},
             "domB.1": {"failures": 0, "entropy": 0.1},
         }
     )
     planner.mutation_rate = 2
     planner.roi_weight = 2.0
     planner.domain_transition_penalty = 1.0
+    planner.stability_weight = 0.5
 
     workflows = {wid: (lambda wid=wid: None) for wid in planner.roi_db.data}
     results = planner.mutate_pipeline(["domA.1"], workflows)
 
     assert results[0]["chain"] == ["domA.1", "domA.2"]
-    assert results[0]["score"] == pytest.approx(0.9)
+    assert results[0]["score"] == pytest.approx(0.4)
     assert any(len(r["chain"]) == 3 for r in results)
     assert planner.roi_db.logged  # integration logging
     assert planner.stability_db.logged
@@ -197,3 +200,26 @@ def test_discover_and_persist_ranks_and_prunes():
     results = planner.discover_and_persist(workflows)
     assert results[0]["chain"] == ["w2"]
     assert len(planner.cluster_map) == 2
+
+
+def test_state_persistence_roundtrip_and_pruning(tmp_path):
+    Fallback, _ = _load_fallback_planner()
+    planner = Fallback()
+    planner.state_path = tmp_path / "state.json"
+    planner.state_prune_strategy = "score"
+    planner.state_capacity = 2
+    planner.cluster_map = {
+        ("a",): {"score": 0.1, "ts": 1.0},
+        ("b",): {"score": 0.9, "ts": 2.0},
+        ("c",): {"score": 0.5, "ts": 3.0},
+    }
+    planner._save_state()
+
+    planner2 = Fallback()
+    planner2.state_path = planner.state_path
+    planner2.state_prune_strategy = "score"
+    planner2.state_capacity = 2
+    planner2._load_state()
+    assert planner2.cluster_map == planner.cluster_map
+    planner2._prune_state()
+    assert set(planner2.cluster_map.keys()) == {("b",), ("c",)}
