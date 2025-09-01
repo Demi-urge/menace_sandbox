@@ -523,7 +523,7 @@ class PromptEngine:
         retriever = self.patch_retriever or self.retriever
         if retriever is None:
             logging.info("No retriever available; falling back to static template")
-            return Prompt(text=self._static_prompt())
+            return Prompt(user=self._static_prompt())
 
         try:
             result = retriever.search(task, top_k=self.top_n)
@@ -533,7 +533,7 @@ class PromptEngine:
                 "prompt_engine_fallback",
                 {"goal": task, "reason": "retrieval_error", "error": str(exc)},
             )
-            return Prompt(text=self._static_prompt())
+            return Prompt(user=self._static_prompt())
 
         if isinstance(result, FallbackResult):
             logging.info(
@@ -548,7 +548,7 @@ class PromptEngine:
                     "confidence": result.confidence,
                 },
             )
-            return Prompt(text=self._static_prompt())
+            return Prompt(user=self._static_prompt())
 
         if isinstance(result, tuple):
             records = result[0]
@@ -570,10 +570,9 @@ class PromptEngine:
                     "confidence": confidence,
                 },
             )
-            return Prompt(text=self._static_prompt())
+            return Prompt(user=self._static_prompt())
 
         examples: List[str] = []
-        vector_confidences: List[float] = []
         outcome_tags: List[str] = []
         for rec in ranked:
             meta = rec.get("metadata", {})
@@ -581,12 +580,6 @@ class PromptEngine:
             if not snippet:
                 continue
             examples.append(snippet)
-            try:
-                vector_confidences.append(
-                    float(rec.get("weighted_score") or rec.get("score") or 0.0)
-                )
-            except Exception:
-                vector_confidences.append(0.0)
             tag = meta.get("roi_tag") or meta.get("outcome")
             if tag:
                 outcome_tags.append(str(tag))
@@ -623,11 +616,11 @@ class PromptEngine:
             lines.extend(self._format_retry_trace(retry_trace))
         text = "\n".join(line for line in lines if line)
         return Prompt(
-            text=text,
+            system="",
+            user=text,
             examples=examples,
-            vector_confidences=vector_confidences,
-            outcome_tags=outcome_tags,
-            metadata=self.last_metadata,
+            vector_confidence=confidence,
+            tags=outcome_tags,
         )
 
     # ------------------------------------------------------------------

@@ -49,17 +49,8 @@ class PromptDB:
     def log(self, prompt: Prompt, result: Completion) -> None:
         """Persist *prompt* and *result* to the underlying SQLite store."""
 
-        tags = (
-            prompt.outcome_tags
-            or prompt.metadata.get("tags")
-            or prompt.metadata.get("outcome_tags")
-            or []
-        )
-        confs = (
-            prompt.vector_confidences
-            or prompt.metadata.get("vector_confidences")
-            or []
-        )
+        tags = prompt.outcome_tags or []
+        confs = prompt.vector_confidences
         if not isinstance(tags, list):
             tags = [str(tags)]
         try:

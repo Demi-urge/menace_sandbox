@@ -74,10 +74,18 @@ class OpenAILLMClient(LLMClient):
 
     # ------------------------------------------------------------------
     def _generate(self, prompt: Prompt) -> LLMResult:
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt.text}],
-        }
+        messages = []
+        if prompt.system:
+            messages.append({"role": "system", "content": prompt.system})
+        for ex in prompt.examples:
+            messages.append({"role": "system", "content": ex})
+        messages.append({"role": "user", "content": prompt.user})
+
+        payload: Dict[str, Any] = {"model": self.model, "messages": messages}
+        if prompt.tags:
+            payload["tags"] = prompt.tags
+        if prompt.vector_confidence is not None:
+            payload["vector_confidence"] = prompt.vector_confidence
 
         raw = self._request(payload)
         text = ""

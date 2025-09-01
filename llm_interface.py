@@ -9,7 +9,8 @@ re-used in small utilities without pulling in a full featured SDK.
 Two concrete pieces are provided:
 
 ``Prompt``
-    Simple dataclass representing the user input.
+    Dataclass describing the different pieces of a chat style prompt.  It is
+    defined in :mod:`prompt_types` but re-exported here for convenience.
 
 ``OpenAIClient``
     Implementation talking to the OpenAI Chat Completions API using the
@@ -20,7 +21,7 @@ Two concrete pieces are provided:
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, List, Protocol
 from abc import ABC, abstractmethod
 import os
 import threading
@@ -33,12 +34,12 @@ import requests
 # Data containers
 # ---------------------------------------------------------------------------
 
-
-@dataclass
-class Prompt:
-    """Input shown to the language model."""
-
-    text: str
+# ``Prompt`` lives in a separate module so other packages can import it
+# without pulling in the entire client implementation.
+try:  # pragma: no cover - package vs module import
+    from .prompt_types import Prompt
+except Exception:  # pragma: no cover - stand-alone usage
+    from prompt_types import Prompt
 
 
 @dataclass
@@ -47,6 +48,13 @@ class LLMResult:
 
     raw: Dict[str, Any]
     text: str
+    parsed: Any | None = None
+
+
+# Backwards compatibility -------------------------------------------------
+# ``Completion`` previously named the ``LLMResult`` container.  Keep an alias
+# so older imports continue to work without modification.
+Completion = LLMResult
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +96,21 @@ class RateLimiter:
             wait = self._last + interval - now
             if wait > 0:
                 time.sleep(wait)
-            self._last = max(now, self._last + interval)
+        self._last = max(now, self._last + interval)
+
+
+# ---------------------------------------------------------------------------
+# Backend protocol
+# ---------------------------------------------------------------------------
+
+
+class LLMBackend(Protocol):
+    """Minimal protocol for lightweight local backends."""
+
+    model: str
+
+    def generate(self, prompt: Prompt) -> LLMResult:  # pragma: no cover - interface
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -119,10 +141,18 @@ class OpenAIClient(LLMClient):
 
     # ------------------------------------------------------------------
     def generate(self, prompt_obj: Prompt) -> LLMResult:
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt_obj.text}],
-        }
+        messages: List[Dict[str, str]] = []
+        if prompt_obj.system:
+            messages.append({"role": "system", "content": prompt_obj.system})
+        for ex in prompt_obj.examples:
+            messages.append({"role": "system", "content": ex})
+        messages.append({"role": "user", "content": prompt_obj.user})
+
+        payload: Dict[str, Any] = {"model": self.model, "messages": messages}
+        if prompt_obj.tags:
+            payload["tags"] = prompt_obj.tags
+        if prompt_obj.vector_confidence is not None:
+            payload["vector_confidence"] = prompt_obj.vector_confidence
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -166,4 +196,11 @@ class OpenAIClient(LLMClient):
             return ""
 
 
-__all__ = ["Prompt", "LLMResult", "LLMClient", "OpenAIClient"]
+__all__ = [
+    "Prompt",
+    "LLMResult",
+    "Completion",
+    "LLMClient",
+    "LLMBackend",
+    "OpenAIClient",
+]
