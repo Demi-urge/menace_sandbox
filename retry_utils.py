@@ -6,7 +6,7 @@ import logging
 import random
 import time
 from functools import wraps
-from typing import Callable, Type, Any
+from typing import Any, Callable, Type
 
 
 def retry(exc: Type[BaseException], attempts: int = 3, delay: float = 1.0) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
