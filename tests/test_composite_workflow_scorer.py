@@ -40,6 +40,7 @@ sys.modules.setdefault(
 )
 sys.modules.setdefault("db_router", sys.modules["menace_sandbox.db_router"])
 from menace_sandbox.db_router import init_db_router  # noqa: E402
+from menace_sandbox.roi_calculator import ROIResult
 
 
 class _StubPatchDB:
@@ -72,7 +73,7 @@ def _copy_fixture_modules(tmp_path: Path) -> None:
 
 def _stub_calculator_factory():
     return types.SimpleNamespace(
-        calculate=lambda metrics, _p: (
+        calculate=lambda metrics, _p: ROIResult(
             sum(float(v) for v in metrics.values()),
             False,
             [],

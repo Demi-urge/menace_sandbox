@@ -47,11 +47,14 @@ class StubTracker:
         self.correlation_history.update(correlations)
 
 
+from menace_sandbox.roi_calculator import ROIResult
+
+
 class StubCalculator:
     profiles = {"default": {}}
 
     def calculate(self, metrics, profile_type):
-        return 0.0, 0.0, 0.0
+        return ROIResult(0.0, False, [])
 
 
 def test_score_workflow_records_and_updates(tmp_path):

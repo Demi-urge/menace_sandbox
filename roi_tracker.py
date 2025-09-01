@@ -2089,7 +2089,8 @@ class ROITracker:
         if profile_type is not None and metrics:
             try:
                 calc = ROICalculator()
-                score, vetoed, _ = calc.calculate(metrics, profile_type)
+                result = calc.calculate(metrics, profile_type)
+                score, vetoed = result.score, result.vetoed
                 if score < self.raroi_borderline_threshold or vetoed:
                     suggestions = propose_fix(metrics, profile_type)
                     if suggestions:

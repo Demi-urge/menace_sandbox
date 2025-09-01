@@ -19,7 +19,7 @@ def test_default_roi_profile_scores_finite():
         "alignment_violation": False,  # avoids equals true veto
     }
 
-    score, vetoed, triggers = calc.calculate(metrics, "scraper_bot")
-    assert math.isfinite(score)
-    assert not vetoed
-    assert triggers == []
+    result = calc.calculate(metrics, "scraper_bot")
+    assert math.isfinite(result.score)
+    assert not result.vetoed
+    assert result.triggers == []

@@ -45,10 +45,10 @@ def test_weighted_roi(tmp_path):
         "latency": 1,
         "energy": 1,
     }
-    score, vetoed, triggers = calc.calculate(metrics, "scraper_bot")
-    assert score == pytest.approx(0.8)
-    assert vetoed is False
-    assert triggers == []
+    result = calc.calculate(metrics, "scraper_bot")
+    assert result.score == pytest.approx(0.8)
+    assert result.vetoed is False
+    assert result.triggers == []
 
 
 @pytest.mark.parametrize("metrics,trigger", [
@@ -58,10 +58,10 @@ def test_weighted_roi(tmp_path):
 def test_veto_triggers(tmp_path, metrics, trigger):
     profile_path = _write_profiles(tmp_path / "roi_profiles.yaml")
     calc = ROICalculator(profiles_path=profile_path)
-    score, vetoed, triggers = calc.calculate(metrics, "scraper_bot")
-    assert score == float("-inf")
-    assert vetoed is True
-    assert any(trigger in t for t in triggers)
+    result = calc.calculate(metrics, "scraper_bot")
+    assert result.score == float("-inf")
+    assert result.vetoed is True
+    assert any(trigger in t for t in result.triggers)
 
 
 def test_log_debug_outputs_components_and_veto(tmp_path, caplog):
@@ -144,7 +144,7 @@ def test_profile_negative_weights_abs_sum_valid(tmp_path):
     profile_path = _write_profiles(tmp_path / "roi_profiles.yaml", weights)
     calc = ROICalculator(profiles_path=profile_path)
     metrics = {"profitability": 1, "energy": 1, "security": 0.5}
-    score, vetoed, triggers = calc.calculate(metrics, "scraper_bot")
-    assert score == 0.0
-    assert vetoed is False
-    assert triggers == []
+    result = calc.calculate(metrics, "scraper_bot")
+    assert result.score == 0.0
+    assert result.vetoed is False
+    assert result.triggers == []
