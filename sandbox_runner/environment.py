@@ -252,54 +252,13 @@ from .input_history_db import InputHistoryDB, router as history_router
 from collections import Counter
 try:
     from error_logger import ErrorLogger
-except ImportError as exc:  # pragma: no cover - optional during minimal imports
+except ImportError as exc:  # pragma: no cover - required dependency
     logger.debug("error_logger unavailable", exc_info=exc)
-    from error_ontology import ErrorCategory, classify_exception
-
-    class ErrorLogger:  # type: ignore[misc]
-        """Minimal internal logger when :mod:`error_logger` is unavailable."""
-
-        class _Classifier:
-            @staticmethod
-            def classify_details(exc: Exception, stack: str) -> tuple[str, ErrorCategory, str]:
-                return "", classify_exception(exc, stack), ""
-
-        classifier = _Classifier()
-
-        def __init__(
-            self, *args: object, log_path: str | os.PathLike[str] | None = None, **_kwargs: object
-        ) -> None:
-            default = Path(__file__).resolve().parents[1] / "sandbox_data" / "errors.log"
-            path = os.getenv("SANDBOX_ERROR_LOG")
-            self._path = Path(log_path or path or default)
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._lock = threading.Lock()
-
-        def log(
-            self,
-            exc: Exception,
-            _task_id: object,
-            _bot_id: object,
-            *,
-            patch_id: object | None = None,
-            deploy_id: object | None = None,
-        ) -> None:
-            stack = "".join(
-                traceback.format_exception(type(exc), exc, exc.__traceback__)
-            )
-            _, category, _ = self.classifier.classify_details(exc, stack)
-            record = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "category": category.value,
-                "type": type(exc).__name__,
-                "message": str(exc),
-                "stack": stack,
-            }
-            with self._lock:
-                with self._path.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(record) + "\n")
-
-            return None
+    raise RuntimeError(
+        "error_logger is required for sandbox operations. Install the package"
+        " providing it (e.g. `pip install menace-sandbox`) or ensure the"
+        " module is available on the PYTHONPATH."
+    ) from exc
 from knowledge_graph import KnowledgeGraph
 
 from db_router import GLOBAL_ROUTER, init_db_router
