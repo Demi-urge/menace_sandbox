@@ -108,6 +108,12 @@ def test_client_fallback_to_local_backend(monkeypatch, tmp_path):
 
     result = client.generate(Prompt(text="hi"), parse_fn=json.loads)
     assert result.parsed == {"b": 2}
+    expected_prompt_tokens = rate_limit.estimate_tokens("hi", model="local")
+    expected_completion_tokens = rate_limit.estimate_tokens(
+        json.dumps({"b": 2}), model="local"
+    )
+    assert result.prompt_tokens == expected_prompt_tokens
+    assert result.completion_tokens == expected_completion_tokens
     row = client.db.conn.execute(
         "SELECT response_text, response_parsed FROM prompts",
     ).fetchone()

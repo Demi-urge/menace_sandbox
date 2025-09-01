@@ -12,6 +12,7 @@ from typing import Any, Dict
 import os
 
 import requests
+import rate_limit
 
 try:  # pragma: no cover - package vs module import
     from .retry_utils import with_retry
@@ -42,8 +43,19 @@ class _RESTBackend(LLMBackend):
             return self._post(payload)
 
         raw = with_retry(do_request, exc=requests.RequestException)
-        text = raw.get("text") or raw.get("response", "") or raw.get("generated_text", "")
-        return Completion(raw=raw, text=text)
+        text = (
+            raw.get("text")
+            or raw.get("response", "")
+            or raw.get("generated_text", "")
+        )
+        prompt_tokens = rate_limit.estimate_tokens(prompt.text, model=self.model)
+        completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
+        return Completion(
+            raw=raw,
+            text=text,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
 
 
 class OllamaBackend(_RESTBackend):
