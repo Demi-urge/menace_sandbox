@@ -280,14 +280,22 @@ def _analyse_module(ctx: Any, module: str) -> tuple[float, Dict[str, float]]:
 
     The score combines commit churn, code complexity (via ``radon``) and recent
     failure frequency.  Each signal contributes a value in ``[0, 1]`` which is
-    multiplied by its weight before summation.  Missing signals are treated as
-    zero and errors are logged but otherwise ignored.
+    multiplied by its weight before summation.  Weights are sourced from
+    ``ctx.settings`` (``SandboxSettings``) when available, falling back to the
+    defaults of ``0.2`` for commit churn, ``0.4`` for complexity and ``0.4`` for
+    failure frequency.  Missing signals are treated as zero and errors are logged
+    but otherwise ignored.
     """
 
     repo = Path(getattr(ctx, "repo", "."))
     path = repo / module
 
-    weights = {"commit": 0.2, "complexity": 0.4, "failures": 0.4}
+    settings = getattr(ctx, "settings", None)
+    weights = {
+        "commit": getattr(settings, "risk_weight_commit", 0.2),
+        "complexity": getattr(settings, "risk_weight_complexity", 0.4),
+        "failures": getattr(settings, "risk_weight_failures", 0.4),
+    }
     signals: Dict[str, float] = {k: 0.0 for k in weights}
 
     # Commit history churn
