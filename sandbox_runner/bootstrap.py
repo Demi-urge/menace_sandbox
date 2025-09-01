@@ -21,6 +21,12 @@ from .cycle import ensure_vector_service
 
 _SELF_IMPROVEMENT_THREAD: Any | None = None
 _INITIALISED = False
+# SQLite databases required for a healthy sandbox
+REQUIRED_DB_FILES = (
+    "metrics.db",
+    "patch_history.db",
+    "visual_agent_queue.db",
+)
 
 
 logger = logging.getLogger(__name__)
@@ -128,7 +134,7 @@ def initialize_autonomous_sandbox(
             baseline_path.write_text("{}\n", encoding="utf-8")
 
     # Create expected SQLite databases
-    for name in ("metrics.db", "patch_history.db", "visual_agent_queue.db"):
+    for name in REQUIRED_DB_FILES:
         _ensure_sqlite_db(data_dir / name)
 
     # Verify optional services are importable and meet version requirements
@@ -227,6 +233,39 @@ def shutdown_autonomous_sandbox(timeout: float | None = None) -> None:
         logger.debug("self-improvement cache cleanup failed", exc_info=True)
     _SELF_IMPROVEMENT_THREAD = None
     _INITIALISED = False
+
+
+def sandbox_health() -> dict[str, bool]:
+    """Return basic health indicators for the sandbox environment."""
+
+    thread = _SELF_IMPROVEMENT_THREAD
+    inner = getattr(thread, "_thread", thread) if thread is not None else None
+    alive = bool(getattr(inner, "is_alive", lambda: False)())
+
+    data_dir = Path(
+        os.getenv("SANDBOX_DATA_DIR", load_sandbox_settings().sandbox_data_dir)
+    )
+    db_ok = True
+    for name in REQUIRED_DB_FILES:
+        try:
+            with open(data_dir / name, "a"):
+                pass
+        except Exception:
+            db_ok = False
+            break
+
+    try:
+        from sandbox_runner import generative_stub_provider as _gsp
+
+        stub_init = _gsp._GENERATOR is not None  # type: ignore[attr-defined]
+    except Exception:
+        stub_init = False
+
+    return {
+        "self_improvement_thread_alive": alive,
+        "databases_accessible": db_ok,
+        "stub_generator_initialized": stub_init,
+    }
 
 
 def _verify_required_dependencies(settings: SandboxSettings) -> dict[str, list[str]]:

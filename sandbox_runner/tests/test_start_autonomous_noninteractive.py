@@ -4,6 +4,7 @@ import threading
 import types
 from pathlib import Path
 
+import logging
 import pytest
 
 # ensure repository root on path
@@ -42,6 +43,10 @@ def test_start_autonomous_sandbox_noninteractive(tmp_path, monkeypatch):
     data.mkdir()
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(data))
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    monkeypatch.setenv("DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("STRIPE_API_KEY", "test")
+    monkeypatch.setenv("MODELS", str(repo))
     monkeypatch.setattr("builtins.input", lambda *a, **k: pytest.fail("prompted"))
 
     import sandbox_runner.bootstrap as bootstrap
@@ -97,3 +102,62 @@ def test_start_autonomous_sandbox_noninteractive(tmp_path, monkeypatch):
     assert started.is_set()
     assert not getattr(thread, "_thread", thread).is_alive()
     bootstrap.shutdown_autonomous_sandbox()
+
+
+def test_start_autonomous_sandbox_health_check(tmp_path, monkeypatch, caplog):
+    repo = tmp_path / "repo"
+    data = tmp_path / "data"
+    repo.mkdir()
+    data.mkdir()
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(data))
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    monkeypatch.setenv("DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("STRIPE_API_KEY", "test")
+    monkeypatch.setenv("MODELS", str(repo))
+    monkeypatch.setattr("builtins.input", lambda *a, **k: pytest.fail("prompted"))
+
+    import sandbox_runner.bootstrap as bootstrap
+
+    monkeypatch.setattr(bootstrap, "_start_optional_services", lambda mods: None)
+    monkeypatch.setattr(bootstrap, "_verify_required_dependencies", lambda s: {})
+    monkeypatch.setattr(bootstrap, "ensure_vector_service", lambda: None)
+
+    started = threading.Event()
+    stop_event = threading.Event()
+
+    def init_self_improvement(settings):
+        return None
+
+    def fake_start_self_improvement_cycle(workflows):
+        def run():
+            started.set()
+            stop_event.wait()
+        t = threading.Thread(target=run)
+        return t
+
+    def fake_stop_self_improvement_cycle():
+        stop_event.set()
+
+    api_stub = types.SimpleNamespace(
+        init_self_improvement=init_self_improvement,
+        start_self_improvement_cycle=fake_start_self_improvement_cycle,
+        stop_self_improvement_cycle=fake_stop_self_improvement_cycle,
+    )
+    sys.modules["self_improvement.api"] = api_stub
+
+    settings = SandboxSettings()
+    settings.sandbox_repo_path = str(repo)
+    settings.sandbox_data_dir = str(data)
+    settings.menace_env_file = str(tmp_path / ".env")
+    settings.optional_service_versions = {}
+    settings.sandbox_central_logging = False
+    monkeypatch.setattr(bootstrap, "load_sandbox_settings", lambda: settings)
+
+    import start_autonomous_sandbox as sas
+
+    with caplog.at_level(logging.INFO):
+        sas.main(["--health-check"])
+
+    assert "Sandbox health" in caplog.text
+    assert bootstrap._SELF_IMPROVEMENT_THREAD is None
