@@ -6,16 +6,33 @@ from typing import Callable, List, Optional, Tuple, Awaitable
 import logging
 import asyncio
 import json
-import os
 from pathlib import Path
 from datetime import datetime
-import time
 
 from pydantic import BaseModel, ValidationError
 from sandbox_settings import SandboxSettings
 
-from filelock import FileLock
+try:  # pragma: no cover - simplified environments may lack full init helpers
+    from .self_improvement.init import FileLock, _atomic_write
+except Exception:  # pragma: no cover - fallback for stubbed tests
+    from filelock import FileLock  # type: ignore
 
+    def _atomic_write(path: Path, data: str | bytes, *, binary: bool = False, lock: FileLock | None = None) -> None:  # type: ignore
+        """Minimal fallback atomic write used when ``self_improvement`` helpers missing."""
+        mode = "wb" if binary else "w"
+        encoding = None if binary else "utf-8"
+        lock = lock or FileLock(str(path) + ".lock")
+
+        def _write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, mode, encoding=encoding) as fh:
+                fh.write(data)  # type: ignore[arg-type]
+
+        if lock.is_locked:
+            _write()
+        else:
+            with lock:
+                _write()
 from .unified_event_bus import EventBus
 from .data_bot import MetricsDB
 from .neuroplasticity import PathwayRecord, Outcome
@@ -82,9 +99,9 @@ class SelfLearningCoordinator:
 
     # --------------------------------------------------------------
     def _load_state(self) -> None:
-        lock_path = str(self._state_path) + ".lock"
+        lock = FileLock(str(self._state_path) + ".lock")
         try:
-            with FileLock(lock_path):
+            with lock:
                 data = json.loads(self._state_path.read_text())
             self._train_count = int(data.get("train_count", 0))
             self._summary_count = int(data.get("summary_count", 0))
@@ -110,30 +127,19 @@ class SelfLearningCoordinator:
             self._save_state()
 
     def _save_state(self) -> None:
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "train_count": self._train_count,
             "summary_count": self._summary_count,
             "last_eval_ts": self._last_eval_ts,
         }
-        lock_path = str(self._state_path) + ".lock"
-        tmp_path = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
-        for attempt in range(3):
-            try:
-                with FileLock(lock_path):
-                    tmp_path.write_text(json.dumps(payload))
-                    os.replace(tmp_path, self._state_path)
-                return
-            except Exception as exc:
-                logger.warning(
-                    "failed to persist self-learning state (attempt %d/3): %s",
-                    attempt + 1,
-                    exc,
-                )
-                time.sleep(0.1)
-        logger.error(
-            "giving up on persisting self-learning state after 3 attempts"
-        )
+        lock = FileLock(str(self._state_path) + ".lock")
+        try:
+            _atomic_write(self._state_path, json.dumps(payload), lock=lock)
+        except Exception as exc:
+            logger.warning(
+                "failed to persist self-learning state: %s",
+                exc,
+            )
 
     def _reload_intervals(self) -> None:
         try:
