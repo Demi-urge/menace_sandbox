@@ -1433,6 +1433,24 @@ class SandboxSettings(BaseSettings):
         ),
     )
 
+    metrics_skip_dirs: list[str] = Field(
+        default_factory=lambda: [
+            ".git",
+            "bin",
+            "build",
+            "dist",
+            "node_modules",
+            "site-packages",
+            "venv",
+            ".venv",
+            "vendor",
+            "third_party",
+            "__pycache__",
+        ],
+        env="METRICS_SKIP_DIRS",
+        description="Directories to skip when collecting code metrics.",
+    )
+
     # self test integration scoring knobs
     integration_score_threshold: float = Field(
         0.0,

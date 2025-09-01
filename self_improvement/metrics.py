@@ -25,26 +25,18 @@ from ..logging_utils import setup_logging
 
 logger = logging.getLogger(__name__)
 
-_SKIP_DIRS = {
-    ".git",
-    "bin",
-    "build",
-    "dist",
-    "node_modules",
-    "site-packages",
-    "venv",
-    ".venv",
-    "vendor",
-    "third_party",
-    "__pycache__",
-}
-
 
 def _collect_metrics(
     files: Iterable[Path],
     repo: Path,
+    settings: SandboxSettings | None = None,
 ) -> tuple[Dict[str, Dict[str, float]], int, float, int]:
     """Return per-file metrics, total complexity, avg maintainability and tests."""
+
+    if settings is None or not hasattr(settings, "metrics_skip_dirs"):
+        skip_dirs = set(SandboxSettings().metrics_skip_dirs)
+    else:
+        skip_dirs = set(settings.metrics_skip_dirs)
 
     per_file: Dict[str, Dict[str, float]] = {}
     total_complexity = 0
@@ -57,7 +49,7 @@ def _collect_metrics(
             rel_path = file.relative_to(repo)
         except ValueError:
             rel_path = file
-        if any(part in _SKIP_DIRS for part in rel_path.parts):
+        if any(part in skip_dirs for part in rel_path.parts):
             continue
         rel = rel_path.as_posix()
         name = file.name
@@ -189,7 +181,7 @@ def _update_alignment_baseline(
                 p = Path(f)
                 tmp.append(p if p.is_absolute() else repo / p)
             file_iter = tmp
-        per_file, _, _, _ = _collect_metrics(file_iter, repo)
+        per_file, _, _, _ = _collect_metrics(file_iter, repo, settings=settings)
 
         baseline_path = Path(path_str)
         try:
