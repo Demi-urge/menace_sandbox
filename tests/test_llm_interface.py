@@ -95,12 +95,12 @@ def test_openai_provider_retry_and_logging(monkeypatch):
         def __init__(self, *_a, **_k):
             pass
 
-        def log(self, prompt, result):
+        def log(self, prompt, result, backend=None):
             logged.append((prompt, result))
 
-    import prompt_db
+    import llm_router as lr
 
-    monkeypatch.setattr(prompt_db, "PromptDB", DummyDB)
+    monkeypatch.setattr(lr, "PromptDB", DummyDB)
 
     # Fake HTTP responses: first a rate limit, then success
     class Resp:
@@ -158,12 +158,12 @@ def test_router_fallback_logs(monkeypatch):
         def __init__(self, *_a, **_k):
             pass
 
-        def log(self, prompt, *_a, **_k):
-            logged.append(prompt.text)
+        def log(self, prompt, *_a, backend=None, **_k):
+            logged.append(backend)
 
-    import prompt_db
+    import llm_router as lr
 
-    monkeypatch.setattr(prompt_db, "PromptDB", DummyDB)
+    monkeypatch.setattr(lr, "PromptDB", DummyDB)
 
     class BoomClient(LLMClient):
         def __init__(self):
@@ -182,6 +182,7 @@ def test_router_fallback_logs(monkeypatch):
     router = LLMRouter(remote=BoomClient(), local=LocalClient(), size_threshold=1)
     res = router.generate(Prompt(text="task", metadata={"tags": ["x"]}))
     assert res.text == "ok"
+    assert logged == ["local"]
 
 
 def test_client_backends_fallback():
@@ -262,7 +263,7 @@ def test_successful_call_logs_and_returns_raw_and_parsed(monkeypatch):
         def __init__(self, *_a, **_k):
             pass
 
-        def log(self, prompt: Prompt, result: LLMResult) -> None:
+        def log(self, prompt: Prompt, result: LLMResult, backend=None) -> None:
             logged.append((prompt, result))
 
     import prompt_db

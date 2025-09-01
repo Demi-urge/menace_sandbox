@@ -416,6 +416,14 @@ class OpenAIProvider(LLMClient):
         raise RuntimeError("Failed to obtain completion from OpenAI")
 
     # ------------------------------------------------------------------
+    async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+        """Asynchronously yield streamed chunks for *prompt*."""
+
+        payload = self._prepare_payload(prompt)
+        async for chunk in self._async_generate(payload):
+            yield chunk
+
+    # ------------------------------------------------------------------
     def generate(
         self,
         prompt: Prompt,
