@@ -14,6 +14,13 @@ The sandbox expects a few variables to be set before launch:
 Run `auto_env_setup.ensure_env()` to generate a `.env` file with these variables when
 missing. Values may also be supplied via the shell environment.
 
+## Prompt logging variables
+
+These optional variables control where prompt execution results are stored:
+
+- `PROMPT_SUCCESS_LOG_PATH` – path for successful prompt logs (default `prompt_success_log.json`).
+- `PROMPT_FAILURE_LOG_PATH` – path for failed prompt logs (default `prompt_failure_log.json`).
+
 ## Optional dependencies
 
 Some features rely on additional tools. Missing components degrade

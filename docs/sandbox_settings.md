@@ -70,6 +70,10 @@ settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 - `temperature`: `1.0`
 - `exploration`: `epsilon_greedy`
 
+## Prompt logging defaults
+- `prompt_success_log_path`: `prompt_success_log.json` (`PROMPT_SUCCESS_LOG_PATH`)
+- `prompt_failure_log_path`: `prompt_failure_log.json` (`PROMPT_FAILURE_LOG_PATH`)
+
 See [`sandbox_config.sample.yaml`](sandbox_config.sample.yaml) for a complete
 example configuration file.
 
