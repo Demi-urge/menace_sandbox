@@ -14,6 +14,10 @@ import orphan_analyzer
 logger = logging.getLogger(__name__)
 
 
+class EvaluationError(Exception):
+    """Raised when an AST node cannot be safely evaluated."""
+
+
 def _resolve_assignment(
     assignments: Mapping[str, Sequence[Tuple[int, ast.AST]]], name: str, lineno: int
 ) -> ast.AST | None:
@@ -46,92 +50,157 @@ def _log_unresolved(node: ast.AST, lineno: int, error: Exception | None = None) 
     logger.debug(msg, *args)
 
 
-def _eval_simple(
-    node: ast.AST, assignments: Mapping[str, Sequence[Tuple[int, ast.AST]]], lineno: int
-) -> str | List[str] | None:
-    """Evaluate *node* to a string or list of strings if possible."""
+class _SimpleEvaluator(ast.NodeVisitor):
+    """Safely evaluate a limited subset of Python expressions."""
 
-    try:
-        value = ast.literal_eval(node)
-        if isinstance(value, str):
-            return value
-        if isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
-            return list(value)
-    except Exception as error:
-        _log_unresolved(node, lineno, error)
+    def __init__(
+        self,
+        assignments: Mapping[str, Sequence[Tuple[int, ast.AST]]],
+        lineno: int,
+    ) -> None:
+        self.assignments = assignments
+        self.lineno = lineno
 
-    if isinstance(node, ast.Name):
-        assigned = _resolve_assignment(assignments, node.id, lineno)
-        if assigned is not None:
-            return _eval_simple(assigned, assignments, lineno)
-        _log_unresolved(node, lineno)
-        return None
+    # -- literals -----------------------------------------------------
+    def visit_Constant(self, node: ast.Constant) -> Any:  # pragma: no cover - trivial
+        return node.value
 
-    if isinstance(node, (ast.List, ast.Tuple)):
-        items: List[str] = []
-        for elt in node.elts:
-            val = _eval_simple(elt, assignments, lineno)
-            if not isinstance(val, str):
-                return _log_unresolved(node, lineno)
-            items.append(val)
-        return items
+    # Python <3.8 compatibility
+    visit_Str = visit_Num = visit_Bytes = visit_NameConstant = visit_Constant
 
-    if isinstance(node, ast.JoinedStr):  # f-string
+    def visit_Name(self, node: ast.Name) -> Any:
+        assigned = _resolve_assignment(self.assignments, node.id, self.lineno)
+        if assigned is None:
+            raise EvaluationError(f"Name '{node.id}' is not defined")
+        return self.visit(assigned)
+
+    def visit_List(self, node: ast.List) -> list[Any]:
+        return [self.visit(elt) for elt in node.elts]
+
+    def visit_Tuple(self, node: ast.Tuple) -> list[Any]:
+        return [self.visit(elt) for elt in node.elts]
+
+    def visit_Dict(self, node: ast.Dict) -> Dict[Any, Any]:
+        return {self.visit(k): self.visit(v) for k, v in zip(node.keys, node.values)}
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> str:
         parts: list[str] = []
         for value in node.values:
-            part = _eval_simple(
-                value.value if isinstance(value, ast.FormattedValue) else value,
-                assignments,
-                lineno,
-            )
-            if part is None:
-                return _log_unresolved(node, lineno)
-            parts.append(part)
+            if isinstance(value, ast.FormattedValue):
+                parts.append(str(self.visit(value.value)))
+            else:
+                parts.append(str(self.visit(value)))
         return "".join(parts)
 
-    if isinstance(node, ast.BinOp):
-        left = _eval_simple(node.left, assignments, lineno)
-        right = _eval_simple(node.right, assignments, lineno)
-        if left is None or right is None:
-            return _log_unresolved(node, lineno)
+    # -- operations ---------------------------------------------------
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+        operand = self.visit(node.operand)
+        op = node.op
+        if isinstance(op, ast.UAdd):
+            return +operand
+        if isinstance(op, ast.USub):
+            return -operand
+        if isinstance(op, ast.Not):
+            return not operand
+        if isinstance(op, ast.Invert):
+            return ~operand
+        raise EvaluationError(f"Unsupported unary operator: {type(op).__name__}")
+
+    def visit_BinOp(self, node: ast.BinOp) -> Any:
+        left = self.visit(node.left)
+        right = self.visit(node.right)
+        op = node.op
         try:
-            if isinstance(node.op, ast.Add):
+            if isinstance(op, ast.Add):
                 return left + right
-            if isinstance(node.op, ast.Mod):
+            if isinstance(op, ast.Sub):
+                return left - right
+            if isinstance(op, ast.Mult):
+                return left * right
+            if isinstance(op, ast.Div):
+                return left / right
+            if isinstance(op, ast.FloorDiv):
+                return left // right
+            if isinstance(op, ast.Mod):
                 if isinstance(right, list):
                     return left % tuple(right)
                 return left % right
-        except Exception as error:
-            return _log_unresolved(node, lineno, error)
-        return _log_unresolved(node, lineno)
+            if isinstance(op, ast.Pow):
+                return left ** right
+        except Exception as error:  # pragma: no cover - best effort
+            raise EvaluationError(error) from error
+        raise EvaluationError(f"Unsupported binary operator: {type(op).__name__}")
 
-    if isinstance(node, ast.Call):
-        args: List[Any] = []
-        for arg in node.args:
-            val = _eval_simple(arg, assignments, lineno)
-            if val is None:
-                return _log_unresolved(node, lineno)
-            args.append(val)
+    def visit_BoolOp(self, node: ast.BoolOp) -> bool:
+        if isinstance(node.op, ast.And):
+            result = True
+            for value in node.values:
+                result = result and bool(self.visit(value))
+                if not result:
+                    break
+            return result
+        if isinstance(node.op, ast.Or):
+            result = False
+            for value in node.values:
+                result = result or bool(self.visit(value))
+                if result:
+                    break
+            return result
+        raise EvaluationError(f"Unsupported boolean operator: {type(node.op).__name__}")
+
+    def visit_Compare(self, node: ast.Compare) -> bool:
+        left = self.visit(node.left)
+        for op, comparator in zip(node.ops, node.comparators):
+            right = self.visit(comparator)
+            if isinstance(op, ast.Eq):
+                ok = left == right
+            elif isinstance(op, ast.NotEq):
+                ok = left != right
+            elif isinstance(op, ast.Lt):
+                ok = left < right
+            elif isinstance(op, ast.LtE):
+                ok = left <= right
+            elif isinstance(op, ast.Gt):
+                ok = left > right
+            elif isinstance(op, ast.GtE):
+                ok = left >= right
+            elif isinstance(op, ast.In):
+                ok = left in right
+            elif isinstance(op, ast.NotIn):
+                ok = left not in right
+            elif isinstance(op, ast.Is):
+                ok = left is right
+            elif isinstance(op, ast.IsNot):
+                ok = left is not right
+            else:
+                raise EvaluationError(
+                    f"Unsupported comparison operator: {type(op).__name__}"
+                )
+            if not ok:
+                return False
+            left = right
+        return True
+
+    # -- calls --------------------------------------------------------
+    def visit_Call(self, node: ast.Call) -> Any:
+        args = [self.visit(arg) for arg in node.args]
         kwargs: Dict[str, Any] = {}
         for kw in node.keywords:
             if kw.arg is None:
-                return _log_unresolved(node, lineno)
-            val = _eval_simple(kw.value, assignments, lineno)
-            if val is None:
-                return _log_unresolved(node, lineno)
-            kwargs[kw.arg] = val
+                raise EvaluationError("Unsupported **kwargs in call")
+            kwargs[kw.arg] = self.visit(kw.value)
 
         func = node.func
         if isinstance(func, ast.Attribute):
-            # method on evaluated base value (e.g. str.lower, str.format)
-            base_val = _eval_simple(func.value, assignments, lineno)
-            if isinstance(base_val, str) and hasattr(base_val, func.attr):
+            try:
+                base_val = self.visit(func.value)
+            except EvaluationError:
+                base_val = None
+            if base_val is not None and hasattr(base_val, func.attr):
                 try:
                     return getattr(base_val, func.attr)(*args, **kwargs)
-                except Exception as error:
-                    return _log_unresolved(node, lineno, error)
-
-            # walk attribute chain to lookup in SAFE_CALLS
+                except Exception as error:  # pragma: no cover - best effort
+                    raise EvaluationError(error) from error
             path: List[str] = [func.attr]
             cur = func.value
             while isinstance(cur, ast.Attribute):
@@ -144,19 +213,88 @@ def _eval_simple(
                 if target is not None:
                     try:
                         return target(*args, **kwargs)
-                    except Exception as error:
-                        return _log_unresolved(node, lineno, error)
+                    except Exception as error:  # pragma: no cover - best effort
+                        raise EvaluationError(error) from error
         elif isinstance(func, ast.Name):
-            key = (func.id,)
-            target = SAFE_CALLS.get(key)
+            target = SAFE_CALLS.get((func.id,))
             if target is not None:
                 try:
                     return target(*args, **kwargs)
-                except Exception as error:
-                    return _log_unresolved(node, lineno, error)
-        return _log_unresolved(node, lineno)
+                except Exception as error:  # pragma: no cover - best effort
+                    raise EvaluationError(error) from error
+        raise EvaluationError("Unsupported function call")
 
-    return _log_unresolved(node, lineno)
+    # -- comprehensions -----------------------------------------------
+    def visit_ListComp(self, node: ast.ListComp) -> list[Any]:
+        if len(node.generators) != 1:
+            raise EvaluationError("Only single-generator comprehensions supported")
+        gen = node.generators[0]
+        iterable = self.visit(gen.iter)
+        result = []
+        for item in iterable:
+            if not isinstance(gen.target, ast.Name):
+                raise EvaluationError("Unsupported comprehension target")
+            sub_assign = dict(self.assignments)
+            sub_assign[gen.target.id] = [(0, ast.Constant(item))]
+            evaluator = _SimpleEvaluator(sub_assign, self.lineno)
+            ifs_ok = True
+            for if_clause in gen.ifs:
+                if not evaluator.visit(if_clause):
+                    ifs_ok = False
+                    break
+            if ifs_ok:
+                result.append(evaluator.visit(node.elt))
+        return result
+
+    def visit_DictComp(self, node: ast.DictComp) -> Dict[Any, Any]:
+        if len(node.generators) != 1:
+            raise EvaluationError("Only single-generator comprehensions supported")
+        gen = node.generators[0]
+        iterable = self.visit(gen.iter)
+        result: Dict[Any, Any] = {}
+        for item in iterable:
+            sub_assign = dict(self.assignments)
+            if isinstance(gen.target, ast.Tuple) and len(gen.target.elts) == 2:
+                k_target, v_target = gen.target.elts
+                if not (isinstance(k_target, ast.Name) and isinstance(v_target, ast.Name)):
+                    raise EvaluationError("Unsupported dict comprehension target")
+                sub_assign[k_target.id] = [(0, ast.Constant(item[0]))]
+                sub_assign[v_target.id] = [(0, ast.Constant(item[1]))]
+            elif isinstance(gen.target, ast.Name):
+                sub_assign[gen.target.id] = [(0, ast.Constant(item))]
+            else:
+                raise EvaluationError("Unsupported dict comprehension target")
+            evaluator = _SimpleEvaluator(sub_assign, self.lineno)
+            ifs_ok = True
+            for if_clause in gen.ifs:
+                if not evaluator.visit(if_clause):
+                    ifs_ok = False
+                    break
+            if ifs_ok:
+                key = evaluator.visit(node.key)
+                value = evaluator.visit(node.value)
+                result[key] = value
+        return result
+
+    # -----------------------------------------------------------------
+    def generic_visit(self, node: ast.AST) -> Any:  # pragma: no cover - safety
+        raise EvaluationError(f"Unsupported expression: {type(node).__name__}")
+
+
+def _eval_simple(
+    node: ast.AST, assignments: Mapping[str, Sequence[Tuple[int, ast.AST]]], lineno: int
+) -> Any:
+    """Evaluate *node* to a Python value if possible.
+
+    Unknown expressions raise :class:`EvaluationError`.
+    """
+
+    evaluator = _SimpleEvaluator(assignments, lineno)
+    try:
+        return evaluator.visit(node)
+    except EvaluationError as error:
+        _log_unresolved(node, lineno, error)
+        raise
 
 
 def _extract_module_from_call(
@@ -170,6 +308,12 @@ def _extract_module_from_call(
     importlib_names = set(importlib_aliases or {"importlib"})
     import_module_names = set(import_module_aliases or {"import_module"})
     assigns = assignments or {}
+
+    def _try_eval(expr: ast.AST) -> Any:
+        try:
+            return _eval_simple(expr, assigns, node.lineno)
+        except EvaluationError:
+            return None
 
     def _attr_parts(expr: ast.AST) -> List[str]:
         parts: List[str] = []
@@ -196,18 +340,18 @@ def _extract_module_from_call(
         arg = node.args[0]
         # Attempt a generic evaluation first which now includes environment
         # variable lookups handled by ``_eval_simple``.
-        resolved = _eval_simple(arg, assigns, node.lineno)
+        resolved = _try_eval(arg)
         if isinstance(resolved, str):
             return resolved
         if isinstance(arg, ast.BinOp):
             if isinstance(arg.op, ast.Add):
-                left = _eval_simple(arg.left, assigns, node.lineno)
-                right = _eval_simple(arg.right, assigns, node.lineno)
+                left = _try_eval(arg.left)
+                right = _try_eval(arg.right)
                 if isinstance(left, str) and isinstance(right, str):
                     return left + right
             if isinstance(arg.op, ast.Mod):
-                left = _eval_simple(arg.left, assigns, node.lineno)
-                right = _eval_simple(arg.right, assigns, node.lineno)
+                left = _try_eval(arg.left)
+                right = _try_eval(arg.right)
                 if isinstance(left, str) and right is not None:
                     try:
                         if isinstance(right, list):
@@ -222,8 +366,8 @@ def _extract_module_from_call(
             and not arg.keywords
             and len(arg.args) == 1
         ):
-            sep = _eval_simple(arg.func.value, assigns, node.lineno)
-            parts = _eval_simple(arg.args[0], assigns, node.lineno)
+            sep = _try_eval(arg.func.value)
+            parts = _try_eval(arg.args[0])
             if isinstance(sep, str) and isinstance(parts, list):
                 if all(isinstance(p, str) for p in parts):
                     return sep.join(parts)
@@ -232,13 +376,13 @@ def _extract_module_from_call(
             and isinstance(arg.func, ast.Attribute)
             and arg.func.attr == "format"
         ):
-            fmt = _eval_simple(arg.func.value, assigns, node.lineno)
+            fmt = _try_eval(arg.func.value)
             if isinstance(fmt, str) and not any(
                 isinstance(a, ast.Starred) for a in arg.args
             ):
                 args: List[str] = []
                 for a in arg.args:
-                    val = _eval_simple(a, assigns, node.lineno)
+                    val = _try_eval(a)
                     if not isinstance(val, str):
                         return None
                     args.append(val)
@@ -246,7 +390,7 @@ def _extract_module_from_call(
                 for kw in arg.keywords:
                     if kw.arg is None:
                         return None
-                    val = _eval_simple(kw.value, assigns, node.lineno)
+                    val = _try_eval(kw.value)
                     if not isinstance(val, str):
                         return None
                     kwargs[kw.arg] = val
@@ -266,7 +410,7 @@ def _extract_module_from_call(
             )
             and node.args
         ):
-            mod = _eval_simple(node.args[0], assigns, node.lineno)
+            mod = _try_eval(node.args[0])
             if isinstance(mod, str):
                 return mod
         loader_names = {"SourceFileLoader", "SourcelessFileLoader", "ExtensionFileLoader"}
@@ -278,7 +422,7 @@ def _extract_module_from_call(
             )
             and node.args
         ):
-            mod = _eval_simple(node.args[0], assigns, node.lineno)
+            mod = _try_eval(node.args[0])
             if isinstance(mod, str):
                 return mod
     return None
