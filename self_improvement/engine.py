@@ -117,8 +117,9 @@ import math
 import shutil
 import ast
 import yaml
+import traceback
 from pathlib import Path
-from typing import Mapping, Callable, Iterable, Dict, Any, Sequence
+from typing import Mapping, Callable, Iterable, Dict, Any, Sequence, List
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
 try:  # pragma: no cover - allow flat imports
@@ -147,6 +148,7 @@ from .orchestration import (
 )
 from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
+from .prompt_memory import log_prompt_attempt
 
 
 from ..self_test_service import SelfTestService
@@ -1246,6 +1248,7 @@ class SelfImprovementEngine:
         delay: float | None = None,
     ) -> int | None:
         start = time.perf_counter()
+        error_trace: str | None = None
         history = self._memory_summaries(module)
         if history:
             self.logger.info(
@@ -1295,6 +1298,7 @@ class SelfImprovementEngine:
             self.logger.error("quick_fix_engine unavailable: %s", exc)
             raise
         except Exception:
+            error_trace = traceback.format_exc()
             self.logger.exception(
                 "patch generation failed", extra=log_record(module=module)
             )
@@ -1304,6 +1308,7 @@ class SelfImprovementEngine:
                 try:
                     apply_patch(patch_id, _repo_path())
                 except RuntimeError:
+                    error_trace = traceback.format_exc()
                     self.logger.exception(
                         "patch application failed", extra=log_record(module=module)
                     )
@@ -1341,6 +1346,47 @@ class SelfImprovementEngine:
         self._record_memory_outcome(
             module, action, patch_id is not None, tags=tags
         )
+
+        success = False
+        roi_meta: Dict[str, Any] = {"roi_delta": 0.0}
+        exec_res: Dict[str, Any] = {"patch_id": patch_id}
+        if patch_id is not None and self.patch_db is not None:
+            try:
+                rec = self.patch_db.get(patch_id)
+            except Exception:
+                rec = None
+            if rec is not None:
+                success = not rec.reverted
+                exec_res["reverted"] = rec.reverted
+                roi_meta["roi_delta"] = rec.roi_delta
+                try:
+                    conn = self.patch_db.router.get_connection("patch_history")
+                    row = conn.execute(
+                        "SELECT tests_passed FROM patch_history WHERE id=?",
+                        (patch_id,),
+                    ).fetchone()
+                    if row:
+                        roi_meta["tests_passed"] = bool(row[0])
+                except Exception:
+                    pass
+        if not success:
+            fails: List[str] = []
+            if error_trace:
+                fails.append(error_trace)
+            trace = getattr(self.self_coding_engine, "_last_retry_trace", None)
+            if trace:
+                fails.append(trace)
+            if fails:
+                exec_res["failures"] = fails
+        try:
+            log_prompt_attempt(
+                getattr(self.self_coding_engine, "_last_prompt", None),
+                success,
+                exec_res,
+                roi_meta,
+            )
+        except Exception:
+            self.logger.exception("log_prompt_attempt failed")
         return patch_id
 
     # ------------------------------------------------------------------
