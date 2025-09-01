@@ -7,12 +7,17 @@ import os
 import time
 import logging
 from datetime import datetime
-from threading import Thread
+from threading import Thread, Lock
 from typing import Any, List, Dict, Optional
 
 from .retry_utils import publish_with_retry
 from db_router import GLOBAL_ROUTER
 import sqlite3
+from sandbox_settings import SandboxSettings
+from logging_utils import (
+    LockedRotatingFileHandler,
+    LockedTimedRotatingFileHandler,
+)
 
 try:  # optional dependency
     from .unified_event_bus import UnifiedEventBus  # type: ignore
@@ -25,6 +30,8 @@ LOG_PATH = os.path.join(LOG_DIR, "violation_log.jsonl")
 ALIGNMENT_DB_PATH = os.path.join(LOG_DIR, "alignment_warnings.db")
 
 logger = logging.getLogger(__name__)
+_logger_lock = Lock()
+_loggers: Dict[str, logging.Logger] = {}
 
 _event_bus: Optional[UnifiedEventBus]
 if UnifiedEventBus is not None:
@@ -45,6 +52,36 @@ def set_event_bus(bus: Optional[UnifiedEventBus]) -> None:
 def _ensure_log_dir() -> None:
     """Create the log directory if it doesn't exist."""
     os.makedirs(LOG_DIR, exist_ok=True)
+
+
+def _get_logger(path: str) -> logging.Logger:
+    with _logger_lock:
+        lg = _loggers.get(path)
+        if lg is None:
+            settings = SandboxSettings()
+            lg = logging.getLogger(f"violation_logger_{path}")
+            lg.setLevel(logging.INFO)
+            rotate_seconds = settings.log_rotation_seconds
+            if rotate_seconds:
+                handler = LockedTimedRotatingFileHandler(
+                    path,
+                    when="s",
+                    interval=rotate_seconds,
+                    backupCount=settings.log_rotation_backup_count,
+                    encoding="utf-8",
+                )
+            else:
+                handler = LockedRotatingFileHandler(
+                    path,
+                    maxBytes=settings.log_rotation_max_bytes,
+                    backupCount=settings.log_rotation_backup_count,
+                    encoding="utf-8",
+                )
+            handler.setFormatter(logging.Formatter("%(message)s"))
+            lg.addHandler(handler)
+            lg.propagate = False
+            _loggers[path] = lg
+        return lg
 
 
 def _alignment_conn() -> sqlite3.Connection:
@@ -206,8 +243,8 @@ def log_violation(
         "evidence": ev,
         "alignment_warning": alignment_warning,
     }
-    with open(LOG_PATH, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record) + "\n")
+    file_logger = _get_logger(LOG_PATH)
+    file_logger.info(json.dumps(record))
 
     if alignment_warning:
         try:
