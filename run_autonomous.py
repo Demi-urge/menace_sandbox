@@ -795,7 +795,7 @@ def update_metrics(
         flagged,
         roi_threshold,
         consecutive=args.roi_cycles,
-        confidence=roi_confidence or 0.95,
+        confidence=roi_confidence,
         entropy_history=entropy_history,
         entropy_threshold=entropy_threshold,
         entropy_consecutive=entropy_consecutive,
@@ -829,7 +829,7 @@ def update_metrics(
         threshold=thr,
         threshold_window=synergy_threshold_window,
         weight=synergy_threshold_weight,
-        confidence=synergy_confidence or 0.95,
+        confidence=synergy_confidence,
     )
     threshold_log.log(run_idx, roi_threshold, syn_thr_val, converged)
     logger.debug(
@@ -1702,6 +1702,10 @@ def main(argv: List[str] | None = None) -> None:
     synergy_confidence = _get_env_override(
         "SYNERGY_CONFIDENCE", args.synergy_confidence, settings
     )
+    if roi_confidence is None:
+        roi_confidence = settings.roi.confidence or 0.95
+    if synergy_confidence is None:
+        synergy_confidence = settings.synergy.confidence or 0.95
     entropy_threshold = _get_env_override(
         "ENTROPY_PLATEAU_THRESHOLD", args.entropy_plateau_threshold, settings
     )
@@ -1735,11 +1739,17 @@ def main(argv: List[str] | None = None) -> None:
     if synergy_ma_window is None:
         synergy_ma_window = args.synergy_cycles
     if synergy_stationarity_confidence is None:
-        synergy_stationarity_confidence = synergy_confidence or 0.95
+        synergy_stationarity_confidence = (
+            settings.synergy.stationarity_confidence
+            or synergy_confidence
+            or 0.95
+        )
     if synergy_std_threshold is None:
         synergy_std_threshold = 1e-3
     if synergy_variance_confidence is None:
-        synergy_variance_confidence = synergy_confidence or 0.95
+        synergy_variance_confidence = (
+            settings.synergy.variance_confidence or synergy_confidence or 0.95
+        )
 
     if args.recover:
         tracker = SandboxRecoveryManager.load_last_tracker(data_dir)
