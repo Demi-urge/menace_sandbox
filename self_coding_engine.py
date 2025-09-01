@@ -1585,13 +1585,19 @@ class SelfCodingEngine:
                 )
             except Exception as exc:
                 trace = traceback.format_exc()
+                roi_val = 0.0
+                if log_prompt_attempt and self.data_bot:
+                    try:
+                        roi_val = self.data_bot.roi(self.bot_name)
+                    except Exception:
+                        pass
                 if log_prompt_attempt:
                     try:
                         log_prompt_attempt(
                             getattr(self, "_last_prompt", None),
                             False,
                             {"error": str(exc), "trace": trace},
-                            {"roi_delta": 0.0},
+                            {"roi": roi_val, "roi_delta": 0.0},
                         )
                     except Exception:
                         self.logger.exception("log_prompt_attempt failed")
@@ -1604,7 +1610,7 @@ class SelfCodingEngine:
                             [],
                             patch_id=pid,
                             contribution=0.0,
-                            roi_delta=0.0,
+                            roi_delta=delta,
                             win=not reverted,
                             regret=reverted,
                             errors=[{"trace": f.trace, "tags": f.tags} for f in failures],
@@ -1637,6 +1643,14 @@ class SelfCodingEngine:
                         )
                     except Exception:
                         self.logger.exception("log_prompt_attempt failed")
+                self.logger.info(
+                    "apply_patch_with_retry success",
+                    extra={
+                        "patch_id": pid,
+                        "roi_delta": delta,
+                        "reverted": reverted,
+                    },
+                )
                 return pid, reverted, delta
             trace = self._last_retry_trace or ""
             if self._failure_cache.seen(trace):
@@ -1650,6 +1664,12 @@ class SelfCodingEngine:
                 )
             except Exception:
                 self.logger.exception("audit trail logging failed")
+        roi_val = 0.0
+        if self.data_bot:
+            try:
+                roi_val = self.data_bot.roi(self.bot_name)
+            except Exception:
+                pass
         if log_prompt_attempt:
             exec_res: Dict[str, Any] = {"failures": [f.trace for f in failures]}
             try:
@@ -1657,10 +1677,14 @@ class SelfCodingEngine:
                     getattr(self, "_last_prompt", None),
                     False,
                     exec_res,
-                    {"roi_delta": 0.0},
+                    {"roi": roi_val, "roi_delta": 0.0},
                 )
             except Exception:
                 self.logger.exception("log_prompt_attempt failed")
+        self.logger.error(
+            "apply_patch_with_retry failed",
+            extra={"roi": roi_val, "failures": [f.trace for f in failures]},
+        )
         return None, False, 0.0
 
     def rollback_patch(self, patch_id: str) -> None:
