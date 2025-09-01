@@ -90,15 +90,47 @@ REPO_ROOT = Path(settings.sandbox_repo_path or _pkg_dir)
 
 
 def _visual_agent_running(urls: str) -> bool:
-    """Return ``True`` if the visual agent responds to ``/health``."""
+    """Return ``True`` if any visual agent endpoint responds to ``/health``.
+
+    ``urls`` may contain multiple base URLs separated by semicolons. Each
+    entry can optionally specify a custom timeout using ``","`` as the
+    separator (``"http://host:port,5"`` sets a five second timeout). The
+    function returns as soon as one endpoint reports a healthy status. It
+    logs the result for each endpoint to aid troubleshooting.
+    """
+
     try:
         import requests  # type: ignore
-
-        base = urls.split(";")[0]
-        resp = requests.get(f"{base}/health", timeout=3)
-        return resp.status_code == 200
     except Exception:
+        logger.exception("failed to import requests module for visual agent check")
         return False
+
+    for entry in (u.strip() for u in urls.split(";")):
+        if not entry:
+            continue
+
+        base, timeout = entry, 3.0
+        if "," in entry:
+            base, to_str = entry.split(",", 1)
+            try:
+                timeout = float(to_str)
+            except Exception:
+                logger.warning(
+                    "invalid timeout '%s' for visual agent URL '%s'", to_str, base
+                )
+
+        try:
+            resp = requests.get(f"{base}/health", timeout=timeout)
+            if resp.status_code == 200:
+                logger.info("visual agent healthy at %s", base)
+                return True
+            logger.warning(
+                "visual agent unhealthy at %s: status %s", base, resp.status_code
+            )
+        except Exception as exc:
+            logger.warning("visual agent check failed for %s: %s", base, exc)
+
+    return False
 
 
 spec = importlib.util.spec_from_file_location("menace", _pkg_dir / "__init__.py")
