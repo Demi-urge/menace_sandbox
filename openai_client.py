@@ -9,7 +9,8 @@ from typing import Dict, Any
 
 import requests
 
-from .llm_interface import Prompt, LLMResult, LLMClient
+from llm_interface import Prompt, LLMResult, LLMClient
+from prompt_db import PromptDB
 
 
 class OpenAILLMClient(LLMClient):
@@ -25,6 +26,7 @@ class OpenAILLMClient(LLMClient):
         self._rps = float(os.getenv("OPENAI_RATE_LIMIT_RPS", "1"))
         self._lock = threading.Lock()
         self._last_request = 0.0
+        self.db = PromptDB(self.model)
 
     # ------------------------------------------------------------------
     def _throttle(self) -> None:
@@ -85,4 +87,11 @@ class OpenAILLMClient(LLMClient):
             text = raw["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError):
             pass
-        return LLMResult(raw=raw, text=text)
+        result = LLMResult(raw=raw, text=text)
+        tags = prompt.metadata.get("tags", [])
+        try:
+            confidence = float(prompt.metadata.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        self.db.log_prompt(prompt, result, tags, confidence)
+        return result
