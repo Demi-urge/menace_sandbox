@@ -12,6 +12,7 @@ import ast
 import tempfile
 import py_compile
 import re
+import traceback
 from datetime import datetime
 
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
@@ -123,6 +124,14 @@ except Exception:  # pragma: no cover - graceful degradation
 from .prompt_engine import PromptEngine
 from .prompt_memory_trainer import PromptMemoryTrainer
 from .error_parser import ErrorParser, ErrorReport, parse_failure, FailureCache
+try:
+    from .self_improvement.prompt_memory import log_prompt_attempt
+except Exception:  # pragma: no cover - fallback for flat layout
+    try:
+        from self_improvement.prompt_memory import log_prompt_attempt  # type: ignore
+    except Exception:  # pragma: no cover - final fallback
+        def log_prompt_attempt(*_a: Any, **_k: Any) -> None:  # type: ignore
+            return None
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -263,6 +272,7 @@ class SelfCodingEngine:
             roi_tracker=tracker, tone=prompt_tone, trainer=self.prompt_memory
         )
         self._last_prompt_metadata: Dict[str, Any] = {}
+        self._last_prompt: Prompt | None = None
         self.router = kwargs.get("router")
         # store tracebacks from failed attempts for retry prompts
         self._last_retry_trace: str | None = None
@@ -511,6 +521,7 @@ class SelfCodingEngine:
                 retrieval_context=retrieval_context or "",
                 retry_trace=retry_trace,
             )
+        self._last_prompt = prompt_obj
         body = prompt_obj.text if isinstance(prompt_obj, Prompt) else str(prompt_obj)
         self._last_prompt_metadata = getattr(self.prompt_engine, "last_metadata", {})
         if VA_PROMPT_TEMPLATE:
@@ -633,6 +644,7 @@ class SelfCodingEngine:
             self._last_retry_trace = str(exc)
             self._last_prompt_metadata = {}
             return _fallback()
+        self._last_prompt = prompt_obj
         self._last_prompt_metadata = getattr(self.prompt_engine, "last_metadata", {})
         if metadata and metadata.get("retrieval_context"):
             rc = metadata["retrieval_context"]
@@ -1529,12 +1541,26 @@ class SelfCodingEngine:
             meta = context_meta if attempts == 1 and context_meta is not None else None
             if current or meta is None:
                 meta = self._build_retry_context(description, current)
-            pid, reverted, delta = self.apply_patch(
-                path,
-                description,
-                context_meta=meta,
-                **kwargs,
-            )
+            try:
+                pid, reverted, delta = self.apply_patch(
+                    path,
+                    description,
+                    context_meta=meta,
+                    **kwargs,
+                )
+            except Exception as exc:
+                trace = traceback.format_exc()
+                if log_prompt_attempt:
+                    try:
+                        log_prompt_attempt(
+                            getattr(self, "_last_prompt", None),
+                            False,
+                            {"error": str(exc), "trace": trace},
+                            {"roi_delta": 0.0},
+                        )
+                    except Exception:
+                        self.logger.exception("log_prompt_attempt failed")
+                raise
             if pid is not None:
                 if failures and self.patch_db:
                     try:
@@ -1551,6 +1577,31 @@ class SelfCodingEngine:
                         )
                     except Exception:
                         self.logger.exception("failed to record failure traces")
+                if log_prompt_attempt:
+                    roi_meta: Dict[str, Any] = {"roi_delta": delta}
+                    if self.patch_db:
+                        try:
+                            conn = self.patch_db.router.get_connection("patch_history")
+                            row = conn.execute(
+                                "SELECT tests_passed FROM patch_history WHERE id=?",
+                                (pid,),
+                            ).fetchone()
+                            if row:
+                                roi_meta["tests_passed"] = bool(row[0])
+                        except Exception:
+                            pass
+                    exec_res: Dict[str, Any] = {"patch_id": pid, "reverted": reverted}
+                    if failures:
+                        exec_res["failures"] = [f.trace for f in failures]
+                    try:
+                        log_prompt_attempt(
+                            getattr(self, "_last_prompt", None),
+                            not reverted,
+                            exec_res,
+                            roi_meta,
+                        )
+                    except Exception:
+                        self.logger.exception("log_prompt_attempt failed")
                 return pid, reverted, delta
             trace = self._last_retry_trace or ""
             if self._failure_cache.seen(trace):
@@ -1564,6 +1615,17 @@ class SelfCodingEngine:
                 )
             except Exception:
                 self.logger.exception("audit trail logging failed")
+        if log_prompt_attempt:
+            exec_res: Dict[str, Any] = {"failures": [f.trace for f in failures]}
+            try:
+                log_prompt_attempt(
+                    getattr(self, "_last_prompt", None),
+                    False,
+                    exec_res,
+                    {"roi_delta": 0.0},
+                )
+            except Exception:
+                self.logger.exception("log_prompt_attempt failed")
         return None, False, 0.0
 
     def rollback_patch(self, patch_id: str) -> None:
