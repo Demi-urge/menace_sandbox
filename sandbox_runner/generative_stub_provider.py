@@ -1,11 +1,23 @@
 from __future__ import annotations
 
-"""Stub provider using a language model via ``transformers``.
+"""Stub provider using a language model via ``transformers`` or OpenAI.
 
 The module persists generated stubs on disk and coordinates concurrent access
 to the cache using a :class:`filelock.FileLock`.  Loads and saves retry lock
 acquisition briefly and emit log messages when contention is encountered so
 that potential concurrency issues can be diagnosed.
+
+Required configuration:
+
+* ``SANDBOX_ENABLE_TRANSFORMERS`` with ``SANDBOX_STUB_MODEL`` and
+  ``SANDBOX_HUGGINGFACE_TOKEN`` to load a HuggingFace model via
+  :func:`transformers.pipeline`.
+* ``SANDBOX_ENABLE_OPENAI`` with ``OPENAI_API_KEY`` to use the ``openai``
+  backend.
+* When neither backend is available a lightweight bundled model specified by
+  ``SANDBOX_STUB_FALLBACK_MODEL`` is attempted.  If that model cannot be
+  loaded a :class:`RuntimeError` is raised describing the missing
+  dependencies.
 """
 
 from typing import Any, Dict, List, Tuple, Callable, Awaitable
@@ -45,6 +57,7 @@ logger = logging.getLogger(__name__)
 
 class StubCacheWarning(UserWarning):
     """Warning emitted when the on-disk stub cache cannot be used."""
+
 
 _GENERATOR = None
 # use OrderedDict for LRU eviction semantics
@@ -662,6 +675,61 @@ class ModelLoadError(RuntimeError):
     """Raised when no suitable stub generation model can be loaded."""
 
 
+async def _load_openai_generator() -> Any:
+    """Load and return the OpenAI client if available."""
+
+    if not _feature_enabled("SANDBOX_ENABLE_OPENAI"):
+        raise ModelLoadError(
+            "openai support disabled; set SANDBOX_ENABLE_OPENAI=1"
+        )
+    if not os.getenv("OPENAI_API_KEY"):
+        raise ModelLoadError("OPENAI_API_KEY missing for openai usage")
+    try:
+        global openai
+        if openai is None:
+            openai = importlib.import_module("openai")  # type: ignore
+    except ImportError as exc:  # pragma: no cover - library not installed
+        raise ModelLoadError(
+            "openai library unavailable; install the 'openai' package"
+        ) from exc
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+    await asyncio.to_thread(_seed_generator_from_history, openai)
+    return openai
+
+
+async def _load_fallback_pipeline(cfg: StubProviderConfig) -> Any:
+    """Load the bundled lightweight model via :mod:`transformers`."""
+
+    if not _feature_enabled("SANDBOX_ENABLE_TRANSFORMERS"):
+        raise ModelLoadError(
+            "transformers support disabled; set SANDBOX_ENABLE_TRANSFORMERS=1"
+        )
+    try:
+        global pipeline
+        if pipeline is None:
+            transformers = importlib.import_module("transformers")
+            pipeline = transformers.pipeline  # type: ignore[attr-defined]
+    except ImportError as exc:  # pragma: no cover - library not installed
+        raise ModelLoadError(
+            "transformers library unavailable; install the 'transformers' package"
+        ) from exc
+    if pipeline is None:  # pragma: no cover - defensive
+        raise ModelLoadError("transformers pipeline unavailable")
+    try:
+        gen = await asyncio.to_thread(
+            pipeline,
+            "text-generation",
+            model=cfg.fallback_model,
+            local_files_only=True,
+        )
+        await asyncio.to_thread(_seed_generator_from_history, gen)
+        return gen
+    except Exception as exc:  # pragma: no cover - model load failures
+        raise ModelLoadError(
+            f"bundled fallback model {cfg.fallback_model} could not be loaded"
+        ) from exc
+
+
 async def _aload_generator(config: StubProviderConfig | None = None) -> Any:
     """Return a text generation pipeline or raise :class:`ModelLoadError`."""
     global _GENERATOR
@@ -672,58 +740,36 @@ async def _aload_generator(config: StubProviderConfig | None = None) -> Any:
     model = settings.sandbox_stub_model
 
     if model == "openai":
-        if not _feature_enabled("SANDBOX_ENABLE_OPENAI"):
-            raise ModelLoadError(
-                "openai support disabled; set SANDBOX_ENABLE_OPENAI=1"
-            )
-        if not os.getenv("OPENAI_API_KEY"):
-            raise ModelLoadError("OPENAI_API_KEY missing for openai usage")
         try:
-            global openai
-            if openai is None:
-                openai = importlib.import_module("openai")  # type: ignore
-        except ImportError as exc:  # pragma: no cover - library not installed
-            raise ModelLoadError(
-                "openai library unavailable; install the 'openai' package"
-            ) from exc
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        _GENERATOR = openai
-        await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
-        return _GENERATOR
-
-    if not _feature_enabled("SANDBOX_ENABLE_TRANSFORMERS"):
-        raise ModelLoadError(
-            "transformers support disabled; set SANDBOX_ENABLE_TRANSFORMERS=1"
-        )
+            _GENERATOR = await _load_openai_generator()
+            return _GENERATOR
+        except ModelLoadError as exc:
+            logger.warning("openai unavailable: %s; attempting bundled model", exc)
+            _GENERATOR = await _load_fallback_pipeline(cfg)
+            return _GENERATOR
 
     try:
         global pipeline
         if pipeline is None:
             transformers = importlib.import_module("transformers")
             pipeline = transformers.pipeline  # type: ignore[attr-defined]
-    except ImportError as exc:  # pragma: no cover - library not installed
-        raise ModelLoadError(
-            "transformers library unavailable; install the 'transformers' package"
-        ) from exc
+    except ImportError:
+        logger.warning("transformers library unavailable; attempting OpenAI fallback")
+        _GENERATOR = await _load_openai_generator()
+        return _GENERATOR
+    if pipeline is None:
+        _GENERATOR = await _load_openai_generator()
+        return _GENERATOR
 
     hf_token = settings.huggingface_token
     if not model or not hf_token:
-        logger.info("Using bundled '%s' model for stub generation", cfg.fallback_model)
         try:
-            _GENERATOR = await asyncio.to_thread(
-                pipeline,
-                "text-generation",
-                model=cfg.fallback_model,
-                local_files_only=True,
-            )
-            await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
-        except Exception as exc:  # pragma: no cover - model load failures
-            raise ModelLoadError(
-                "no configured model available; install a supported model via the"
-                " 'transformers' package or set SANDBOX_STUB_MODEL and"
-                " SANDBOX_HUGGINGFACE_TOKEN"
-            ) from exc
-        return _GENERATOR
+            _GENERATOR = await _load_fallback_pipeline(cfg)
+            return _GENERATOR
+        except ModelLoadError as exc:
+            logger.warning("bundled model load failed: %s; attempting OpenAI", exc)
+            _GENERATOR = await _load_openai_generator()
+            return _GENERATOR
 
     try:
         _GENERATOR = await asyncio.to_thread(
@@ -733,32 +779,19 @@ async def _aload_generator(config: StubProviderConfig | None = None) -> Any:
             use_auth_token=hf_token,
         )
         await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
+        return _GENERATOR
     except Exception as exc:  # pragma: no cover - model load failures
         logger.exception(
             "failed to load model %s; attempting fallback %s", model, cfg.fallback_model,
             exc_info=exc,
         )
         try:
-            _GENERATOR = await asyncio.to_thread(
-                pipeline,
-                "text-generation",
-                model=cfg.fallback_model,
-                local_files_only=True,
-            )
-            await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
-        except Exception as exc2:  # pragma: no cover - model load failures
-            raise ModelLoadError(
-                f"failed to load model {model} and fallback {cfg.fallback_model}; "
-                "verify model names and ensure required weights are installed"
-            ) from exc2
-    if _GENERATOR is None:
-        raise ModelLoadError(
-            "no stub generation model could be loaded; install the 'transformers'"
-            " package and configure SANDBOX_ENABLE_TRANSFORMERS=1 with a"
-            " valid model or enable OpenAI via SANDBOX_ENABLE_OPENAI=1 and"
-            " provide OPENAI_API_KEY"
-        )
-    return _GENERATOR
+            _GENERATOR = await _load_fallback_pipeline(cfg)
+            return _GENERATOR
+        except ModelLoadError as exc2:
+            logger.warning("fallback model unavailable: %s; attempting OpenAI", exc2)
+            _GENERATOR = await _load_openai_generator()
+            return _GENERATOR
 
 
 def _load_generator(config: StubProviderConfig | None = None):
@@ -843,11 +876,11 @@ async def async_generate_stubs(
     except ModelLoadError as exc:
         logger.error("stub generation unavailable: %s", exc)
         return stubs
-    use_openai = gen is openai
     if gen is None:
         func = ctx.get("target")
         base = stubs or [{}]
         return [_rule_based_stub(s, func) for s in base]
+    use_openai = gen is openai
 
     template: str = ctx.get(
         "prompt_template",
