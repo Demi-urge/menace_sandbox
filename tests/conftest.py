@@ -57,11 +57,22 @@ sandbox_env = types.ModuleType("sandbox_runner.environment")
 sandbox_env.simulate_temporal_trajectory = lambda *a, **k: None
 sandbox_env.SANDBOX_ENV_PRESETS = [{}]
 sandbox_env.load_presets = lambda: sandbox_env.SANDBOX_ENV_PRESETS
+sandbox_env.simulate_full_environment = lambda *a, **k: None
 sandbox_pkg = types.ModuleType("sandbox_runner")
 sandbox_pkg.environment = sandbox_env
 sandbox_pkg.__path__ = [str(ROOT / "sandbox_runner")]
 sys.modules["sandbox_runner"] = sandbox_pkg
 sys.modules["sandbox_runner.environment"] = sandbox_env
+
+# Minimal stubs for database helpers used during imports
+embeddable_stub = types.ModuleType("embeddable_db_mixin")
+embeddable_stub.log_embedding_metrics = lambda *a, **k: None
+embeddable_stub.EmbeddableDBMixin = object
+sys.modules.setdefault("embeddable_db_mixin", embeddable_stub)
+code_db_stub = types.ModuleType("code_database")
+code_db_stub.PatchHistoryDB = object
+sys.modules.setdefault("code_database", code_db_stub)
+sys.modules.setdefault("menace.code_database", code_db_stub)
 
 # Stub run_autonomous to bypass dependency checks if imported
 run_auto_stub = types.ModuleType("run_autonomous")

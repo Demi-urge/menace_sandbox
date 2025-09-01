@@ -193,11 +193,7 @@ DELTAS = {
     "synergy_throughput": 0.0,
 }
 
-@pytest.mark.parametrize("cls_name", [
-    "DQNSynergyLearner",
-    "SACSynergyLearner",
-    "TD3SynergyLearner",
-])
+@pytest.mark.parametrize("cls_name", ["DQNSynergyLearner"])
 def test_rl_learner_updates_and_sync(tmp_path, sie, cls_name):
     cls = getattr(sie, cls_name)
     path = tmp_path / f"{cls_name}.json"

@@ -390,14 +390,383 @@ from .learners import (
     SynergyWeightLearner,
     DQNSynergyLearner,
     DoubleDQNSynergyLearner,
-    SACSynergyLearner,
-    TD3SynergyLearner,
 )
 from .dashboards import SynergyDashboard, load_synergy_history
 
+
+class _ReplayBuffer:
+    """Simple replay buffer storing state, action and reward."""
+
+    def __init__(self, size: int) -> None:
+        self.data: deque[tuple[sip_torch.Tensor, sip_torch.Tensor, sip_torch.Tensor]] = deque(
+            maxlen=size
+        )
+
+    def add(self, state: sip_torch.Tensor, action: sip_torch.Tensor, reward: sip_torch.Tensor) -> None:
+        self.data.append((state, action, reward))
+
+    def sample(
+        self, batch_size: int
+    ) -> tuple[sip_torch.Tensor, sip_torch.Tensor, sip_torch.Tensor]:
+        import random
+
+        batch = random.sample(self.data, min(batch_size, len(self.data)))
+        states, actions, rewards = zip(*batch)
+        return sip_torch.stack(states), sip_torch.stack(actions), sip_torch.stack(rewards)
+
+    def __len__(self) -> int:  # pragma: no cover - trivial
+        return len(self.data)
+
+
+class _BaseRLSynergyLearner:
+    """Minimal reinforcement learning based synergy weight learner."""
+
+    names = [
+        "synergy_roi",
+        "synergy_efficiency",
+        "synergy_resilience",
+        "synergy_antifragility",
+        "synergy_reliability",
+        "synergy_maintainability",
+        "synergy_throughput",
+    ]
+
+    def __init__(
+        self,
+        path: Path | None = None,
+        lr: float | None = None,
+        *,
+        settings: SandboxSettings | None = None,
+        target_sync: int = 10,
+    ) -> None:
+        settings = settings or SandboxSettings()
+        sy = getattr(settings, "synergy", None)
+        if sy is None:
+            sy = {
+                "weights_lr": getattr(settings, "synergy_weights_lr", 0.1),
+                "train_interval": getattr(settings, "synergy_train_interval", 10),
+                "replay_size": getattr(settings, "synergy_replay_size", 100),
+                "checkpoint_interval": getattr(settings, "synergy_checkpoint_interval", 50),
+            }
+        self.lr = float(lr if lr is not None else sy["weights_lr"])
+        if self.lr <= 0:  # pragma: no cover - sanity check
+            raise ValueError("learning rate must be positive")
+        self.train_interval = int(sy["train_interval"])
+        self.replay_size = int(sy["replay_size"])
+        self.path = Path(path) if path else Path(settings.synergy_weight_file)
+        self.weights = get_default_synergy_weights()
+        self._state: tuple[float, ...] = (0.0,) * 7
+        self._steps = 0
+        self.target_sync = int(target_sync)
+        self.buffer = _ReplayBuffer(self.replay_size)
+        self.checkpoint_interval = int(sy["checkpoint_interval"])
+        self._save_count = 0
+        self.checkpoint_path = self.path.with_suffix(self.path.suffix + ".bak")
+        self.load()
+
+    # Weight persistence -------------------------------------------------
+    def load(self) -> None:
+        if not self.path or not self.path.exists():
+            return
+        data: Dict[str, float] | None = None
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception as exc:  # pragma: no cover - disk issues
+            logger.warning("failed to load synergy weights %s: %s", self.path, exc)
+            if self.checkpoint_path.exists():
+                try:
+                    with open(self.checkpoint_path, "r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                except Exception:
+                    data = None
+        if isinstance(data, dict):
+            self.weights.update({k: float(v) for k, v in data.items() if k in self.weights})
+        self._load_networks()
+
+    def save(self) -> None:
+        if not self.path:
+            return
+        try:
+            _atomic_write(self.path, json.dumps(self.weights))
+            self._save_count += 1
+            if self._save_count % self.checkpoint_interval == 0:
+                _atomic_write(self.checkpoint_path, json.dumps(self.weights))
+        except Exception as exc:  # pragma: no cover - disk errors
+            logger.warning("failed to save synergy weights %s: %s", self.path, exc)
+        self._save_networks()
+
+    # Hooks for subclasses -----------------------------------------------
+    def _save_networks(self) -> None:
+        """Persist policy and target networks to disk."""
+
+    def _load_networks(self) -> None:
+        """Load policy and target networks from disk if present."""
+
+    # API compatible with SynergyWeightLearner ---------------------------
+    def update(
+        self,
+        roi_delta: float,
+        deltas: Mapping[str, float],
+        extra: Mapping[str, float] | None = None,
+    ) -> None:
+        raise NotImplementedError
+
+
+class SACSynergyLearner(_BaseRLSynergyLearner):
+    """Concrete learner using a tiny SAC-like actor-critic setup."""
+
+    def __init__(
+        self,
+        path: Path | None = None,
+        lr: float | None = None,
+        *,
+        target_sync: int = 10,
+        settings: SandboxSettings | None = None,
+    ) -> None:
+        super().__init__(path, lr, settings=settings, target_sync=target_sync)
+        hidden = 32
+        self.actor = sip_torch.nn.Sequential(
+            sip_torch.nn.Linear(7, hidden),
+            sip_torch.nn.ReLU(),
+            sip_torch.nn.Linear(hidden, 7),
+        )
+        self.critic = sip_torch.nn.Sequential(
+            sip_torch.nn.Linear(14, hidden),
+            sip_torch.nn.ReLU(),
+            sip_torch.nn.Linear(hidden, 7),
+        )
+        self.target_critic = sip_torch.nn.Sequential(
+            sip_torch.nn.Linear(14, hidden),
+            sip_torch.nn.ReLU(),
+            sip_torch.nn.Linear(hidden, 7),
+        )
+        self.target_critic.load_state_dict(self.critic.state_dict())
+        self.actor_opt = sip_torch.optim.Adam(self.actor.parameters(), lr=self.lr)
+        self.critic_opt = sip_torch.optim.Adam(self.critic.parameters(), lr=self.lr)
+        self.noise = 0.1
+        self.batch_size = 32
+        self._load_networks()
+
+    def _save_networks(self) -> None:
+        base = os.path.splitext(self.path)[0]
+        try:
+            buf = io.BytesIO()
+            sip_torch.save(self.actor.state_dict(), buf)
+            _atomic_write(Path(base + ".policy.pkl"), buf.getvalue(), binary=True)
+            buf = io.BytesIO()
+            sip_torch.save(self.target_critic.state_dict(), buf)
+            _atomic_write(Path(base + ".target.pt"), buf.getvalue(), binary=True)
+        except Exception as exc:  # pragma: no cover - disk errors
+            logger.exception("failed to save SAC models: %s", exc)
+
+    def _load_networks(self) -> None:
+        base = os.path.splitext(self.path)[0]
+        pol = Path(base + ".policy.pkl")
+        tgt = Path(base + ".target.pt")
+        try:
+            if pol.exists():
+                self.actor.load_state_dict(sip_torch.load(pol))
+            if tgt.exists():
+                self.target_critic.load_state_dict(sip_torch.load(tgt))
+        except Exception as exc:  # pragma: no cover - disk errors
+            logger.warning("failed to load SAC models: %s", exc)
+
+    def update(
+        self,
+        roi_delta: float,
+        deltas: Mapping[str, float],
+        extra: Mapping[str, float] | None = None,
+    ) -> None:
+        state = sip_torch.tensor(
+            [float(deltas.get(n, 0.0)) for n in self.names], dtype=sip_torch.float32
+        )
+        self._state = tuple(float(s) for s in state.tolist())
+        action = self.actor(state)
+        action = (action + sip_torch.randn_like(action) * self.noise).clamp(0.0, 10.0)
+        reward = sip_torch.tensor([float(roi_delta)], dtype=sip_torch.float32)
+        self.buffer.add(state, action.detach(), reward)
+        if (
+            self._steps % self.train_interval == 0
+            and len(self.buffer) >= self.batch_size
+        ):
+            states, actions, rewards = self.buffer.sample(self.batch_size)
+            q_pred = self.critic(sip_torch.cat([states, actions], dim=1))
+            target = rewards.repeat(1, 7)
+            critic_loss = sip_torch.nn.functional.mse_loss(q_pred, target)
+            self.critic_opt.zero_grad()
+            critic_loss.backward()
+            self.critic_opt.step()
+
+            actor_loss = -self.critic(
+                sip_torch.cat([states, self.actor(states)], dim=1)
+            ).mean()
+            self.actor_opt.zero_grad()
+            actor_loss.backward()
+            self.actor_opt.step()
+
+            if self._steps % self.target_sync == 0:
+                self.target_critic.load_state_dict(self.critic.state_dict())
+        self._steps += 1
+        mapping = {
+            "roi": 0,
+            "efficiency": 1,
+            "resilience": 2,
+            "antifragility": 3,
+            "reliability": 4,
+            "maintainability": 5,
+            "throughput": 6,
+        }
+        for key, idx in mapping.items():
+            self.weights[key] = float(action[idx].item())
+        self.save()
+
+
+class TD3SynergyLearner(_BaseRLSynergyLearner):
+    """Concrete learner using a tiny TD3-style algorithm."""
+
+    def __init__(
+        self,
+        path: Path | None = None,
+        lr: float | None = None,
+        *,
+        target_sync: int = 10,
+        settings: SandboxSettings | None = None,
+    ) -> None:
+        super().__init__(path, lr, settings=settings, target_sync=target_sync)
+        hidden = 32
+        self.actor = sip_torch.nn.Sequential(
+            sip_torch.nn.Linear(7, hidden),
+            sip_torch.nn.ReLU(),
+            sip_torch.nn.Linear(hidden, 7),
+        )
+        self.target_actor = sip_torch.nn.Sequential(
+            sip_torch.nn.Linear(7, hidden),
+            sip_torch.nn.ReLU(),
+            sip_torch.nn.Linear(hidden, 7),
+        )
+        self.target_actor.load_state_dict(self.actor.state_dict())
+        self.critic1 = sip_torch.nn.Sequential(
+            sip_torch.nn.Linear(14, hidden),
+            sip_torch.nn.ReLU(),
+            sip_torch.nn.Linear(hidden, 7),
+        )
+        self.critic2 = sip_torch.nn.Sequential(
+            sip_torch.nn.Linear(14, hidden),
+            sip_torch.nn.ReLU(),
+            sip_torch.nn.Linear(hidden, 7),
+        )
+        self.target_c1 = sip_torch.nn.Sequential(
+            sip_torch.nn.Linear(14, hidden),
+            sip_torch.nn.ReLU(),
+            sip_torch.nn.Linear(hidden, 7),
+        )
+        self.target_c2 = sip_torch.nn.Sequential(
+            sip_torch.nn.Linear(14, hidden),
+            sip_torch.nn.ReLU(),
+            sip_torch.nn.Linear(hidden, 7),
+        )
+        self.target_c1.load_state_dict(self.critic1.state_dict())
+        self.target_c2.load_state_dict(self.critic2.state_dict())
+        self.actor_opt = sip_torch.optim.Adam(self.actor.parameters(), lr=self.lr)
+        self.c1_opt = sip_torch.optim.Adam(self.critic1.parameters(), lr=self.lr)
+        self.c2_opt = sip_torch.optim.Adam(self.critic2.parameters(), lr=self.lr)
+        self.noise = 0.1
+        self.batch_size = 32
+        self.policy_delay = 2
+        self._load_networks()
+
+    def _save_networks(self) -> None:
+        base = os.path.splitext(self.path)[0]
+        try:
+            buf = io.BytesIO()
+            sip_torch.save(self.actor.state_dict(), buf)
+            _atomic_write(Path(base + ".policy.pkl"), buf.getvalue(), binary=True)
+            buf = io.BytesIO()
+            sip_torch.save(self.target_actor.state_dict(), buf)
+            _atomic_write(Path(base + ".target.pt"), buf.getvalue(), binary=True)
+        except Exception as exc:  # pragma: no cover - disk errors
+            logger.exception("failed to save TD3 models: %s", exc)
+
+    def _load_networks(self) -> None:
+        base = os.path.splitext(self.path)[0]
+        pol = Path(base + ".policy.pkl")
+        tgt = Path(base + ".target.pt")
+        try:
+            if pol.exists():
+                self.actor.load_state_dict(sip_torch.load(pol))
+            if tgt.exists():
+                self.target_actor.load_state_dict(sip_torch.load(tgt))
+        except Exception as exc:  # pragma: no cover - disk errors
+            logger.warning("failed to load TD3 models: %s", exc)
+
+    def update(
+        self,
+        roi_delta: float,
+        deltas: Mapping[str, float],
+        extra: Mapping[str, float] | None = None,
+    ) -> None:
+        state = sip_torch.tensor(
+            [float(deltas.get(n, 0.0)) for n in self.names], dtype=sip_torch.float32
+        )
+        self._state = tuple(float(s) for s in state.tolist())
+        action = self.actor(state)
+        action = (action + sip_torch.randn_like(action) * self.noise).clamp(0.0, 10.0)
+        reward = sip_torch.tensor([float(roi_delta)], dtype=sip_torch.float32)
+        self.buffer.add(state, action.detach(), reward)
+        if len(self.buffer) >= self.batch_size:
+            states, actions, rewards = self.buffer.sample(self.batch_size)
+            # critic update
+            target_actions = self.target_actor(states)
+            target_q1 = self.target_c1(sip_torch.cat([states, target_actions], dim=1))
+            target_q2 = self.target_c2(sip_torch.cat([states, target_actions], dim=1))
+            target_q = rewards.repeat(1, 7)
+            c1_loss = sip_torch.nn.functional.mse_loss(
+                self.critic1(sip_torch.cat([states, actions], dim=1)), target_q
+            )
+            c2_loss = sip_torch.nn.functional.mse_loss(
+                self.critic2(sip_torch.cat([states, actions], dim=1)), target_q
+            )
+            self.c1_opt.zero_grad()
+            c1_loss.backward()
+            self.c1_opt.step()
+            self.c2_opt.zero_grad()
+            c2_loss.backward()
+            self.c2_opt.step()
+            # actor update with delay
+            if self._steps % self.policy_delay == 0:
+                actor_loss = -self.critic1(
+                    sip_torch.cat([states, self.actor(states)], dim=1)
+                ).mean()
+                self.actor_opt.zero_grad()
+                actor_loss.backward()
+                self.actor_opt.step()
+                if self._steps % self.target_sync == 0:
+                    self.target_actor.load_state_dict(self.actor.state_dict())
+            if self._steps % self.target_sync == 0:
+                self.target_c1.load_state_dict(self.critic1.state_dict())
+                self.target_c2.load_state_dict(self.critic2.state_dict())
+        self._steps += 1
+        mapping = {
+            "roi": 0,
+            "efficiency": 1,
+            "resilience": 2,
+            "antifragility": 3,
+            "reliability": 4,
+            "maintainability": 5,
+            "throughput": 6,
+        }
+        for key, idx in mapping.items():
+            self.weights[key] = float(action[idx].item())
+        self.save()
+
 POLICY_STATE_LEN = 21
 
-__all__ = ["SelfImprovementEngine"]
+__all__ = [
+    "SelfImprovementEngine",
+    "SACSynergyLearner",
+    "TD3SynergyLearner",
+]
 class SelfImprovementEngine:
     """Run the automation pipeline on a configurable bot."""
 
