@@ -34,7 +34,7 @@ try:  # pragma: no cover - optional dependency
 except ImportError as exc:  # pragma: no cover - fallback when event bus missing
     get_logger(__name__).warning(
         "unified event bus unavailable",  # noqa: TRY300
-        extra=log_record(module=__name__, dependency="unified_event_bus"),
+        extra=log_record(component=__name__, dependency="unified_event_bus"),
         exc_info=exc,
     )
     UnifiedEventBus = None  # type: ignore
@@ -44,7 +44,7 @@ try:  # pragma: no cover - optional dependency
 except ImportError as exc:  # pragma: no cover - gracefully degrade
     get_logger(__name__).warning(
         "meta_workflow_planner import failed",  # noqa: TRY300
-        extra=log_record(module=__name__, dependency="meta_workflow_planner"),
+        extra=log_record(component=__name__, dependency="meta_workflow_planner"),
         exc_info=exc,
     )
     try:
@@ -52,7 +52,7 @@ except ImportError as exc:  # pragma: no cover - gracefully degrade
     except ImportError as exc2:  # pragma: no cover - best effort fallback
         get_logger(__name__).warning(
             "local meta_workflow_planner import failed",  # noqa: TRY300
-            extra=log_record(module=__name__, dependency="meta_workflow_planner"),
+            extra=log_record(component=__name__, dependency="meta_workflow_planner"),
             exc_info=exc2,
         )
         MetaWorkflowPlanner = None  # type: ignore
@@ -76,7 +76,7 @@ class _FallbackPlanner:
         except (OSError, RuntimeError) as exc:  # pragma: no cover - best effort
             get_logger(__name__).warning(
                 "ROIResultsDB unavailable",
-                extra=log_record(module=__name__),
+                extra=log_record(component=__name__),
                 exc_info=exc,
             )
             self.roi_db = None
@@ -85,7 +85,7 @@ class _FallbackPlanner:
         except (OSError, RuntimeError) as exc:  # pragma: no cover - best effort
             get_logger(__name__).warning(
                 "WorkflowStabilityDB unavailable",
-                extra=log_record(module=__name__),
+                extra=log_record(component=__name__),
                 exc_info=exc,
             )
             self.stability_db = None
@@ -104,6 +104,12 @@ class _FallbackPlanner:
             cfg, "domain_transition_penalty", getattr(cfg, "meta_domain_penalty", 1.0)
         )
         self.entropy_weight = getattr(cfg, "meta_entropy_weight", 0.0)
+        self.stability_weight = getattr(
+            cfg, "stability_weight", getattr(cfg, "meta_stability_weight", 1.0)
+        )
+        self.state_prune_strategy = getattr(
+            cfg, "state_prune_strategy", getattr(cfg, "meta_state_prune_strategy", "recent")
+        )
         self.roi_window = roi_window
         self._load_state()
 
@@ -192,17 +198,24 @@ class _FallbackPlanner:
 
     # ------------------------------------------------------------------
     def _prune_state(self) -> None:
-        """Trim ``cluster_map`` to ``state_capacity`` most recent entries."""
+        """Trim ``cluster_map`` according to pruning strategy."""
 
         if self.state_capacity <= 0:
             return
         if len(self.cluster_map) <= self.state_capacity:
             return
-        items = sorted(
-            self.cluster_map.items(),
-            key=lambda kv: float(kv[1].get("ts", 0.0)),
-            reverse=True,
-        )
+        if self.state_prune_strategy == "score":
+            items = sorted(
+                self.cluster_map.items(),
+                key=lambda kv: float(kv[1].get("score", 0.0)),
+                reverse=True,
+            )
+        else:  # default "recent"
+            items = sorted(
+                self.cluster_map.items(),
+                key=lambda kv: float(kv[1].get("ts", 0.0)),
+                reverse=True,
+            )
         self.cluster_map = dict(items[: self.state_capacity])
 
     # ------------------------------------------------------------------
@@ -252,7 +265,9 @@ class _FallbackPlanner:
     def _domain(self, wid: str) -> str:
         return wid.split(".", 1)[0]
 
-    def _score(self, chain: Sequence[str], roi: float, entropy: float) -> float:
+    def _score(
+        self, chain: Sequence[str], roi: float, entropy: float, failures: int
+    ) -> float:
         transitions = sum(
             1
             for i in range(1, len(chain))
@@ -262,6 +277,7 @@ class _FallbackPlanner:
             self.roi_weight * roi
             - self.domain_transition_penalty * transitions
             - self.entropy_weight * abs(entropy)
+            - self.stability_weight * failures
         )
 
     def discover_and_persist(
@@ -376,7 +392,7 @@ class _FallbackPlanner:
 
         chain_roi = fmean(roi_values)
         chain_entropy = fmean(entropies) if entropies else 0.0
-        score = self._score(chain, chain_roi, chain_entropy)
+        score = self._score(chain, chain_roi, chain_entropy, failures)
         record = {
             "chain": list(chain),
             "roi_gain": chain_roi,
@@ -388,6 +404,7 @@ class _FallbackPlanner:
             "last_roi": chain_roi,
             "last_entropy": chain_entropy,
             "score": score,
+            "failures": failures,
             "ts": time.time(),
         }
         self.logger.debug(
