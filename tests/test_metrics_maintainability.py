@@ -102,3 +102,23 @@ def test_radon_metrics_used(monkeypatch, tmp_path):
     assert avg == 88.0
     assert calls == {"cc": 1, "mi": 1}
     assert tests == 0
+
+
+def test_skip_dirs_setting(tmp_path):
+    metrics = _load_metrics()
+    build = tmp_path / "build"
+    build.mkdir()
+    src = build / "foo.py"
+    src.write_text("def f():\n    return 1\n")
+
+    per_file, total, avg, tests = metrics._collect_metrics([src], tmp_path)
+    assert per_file == {}
+    assert total == 0
+    assert avg == 0.0
+    assert tests == 0
+
+    settings = metrics.SandboxSettings(metrics_skip_dirs=[])
+    per_file, total, avg, tests = metrics._collect_metrics(
+        [src], tmp_path, settings=settings
+    )
+    assert "build/foo.py" in per_file
