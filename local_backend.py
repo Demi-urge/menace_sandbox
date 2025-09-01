@@ -216,7 +216,12 @@ class VLLMBackend(_RESTBackend):
             yield chunk
 
 
-def mixtral_client(model: str | None = None, base_url: str | None = None) -> LLMClient:
+def mixtral_client(
+    model: str | None = None,
+    base_url: str | None = None,
+    *,
+    log_prompts: bool = True,
+) -> LLMClient:
     """Return an :class:`LLMClient` using an :class:`OllamaBackend`.
 
     The *model* and *base_url* parameters fall back to ``OLLAMA_MODEL`` and
@@ -228,10 +233,15 @@ def mixtral_client(model: str | None = None, base_url: str | None = None) -> LLM
         model=model or os.getenv("OLLAMA_MODEL", "mixtral"),
         base_url=base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
     )
-    return LLMClient(model=backend.model, backends=[backend], log_prompts=False)
+    return LLMClient(model=backend.model, backends=[backend], log_prompts=log_prompts)
 
 
-def llama3_client(model: str | None = None, base_url: str | None = None) -> LLMClient:
+def llama3_client(
+    model: str | None = None,
+    base_url: str | None = None,
+    *,
+    log_prompts: bool = True,
+) -> LLMClient:
     """Return an :class:`LLMClient` using a :class:`VLLMBackend` configured for
     Llama 3."""
 
@@ -239,7 +249,7 @@ def llama3_client(model: str | None = None, base_url: str | None = None) -> LLMC
         model=model or os.getenv("VLLM_MODEL", "llama3"),
         base_url=base_url or os.getenv("VLLM_BASE_URL", "http://localhost:8000"),
     )
-    return LLMClient(model=backend.model, backends=[backend], log_prompts=False)
+    return LLMClient(model=backend.model, backends=[backend], log_prompts=log_prompts)
 
 
 __all__ = ["OllamaBackend", "VLLMBackend", "mixtral_client", "llama3_client"]

@@ -84,9 +84,11 @@ def test_rest_backend_retries_and_latency(monkeypatch):
 
     sleeps: list[float] = []
     monkeypatch.setattr(
-        local_backend.retry_utils.time,
-        "sleep",
-        lambda s: sleeps.append(s),
+        local_backend.rate_limit,
+        "sleep_with_backoff",
+        lambda attempt, base=1.0, max_delay=60.0: sleeps.append(
+            min(base * (2**attempt), max_delay)
+        ),
     )
     monkeypatch.setenv("LLM_MAX_RETRIES", "2")
     counter = iter([0.0, 1.0, 2.0])
@@ -105,7 +107,9 @@ def test_rest_backend_retries_and_latency(monkeypatch):
 
 def test_rest_backend_propagates_failure(monkeypatch):
     monkeypatch.setattr(
-        local_backend.retry_utils.time, "sleep", lambda *_a, **_k: None
+        local_backend.rate_limit,
+        "sleep_with_backoff",
+        lambda *_a, **_k: None,
     )
     monkeypatch.setenv("LLM_MAX_RETRIES", "2")
 
@@ -119,3 +123,39 @@ def test_rest_backend_propagates_failure(monkeypatch):
     backend = local_backend.OllamaBackend(model="m", base_url="http://x")
     with pytest.raises(local_backend._RetryableHTTPError):
         backend.generate(Prompt(text="hi"))
+
+
+@pytest.mark.parametrize(
+    "factory, name",
+    [
+        (local_backend.mixtral_client, "mixtral"),
+        (local_backend.llama3_client, "llama3"),
+    ],
+)
+def test_local_clients_log(monkeypatch, factory, name):
+    """Local client factories log interactions when ``log_prompts`` is True."""
+
+    resp = DummyResp(200, {"text": "ok"})
+    monkeypatch.setattr(
+        local_backend.requests.Session,
+        "post",
+        lambda self, url, json=None, timeout=None: resp,
+    )
+
+    logged: dict[str, str] = {}
+
+    class DummyDB:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def log(self, prompt, result, backend=None):
+            logged["prompt"] = prompt.text
+            logged["backend"] = backend
+
+    import prompt_db
+
+    monkeypatch.setattr(prompt_db, "PromptDB", DummyDB)
+
+    client = factory()
+    client.generate(Prompt(text="hi"))
+    assert logged == {"prompt": "hi", "backend": name}
