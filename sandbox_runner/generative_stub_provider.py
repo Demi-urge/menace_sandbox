@@ -848,5 +848,16 @@ async def async_generate_stubs(
 
 
 def generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[Dict[str, Any]]:
-    """Synchronous wrapper for :func:`async_generate_stubs`."""
-    return asyncio.run(async_generate_stubs(stubs, ctx))
+    """Synchronous wrapper for :func:`async_generate_stubs`.
+
+    If an asyncio event loop is already running, the coroutine is scheduled on
+    that loop and waited on using ``run_until_complete``.  Otherwise a new loop
+    is created via :func:`asyncio.run`.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # no loop is running
+        return asyncio.run(async_generate_stubs(stubs, ctx))
+    else:  # pragma: no cover - requires active event loop
+        fut = asyncio.ensure_future(async_generate_stubs(stubs, ctx), loop=loop)
+        return loop.run_until_complete(fut)
