@@ -285,9 +285,9 @@ class PromptDB:
                 result.completion_tokens,
                 result.latency_ms,
                 backend,
-                getattr(result, "input_tokens", None) or result.prompt_tokens,
-                getattr(result, "output_tokens", None) or result.completion_tokens,
-                getattr(result, "cost", None),
+                result.input_tokens or result.prompt_tokens,
+                result.output_tokens or result.completion_tokens,
+                result.cost,
             ),
         )
         self.conn.commit()
