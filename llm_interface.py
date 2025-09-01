@@ -496,8 +496,14 @@ class OpenAIProvider(LLMClient):
         prompt: Prompt,
         *,
         parse_fn: Callable[[str], Any] | None = None,
-    ) -> LLMResult:
-        """Synchronously generate a completion aggregating streamed chunks."""
+    ) -> LLMResult | asyncio.Task[LLMResult]:
+        """Synchronously generate a completion aggregating streamed chunks.
+
+        When called while an event loop is already running the collection is
+        scheduled on that loop and a task is returned which must be awaited by
+        the caller.  If no loop is active ``asyncio.run`` is used and the result
+        is returned directly.
+        """
 
         payload = self._prepare_payload(prompt)
         prompt_tokens = rate_limit.estimate_tokens(
@@ -508,48 +514,52 @@ class OpenAIProvider(LLMClient):
         self._rate_limiter.update_rate(cfg.tokens_per_minute)
         self._rate_limiter.consume(prompt_tokens)
 
-        text_parts: List[str] = []
-
-        async def collect() -> None:
+        async def collect() -> LLMResult:
+            text_parts: List[str] = []
+            start = time.perf_counter()
             async for part in self._async_generate(prompt):
                 text_parts.append(part)
+            latency_ms = (time.perf_counter() - start) * 1000
+            text = "".join(text_parts)
+            completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
+            self._rate_limiter.consume(completion_tokens)
+            in_rate, out_rate = llm_pricing.get_rates(self.model, cfg.pricing)
+            cost = prompt_tokens * in_rate + completion_tokens * out_rate
+            parsed = None
+            if parse_fn is not None:
+                try:
+                    parsed = parse_fn(text)
+                except Exception:  # pragma: no cover - best effort
+                    parsed = None
 
-        start = time.perf_counter()
-        asyncio.run(collect())
-        latency_ms = (time.perf_counter() - start) * 1000
-        text = "".join(text_parts)
-        completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
-        self._rate_limiter.consume(completion_tokens)
-        in_rate, out_rate = llm_pricing.get_rates(self.model, cfg.pricing)
-        cost = prompt_tokens * in_rate + completion_tokens * out_rate
-        parsed = None
-        if parse_fn is not None:
-            try:
-                parsed = parse_fn(text)
-            except Exception:  # pragma: no cover - best effort
-                parsed = None
-
-        result = LLMResult(
-            raw={
-                "backend": "openai",
-                "model": self.model,
-                "usage": {
-                    "input_tokens": prompt_tokens,
-                    "output_tokens": completion_tokens,
-                    "cost": cost,
+            result = LLMResult(
+                raw={
+                    "backend": "openai",
+                    "model": self.model,
+                    "usage": {
+                        "input_tokens": prompt_tokens,
+                        "output_tokens": completion_tokens,
+                        "cost": cost,
+                    },
                 },
-            },
-            text=text,
-            parsed=parsed,
-            latency_ms=latency_ms,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            input_tokens=prompt_tokens,
-            output_tokens=completion_tokens,
-            cost=cost,
-        )
-        self._log(prompt, result, backend="openai")
-        return result
+                text=text,
+                parsed=parsed,
+                latency_ms=latency_ms,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                input_tokens=prompt_tokens,
+                output_tokens=completion_tokens,
+                cost=cost,
+            )
+            self._log(prompt, result, backend="openai")
+            return result
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(collect())
+        else:
+            return loop.create_task(collect())
 
 
 # Backwards compatibility -------------------------------------------------

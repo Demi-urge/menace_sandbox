@@ -1,6 +1,7 @@
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+import asyncio
 import requests
 import pytest
 
@@ -352,3 +353,19 @@ def test_local_weights_streaming(monkeypatch):
 
     text = asyncio.run(collect())
     assert text == "hello world"
+
+
+def test_openai_generate_inside_running_loop(monkeypatch):
+    provider = OpenAIProvider(model="gpt", api_key="k")
+    monkeypatch.setattr(OpenAIProvider, "_log", lambda *a, **k: None)
+
+    async def fake_async_gen(self, prompt):
+        yield "hi"
+
+    monkeypatch.setattr(OpenAIProvider, "_async_generate", fake_async_gen)
+
+    async def run():
+        return await provider.generate(Prompt("hi"))
+
+    result = asyncio.run(run())
+    assert result.text == "hi"
