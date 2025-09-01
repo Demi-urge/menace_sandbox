@@ -428,44 +428,11 @@ class DoubleDQNSynergyLearner(DQNSynergyLearner):
         )
 
 
-class SACSynergyLearner(DQNSynergyLearner):
-    """Synergy learner using a simplified SAC strategy."""
 
-    def __init__(
-        self,
-        path: Path | None = None,
-        lr: float | None = None,
-        *,
-        target_sync: int | None = None,
-        settings: SandboxSettings | None = None,
-    ) -> None:
-        super().__init__(
-            path,
-            lr,
-            strategy="sac",
-            target_sync=target_sync,
-            settings=settings,
-        )
-
-
-class TD3SynergyLearner(DQNSynergyLearner):
-    """Synergy learner using a simplified TD3 strategy."""
-
-    def __init__(
-        self,
-        path: Path | None = None,
-        lr: float | None = None,
-        *,
-        target_sync: int | None = None,
-        settings: SandboxSettings | None = None,
-    ) -> None:
-        super().__init__(
-            path,
-            lr,
-            strategy="td3",
-            target_sync=target_sync,
-            settings=settings,
-        )
+# The SAC and TD3 learners are now implemented directly in ``engine`` with
+# dedicated policy networks.  They are imported here for backwards
+# compatibility with older imports targeting ``self_improvement.learners``.
+from .engine import SACSynergyLearner, TD3SynergyLearner  # noqa: E402
 
 
 __all__ = [

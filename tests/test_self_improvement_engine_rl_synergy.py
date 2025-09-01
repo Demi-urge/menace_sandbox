@@ -206,6 +206,22 @@ def test_sac_engine_weights_update(tmp_path):
     assert engine2.synergy_weight_roi == pytest.approx(engine.synergy_weight_roi)
 
 
+def test_td3_engine_weights_update(tmp_path):
+    torch = pytest.importorskip("torch")
+    import importlib
+    import menace.self_improvement_policy as sip
+    sip = importlib.reload(sip)
+    sie = importlib.reload(sys.modules["menace.self_improvement"])
+
+    path = tmp_path / "td3.json"
+    engine = _make_engine(path, sie.TD3SynergyLearner)
+    start = engine.synergy_weight_roi
+    _train_cycles(engine, cycles=3)
+    assert engine.synergy_weight_roi != start
+    engine2 = _reload_engine(path, sie.TD3SynergyLearner)
+    assert engine2.synergy_weight_roi == pytest.approx(engine.synergy_weight_roi)
+
+
 def test_update_failure_dispatches_alert(monkeypatch, tmp_path):
     import importlib
     sie = importlib.reload(sys.modules["menace.self_improvement"])
