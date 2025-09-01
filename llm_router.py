@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Routing helpers for language model backends."""
 
-from typing import Dict, Tuple
+from typing import Dict, Tuple, AsyncGenerator
 import time
 
 from llm_interface import Prompt, LLMResult, LLMClient
@@ -82,6 +82,39 @@ class LLMRouter(LLMClient):
             except Exception:
                 pass
         return result
+
+    async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+        """Asynchronously stream chunks from the chosen backend with fallback."""
+
+        primary, fallback = self._select_backends(prompt)
+        chosen = primary
+        chunks: list[str] = []
+
+        async def _run(backend: LLMClient):
+            agen = backend.async_generate  # type: ignore[attr-defined]
+            async for part in agen(prompt):
+                chunks.append(part)
+                yield part
+
+        try:
+            async for part in _run(primary):
+                yield part
+        except Exception:
+            self._last_failure[primary] = time.time()
+            chunks.clear()
+            chosen = fallback
+            async for part in _run(fallback):
+                yield part
+
+        if getattr(self, "db", None):  # pragma: no cover - logging is best effort
+            result = LLMResult(
+                raw={"backend": chosen.model, "model": chosen.model},
+                text="".join(chunks),
+            )
+            try:
+                self.db.log(prompt, result, backend=chosen.model)
+            except Exception:
+                pass
 
 
 def client_from_settings(
