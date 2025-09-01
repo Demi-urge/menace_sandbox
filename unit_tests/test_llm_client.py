@@ -174,6 +174,70 @@ def test_anthropic_client_retries(monkeypatch):
     assert backoff == [0]
 
 
+def test_openai_cost_calculation(monkeypatch):
+    cfg = llm_config.LLMConfig(
+        model="m",
+        api_key="k",
+        max_retries=1,
+        tokens_per_minute=0,
+        pricing={"m": {"input": 0.1, "output": 0.2}},
+    )
+    monkeypatch.setattr(llm_config, "get_config", lambda: cfg)
+    provider = OpenAIProvider(model="m", api_key="k", max_retries=1)
+
+    def fake_post(url, headers=None, json=None, timeout=30):
+        class Resp:
+            status_code = 200
+
+            def json(self):
+                return {
+                    "choices": [{"message": {"content": "ok"}}],
+                    "usage": {"prompt_tokens": 2, "completion_tokens": 3},
+                }
+
+            def raise_for_status(self):
+                pass
+
+        return Resp()
+
+    monkeypatch.setattr(provider._session, "post", fake_post)
+    res = provider._generate(Prompt("hi"))
+    assert res.cost == pytest.approx(2 * 0.1 + 3 * 0.2)
+
+
+def test_anthropic_cost_calculation(monkeypatch):
+    cfg = llm_config.LLMConfig(
+        model="m",
+        api_key="k",
+        max_retries=1,
+        tokens_per_minute=0,
+        pricing={"m": {"input": 0.1, "output": 0.2}},
+    )
+    monkeypatch.setattr(llm_config, "get_config", lambda: cfg)
+    import anthropic_client as ac
+
+    client = AnthropicClient(model="m", api_key="k", max_retries=1)
+
+    def fake_post(url, headers=None, json=None, timeout=30):
+        class Resp:
+            status_code = 200
+
+            def json(self):
+                return {
+                    "content": [{"text": "ok"}],
+                    "usage": {"input_tokens": 2, "output_tokens": 3},
+                }
+
+            def raise_for_status(self):
+                pass
+
+        return Resp()
+
+    monkeypatch.setattr(ac.requests, "post", fake_post)
+    res = client.generate(Prompt("hi"))
+    assert res.cost == pytest.approx(2 * 0.1 + 3 * 0.2)
+
+
 def test_ollama_backend_retries(monkeypatch):
     import local_backend as lb
 

@@ -26,10 +26,11 @@ except Exception:  # pragma: no cover - httpx may be provided as a stub in tests
     httpx = None  # type: ignore
 
 try:  # pragma: no cover - package vs module import
-    from . import llm_config, rate_limit
+    from . import llm_config, rate_limit, llm_pricing
 except Exception:  # pragma: no cover - stand-alone usage
     import llm_config  # type: ignore
     import rate_limit  # type: ignore
+    import llm_pricing  # type: ignore
 
 # ``Prompt`` lives in a separate module so other packages can import it without
 # pulling in the entire client implementation.
@@ -352,15 +353,15 @@ class OpenAIProvider(LLMClient):
                 )
                 input_tokens = usage.get("input_tokens") or prompt_tokens
                 output_tokens = usage.get("output_tokens") or completion_tokens
-                cost = usage.get("cost")
+                in_rate, out_rate = llm_pricing.get_rates(self.model, cfg.pricing)
+                cost = input_tokens * in_rate + output_tokens * out_rate
                 total = (prompt_tokens or 0) + (completion_tokens or 0)
                 extra = max(0, total - prompt_tokens_est)
                 if extra:
                     self._rate_limiter.consume(extra)
                 usage.setdefault("input_tokens", input_tokens)
                 usage.setdefault("output_tokens", output_tokens)
-                if cost is not None:
-                    usage.setdefault("cost", cost)
+                usage["cost"] = cost
                 raw["usage"] = usage
                 raw.setdefault("model", self.model)
                 raw["backend"] = "openai"
@@ -473,6 +474,8 @@ class OpenAIProvider(LLMClient):
         text = "".join(text_parts)
         completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
         self._rate_limiter.consume(completion_tokens)
+        in_rate, out_rate = llm_pricing.get_rates(self.model, cfg.pricing)
+        cost = prompt_tokens * in_rate + completion_tokens * out_rate
         parsed = None
         if parse_fn is not None:
             try:
@@ -487,7 +490,7 @@ class OpenAIProvider(LLMClient):
                 "usage": {
                     "input_tokens": prompt_tokens,
                     "output_tokens": completion_tokens,
-                    "cost": None,
+                    "cost": cost,
                 },
             },
             text=text,
@@ -497,7 +500,7 @@ class OpenAIProvider(LLMClient):
             completion_tokens=completion_tokens,
             input_tokens=prompt_tokens,
             output_tokens=completion_tokens,
-            cost=None,
+            cost=cost,
         )
         self._log(prompt, result, backend="openai")
         return result
