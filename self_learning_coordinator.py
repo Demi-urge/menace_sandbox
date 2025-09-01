@@ -6,12 +6,15 @@ from typing import Callable, List, Optional, Tuple, Awaitable
 import logging
 import asyncio
 import json
+import os
 from pathlib import Path
 from datetime import datetime
 import time
 
 from pydantic import BaseModel, ValidationError
 from sandbox_settings import SandboxSettings
+
+from filelock import FileLock
 
 from .unified_event_bus import EventBus
 from .data_bot import MetricsDB
@@ -79,8 +82,10 @@ class SelfLearningCoordinator:
 
     # --------------------------------------------------------------
     def _load_state(self) -> None:
+        lock_path = str(self._state_path) + ".lock"
         try:
-            data = json.loads(self._state_path.read_text())
+            with FileLock(lock_path):
+                data = json.loads(self._state_path.read_text())
             self._train_count = int(data.get("train_count", 0))
             self._summary_count = int(data.get("summary_count", 0))
             self._last_eval_ts = data.get("last_eval_ts")
@@ -111,9 +116,13 @@ class SelfLearningCoordinator:
             "summary_count": self._summary_count,
             "last_eval_ts": self._last_eval_ts,
         }
+        lock_path = str(self._state_path) + ".lock"
+        tmp_path = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
         for attempt in range(3):
             try:
-                self._state_path.write_text(json.dumps(payload))
+                with FileLock(lock_path):
+                    tmp_path.write_text(json.dumps(payload))
+                    os.replace(tmp_path, self._state_path)
                 return
             except Exception as exc:
                 logger.warning(
