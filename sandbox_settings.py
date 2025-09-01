@@ -341,8 +341,11 @@ class SandboxSettings(BaseSettings):
     available_backends: dict[str, str] = Field(
         default_factory=lambda: {
             "openai": "llm_interface.OpenAIProvider",
+            "anthropic": "anthropic_client.AnthropicClient",
             "ollama": "local_client.OllamaClient",
             "vllm": "local_client.VLLMClient",
+            "mixtral": "local_backend.mixtral_client",
+            "llama3": "local_backend.llama3_client",
         },
         env="AVAILABLE_LLM_BACKENDS",
         description="Mapping of backend names to import paths for LLM client factories.",
