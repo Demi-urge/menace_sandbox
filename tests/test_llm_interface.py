@@ -63,3 +63,94 @@ def test_router_fallback_on_error():
     router = LLMRouter(remote=FailingClient(), local=EchoClient(), size_threshold=1)
     res = router.generate(Prompt(text="hi"))
     assert res.text == "local"
+
+
+def test_openai_provider_retry_and_logging(monkeypatch):
+    """OpenAIProvider retries on 429 responses and logs the interaction."""
+
+    from llm_interface import OpenAIProvider, requests, time as llm_time, Prompt, LLMResult
+
+    # Capture sleep calls to assert backoff behaviour
+    sleeps: list[float] = []
+    monkeypatch.setattr(llm_time, "sleep", lambda s: sleeps.append(s))
+
+    # Stub PromptDB to record log_prompt invocations
+    logged: list[tuple[Prompt, LLMResult, list[str], list[float]]] = []
+
+    class DummyDB:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def log_prompt(self, prompt, result, tags, confs):
+            logged.append((prompt, result, tags, confs))
+
+    import prompt_db
+
+    monkeypatch.setattr(prompt_db, "PromptDB", DummyDB)
+
+    # Fake HTTP responses: first a rate limit, then success
+    class Resp:
+        def __init__(self, status, data):
+            self.status_code = status
+            self.ok = status == 200
+            self._data = data
+
+        def json(self):  # pragma: no cover - simple stub
+            return self._data
+
+        def raise_for_status(self):  # pragma: no cover - simple stub
+            raise requests.HTTPError("boom", response=self)
+
+    responses = [Resp(429, {}), Resp(200, {"choices": [{"message": {"content": "{\"a\":1}"}}]})]
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        return responses.pop(0)
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    provider = OpenAIProvider(max_retries=2)
+    monkeypatch.setattr(provider._session, "post", fake_post)
+
+    prompt = Prompt(text="hi", metadata={"tags": ["t"], "vector_confidences": [0.7]})
+    result = provider.generate(prompt)
+
+    # Second response consumed and logged
+    assert not responses
+    assert sleeps == [1.0]
+    assert result.parsed == {"a": 1}
+    assert logged and logged[0][0] is prompt
+
+
+def test_router_fallback_logs(monkeypatch):
+    """LLMRouter falls back to local backend and logs the successful prompt."""
+
+    logged: list[str] = []
+
+    class DummyDB:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def log_prompt(self, prompt, *_a, **_k):
+            logged.append(prompt.text)
+
+    import prompt_db
+
+    monkeypatch.setattr(prompt_db, "PromptDB", DummyDB)
+
+    class BoomClient(LLMClient):
+        def __init__(self):
+            super().__init__("boom")
+
+        def _generate(self, prompt: Prompt) -> LLMResult:
+            raise RuntimeError("fail")
+
+    class LocalClient(LLMClient):
+        def __init__(self):
+            super().__init__("local")
+
+        def _generate(self, prompt: Prompt) -> LLMResult:
+            return LLMResult(text="ok")
+
+    router = LLMRouter(remote=BoomClient(), local=LocalClient(), size_threshold=1)
+    res = router.generate(Prompt(text="task", metadata={"tags": ["x"]}))
+    assert res.text == "ok"
+    assert logged == ["task"]
