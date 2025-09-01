@@ -6,6 +6,7 @@ import time
 from llm_router import LLMRouter
 from prompt_db import PromptDB
 from completion_parsers import parse_json
+import asyncio
 
 
 def test_promptdb_logs_to_memory(tmp_path):
@@ -347,3 +348,69 @@ def test_prompt_serialization_roundtrip():
     restored = Prompt(**json.loads(json.dumps(data)))
 
     assert asdict(restored) == data
+
+
+def _setup_fake_httpx(monkeypatch):
+    import types
+    import llm_interface as llmi
+
+    class FakeStream:
+        status_code = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_lines(self):
+            yield "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}"
+            yield "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}"
+            yield "data: [DONE]"
+
+        def raise_for_status(self):
+            pass
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url, headers=None, json=None, timeout=None):
+            return FakeStream()
+
+    monkeypatch.setattr(llmi, "httpx", types.SimpleNamespace(AsyncClient=FakeClient))
+    return llmi
+
+
+def test_openai_provider_async_stream(monkeypatch):
+    _setup_fake_httpx(monkeypatch)
+    from llm_interface import OpenAIProvider, Prompt
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    provider = OpenAIProvider()
+
+    chunks: list[str] = []
+
+    async def run():
+        async for part in provider.async_generate(Prompt(text="hi")):
+            chunks.append(part)
+
+    asyncio.run(run())
+    assert chunks == ["Hel", "lo"]
+
+
+def test_openai_provider_streaming_sync_wrapper(monkeypatch):
+    _setup_fake_httpx(monkeypatch)
+    from llm_interface import OpenAIProvider, Prompt
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    provider = OpenAIProvider()
+
+    result = provider.generate(Prompt(text="hi"))
+    assert result.text == "Hello"

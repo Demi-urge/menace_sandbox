@@ -13,11 +13,17 @@ new model providers while still supporting logging and simple response parsing.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Protocol, Sequence
+from typing import Any, Callable, Dict, List, Protocol, Sequence, AsyncGenerator
 
+import asyncio
 import json
 import requests
 import time
+
+try:  # pragma: no cover - optional dependency
+    import httpx  # type: ignore
+except Exception:  # pragma: no cover - httpx may be provided as a stub in tests
+    httpx = None  # type: ignore
 
 try:  # pragma: no cover - package vs module import
     from . import llm_config, rate_limit
@@ -135,6 +141,16 @@ class LLMClient:
         raise NotImplementedError
 
     # ------------------------------------------------------------------
+    async def _async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+        """Asynchronous variant for streaming backends.
+
+        Subclasses providing streaming capabilities should override this
+        coroutine and ``yield`` chunks of the response as they arrive.
+        """
+
+        raise NotImplementedError
+
+    # ------------------------------------------------------------------
     def generate(
         self,
         prompt: Prompt,
@@ -188,6 +204,41 @@ class LLMClient:
         self._log(prompt, result)
         return result
 
+    # ------------------------------------------------------------------
+    async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+        """Asynchronously yield completion chunks for *prompt*.
+
+        When explicit backends are configured the method tries each backend in
+        order until one succeeds.  Backends are expected to implement an
+        ``async_generate`` method returning an async generator of text chunks.
+        """
+
+        if self.backends:
+            order = list(self.backends)
+            meta = getattr(prompt, "metadata", {})
+            if meta.get("small_task") and len(order) > 1:
+                order = order[1:] + order[:1]
+            last_exc: Exception | None = None
+            for backend in order:
+                try:
+                    agen = backend.async_generate  # type: ignore[attr-defined]
+                except AttributeError:  # pragma: no cover - backend lacks async
+                    last_exc = RuntimeError("backend lacks async_generate")
+                    continue
+                try:
+                    async for chunk in agen(prompt):
+                        yield chunk
+                    return
+                except Exception as exc:  # pragma: no cover - backend failure
+                    last_exc = exc
+                    continue
+            if last_exc is not None:
+                raise last_exc
+            raise RuntimeError("no backends configured")
+
+        async for chunk in self._async_generate(prompt):
+            yield chunk
+
 
 __all__ = [
     "Prompt",
@@ -197,6 +248,8 @@ __all__ = [
     "LLMBackend",
     "OpenAIProvider",
     "requests",
+    "httpx",
+    "asyncio",
     "time",
     "rate_limit",
 ]
@@ -225,7 +278,7 @@ class OpenAIProvider(LLMClient):
         self._rate_limiter = rate_limit.TokenBucket(cfg.tokens_per_minute)
 
     # ------------------------------------------------------------------
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _prepare_payload(self, prompt: Prompt) -> Dict[str, Any]:
         messages: List[Dict[str, str]] = []
         if prompt.system:
             messages.append({"role": "system", "content": prompt.system})
@@ -238,7 +291,11 @@ class OpenAIProvider(LLMClient):
             payload["tags"] = prompt.tags
         if getattr(prompt, "vector_confidence", None) is not None:
             payload["vector_confidence"] = prompt.vector_confidence
+        return payload
 
+    # ------------------------------------------------------------------
+    def _generate(self, prompt: Prompt) -> LLMResult:
+        payload = self._prepare_payload(prompt)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -294,3 +351,94 @@ class OpenAIProvider(LLMClient):
             rate_limit.sleep_with_backoff(attempt)
 
         raise RuntimeError("Failed to obtain completion from OpenAI")
+
+    # ------------------------------------------------------------------
+    async def _async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+        if httpx is None:  # pragma: no cover - dependency missing
+            raise RuntimeError("httpx is required for async streaming")
+
+        payload = self._prepare_payload(prompt)
+        payload["stream"] = True
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        cfg = llm_config.get_config()
+        retries = cfg.max_retries
+        for attempt in range(retries):
+            self._rate_limiter.update_rate(cfg.tokens_per_minute)
+            tokens = rate_limit.estimate_tokens(
+                " ".join(m.get("content", "") for m in payload["messages"]),
+                model=self.model,
+            )
+            self._rate_limiter.consume(tokens)
+            try:
+                async with httpx.AsyncClient() as client:
+                    async with client.stream(
+                        "POST", self.api_url, headers=headers, json=payload, timeout=30
+                    ) as response:
+                        if response.status_code == 429 and attempt < retries - 1:
+                            rate_limit.sleep_with_backoff(attempt)
+                            continue
+                        if response.status_code >= 500 and attempt < retries - 1:
+                            rate_limit.sleep_with_backoff(attempt)
+                            continue
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if not line:
+                                continue
+                            if not line.startswith("data:"):
+                                continue
+                            data = line[len("data:"):].strip()
+                            if data == "[DONE]":
+                                return
+                            try:
+                                chunk = json.loads(data)
+                            except Exception:
+                                continue
+                            try:
+                                delta = chunk["choices"][0]["delta"].get("content", "")
+                            except Exception:
+                                delta = ""
+                            if delta:
+                                yield delta
+                        return
+            except Exception:  # pragma: no cover - request failure
+                if attempt == retries - 1:
+                    raise
+
+            rate_limit.sleep_with_backoff(attempt)
+
+        raise RuntimeError("Failed to obtain completion from OpenAI")
+
+    # ------------------------------------------------------------------
+    def generate(
+        self,
+        prompt: Prompt,
+        *,
+        parse_fn: Callable[[str], Any] | None = None,
+    ) -> LLMResult:
+        """Synchronously generate a completion aggregating streamed chunks."""
+
+        text_parts: List[str] = []
+
+        async def collect() -> None:
+            async for part in self._async_generate(prompt):
+                text_parts.append(part)
+
+        start = time.perf_counter()
+        asyncio.run(collect())
+        latency_ms = (time.perf_counter() - start) * 1000
+        text = "".join(text_parts)
+        parsed = None
+        if parse_fn is not None:
+            try:
+                parsed = parse_fn(text)
+            except Exception:  # pragma: no cover - best effort
+                parsed = None
+
+        result = LLMResult(text=text, parsed=parsed, latency_ms=latency_ms)
+        self._log(prompt, result)
+        return result
