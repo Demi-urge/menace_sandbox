@@ -442,3 +442,10 @@ class OpenAIProvider(LLMClient):
         result = LLMResult(text=text, parsed=parsed, latency_ms=latency_ms)
         self._log(prompt, result)
         return result
+
+
+# Backwards compatibility -------------------------------------------------
+# ``OpenAILLMClient`` previously referenced the OpenAI provider implementation.
+# Keep an alias so older imports continue to function after consolidation.
+OpenAILLMClient = OpenAIProvider
+__all__.append("OpenAILLMClient")
