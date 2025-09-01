@@ -344,7 +344,8 @@ Tune the sensitivity with the `--entropy-threshold`/`ENTROPY_THRESHOLD` flag and
 the `--consecutive`/`ENTROPY_PLATEAU_CONSECUTIVE` window size or rely on the
 default threshold returned by `ROITracker.diminishing()`. Additional gates such
 as `ROI_THRESHOLD`,
-`SYNERGY_THRESHOLD`, `ROI_CONFIDENCE` and `SYNERGY_CONFIDENCE` can further
+`SYNERGY_THRESHOLD`, `ROI_CONFIDENCE`, `SYNERGY_CONFIDENCE`,
+`SYNERGY_STATIONARITY_CONFIDENCE` and `SYNERGY_VARIANCE_CONFIDENCE` can further
 restrict automatic completion. When a module is flagged the runner emits a
 `sandbox diminishing` log listing the affected sections so you can review them or
 reset their history. Flagged modules are persisted to ``*.flags`` files so later
@@ -669,6 +670,8 @@ persisted to `sandbox_data/metrics.db` for later inspection.
 - `SYNERGY_THRESHOLD_WINDOW` – samples used for adaptive synergy threshold
 - `SYNERGY_THRESHOLD_WEIGHT` – exponential weight for threshold calculation
 - `SYNERGY_CONFIDENCE` – confidence level for synergy convergence checks
+- `SYNERGY_STATIONARITY_CONFIDENCE` – confidence for stationarity tests
+- `SYNERGY_VARIANCE_CONFIDENCE` – confidence for variance tests
 - `SANDBOX_PRESET_RL_PATH` – path to the RL policy used for preset adaptation
 - `SANDBOX_PRESET_RL_STRATEGY` – reinforcement learning algorithm
 - `SANDBOX_ADAPTIVE_AGENT_PATH` – path to the adaptive RL agent state

@@ -1124,8 +1124,16 @@ class SandboxSettings(BaseSettings):
     )
     roi_threshold: float | None = Field(None, env="ROI_THRESHOLD")
     synergy_threshold: float | None = Field(None, env="SYNERGY_THRESHOLD")
-    roi_confidence: float | None = Field(None, env="ROI_CONFIDENCE")
-    synergy_confidence: float | None = Field(None, env="SYNERGY_CONFIDENCE")
+    roi_confidence: float | None = Field(
+        None,
+        env="ROI_CONFIDENCE",
+        description="t-test confidence when flagging modules; defaults to 0.95",
+    )
+    synergy_confidence: float | None = Field(
+        None,
+        env="SYNERGY_CONFIDENCE",
+        description="confidence level for synergy convergence checks; defaults to 0.95",
+    )
     auto_merge_roi_threshold: float = Field(
         0.0, env="AUTO_MERGE_ROI_THRESHOLD"
     )
@@ -1225,11 +1233,15 @@ class SandboxSettings(BaseSettings):
     synergy_threshold_weight: float | None = Field(None, env="SYNERGY_THRESHOLD_WEIGHT")
     synergy_ma_window: int | None = Field(None, env="SYNERGY_MA_WINDOW")
     synergy_stationarity_confidence: float | None = Field(
-        None, env="SYNERGY_STATIONARITY_CONFIDENCE"
+        None,
+        env="SYNERGY_STATIONARITY_CONFIDENCE",
+        description="confidence for stationarity tests; defaults to 0.95",
     )
     synergy_std_threshold: float | None = Field(None, env="SYNERGY_STD_THRESHOLD")
     synergy_variance_confidence: float | None = Field(
-        None, env="SYNERGY_VARIANCE_CONFIDENCE"
+        None,
+        env="SYNERGY_VARIANCE_CONFIDENCE",
+        description="confidence for variance tests; defaults to 0.95",
     )
 
     relevancy_threshold: int = Field(
