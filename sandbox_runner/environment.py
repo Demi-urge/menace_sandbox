@@ -101,9 +101,13 @@ if TYPE_CHECKING:  # pragma: no cover
 
 # Relevancy radar integration -------------------------------------------------
 _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
+_RADAR_WARNING_EMITTED = False
 try:  # pragma: no cover - optional dependency
     from relevancy_radar import track_usage as _radar_track_module_usage
+    RELEVANCY_RADAR_AVAILABLE = True
 except ImportError:  # pragma: no cover - optional dependency
+    RELEVANCY_RADAR_AVAILABLE = False
+
     def _radar_track_module_usage(_module: str) -> None:  # type: ignore
         return None
 
@@ -151,6 +155,14 @@ def _async_radar_track(module: str) -> None:
     """Record ``module`` usage without blocking."""
 
     if not _ENABLE_RELEVANCY_RADAR:
+        return
+    if not RELEVANCY_RADAR_AVAILABLE:
+        global _RADAR_WARNING_EMITTED
+        if not _RADAR_WARNING_EMITTED:
+            logger.warning(
+                "relevancy_radar dependency missing; tracking disabled"
+            )
+            _RADAR_WARNING_EMITTED = True
         return
     _ensure_radar_worker()
     if _radar_queue is None:
