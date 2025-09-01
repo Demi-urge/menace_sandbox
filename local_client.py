@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Dict, Any
 
 import requests
+import rate_limit
 
 from llm_interface import Prompt, LLMResult, LLMClient
 
@@ -41,7 +42,14 @@ class OllamaClient(_BaseLocalClient, LLMClient):
         payload = {"model": self.model, "prompt": prompt.text}
         raw = self._post("api/generate", payload)
         text = raw.get("response", "") or raw.get("text", "")
-        return LLMResult(raw=raw, text=text)
+        prompt_tokens = rate_limit.estimate_tokens(prompt.text, model=self.model)
+        completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
+        return LLMResult(
+            raw=raw,
+            text=text,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
 
 
 class VLLMClient(_BaseLocalClient, LLMClient):
@@ -59,7 +67,14 @@ class VLLMClient(_BaseLocalClient, LLMClient):
         payload = {"model": self.model, "prompt": prompt.text}
         raw = self._post("generate", payload)
         text = raw.get("text") or raw.get("generated_text", "")
-        return LLMResult(raw=raw, text=text)
+        prompt_tokens = rate_limit.estimate_tokens(prompt.text, model=self.model)
+        completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
+        return LLMResult(
+            raw=raw,
+            text=text,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
 
 
 __all__ = ["OllamaClient", "VLLMClient"]
