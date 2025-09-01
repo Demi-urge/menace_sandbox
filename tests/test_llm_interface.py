@@ -2,6 +2,7 @@ import retry_utils
 from db_router import DBRouter
 from llm_interface import Prompt, LLMResult, LLMClient
 import random
+import time
 from llm_router import LLMRouter
 from prompt_db import PromptDB
 from completion_parsers import parse_json
@@ -113,7 +114,16 @@ def test_openai_provider_retry_and_logging(monkeypatch):
             if not self.ok:
                 raise requests.HTTPError("boom", response=self)
 
-    responses = [Resp(429, {}), Resp(200, {"choices": [{"message": {"content": "{\"a\":1}"}}]})]
+    responses = [
+        Resp(429, {}),
+        Resp(
+            200,
+            {
+                "choices": [{"message": {"content": "{\"a\":1}"}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            },
+        ),
+    ]
 
     def fake_post(url, headers=None, json=None, timeout=None):
         return responses.pop(0)
@@ -121,6 +131,8 @@ def test_openai_provider_retry_and_logging(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     provider = OpenAIProvider(max_retries=2)
     monkeypatch.setattr(provider._session, "post", fake_post)
+    counter = iter([0.0, 1.0, 2.0, 3.0])
+    monkeypatch.setattr(time, "perf_counter", lambda: next(counter))
 
     prompt = Prompt(text="hi", metadata={"tags": ["t"], "vector_confidences": [0.7]})
     result = provider.generate(prompt)
@@ -130,6 +142,9 @@ def test_openai_provider_retry_and_logging(monkeypatch):
     assert sleeps == [1.0]
     assert result.parsed == {"a": 1}
     assert logged and logged[0][0] is prompt
+    assert result.prompt_tokens == 3
+    assert result.completion_tokens == 2
+    assert result.latency_ms == 1000.0
 
 
 def test_router_fallback_logs(monkeypatch):

@@ -12,11 +12,20 @@ def test_log(tmp_path):
     prompt = Prompt(
         text="hi", examples=["ex1"], outcome_tags=["test"], vector_confidences=[0.5]
     )
-    result = LLMResult(raw={"data": 1}, text="hello")
+    result = LLMResult(
+        raw={"data": 1},
+        text="hello",
+        prompt_tokens=5,
+        completion_tokens=7,
+        latency_ms=12.5,
+    )
     db.log(prompt, result)
     row = db.conn.execute(
-        "SELECT text, examples, vector_confidences, outcome_tags, response_text, model "
-        "FROM prompts",
+        (
+            "SELECT text, examples, vector_confidences, outcome_tags, "
+            "response_text, model, prompt_tokens, completion_tokens, latency_ms "
+            "FROM prompts"
+        )
     ).fetchone()
     assert row[0] == "hi"
     assert json.loads(row[1]) == ["ex1"]
@@ -24,6 +33,7 @@ def test_log(tmp_path):
     assert json.loads(row[3]) == ["test"]
     assert row[4] == "hello"
     assert row[5] == "gpt-test"
+    assert row[6:] == (5, 7, 12.5)
 
 
 def test_openai_client_logs_prompt(monkeypatch, tmp_path):
