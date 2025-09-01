@@ -152,8 +152,10 @@ from .orphan_discovery import (
 
 _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
 
-_USAGE_QUEUE_MAXSIZE = 256
-_usage_queue: "queue.Queue[tuple[str, float]]" = queue.Queue(maxsize=_USAGE_QUEUE_MAXSIZE)
+_settings = SandboxSettings()
+_usage_queue: "queue.Queue[tuple[str, float]]" = queue.Queue(
+    maxsize=_settings.usage_queue_maxsize
+)
 _usage_thread: threading.Thread | None = None
 _usage_stop_event: threading.Event | None = None
 

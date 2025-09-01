@@ -1358,6 +1358,11 @@ class SandboxSettings(BaseSettings):
         env="RELEVANCY_RADAR_REPLACE_RATIO",
         description="Call and time ratio below which modules are suggested for replacement.",
     )
+    usage_queue_maxsize: int = Field(
+        256,
+        env="USAGE_QUEUE_MAXSIZE",
+        description="Maximum number of module usage events queued for relevancy tracking.",
+    )
     relevancy_metrics_retention_days: int | None = Field(
         None,
         env="RELEVANCY_METRICS_RETENTION_DAYS",
