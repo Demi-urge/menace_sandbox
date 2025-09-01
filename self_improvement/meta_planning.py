@@ -766,7 +766,23 @@ def start_self_improvement_cycle(
 
         def _finished(self, task: asyncio.Task[None]) -> None:
             if task.cancelled():
-                pass
+                msg = getattr(task, "_cancel_message", None)
+                reason = str(msg) if msg else "cancelled"
+                logger = get_logger(__name__)
+                logger.info(
+                    "self improvement cycle cancelled",
+                    extra=log_record(reason=reason),
+                )
+                try:  # pragma: no cover - metrics are best effort
+                    from ..metrics_exporter import self_improvement_failure_total
+
+                    self_improvement_failure_total.labels(reason=reason).inc()
+                except Exception as exc:
+                    logger.debug(
+                        "cancellation metric update failed",
+                        extra=log_record(reason=reason),
+                        exc_info=exc,
+                    )
             else:
                 try:
                     task.result()
