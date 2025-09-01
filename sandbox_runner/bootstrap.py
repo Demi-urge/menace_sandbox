@@ -5,7 +5,6 @@ import importlib.util
 import logging
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 from typing import Callable
@@ -124,14 +123,14 @@ def initialize_autonomous_sandbox(
     return settings
 
 
-def _verify_required_dependencies(
-    settings: SandboxSettings, auto_install: bool = True
-) -> None:
-    """Exit if required or production optional dependencies are missing.
+def _verify_required_dependencies(settings: SandboxSettings) -> dict[str, list[str]]:
+    """Validate required dependencies and return missing categories.
 
-    When ``auto_install`` is ``True`` missing Python packages are installed via
-    ``pip`` with progress logged.  Installation failures still result in a
-    :class:`SystemExit` for required packages.
+    The function performs a pure validation pass without attempting to install
+    any packages.  A dictionary mapping dependency categories to lists of missing
+    packages is returned.  The categories are ``system``, ``python`` and
+    ``optional``.  Callers may surface user-facing messages or decide how to
+    handle the missing dependencies.
     """
 
     def _have_spec(name: str) -> bool:
@@ -158,64 +157,30 @@ def _verify_required_dependencies(
     req_pkgs = _clean_list("python package", settings.required_python_packages)
     opt_pkgs = _clean_list("optional python package", settings.optional_python_packages)
 
-    def _pip_install(pkg: str) -> bool:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", pkg],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            logger.info("installed %s", pkg)
-            return True
-        logger.warning("failed to install %s: %s", pkg, result.stderr.strip())
-        return False
-
     missing_sys = [t for t in req_tools if shutil.which(t) is None]
     missing_req = [p for p in req_pkgs if not _have_spec(p)]
     missing_opt = [p for p in opt_pkgs if not _have_spec(p)]
 
-    if auto_install:
-        for pkg in list(missing_req):
-            if _pip_install(pkg) and _have_spec(pkg):
-                missing_req.remove(pkg)
-        for pkg in list(missing_opt):
-            if _pip_install(pkg) and _have_spec(pkg):
-                missing_opt.remove(pkg)
-
     mode = settings.menace_mode.lower()
 
-    messages: list[str] = []
+    errors: dict[str, list[str]] = {}
     if missing_sys:
-        messages.append(
-            "Missing system packages: "
-            + ", ".join(missing_sys)
-            + ". Install them using your package manager."
-        )
+        errors["system"] = missing_sys
     if missing_req:
-        messages.append(
-            "Missing Python packages: "
-            + ", ".join(missing_req)
-            + ". Install them with 'pip install <package>'."
-        )
+        errors["python"] = missing_req
     if missing_opt and mode == "production":
-        messages.append(
-            "Missing optional Python packages: "
-            + ", ".join(missing_opt)
-            + ". Install them with 'pip install <package>'."
-        )
-
-    if messages:
-        raise SystemExit("\n".join(messages))
-
-    if missing_opt:
+        errors["optional"] = missing_opt
+    elif missing_opt:
         logger.warning(
             "Missing optional Python packages: %s", ", ".join(missing_opt)
         )
 
+    return errors
+
 
 def bootstrap_environment(
     settings: SandboxSettings | None = None,
-    verifier: Callable[..., None] | None = None,
+    verifier: Callable[..., dict[str, list[str]]] | None = None,
     *,
     auto_install: bool = True,
 ) -> SandboxSettings:
@@ -236,11 +201,32 @@ def bootstrap_environment(
         logger.info("created env file at %s", env_file)
     if verifier:
         try:
-            verifier(settings, auto_install)  # type: ignore[misc]
+            errors = verifier(settings, auto_install)  # type: ignore[misc]
         except TypeError:
-            verifier(settings)  # type: ignore[misc]
+            errors = verifier(settings)  # type: ignore[misc]
     else:
-        _verify_required_dependencies(settings, auto_install=auto_install)
+        errors = _verify_required_dependencies(settings)
+    if errors:
+        messages: list[str] = []
+        if errors.get("system"):
+            messages.append(
+                "Missing system packages: "
+                + ", ".join(errors["system"])
+                + ". Install them using your package manager."
+            )
+        if errors.get("python"):
+            messages.append(
+                "Missing Python packages: "
+                + ", ".join(errors["python"])
+                + ". Install them with 'pip install <package>'."
+            )
+        if errors.get("optional"):
+            messages.append(
+                "Missing optional Python packages: "
+                + ", ".join(errors["optional"])
+                + ". Install them with 'pip install <package>'."
+            )
+        raise SystemExit("\n".join(messages))
     return initialize_autonomous_sandbox(settings)
 
 

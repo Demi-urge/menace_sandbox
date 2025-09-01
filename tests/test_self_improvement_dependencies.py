@@ -90,6 +90,6 @@ def test_verify_dependencies_requires_torch(monkeypatch):
     monkeypatch.setattr(importlib, "import_module", fake_import)
 
     with pytest.raises(RuntimeError) as excinfo:
-        verify_dependencies(auto_install=False)
+        verify_dependencies()
 
     assert "torch" in str(excinfo.value)

@@ -13,8 +13,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -41,12 +39,13 @@ logger = get_logger(__name__)
 settings = SandboxSettings()
 
 
-def verify_dependencies(auto_install: bool = True) -> None:
-    """Ensure optional helper packages for self-improvement are installed.
+def verify_dependencies() -> None:
+    """Ensure optional helper packages for self-improvement are available.
 
-    When ``auto_install`` is ``True`` missing packages are installed using
-    ``pip`` without user interaction.  Each installation attempt is logged and
-    import failures after installation still raise a :class:`RuntimeError`.
+    The function only validates the presence of known helper packages and
+    collects a list of missing ones.  No installation attempts are performed;
+    instead, clear instructions on how to install the dependencies are
+    provided in the raised error.
     """
 
     import importlib
@@ -89,20 +88,8 @@ def verify_dependencies(auto_install: bool = True) -> None:
         ),
     }
 
-    def _pip_install(pkg: str) -> bool:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", pkg],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            logger.info("installed %s", pkg)
-            return True
-        logger.warning("failed to install %s: %s", pkg, result.stderr.strip())
-        return False
-
     missing: list[str] = []
-    for name, (modules, pkg, guidance) in checks.items():
+    for name, (modules, _pkg, guidance) in checks.items():
         if isinstance(modules, str):
             modules = (modules,)
         available = False
@@ -113,21 +100,15 @@ def verify_dependencies(auto_install: bool = True) -> None:
                 break
             except Exception:
                 continue
-        if not available and auto_install and _pip_install(pkg):
-            for module in modules:
-                try:
-                    importlib.import_module(module)
-                    available = True
-                    break
-                except Exception:
-                    continue
         if not available:
             missing.append(f"{name} – {guidance}")
 
     if missing:
-        raise RuntimeError(
-            "Missing dependencies for self-improvement: " + "; ".join(missing)
+        message = (
+            "Missing dependencies for self-improvement:\n  - "
+            + "\n  - ".join(missing)
         )
+        raise RuntimeError(message)
 
 
 def _lock_for(path: Path) -> FileLock:
