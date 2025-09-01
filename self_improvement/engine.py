@@ -49,6 +49,7 @@ import threading
 import asyncio
 import os
 import importlib
+from abc import ABC, abstractmethod
 
 from db_router import GLOBAL_ROUTER, init_db_router
 
@@ -421,7 +422,7 @@ class _ReplayBuffer:
         return len(self.data)
 
 
-class _BaseRLSynergyLearner:
+class _BaseRLSynergyLearner(ABC):
     """Minimal reinforcement learning based synergy weight learner."""
 
     names = [
@@ -507,12 +508,14 @@ class _BaseRLSynergyLearner:
         """Load policy and target networks from disk if present."""
 
     # API compatible with SynergyWeightLearner ---------------------------
+    @abstractmethod
     def update(
         self,
         roi_delta: float,
         deltas: Mapping[str, float],
         extra: Mapping[str, float] | None = None,
     ) -> None:
+        """Update synergy weights based on observed deltas and reward."""
         raise NotImplementedError
 
 
