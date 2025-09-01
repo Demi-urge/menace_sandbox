@@ -234,3 +234,101 @@ def test_generate_parse_fn_error_ignored():
     client = Dummy()
     res = client.generate(Prompt(text="hi"), parse_fn=bad)
     assert res.parsed is None
+
+
+def test_successful_call_logs_and_returns_raw_and_parsed(monkeypatch):
+    """LLMClient logs prompts and exposes raw and parsed responses."""
+
+    logged: list[tuple[Prompt, LLMResult]] = []
+
+    class DummyDB:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def log(self, prompt: Prompt, result: LLMResult) -> None:
+            logged.append((prompt, result))
+
+    import prompt_db
+
+    monkeypatch.setattr(prompt_db, "PromptDB", DummyDB)
+
+    class DummyClient(LLMClient):
+        def __init__(self):
+            super().__init__("dummy")
+
+        def _generate(self, prompt: Prompt) -> LLMResult:
+            return LLMResult(raw={"x": 1}, text="{\"a\":1}")
+
+    client = DummyClient()
+    prompt = Prompt(text="hi")
+    result = client.generate(prompt, parse_fn=parse_json)
+
+    assert result.raw == {"x": 1}
+    assert result.parsed == {"a": 1}
+    assert logged == [(prompt, result)]
+
+
+def test_openai_provider_retries_on_server_error(monkeypatch):
+    """Server errors trigger retries with exponential backoff."""
+
+    from llm_interface import OpenAIProvider, requests, rate_limit
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        rate_limit,
+        "sleep_with_backoff",
+        lambda attempt, base=1.0, max_delay=60.0: sleeps.append(
+            min(base * (2**attempt), max_delay)
+        ),
+    )
+
+    class Resp:
+        def __init__(self, status: int, data):
+            self.status_code = status
+            self.ok = status == 200
+            self._data = data
+
+        def json(self):  # pragma: no cover - simple stub
+            return self._data
+
+        def raise_for_status(self):  # pragma: no cover - simple stub
+            if not self.ok:
+                raise requests.HTTPError("boom", response=self)
+
+    responses = [
+        Resp(500, {}),
+        Resp(200, {"choices": [{"message": {"content": "{\"b\":2}"}}]}),
+    ]
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        return responses.pop(0)
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    provider = OpenAIProvider(max_retries=2)
+    monkeypatch.setattr(provider._session, "post", fake_post)
+
+    result = provider.generate(Prompt(text="hi"))
+
+    assert result.parsed == {"b": 2}
+    assert result.raw["choices"][0]["message"]["content"] == "{\"b\":2}"
+    assert sleeps == [1.0]
+    assert not responses
+
+
+def test_prompt_serialization_roundtrip():
+    import json
+    from dataclasses import asdict
+
+    prompt = Prompt(
+        user="hello",
+        system="sys",
+        examples=["ex"],
+        vector_confidence=0.5,
+        tags=["t"],
+        metadata={"k": "v"},
+    )
+
+    data = asdict(prompt)
+    restored = Prompt(**json.loads(json.dumps(data)))
+
+    assert asdict(restored) == data
