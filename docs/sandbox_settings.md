@@ -118,11 +118,11 @@ Unset modules are ignored.
 `SandboxSettings` can dynamically load different language model clients. The
 `preferred_llm_backend` field selects the primary backend. Available backends
 are defined by the `available_backends` mapping, which associates backend names
-with dotted import paths pointing to a factory function or client class
-returning an `LLMClient` instance.
+with dotted import paths. These entries are registered with the
+`llm_registry` module so the router can instantiate them by name.
 
-Register a custom or private adapter by extending the mapping and selecting it
-as the preferred backend:
+Register a custom or private adapter by extending the mapping or by using the
+helpers in `llm_registry` and selecting it as the preferred backend:
 
 ```yaml
 preferred_llm_backend: custom
@@ -138,4 +138,7 @@ export AVAILABLE_LLM_BACKENDS='{"custom": "my_package.custom_client.CustomClient
 ```
 
 The selected entry must resolve to a callable that returns an `LLMClient`
-instance when invoked without arguments.
+instance when invoked without arguments. Alternatively, register a factory
+directly in code using `llm_registry.register_backend` or the
+`@llm_registry.backend` decorator and simply reference the chosen name in
+`preferred_llm_backend`.
