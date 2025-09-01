@@ -9,9 +9,18 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict
 
+import logging
+
 from sandbox_settings import SandboxSettings
 
 from .utils import _call_with_retries
+
+from metrics_exporter import (
+    orphan_integration_success_total,
+    orphan_integration_failure_total,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def _load_orphan_module(attr: str) -> Callable[..., Any]:
@@ -41,7 +50,18 @@ def integrate_orphans(
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
     func = _load_orphan_module("integrate_orphans")
-    return _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
+    try:
+        modules = _call_with_retries(
+            func, *args, retries=retries, delay=delay, **kwargs
+        )
+    except Exception:
+        orphan_integration_failure_total.inc()
+        logger.exception("orphan integration failed")
+        raise
+    else:
+        orphan_integration_success_total.inc()
+        logger.info("integrated modules: %s", modules)
+        return modules
 
 
 def post_round_orphan_scan(
@@ -55,7 +75,22 @@ def post_round_orphan_scan(
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
     func = _load_orphan_module("post_round_orphan_scan")
-    return _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
+    try:
+        result = _call_with_retries(
+            func, *args, retries=retries, delay=delay, **kwargs
+        )
+    except Exception:
+        orphan_integration_failure_total.inc()
+        logger.exception("post round orphan scan failed")
+        raise
+    else:
+        orphan_integration_success_total.inc()
+        integrated = result.get("integrated") if isinstance(result, dict) else None
+        flagged = result.get("flagged") if isinstance(result, dict) else None
+        logger.info(
+            "post round scan integrated=%s flagged=%s", integrated, flagged
+        )
+        return result
 
 
 __all__ = ["integrate_orphans", "post_round_orphan_scan"]
