@@ -1,102 +1,51 @@
-from __future__ import annotations
+"""Minimal language model client interface with optional backend chaining.
 
-"""Lightweight LLM abstraction with an OpenAI GPT-4o implementation.
+This module defines a small dataclass :class:`LLMResult`, a light weight
+``LLMBackend`` protocol and the :class:`LLMClient` helper used throughout the
+codebase.  ``LLMClient`` can either be subclassed to implement a concrete
+backend via :meth:`_generate` or instantiated with a list of backends to act as
+an orchestrator with fallback behaviour.
 
-This module exposes a minimal :class:`LLMClient` interface for language model
-backends.  The interface purposely keeps the surface area tiny so it can be
-re-used in small utilities without pulling in a full featured SDK.
-
-Two concrete pieces are provided:
-
-``Prompt``
-    Dataclass describing the different pieces of a chat style prompt.  It is
-    defined in :mod:`prompt_types` but re-exported here for convenience.
-
-``OpenAIClient``
-    Implementation talking to the OpenAI Chat Completions API using the
-    GPT-4o model.  The client features basic exponential backoff retry logic
-    and a per-second rate limiter.  ``generate`` returns both the raw JSON
-    response as well as the parsed text content so downstream callers can
-    choose the level of detail they require.
+The goal of keeping the abstraction surface tiny is to make it easy to plug in
+new model providers while still supporting logging and simple response parsing.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any, Dict, List, Protocol
-from abc import ABC, abstractmethod
+from typing import Any, Callable, Dict, List, Protocol, Sequence
+
+import json
 import os
-import threading
+import requests
 import time
 
-import requests
-
-
-# ---------------------------------------------------------------------------
-# Data containers
-# ---------------------------------------------------------------------------
-
-# ``Prompt`` lives in a separate module so other packages can import it
-# without pulling in the entire client implementation.
+# ``Prompt`` lives in a separate module so other packages can import it without
+# pulling in the entire client implementation.
 try:  # pragma: no cover - package vs module import
     from .prompt_types import Prompt
 except Exception:  # pragma: no cover - stand-alone usage
     from prompt_types import Prompt
 
 
+# ---------------------------------------------------------------------------
+# Data containers
+# ---------------------------------------------------------------------------
+
+
 @dataclass
 class LLMResult:
     """Result of an LLM generation call."""
 
-    raw: Dict[str, Any]
-    text: str
+    raw: Dict[str, Any] | None = None
+    text: str = ""
     parsed: Any | None = None
 
 
 # Backwards compatibility -------------------------------------------------
-# ``Completion`` previously named the ``LLMResult`` container.  Keep an alias
-# so older imports continue to work without modification.
+# ``Completion`` previously named the ``LLMResult`` container.  Keep an alias so
+# older imports continue to work without modification.
 Completion = LLMResult
-
-
-# ---------------------------------------------------------------------------
-# Base interface
-# ---------------------------------------------------------------------------
-
-
-class LLMClient(ABC):
-    """Abstract base class for language model clients."""
-
-    @abstractmethod
-    def generate(self, prompt_obj: Prompt) -> LLMResult:
-        """Return both raw provider JSON and parsed text for *prompt_obj*."""
-
-    @abstractmethod
-    def parse(self, raw_response: Dict[str, Any]) -> str:
-        """Extract the human readable text from *raw_response*."""
-
-
-# ---------------------------------------------------------------------------
-# Utility helpers
-# ---------------------------------------------------------------------------
-
-
-class RateLimiter:
-    """Simple thread safe rate limiter expressed in requests per second."""
-
-    def __init__(self, rps: float) -> None:
-        self.rps = rps
-        self._lock = threading.Lock()
-        self._last = 0.0
-
-    def acquire(self) -> None:
-        if self.rps <= 0:
-            return
-        with self._lock:
-            interval = 1.0 / self.rps
-            now = time.time()
-            wait = self._last + interval - now
-            if wait > 0:
-                time.sleep(wait)
-        self._last = max(now, self._last + interval)
 
 
 # ---------------------------------------------------------------------------
@@ -114,12 +63,138 @@ class LLMBackend(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# OpenAI implementation
+# Core client
 # ---------------------------------------------------------------------------
 
 
-class OpenAIClient(LLMClient):
-    """LLMClient implementation using the OpenAI GPT-4o model."""
+class LLMClient:
+    """Small helper class orchestrating language model backends.
+
+    Parameters
+    ----------
+    model:
+        Name of the model used for logging purposes.  When *backends* are
+        provided and *model* is ``None`` the first backend's model name is used.
+    backends:
+        Optional list of backend instances.  When provided the client acts as a
+        router trying each backend in order and falling back to the next one if
+        an exception is raised.  This allows chaining a remote primary backend
+        with a secondary local fallback.
+    log_prompts:
+        When ``True`` interactions are recorded in ``PromptDB``.  Logging is
+        best effort and silently ignored if the database layer is unavailable.
+    """
+
+    def __init__(
+        self,
+        model: str | None = None,
+        *,
+        backends: Sequence[LLMBackend] | None = None,
+        log_prompts: bool = True,
+    ) -> None:
+        if model is None and backends:
+            model = backends[0].model
+        if model is None:
+            raise TypeError("model is required if backends are not provided")
+        self.model = model
+        self.backends = list(backends or [])
+        self._log_prompts = log_prompts
+        if log_prompts:
+            try:  # pragma: no cover - database may not be available
+                from prompt_db import PromptDB
+
+                self.db = PromptDB(model=model)
+            except Exception:  # pragma: no cover - logging is best effort
+                self.db = None
+        else:
+            self.db = None
+
+    # ------------------------------------------------------------------
+    def _log(self, prompt: Prompt, result: LLMResult) -> None:
+        """Persist *prompt* and *result* if logging is enabled."""
+
+        if not self._log_prompts or not getattr(self, "db", None):
+            return
+        try:  # pragma: no cover - logging is best effort
+            self.db.log(prompt, result)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    def _generate(self, prompt: Prompt) -> LLMResult:
+        """Subclasses must implement this method."""
+
+        raise NotImplementedError
+
+    # ------------------------------------------------------------------
+    def generate(
+        self,
+        prompt: Prompt,
+        *,
+        parse_fn: Callable[[str], Any] | None = None,
+    ) -> LLMResult:
+        """Generate a completion for *prompt*.
+
+        If the client was initialised with a list of backends each backend is
+        attempted in order.  When ``prompt.metadata['small_task']`` is truthy the
+        first backend is skipped which allows callers to favour a local backend
+        for inexpensive tasks.  If all backends fail the last exception is
+        raised.
+
+        For subclassed clients without explicit backends, :meth:`_generate` is
+        called directly.
+        """
+
+        # If explicit backends are configured act as a router
+        if self.backends:
+            order = list(self.backends)
+            meta = getattr(prompt, "metadata", {})
+            if meta.get("small_task") and len(order) > 1:
+                # Prefer the secondary backend for small tasks
+                order = order[1:] + order[:1]
+            last_exc: Exception | None = None
+            for backend in order:
+                try:
+                    result = backend.generate(prompt)
+                except Exception as exc:  # pragma: no cover - backend failure
+                    last_exc = exc
+                    continue
+                if parse_fn is not None:
+                    try:
+                        result.parsed = parse_fn(result.text)
+                    except Exception:  # pragma: no cover - parsing is best effort
+                        pass
+                self._log(prompt, result)
+                return result
+            if last_exc is not None:
+                raise last_exc
+            raise RuntimeError("no backends configured")
+
+        # No explicit backends: delegate to subclass implementation
+        result = self._generate(prompt)
+        if parse_fn is not None:
+            try:
+                result.parsed = parse_fn(result.text)
+            except Exception:  # pragma: no cover - parsing is best effort
+                pass
+        self._log(prompt, result)
+        return result
+
+
+__all__ = [
+    "Prompt",
+    "LLMResult",
+    "Completion",
+    "LLMClient",
+    "LLMBackend",
+    "OpenAIProvider",
+    "requests",
+    "time",
+]
+
+
+class OpenAIProvider(LLMClient):
+    """Minimal OpenAI Chat Completions client with retry/backoff."""
 
     api_url = "https://api.openai.com/v1/chat/completions"
 
@@ -129,30 +204,32 @@ class OpenAIClient(LLMClient):
         api_key: str | None = None,
         *,
         max_retries: int = 5,
-        rate_limit_rps: float = 1.0,
     ) -> None:
-        self.model = model
+        super().__init__(model)
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is required")
         self.max_retries = max_retries
-        self.session = requests.Session()
-        self.rate_limiter = RateLimiter(rate_limit_rps)
+        self._session = requests.Session()
 
     # ------------------------------------------------------------------
-    def generate(self, prompt_obj: Prompt) -> LLMResult:
+    def _throttle(self) -> None:  # pragma: no cover - simple rate limiter
+        pass
+
+    # ------------------------------------------------------------------
+    def _generate(self, prompt: Prompt) -> LLMResult:
         messages: List[Dict[str, str]] = []
-        if prompt_obj.system:
-            messages.append({"role": "system", "content": prompt_obj.system})
-        for ex in prompt_obj.examples:
+        if prompt.system:
+            messages.append({"role": "system", "content": prompt.system})
+        for ex in getattr(prompt, "examples", []):
             messages.append({"role": "system", "content": ex})
-        messages.append({"role": "user", "content": prompt_obj.user})
+        messages.append({"role": "user", "content": prompt.user})
 
         payload: Dict[str, Any] = {"model": self.model, "messages": messages}
-        if prompt_obj.tags:
-            payload["tags"] = prompt_obj.tags
-        if prompt_obj.vector_confidence is not None:
-            payload["vector_confidence"] = prompt_obj.vector_confidence
+        if getattr(prompt, "tags", None):
+            payload["tags"] = prompt.tags
+        if getattr(prompt, "vector_confidence", None) is not None:
+            payload["vector_confidence"] = prompt.vector_confidence
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -161,10 +238,10 @@ class OpenAIClient(LLMClient):
 
         backoff = 1.0
         for attempt in range(self.max_retries):
-            self.rate_limiter.acquire()
+            self._throttle()
             try:
-                response = self.session.post(
-                    self.api_url, json=payload, headers=headers, timeout=30
+                response = self._session.post(
+                    self.api_url, headers=headers, json=payload, timeout=30
                 )
             except requests.RequestException:
                 if attempt == self.max_retries - 1:
@@ -180,34 +257,21 @@ class OpenAIClient(LLMClient):
                     continue
                 response.raise_for_status()
                 raw = response.json()
-                text = self.parse(raw)
-                result = LLMResult(raw=raw, text=text)
+                text = ""
                 try:
-                    from prompt_db import log_interaction
-
-                    log_interaction(prompt_obj, raw, text, prompt_obj.tags)
+                    text = raw["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError):
+                    pass
+                parsed = None
+                try:
+                    parsed = json.loads(text)
                 except Exception:
-                    pass  # Logging should never break generation
-                return result
+                    pass
+                return LLMResult(raw=raw, text=text, parsed=parsed)
 
             time.sleep(backoff)
             backoff *= 2
 
         raise RuntimeError("Failed to obtain completion from OpenAI")
 
-    # ------------------------------------------------------------------
-    def parse(self, raw_response: Dict[str, Any]) -> str:
-        try:
-            return raw_response["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError):
-            return ""
 
-
-__all__ = [
-    "Prompt",
-    "LLMResult",
-    "Completion",
-    "LLMClient",
-    "LLMBackend",
-    "OpenAIClient",
-]

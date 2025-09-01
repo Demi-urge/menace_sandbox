@@ -3,7 +3,7 @@ from __future__ import annotations
 """Common prompt related data structures."""
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import Any, Dict, List
 
 
 @dataclass(init=False)
@@ -29,6 +29,7 @@ class Prompt:
     examples: List[str] = field(default_factory=list)
     vector_confidence: float | None = None
     tags: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __init__(
         self,
@@ -38,15 +39,38 @@ class Prompt:
         examples: List[str] | None = None,
         vector_confidence: float | None = None,
         tags: List[str] | None = None,
+        outcome_tags: List[str] | None = None,
+        vector_confidences: List[float] | None = None,
         text: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> None:
         if text is not None and not user:
             user = text
+        meta = dict(metadata or {})
         self.system = system
         self.user = user
         self.examples = list(examples) if examples else []
-        self.vector_confidence = vector_confidence
-        self.tags = list(tags) if tags else []
+        if vector_confidence is not None:
+            self.vector_confidence = vector_confidence
+        elif vector_confidences:
+            self.vector_confidence = vector_confidences[0]
+        elif "vector_confidence" in meta:
+            self.vector_confidence = meta.get("vector_confidence")
+        elif meta.get("vector_confidences"):
+            self.vector_confidence = meta.get("vector_confidences")[0]
+        else:
+            self.vector_confidence = None
+        if tags is not None:
+            self.tags = list(tags)
+        elif outcome_tags is not None:
+            self.tags = list(outcome_tags)
+        elif meta.get("tags") is not None:
+            self.tags = list(meta.get("tags"))
+        elif meta.get("outcome_tags") is not None:
+            self.tags = list(meta.get("outcome_tags"))
+        else:
+            self.tags = []
+        self.metadata = meta
 
     # ------------------------------------------------------------------
     def __str__(self) -> str:  # pragma: no cover - trivial
