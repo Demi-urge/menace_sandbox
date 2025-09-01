@@ -1,5 +1,6 @@
 from llm_interface import Prompt, LLMResult, LLMClient
-from llm_router import LLMRouter
+from llm_router import LLMRouter, client_from_settings
+from sandbox_settings import SandboxSettings
 
 
 class StubClient(LLMClient):
@@ -24,6 +25,7 @@ def test_router_uses_local_for_small_prompts():
     assert local.calls == 1
     assert remote.calls == 0
 
+
 def test_router_uses_remote_for_large_prompts():
     local = StubClient("local")
     remote = StubClient("remote")
@@ -31,6 +33,7 @@ def test_router_uses_remote_for_large_prompts():
     res = router.generate(Prompt(text="this is long"))
     assert res.text == "remote"
     assert remote.calls == 1
+
 
 def test_router_fallback_on_failure():
     local = StubClient("local", fail=True)
@@ -40,3 +43,17 @@ def test_router_fallback_on_failure():
 
     assert res.text == "remote"
     assert remote.calls == 1
+
+
+def custom_factory() -> StubClient:
+    return StubClient("custom")
+
+
+def test_client_from_settings_dynamic_backend(monkeypatch):
+    settings = SandboxSettings(
+        preferred_llm_backend="custom",
+        available_backends={"custom": "tests.test_llm_router.custom_factory"},
+    )
+    client = client_from_settings(settings)
+    res = client.generate(Prompt(text="hi"))
+    assert res.text == "custom"

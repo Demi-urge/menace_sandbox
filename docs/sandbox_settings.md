@@ -112,3 +112,30 @@ export OPTIONAL_SERVICE_VERSIONS='{"relevancy_radar": "1.2.0"}'
 ```
 
 Unset modules are ignored.
+
+## LLM backends
+
+`SandboxSettings` can dynamically load different language model clients. The
+`preferred_llm_backend` field selects the primary backend. Available backends
+are defined by the `available_backends` mapping, which associates backend names
+with dotted import paths pointing to a factory function or client class
+returning an `LLMClient` instance.
+
+Register a custom or private adapter by extending the mapping and selecting it
+as the preferred backend:
+
+```yaml
+preferred_llm_backend: custom
+available_backends:
+  custom: "my_package.custom_client.CustomClient"
+```
+
+Environment variables accept the same configuration using JSON:
+
+```bash
+export PREFERRED_LLM_BACKEND=custom
+export AVAILABLE_LLM_BACKENDS='{"custom": "my_package.custom_client.CustomClient"}'
+```
+
+The selected entry must resolve to a callable that returns an `LLMClient`
+instance when invoked without arguments.
