@@ -621,7 +621,9 @@ async def _aload_generator(config: StubProviderConfig | None = None) -> Any:
             if openai is None:
                 openai = importlib.import_module("openai")  # type: ignore
         except ImportError as exc:  # pragma: no cover - library not installed
-            raise ModelLoadError("openai library unavailable") from exc
+            raise ModelLoadError(
+                "openai library unavailable; install the 'openai' package"
+            ) from exc
         openai.api_key = os.getenv("OPENAI_API_KEY")
         _GENERATOR = openai
         await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
@@ -638,7 +640,9 @@ async def _aload_generator(config: StubProviderConfig | None = None) -> Any:
             transformers = importlib.import_module("transformers")
             pipeline = transformers.pipeline  # type: ignore[attr-defined]
     except ImportError as exc:  # pragma: no cover - library not installed
-        raise ModelLoadError("transformers library unavailable") from exc
+        raise ModelLoadError(
+            "transformers library unavailable; install the 'transformers' package"
+        ) from exc
 
     hf_token = settings.huggingface_token
     if not model or not hf_token:
@@ -653,7 +657,9 @@ async def _aload_generator(config: StubProviderConfig | None = None) -> Any:
             await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
         except Exception as exc:  # pragma: no cover - model load failures
             raise ModelLoadError(
-                f"failed to load fallback model {cfg.fallback_model}"
+                "no configured model available; install a supported model via the"
+                " 'transformers' package or set SANDBOX_STUB_MODEL and"
+                " SANDBOX_HUGGINGFACE_TOKEN"
             ) from exc
         return _GENERATOR
 
@@ -680,8 +686,16 @@ async def _aload_generator(config: StubProviderConfig | None = None) -> Any:
             await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
         except Exception as exc2:  # pragma: no cover - model load failures
             raise ModelLoadError(
-                f"failed to load model {model} and fallback {cfg.fallback_model}"
+                f"failed to load model {model} and fallback {cfg.fallback_model}; "
+                "verify model names and ensure required weights are installed"
             ) from exc2
+    if _GENERATOR is None:
+        raise ModelLoadError(
+            "no stub generation model could be loaded; install the 'transformers'"
+            " package and configure SANDBOX_ENABLE_TRANSFORMERS=1 with a"
+            " valid model or enable OpenAI via SANDBOX_ENABLE_OPENAI=1 and"
+            " provide OPENAI_API_KEY"
+        )
     return _GENERATOR
 
 
@@ -763,7 +777,7 @@ async def async_generate_stubs(
         return stubs
 
     try:
-        gen = await _aload_generator(config)
+        gen = await _aload_generator()
     except ModelLoadError as exc:
         logger.error("stub generation unavailable: %s", exc)
         return stubs
