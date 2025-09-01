@@ -477,19 +477,35 @@ class SelfLearningCoordinator:
         self._save_state()
 
     async def _train_record(self, rec: PathwayRecord) -> None:
-        async with asyncio.TaskGroup() as tg:
-            if self.learning_engine:
-                tg.create_task(self._partial_train(self.learning_engine, rec, "learning_engine"))
-            if self.unified_engine:
-                tg.create_task(self._partial_train(self.unified_engine, rec, "unified_engine"))
-            if self.action_engine:
-                tg.create_task(self._partial_train(self.action_engine, rec, "action_engine"))
+        tasks: set[asyncio.Task] = set()
+        meta: dict[asyncio.Task, tuple[object, str, int]] = {}
 
-    async def _partial_train(self, engine: object, rec: PathwayRecord, name: str) -> None:
-        try:
-            await asyncio.to_thread(engine.partial_train, rec)
-        except Exception as exc:
-            logger.exception("%s failed during partial_train: %s", name, exc)
+        def schedule(engine: object, name: str, attempt: int = 0) -> None:
+            task = asyncio.create_task(self._partial_train(engine, rec))
+            meta[task] = (engine, name, attempt)
+            tasks.add(task)
+
+        if self.learning_engine:
+            schedule(self.learning_engine, "learning_engine")
+        if self.unified_engine:
+            schedule(self.unified_engine, "unified_engine")
+        if self.action_engine:
+            schedule(self.action_engine, "action_engine")
+
+        while tasks:
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            tasks = pending
+            for t in done:
+                engine, name, attempt = meta.pop(t)
+                try:
+                    t.result()
+                except Exception as exc:
+                    logger.exception("%s failed during partial_train: %s", name, exc)
+                    if attempt < 1:
+                        schedule(engine, name, attempt + 1)
+
+    async def _partial_train(self, engine: object, rec: PathwayRecord) -> None:
+        await asyncio.to_thread(engine.partial_train, rec)
 
     async def _train_from_summary(self) -> None:
         if self.curriculum_builder:
