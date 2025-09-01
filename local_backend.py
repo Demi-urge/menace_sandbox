@@ -16,13 +16,17 @@ import time
 import requests
 import rate_limit
 import llm_config
+import retry_utils
+from llm_interface import Prompt, Completion, LLMBackend, LLMClient
 
 try:  # pragma: no cover - optional dependency
     import httpx  # type: ignore
 except Exception:  # pragma: no cover - httpx may be provided as a stub in tests
     httpx = None  # type: ignore
 
-from llm_interface import Prompt, Completion, LLMBackend, LLMClient
+
+class _RetryableHTTPError(requests.HTTPError):
+    """Error raised for HTTP 5xx responses to trigger retry."""
 
 
 @dataclass
@@ -33,6 +37,7 @@ class _RESTBackend(LLMBackend):
     base_url: str
     endpoint: str
     _rate_limiter: rate_limit.TokenBucket = field(init=False, repr=False)
+    _session: requests.Session = field(default_factory=requests.Session, init=False, repr=False)
 
     def __post_init__(self) -> None:  # pragma: no cover - simple initialiser
         cfg = llm_config.get_config()
@@ -40,7 +45,9 @@ class _RESTBackend(LLMBackend):
 
     def _post(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         url = f"{self.base_url.rstrip('/')}/{self.endpoint.lstrip('/')}"
-        response = requests.post(url, json=payload, timeout=30)
+        response = self._session.post(url, json=payload, timeout=30)
+        if 500 <= response.status_code < 600:
+            raise _RetryableHTTPError(f"server error: {response.status_code}", response=response)
         response.raise_for_status()
         return response.json()
 
@@ -52,59 +59,59 @@ class _RESTBackend(LLMBackend):
             payload["vector_confidence"] = prompt.vector_confidence
 
         cfg = llm_config.get_config()
-        retries = cfg.max_retries
         prompt_tokens = rate_limit.estimate_tokens(prompt.text, model=self.model)
 
-        for attempt in range(retries):
-            self._rate_limiter.update_rate(cfg.tokens_per_minute)
-            self._rate_limiter.consume(prompt_tokens)
-            try:
-                start = time.perf_counter()
-                raw = self._post(payload)
-                latency_ms = (time.perf_counter() - start) * 1000
-            except requests.RequestException:
-                if attempt == retries - 1:
-                    raise
-            else:
-                raw["backend"] = getattr(
-                    self,
-                    "backend_name",
-                    self.__class__.__name__.replace("Backend", "").lower(),
-                )
-                raw.setdefault("model", self.model)
-                if getattr(prompt, "tags", None):
-                    raw.setdefault("tags", list(prompt.tags))
-                if getattr(prompt, "vector_confidence", None) is not None:
-                    raw.setdefault("vector_confidence", prompt.vector_confidence)
-                text = (
-                    raw.get("text")
-                    or raw.get("response", "")
-                    or raw.get("generated_text", "")
-                )
-                completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
-                self._rate_limiter.consume(completion_tokens)
-                raw.setdefault(
-                    "usage",
-                    {
-                        "input_tokens": prompt_tokens,
-                        "output_tokens": completion_tokens,
-                        "cost": 0.0,
-                    },
-                )
-                return Completion(
-                    raw=raw,
-                    text=text,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    input_tokens=prompt_tokens,
-                    output_tokens=completion_tokens,
-                    cost=0.0,
-                    latency_ms=latency_ms,
-                )
+        self._rate_limiter.update_rate(cfg.tokens_per_minute)
 
-            rate_limit.sleep_with_backoff(attempt)
+        def _do_post() -> Dict[str, Any]:
+            return self._post(payload)
 
-        raise RuntimeError("Failed to obtain completion from local backend")
+        start = time.perf_counter()
+        raw = retry_utils.with_retry(
+            _do_post,
+            attempts=cfg.max_retries,
+            delay=1.0,
+            exc=(requests.ConnectionError, _RetryableHTTPError),
+        )
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        self._rate_limiter.consume(prompt_tokens)
+
+        raw["backend"] = getattr(
+            self,
+            "backend_name",
+            self.__class__.__name__.replace("Backend", "").lower(),
+        )
+        raw.setdefault("model", self.model)
+        if getattr(prompt, "tags", None):
+            raw.setdefault("tags", list(prompt.tags))
+        if getattr(prompt, "vector_confidence", None) is not None:
+            raw.setdefault("vector_confidence", prompt.vector_confidence)
+        text = (
+            raw.get("text")
+            or raw.get("response", "")
+            or raw.get("generated_text", "")
+        )
+        completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
+        self._rate_limiter.consume(completion_tokens)
+        raw.setdefault(
+            "usage",
+            {
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
+                "cost": 0.0,
+            },
+        )
+        return Completion(
+            raw=raw,
+            text=text,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+            cost=0.0,
+            latency_ms=latency_ms,
+        )
 
     async def async_generate(
         self, prompt: Prompt
@@ -134,13 +141,13 @@ class _RESTBackend(LLMBackend):
 
         for attempt in range(retries):
             self._rate_limiter.update_rate(cfg.tokens_per_minute)
-            self._rate_limiter.consume(prompt_tokens)
             try:
                 async with httpx.AsyncClient() as client:
                     async with client.stream(
                         "POST", url, json=payload, timeout=30
                     ) as response:
                         response.raise_for_status()
+                        self._rate_limiter.consume(prompt_tokens)
                         async for line in response.aiter_lines():
                             if not line:
                                 continue

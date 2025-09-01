@@ -102,7 +102,13 @@ def test_client_fallback_to_local_backend(monkeypatch, tmp_path):
     def local_post(url, json=None, timeout=None):
         return resp
 
-    monkeypatch.setattr(local_backend.requests, "post", local_post)
+    monkeypatch.setattr(
+        local_backend.requests.Session,
+        "post",
+        lambda self, url, json=None, timeout=None: local_post(
+            url, json=json, timeout=timeout
+        ),
+    )
 
     client = LLMClient(backends=[openai_backend, local])
 
