@@ -5073,18 +5073,6 @@ try:
 except Exception:
     SANDBOX_INPUT_STUBS = []
 
-# Default stub generation strategy. Exposed for callers that wish to
-# introspect or override the behaviour programmatically.
-from sandbox_settings import SandboxSettings
-_STUB_SETTINGS = SandboxSettings()
-
-# Default stub generation strategy. Exposed for callers that wish to
-# introspect or override the behaviour programmatically.
-SANDBOX_STUB_STRATEGY = _STUB_SETTINGS.stub_strategy or "templates"
-
-# When true, append adversarial "misuse" stubs to the generated inputs
-SANDBOX_MISUSE_STUBS = bool(_STUB_SETTINGS.misuse_stubs)
-
 from .stub_providers import discover_stub_providers, StubProvider
 
 
@@ -5418,9 +5406,10 @@ def _misuse_strategy(
 def _misuse_provider(
     stubs: List[Dict[str, Any]] | None, ctx: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
-    """Append adversarial payloads when ``SANDBOX_MISUSE_STUBS`` is enabled."""
+    """Append adversarial payloads when misuse stubs are enabled."""
 
-    if not SANDBOX_MISUSE_STUBS:
+    settings = SandboxSettings()
+    if not settings.misuse_stubs:
         return stubs or []
     if isinstance(ctx, dict) and ctx.get("strategy") in {"hostile", "misuse"}:
         return stubs or []
