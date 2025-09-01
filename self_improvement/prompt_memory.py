@@ -13,13 +13,20 @@ from typing import Any, Dict
 
 from filelock import FileLock
 
+from sandbox_settings import SandboxSettings
 from .init import _repo_path
+
+_settings = SandboxSettings()
 
 
 def _log_path(success: bool) -> Path:
     """Return the log file path based on *success* state."""
 
-    filename = "prompt_success_log.json" if success else "prompt_failure_log.json"
+    filename = (
+        _settings.prompt_success_log_path
+        if success
+        else _settings.prompt_failure_log_path
+    )
     return _repo_path() / filename
 
 
