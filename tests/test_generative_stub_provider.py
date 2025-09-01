@@ -519,3 +519,25 @@ def test_env_reload_updates_retries(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_STUB_RETRIES", "3")
     gsp_mod.get_settings(refresh=True)
     assert run_expected_calls() == 3
+
+
+@pytest.mark.asyncio
+async def test_cache_load_save_race(monkeypatch, tmp_path, recwarn):
+    path = tmp_path / "cache.json"
+    monkeypatch.setenv("SANDBOX_STUB_CACHE", str(path))
+    gsp_mod = importlib.reload(gsp)
+
+    config = gsp_mod.get_config()
+
+    def always_timeout(self, timeout=None):  # type: ignore[override]
+        raise gsp_mod.Timeout()
+
+    monkeypatch.setattr(gsp_mod.FileLock, "acquire", always_timeout)
+
+    await asyncio.gather(
+        *(gsp_mod._async_load_cache(config) for _ in range(3)),
+        *(gsp_mod._async_save_cache(config) for _ in range(3)),
+    )
+
+    messages = {str(w.message) for w in recwarn.list}
+    assert any("in-memory cache" in m for m in messages)

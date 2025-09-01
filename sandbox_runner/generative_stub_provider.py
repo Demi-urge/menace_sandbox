@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import warnings
 from pathlib import Path
 from collections import Counter, OrderedDict, defaultdict
 import atexit
@@ -40,6 +41,10 @@ pipeline = None  # type: ignore
 openai = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+
+class StubCacheWarning(UserWarning):
+    """Warning emitted when the on-disk stub cache cannot be used."""
 
 _GENERATOR = None
 # use OrderedDict for LRU eviction semantics
@@ -194,9 +199,10 @@ def _load_config(settings: SandboxSettings) -> StubProviderConfig:
 
 def get_settings(refresh: bool = False) -> SandboxSettings:
     """Return cached :class:`SandboxSettings`, refreshing if requested."""
-    global _SETTINGS
+    global _SETTINGS, _CONFIG
     if _SETTINGS is None or refresh:
         _SETTINGS = SandboxSettings()
+        _CONFIG = _load_config(_SETTINGS)
     return _SETTINGS
 
 
@@ -215,9 +221,11 @@ CONFIG = get_config()
 
 
 async def _call_with_retry(
-    func: Callable[[], Awaitable[Any]], config: StubProviderConfig
+    func: Callable[[], Awaitable[Any]],
+    config: StubProviderConfig | None = None,
 ) -> Any:
     """Invoke *func* with retry, timeout and rate limiting."""
+    config = config or get_config()
     delay = config.retry_base
     for attempt in range(config.retries):
         try:
@@ -392,28 +400,60 @@ def _type_matches(value: Any, annotation: Any) -> bool:
     return True
 
 
-def _load_cache(config: StubProviderConfig) -> "OrderedDict[Tuple[str, str], Dict[str, Any]]":
+def _load_cache(
+    config: StubProviderConfig | None = None,
+) -> "OrderedDict[Tuple[str, str], Dict[str, Any]]":
+    config = config or get_config()
     path = config.cache_path
     try:
         if path.exists():
             with open(path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
-            if isinstance(data, list):
-                cache: "OrderedDict[Tuple[str, str], Dict[str, Any]]" = OrderedDict()
-                for item in data:
-                    if not (
-                        isinstance(item, list)
-                        and len(item) == 2
-                        and isinstance(item[0], str)
-                        and isinstance(item[1], dict)
-                    ):
-                        continue
-                    parts = item[0].split("::", 1)
-                    if len(parts) == 2:
-                        cache[(parts[0], parts[1])] = item[1]
-                return cache
-    except (OSError, json.JSONDecodeError) as exc:
+            if not isinstance(data, list):
+                raise ValueError("invalid cache format")
+            cache: "OrderedDict[Tuple[str, str], Dict[str, Any]]" = OrderedDict()
+            corrupted = False
+            for item in data:
+                if not (
+                    isinstance(item, list)
+                    and len(item) == 2
+                    and isinstance(item[0], str)
+                    and isinstance(item[1], dict)
+                ):
+                    corrupted = True
+                    continue
+                parts = item[0].split("::", 1)
+                if len(parts) != 2:
+                    corrupted = True
+                    continue
+                key = (parts[0], parts[1])
+                value = item[1]
+                if not _valid_cache_item(key, value):
+                    corrupted = True
+                    continue
+                cache[key] = value
+            if corrupted:
+                warnings.warn(
+                    "stub cache corrupted; rebuilding from valid entries",
+                    StubCacheWarning,
+                )
+                try:
+                    items = [[f"{k[0]}::{k[1]}", v] for k, v in cache.items()]
+                    tmp = path.with_suffix(".tmp")
+                    with open(tmp, "w", encoding="utf-8") as fh:
+                        json.dump(items, fh)
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    tmp.replace(path)
+                except OSError as exc:
+                    logger.exception("failed to rebuild stub cache", exc_info=exc)
+            return cache
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         logger.exception("failed to load stub cache", exc_info=exc)
+        warnings.warn(
+            "stub cache unreadable; using empty in-memory cache",
+            StubCacheWarning,
+        )
         try:
             backup = path.with_suffix(".corrupt")
             path.replace(backup)
@@ -438,7 +478,8 @@ def _valid_cache_item(key: Tuple[str, str], value: Dict[str, Any]) -> bool:
     return True
 
 
-def _save_cache(config: StubProviderConfig) -> None:
+def _save_cache(config: StubProviderConfig | None = None) -> None:
+    config = config or get_config()
     path = config.cache_path
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -461,15 +502,20 @@ def _save_cache(config: StubProviderConfig) -> None:
         tmp.replace(path)
     except (OSError, TypeError) as exc:
         logger.exception("failed to save stub cache", exc_info=exc)
+        warnings.warn(
+            "failed to persist stub cache; using in-memory cache only",
+            StubCacheWarning,
+        )
 
 
 async def _async_load_cache(
-    config: StubProviderConfig,
+    config: StubProviderConfig | None = None,
 ) -> Dict[Tuple[str, str], Dict[str, Any]]:
     """Asynchronously load stub cache from disk with a file lock."""
+    config = config or get_config()
 
     async def _locked_load() -> Dict[Tuple[str, str], Dict[str, Any]]:
-        return await asyncio.to_thread(_load_cache, config)
+        return await asyncio.to_thread(_load_cache)
 
     lock_path = str(config.cache_path) + ".lock"
     delay = 0.05
@@ -489,16 +535,24 @@ async def _async_load_cache(
             delay *= 2
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("unexpected cache load error", exc_info=exc)
-            break
-    logger.warning("loading stub cache without lock after retries")
-    return await _locked_load()
+            warnings.warn(
+                "stub cache unavailable; using empty in-memory cache",
+                StubCacheWarning,
+            )
+            return OrderedDict()
+    warnings.warn(
+        "stub cache load lock timeout; using empty in-memory cache",
+        StubCacheWarning,
+    )
+    return OrderedDict()
 
 
-async def _async_save_cache(config: StubProviderConfig) -> None:
+async def _async_save_cache(config: StubProviderConfig | None = None) -> None:
     """Asynchronously persist stub cache to disk with a file lock."""
+    config = config or get_config()
 
     async def _locked_save() -> None:
-        await asyncio.to_thread(_save_cache, config)
+        await asyncio.to_thread(_save_cache)
 
     lock_path = str(config.cache_path) + ".lock"
     delay = 0.05
@@ -519,8 +573,16 @@ async def _async_save_cache(config: StubProviderConfig) -> None:
             delay *= 2
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("unexpected cache save error", exc_info=exc)
+            warnings.warn(
+                "stub cache save failed; using in-memory cache only",
+                StubCacheWarning,
+            )
             return
     logger.error("giving up on saving stub cache after lock timeouts")
+    warnings.warn(
+        "stub cache save lock timeout; using in-memory cache only",
+        StubCacheWarning,
+    )
 
 # backward compatible aliases
 _aload_cache = _async_load_cache
@@ -544,7 +606,7 @@ def _schedule_cache_persist(config: StubProviderConfig) -> None:
 
     async def _runner() -> None:
         try:
-            await asyncio.shield(_async_save_cache(config))
+            await asyncio.shield(_async_save_cache())
         except Exception as exc:
             logger.exception("failed to save stub cache", exc_info=exc)
 
