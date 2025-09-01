@@ -33,7 +33,7 @@ class AnthropicClient(LLMClient):
         if not self.api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is required")
         self.max_retries = max_retries or cfg.max_retries
-        self._rate_limiter = rate_limit.TokenBucket(cfg.tokens_per_minute)
+        # Token bucket shared across clients is initialised by ``LLMClient``.
 
     # ------------------------------------------------------------------
     def _prepare_payload(self, prompt: Prompt) -> Dict[str, Any]:

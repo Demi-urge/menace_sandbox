@@ -16,7 +16,6 @@ import time
 import requests
 import rate_limit
 import llm_config
-import retry_utils
 from llm_interface import Prompt, Completion, LLMBackend, LLMClient
 
 try:  # pragma: no cover - optional dependency
@@ -41,7 +40,8 @@ class _RESTBackend(LLMBackend):
 
     def __post_init__(self) -> None:  # pragma: no cover - simple initialiser
         cfg = llm_config.get_config()
-        self._rate_limiter = rate_limit.TokenBucket(cfg.tokens_per_minute)
+        self._rate_limiter = rate_limit.SHARED_TOKEN_BUCKET
+        self._rate_limiter.update_rate(getattr(cfg, "tokens_per_minute", 0))
 
     def _post(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         url = f"{self.base_url.rstrip('/')}/{self.endpoint.lstrip('/')}"
@@ -63,17 +63,20 @@ class _RESTBackend(LLMBackend):
 
         self._rate_limiter.update_rate(cfg.tokens_per_minute)
 
-        def _do_post() -> Dict[str, Any]:
-            return self._post(payload)
-
-        start = time.perf_counter()
-        raw = retry_utils.with_retry(
-            _do_post,
-            attempts=cfg.max_retries,
-            delay=1.0,
-            exc=(requests.ConnectionError, _RetryableHTTPError),
-        )
-        latency_ms = (time.perf_counter() - start) * 1000
+        raw: Dict[str, Any] | None = None
+        latency_ms = 0.0
+        for attempt in range(cfg.max_retries):
+            try:
+                start = time.perf_counter()
+                raw = self._post(payload)
+                latency_ms = (time.perf_counter() - start) * 1000
+                break
+            except (requests.RequestException, _RetryableHTTPError):
+                if attempt == cfg.max_retries - 1:
+                    raise
+                rate_limit.sleep_with_backoff(attempt)
+        if raw is None:
+            raise RuntimeError("local backend request failed")
 
         self._rate_limiter.consume(prompt_tokens)
 

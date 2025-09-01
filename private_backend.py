@@ -37,7 +37,8 @@ class LocalWeightsBackend(LLMBackend):
         if torch is not None:
             self._model.to(self.device)
         cfg = llm_config.get_config()
-        self._rate_limiter = rate_limit.TokenBucket(cfg.tokens_per_minute)
+        self._rate_limiter = rate_limit.SHARED_TOKEN_BUCKET
+        self._rate_limiter.update_rate(getattr(cfg, "tokens_per_minute", 0))
 
     def generate(self, prompt: Prompt) -> LLMResult:
         cfg = llm_config.get_config()
