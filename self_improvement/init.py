@@ -88,20 +88,43 @@ def verify_dependencies() -> None:
         ),
     }
 
+    import subprocess
+    import sys
+
     missing: list[str] = []
-    for name, (modules, _pkg, guidance) in checks.items():
+    for name, (modules, pkg, guidance) in checks.items():
         if isinstance(modules, str):
             modules = (modules,)
         available = False
+        last_exc: Exception | None = None
         for module in modules:  # pragma: no cover - import guidance
             try:
                 importlib.import_module(module)
                 available = True
                 break
             except Exception:
-                continue
+                try:
+                    subprocess.check_call(
+                        [sys.executable, "-m", "pip", "install", pkg],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    importlib.import_module(module)
+                    available = True
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    logger.debug(
+                        "auto-install for %s failed",
+                        module,
+                        extra=log_record(dependency=module, package=pkg, error=str(exc)),
+                        exc_info=exc,
+                    )
         if not available:
-            missing.append(f"{name} – {guidance}")
+            msg = f"{name} – {guidance}"
+            if last_exc:
+                msg += f" ({last_exc})"
+            missing.append(msg)
 
     if missing:
         message = (
