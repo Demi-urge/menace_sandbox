@@ -1,7 +1,9 @@
 # LLM interface
 
-The `llm_interface` module supplies a tiny protocol for working with language models. It defines
-`Prompt`, `LLMResult` and the `LLMClient` protocol which requires a single `generate` method.
+The `llm_interface` module supplies a tiny interface for working with language models. It defines
+the `Prompt` and `LLMResult` dataclasses together with the `LLMClient` base class which exposes a
+single `generate` method. `LLMResult` captures both the raw text produced by the model and an
+optional parsed representation.
 
 ## Basic usage
 
@@ -10,6 +12,8 @@ from llm_interface import Prompt, LLMResult, LLMClient
 
 class EchoClient(LLMClient):
     def generate(self, prompt: Prompt) -> LLMResult:
+        # ``parsed`` may contain structured data such as a JSON dict.  It is
+        # optional and defaults to ``None``.
         return LLMResult(text=prompt.text.upper())
 
 client = EchoClient()
@@ -43,7 +47,7 @@ class MemoryRouter:
         return self.conn
 
 memory_db = PromptDB(model="demo", router=MemoryRouter())
-memory_db.log_prompt(Prompt("hi"), LLMResult(text="ok"), ["tag"], 0.9)
+memory_db.log_prompt(Prompt("hi"), LLMResult(text="ok", parsed={}), ["tag"], 0.9)
 ```
 
 ## Fallback routing

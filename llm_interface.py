@@ -1,20 +1,28 @@
 """Lightweight LLM interface definitions.
 
-This module defines simple dataclasses for LLM prompts and results as well as
-an ``LLMClient`` protocol for generating responses.  The goal is to provide a
-minimal interface that different LLM backends can implement without pulling in
-heavy dependencies.
+The project only needs a very small slice of functionality from whatever
+language model backend is in use.  To keep the dependency surface minimal this
+module defines tiny dataclasses for exchanging prompts and results together with
+a base :class:`LLMClient` that backends can inherit from.  The class exposes a
+single :py:meth:`generate` method returning an :class:`LLMResult`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Protocol
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List
 
 
 @dataclass(slots=True)
 class Prompt:
-    """Input to an LLM generation call."""
+    """Input to an LLM generation call.
+
+    ``text`` contains the assembled prompt shown to the model while ``examples``
+    stores any illustrative snippets that were used to build the prompt.
+    Additional information such as ROI metrics or tone preferences can be
+    attached via the ``metadata`` mapping.
+    """
 
     text: str
     examples: List[str] = field(default_factory=list)
@@ -64,20 +72,29 @@ class Prompt:
 
 @dataclass(slots=True)
 class LLMResult:
-    """Result returned by an :class:`LLMClient`."""
+    """Result returned by an :class:`LLMClient`.
 
-    raw: Dict[str, object] = field(default_factory=dict)
+    ``text`` holds the raw string produced by the model.  ``parsed`` optionally
+    stores a structured representation of that string (for example JSON
+    decoded from ``text``).  ``raw`` can be used by clients to stash any
+    transport specific payload such as HTTP responses.
+    """
+
     text: str = ""
+    parsed: Any | None = None
+    raw: Dict[str, object] = field(default_factory=dict)
 
 
-class LLMClient(Protocol):
-    """Protocol describing the minimal LLM client interface."""
+class LLMClient(ABC):
+    """Base class describing the minimal LLM client interface."""
 
+    @abstractmethod
     def generate(self, prompt: Prompt) -> LLMResult:  # pragma: no cover - interface
         """Generate a response for *prompt*.
 
         Implementations should return an :class:`LLMResult` with the model's
-        response as ``text`` and any raw payload in ``raw``.
+        response in ``text`` and may optionally populate ``parsed`` and
+        ``raw`` with backend-specific data.
         """
 
 

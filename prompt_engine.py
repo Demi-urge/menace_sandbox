@@ -4,9 +4,10 @@ This module now relies on lightweight service objects that can be injected
 from the outside.  ``Retriever`` is used to fetch historical patches while
 ``ContextBuilder`` exposes optional helpers such as ROI tracking.  The
 ``PromptEngine`` orchestrates snippet retrieval, compression and ranking to
-produce a compact prompt for the language model.  When retrieval fails or the
-average confidence falls below a configurable threshold a static fallback
-template is returned instead of an unhelpful prompt.
+produce a compact :class:`llm_interface.Prompt` object for the language model.
+When retrieval fails or the average confidence falls below a configurable
+threshold a static fallback template is returned instead of an unhelpful
+prompt.
 """
 
 from __future__ import annotations
@@ -505,7 +506,7 @@ class PromptEngine:
         retry_trace: str | None = None,
         tone: str | None = None,
     ) -> Prompt:
-        """Return a prompt for *task* using retrieved patch examples.
+        """Return a :class:`Prompt` for *task* using retrieved patch examples.
 
         ``context`` and ``retrieval_context`` allow callers to prepend
         additional information such as the snippet body, repository layout or
@@ -898,8 +899,12 @@ def build_prompt(
     failure_header: str = "Avoid {summary} because it caused {outcome}:",
     tone: str = "neutral",
     trainer: PromptMemoryTrainer | None = None,
-) -> Prompt:
-    """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`."""
+    ) -> Prompt:
+    """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`.
+
+    The helper instantiates a temporary :class:`PromptEngine` and returns the
+    resulting :class:`Prompt` instance.
+    """
 
     return PromptEngine.construct_prompt(
         goal,
