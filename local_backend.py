@@ -20,7 +20,7 @@ try:  # pragma: no cover - package vs module import
 except Exception:  # pragma: no cover - fallback when not a package
     from retry_utils import with_retry
 
-from llm_interface import Prompt, Completion, LLMBackend
+from llm_interface import Prompt, Completion, LLMBackend, LLMClient
 
 
 @dataclass
@@ -86,5 +86,30 @@ class VLLMBackend(_RESTBackend):
         base_url = base_url or os.getenv("VLLM_BASE_URL", "http://localhost:8000")
         super().__init__(model=model, base_url=base_url, endpoint="generate")
 
+def mixtral_client(model: str | None = None, base_url: str | None = None) -> LLMClient:
+    """Return an :class:`LLMClient` using an :class:`OllamaBackend`.
 
-__all__ = ["OllamaBackend", "VLLMBackend"]
+    The *model* and *base_url* parameters fall back to ``OLLAMA_MODEL`` and
+    ``OLLAMA_BASE_URL`` environment variables respectively.  When not provided
+    the model defaults to ``"mixtral"``.
+    """
+
+    backend = OllamaBackend(
+        model=model or os.getenv("OLLAMA_MODEL", "mixtral"),
+        base_url=base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+    )
+    return LLMClient(model=backend.model, backends=[backend], log_prompts=False)
+
+
+def llama3_client(model: str | None = None, base_url: str | None = None) -> LLMClient:
+    """Return an :class:`LLMClient` using a :class:`VLLMBackend` configured for
+    Llama 3."""
+
+    backend = VLLMBackend(
+        model=model or os.getenv("VLLM_MODEL", "llama3"),
+        base_url=base_url or os.getenv("VLLM_BASE_URL", "http://localhost:8000"),
+    )
+    return LLMClient(model=backend.model, backends=[backend], log_prompts=False)
+
+
+__all__ = ["OllamaBackend", "VLLMBackend", "mixtral_client", "llama3_client"]
