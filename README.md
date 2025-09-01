@@ -1,3 +1,5 @@
+See [docs/sandbox_environment.md](docs/sandbox_environment.md) for required environment variables, optional dependencies and directory layout.
+
 - Revenue tracking and monetisation helpers
 - **Profit density evaluation** keeping only the most lucrative clips
 - Intelligent culling for clips, accounts and topics
