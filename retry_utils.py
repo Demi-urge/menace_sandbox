@@ -3,6 +3,7 @@ from __future__ import annotations
 """Retry helpers for network and IO operations."""
 
 import logging
+import random
 import time
 from functools import wraps
 from typing import Callable, Type, Any
@@ -59,6 +60,7 @@ def with_retry(
     delay: float = 1.0,
     exc: Iterable[Type[BaseException]] | Type[BaseException] = Exception,
     logger: logging.Logger | None = None,
+    jitter: float = 0.0,
 ) -> T:
     """Call ``func`` with retry and exponential backoff."""
     if isinstance(exc, type):
@@ -74,7 +76,10 @@ def with_retry(
                 raise
             log = logger or logging
             log.warning("retry %s/%s after error: %s", i + 1, attempts, e)
-            time.sleep(backoff)
+            sleep = backoff
+            if jitter:
+                sleep += random.uniform(0, backoff * jitter)
+            time.sleep(sleep)
             backoff *= 2
     # should not reach here
     raise RuntimeError("with_retry exhausted without returning")

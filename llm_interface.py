@@ -14,7 +14,62 @@ from typing import Any, Dict, List, Protocol
 import os
 import time
 import json
+import random
+import threading
+
 import requests
+try:  # pragma: no cover - package vs module import
+    from .retry_utils import with_retry
+except Exception:  # pragma: no cover - fallback when not a package
+    from retry_utils import with_retry
+
+
+class RateLimiter:
+    """Simple token bucket rate limiter.
+
+    The limiter's behaviour can be configured via the environment variables
+    ``LLM_RATE_LIMIT_RPS`` (tokens added per second) and ``LLM_RATE_LIMIT_BUCKET``
+    (maximum burst size).  If ``LLM_RATE_LIMIT_RPS`` is not set or is ``0`` the
+    limiter is effectively disabled.
+    """
+
+    def __init__(self, rate: float, capacity: float) -> None:
+        self.rate = rate
+        self.capacity = capacity
+        self._tokens = capacity
+        self._updated = time.monotonic()
+        self._lock = threading.Lock()
+
+    def acquire(self, tokens: float = 1.0) -> None:
+        if self.rate <= 0:
+            return
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                # Refill bucket based on time elapsed
+                self._tokens = min(
+                    self.capacity, self._tokens + (now - self._updated) * self.rate
+                )
+                if self._tokens >= tokens:
+                    self._tokens -= tokens
+                    self._updated = now
+                    return
+                needed = tokens - self._tokens
+                self._updated = now
+            time.sleep(needed / self.rate)
+
+    @classmethod
+    def from_env(cls) -> "RateLimiter | _NoopRateLimiter":
+        rate = float(os.getenv("LLM_RATE_LIMIT_RPS", "0"))
+        capacity = float(os.getenv("LLM_RATE_LIMIT_BUCKET", "1"))
+        if rate <= 0:
+            return _NoopRateLimiter()
+        return cls(rate, capacity)
+
+
+class _NoopRateLimiter:
+    def acquire(self, tokens: float = 1.0) -> None:  # pragma: no cover - trivial
+        return
 
 
 @dataclass(slots=True)
@@ -220,6 +275,7 @@ class OpenAIBackend(LLMClient):
         self.timeout = timeout
         self.max_retries = max_retries
         self._session = requests.Session()
+        self._rate_limiter = RateLimiter.from_env()
 
     # ------------------------------------------------------------------
     def _request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -230,29 +286,26 @@ class OpenAIBackend(LLMClient):
             "Content-Type": "application/json",
         }
 
-        backoff = 1.0
-        for attempt in range(self.max_retries):
-            try:
-                response = self._session.post(
-                    self.api_url, headers=headers, json=payload, timeout=self.timeout
-                )
-            except requests.RequestException:
-                if attempt == self.max_retries - 1:
-                    raise
-            else:
-                if response.status_code == 429:
-                    if attempt == self.max_retries - 1:
-                        response.raise_for_status()
-                else:
-                    if response.ok:
-                        return response.json()
-                    if attempt == self.max_retries - 1:
-                        response.raise_for_status()
+        class RetryableHTTPError(requests.HTTPError):
+            """HTTP error that should trigger a retry."""
 
-            time.sleep(backoff)
-            backoff *= 2
+        def do_request() -> Dict[str, Any]:
+            self._rate_limiter.acquire()
+            response = self._session.post(
+                self.api_url, headers=headers, json=payload, timeout=self.timeout
+            )
+            if response.status_code in {429, 503}:
+                raise RetryableHTTPError(f"{response.status_code}", response=response)
+            response.raise_for_status()
+            return response.json()
 
-        raise RuntimeError("Exceeded maximum retries for OpenAI request")
+        return with_retry(
+            do_request,
+            attempts=self.max_retries,
+            delay=1.0,
+            exc=(requests.RequestException, RetryableHTTPError),
+            jitter=0.1,
+        )
 
     # ------------------------------------------------------------------
     def _generate(self, prompt: Prompt) -> Completion:
@@ -310,9 +363,13 @@ class OllamaProvider(LLMClient):
     def _generate(self, prompt: Prompt) -> Completion:
         payload = {"model": self.model, "prompt": prompt.text}
         url = self.base_url.rstrip("/") + "/api/generate"
-        response = self._session.post(url, json=payload, timeout=30)
-        response.raise_for_status()
-        raw = response.json()
+
+        def do_request() -> Dict[str, Any]:
+            response = self._session.post(url, json=payload, timeout=30)
+            response.raise_for_status()
+            return response.json()
+
+        raw = with_retry(do_request, exc=requests.RequestException)
         text = raw.get("response", "") or raw.get("text", "")
         return Completion(raw=raw, text=text)
 
@@ -338,9 +395,13 @@ class VLLMProvider(LLMClient):
     def _generate(self, prompt: Prompt) -> Completion:
         payload = {"model": self.model, "prompt": prompt.text}
         url = self.base_url.rstrip("/") + "/generate"
-        response = self._session.post(url, json=payload, timeout=30)
-        response.raise_for_status()
-        raw = response.json()
+
+        def do_request() -> Dict[str, Any]:
+            response = self._session.post(url, json=payload, timeout=30)
+            response.raise_for_status()
+            return response.json()
+
+        raw = with_retry(do_request, exc=requests.RequestException)
         text = raw.get("text") or raw.get("generated_text", "")
         return Completion(raw=raw, text=text)
 
@@ -398,6 +459,7 @@ __all__ = [
     "LLMResult",
     "LLMBackend",
     "LLMClient",
+    "RateLimiter",
     "OpenAIBackend",
     "OpenAIProvider",
     "OllamaProvider",
