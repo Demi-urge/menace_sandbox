@@ -16,7 +16,22 @@ def _load_module(name: str, path: Path):
     return module
 
 
+def _stub_deps():
+    sys.modules.setdefault("quick_fix_engine", types.ModuleType("quick_fix_engine"))
+    sr_pkg = types.ModuleType("sandbox_runner")
+    sr_pkg.__path__ = []
+    sys.modules.setdefault("sandbox_runner", sr_pkg)
+    boot = types.ModuleType("sandbox_runner.bootstrap")
+    boot.initialize_autonomous_sandbox = lambda *a, **k: None
+    sys.modules.setdefault("sandbox_runner.bootstrap", boot)
+    sys.modules.setdefault(
+        "sandbox_runner.orphan_integration",
+        types.ModuleType("sandbox_runner.orphan_integration"),
+    )
+
+
 def test_self_improvement_cycle_runs(tmp_path, monkeypatch, in_memory_dbs):
+    _stub_deps()
     menace_pkg = types.ModuleType("menace")
     menace_pkg.__path__ = []
     sys.modules["menace"] = menace_pkg

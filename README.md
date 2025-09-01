@@ -1309,8 +1309,11 @@ workflows and troubleshooting tips.
 
 #### Required packages
 
-- `sandbox_runner`
+- `sandbox_runner` (including the `sandbox_runner.orphan_integration` module)
 - `quick_fix_engine`
+
+The `init_self_improvement` routine verifies these dependencies at startup and
+raises a `RuntimeError` with installation guidance when they are missing.
 
 #### Optional packages
 
