@@ -11,7 +11,12 @@ import argparse
 import logging
 import sys
 
-from sandbox_runner.bootstrap import launch_sandbox
+from sandbox_runner.bootstrap import (
+    bootstrap_environment,
+    launch_sandbox,
+    sandbox_health,
+    shutdown_autonomous_sandbox,
+)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -31,6 +36,11 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Logging level (e.g. DEBUG, INFO, WARNING)",
     )
+    parser.add_argument(
+        "--health-check",
+        action="store_true",
+        help="Run sandbox health checks and exit",
+    )
     args = parser.parse_args(argv)
 
     # Configure logging; errors are always shown but the level can be raised
@@ -38,6 +48,11 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=getattr(logging, str(args.log_level).upper(), None))
 
     try:
+        if args.health_check:
+            bootstrap_environment()
+            logging.info("Sandbox health: %s", sandbox_health())
+            shutdown_autonomous_sandbox()
+            return
         launch_sandbox()
     except Exception:  # pragma: no cover - defensive catch
         logging.exception("Failed to launch sandbox")
