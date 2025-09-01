@@ -2,73 +2,72 @@
 
 from __future__ import annotations
 
-import os
-import threading
-import time
 from typing import Dict, Any
 
 import requests
 
 from llm_interface import Prompt, LLMResult, LLMClient
 
+try:  # pragma: no cover - package vs module import
+    from . import llm_config, rate_limit
+except Exception:  # pragma: no cover - stand-alone usage
+    import llm_config  # type: ignore
+    import rate_limit  # type: ignore
+
 
 class OpenAILLMClient(LLMClient):
     """Simple client for the OpenAI chat completions API."""
 
-    def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
-        super().__init__(model or os.getenv("OPENAI_MODEL", "gpt-4o"))
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+    api_url = "https://api.openai.com/v1/chat/completions"
+
+    def __init__(
+        self,
+        model: str | None = None,
+        api_key: str | None = None,
+        *,
+        max_retries: int | None = None,
+    ) -> None:
+        cfg = llm_config.get_config()
+        model = model or cfg.model
+        super().__init__(model)
+        self.api_key = api_key or cfg.api_key
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is required")
+        self.max_retries = max_retries or cfg.max_retries
         self._session = requests.Session()
-        # Rate limit per second; default 1 if not provided
-        self._rps = float(os.getenv("OPENAI_RATE_LIMIT_RPS", "1"))
-        self._lock = threading.Lock()
-        self._last_request = 0.0
-
-    # ------------------------------------------------------------------
-    def _throttle(self) -> None:
-        """Sleep to respect the configured requests-per-second rate."""
-
-        if self._rps <= 0:
-            return
-        min_interval = 1.0 / self._rps
-        with self._lock:
-            now = time.time()
-            wait = self._last_request + min_interval - now
-            if wait > 0:
-                time.sleep(wait)
-            self._last_request = time.time()
+        self._rate_limiter = rate_limit.TokenBucket(cfg.tokens_per_minute)
 
     # ------------------------------------------------------------------
     def _request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """POST *payload* to the OpenAI API with retry/backoff."""
 
-        url = "https://api.openai.com/v1/chat/completions"
+        cfg = llm_config.get_config()
+        self._rate_limiter.update_rate(cfg.tokens_per_minute)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
-        backoff = 1.0
-        for attempt in range(5):
-            self._throttle()
+        retries = cfg.max_retries
+        for attempt in range(retries):
+            tokens = rate_limit.estimate_tokens(
+                " ".join(m.get("content", "") for m in payload.get("messages", []))
+            )
+            self._rate_limiter.consume(tokens)
             try:
-                response = self._session.post(url, headers=headers, json=payload, timeout=30)
+                response = self._session.post(
+                    self.api_url, headers=headers, json=payload, timeout=30
+                )
             except requests.RequestException:
-                if attempt == 4:
+                if attempt == retries - 1:
                     raise
-                time.sleep(backoff)
-                backoff *= 2
-                continue
-
-            if response.status_code == 429 and attempt < 4:
-                time.sleep(backoff)
-                backoff *= 2
-                continue
-
-            response.raise_for_status()
-            return response.json()
+            else:
+                if response.status_code == 429 and attempt < retries - 1:
+                    rate_limit.sleep_with_backoff(attempt)
+                    continue
+                response.raise_for_status()
+                return response.json()
+            rate_limit.sleep_with_backoff(attempt)
 
         raise RuntimeError("Exceeded maximum retries for OpenAI request")
 

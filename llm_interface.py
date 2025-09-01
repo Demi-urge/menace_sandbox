@@ -20,6 +20,12 @@ import os
 import requests
 import time
 
+try:  # pragma: no cover - package vs module import
+    from . import llm_config, rate_limit
+except Exception:  # pragma: no cover - stand-alone usage
+    import llm_config  # type: ignore
+    import rate_limit  # type: ignore
+
 # ``Prompt`` lives in a separate module so other packages can import it without
 # pulling in the entire client implementation.
 try:  # pragma: no cover - package vs module import
@@ -190,6 +196,7 @@ __all__ = [
     "OpenAIProvider",
     "requests",
     "time",
+    "rate_limit",
 ]
 
 
@@ -200,21 +207,20 @@ class OpenAIProvider(LLMClient):
 
     def __init__(
         self,
-        model: str = "gpt-4o",
+        model: str | None = None,
         api_key: str | None = None,
         *,
-        max_retries: int = 5,
+        max_retries: int | None = None,
     ) -> None:
+        cfg = llm_config.get_config()
+        model = model or cfg.model
         super().__init__(model)
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key or cfg.api_key
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is required")
-        self.max_retries = max_retries
+        self.max_retries = max_retries or cfg.max_retries
         self._session = requests.Session()
-
-    # ------------------------------------------------------------------
-    def _throttle(self) -> None:  # pragma: no cover - simple rate limiter
-        pass
+        self._rate_limiter = rate_limit.TokenBucket(cfg.tokens_per_minute)
 
     # ------------------------------------------------------------------
     def _generate(self, prompt: Prompt) -> LLMResult:
@@ -236,24 +242,27 @@ class OpenAIProvider(LLMClient):
             "Content-Type": "application/json",
         }
 
-        backoff = 1.0
-        for attempt in range(self.max_retries):
-            self._throttle()
+        cfg = llm_config.get_config()
+        retries = cfg.max_retries
+        for attempt in range(retries):
+            self._rate_limiter.update_rate(cfg.tokens_per_minute)
+            tokens = rate_limit.estimate_tokens(
+                " ".join(m.get("content", "") for m in payload["messages"])
+            )
+            self._rate_limiter.consume(tokens)
             try:
                 response = self._session.post(
                     self.api_url, headers=headers, json=payload, timeout=30
                 )
             except requests.RequestException:
-                if attempt == self.max_retries - 1:
+                if attempt == retries - 1:
                     raise
             else:
-                if response.status_code == 429 and attempt < self.max_retries - 1:
-                    time.sleep(backoff)
-                    backoff *= 2
+                if response.status_code == 429 and attempt < retries - 1:
+                    rate_limit.sleep_with_backoff(attempt)
                     continue
-                if response.status_code >= 500 and attempt < self.max_retries - 1:
-                    time.sleep(backoff)
-                    backoff *= 2
+                if response.status_code >= 500 and attempt < retries - 1:
+                    rate_limit.sleep_with_backoff(attempt)
                     continue
                 response.raise_for_status()
                 raw = response.json()
@@ -269,8 +278,7 @@ class OpenAIProvider(LLMClient):
                     pass
                 return LLMResult(raw=raw, text=text, parsed=parsed)
 
-            time.sleep(backoff)
-            backoff *= 2
+            rate_limit.sleep_with_backoff(attempt)
 
         raise RuntimeError("Failed to obtain completion from OpenAI")
 

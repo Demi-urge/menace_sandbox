@@ -50,9 +50,14 @@ def test_openai_rate_limit_retry(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("PROMPT_DB_PATH", str(tmp_path / "prompts.db"))
     client = OpenAILLMClient(model="gpt-test")
-    monkeypatch.setattr(OpenAILLMClient, "_throttle", lambda self: None)
     sleeps: list[float] = []
-    monkeypatch.setattr(openai_client.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(
+        openai_client.rate_limit,
+        "sleep_with_backoff",
+        lambda attempt, base=1.0, max_delay=60.0: sleeps.append(
+            min(base * (2**attempt), max_delay)
+        ),
+    )
 
     responses = [
         DummyResp(429, {}),
@@ -77,8 +82,11 @@ def test_client_fallback_to_local_backend(monkeypatch, tmp_path):
     openai_backend = OpenAILLMClient(model="gpt-test")
     openai_backend._log_prompts = False
     openai_backend.db = None
-    monkeypatch.setattr(OpenAILLMClient, "_throttle", lambda self: None)
-    monkeypatch.setattr(openai_client.time, "sleep", lambda s: None)
+    monkeypatch.setattr(
+        openai_client.rate_limit,
+        "sleep_with_backoff",
+        lambda attempt, base=1.0, max_delay=60.0: None,
+    )
 
     def failing_post(url, headers=None, json=None, timeout=None):
         raise requests.RequestException("boom")
