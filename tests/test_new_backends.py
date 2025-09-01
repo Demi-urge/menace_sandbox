@@ -4,6 +4,7 @@ from llm_router import client_from_settings
 from sandbox_settings import SandboxSettings
 from llm_interface import Prompt
 import requests
+import pytest
 
 
 class DummyResp:
@@ -24,9 +25,16 @@ def test_anthropic_client_via_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("PROMPT_DB_PATH", str(tmp_path / "prompts.db"))
     resp = DummyResp(
         200,
-        {"content": [{"type": "text", "text": "ok"}], "usage": {"input_tokens": 1, "output_tokens": 2}},
+        {
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 1, "output_tokens": 2},
+        },
     )
-    monkeypatch.setattr(anthropic_client.requests, "post", lambda url, headers=None, json=None, timeout=None: resp)
+    monkeypatch.setattr(
+        anthropic_client.requests,
+        "post",
+        lambda url, headers=None, json=None, timeout=None: resp,
+    )
     settings = SandboxSettings(preferred_llm_backend="anthropic")
     client = client_from_settings(settings)
     res = client.generate(Prompt(text="hi"))
@@ -53,3 +61,51 @@ def test_llama3_local_backend(monkeypatch):
     res = client.generate(Prompt(text="hi"))
     assert res.text == "llama"
     assert client.model == "llama3"
+
+
+def test_rest_backend_retries_and_latency(monkeypatch):
+    """_RESTBackend retries failed posts and records latency and tokens."""
+
+    calls = {"n": 0}
+
+    def fake_post(url, json=None, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise requests.RequestException("boom")
+        return DummyResp(200, {"text": "ok"})
+
+    sleeps: list[float] = []
+
+    def fake_sleep(attempt, base=1.0, max_delay=60.0):
+        sleeps.append(min(base * (2**attempt), max_delay))
+
+    monkeypatch.setattr(local_backend.rate_limit, "sleep_with_backoff", fake_sleep)
+    monkeypatch.setenv("LLM_MAX_RETRIES", "2")
+    counter = iter([0.0, 1.0, 2.0])
+    monkeypatch.setattr(local_backend.time, "perf_counter", lambda: next(counter))
+    monkeypatch.setattr(local_backend.requests, "post", fake_post)
+
+    backend = local_backend.OllamaBackend(model="m", base_url="http://x")
+    result = backend.generate(Prompt(text="hi"))
+    assert result.text == "ok"
+    assert result.latency_ms == 1000.0
+    assert result.prompt_tokens == local_backend.rate_limit.estimate_tokens("hi", model="m")
+    assert result.completion_tokens == local_backend.rate_limit.estimate_tokens("ok", model="m")
+    assert sleeps == [1.0]
+    assert calls["n"] == 2
+
+
+def test_rest_backend_propagates_failure(monkeypatch):
+    monkeypatch.setattr(local_backend.rate_limit, "sleep_with_backoff", lambda *_a, **_k: None)
+    monkeypatch.setenv("LLM_MAX_RETRIES", "2")
+
+    def boom(url, json=None, timeout=None):
+        raise requests.RequestException("fail")
+
+    monkeypatch.setattr(local_backend.requests, "post", boom)
+    counter = iter([0.0, 1.0])
+    monkeypatch.setattr(local_backend.time, "perf_counter", lambda: next(counter))
+
+    backend = local_backend.OllamaBackend(model="m", base_url="http://x")
+    with pytest.raises(requests.RequestException):
+        backend.generate(Prompt(text="hi"))

@@ -10,15 +10,11 @@ with :class:`llm_interface.LLMClient`.
 from dataclasses import dataclass, field
 from typing import Any, Dict
 import os
+import time
 
 import requests
 import rate_limit
 import llm_config
-
-try:  # pragma: no cover - package vs module import
-    from .retry_utils import with_retry
-except Exception:  # pragma: no cover - fallback when not a package
-    from retry_utils import with_retry
 
 from llm_interface import Prompt, Completion, LLMBackend, LLMClient
 
@@ -45,32 +41,45 @@ class _RESTBackend(LLMBackend):
     def generate(self, prompt: Prompt) -> Completion:
         payload = {"model": self.model, "prompt": prompt.text}
 
-        def do_request() -> Dict[str, Any]:
-            return self._post(payload)
-
         cfg = llm_config.get_config()
-        self._rate_limiter.update_rate(cfg.tokens_per_minute)
+        retries = cfg.max_retries
         prompt_tokens = rate_limit.estimate_tokens(prompt.text, model=self.model)
-        self._rate_limiter.consume(prompt_tokens)
 
-        raw = with_retry(do_request, exc=requests.RequestException)
-        raw["backend"] = getattr(
-            self, "backend_name", self.__class__.__name__.replace("Backend", "").lower()
-        )
-        raw.setdefault("model", self.model)
-        text = (
-            raw.get("text")
-            or raw.get("response", "")
-            or raw.get("generated_text", "")
-        )
-        completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
-        self._rate_limiter.consume(completion_tokens)
-        return Completion(
-            raw=raw,
-            text=text,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-        )
+        for attempt in range(retries):
+            self._rate_limiter.update_rate(cfg.tokens_per_minute)
+            self._rate_limiter.consume(prompt_tokens)
+            try:
+                start = time.perf_counter()
+                raw = self._post(payload)
+                latency_ms = (time.perf_counter() - start) * 1000
+            except requests.RequestException:
+                if attempt == retries - 1:
+                    raise
+            else:
+                raw["backend"] = getattr(
+                    self,
+                    "backend_name",
+                    self.__class__.__name__.replace("Backend", "").lower(),
+                )
+                raw.setdefault("model", self.model)
+                text = (
+                    raw.get("text")
+                    or raw.get("response", "")
+                    or raw.get("generated_text", "")
+                )
+                completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
+                self._rate_limiter.consume(completion_tokens)
+                return Completion(
+                    raw=raw,
+                    text=text,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    latency_ms=latency_ms,
+                )
+
+            rate_limit.sleep_with_backoff(attempt)
+
+        raise RuntimeError("Failed to obtain completion from local backend")
 
 
 class OllamaBackend(_RESTBackend):
@@ -91,6 +100,7 @@ class VLLMBackend(_RESTBackend):
         base_url = base_url or os.getenv("VLLM_BASE_URL", "http://localhost:8000")
         self.backend_name = "vllm"
         super().__init__(model=model, base_url=base_url, endpoint="generate")
+
 
 def mixtral_client(model: str | None = None, base_url: str | None = None) -> LLMClient:
     """Return an :class:`LLMClient` using an :class:`OllamaBackend`.
