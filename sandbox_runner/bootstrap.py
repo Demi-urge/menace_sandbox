@@ -7,7 +7,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Iterable
 
 from packaging.version import Version
 
@@ -19,6 +19,10 @@ from .cli import main as _cli_main
 from .cycle import ensure_vector_service
 
 
+_SELF_IMPROVEMENT_THREAD: Any | None = None
+_INITIALISED = False
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,6 +31,29 @@ def _ensure_sqlite_db(path: Path) -> None:
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
+
+
+def _start_optional_services(modules: Iterable[str]) -> None:
+    """Best-effort launch of auxiliary service modules.
+
+    For each entry in ``modules`` we attempt to import ``<module>_service`` and
+    invoke a ``start`` or ``main`` function if present.  Failures are logged but
+    otherwise ignored to keep bootstrap resilient.
+    """
+
+    for mod in modules:
+        svc_name = f"{mod}_service"
+        try:
+            svc_mod = importlib.import_module(svc_name)
+        except ModuleNotFoundError:
+            logger.info("%s service not installed", svc_name)
+            continue
+        start_fn = getattr(svc_mod, "start", None) or getattr(svc_mod, "main", None)
+        if callable(start_fn):
+            try:
+                start_fn()  # type: ignore[call-arg]
+            except Exception:  # pragma: no cover - best effort
+                logger.warning("failed to launch %s", svc_name, exc_info=True)
 
 
 def initialize_autonomous_sandbox(
@@ -41,6 +68,9 @@ def initialize_autonomous_sandbox(
     """
 
     settings = settings or load_sandbox_settings()
+    global _INITIALISED, _SELF_IMPROVEMENT_THREAD
+    if _INITIALISED:
+        return settings
 
     # Populate environment defaults without prompting the user.  This creates
     # a minimal ``.env`` file when missing and exports essential configuration
@@ -119,6 +149,22 @@ def initialize_autonomous_sandbox(
                 min_version,
                 mod,
             )
+
+    _start_optional_services(settings.optional_service_versions.keys())
+    _INITIALISED = True
+
+    try:
+        from self_improvement.api import (
+            init_self_improvement,
+            start_self_improvement_cycle,
+        )
+
+        init_self_improvement(settings)
+        thread = start_self_improvement_cycle({"bootstrap": lambda: None})
+        thread.start()
+        _SELF_IMPROVEMENT_THREAD = thread
+    except Exception:  # pragma: no cover - best effort
+        logger.error("self-improvement startup failed", exc_info=True)
 
     return settings
 
