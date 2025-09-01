@@ -14,6 +14,7 @@ sys.modules.setdefault("code_database", types.SimpleNamespace(PatchHistoryDB=obj
 from prompt_engine import PromptEngine, DEFAULT_TEMPLATE  # noqa: E402
 from prompt_memory_trainer import PromptMemoryTrainer  # noqa: E402
 from vector_service.retriever import FallbackResult  # noqa: E402
+from vector_service.roi_tags import RoiTag  # noqa: E402
 
 
 class DummyRetriever:
@@ -37,6 +38,35 @@ def _record(score: float, **meta: Any) -> Dict[str, Any]:
     """Helper to build retriever records with ``score`` and metadata."""
 
     return {"score": score, "metadata": meta}
+
+
+def test_prompt_engine_returns_confidences_and_tags():
+    records = [
+        _record(
+            0.9,
+            summary="good",
+            tests_passed=True,
+            raroi=0.3,
+            roi_tag=RoiTag.HIGH_ROI.value,
+        ),
+        _record(
+            0.8,
+            summary="bad",
+            tests_passed=False,
+            raroi=0.1,
+            roi_tag=RoiTag.BUG_INTRODUCED.value,
+        ),
+    ]
+    engine = PromptEngine(
+        retriever=DummyRetriever(records),
+        patch_retriever=DummyRetriever(records),
+        confidence_threshold=-1.0,
+    )
+    prompt = engine.build_prompt("desc")
+    assert len(prompt.examples) == 2
+    assert len(prompt.examples) == len(prompt.vector_confidences)
+    assert RoiTag.HIGH_ROI.value in prompt.outcome_tags
+    assert RoiTag.BUG_INTRODUCED.value in prompt.outcome_tags
 
 
 def test_prompt_engine_sections_and_ranking():

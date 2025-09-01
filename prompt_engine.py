@@ -572,6 +572,25 @@ class PromptEngine:
             )
             return Prompt(text=self._static_prompt())
 
+        examples: List[str] = []
+        vector_confidences: List[float] = []
+        outcome_tags: List[str] = []
+        for rec in ranked:
+            meta = rec.get("metadata", {})
+            snippet, _ = self._compress_patch(meta, max_tokens=self.max_tokens)
+            if not snippet:
+                continue
+            examples.append(snippet)
+            try:
+                vector_confidences.append(
+                    float(rec.get("weighted_score") or rec.get("score") or 0.0)
+                )
+            except Exception:
+                vector_confidences.append(0.0)
+            tag = meta.get("roi_tag") or meta.get("outcome")
+            if tag:
+                outcome_tags.append(str(tag))
+
         snippet_lines = self.build_snippets(ranked)
         lines: List[str] = []
 
@@ -603,7 +622,13 @@ class PromptEngine:
         if retry_trace:
             lines.extend(self._format_retry_trace(retry_trace))
         text = "\n".join(line for line in lines if line)
-        return Prompt(text=text, examples=snippet_lines, metadata=self.last_metadata)
+        return Prompt(
+            text=text,
+            examples=examples,
+            vector_confidences=vector_confidences,
+            outcome_tags=outcome_tags,
+            metadata=self.last_metadata,
+        )
 
     # ------------------------------------------------------------------
     def _format_retry_trace(self, retry_trace: str) -> List[str]:
@@ -899,7 +924,7 @@ def build_prompt(
     failure_header: str = "Avoid {summary} because it caused {outcome}:",
     tone: str = "neutral",
     trainer: PromptMemoryTrainer | None = None,
-    ) -> Prompt:
+) -> Prompt:
     """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`.
 
     The helper instantiates a temporary :class:`PromptEngine` and returns the
