@@ -1,5 +1,19 @@
 See [docs/sandbox_environment.md](docs/sandbox_environment.md) for required environment variables, optional dependencies and directory layout.
 
+## Self-Improvement Sandbox Setup
+
+`initialize_autonomous_sandbox()` now creates a `.env` file on first run and
+populates it with minimal defaults so the sandbox can start without manual
+configuration. The generated file includes stub values for critical settings:
+
+- `DATABASE_URL` defaults to `sqlite:///menace.db`
+- `MODELS` resolves to the bundled `micro_models` directory when set to `demo`
+- `OPENAI_API_KEY` and `STRIPE_API_KEY` placeholders
+- `SANDBOX_DATA_DIR` defaults to `sandbox_data`
+
+Bootstrap verifies these variables before launching and raises a clear error if
+any required value is missing or the model path does not exist.
+
 - Revenue tracking and monetisation helpers
 - **Profit density evaluation** keeping only the most lucrative clips
 - Intelligent culling for clips, accounts and topics

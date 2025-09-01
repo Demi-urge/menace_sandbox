@@ -12,7 +12,6 @@ from typing import Any, Callable, Iterable
 from packaging.version import Version
 
 from menace.auto_env_setup import ensure_env
-from menace.default_config_manager import DefaultConfigManager
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 
 from .cli import main as _cli_main
@@ -72,13 +71,30 @@ def initialize_autonomous_sandbox(
     if _INITIALISED:
         return settings
 
-    # Populate environment defaults without prompting the user.  This creates
-    # a minimal ``.env`` file when missing and exports essential configuration
-    # variables to the process environment.
+    # Populate environment defaults without prompting the user. This creates
+    # a minimal ``.env`` file when missing and verifies that critical
+    # configuration variables are present before continuing.
+    env_file = getattr(settings, "menace_env_file", ".env")
     try:
-        DefaultConfigManager(getattr(settings, "menace_env_file", ".env")).apply_defaults()
-    except Exception:  # pragma: no cover - best effort
-        logger.warning("failed to ensure default configuration", exc_info=True)
+        ensure_env(env_file)
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.error("environment bootstrap failed", exc_info=True)
+        raise RuntimeError("environment configuration incomplete") from exc
+
+    required = ["OPENAI_API_KEY", "DATABASE_URL", "STRIPE_API_KEY", "MODELS"]
+    missing = [name for name in required if not os.getenv(name)]
+    if missing:
+        raise RuntimeError(
+            f"required environment variables not set: {', '.join(missing)}"
+        )
+
+    models_spec = os.getenv("MODELS", "").strip()
+    model_path = Path("micro_models" if models_spec == "demo" else models_spec)
+    if not model_path.exists():
+        raise RuntimeError(
+            f"model path '{model_path}' does not exist; set MODELS to a valid directory"
+        )
+    os.environ["MODELS"] = str(model_path)
 
     # Ensure the mandatory vector_service dependency is available before
     # proceeding with further sandbox initialisation.
