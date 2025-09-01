@@ -292,6 +292,10 @@ class WorkflowSandboxRunner:
                 memory_limit = _settings.default_memory_limit
 
         proc = psutil.Process() if psutil else None
+        if memory_limit and proc is None:
+            msg = "memory limits require psutil to be installed"
+            logger.warning(msg)
+            raise RuntimeError(msg)
 
         try:
             from .environment import _patched_imports
@@ -1058,29 +1062,34 @@ class WorkflowSandboxRunner:
                         timer.daemon = True
                         timer.start()
 
-                if memory_limit and proc:
-                    def _monitor_mem() -> None:  # pragma: no cover - thread
-                        while not mem_stop.wait(0.05):
-                            try:
-                                if proc.memory_info().rss > memory_limit:
-                                    mem_event.set()
-                                    if hasattr(signal, "SIGUSR1"):
-                                        os.kill(os.getpid(), signal.SIGUSR1)
-                                    else:  # pragma: no cover - no signals
-                                        _thread.interrupt_main()
+                if memory_limit:
+                    if proc is None:
+                        logger.warning(
+                            "memory limit requested but psutil is unavailable; limit ignored"
+                        )
+                    else:
+                        def _monitor_mem() -> None:  # pragma: no cover - thread
+                            while not mem_stop.wait(0.05):
+                                try:
+                                    if proc.memory_info().rss > memory_limit:
+                                        mem_event.set()
+                                        if hasattr(signal, "SIGUSR1"):
+                                            os.kill(os.getpid(), signal.SIGUSR1)
+                                        else:  # pragma: no cover - no signals
+                                            _thread.interrupt_main()
+                                        break
+                                except Exception:
                                     break
-                            except Exception:
-                                break
 
-                    if hasattr(signal, "SIGUSR1"):
-                        def _mem_handler(signum, frame):  # pragma: no cover - handler
-                            mem_event.set()
-                            raise MemoryError("module exceeded memory limit")
+                        if hasattr(signal, "SIGUSR1"):
+                            def _mem_handler(signum, frame):  # pragma: no cover - handler
+                                mem_event.set()
+                                raise MemoryError("module exceeded memory limit")
 
-                        old_mem_handler = signal.signal(signal.SIGUSR1, _mem_handler)
+                            old_mem_handler = signal.signal(signal.SIGUSR1, _mem_handler)
 
-                    mem_thread = threading.Thread(target=_monitor_mem, daemon=True)
-                    mem_thread.start()
+                        mem_thread = threading.Thread(target=_monitor_mem, daemon=True)
+                        mem_thread.start()
 
                 try:
                     if inspect.iscoroutinefunction(fn):
