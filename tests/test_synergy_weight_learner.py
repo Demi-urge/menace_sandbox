@@ -487,6 +487,26 @@ def test_sb3_learners_persistence_and_files(tmp_path, cls_name):
     assert model.exists() or target.exists()
 
 
+def test_sac_custom_params_override(tmp_path):
+    torch = pytest.importorskip("torch")
+    import menace.self_improvement as sie
+
+    path = tmp_path / "w.json"
+    learner = sie.SACSynergyLearner(
+        path=path,
+        lr=0.01,
+        hidden_sizes=[16, 8],
+        noise=0.2,
+        batch_size=4,
+        target_sync=3,
+    )
+    assert learner.noise == 0.2
+    assert learner.batch_size == 4
+    assert learner.target_sync == 3
+    assert isinstance(learner.actor[0], torch.nn.Linear)
+    assert learner.actor[0].out_features == 16
+
+
 def test_synergy_weight_logging_info(tmp_path, caplog):
     path = tmp_path / "w.json"
     caplog.set_level("INFO")
