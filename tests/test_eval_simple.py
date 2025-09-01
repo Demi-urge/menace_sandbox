@@ -2,7 +2,9 @@ import ast
 import logging
 import os
 
-from sandbox_runner.orphan_discovery import _eval_simple
+import pytest
+
+from sandbox_runner.orphan_discovery import EvaluationError, _eval_simple
 
 
 def _parse(expr: str) -> ast.AST:
@@ -28,6 +30,7 @@ def test_concat_with_assignment():
 def test_unresolved_logs(caplog):
     node = _parse("unknown")
     with caplog.at_level(logging.DEBUG):
-        assert _eval_simple(node, {}, 1) is None
+        with pytest.raises(EvaluationError):
+            _eval_simple(node, {}, 1)
     assert "Unresolved expression" in caplog.text
 
