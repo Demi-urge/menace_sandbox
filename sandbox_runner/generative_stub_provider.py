@@ -26,16 +26,13 @@ from contextlib import AbstractAsyncContextManager
 from typing import get_origin, get_args, Union
 import ast
 import dataclasses
+from dataclasses import dataclass, field
 from filelock import FileLock, Timeout
 
 from .input_history_db import InputHistoryDB
 from sandbox_settings import SandboxSettings
 
 ROOT = Path(__file__).resolve().parents[1]
-
-_STUB_CACHE_PATH = Path(
-    os.getenv("SANDBOX_STUB_CACHE", str(ROOT / "sandbox_data" / "stub_cache.json"))
-)
 
 
 # Optional dependencies loaded lazily
@@ -57,8 +54,28 @@ _TARGET_STATS: dict[str, Counter[str]] = defaultdict(Counter)
 # Entry-point group for discovering available text generation models
 MODEL_ENTRY_POINT_GROUP = "sandbox.stub_models"
 
-FALLBACK_MODEL: str
+
+@dataclass
+class StubProviderConfig:
+    """Configuration for stub generation and caching."""
+
+    timeout: float
+    retries: int
+    retry_base: float
+    retry_max: float
+    cache_max: int
+    cache_path: Path
+    fallback_model: str
+    max_concurrency: int = 1
+    rate_limit: asyncio.Semaphore = field(init=False)
+
+    def __post_init__(self) -> None:  # pragma: no cover - trivial
+        self.rate_limit = asyncio.Semaphore(self.max_concurrency)
+
+
+FALLBACK_MODEL: str  # backwards compatibility alias
 _SETTINGS: SandboxSettings | None = None
+_CONFIG: StubProviderConfig | None = None
 
 
 class _SaveTaskManager(AbstractAsyncContextManager):
@@ -92,14 +109,6 @@ def _feature_enabled(name: str) -> bool:
     return val in {"1", "true", "yes"}
 
 
-_RATE_LIMIT = asyncio.Semaphore(int(os.getenv("SANDBOX_STUB_MAX_CONCURRENCY", "1")))
-_GEN_TIMEOUT: float
-_GEN_RETRIES: int
-_RETRY_BASE: float
-_RETRY_MAX: float
-_CACHE_MAX: int
-
-
 def _available_models(settings: Any | None = None) -> set[str]:
     """Return names of available text generation models."""
 
@@ -119,8 +128,8 @@ def _available_models(settings: Any | None = None) -> set[str]:
     return models
 
 
-def _validate_env(settings: SandboxSettings) -> None:
-    """Validate environment configuration and log warnings."""
+def _load_config(settings: SandboxSettings) -> StubProviderConfig:
+    """Validate environment configuration and produce :class:`StubProviderConfig`."""
 
     def _float_env(name: str, default: float) -> float:
         val = os.getenv(name)
@@ -148,13 +157,21 @@ def _validate_env(settings: SandboxSettings) -> None:
             logger.warning("invalid %s=%r; using default %s", name, val, default)
             return default
 
-    global _GEN_TIMEOUT, _GEN_RETRIES, _RETRY_BASE, _RETRY_MAX, _CACHE_MAX, FALLBACK_MODEL
-    _GEN_TIMEOUT = _float_env("SANDBOX_STUB_TIMEOUT", settings.stub_timeout)
-    _GEN_RETRIES = _int_env("SANDBOX_STUB_RETRIES", settings.stub_retries)
-    _RETRY_BASE = _float_env("SANDBOX_STUB_RETRY_BASE", settings.stub_retry_base)
-    _RETRY_MAX = _float_env("SANDBOX_STUB_RETRY_MAX", settings.stub_retry_max)
-    _CACHE_MAX = _int_env("SANDBOX_STUB_CACHE_MAX", settings.stub_cache_max)
-    FALLBACK_MODEL = os.getenv("SANDBOX_STUB_FALLBACK_MODEL", settings.stub_fallback_model)
+    cache_path = Path(
+        os.getenv("SANDBOX_STUB_CACHE", str(ROOT / "sandbox_data" / "stub_cache.json"))
+    )
+    cfg = StubProviderConfig(
+        timeout=_float_env("SANDBOX_STUB_TIMEOUT", settings.stub_timeout),
+        retries=_int_env("SANDBOX_STUB_RETRIES", settings.stub_retries),
+        retry_base=_float_env("SANDBOX_STUB_RETRY_BASE", settings.stub_retry_base),
+        retry_max=_float_env("SANDBOX_STUB_RETRY_MAX", settings.stub_retry_max),
+        cache_max=_int_env("SANDBOX_STUB_CACHE_MAX", settings.stub_cache_max),
+        cache_path=cache_path,
+        fallback_model=os.getenv(
+            "SANDBOX_STUB_FALLBACK_MODEL", settings.stub_fallback_model
+        ),
+        max_concurrency=_int_env("SANDBOX_STUB_MAX_CONCURRENCY", 1),
+    )
 
     model = settings.sandbox_stub_model
     if model:
@@ -170,34 +187,49 @@ def _validate_env(settings: SandboxSettings) -> None:
                 "SANDBOX_STUB_MODEL=%s but no stub models are configured", model
             )
 
+    global FALLBACK_MODEL
+    FALLBACK_MODEL = cfg.fallback_model
+    return cfg
+
 
 def get_settings(refresh: bool = False) -> SandboxSettings:
     """Return cached :class:`SandboxSettings`, refreshing if requested."""
     global _SETTINGS
     if _SETTINGS is None or refresh:
         _SETTINGS = SandboxSettings()
-        _validate_env(_SETTINGS)
     return _SETTINGS
 
 
-# Initialise settings on import for backward compatibility
+def get_config(refresh: bool = False) -> StubProviderConfig:
+    """Return cached :class:`StubProviderConfig`, refreshing if requested."""
+    global _CONFIG
+    settings = get_settings(refresh=refresh)
+    if _CONFIG is None or refresh:
+        _CONFIG = _load_config(settings)
+    return _CONFIG
+
+
+# Initialise settings/config on import for backward compatibility
 SETTINGS = get_settings()
+CONFIG = get_config()
 
 
-async def _call_with_retry(func: Callable[[], Awaitable[Any]]) -> Any:
+async def _call_with_retry(
+    func: Callable[[], Awaitable[Any]], config: StubProviderConfig
+) -> Any:
     """Invoke *func* with retry, timeout and rate limiting."""
-    delay = _RETRY_BASE
-    for attempt in range(_GEN_RETRIES):
+    delay = config.retry_base
+    for attempt in range(config.retries):
         try:
-            async with _RATE_LIMIT:
-                return await asyncio.wait_for(func(), timeout=_GEN_TIMEOUT)
+            async with config.rate_limit:
+                return await asyncio.wait_for(func(), timeout=config.timeout)
         except Exception as exc:
-            if attempt == _GEN_RETRIES - 1:
+            if attempt == config.retries - 1:
                 raise
             logger.warning("generation attempt %d failed: %s", attempt + 1, exc)
             jitter = random.uniform(0, delay)
             await asyncio.sleep(jitter)
-            delay = min(delay * 2, _RETRY_MAX)
+            delay = min(delay * 2, config.retry_max)
 
 
 def _rule_based_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
@@ -360,10 +392,11 @@ def _type_matches(value: Any, annotation: Any) -> bool:
     return True
 
 
-def _load_cache() -> "OrderedDict[Tuple[str, str], Dict[str, Any]]":
+def _load_cache(config: StubProviderConfig) -> "OrderedDict[Tuple[str, str], Dict[str, Any]]":
+    path = config.cache_path
     try:
-        if _STUB_CACHE_PATH.exists():
-            with open(_STUB_CACHE_PATH, "r", encoding="utf-8") as fh:
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
             if isinstance(data, list):
                 cache: "OrderedDict[Tuple[str, str], Dict[str, Any]]" = OrderedDict()
@@ -382,35 +415,63 @@ def _load_cache() -> "OrderedDict[Tuple[str, str], Dict[str, Any]]":
     except (OSError, json.JSONDecodeError) as exc:
         logger.exception("failed to load stub cache", exc_info=exc)
         try:
-            backup = _STUB_CACHE_PATH.with_suffix(".corrupt")
-            _STUB_CACHE_PATH.replace(backup)
+            backup = path.with_suffix(".corrupt")
+            path.replace(backup)
         except OSError as backup_exc:
             logger.exception("failed to back up corrupt cache", exc_info=backup_exc)
     return OrderedDict()
 
 
-def _save_cache() -> None:
+def _valid_cache_item(key: Tuple[str, str], value: Dict[str, Any]) -> bool:
+    if not (
+        isinstance(key, tuple)
+        and len(key) == 2
+        and all(isinstance(p, str) for p in key)
+    ):
+        return False
+    if not isinstance(value, dict) or not all(isinstance(k, str) for k in value.keys()):
+        return False
     try:
-        _STUB_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        json.dumps(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _save_cache(config: StubProviderConfig) -> None:
+    path = config.cache_path
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         with _CACHE_LOCK:
-            data = [[f"{k[0]}::{k[1]}", v] for k, v in _CACHE.items()]
-        tmp = _STUB_CACHE_PATH.with_suffix(".tmp")
+            items: List[List[Any]] = []
+            invalid: List[Tuple[str, str]] = []
+            for k, v in _CACHE.items():
+                if _valid_cache_item(k, v):
+                    items.append([f"{k[0]}::{k[1]}", v])
+                else:
+                    invalid.append(k)
+            for k in invalid:
+                _CACHE.pop(k, None)
+            data = items
+        tmp = path.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
             fh.flush()
             os.fsync(fh.fileno())
-        tmp.replace(_STUB_CACHE_PATH)
+        tmp.replace(path)
     except (OSError, TypeError) as exc:
         logger.exception("failed to save stub cache", exc_info=exc)
 
 
-async def _async_load_cache() -> Dict[Tuple[str, str], Dict[str, Any]]:
+async def _async_load_cache(
+    config: StubProviderConfig,
+) -> Dict[Tuple[str, str], Dict[str, Any]]:
     """Asynchronously load stub cache from disk with a file lock."""
 
     async def _locked_load() -> Dict[Tuple[str, str], Dict[str, Any]]:
-        return await asyncio.to_thread(_load_cache)
+        return await asyncio.to_thread(_load_cache, config)
 
-    lock_path = str(_STUB_CACHE_PATH) + ".lock"
+    lock_path = str(config.cache_path) + ".lock"
     delay = 0.05
     for attempt in range(3):
         lock = FileLock(lock_path)
@@ -433,13 +494,13 @@ async def _async_load_cache() -> Dict[Tuple[str, str], Dict[str, Any]]:
     return await _locked_load()
 
 
-async def _async_save_cache() -> None:
+async def _async_save_cache(config: StubProviderConfig) -> None:
     """Asynchronously persist stub cache to disk with a file lock."""
 
     async def _locked_save() -> None:
-        await asyncio.to_thread(_save_cache)
+        await asyncio.to_thread(_save_cache, config)
 
-    lock_path = str(_STUB_CACHE_PATH) + ".lock"
+    lock_path = str(config.cache_path) + ".lock"
     delay = 0.05
     for attempt in range(3):
         lock = FileLock(lock_path)
@@ -466,24 +527,24 @@ _aload_cache = _async_load_cache
 _asave_cache = _async_save_cache
 
 
-def _cache_evict() -> None:
+def _cache_evict(config: StubProviderConfig) -> None:
     """Evict least recently used cache entries when exceeding limit.
 
     Caller must hold ``_CACHE_LOCK``.
     """
-    while len(_CACHE) > _CACHE_MAX:
+    while len(_CACHE) > config.cache_max:
         try:
             _CACHE.popitem(last=False)
         except KeyError:
             break
 
 
-def _schedule_cache_persist() -> None:
+def _schedule_cache_persist(config: StubProviderConfig) -> None:
     """Persist the cache in the background."""
 
     async def _runner() -> None:
         try:
-            await asyncio.shield(_async_save_cache())
+            await asyncio.shield(_async_save_cache(config))
         except Exception as exc:
             logger.exception("failed to save stub cache", exc_info=exc)
 
@@ -493,19 +554,21 @@ def _schedule_cache_persist() -> None:
 
 # load persistent cache at import time
 with _CACHE_LOCK:
-    _CACHE.update(_load_cache())
-    _cache_evict()
+    _CACHE.update(_load_cache(CONFIG))
+    _cache_evict(CONFIG)
 
 
 def _atexit_save_cache() -> None:
     """Persist the cache on shutdown without blocking the event loop."""
 
+    config = get_config()
+
     async def _wait_and_save() -> None:
         await _SAVE_TASKS.__aexit__(None, None, None)
         try:
-            await asyncio.to_thread(_save_cache)
+            await asyncio.to_thread(_save_cache, config)
         except RuntimeError:
-            _save_cache()
+            _save_cache(config)
 
     try:
         loop: asyncio.AbstractEventLoop | None = None
@@ -537,12 +600,13 @@ class ModelLoadError(RuntimeError):
     """Raised when no suitable stub generation model can be loaded."""
 
 
-async def _aload_generator() -> Any:
+async def _aload_generator(config: StubProviderConfig | None = None) -> Any:
     """Return a text generation pipeline or raise :class:`ModelLoadError`."""
     global _GENERATOR
     if _GENERATOR is not None:
         return _GENERATOR
     settings = get_settings()
+    cfg = config or get_config()
     model = settings.sandbox_stub_model
 
     if model == "openai":
@@ -578,18 +642,18 @@ async def _aload_generator() -> Any:
 
     hf_token = settings.huggingface_token
     if not model or not hf_token:
-        logger.info("Using bundled '%s' model for stub generation", FALLBACK_MODEL)
+        logger.info("Using bundled '%s' model for stub generation", cfg.fallback_model)
         try:
             _GENERATOR = await asyncio.to_thread(
                 pipeline,
                 "text-generation",
-                model=FALLBACK_MODEL,
+                model=cfg.fallback_model,
                 local_files_only=True,
             )
             await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
         except Exception as exc:  # pragma: no cover - model load failures
             raise ModelLoadError(
-                f"failed to load fallback model {FALLBACK_MODEL}"
+                f"failed to load fallback model {cfg.fallback_model}"
             ) from exc
         return _GENERATOR
 
@@ -603,27 +667,27 @@ async def _aload_generator() -> Any:
         await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
     except Exception as exc:  # pragma: no cover - model load failures
         logger.exception(
-            "failed to load model %s; attempting fallback %s", model, FALLBACK_MODEL,
+            "failed to load model %s; attempting fallback %s", model, cfg.fallback_model,
             exc_info=exc,
         )
         try:
             _GENERATOR = await asyncio.to_thread(
                 pipeline,
                 "text-generation",
-                model=FALLBACK_MODEL,
+                model=cfg.fallback_model,
                 local_files_only=True,
             )
             await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
         except Exception as exc2:  # pragma: no cover - model load failures
             raise ModelLoadError(
-                f"failed to load model {model} and fallback {FALLBACK_MODEL}"
+                f"failed to load model {model} and fallback {cfg.fallback_model}"
             ) from exc2
     return _GENERATOR
 
 
-def _load_generator():
+def _load_generator(config: StubProviderConfig | None = None):
     """Synchronous wrapper for :func:`_aload_generator`."""
-    return asyncio.run(_aload_generator())
+    return asyncio.run(_aload_generator(config))
 
 
 def _get_history_db() -> InputHistoryDB:
@@ -671,19 +735,20 @@ def _aggregate(records: List[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def async_generate_stubs(
-    stubs: List[Dict[str, Any]], ctx: dict
+    stubs: List[Dict[str, Any]], ctx: dict, config: StubProviderConfig | None = None
 ) -> List[Dict[str, Any]]:
     """Generate or enhance ``stubs`` using recent history or a language model."""
+    config = config or get_config()
 
     strategy = ctx.get("strategy")
 
     if not _CACHE:
         try:
-            loaded = await _async_load_cache()
+            loaded = await _async_load_cache(config)
             with _CACHE_LOCK:
                 if not _CACHE:
                     _CACHE.update(loaded)
-                    _cache_evict()
+                    _cache_evict(config)
         except Exception as exc:
             logger.exception("failed to load stub cache", exc_info=exc)
     if strategy == "history":
@@ -698,7 +763,7 @@ async def async_generate_stubs(
         return stubs
 
     try:
-        gen = await _aload_generator()
+        gen = await _aload_generator(config)
     except ModelLoadError as exc:
         logger.error("stub generation unavailable: %s", exc)
         return stubs
@@ -790,7 +855,7 @@ async def async_generate_stubs(
             return result[0].get("generated_text", "")
 
         try:
-            text = await _call_with_retry(_invoke)
+            text = await _call_with_retry(_invoke, config)
             match = re.search(r"{.*}", text, flags=re.S)
             if match:
                 data = json.loads(match.group(0))
@@ -827,7 +892,7 @@ async def async_generate_stubs(
                             logger.warning(
                                 "failed to update cache LRU for key %s: %s", key, exc
                             )
-                        _cache_evict()
+                        _cache_evict(config)
                         try:
                             stub_key = json.dumps(data, sort_keys=True, default=str)
                         except TypeError:
@@ -842,22 +907,20 @@ async def async_generate_stubs(
             raise RuntimeError("stub generation failed") from exc
 
     if changed:
-        _schedule_cache_persist()
+        _schedule_cache_persist(config)
 
     return new_stubs
 
 
-def generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[Dict[str, Any]]:
-    """Synchronous wrapper for :func:`async_generate_stubs`.
-
-    If an asyncio event loop is already running, the coroutine is scheduled on
-    that loop and waited on using ``run_until_complete``.  Otherwise a new loop
-    is created via :func:`asyncio.run`.
-    """
+def generate_stubs(
+    stubs: List[Dict[str, Any]], ctx: dict, config: StubProviderConfig | None = None
+) -> List[Dict[str, Any]]:
+    """Synchronous wrapper for :func:`async_generate_stubs`."""
+    config = config or get_config()
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:  # no loop is running
-        return asyncio.run(async_generate_stubs(stubs, ctx))
+        return asyncio.run(async_generate_stubs(stubs, ctx, config))
     else:  # pragma: no cover - requires active event loop
-        fut = asyncio.ensure_future(async_generate_stubs(stubs, ctx), loop=loop)
+        fut = asyncio.ensure_future(async_generate_stubs(stubs, ctx, config), loop=loop)
         return loop.run_until_complete(fut)
