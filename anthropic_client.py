@@ -9,6 +9,7 @@ import requests
 
 import rate_limit
 import llm_config
+import llm_pricing
 
 from llm_interface import Prompt, LLMResult, LLMClient
 
@@ -92,7 +93,8 @@ class AnthropicClient(LLMClient):
                 )
                 input_tokens = usage.get("input_tokens") or prompt_tokens
                 output_tokens = usage.get("output_tokens") or completion_tokens
-                cost = usage.get("cost")
+                in_rate, out_rate = llm_pricing.get_rates(self.model, cfg.pricing)
+                cost = input_tokens * in_rate + output_tokens * out_rate
                 extra = max(
                     0, (prompt_tokens or 0) + (completion_tokens or 0) - prompt_tokens_est
                 )
@@ -100,8 +102,7 @@ class AnthropicClient(LLMClient):
                     self._rate_limiter.consume(extra)
                 usage.setdefault("input_tokens", input_tokens)
                 usage.setdefault("output_tokens", output_tokens)
-                if cost is not None:
-                    usage.setdefault("cost", cost)
+                usage["cost"] = cost
                 raw["usage"] = usage
                 raw.setdefault("model", self.model)
                 raw["backend"] = "anthropic"

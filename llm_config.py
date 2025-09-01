@@ -8,7 +8,7 @@ values specified in an optional JSON configuration file referenced via the
 ``LLM_CONFIG_FILE`` environment variable.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict
 import json
@@ -23,6 +23,7 @@ class LLMConfig:
     api_key: str | None = None
     max_retries: int = 5
     tokens_per_minute: int = 0
+    pricing: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
 
 def _load_file(path: str | None) -> Dict[str, Any]:
@@ -51,11 +52,22 @@ def get_config() -> LLMConfig:
     tokens_per_minute = int(
         os.getenv("LLM_TPM", file_cfg.get("tokens_per_minute", 0))
     )
+    pricing: Dict[str, Dict[str, float]] = {}
+    file_pricing = file_cfg.get("pricing")
+    if isinstance(file_pricing, dict):
+        pricing.update(file_pricing)
+    env_pricing = os.getenv("LLM_PRICING")
+    if env_pricing:
+        try:
+            pricing.update(json.loads(env_pricing))
+        except Exception:
+            pass
     return LLMConfig(
         model=model,
         api_key=api_key,
         max_retries=max_retries,
         tokens_per_minute=tokens_per_minute,
+        pricing=pricing,
     )
 
 
