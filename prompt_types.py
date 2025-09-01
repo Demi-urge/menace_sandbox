@@ -91,6 +91,8 @@ class Prompt:
     @property
     def vector_confidences(self) -> List[float]:
         """Legacy list-style confidence accessor."""
+        if "vector_confidences" in self.metadata:
+            return list(self.metadata["vector_confidences"])
         return [self.vector_confidence] if self.vector_confidence is not None else []
 
     @property

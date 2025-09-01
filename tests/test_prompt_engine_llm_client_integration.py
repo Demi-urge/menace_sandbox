@@ -24,11 +24,7 @@ class CapturingClient(LLMClient):
     def _generate(self, prompt: Prompt) -> LLMResult:
         self.seen.append(prompt)
         # Return JSON to exercise parsed handling
-        return LLMResult(
-            text='{"result": "ok"}',
-            parsed={"result": "ok"},
-            completions=['{"result": "ok"}'],
-        )
+        return LLMResult(text='{"result": "ok"}', parsed={"result": "ok"})
 
 
 def test_prompt_engine_to_llm_client_flow():
@@ -46,4 +42,3 @@ def test_prompt_engine_to_llm_client_flow():
     assert isinstance(prompt, Prompt)
     assert client.seen == [prompt]
     assert result.parsed == {"result": "ok"}
-    assert result.completions == ['{"result": "ok"}']

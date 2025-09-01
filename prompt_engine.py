@@ -24,6 +24,11 @@ from llm_interface import Prompt
 from snippet_compressor import compress_snippets
 
 try:  # pragma: no cover - optional runtime dependency
+    from prompt_optimizer import PromptOptimizer  # type: ignore
+except Exception:  # pragma: no cover - degrade gracefully
+    PromptOptimizer = None  # type: ignore
+
+try:  # pragma: no cover - optional runtime dependency
     from prompt_memory_trainer import PromptMemoryTrainer  # type: ignore
 except Exception:  # pragma: no cover - degrade gracefully
     PromptMemoryTrainer = None  # type: ignore
@@ -125,6 +130,11 @@ class PromptEngine:
         Template for headers inserted before failed examples. Supports
         ``{summary}`` and ``{outcome}`` placeholders and defaults to
         ``"Avoid {summary} because it caused {outcome}:"``.
+    optimizer:
+        Optional :class:`prompt_optimizer.PromptOptimizer` used to suggest
+        tone and structural preferences.
+    optimizer_refresh_interval:
+        Refresh optimiser statistics after this many prompts when set.
     """
 
     retriever: Retriever | None = None
@@ -165,6 +175,8 @@ class PromptEngine:
         )
     )
     trainer: PromptMemoryTrainer | None = None
+    optimizer: PromptOptimizer | None = None
+    optimizer_refresh_interval: int | None = None
     success_header: str = "Given the following pattern:"
     failure_header: str = "Avoid {summary} because it caused {outcome}:"
     tone: str = "neutral"
@@ -176,6 +188,7 @@ class PromptEngine:
     trained_example_placement: str | None = field(default=None, init=False)
     trained_length: str | None = field(default=None, init=False)
     style_version: int = field(default=0, init=False)
+    _optimizer_counter: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
         if self.retriever is None:
@@ -372,6 +385,34 @@ class PromptEngine:
         )
 
     # ------------------------------------------------------------------
+    def refresh_optimizer(self) -> None:
+        """Recompute optimiser statistics if available."""
+
+        if not self.optimizer:
+            return
+        try:  # pragma: no cover - best effort
+            self.optimizer.aggregate()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    def after_log_append(self) -> None:
+        """Hook invoked after new log entries are written."""
+
+        self.refresh_optimizer()
+
+    # ------------------------------------------------------------------
+    def _maybe_refresh_optimizer(self) -> None:
+        """Refresh optimiser based on the configured interval."""
+
+        if not self.optimizer or self.optimizer_refresh_interval is None:
+            return
+        self._optimizer_counter += 1
+        if self._optimizer_counter >= self.optimizer_refresh_interval:
+            self.refresh_optimizer()
+            self._optimizer_counter = 0
+
+    # ------------------------------------------------------------------
     def build_snippets(self, patches: Iterable[Dict[str, Any]]) -> List[str]:
         """Return formatted snippet lines ordered by weighted scoring.
 
@@ -517,13 +558,24 @@ class PromptEngine:
         fails or the average confidence of returned patches falls below
         ``confidence_threshold`` a static fallback template is returned.
         """
-
+        self._maybe_refresh_optimizer()
+        if self.optimizer:
+            try:  # pragma: no cover - best effort
+                prefs = self.optimizer.select_format(__name__, "build_prompt")
+            except Exception:
+                prefs = {}
+            if tone is None and prefs.get("tone"):
+                self.tone = prefs["tone"]
+            if prefs.get("structured_sections"):
+                self.trained_structured_sections = prefs["structured_sections"]
+            if prefs.get("example_placement"):
+                self.trained_example_placement = prefs["example_placement"]
         if tone is not None:
             self.tone = tone
         retriever = self.patch_retriever or self.retriever
         if retriever is None:
             logging.info("No retriever available; falling back to static template")
-            return Prompt(user=self._static_prompt())
+            return self._static_prompt()
 
         try:
             result = retriever.search(task, top_k=self.top_n)
@@ -533,7 +585,7 @@ class PromptEngine:
                 "prompt_engine_fallback",
                 {"goal": task, "reason": "retrieval_error", "error": str(exc)},
             )
-            return Prompt(user=self._static_prompt())
+            return self._static_prompt()
 
         if isinstance(result, FallbackResult):
             logging.info(
@@ -548,7 +600,7 @@ class PromptEngine:
                     "confidence": result.confidence,
                 },
             )
-            return Prompt(user=self._static_prompt())
+            return self._static_prompt()
 
         if isinstance(result, tuple):
             records = result[0]
@@ -570,7 +622,7 @@ class PromptEngine:
                     "confidence": confidence,
                 },
             )
-            return Prompt(user=self._static_prompt())
+            return self._static_prompt()
 
         examples: List[str] = []
         outcome_tags: List[str] = []
@@ -620,7 +672,9 @@ class PromptEngine:
             user=text,
             examples=examples,
             vector_confidence=confidence,
+            vector_confidences=scores,
             tags=outcome_tags,
+            metadata={"vector_confidences": scores},
         )
 
     # ------------------------------------------------------------------
@@ -883,6 +937,8 @@ class PromptEngine:
         failure_header: str = "Avoid {summary} because it caused {outcome}:",
         tone: str = "neutral",
         trainer: PromptMemoryTrainer | None = None,
+        optimizer: PromptOptimizer | None = None,
+        optimizer_refresh_interval: int | None = None,
     ) -> Prompt:
         """Class method wrapper used by existing callers and tests."""
 
@@ -896,6 +952,8 @@ class PromptEngine:
             failure_header=failure_header,
             tone=tone,
             trainer=trainer,
+            optimizer=optimizer,
+            optimizer_refresh_interval=optimizer_refresh_interval,
         )
         return engine.build_prompt(
             goal,
@@ -917,6 +975,8 @@ def build_prompt(
     failure_header: str = "Avoid {summary} because it caused {outcome}:",
     tone: str = "neutral",
     trainer: PromptMemoryTrainer | None = None,
+    optimizer: PromptOptimizer | None = None,
+    optimizer_refresh_interval: int | None = None,
 ) -> Prompt:
     """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`.
 
@@ -934,6 +994,8 @@ def build_prompt(
         failure_header=failure_header,
         tone=tone,
         trainer=trainer,
+        optimizer=optimizer,
+        optimizer_refresh_interval=optimizer_refresh_interval,
     )
 
 
