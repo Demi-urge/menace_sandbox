@@ -162,11 +162,40 @@ def initialize_autonomous_sandbox(
         init_self_improvement(settings)
         thread = start_self_improvement_cycle({"bootstrap": lambda: None})
         thread.start()
+        try:
+            thread.join(0)
+        except Exception as exc:
+            logger.error("self-improvement thread raised during startup", exc_info=True)
+            raise RuntimeError("self-improvement thread failed to start") from exc
+        inner = getattr(thread, "_thread", thread)
+        if hasattr(inner, "is_alive") and not inner.is_alive():
+            raise RuntimeError("self-improvement thread terminated unexpectedly")
         _SELF_IMPROVEMENT_THREAD = thread
-    except Exception:  # pragma: no cover - best effort
+    except Exception as exc:  # pragma: no cover - best effort
         logger.error("self-improvement startup failed", exc_info=True)
+        raise RuntimeError("self-improvement startup failed") from exc
 
     return settings
+
+
+def shutdown_autonomous_sandbox(timeout: float | None = None) -> None:
+    """Stop background self-improvement thread and reset globals."""
+
+    global _SELF_IMPROVEMENT_THREAD, _INITIALISED
+    thread = _SELF_IMPROVEMENT_THREAD
+    if thread is None:
+        _INITIALISED = False
+        return
+    from self_improvement.api import stop_self_improvement_cycle
+
+    stop_self_improvement_cycle()
+    if hasattr(thread, "join"):
+        thread.join(timeout)
+    inner = getattr(thread, "_thread", thread)
+    if hasattr(inner, "is_alive") and inner.is_alive():
+        raise RuntimeError("self-improvement thread failed to shut down")
+    _SELF_IMPROVEMENT_THREAD = None
+    _INITIALISED = False
 
 
 def _verify_required_dependencies(settings: SandboxSettings) -> dict[str, list[str]]:
