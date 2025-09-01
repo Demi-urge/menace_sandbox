@@ -20,16 +20,22 @@ from .orchestration import (
 from .patch_application import generate_patch
 from .roi_tracking import update_alignment_baseline
 from .data_stores import router, STABLE_WORKFLOWS
-from .engine import (
-    SelfImprovementEngine,
+from .engine import SelfImprovementEngine
+from .learners import (
     SynergyWeightLearner,
     DQNSynergyLearner,
     DoubleDQNSynergyLearner,
     SACSynergyLearner,
     TD3SynergyLearner,
-    SynergyDashboard,
-    ImprovementEngineRegistry,
 )
+from .dashboards import (
+    SynergyDashboard,
+    load_synergy_history,
+    synergy_stats,
+    synergy_ma,
+)
+from .registry import ImprovementEngineRegistry, auto_x
+from .orchestration_utils import benchmark_workflow_variants
 
 __all__ = [
     "init_self_improvement",
@@ -55,4 +61,9 @@ __all__ = [
     "TD3SynergyLearner",
     "SynergyDashboard",
     "ImprovementEngineRegistry",
+    "auto_x",
+    "benchmark_workflow_variants",
+    "load_synergy_history",
+    "synergy_stats",
+    "synergy_ma",
 ]

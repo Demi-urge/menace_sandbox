@@ -69,7 +69,7 @@ def test_benchmark_workflow_variants_calculates_roi_delta():
         def record_mutation_outcome(*a, **k):
             pass
 
-    src = Path("self_improvement.py").read_text()
+    src = Path("self_improvement/orchestration_utils.py").read_text()
     tree = ast.parse(src)
     func_node = next(
         n
