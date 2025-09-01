@@ -124,13 +124,15 @@ class LLMClient:
             self.db = None
 
     # ------------------------------------------------------------------
-    def _log(self, prompt: Prompt, result: LLMResult) -> None:
+    def _log(
+        self, prompt: Prompt, result: LLMResult, *, backend: str | None = None
+    ) -> None:
         """Persist *prompt* and *result* if logging is enabled."""
 
         if not self._log_prompts or not getattr(self, "db", None):
             return
         try:  # pragma: no cover - logging is best effort
-            self.db.log(prompt, result)
+            self.db.log(prompt, result, backend=backend)
         except Exception:
             pass
 
@@ -156,6 +158,7 @@ class LLMClient:
         prompt: Prompt,
         *,
         parse_fn: Callable[[str], Any] | None = None,
+        backend: str | None = None,
     ) -> LLMResult:
         """Generate a completion for *prompt*.
 
@@ -177,9 +180,9 @@ class LLMClient:
                 # Prefer the secondary backend for small tasks
                 order = order[1:] + order[:1]
             last_exc: Exception | None = None
-            for backend in order:
+            for backend_obj in order:
                 try:
-                    result = backend.generate(prompt)
+                    result = backend_obj.generate(prompt)
                 except Exception as exc:  # pragma: no cover - backend failure
                     last_exc = exc
                     continue
@@ -188,7 +191,7 @@ class LLMClient:
                         result.parsed = parse_fn(result.text)
                     except Exception:  # pragma: no cover - parsing is best effort
                         pass
-                self._log(prompt, result)
+                self._log(prompt, result, backend=getattr(backend_obj, "model", None))
                 return result
             if last_exc is not None:
                 raise last_exc
@@ -201,7 +204,8 @@ class LLMClient:
                 result.parsed = parse_fn(result.text)
             except Exception:  # pragma: no cover - parsing is best effort
                 pass
-        self._log(prompt, result)
+        backend_name = backend or (result.raw or {}).get("backend")
+        self._log(prompt, result, backend=backend_name)
         return result
 
     # ------------------------------------------------------------------
@@ -347,6 +351,8 @@ class OpenAIProvider(LLMClient):
                 extra = max(0, total - prompt_tokens_est)
                 if extra:
                     self._rate_limiter.consume(extra)
+                raw.setdefault("model", self.model)
+                raw["backend"] = "openai"
                 return LLMResult(
                     raw=raw,
                     text=text,
@@ -461,13 +467,14 @@ class OpenAIProvider(LLMClient):
                 parsed = None
 
         result = LLMResult(
+            raw={"backend": "openai", "model": self.model},
             text=text,
             parsed=parsed,
             latency_ms=latency_ms,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
         )
-        self._log(prompt, result)
+        self._log(prompt, result, backend="openai")
         return result
 
 

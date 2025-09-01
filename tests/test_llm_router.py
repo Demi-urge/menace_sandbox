@@ -15,7 +15,7 @@ class StubClient(LLMClient):
         self.calls += 1
         if self.fail:
             raise RuntimeError("boom")
-        return LLMResult(raw={}, text=self.text)
+        return LLMResult(raw={"backend": self.model}, text=self.text)
 
 
 def test_router_uses_local_for_small_prompts():
@@ -89,8 +89,9 @@ def test_router_logs_backend_choice(monkeypatch):
 
     monkeypatch.setattr(lr, "PromptDB", DummyDB)
     router = LLMRouter(remote=StubClient("remote"), local=StubClient("local"), size_threshold=5)
-    router.generate(Prompt(text="hi"))
+    res = router.generate(Prompt(text="hi"))
     assert logged == ["local"]
+    assert res.raw["backend"] == "local"
 
 
 def custom_factory() -> StubClient:

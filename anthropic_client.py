@@ -95,6 +95,8 @@ class AnthropicClient(LLMClient):
                 )
                 if extra:
                     self._rate_limiter.consume(extra)
+                raw.setdefault("model", self.model)
+                raw["backend"] = "anthropic"
                 return LLMResult(
                     raw=raw,
                     text=text,

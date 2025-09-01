@@ -54,6 +54,10 @@ class _RESTBackend(LLMBackend):
         self._rate_limiter.consume(prompt_tokens)
 
         raw = with_retry(do_request, exc=requests.RequestException)
+        raw["backend"] = getattr(
+            self, "backend_name", self.__class__.__name__.replace("Backend", "").lower()
+        )
+        raw.setdefault("model", self.model)
         text = (
             raw.get("text")
             or raw.get("response", "")
@@ -75,6 +79,7 @@ class OllamaBackend(_RESTBackend):
     def __init__(self, model: str | None = None, base_url: str | None = None) -> None:
         model = model or os.getenv("OLLAMA_MODEL", "mistral")
         base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.backend_name = "ollama"
         super().__init__(model=model, base_url=base_url, endpoint="api/generate")
 
 
@@ -84,6 +89,7 @@ class VLLMBackend(_RESTBackend):
     def __init__(self, model: str | None = None, base_url: str | None = None) -> None:
         model = model or os.getenv("VLLM_MODEL", "llama3")
         base_url = base_url or os.getenv("VLLM_BASE_URL", "http://localhost:8000")
+        self.backend_name = "vllm"
         super().__init__(model=model, base_url=base_url, endpoint="generate")
 
 def mixtral_client(model: str | None = None, base_url: str | None = None) -> LLMClient:
