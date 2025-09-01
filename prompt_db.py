@@ -27,7 +27,7 @@ def _get_conn() -> sqlite3.Connection:
 
     global _CONN
     if _CONN is None:
-        _CONN = sqlite3.connect(DB_PATH)
+        _CONN = sqlite3.connect(DB_PATH)  # noqa: P204,SQL001
         _init_db(_CONN)
     return _CONN
 
@@ -49,10 +49,22 @@ def _init_db(conn: sqlite3.Connection) -> None:
             vector_confidences TEXT,
             outcome_tags TEXT,
             model TEXT,
-            timestamp TEXT
+            timestamp TEXT,
+            prompt_tokens INTEGER,
+            completion_tokens INTEGER,
+            latency_ms REAL
         )
         """,
     )
+    for stmt in (
+        "ALTER TABLE prompts ADD COLUMN prompt_tokens INTEGER",
+        "ALTER TABLE prompts ADD COLUMN completion_tokens INTEGER",
+        "ALTER TABLE prompts ADD COLUMN latency_ms REAL",
+    ):
+        try:
+            cur.execute(stmt)
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
 
 
@@ -86,9 +98,10 @@ def log_interaction(
         """
         INSERT INTO prompts(
             prompt, text, completion_raw, completion_parsed, response_text, response_parsed,
-            examples, vector_confidence, vector_confidences, outcome_tags, model, timestamp
+            examples, vector_confidence, vector_confidences, outcome_tags, model, timestamp,
+            prompt_tokens, completion_tokens, latency_ms
         )
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             prompt_obj.user,
@@ -103,6 +116,13 @@ def log_interaction(
             json.dumps(list(tags or [])),
             raw.get("model") or getattr(prompt_obj, "model", None),
             datetime.utcnow().isoformat(),
+            (raw.get("usage") or {}).get("prompt_tokens")
+            if isinstance(raw, dict)
+            else None,
+            (raw.get("usage") or {}).get("completion_tokens")
+            if isinstance(raw, dict)
+            else None,
+            raw.get("latency_ms") if isinstance(raw, dict) else None,
         ),
     )
     conn.commit()
@@ -130,7 +150,8 @@ def fetch_logs(
     conn = _get_conn()
     query = (
         "SELECT prompt, completion_parsed, examples, vector_confidence, "
-        "outcome_tags, model, timestamp, completion_raw FROM prompts"
+        "outcome_tags, model, timestamp, completion_raw, "
+        "prompt_tokens, completion_tokens, latency_ms FROM prompts"
     )
     clauses: List[str] = []
     params: List[Any] = []
@@ -150,7 +171,19 @@ def fetch_logs(
     rows = conn.execute(query, params).fetchall()
     results: List[Dict[str, Any]] = []
     for row in rows:
-        prompt, completion, examples, vc, tags_json, mdl, ts, raw_json = row
+        (
+            prompt,
+            completion,
+            examples,
+            vc,
+            tags_json,
+            mdl,
+            ts,
+            raw_json,
+            p_tokens,
+            c_tokens,
+            latency,
+        ) = row
         results.append(
             {
                 "prompt": prompt,
@@ -161,6 +194,9 @@ def fetch_logs(
                 "model": mdl,
                 "timestamp": ts,
                 "raw": json.loads(raw_json) if raw_json else None,
+                "prompt_tokens": p_tokens,
+                "completion_tokens": c_tokens,
+                "latency_ms": latency,
             }
         )
     return results
@@ -202,9 +238,10 @@ class PromptDB:
             """
             INSERT INTO prompts(
                 prompt, text, completion_raw, completion_parsed, response_text, response_parsed,
-                examples, vector_confidence, vector_confidences, outcome_tags, model, timestamp
+                examples, vector_confidence, vector_confidences, outcome_tags, model, timestamp,
+                prompt_tokens, completion_tokens, latency_ms
             )
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 prompt.user,
@@ -219,6 +256,9 @@ class PromptDB:
                 json.dumps(list(prompt.outcome_tags)),
                 raw.get("model") or getattr(prompt, "model", None) or self.model,
                 datetime.utcnow().isoformat(),
+                result.prompt_tokens,
+                result.completion_tokens,
+                result.latency_ms,
             ),
         )
         self.conn.commit()
@@ -241,4 +281,3 @@ class PromptDB:
 
 
 __all__ = ["log_interaction", "fetch_logs", "PromptDB"]
-

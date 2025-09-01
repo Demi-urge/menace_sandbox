@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Protocol, Sequence
 
 import json
-import os
 import requests
 import time
 
@@ -46,6 +45,9 @@ class LLMResult:
     raw: Dict[str, Any] | None = None
     text: str = ""
     parsed: Any | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    latency_ms: float | None = None
 
 
 # Backwards compatibility -------------------------------------------------
@@ -252,9 +254,11 @@ class OpenAIProvider(LLMClient):
             )
             self._rate_limiter.consume(tokens)
             try:
+                start = time.perf_counter()
                 response = self._session.post(
                     self.api_url, headers=headers, json=payload, timeout=30
                 )
+                latency_ms = (time.perf_counter() - start) * 1000
             except requests.RequestException:
                 if attempt == retries - 1:
                     raise
@@ -277,10 +281,16 @@ class OpenAIProvider(LLMClient):
                     parsed = json.loads(text)
                 except Exception:
                     pass
-                return LLMResult(raw=raw, text=text, parsed=parsed)
+                usage = raw.get("usage", {}) if isinstance(raw, dict) else {}
+                return LLMResult(
+                    raw=raw,
+                    text=text,
+                    parsed=parsed,
+                    prompt_tokens=usage.get("prompt_tokens"),
+                    completion_tokens=usage.get("completion_tokens"),
+                    latency_ms=latency_ms,
+                )
 
             rate_limit.sleep_with_backoff(attempt)
 
         raise RuntimeError("Failed to obtain completion from OpenAI")
-
-
