@@ -94,14 +94,38 @@ class LLMResult:
 class LLMClient(ABC):
     """Base class describing the minimal LLM client interface."""
 
-    @abstractmethod
-    def generate(self, prompt: Prompt) -> LLMResult:  # pragma: no cover - interface
-        """Generate a response for *prompt*.
+    def __init__(self, model: str, *, log_prompts: bool = True) -> None:
+        self.model = model
+        self._log_prompts = log_prompts
+        if log_prompts:
+            from prompt_db import PromptDB
 
-        Implementations should return an :class:`LLMResult` with the model's
-        response in ``text`` and may optionally populate ``parsed`` and
-        ``raw`` with backend-specific data.
-        """
+            self.db = PromptDB(model)
+        else:
+            self.db = None
+
+    @abstractmethod
+    def _generate(self, prompt: Prompt) -> LLMResult:  # pragma: no cover - interface
+        """Subclasses implement the actual request logic."""
+
+    def generate(self, prompt: Prompt) -> LLMResult:
+        """Generate a response for *prompt* and persist the interaction."""
+
+        result = self._generate(prompt)
+        if self._log_prompts and self.db:
+            tags = prompt.metadata.get("tags") or prompt.metadata.get("outcome_tags") or []
+            confs = prompt.metadata.get("vector_confidences") or []
+            if not isinstance(tags, list):
+                tags = [str(tags)]
+            try:
+                confs = [float(c) for c in confs]
+            except Exception:
+                confs = []
+            try:
+                self.db.log_prompt(prompt, result, tags, confs)
+            except Exception:
+                pass
+        return result
 
 
 class OpenAIProvider(LLMClient):
@@ -116,7 +140,7 @@ class OpenAIProvider(LLMClient):
         timeout: float = 30.0,
         max_retries: int = 5,
     ) -> None:
-        self.model = model or "gpt-4o"
+        super().__init__(model or "gpt-4o")
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is required")
@@ -158,7 +182,7 @@ class OpenAIProvider(LLMClient):
         raise RuntimeError("Exceeded maximum retries for OpenAI request")
 
     # ------------------------------------------------------------------
-    def generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> LLMResult:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt.text}],
@@ -193,7 +217,7 @@ class OllamaProvider(LLMClient):
     base_url = "http://localhost:11434"
 
     def __init__(self, model: str = "mixtral", base_url: str | None = None) -> None:
-        self.model = model
+        super().__init__(model)
         self.base_url = base_url or self.base_url
         self._session = requests.Session()
 
@@ -206,7 +230,7 @@ class OllamaProvider(LLMClient):
             return False
         return True
 
-    def generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> LLMResult:
         payload = {"model": self.model, "prompt": prompt.text}
         url = self.base_url.rstrip("/") + "/api/generate"
         response = self._session.post(url, json=payload, timeout=30)
@@ -222,7 +246,7 @@ class VLLMProvider(LLMClient):
     base_url = "http://localhost:8000"
 
     def __init__(self, model: str = "llama3", base_url: str | None = None) -> None:
-        self.model = model
+        super().__init__(model)
         self.base_url = base_url or self.base_url
         self._session = requests.Session()
 
@@ -234,7 +258,7 @@ class VLLMProvider(LLMClient):
             return False
         return True
 
-    def generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> LLMResult:
         payload = {"model": self.model, "prompt": prompt.text}
         url = self.base_url.rstrip("/") + "/generate"
         response = self._session.post(url, json=payload, timeout=30)
@@ -248,6 +272,7 @@ class HybridProvider(LLMClient):
     """Automatically route requests between local and remote providers."""
 
     def __init__(self, *, size_threshold: int = 1000) -> None:
+        super().__init__("hybrid", log_prompts=False)
         self.size_threshold = size_threshold
 
         local: LLMClient | None = None
@@ -268,7 +293,7 @@ class HybridProvider(LLMClient):
         if not self.local and not self.remote:
             raise RuntimeError("No available LLM providers")
 
-    def generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> LLMResult:
         use_local = self.local is not None and (
             self.remote is None or len(prompt.text) <= self.size_threshold
         )

@@ -10,23 +10,21 @@ from typing import Dict, Any
 import requests
 
 from llm_interface import Prompt, LLMResult, LLMClient
-from prompt_db import PromptDB
 
 
 class OpenAILLMClient(LLMClient):
     """Simple client for the OpenAI chat completions API."""
 
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
+        super().__init__(model or "gpt-4o")
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is required")
-        self.model = model or "gpt-4o"
         self._session = requests.Session()
         # Rate limit per second; default 1 if not provided
         self._rps = float(os.getenv("OPENAI_RATE_LIMIT_RPS", "1"))
         self._lock = threading.Lock()
         self._last_request = 0.0
-        self.db = PromptDB(self.model)
 
     # ------------------------------------------------------------------
     def _throttle(self) -> None:
@@ -75,7 +73,7 @@ class OpenAILLMClient(LLMClient):
         raise RuntimeError("Exceeded maximum retries for OpenAI request")
 
     # ------------------------------------------------------------------
-    def generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> LLMResult:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt.text}],
@@ -87,11 +85,4 @@ class OpenAILLMClient(LLMClient):
             text = raw["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError):
             pass
-        result = LLMResult(raw=raw, text=text)
-        tags = prompt.metadata.get("tags", [])
-        try:
-            confidence = float(prompt.metadata.get("confidence", 0.0))
-        except (TypeError, ValueError):
-            confidence = 0.0
-        self.db.log_prompt(prompt, result, tags, confidence)
-        return result
+        return LLMResult(raw=raw, text=text)
