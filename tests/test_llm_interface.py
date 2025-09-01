@@ -1,6 +1,7 @@
 import retry_utils
 from db_router import DBRouter
 from llm_interface import Prompt, LLMResult, LLMClient
+import random
 from llm_router import LLMRouter
 from prompt_db import PromptDB
 
@@ -73,6 +74,7 @@ def test_openai_provider_retry_and_logging(monkeypatch):
     # Capture sleep calls to assert backoff behaviour
     sleeps: list[float] = []
     monkeypatch.setattr(llm_time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(random, "uniform", lambda a, b: 0)
 
     # Stub PromptDB to record log_prompt invocations
     logged: list[tuple[Prompt, LLMResult, list[str], list[float]]] = []
@@ -99,7 +101,8 @@ def test_openai_provider_retry_and_logging(monkeypatch):
             return self._data
 
         def raise_for_status(self):  # pragma: no cover - simple stub
-            raise requests.HTTPError("boom", response=self)
+            if not self.ok:
+                raise requests.HTTPError("boom", response=self)
 
     responses = [Resp(429, {}), Resp(200, {"choices": [{"message": {"content": "{\"a\":1}"}}]})]
 
