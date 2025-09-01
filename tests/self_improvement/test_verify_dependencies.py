@@ -48,66 +48,30 @@ def _prepare_modules(*, missing: tuple[str, ...] = ()):  # pragma: no cover - se
     sys.modules["menace.self_improvement"] = si_pkg
 
 
-def test_verify_dependencies_autoinstall_success(monkeypatch):
+def test_verify_dependencies_does_not_attempt_install(monkeypatch):
     _prepare_modules(missing=("quick_fix_engine",))
     init_mod = _load_module(
         "menace.self_improvement.init", Path("self_improvement/init.py")
     )
 
-    calls = {"import": 0, "pip": 0}
+    def fail_pip(*args, **kwargs):
+        raise AssertionError("pip install attempted")
 
-    def fake_import(name):
+    monkeypatch.setattr(subprocess, "check_call", fail_pip)
+
+    calls = {"import": 0}
+
+    def fake_import(name, package=None):
         if name == "quick_fix_engine":
             calls["import"] += 1
-            if calls["import"] == 1:
-                raise ImportError("missing")
+            raise ModuleNotFoundError(name)
         return sys.modules.setdefault(name, types.ModuleType(name))
 
     monkeypatch.setattr(importlib, "import_module", fake_import)
 
-    def fake_check_call(cmd, **kwargs):
-        calls["pip"] += 1
-        return 0
-
-    monkeypatch.setattr(subprocess, "check_call", fake_check_call)
-
-    init_mod.verify_dependencies()
-
-    assert calls["import"] == 2
-    assert calls["pip"] == 1
-
-
-def test_verify_dependencies_autoinstall_failure(monkeypatch, caplog):
-    _prepare_modules(missing=("quick_fix_engine",))
-    init_mod = _load_module(
-        "menace.self_improvement.init", Path("self_improvement/init.py")
-    )
-
-    def always_fail(name):
-        if name == "quick_fix_engine":
-            raise ImportError("boom")
-        return sys.modules.setdefault(name, types.ModuleType(name))
-
-    monkeypatch.setattr(importlib, "import_module", always_fail)
-
-    called = {}
-
-    def fake_check_call(cmd, **kwargs):
-        called["cmd"] = cmd
-        return 0
-
-    monkeypatch.setattr(subprocess, "check_call", fake_check_call)
-
-    caplog.set_level("DEBUG")
     with pytest.raises(RuntimeError) as err:
         init_mod.verify_dependencies()
 
     assert "quick_fix_engine" in str(err.value)
-    assert "boom" in str(err.value)
-    assert called["cmd"][-1] == "quick_fix_engine"
-    record = next(
-        r
-        for r in caplog.records
-        if r.message == "auto-install for quick_fix_engine failed"
-    )
-    assert record.error == "boom"
+    assert calls["import"] == 1
+
