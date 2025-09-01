@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List
@@ -15,7 +15,7 @@ router = GLOBAL_ROUTER or init_db_router("sandbox_runner_input_history_db")
 @dataclass
 class InputRecord:
     data: dict[str, Any]
-    ts: str = datetime.utcnow().isoformat()
+    ts: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 class InputHistoryDB:
