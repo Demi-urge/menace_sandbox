@@ -10,7 +10,7 @@ single :py:meth:`generate` method returning an :class:`LLMResult`.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Protocol
+from typing import Any, Callable, Dict, List, Protocol
 import os
 import time
 import json
@@ -253,11 +253,26 @@ class LLMClient:
 
     # ------------------------------------------------------------------
     def generate(
-        self, prompt: Prompt, *, return_raw: bool = False
+        self,
+        prompt: Prompt,
+        *,
+        return_raw: bool = False,
+        parse_fn: Callable[[str], Any] | None = None,
     ) -> Completion | tuple[Completion, Dict[str, object]]:
-        """Generate a response for *prompt* and persist the interaction."""
+        """Generate a response for *prompt* and persist the interaction.
+
+        If *parse_fn* is supplied it will be called with the raw completion
+        text and the return value stored on :attr:`Completion.parsed`.  Any
+        exception raised by *parse_fn* is ignored and ``parsed`` falls back to
+        ``None``.
+        """
 
         result = self._generate(prompt)
+        if parse_fn is not None:
+            try:
+                result.parsed = parse_fn(result.text)
+            except Exception:  # pragma: no cover - defensive
+                result.parsed = None
         if self._log_prompts and self.db:
             try:
                 self.db.log(prompt, result)

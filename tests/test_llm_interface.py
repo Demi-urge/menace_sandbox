@@ -4,6 +4,7 @@ from llm_interface import Prompt, LLMResult, LLMClient
 import random
 from llm_router import LLMRouter
 from prompt_db import PromptDB
+from completion_parsers import parse_json
 
 
 def test_promptdb_logs_to_memory(tmp_path):
@@ -198,3 +199,32 @@ def test_client_small_task_uses_local():
     client = LLMClient(backends=[RemoteBackend(), LocalBackend()], log_prompts=False)
     res = client.generate(Prompt(text="task", metadata={"small_task": True}))
     assert res.text == "ok"
+
+
+def test_generate_applies_parse_fn():
+    class Dummy(LLMClient):
+        def __init__(self):
+            super().__init__("dummy", log_prompts=False)
+
+        def _generate(self, prompt: Prompt) -> LLMResult:
+            return LLMResult(text="{\"a\":1}")
+
+    client = Dummy()
+    res = client.generate(Prompt(text="hi"), parse_fn=parse_json)
+    assert res.parsed == {"a": 1}
+
+
+def test_generate_parse_fn_error_ignored():
+    class Dummy(LLMClient):
+        def __init__(self):
+            super().__init__("dummy", log_prompts=False)
+
+        def _generate(self, prompt: Prompt) -> LLMResult:
+            return LLMResult(text="oops")
+
+    def bad(_text: str):  # pragma: no cover - intentional failure
+        raise ValueError("fail")
+
+    client = Dummy()
+    res = client.generate(Prompt(text="hi"), parse_fn=bad)
+    assert res.parsed is None
