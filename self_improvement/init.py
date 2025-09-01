@@ -42,21 +42,30 @@ settings = SandboxSettings()
 def verify_dependencies() -> None:
     """Ensure optional helper packages for self-improvement are installed."""
 
-    try:
-        import quick_fix_engine  # type: ignore # noqa: F401
-    except Exception as exc:  # pragma: no cover - import guidance
-        raise RuntimeError(
-            "quick_fix_engine is required for self-improvement. "
-            "Install it with 'pip install quick_fix_engine'."
-        ) from exc
+    import importlib
 
-    try:
-        import sandbox_runner.orphan_integration  # type: ignore # noqa: F401
-    except Exception as exc:  # pragma: no cover - import guidance
-        raise RuntimeError(
-            "sandbox_runner.orphan_integration is required for self-improvement. "
+    checks = {
+        "quick_fix_engine": "Install it with 'pip install quick_fix_engine'.",
+        "sandbox_runner.orphan_integration": (
             "Install the sandbox_runner package or ensure it is on PYTHONPATH."
-        ) from exc
+        ),
+        "relevancy_radar": "Install it with 'pip install relevancy_radar'.",
+        "error_logger": "Ensure the error_logger module is available.",
+        "telemetry_feedback": "Ensure telemetry helpers are available.",
+        "telemetry_backend": "Ensure telemetry helpers are available.",
+    }
+
+    missing: list[str] = []
+    for module, guidance in checks.items():
+        try:  # pragma: no cover - import guidance
+            importlib.import_module(module)
+        except Exception:
+            missing.append(f"{module} – {guidance}")
+
+    if missing:
+        raise RuntimeError(
+            "Missing dependencies for self-improvement: " + "; ".join(missing)
+        )
 
 
 def _lock_for(path: Path) -> FileLock:
