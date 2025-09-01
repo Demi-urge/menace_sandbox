@@ -16,6 +16,7 @@ import pickle
 from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, Dict
+from types import SimpleNamespace
 
 from sandbox_settings import SandboxSettings
 
@@ -139,7 +140,11 @@ class TorchReplayStrategy:
 
 
 class SynergyWeightLearner:
-    """Learner adjusting synergy weights using a simple RL policy."""
+    """Learner adjusting synergy weights using a simple RL policy.
+
+    All tunable parameters are loaded from :class:`SandboxSettings` allowing
+    configuration via environment variables.
+    """
 
     def __init__(
         self,
@@ -152,10 +157,27 @@ class SynergyWeightLearner:
         hyperparams: Mapping[str, Any] | None = None,
     ) -> None:
         settings = settings or SandboxSettings()
+        sy = getattr(settings, "synergy", None)
+        if sy is None:
+            sy = SimpleNamespace(
+                weights_lr=getattr(settings, "synergy_weights_lr", 0.1),
+                train_interval=getattr(settings, "synergy_train_interval", 10),
+                replay_size=getattr(settings, "synergy_replay_size", 100),
+                checkpoint_interval=getattr(
+                    settings, "synergy_checkpoint_interval", 50
+                ),
+                python_fallback=getattr(settings, "synergy_python_fallback", True),
+                python_max_replay=getattr(settings, "synergy_python_max_replay", 1000),
+                hidden_size=getattr(settings, "synergy_hidden_size", 32),
+                layers=getattr(settings, "synergy_layers", 1),
+                optimizer=getattr(settings, "synergy_optimizer", "adam"),
+            )
         if lr is None:
-            lr = float(getattr(settings, "synergy_weights_lr", 0.1))
-        self.train_interval = int(getattr(settings, "synergy_train_interval", 10))
-        self.replay_size = int(getattr(settings, "synergy_replay_size", 100))
+            lr = float(sy.weights_lr)
+        if lr <= 0:
+            raise ValueError("learning rate must be positive")
+        self.train_interval = int(sy.train_interval)
+        self.replay_size = int(sy.replay_size)
         self.path = Path(path) if path else Path(settings.synergy_weight_file)
         self.lr = lr
         self.weights = get_default_synergy_weights()
@@ -164,14 +186,13 @@ class SynergyWeightLearner:
         self.strategy = strat_factory(**hp)
         self._state: tuple[float, ...] = (0.0,) * 7
         self._steps = 0
+        self.target_sync = int(hp.get("target_sync", 10))
         self.eval_loss = 0.0
-        self.checkpoint_interval = int(
-            getattr(settings, "synergy_checkpoint_interval", 50)
-        )
+        self.checkpoint_interval = int(sy.checkpoint_interval)
         self._save_count = 0
         self.checkpoint_path = self.path.with_suffix(self.path.suffix + ".bak")
-        allow_py = bool(getattr(settings, "synergy_python_fallback", True))
-        max_replay = int(getattr(settings, "synergy_python_max_replay", 1000))
+        allow_py = bool(sy.python_fallback)
+        max_replay = int(sy.python_max_replay)
         if sip_torch is None:
             if not allow_py or self.replay_size > max_replay:
                 raise RuntimeError(
@@ -184,9 +205,9 @@ class SynergyWeightLearner:
             )
             self.buffer: deque[tuple[Any, float]] = deque(maxlen=self.replay_size)
         else:
-            hidden = int(getattr(settings, "synergy_hidden_size", 32))
-            layers = int(getattr(settings, "synergy_layers", 1))
-            opt_name = str(getattr(settings, "synergy_optimizer", "adam")).lower()
+            hidden = int(sy.hidden_size)
+            layers = int(sy.layers)
+            opt_name = str(sy.optimizer).lower()
             opt_cls_default = {
                 "sgd": sip_torch.optim.SGD,
                 "adam": sip_torch.optim.Adam,
@@ -251,11 +272,17 @@ class SynergyWeightLearner:
             self.weights.update({k: float(v) for k, v in data.items() if k in self.weights})
 
     def save(self) -> None:
-        super().save()
         if not self.path:
             return
+        try:
+            _atomic_write(self.path, json.dumps(self.weights))
+            self._save_count += 1
+            if self._save_count % self.checkpoint_interval == 0:
+                _atomic_write(self.checkpoint_path, json.dumps(self.weights))
+        except Exception as exc:  # pragma: no cover - disk errors
+            logger.warning("failed to save synergy weights %s: %s", self.path, exc)
         base = os.path.splitext(self.path)[0]
-        if self.path and sip_torch is not None:
+        if sip_torch is not None:
             try:
                 if hasattr(self.strategy, "model") and self.strategy.model is not None:
                     buf = io.BytesIO()
@@ -267,16 +294,14 @@ class SynergyWeightLearner:
                 ):
                     buf = io.BytesIO()
                     sip_torch.save(self.strategy.target_model.state_dict(), buf)
-                    _atomic_write(
-                        Path(base + ".target.pt"), buf.getvalue(), binary=True
-                    )
-            except Exception as exc:
+                    _atomic_write(Path(base + ".target.pt"), buf.getvalue(), binary=True)
+            except Exception as exc:  # pragma: no cover - disk errors
                 logger.exception("failed to save DQN models: %s", exc)
-        try:
-            pkl = Path(base + ".policy.pkl")
-            _atomic_write(pkl, pickle.dumps(self.strategy), binary=True)
-        except Exception as exc:
-            logger.exception("failed to save strategy pickle: %s", exc)
+            try:
+                pkl = Path(base + ".policy.pkl")
+                _atomic_write(pkl, pickle.dumps(self.strategy), binary=True)
+            except Exception as exc:  # pragma: no cover - disk errors
+                logger.exception("failed to save strategy pickle: %s", exc)
 
     def update(
         self,
@@ -343,16 +368,30 @@ class SynergyWeightLearner:
 
 
 class DQNSynergyLearner(SynergyWeightLearner):
-    """Synergy learner using a configurable DQN style strategy."""
+    """Synergy learner using a configurable DQN style strategy.
+
+    ``synergy_strategy`` selects the DQN variant while ``synergy_target_sync``
+    controls how often the target network is synchronised.
+    """
 
     def __init__(
         self,
         path: Path | None = None,
-        lr: float = 1e-3,
+        lr: float | None = None,
         *,
-        strategy: str = "dqn",
-        target_sync: int = 10,
+        strategy: str | None = None,
+        target_sync: int | None = None,
+        settings: SandboxSettings | None = None,
     ) -> None:
+        settings = settings or SandboxSettings()
+        sy = getattr(settings, "synergy", None)
+        if sy is None:
+            sy = SimpleNamespace(
+                strategy=getattr(settings, "synergy_strategy", "dqn"),
+                target_sync=getattr(settings, "synergy_target_sync", 10),
+            )
+        strategy = strategy or sy.strategy
+        target_sync = int(target_sync or sy.target_sync)
         strat_map = {
             "dqn": DQNStrategy,
             "double_dqn": DoubleDQNStrategy,
@@ -363,6 +402,7 @@ class DQNSynergyLearner(SynergyWeightLearner):
         super().__init__(
             path=path,
             lr=lr,
+            settings=settings,
             strategy_factory=strategy_factory,
             hyperparams={"target_sync": target_sync},
         )
@@ -372,27 +412,60 @@ class DoubleDQNSynergyLearner(DQNSynergyLearner):
     """Synergy learner using a Double DQN strategy."""
 
     def __init__(
-        self, path: Path | None = None, lr: float = 1e-3, *, target_sync: int = 10
+        self,
+        path: Path | None = None,
+        lr: float | None = None,
+        *,
+        target_sync: int | None = None,
+        settings: SandboxSettings | None = None,
     ) -> None:
-        super().__init__(path, lr, strategy="double_dqn", target_sync=target_sync)
+        super().__init__(
+            path,
+            lr,
+            strategy="double_dqn",
+            target_sync=target_sync,
+            settings=settings,
+        )
 
 
 class SACSynergyLearner(DQNSynergyLearner):
     """Synergy learner using a simplified SAC strategy."""
 
     def __init__(
-        self, path: Path | None = None, lr: float = 1e-3, *, target_sync: int = 10
+        self,
+        path: Path | None = None,
+        lr: float | None = None,
+        *,
+        target_sync: int | None = None,
+        settings: SandboxSettings | None = None,
     ) -> None:
-        super().__init__(path, lr, strategy="sac", target_sync=target_sync)
+        super().__init__(
+            path,
+            lr,
+            strategy="sac",
+            target_sync=target_sync,
+            settings=settings,
+        )
 
 
 class TD3SynergyLearner(DQNSynergyLearner):
     """Synergy learner using a simplified TD3 strategy."""
 
     def __init__(
-        self, path: Path | None = None, lr: float = 1e-3, *, target_sync: int = 10
+        self,
+        path: Path | None = None,
+        lr: float | None = None,
+        *,
+        target_sync: int | None = None,
+        settings: SandboxSettings | None = None,
     ) -> None:
-        super().__init__(path, lr, strategy="td3", target_sync=target_sync)
+        super().__init__(
+            path,
+            lr,
+            strategy="td3",
+            target_sync=target_sync,
+            settings=settings,
+        )
 
 
 __all__ = [

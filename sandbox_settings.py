@@ -102,6 +102,10 @@ class SynergySettings(BaseModel):
     layers: int = 1
     optimizer: str = "adam"
     checkpoint_interval: int = 50
+    strategy: str = "dqn"
+    target_sync: int = 10
+    python_fallback: bool = True
+    python_max_replay: int = 1000
 
     @field_validator(
         "threshold",
@@ -124,6 +128,8 @@ class SynergySettings(BaseModel):
         "hidden_size",
         "layers",
         "checkpoint_interval",
+        "target_sync",
+        "python_max_replay",
     )
     def _synergy_positive_int(cls, v: int | None, info: Any) -> int | None:
         if v is not None and v <= 0:
@@ -143,6 +149,13 @@ class SynergySettings(BaseModel):
     def _synergy_non_negative(cls, v: float, info: Any) -> float:
         if v < 0:
             raise ValueError(f"{info.field_name} must be non-negative")
+        return v
+
+    @field_validator("strategy")
+    def _synergy_strategy(cls, v: str) -> str:
+        allowed = {"dqn", "double_dqn", "sac", "td3"}
+        if v not in allowed:
+            raise ValueError(f"strategy must be one of {sorted(allowed)}")
         return v
 
 
@@ -1313,13 +1326,61 @@ class SandboxSettings(BaseSettings):
     roi_ema_alpha: float = Field(0.1, env="ROI_EMA_ALPHA")
     roi_compounding_weight: float = Field(1.0, env="ROI_COMPOUNDING_WEIGHT")
     sandbox_score_db: str = Field("score_history.db", env="SANDBOX_SCORE_DB")
-    synergy_weights_lr: float = Field(0.1, env="SYNERGY_WEIGHTS_LR")
-    synergy_train_interval: int = Field(10, env="SYNERGY_TRAIN_INTERVAL")
-    synergy_replay_size: int = Field(100, env="SYNERGY_REPLAY_SIZE")
-    synergy_hidden_size: int = Field(32, env="SYNERGY_HIDDEN_SIZE")
-    synergy_layers: int = Field(1, env="SYNERGY_LAYERS")
-    synergy_optimizer: str = Field("adam", env="SYNERGY_OPTIMIZER")
-    synergy_checkpoint_interval: int = Field(50, env="SYNERGY_CHECKPOINT_INTERVAL")
+    synergy_weights_lr: float = Field(
+        0.1,
+        env="SYNERGY_WEIGHTS_LR",
+        description="Learning rate for synergy weight learner.",
+    )
+    synergy_train_interval: int = Field(
+        10,
+        env="SYNERGY_TRAIN_INTERVAL",
+        description="Steps between learner optimisation updates.",
+    )
+    synergy_replay_size: int = Field(
+        100,
+        env="SYNERGY_REPLAY_SIZE",
+        description="Length of replay buffer for RL strategies.",
+    )
+    synergy_hidden_size: int = Field(
+        32,
+        env="SYNERGY_HIDDEN_SIZE",
+        description="Hidden units per layer for torch models.",
+    )
+    synergy_layers: int = Field(
+        1,
+        env="SYNERGY_LAYERS",
+        description="Number of hidden layers for torch models.",
+    )
+    synergy_optimizer: str = Field(
+        "adam",
+        env="SYNERGY_OPTIMIZER",
+        description="Optimizer to use for torch strategies.",
+    )
+    synergy_checkpoint_interval: int = Field(
+        50,
+        env="SYNERGY_CHECKPOINT_INTERVAL",
+        description="Updates between on-disk checkpoints.",
+    )
+    synergy_strategy: str = Field(
+        "dqn",
+        env="SYNERGY_STRATEGY",
+        description="DQN variant for DQNSynergyLearner.",
+    )
+    synergy_target_sync: int = Field(
+        10,
+        env="SYNERGY_TARGET_SYNC",
+        description="Steps between target network synchronisation.",
+    )
+    synergy_python_fallback: bool = Field(
+        True,
+        env="SYNERGY_PYTHON_FALLBACK",
+        description="Allow slow pure-Python learner when torch missing.",
+    )
+    synergy_python_max_replay: int = Field(
+        1000,
+        env="SYNERGY_PYTHON_MAX_REPLAY",
+        description="Replay size limit for Python fallback before requiring torch.",
+    )
     adaptive_roi_retrain_interval: int = Field(
         20,
         env="ADAPTIVE_ROI_RETRAIN_INTERVAL",
@@ -1658,6 +1719,10 @@ class SandboxSettings(BaseSettings):
             layers=self.synergy_layers,
             optimizer=self.synergy_optimizer,
             checkpoint_interval=self.synergy_checkpoint_interval,
+            strategy=self.synergy_strategy,
+            target_sync=self.synergy_target_sync,
+            python_fallback=self.synergy_python_fallback,
+            python_max_replay=self.synergy_python_max_replay,
         )
         self.alignment = AlignmentSettings(
             rules=self.alignment_rules,
