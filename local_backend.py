@@ -185,6 +185,11 @@ class OllamaBackend(_RESTBackend):
         self.backend_name = "ollama"
         super().__init__(model=model, base_url=base_url, endpoint="api/generate")
 
+    async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+        """Stream a completion from the Ollama server."""
+        async for chunk in super().async_generate(prompt):
+            yield chunk
+
 
 class VLLMBackend(_RESTBackend):
     """Backend for a vLLM REST server."""
@@ -194,6 +199,11 @@ class VLLMBackend(_RESTBackend):
         base_url = base_url or os.getenv("VLLM_BASE_URL", "http://localhost:8000")
         self.backend_name = "vllm"
         super().__init__(model=model, base_url=base_url, endpoint="generate")
+
+    async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+        """Stream a completion from the vLLM server."""
+        async for chunk in super().async_generate(prompt):
+            yield chunk
 
 
 def mixtral_client(model: str | None = None, base_url: str | None = None) -> LLMClient:
