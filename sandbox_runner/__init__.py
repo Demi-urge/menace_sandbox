@@ -1,6 +1,7 @@
 """Support modules for sandbox_runner wrapper."""
 import importlib
 
+from logging_utils import get_logger
 from sandbox_settings import SandboxSettings
 
 settings = SandboxSettings()
@@ -30,7 +31,13 @@ if not _LIGHT_IMPORTS:
         _preset_resource_strain,
         _preset_chaotic_failure,
     )
-    from .meta_logger import _SandboxMetaLogger
+    try:  # telemetry optional
+        from .meta_logger import _SandboxMetaLogger
+    except ImportError as exc:  # pragma: no cover - meta logger missing
+        _SandboxMetaLogger = None  # type: ignore
+        get_logger(__name__).warning(
+            "sandbox meta logging unavailable: %s", exc
+        )
 else:  # defer heavy imports until needed
     _env_mod = None
 
@@ -89,7 +96,13 @@ else:  # defer heavy imports until needed
             "_SandboxMetaLogger",
         }:
             if name == "_SandboxMetaLogger":
-                from .meta_logger import _SandboxMetaLogger as ml
+                try:
+                    from .meta_logger import _SandboxMetaLogger as ml
+                except ImportError as exc:  # pragma: no cover - meta logger missing
+                    get_logger(__name__).warning(
+                        "sandbox meta logging unavailable: %s", exc
+                    )
+                    raise
                 globals()["_SandboxMetaLogger"] = ml
                 return ml
             _load_env()

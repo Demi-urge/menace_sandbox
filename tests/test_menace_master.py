@@ -4,6 +4,8 @@ import types
 import os
 import logging
 from pathlib import Path
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 import sandbox_runner
 
 
@@ -47,6 +49,9 @@ class DummyConfig:
 
 def _setup_mm_stubs(monkeypatch):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    stub_cycle = types.ModuleType("sandbox_runner.cycle")
+    stub_cycle._async_track_usage = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "sandbox_runner.cycle", stub_cycle)
 
     pkg = types.ModuleType("menace")
     pkg.__path__ = []

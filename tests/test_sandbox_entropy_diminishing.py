@@ -1,6 +1,12 @@
 import os
+import sys
+import types
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
+stub_cycle = types.ModuleType("sandbox_runner.cycle")
+stub_cycle._async_track_usage = lambda *a, **k: None
+sys.modules["sandbox_runner.cycle"] = stub_cycle
 
 from sandbox_runner.meta_logger import _SandboxMetaLogger
 
