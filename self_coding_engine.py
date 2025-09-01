@@ -274,11 +274,6 @@ class SelfCodingEngine:
         self.patch_logger = patch_logger
         self.roi_tracker = tracker
         self.knowledge_service = knowledge_service
-        # expose ROI tracker to the prompt engine so retrieved examples can
-        # carry risk-adjusted ROI hints when available
-        self.prompt_engine = PromptEngine(
-            roi_tracker=tracker, tone=prompt_tone, trainer=self.prompt_memory
-        )
         if prompt_optimizer is None:
             try:
                 prompt_optimizer = PromptOptimizer(
@@ -288,6 +283,14 @@ class SelfCodingEngine:
             except Exception:
                 prompt_optimizer = None
         self.prompt_optimizer = prompt_optimizer
+        # expose ROI tracker to the prompt engine so retrieved examples can
+        # carry risk-adjusted ROI hints when available
+        self.prompt_engine = PromptEngine(
+            roi_tracker=tracker,
+            tone=prompt_tone,
+            trainer=self.prompt_memory,
+            optimizer=self.prompt_optimizer,
+        )
         if prompt_evolution_logger is None:
             try:
                 prompt_evolution_logger = PromptEvolutionLogger(
@@ -433,6 +436,12 @@ class SelfCodingEngine:
             )
         except Exception:
             self.logger.exception("prompt evolution logging failed")
+        else:
+            if self.prompt_optimizer:
+                try:
+                    self.prompt_optimizer.refresh()
+                except Exception:
+                    self.logger.exception("prompt optimizer refresh failed")
 
     def _track_contributors(
         self,
@@ -573,6 +582,7 @@ class SelfCodingEngine:
             return
         tone = suggestion.get('tone')
         if isinstance(tone, str):
+            self.prompt_tone = tone
             self.prompt_engine.tone = tone
         headers = suggestion.get('headers')
         if isinstance(headers, list) and headers:
@@ -580,6 +590,12 @@ class SelfCodingEngine:
         example_order = suggestion.get('example_order')
         if isinstance(example_order, list) and example_order:
             self.prompt_engine.trained_example_order = [str(e) for e in example_order]
+        struct = suggestion.get('structured_sections')
+        if isinstance(struct, list) and struct:
+            self.prompt_engine.trained_structured_sections = [str(s) for s in struct]
+        placement = suggestion.get('example_placement')
+        if isinstance(placement, str):
+            self.prompt_engine.trained_example_placement = placement
 
     def build_visual_agent_prompt(
         self,
