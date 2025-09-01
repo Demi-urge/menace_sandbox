@@ -46,6 +46,10 @@ class _RESTBackend(LLMBackend):
 
     def generate(self, prompt: Prompt) -> Completion:
         payload = {"model": self.model, "prompt": prompt.text}
+        if getattr(prompt, "tags", None):
+            payload["tags"] = list(prompt.tags)
+        if getattr(prompt, "vector_confidence", None) is not None:
+            payload["vector_confidence"] = prompt.vector_confidence
 
         cfg = llm_config.get_config()
         retries = cfg.max_retries
@@ -68,6 +72,10 @@ class _RESTBackend(LLMBackend):
                     self.__class__.__name__.replace("Backend", "").lower(),
                 )
                 raw.setdefault("model", self.model)
+                if getattr(prompt, "tags", None):
+                    raw.setdefault("tags", list(prompt.tags))
+                if getattr(prompt, "vector_confidence", None) is not None:
+                    raw.setdefault("vector_confidence", prompt.vector_confidence)
                 text = (
                     raw.get("text")
                     or raw.get("response", "")
@@ -103,6 +111,10 @@ class _RESTBackend(LLMBackend):
             raise RuntimeError("httpx is required for async streaming")
 
         payload = {"model": self.model, "prompt": prompt.text, "stream": True}
+        if getattr(prompt, "tags", None):
+            payload["tags"] = list(prompt.tags)
+        if getattr(prompt, "vector_confidence", None) is not None:
+            payload["vector_confidence"] = prompt.vector_confidence
         url = f"{self.base_url.rstrip('/')}/{self.endpoint.lstrip('/')}"
 
         cfg = llm_config.get_config()

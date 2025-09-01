@@ -1,4 +1,4 @@
-from llm_interface import Prompt, LLMResult, LLMClient
+from typing import Any
 from llm_interface import Prompt, LLMResult, LLMClient
 from llm_router import LLMRouter, client_from_settings
 from sandbox_settings import SandboxSettings
@@ -94,6 +94,33 @@ def test_router_logs_backend_choice(monkeypatch):
     res = router.generate(Prompt(text="hi"))
     assert logged == ["local"]
     assert res.raw["backend"] == "local"
+
+
+def test_router_logs_prompt_metadata(monkeypatch):
+    logged: dict[str, Any] = {}
+
+    class DummyDB:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def log(self, prompt, result, backend=None):
+            logged["prompt"] = prompt
+            logged["raw"] = result.raw
+            logged["backend"] = backend
+
+    import llm_router as lr
+
+    monkeypatch.setattr(lr, "PromptDB", DummyDB)
+    router = LLMRouter(remote=StubClient("remote"), local=StubClient("local"), size_threshold=5)
+    prompt = Prompt(text="hi", examples=["ex"], outcome_tags=["tag"], vector_confidence=0.8)
+    router.generate(prompt)
+
+    assert logged["backend"] == "local"
+    assert logged["prompt"].examples == ["ex"]
+    assert logged["prompt"].vector_confidence == 0.8
+    assert logged["prompt"].outcome_tags == ["tag"]
+    assert logged["raw"]["tags"] == ["tag"]
+    assert logged["raw"]["vector_confidence"] == 0.8
 
 
 def custom_factory() -> StubClient:
