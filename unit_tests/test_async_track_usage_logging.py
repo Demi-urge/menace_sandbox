@@ -18,10 +18,10 @@ class DummyQueue:
     def __init__(self):
         self.items = []
 
-    def put(self, item):
+    def put(self, item, *args, **kwargs):
         self.items.append(item)
 
-    def get(self):
+    def get(self, *args, **kwargs):
         return self.items.pop(0)
 
     def task_done(self):
@@ -45,6 +45,8 @@ def _load_async_track_usage():
         "record_output_impact": lambda *a, **k: None,
         "logger": DummyLogger(),
         "_usage_queue": DummyQueue(),
+        "_usage_stop_event": types.SimpleNamespace(is_set=lambda: False),
+        "dispatch_alert": lambda *a, **k: None,
         "time": types.SimpleNamespace(sleep=lambda *a, **k: None),
         "log_record": lambda **kw: kw,
     }
