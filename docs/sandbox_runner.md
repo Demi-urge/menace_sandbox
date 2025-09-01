@@ -121,7 +121,7 @@ consume this projection to prioritise follow‑up cycles:
 ```python
 from unified_event_bus import UnifiedEventBus
 from workflow_graph import WorkflowGraph
-from self_improvement import SelfImprovementEngine
+from self_improvement.api import SelfImprovementEngine
 
 bus = UnifiedEventBus()
 graph = WorkflowGraph()
