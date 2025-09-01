@@ -17,6 +17,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from filelock import FileLock
 
 from sandbox_settings import SandboxSettings, load_sandbox_settings
@@ -195,29 +197,72 @@ def _atomic_write(
 
 
 def get_default_synergy_weights() -> dict[str, float]:
-    """Return default synergy weights from :class:`SandboxSettings`.
+    """Return baseline synergy weights.
 
-    A fresh :class:`SandboxSettings` instance is created on each call so that
-    changes to configuration or environment variables are reflected in the
-    returned defaults.
+    The function first tries to read a ``synergy_weights`` mapping from the
+    metrics snapshot referenced by ``alignment_baseline_metrics_path``.  If no
+    such data is found it falls back to values defined in a
+    ``SandboxSettings`` configuration file.  Hard-coded unit weights are used
+    only when neither source provides a mapping.
     """
 
     cfg = SandboxSettings()
-    return dict(
-        getattr(
-            cfg,
-            "default_synergy_weights",
-            {
-                "roi": 1.0,
-                "efficiency": 1.0,
-                "resilience": 1.0,
-                "antifragility": 1.0,
-                "reliability": 1.0,
-                "maintainability": 1.0,
-                "throughput": 1.0,
-            },
+    weights: dict[str, float] | None = None
+
+    metrics_path = Path(getattr(cfg, "alignment_baseline_metrics_path", ""))
+    if metrics_path.is_file():
+        try:
+            with open(metrics_path, "r", encoding="utf-8") as fh:
+                if metrics_path.suffix in {".yml", ".yaml"}:
+                    data = yaml.safe_load(fh) or {}
+                else:
+                    data = json.load(fh)
+            candidate = data.get("synergy_weights")
+            if isinstance(candidate, dict):
+                weights = {k: float(v) for k, v in candidate.items()}
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.debug(
+                "failed to load synergy weights from metrics snapshot %s",
+                metrics_path,
+                extra=log_record(path=str(metrics_path), error=str(exc)),
+                exc_info=exc,
+            )
+
+    if weights is None:
+        settings_path = os.getenv("SANDBOX_SETTINGS_PATH") or os.getenv(
+            "SANDBOX_SETTINGS_YAML"
         )
-    )
+        if settings_path and Path(settings_path).is_file():
+            try:
+                cfg_file = load_sandbox_settings(settings_path)
+                candidate = getattr(cfg_file, "default_synergy_weights", None)
+                if isinstance(candidate, dict):
+                    weights = {k: float(v) for k, v in candidate.items()}
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.debug(
+                    "failed to load synergy weights from sandbox settings %s",
+                    settings_path,
+                    extra=log_record(path=settings_path, error=str(exc)),
+                    exc_info=exc,
+                )
+
+    if weights is None:
+        candidate = getattr(cfg, "default_synergy_weights", None)
+        if isinstance(candidate, dict):
+            weights = {k: float(v) for k, v in candidate.items()}
+
+    if weights is None:
+        weights = {
+            "roi": 1.0,
+            "efficiency": 1.0,
+            "resilience": 1.0,
+            "antifragility": 1.0,
+            "reliability": 1.0,
+            "maintainability": 1.0,
+            "throughput": 1.0,
+        }
+
+    return dict(weights)
 
 
 def _repo_path() -> Path:
