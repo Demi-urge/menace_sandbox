@@ -1,3 +1,8 @@
+"""Dependency verification tests for the self-improvement module.
+
+The module no longer performs automatic installations; dependencies must be
+installed ahead of time using ``make install-self-improvement-deps``.
+"""
 import importlib
 import importlib.util
 import subprocess
@@ -76,26 +81,23 @@ def test_verify_dependencies_does_not_attempt_install(monkeypatch):
     assert calls["import"] == 1
 
 
-def test_verify_dependencies_attempts_install_when_enabled(monkeypatch):
+def test_verify_dependencies_does_not_install_even_when_enabled(monkeypatch):
     _prepare_modules(missing=("quick_fix_engine",))
     init_mod = _load_module(
         "menace.self_improvement.init", Path("self_improvement/init.py")
     )
 
-    calls = {"pip": 0}
+    def fail_pip(*args, **kwargs):
+        raise AssertionError("pip install attempted")
 
-    def fake_pip(*args, **kwargs):
-        calls["pip"] += 1
-        raise subprocess.CalledProcessError(1, "pip")
-
-    monkeypatch.setattr(subprocess, "check_call", fake_pip)
+    monkeypatch.setattr(subprocess, "check_call", fail_pip)
     init_mod.settings.auto_install_dependencies = True
     init_mod.settings.menace_offline_install = False
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as err:
         init_mod.verify_dependencies()
 
-    assert calls["pip"] == 1
+    assert "quick_fix_engine" in str(err.value)
 
 
 def test_verify_dependencies_reports_version_mismatch(monkeypatch):
@@ -115,4 +117,3 @@ def test_verify_dependencies_reports_version_mismatch(monkeypatch):
         init_mod.verify_dependencies()
 
     assert "torch" in str(err.value)
-

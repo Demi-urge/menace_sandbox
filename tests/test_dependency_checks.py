@@ -1,3 +1,9 @@
+"""Dependency verification tests for self-improvement helpers.
+
+These tests assume required packages are installed separately using
+``make install-self-improvement-deps``.  The runtime does not perform
+automatic installation.
+"""
 import importlib
 import importlib.util
 import sys
@@ -75,7 +81,6 @@ def test_missing_dependency(monkeypatch):
 
     monkeypatch.setattr(importlib, "import_module", fake_import)
     init_module = _load_init()
-    monkeypatch.setattr(init_module.settings, "auto_install_dependencies", False)
 
     with pytest.raises(RuntimeError) as exc:
         init_module.verify_dependencies()
@@ -98,7 +103,6 @@ def test_version_mismatch(monkeypatch):
 
     monkeypatch.setattr(metadata, "version", fake_version)
     init_module = _load_init()
-    monkeypatch.setattr(init_module.settings, "auto_install_dependencies", False)
 
     with pytest.raises(RuntimeError) as exc:
         init_module.verify_dependencies()
@@ -107,4 +111,3 @@ def test_version_mismatch(monkeypatch):
     assert "pip install quick_fix_engine --upgrade" in msg
     assert "sandbox_runner (installed 0.9" in msg
     assert "pip install sandbox_runner --upgrade" in msg
-

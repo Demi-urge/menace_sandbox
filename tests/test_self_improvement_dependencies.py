@@ -1,3 +1,8 @@
+"""Integration tests for self-improvement dependency checks.
+
+Dependencies are expected to be installed separately via
+``make install-self-improvement-deps``; the verifier only reports problems.
+"""
 import importlib
 import importlib.util
 import types

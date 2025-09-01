@@ -20,8 +20,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -53,10 +51,9 @@ settings = SandboxSettings()
 def verify_dependencies() -> None:
     """Validate required helper modules and their versions.
 
-    When ``settings.auto_install_dependencies`` is ``True`` missing or
-    mismatched dependencies trigger a ``pip install`` attempt.  Offline mode is
-    respected via ``settings.menace_offline_install`` and results in actionable
-    error messages instead of install attempts.
+    Missing or mismatched packages raise a :class:`RuntimeError` listing the
+    required installation commands.  The function does not attempt to install
+    dependencies automatically, keeping initialisation non-interactive.
     """
 
     import importlib
@@ -146,38 +143,13 @@ def verify_dependencies() -> None:
     if missing or mismatched:
         lines: list[str] = []
         if missing:
-            lines.append("Missing dependencies for self-improvement:\n  - " + "\n  - ".join(missing))
+            lines.append(
+                "Missing dependencies for self-improvement:\n  - "
+                + "\n  - ".join(missing)
+            )
         if mismatched:
             lines.append("Version mismatches:\n  - " + "\n  - ".join(mismatched))
         message = "\n".join(lines)
-
-        if missing and settings.auto_install_dependencies:
-            if settings.menace_offline_install:
-                message += "\nOffline mode is enabled; install the dependencies manually."
-                raise RuntimeError(message)
-            for pkg in missing:
-                name = pkg.split(" – ", 1)[0]
-                requirement = checks[name].get("version") or ""
-                req = f"{name}{requirement}" if requirement else name
-                try:
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", req])
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.warning(
-                        "auto install failed for %s: %s",
-                        name,
-                        exc,
-                        extra=log_record(dependency=name, error=str(exc)),
-                    )
-                    raise RuntimeError(message) from exc
-            # Re-run to verify after installation
-            original = settings.auto_install_dependencies
-            settings.auto_install_dependencies = False
-            try:
-                verify_dependencies()
-            finally:
-                settings.auto_install_dependencies = original
-            return
-
         raise RuntimeError(message)
 
 
