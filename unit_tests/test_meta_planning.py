@@ -1,5 +1,8 @@
 import ast
 import asyncio
+import logging
+import sys
+import time
 import types
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -149,3 +152,104 @@ def test_cycle_fails_when_enabled_but_missing():
 
     with pytest.raises(RuntimeError):
         asyncio.run(meta["self_improvement_cycle"]({}))
+
+
+def test_cycle_thread_logs_cancellation(monkeypatch, caplog):
+    import importlib.util
+
+    path = Path("self_improvement/meta_planning.py")
+    spec = importlib.util.spec_from_file_location(
+        "menace_sandbox.self_improvement.meta_planning", path
+    )
+    mp = importlib.util.module_from_spec(spec)
+    root_pkg = types.ModuleType("menace_sandbox")
+    root_pkg.__path__ = [str(Path("."))]
+    sub_pkg = types.ModuleType("menace_sandbox.self_improvement")
+    sub_pkg.__path__ = [str(path.parent)]
+    monkeypatch.setitem(sys.modules, "menace_sandbox", root_pkg)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.self_improvement", sub_pkg)
+    stub_settings = types.SimpleNamespace(
+        meta_entropy_threshold=0.2,
+        meta_mutation_rate=0.0,
+        meta_roi_weight=0.0,
+        meta_domain_penalty=0.0,
+        meta_entropy_weight=0.0,
+        meta_search_depth=1,
+        meta_beam_width=1,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "menace_sandbox.self_improvement.init",
+        types.SimpleNamespace(settings=stub_settings),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "menace_sandbox.workflow_stability_db",
+        types.SimpleNamespace(WorkflowStabilityDB=lambda *a, **k: None),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "menace_sandbox.roi_results_db",
+        types.SimpleNamespace(ROIResultsDB=lambda *a, **k: None),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "menace_sandbox.lock_utils",
+        types.SimpleNamespace(SandboxLock=object, Timeout=Exception, LOCK_TIMEOUT=1),
+    )
+    import logging_utils as real_logging_utils
+
+    monkeypatch.setitem(
+        sys.modules,
+        "menace_sandbox.logging_utils",
+        real_logging_utils,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "menace_sandbox.sandbox_settings",
+        types.SimpleNamespace(SandboxSettings=object),
+    )
+    monkeypatch.setitem(
+        sys.modules, "menace_sandbox.self_improvement.meta_planning", mp
+    )
+    assert spec.loader is not None
+    spec.loader.exec_module(mp)
+
+    class Counter:
+        def __init__(self) -> None:
+            self.reason = None
+            self.count = 0
+
+        def labels(self, reason: str):  # pragma: no cover - simple stub
+            self.reason = reason
+
+            def inc() -> None:
+                self.count += 1
+
+            return types.SimpleNamespace(inc=inc)
+
+    me = types.SimpleNamespace(self_improvement_failure_total=Counter())
+    monkeypatch.setitem(sys.modules, "menace_sandbox.metrics_exporter", me)
+    monkeypatch.setitem(sys.modules, "metrics_exporter", me)
+
+    async def dummy_cycle(workflows, interval, event_bus=None, stop_event=None):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(mp, "self_improvement_cycle", dummy_cycle)
+
+    with caplog.at_level(logging.INFO):
+        thread = mp.start_self_improvement_cycle({})
+        thread.start()
+        for _ in range(100):
+            if thread._task is not None:
+                break
+            time.sleep(0.01)
+        assert thread._task is not None
+        thread._loop.call_soon_threadsafe(lambda: thread._task.cancel())
+        thread.join()
+
+    assert any(
+        "self improvement cycle cancelled" in rec.message
+        and getattr(rec, "reason", "") == "cancelled"
+        for rec in caplog.records
+    )
