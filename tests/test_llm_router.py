@@ -1,6 +1,7 @@
 from llm_interface import Prompt, LLMResult, LLMClient
 from llm_router import LLMRouter, client_from_settings
 from sandbox_settings import SandboxSettings
+import llm_router
 
 
 class StubClient(LLMClient):
@@ -31,7 +32,7 @@ def test_router_uses_remote_for_large_prompts():
     local = StubClient("local")
     remote = StubClient("remote")
     router = LLMRouter(remote=remote, local=local, size_threshold=5)
-    res = router.generate(Prompt(text="this is long"))
+    res = router.generate(Prompt(text="this is a long prompt for testing"))
     assert res.text == "remote"
     assert remote.calls == 1
 
@@ -44,6 +45,52 @@ def test_router_fallback_on_failure():
 
     assert res.text == "remote"
     assert remote.calls == 1
+
+
+def test_router_respects_roi_tags():
+    local = StubClient("local")
+    remote = StubClient("remote")
+    router = LLMRouter(remote=remote, local=local, size_threshold=5)
+    res = router.generate(Prompt(text="hi", tags=["high_roi"]))
+    assert res.text == "remote"
+    res = router.generate(Prompt(text="this is a long prompt for testing", tags=["low_roi"]))
+    assert res.text == "local"
+
+
+def test_router_avoids_recent_failures(monkeypatch):
+    local = StubClient("local")
+    remote = StubClient("remote", fail=True)
+    router = LLMRouter(remote=remote, local=local, size_threshold=5, failure_cooldown=10)
+
+    now = [0.0]
+    monkeypatch.setattr(llm_router.time, "time", lambda: now[0])
+
+    router.generate(Prompt(text="this is a long prompt for testing"))
+    assert remote.calls == 1
+
+    remote.fail = False
+    now[0] = 1.0
+    router.generate(Prompt(text="this is a long prompt for testing"))
+    assert remote.calls == 1
+    assert local.calls == 2
+
+
+def test_router_logs_backend_choice(monkeypatch):
+    logged: list[str] = []
+
+    class DummyDB:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def log(self, prompt, result, backend=None):
+            logged.append(backend)
+
+    import llm_router as lr
+
+    monkeypatch.setattr(lr, "PromptDB", DummyDB)
+    router = LLMRouter(remote=StubClient("remote"), local=StubClient("local"), size_threshold=5)
+    router.generate(Prompt(text="hi"))
+    assert logged == ["local"]
 
 
 def custom_factory() -> StubClient:

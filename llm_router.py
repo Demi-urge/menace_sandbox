@@ -3,10 +3,13 @@ from __future__ import annotations
 """Routing helpers for language model backends."""
 
 from importlib import import_module
-from typing import Callable, Dict
+from typing import Callable, Dict, Tuple
+import time
 
 from llm_interface import Prompt, LLMResult, LLMClient
 from sandbox_settings import SandboxSettings
+from rate_limit import estimate_tokens
+from prompt_db import PromptDB
 
 ClientFactory = Callable[[], LLMClient]
 
@@ -25,23 +28,72 @@ class LLMRouter(LLMClient):
     """Route requests between remote and local backends.
 
     The router chooses the remote backend for larger prompts while favouring
-    the local backend for smaller ones.  If the selected backend raises an
-    exception, the other backend is attempted as a fallback.
+    the local backend for smaller ones.  Metadata such as ROI tags can override
+    this behaviour.  Backends with recent failures are avoided.  The chosen
+    backend is logged to ``PromptDB`` for post-hoc analysis.
     """
 
-    def __init__(self, remote: LLMClient, local: LLMClient, *, size_threshold: int = 1000) -> None:
+    def __init__(
+        self,
+        remote: LLMClient,
+        local: LLMClient,
+        *,
+        size_threshold: int = 1000,
+        failure_cooldown: float = 60.0,
+    ) -> None:
         super().__init__("router", log_prompts=False)
         self.remote = remote
         self.local = local
         self.size_threshold = size_threshold
+        self.failure_cooldown = failure_cooldown
+        self._last_failure: Dict[LLMClient, float] = {}
+        # prevent duplicate logging by underlying clients
+        for backend in (remote, local):
+            if isinstance(backend, LLMClient):
+                backend._log_prompts = False  # type: ignore[attr-defined]
+        try:  # pragma: no cover - logging is best effort
+            self.db = PromptDB(model="router")
+        except Exception:  # pragma: no cover - optional
+            self.db = None
+
+    def _recent_failure(self, backend: LLMClient) -> bool:
+        ts = self._last_failure.get(backend)
+        return ts is not None and (time.time() - ts) < self.failure_cooldown
+
+    def _select_backends(self, prompt: Prompt) -> Tuple[LLMClient, LLMClient]:
+        tokens = estimate_tokens(prompt.user)
+        tags = set(getattr(prompt, "tags", []))
+        meta = getattr(prompt, "metadata", {})
+        tags.update(meta.get("tags", []))
+        if "low_roi" in tags:
+            primary = self.local
+        elif "high_roi" in tags:
+            primary = self.remote
+        else:
+            primary = self.remote if tokens > self.size_threshold else self.local
+        if self._recent_failure(primary):
+            primary = self.local if primary is self.remote else self.remote
+        fallback = self.local if primary is self.remote else self.remote
+        return primary, fallback
 
     def _generate(self, prompt: Prompt) -> LLMResult:
-        primary = self.remote if len(prompt.text) > self.size_threshold else self.local
-        fallback = self.local if primary is self.remote else self.remote
+        primary, fallback = self._select_backends(prompt)
+        chosen = primary
         try:
-            return primary.generate(prompt)
+            result = primary.generate(prompt)
         except Exception:
-            return fallback.generate(prompt)
+            self._last_failure[primary] = time.time()
+            result = fallback.generate(prompt)
+            chosen = fallback
+        if getattr(self, "db", None):  # pragma: no cover - logging is best effort
+            result.raw = dict(result.raw or {})
+            result.raw.setdefault("model", chosen.model)
+            result.raw["backend"] = chosen.model
+            try:
+                self.db.log(prompt, result, backend=chosen.model)
+            except Exception:
+                pass
+        return result
 
 
 def client_from_settings(

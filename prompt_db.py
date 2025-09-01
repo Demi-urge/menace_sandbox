@@ -52,7 +52,8 @@ def _init_db(conn: sqlite3.Connection) -> None:
             timestamp TEXT,
             prompt_tokens INTEGER,
             completion_tokens INTEGER,
-            latency_ms REAL
+            latency_ms REAL,
+            backend TEXT
         )
         """,
     )
@@ -60,6 +61,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
         "ALTER TABLE prompts ADD COLUMN prompt_tokens INTEGER",
         "ALTER TABLE prompts ADD COLUMN completion_tokens INTEGER",
         "ALTER TABLE prompts ADD COLUMN latency_ms REAL",
+        "ALTER TABLE prompts ADD COLUMN backend TEXT",
     ):
         try:
             cur.execute(stmt)
@@ -74,7 +76,11 @@ def _init_db(conn: sqlite3.Connection) -> None:
 
 
 def log_interaction(
-    prompt_obj: Prompt, raw: Dict[str, Any], text: str, tags: List[str] | None
+    prompt_obj: Prompt,
+    raw: Dict[str, Any],
+    text: str,
+    tags: List[str] | None,
+    backend: str | None = None,
 ) -> None:
     """Record a single prompt/completion pair in the SQLite log."""
 
@@ -99,9 +105,9 @@ def log_interaction(
         INSERT INTO prompts(
             prompt, text, completion_raw, completion_parsed, response_text, response_parsed,
             examples, vector_confidence, vector_confidences, outcome_tags, model, timestamp,
-            prompt_tokens, completion_tokens, latency_ms
+            prompt_tokens, completion_tokens, latency_ms, backend
         )
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             prompt_obj.user,
@@ -123,6 +129,7 @@ def log_interaction(
             if isinstance(raw, dict)
             else None,
             raw.get("latency_ms") if isinstance(raw, dict) else None,
+            backend,
         ),
     )
     conn.commit()
@@ -150,7 +157,7 @@ def fetch_logs(
     conn = _get_conn()
     query = (
         "SELECT prompt, completion_parsed, examples, vector_confidence, "
-        "outcome_tags, model, timestamp, completion_raw, "
+        "outcome_tags, model, backend, timestamp, completion_raw, "
         "prompt_tokens, completion_tokens, latency_ms FROM prompts"
     )
     clauses: List[str] = []
@@ -178,6 +185,7 @@ def fetch_logs(
             vc,
             tags_json,
             mdl,
+            backend,
             ts,
             raw_json,
             p_tokens,
@@ -192,6 +200,7 @@ def fetch_logs(
                 "vector_confidence": vc,
                 "outcome_tags": json.loads(tags_json) if tags_json else [],
                 "model": mdl,
+                "backend": backend,
                 "timestamp": ts,
                 "raw": json.loads(raw_json) if raw_json else None,
                 "prompt_tokens": p_tokens,
@@ -221,10 +230,12 @@ class PromptDB:
         _init_db(self.conn)
 
     # ------------------------------------------------------------------
-    def log(self, prompt: Prompt, result: Completion) -> None:
+    def log(self, prompt: Prompt, result: Completion, backend: str | None = None) -> None:
         """Persist *prompt* and *result* to the underlying SQLite store."""
 
         raw = result.raw or {}
+        if backend is None:
+            backend = raw.get("backend") or getattr(prompt, "metadata", {}).get("backend")
         try:
             raw_json = json.dumps(raw)
         except Exception:  # pragma: no cover - defensive
@@ -239,9 +250,9 @@ class PromptDB:
             INSERT INTO prompts(
                 prompt, text, completion_raw, completion_parsed, response_text, response_parsed,
                 examples, vector_confidence, vector_confidences, outcome_tags, model, timestamp,
-                prompt_tokens, completion_tokens, latency_ms
+                prompt_tokens, completion_tokens, latency_ms, backend
             )
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 prompt.user,
@@ -259,6 +270,7 @@ class PromptDB:
                 result.prompt_tokens,
                 result.completion_tokens,
                 result.latency_ms,
+                backend,
             ),
         )
         self.conn.commit()
