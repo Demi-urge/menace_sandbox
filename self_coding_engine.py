@@ -419,21 +419,13 @@ class SelfCodingEngine:
             prompt = Prompt(getattr(prompt, "text", str(prompt or "")))
         runtime = getattr(ci_result, "runtime", None) if ci_result else None
         summary = getattr(ci_result, "stdout", "") if ci_result else ""
-        log_fn = (
-            self.prompt_evolution_logger.log_success
-            if success
-            else self.prompt_evolution_logger.log_failure
-        )
+        meta = dict(getattr(prompt, "metadata", {}))
+        meta.update(getattr(self.prompt_engine, "last_metadata", {}))
+        prompt.metadata = meta
+        result = {"patch": patch, "summary": summary, "runtime": runtime}
+        roi = {"roi_delta": roi_delta, "coverage": coverage}
         try:
-            log_fn(
-                patch,
-                prompt,
-                summary,
-                roi_delta=roi_delta,
-                coverage=coverage,
-                runtime_delta=runtime,
-                prompt_engine=self.prompt_engine,
-            )
+            self.prompt_evolution_logger.log(prompt, success, result, roi)
         except Exception:
             self.logger.exception("prompt evolution logging failed")
         else:

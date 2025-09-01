@@ -85,7 +85,7 @@ def test_prompt_evolution_logging(tmp_path):
     assert s["prompt"]["system"] == "sys"
     assert s["prompt"]["user"] == "do it"
     assert s["prompt"]["examples"] == ["ex1"]
-    assert "tone" in s["metadata"]
+    assert "tone" in s["prompt"]["metadata"]
     assert "roi_delta" in s["roi"] and "coverage" in s["roi"]
 
     assert f["prompt"]["user"] == "fail"
