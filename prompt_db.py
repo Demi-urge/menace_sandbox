@@ -53,7 +53,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
             prompt_tokens INTEGER,
             completion_tokens INTEGER,
             latency_ms REAL,
-            backend TEXT
+            backend TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            cost REAL
         )
         """,
     )
@@ -62,6 +65,9 @@ def _init_db(conn: sqlite3.Connection) -> None:
         "ALTER TABLE prompts ADD COLUMN completion_tokens INTEGER",
         "ALTER TABLE prompts ADD COLUMN latency_ms REAL",
         "ALTER TABLE prompts ADD COLUMN backend TEXT",
+        "ALTER TABLE prompts ADD COLUMN input_tokens INTEGER",
+        "ALTER TABLE prompts ADD COLUMN output_tokens INTEGER",
+        "ALTER TABLE prompts ADD COLUMN cost REAL",
     ):
         try:
             cur.execute(stmt)
@@ -99,15 +105,16 @@ def log_interaction(
     except Exception:  # pragma: no cover - defensive
         parsed_json = json.dumps(None)
 
+    usage = (raw.get("usage") if isinstance(raw, dict) else {}) or {}
     cur = conn.cursor()
     cur.execute(
         """
         INSERT INTO prompts(
             prompt, text, completion_raw, completion_parsed, response_text, response_parsed,
             examples, vector_confidence, vector_confidences, outcome_tags, model, timestamp,
-            prompt_tokens, completion_tokens, latency_ms, backend
+            prompt_tokens, completion_tokens, latency_ms, backend, input_tokens, output_tokens, cost
         )
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             prompt_obj.user,
@@ -122,14 +129,13 @@ def log_interaction(
             json.dumps(list(tags or [])),
             raw.get("model") or getattr(prompt_obj, "model", None),
             datetime.utcnow().isoformat(),
-            (raw.get("usage") or {}).get("prompt_tokens")
-            if isinstance(raw, dict)
-            else None,
-            (raw.get("usage") or {}).get("completion_tokens")
-            if isinstance(raw, dict)
-            else None,
+            usage.get("prompt_tokens"),
+            usage.get("completion_tokens"),
             raw.get("latency_ms") if isinstance(raw, dict) else None,
             backend,
+            usage.get("input_tokens") or usage.get("prompt_tokens"),
+            usage.get("output_tokens") or usage.get("completion_tokens"),
+            usage.get("cost"),
         ),
     )
     conn.commit()
@@ -158,7 +164,8 @@ def fetch_logs(
     query = (
         "SELECT prompt, completion_parsed, examples, vector_confidence, "
         "outcome_tags, model, backend, timestamp, completion_raw, "
-        "prompt_tokens, completion_tokens, latency_ms FROM prompts"
+        "prompt_tokens, completion_tokens, latency_ms, input_tokens, "
+        "output_tokens, cost FROM prompts"
     )
     clauses: List[str] = []
     params: List[Any] = []
@@ -191,6 +198,9 @@ def fetch_logs(
             p_tokens,
             c_tokens,
             latency,
+            i_tokens,
+            o_tokens,
+            cost,
         ) = row
         results.append(
             {
@@ -206,6 +216,9 @@ def fetch_logs(
                 "prompt_tokens": p_tokens,
                 "completion_tokens": c_tokens,
                 "latency_ms": latency,
+                "input_tokens": i_tokens,
+                "output_tokens": o_tokens,
+                "cost": cost,
             }
         )
     return results
@@ -250,9 +263,10 @@ class PromptDB:
             INSERT INTO prompts(
                 prompt, text, completion_raw, completion_parsed, response_text, response_parsed,
                 examples, vector_confidence, vector_confidences, outcome_tags, model, timestamp,
-                prompt_tokens, completion_tokens, latency_ms, backend
+                prompt_tokens, completion_tokens, latency_ms, backend, input_tokens,
+                output_tokens, cost
             )
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 prompt.user,
@@ -271,6 +285,9 @@ class PromptDB:
                 result.completion_tokens,
                 result.latency_ms,
                 backend,
+                getattr(result, "input_tokens", None) or result.prompt_tokens,
+                getattr(result, "output_tokens", None) or result.completion_tokens,
+                getattr(result, "cost", None),
             ),
         )
         self.conn.commit()
