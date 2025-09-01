@@ -116,6 +116,7 @@ except Exception:  # pragma: no cover - defensive fallback
             )
 
 from .roi_tracker import ROITracker
+from .prompt_evolution_logger import PromptEvolutionLogger
 try:  # pragma: no cover - optional dependency
     from .patch_provenance import record_patch_metadata
 except Exception:  # pragma: no cover - graceful degradation
@@ -177,6 +178,7 @@ class SelfCodingEngine:
         knowledge_service: GPTKnowledgeService | None = None,
         prompt_memory: PromptMemoryTrainer | None = None,
         prompt_optimizer: PromptOptimizer | None = None,
+        prompt_evolution_logger: PromptEvolutionLogger | None = None,
         prompt_tone: str = "neutral",
         **kwargs: Any,
     ) -> None:
@@ -279,11 +281,21 @@ class SelfCodingEngine:
         if prompt_optimizer is None:
             try:
                 prompt_optimizer = PromptOptimizer(
-                    "prompt_success_log.json", "prompt_failure_log.json"
+                    _settings.prompt_success_log_path,
+                    _settings.prompt_failure_log_path,
                 )
             except Exception:
                 prompt_optimizer = None
         self.prompt_optimizer = prompt_optimizer
+        if prompt_evolution_logger is None:
+            try:
+                prompt_evolution_logger = PromptEvolutionLogger(
+                    success_path=Path(_settings.prompt_success_log_path),
+                    failure_path=Path(_settings.prompt_failure_log_path),
+                )
+            except Exception:
+                prompt_evolution_logger = None
+        self.prompt_evolution_logger = prompt_evolution_logger
         self._last_prompt_metadata: Dict[str, Any] = {}
         self._last_prompt: Prompt | None = None
         self.router = kwargs.get("router")
@@ -379,6 +391,40 @@ class SelfCodingEngine:
             self.logger.exception("failed to store prompt format history")
         finally:
             self._last_prompt_metadata = {}
+
+    def _log_prompt_evolution(
+        self,
+        patch: str,
+        success: bool,
+        ci_result: "TestHarnessResult" | None,
+        roi_delta: float,
+        coverage: float,
+    ) -> None:
+        """Record prompt execution details via :class:`PromptEvolutionLogger`."""
+        if not self.prompt_evolution_logger:
+            return
+        prompt = getattr(self, "_last_prompt", None)
+        if not isinstance(prompt, Prompt):
+            prompt = Prompt(getattr(prompt, "text", str(prompt or "")))
+        runtime = getattr(ci_result, "runtime", None) if ci_result else None
+        summary = getattr(ci_result, "stdout", "") if ci_result else ""
+        log_fn = (
+            self.prompt_evolution_logger.log_success
+            if success
+            else self.prompt_evolution_logger.log_failure
+        )
+        try:
+            log_fn(
+                patch,
+                prompt,
+                summary,
+                roi_delta=roi_delta,
+                coverage=coverage,
+                runtime_delta=runtime,
+                prompt_engine=self.prompt_engine,
+            )
+        except Exception:
+            self.logger.exception("prompt evolution logging failed")
 
     def _track_contributors(
         self,
@@ -1046,7 +1092,7 @@ class SelfCodingEngine:
         if not pre_verified or not generated_code.strip():
             self.logger.info("no code generated; skipping enhancement")
             path.write_text(original, encoding="utf-8")
-            self._run_ci(path)
+            ci_result = self._run_ci(path)
             self._store_patch_memory(path, description, generated_code, False, 0.0)
             if self.cognition_layer and session_id:
                 try:
@@ -1060,11 +1106,18 @@ class SelfCodingEngine:
                 "apply_patch_result",
                 {"path": str(path), "success": False},
             )
+            self._log_prompt_evolution(
+                generated_code,
+                False,
+                ci_result,
+                0.0,
+                0.0,
+            )
             self._record_prompt_metadata(False)
             return None, False, 0.0
         if self.formal_verifier and not self.formal_verifier.verify(path):
             path.write_text(original, encoding="utf-8")
-            self._run_ci(path)
+            ci_result = self._run_ci(path)
             reverted = True
             after_roi = before_roi
             after_err = before_err
@@ -1161,6 +1214,13 @@ class SelfCodingEngine:
                 "apply_patch_result",
                 {"path": str(path), "success": False, "patch_id": patch_id},
             )
+            self._log_prompt_evolution(
+                generated_code,
+                False,
+                ci_result,
+                roi_delta,
+                0.0,
+            )
             self._record_prompt_metadata(False)
             return patch_id, True, roi_delta
         ci_result = self._run_ci(path)
@@ -1205,6 +1265,13 @@ class SelfCodingEngine:
                 "apply_patch_result",
                 {"path": str(path), "success": False},
             )
+            self._log_prompt_evolution(
+                generated_code,
+                False,
+                ci_result,
+                0.0,
+                0.0,
+            )
             self._record_prompt_metadata(False)
             return None, False, 0.0
         if self.safety_monitor and not self.safety_monitor.validate_bot(self.bot_name):
@@ -1246,6 +1313,13 @@ class SelfCodingEngine:
                 requesting_bot,
                 "apply_patch_result",
                 {"path": str(path), "success": False},
+            )
+            self._log_prompt_evolution(
+                generated_code,
+                False,
+                ci_result,
+                0.0,
+                0.0,
             )
             self._record_prompt_metadata(False)
             return None, False, 0.0
@@ -1429,6 +1503,13 @@ class SelfCodingEngine:
             },
         )
         self._store_patch_memory(path, description, generated_code, not reverted, roi_delta)
+        self._log_prompt_evolution(
+            generated_code,
+            not reverted,
+            ci_result,
+            roi_delta,
+            coverage,
+        )
         try:
             if self.patch_db and session_id and patch_id is not None:
                 win_flag = not reverted and roi_delta > 0
@@ -1586,6 +1667,7 @@ class SelfCodingEngine:
             except Exception as exc:
                 trace = traceback.format_exc()
                 roi_val = 0.0
+                self._log_prompt_evolution("", False, None, 0.0, 0.0)
                 if log_prompt_attempt and self.data_bot:
                     try:
                         roi_val = self.data_bot.roi(self.bot_name)
