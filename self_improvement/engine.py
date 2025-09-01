@@ -146,7 +146,7 @@ from .orchestration import (
     stop_self_improvement_cycle,
 )
 from .roi_tracking import update_alignment_baseline
-from .patch_application import generate_patch
+from .patch_application import generate_patch, apply_patch
 
 
 from ..self_test_service import SelfTestService
@@ -1299,6 +1299,15 @@ class SelfImprovementEngine:
                 "patch generation failed", extra=log_record(module=module)
             )
             patch_id = None
+        else:
+            if patch_id is not None:
+                try:
+                    apply_patch(patch_id, _repo_path())
+                except RuntimeError:
+                    self.logger.exception(
+                        "patch application failed", extra=log_record(module=module)
+                    )
+                    patch_id = None
         elapsed = time.perf_counter() - start
         if self.metrics_db:
             try:
