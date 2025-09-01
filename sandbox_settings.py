@@ -318,6 +318,8 @@ class SandboxSettings(BaseSettings):
     sandbox_module_threshold: float | None = Field(None, env="SANDBOX_MODULE_THRESHOLD")
     sandbox_semantic_modules: bool = Field(False, env="SANDBOX_SEMANTIC_MODULES")
     sandbox_stub_model: str | None = Field(None, env="SANDBOX_STUB_MODEL")
+    llm_backend: str = Field("openai", env="LLM_BACKEND")
+    llm_fallback_backend: str | None = Field(None, env="LLM_FALLBACK_BACKEND")
     huggingface_token: str | None = Field(
         None, env=["HUGGINGFACE_API_TOKEN", "HF_TOKEN"]
     )
