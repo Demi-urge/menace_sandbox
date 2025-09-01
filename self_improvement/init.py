@@ -50,7 +50,7 @@ def verify_dependencies() -> None:
     provided in the raised error.
     """
 
-    import importlib
+    import importlib.util
 
     checks = {
         "quick_fix_engine": (
@@ -87,24 +87,18 @@ def verify_dependencies() -> None:
     for name, (modules, guidance) in checks.items():
         if isinstance(modules, str):
             modules = (modules,)
-        last_exc: Exception | None = None
-        for module in modules:  # pragma: no cover - import guidance
-            try:
-                importlib.import_module(module)
+
+        for module in modules:  # pragma: no cover - availability check
+            spec = importlib.util.find_spec(module)
+            if spec is not None:
                 break
-            except Exception as exc:
-                last_exc = exc
-                logger.debug(
-                    "import for %s failed",
-                    module,
-                    extra=log_record(dependency=module, error=str(exc)),
-                    exc_info=exc,
-                )
+            logger.debug(
+                "module %s not found",
+                module,
+                extra=log_record(dependency=module),
+            )
         else:
-            msg = f"{name} – {guidance}"
-            if last_exc:
-                msg += f" ({last_exc})"
-            missing.append(msg)
+            missing.append(f"{name} – {guidance}")
 
     if missing:
         message = (
