@@ -503,6 +503,16 @@ patch_failure_total = Gauge(
     "patch_failure_total", "Number of failed patch applications",
 )
 
+# Counters for orphan integration outcomes
+orphan_integration_success_total = Gauge(
+    "orphan_integration_success_total",
+    "Number of successful orphan integrations",
+)
+orphan_integration_failure_total = Gauge(
+    "orphan_integration_failure_total",
+    "Number of orphan integration failures",
+)
+
 
 # Metrics for visual agent utilisation
 visual_agent_wait_time = Gauge(
