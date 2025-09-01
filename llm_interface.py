@@ -187,4 +187,115 @@ class OpenAIProvider(LLMClient):
         return LLMResult(text=text, parsed=parsed, raw=raw, completions=completions)
 
 
-__all__ = ["Prompt", "LLMResult", "LLMClient", "OpenAIProvider"]
+class OllamaProvider(LLMClient):
+    """Client for an `ollama` local model server."""
+
+    base_url = "http://localhost:11434"
+
+    def __init__(self, model: str = "mixtral", base_url: str | None = None) -> None:
+        self.model = model
+        self.base_url = base_url or self.base_url
+        self._session = requests.Session()
+
+    @classmethod
+    def is_available(cls, base_url: str | None = None) -> bool:
+        url = (base_url or cls.base_url).rstrip("/") + "/api/tags"
+        try:
+            requests.get(url, timeout=1)
+        except requests.RequestException:
+            return False
+        return True
+
+    def generate(self, prompt: Prompt) -> LLMResult:
+        payload = {"model": self.model, "prompt": prompt.text}
+        url = self.base_url.rstrip("/") + "/api/generate"
+        response = self._session.post(url, json=payload, timeout=30)
+        response.raise_for_status()
+        raw = response.json()
+        text = raw.get("response", "") or raw.get("text", "")
+        return LLMResult(raw=raw, text=text)
+
+
+class VLLMProvider(LLMClient):
+    """Client for a vLLM HTTP server."""
+
+    base_url = "http://localhost:8000"
+
+    def __init__(self, model: str = "llama3", base_url: str | None = None) -> None:
+        self.model = model
+        self.base_url = base_url or self.base_url
+        self._session = requests.Session()
+
+    @classmethod
+    def is_available(cls, base_url: str | None = None) -> bool:
+        try:
+            requests.get(base_url or cls.base_url, timeout=1)
+        except requests.RequestException:
+            return False
+        return True
+
+    def generate(self, prompt: Prompt) -> LLMResult:
+        payload = {"model": self.model, "prompt": prompt.text}
+        url = self.base_url.rstrip("/") + "/generate"
+        response = self._session.post(url, json=payload, timeout=30)
+        response.raise_for_status()
+        raw = response.json()
+        text = raw.get("text") or raw.get("generated_text", "")
+        return LLMResult(raw=raw, text=text)
+
+
+class HybridProvider(LLMClient):
+    """Automatically route requests between local and remote providers."""
+
+    def __init__(self, *, size_threshold: int = 1000) -> None:
+        self.size_threshold = size_threshold
+
+        local: LLMClient | None = None
+        if OllamaProvider.is_available():
+            local = OllamaProvider()
+        elif VLLMProvider.is_available():
+            local = VLLMProvider()
+        self.local = local
+
+        remote: LLMClient | None = None
+        if os.getenv("OPENAI_API_KEY"):
+            try:
+                remote = OpenAIProvider()
+            except Exception:
+                remote = None
+        self.remote = remote
+
+        if not self.local and not self.remote:
+            raise RuntimeError("No available LLM providers")
+
+    def generate(self, prompt: Prompt) -> LLMResult:
+        use_local = self.local is not None and (
+            self.remote is None or len(prompt.text) <= self.size_threshold
+        )
+        if use_local:
+            try:
+                return self.local.generate(prompt)
+            except Exception:
+                if self.remote:
+                    return self.remote.generate(prompt)
+                raise
+        if self.remote:
+            try:
+                return self.remote.generate(prompt)
+            except Exception:
+                if self.local:
+                    return self.local.generate(prompt)
+                raise
+        assert self.local  # for type checking
+        return self.local.generate(prompt)
+
+
+__all__ = [
+    "Prompt",
+    "LLMResult",
+    "LLMClient",
+    "OpenAIProvider",
+    "OllamaProvider",
+    "VLLMProvider",
+    "HybridProvider",
+]
