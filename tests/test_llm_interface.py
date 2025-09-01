@@ -1,6 +1,7 @@
 import retry_utils
 from db_router import DBRouter
 from llm_interface import Prompt, LLMResult, LLMClient
+from typing import Any
 import random
 import time
 from llm_router import LLMRouter
@@ -411,6 +412,34 @@ def test_openai_provider_async_stream(monkeypatch):
     assert chunks == ["Hel", "lo"]
 
 
+def test_openai_provider_async_logging(monkeypatch):
+    llmi = _setup_fake_httpx(monkeypatch)
+    from llm_interface import OpenAIProvider, Prompt
+
+    logged: list[tuple[Prompt, Any, str | None]] = []
+
+    class DummyDB:
+        def __init__(self, *a, **k):
+            pass
+
+        def log(self, prompt, result, backend=None):
+            logged.append((prompt, result, backend))
+
+    import prompt_db as pdb
+
+    monkeypatch.setattr(pdb, "PromptDB", DummyDB)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    provider = OpenAIProvider()
+
+    async def run():
+        async for _ in provider.async_generate(Prompt(text="hi")):
+            pass
+
+    asyncio.run(run())
+    assert logged and logged[0][1].text == "Hello"
+    assert logged[0][2] == "openai"
+
+
 def test_openai_provider_streaming_sync_wrapper(monkeypatch):
     _setup_fake_httpx(monkeypatch)
     from llm_interface import OpenAIProvider, Prompt
@@ -475,6 +504,35 @@ def test_rest_backend_async_stream(monkeypatch):
 
     asyncio.run(run())
     assert chunks == ["Hel", "lo"]
+
+
+def test_rest_backend_async_logging(monkeypatch):
+    lb = _setup_fake_local_httpx(monkeypatch)
+    from llm_interface import Prompt, LLMClient
+
+    backend = lb.OllamaBackend(model="m", base_url="http://x")
+
+    logged: list[tuple[Prompt, Any, str | None]] = []
+
+    class DummyDB:
+        def __init__(self, *a, **k):
+            pass
+
+        def log(self, prompt, result, backend=None):
+            logged.append((prompt, result, backend))
+
+    import prompt_db as pdb
+
+    monkeypatch.setattr(pdb, "PromptDB", DummyDB)
+    client = LLMClient(model="m", backends=[backend], log_prompts=True)
+
+    async def run():
+        async for _ in client.async_generate(Prompt(text="hi")):
+            pass
+
+    asyncio.run(run())
+    assert logged and logged[0][1].text == "Hello"
+    assert logged[0][2] == "ollama"
 
 
 def _setup_fake_sse_httpx(monkeypatch):

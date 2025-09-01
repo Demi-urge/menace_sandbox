@@ -218,12 +218,54 @@ class LLMClient:
 
     # ------------------------------------------------------------------
     async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
-        """Asynchronously yield completion chunks for *prompt*.
+        """Asynchronously yield completion chunks for *prompt* and log the result."""
 
-        When explicit backends are configured the method tries each backend in
-        order until one succeeds.  Backends are expected to implement an
-        ``async_generate`` method returning an async generator of text chunks.
-        """
+        cfg = llm_config.get_config()
+
+        def _prompt_text(p: Prompt) -> str:
+            parts = []
+            if getattr(p, "system", None):
+                parts.append(p.system)
+            parts.extend(getattr(p, "examples", []))
+            parts.append(getattr(p, "user", getattr(p, "text", "")))
+            return " ".join(parts)
+
+        def _finalize(text: str, *, backend_name: str | None, model: str) -> LLMResult:
+            prompt_tokens = rate_limit.estimate_tokens(_prompt_text(prompt), model=model)
+            completion_tokens = rate_limit.estimate_tokens(text, model=model)
+            in_rate, out_rate = llm_pricing.get_rates(model, cfg.pricing)
+            cost = prompt_tokens * in_rate + completion_tokens * out_rate
+            result = LLMResult(
+                raw={
+                    "backend": backend_name,
+                    "model": model,
+                    "usage": {
+                        "input_tokens": prompt_tokens,
+                        "output_tokens": completion_tokens,
+                        "cost": cost,
+                    },
+                },
+                text=text,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                input_tokens=prompt_tokens,
+                output_tokens=completion_tokens,
+                cost=cost,
+            )
+            self._log(prompt, result, backend=backend_name)
+            return result
+
+        async def _stream(agen: AsyncGenerator[str, None], *, backend_name: str | None, model: str) -> None:
+            parts: List[str] = []
+            while True:
+                try:
+                    chunk = await agen.__anext__()
+                except StopAsyncIteration:
+                    break
+                parts.append(chunk)
+                yield chunk
+            text = "".join(parts)
+            _finalize(text, backend_name=backend_name, model=model)
 
         if self.backends:
             order = list(self.backends)
@@ -233,12 +275,16 @@ class LLMClient:
             last_exc: Exception | None = None
             for backend in order:
                 try:
-                    agen = backend.async_generate  # type: ignore[attr-defined]
+                    agen_fn = backend.async_generate  # type: ignore[attr-defined]
                 except AttributeError:  # pragma: no cover - backend lacks async
                     last_exc = RuntimeError("backend lacks async_generate")
                     continue
                 try:
-                    async for chunk in agen(prompt):
+                    backend_name = getattr(backend, "backend_name", getattr(backend, "model", None))
+                    model_name = getattr(backend, "model", self.model)
+                    agen = agen_fn(prompt)
+                    wrapper = _stream(agen, backend_name=backend_name, model=model_name)
+                    async for chunk in wrapper:
                         yield chunk
                     return
                 except Exception as exc:  # pragma: no cover - backend failure
@@ -248,8 +294,12 @@ class LLMClient:
                 raise last_exc
             raise RuntimeError("no backends configured")
 
-        async for chunk in self._async_generate(prompt):
+        backend_name = getattr(self, "backend_name", None)
+        agen = self._async_generate(prompt)
+        wrapper = _stream(agen, backend_name=backend_name, model=self.model)
+        async for chunk in wrapper:
             yield chunk
+        return
 
 
 __all__ = [
@@ -287,6 +337,7 @@ class OpenAIProvider(LLMClient):
             raise RuntimeError("OPENAI_API_KEY is required")
         self.max_retries = max_retries or cfg.max_retries
         self._session = requests.Session()
+        self.backend_name = "openai"
 
     # ------------------------------------------------------------------
     def _prepare_payload(self, prompt: Prompt) -> Dict[str, Any]:
@@ -385,11 +436,11 @@ class OpenAIProvider(LLMClient):
         raise RuntimeError("Failed to obtain completion from OpenAI")
 
     # ------------------------------------------------------------------
-    async def _async_generate(self, payload: Dict[str, Any]) -> AsyncGenerator[str, None]:
+    async def _async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
         if httpx is None:  # pragma: no cover - dependency missing
             raise RuntimeError("httpx is required for async streaming")
 
-        payload = dict(payload)
+        payload = self._prepare_payload(prompt)
         payload["stream"] = True
 
         headers = {
@@ -440,14 +491,6 @@ class OpenAIProvider(LLMClient):
         raise RuntimeError("Failed to obtain completion from OpenAI")
 
     # ------------------------------------------------------------------
-    async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
-        """Asynchronously yield streamed chunks for *prompt*."""
-
-        payload = self._prepare_payload(prompt)
-        async for chunk in self._async_generate(payload):
-            yield chunk
-
-    # ------------------------------------------------------------------
     def generate(
         self,
         prompt: Prompt,
@@ -468,7 +511,7 @@ class OpenAIProvider(LLMClient):
         text_parts: List[str] = []
 
         async def collect() -> None:
-            async for part in self._async_generate(payload):
+            async for part in self._async_generate(prompt):
                 text_parts.append(part)
 
         start = time.perf_counter()
