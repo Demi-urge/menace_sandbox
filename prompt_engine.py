@@ -19,6 +19,11 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+try:  # pragma: no cover - optional settings dependency
+    from sandbox_settings import SandboxSettings  # type: ignore
+except Exception:  # pragma: no cover - allow running without settings
+    SandboxSettings = None  # type: ignore
+
 from llm_interface import Prompt
 
 from snippet_compressor import compress_snippets
@@ -216,6 +221,15 @@ class PromptEngine:
                 self.trainer = PromptMemoryTrainer()
             except Exception:
                 self.trainer = None
+        if self.optimizer is None and PromptOptimizer is not None and SandboxSettings:
+            try:
+                _s = SandboxSettings()
+                self.optimizer = PromptOptimizer(
+                    _s.prompt_success_log_path,
+                    _s.prompt_failure_log_path,
+                )
+            except Exception:
+                self.optimizer = None
         self._load_trained_config()
 
     # ------------------------------------------------------------------
@@ -383,6 +397,28 @@ class PromptEngine:
         self._load_trained_config(
             summary, version=getattr(self.trainer, "STYLE_VERSION", 0)
         )
+        if self.optimizer:
+            try:  # pragma: no cover - best effort suggestions
+                opts = self.optimizer.suggest_format(__name__, "build_prompt", limit=1)
+            except Exception:
+                opts = []
+            if opts:
+                fmt = opts[0]
+                tone = fmt.get("tone")
+                if isinstance(tone, str):
+                    self.tone = tone
+                headers = fmt.get("headers")
+                if isinstance(headers, list) and headers:
+                    self.trained_headers = [str(h) for h in headers]
+                order = fmt.get("example_order")
+                if isinstance(order, list) and order:
+                    self.trained_example_order = [str(o) for o in order]
+                structured = fmt.get("structured_sections")
+                if isinstance(structured, list) and structured:
+                    self.trained_structured_sections = [str(s) for s in structured]
+                placement = fmt.get("example_placement")
+                if isinstance(placement, str):
+                    self.trained_example_placement = placement
 
     # ------------------------------------------------------------------
     def refresh_optimizer(self) -> None:
@@ -391,7 +427,7 @@ class PromptEngine:
         if not self.optimizer:
             return
         try:  # pragma: no cover - best effort
-            self.optimizer.aggregate()
+            self.optimizer.refresh()
         except Exception:
             pass
 
@@ -561,15 +597,23 @@ class PromptEngine:
         self._maybe_refresh_optimizer()
         if self.optimizer:
             try:  # pragma: no cover - best effort
-                prefs = self.optimizer.select_format(__name__, "build_prompt")
+                opts = self.optimizer.suggest_format(__name__, "build_prompt", limit=1)
             except Exception:
-                prefs = {}
-            if tone is None and prefs.get("tone"):
-                self.tone = prefs["tone"]
-            if prefs.get("structured_sections"):
-                self.trained_structured_sections = prefs["structured_sections"]
-            if prefs.get("example_placement"):
-                self.trained_example_placement = prefs["example_placement"]
+                opts = []
+            if opts:
+                prefs = opts[0]
+                if tone is None and prefs.get("tone"):
+                    self.tone = prefs["tone"]
+                headers = prefs.get("headers")
+                if isinstance(headers, list) and headers:
+                    self.trained_headers = [str(h) for h in headers]
+                order = prefs.get("example_order")
+                if isinstance(order, list) and order:
+                    self.trained_example_order = [str(o) for o in order]
+                if prefs.get("structured_sections"):
+                    self.trained_structured_sections = prefs["structured_sections"]
+                if prefs.get("example_placement"):
+                    self.trained_example_placement = prefs["example_placement"]
         if tone is not None:
             self.tone = tone
         retriever = self.patch_retriever or self.retriever
