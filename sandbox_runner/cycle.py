@@ -155,14 +155,18 @@ _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
 _USAGE_QUEUE_MAXSIZE = 256
 _usage_queue: "queue.Queue[tuple[str, float]]" = queue.Queue(maxsize=_USAGE_QUEUE_MAXSIZE)
 _usage_thread: threading.Thread | None = None
+_usage_stop_event: threading.Event | None = None
 
 
 def _usage_worker() -> None:
-    while True:
-        item = _usage_queue.get()
+    while _usage_stop_event is not None and not _usage_stop_event.is_set():
+        try:
+            item = _usage_queue.get(timeout=0.1)
+        except queue.Empty:
+            continue
         try:
             if item is None:
-                return
+                break
             module, impact = item
             delay = 0.1
             for attempt in range(5):
@@ -200,9 +204,11 @@ def _usage_worker() -> None:
             _usage_queue.task_done()
 
 
-def _flush_usage_queue() -> None:
+def _stop_usage_worker() -> None:
     if not _ENABLE_RELEVANCY_RADAR:
         return
+    if _usage_stop_event is not None:
+        _usage_stop_event.set()
     thread = _usage_thread
     try:
         _usage_queue.put(None, block=True)
@@ -216,12 +222,17 @@ def _flush_usage_queue() -> None:
     finally:
         if thread and thread.is_alive():
             thread.join(timeout=1.0)
+            if thread.is_alive():
+                logger.warning("usage tracking thread did not terminate before timeout")
+            else:
+                logger.info("usage tracking thread terminated")
 
 
 if _ENABLE_RELEVANCY_RADAR:
-    _usage_thread = threading.Thread(target=_usage_worker, daemon=True)
+    _usage_stop_event = threading.Event()
+    _usage_thread = threading.Thread(target=_usage_worker, name="radar-usage", daemon=True)
     _usage_thread.start()
-    atexit.register(_flush_usage_queue)
+    atexit.register(_stop_usage_worker)
 
 
 def _async_track_usage(module: str, impact: float | None = None) -> None:

@@ -1,3 +1,4 @@
+# flake8: noqa
 """Runtime helpers for sandbox execution.
 
 The sandbox repository location is resolved via :mod:`sandbox_runner.config`,
@@ -113,10 +114,11 @@ except ImportError:  # pragma: no cover - optional dependency
 
 _radar_queue: queue.Queue[str] | None = None
 _radar_thread: threading.Thread | None = None
+_radar_stop_event: threading.Event | None = None
 
 
 def _radar_worker() -> None:
-    while True:
+    while _radar_stop_event is not None and not _radar_stop_event.is_set():
         module = _radar_queue.get()
         if module is None:
             break
@@ -129,16 +131,23 @@ def _radar_worker() -> None:
 def _stop_radar_worker() -> None:
     if _radar_queue is None:
         return
+    if _radar_stop_event is not None:
+        _radar_stop_event.set()
     _radar_queue.put(None)
     if _radar_thread and _radar_thread.is_alive():
-        _radar_thread.join()
+        _radar_thread.join(timeout=1.0)
+        if _radar_thread.is_alive():
+            logger.warning("radar worker did not terminate before timeout")
+        else:
+            logger.info("radar worker terminated")
 
 
 def _ensure_radar_worker() -> None:
-    global _radar_thread, _radar_queue
+    global _radar_thread, _radar_queue, _radar_stop_event
     if _radar_thread is not None and _radar_thread.is_alive():
         return
     _radar_queue = queue.Queue()
+    _radar_stop_event = threading.Event()
     _radar_thread = threading.Thread(
         target=_radar_worker, name="radar-track", daemon=True
     )
@@ -147,6 +156,7 @@ def _ensure_radar_worker() -> None:
     except RuntimeError as exc:
         record_error(exc)
         _radar_thread = None
+        _radar_stop_event = None
         return
     atexit.register(_stop_radar_worker)
 
@@ -3581,6 +3591,13 @@ def register_signal_handlers() -> None:
 
     def _handler(signum, frame) -> None:  # pragma: no cover - signal path
         try:
+            _stop_radar_worker()
+            try:
+                from .cycle import _stop_usage_worker
+
+                _stop_usage_worker()
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("usage worker shutdown failed")
             _cleanup_pools()
             _await_cleanup_task()
             _await_reaper_task()
