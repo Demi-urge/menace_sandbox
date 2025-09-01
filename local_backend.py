@@ -8,13 +8,19 @@ with :class:`llm_interface.LLMClient`.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any, Dict, AsyncGenerator
+import json
 import os
 import time
 
 import requests
 import rate_limit
 import llm_config
+
+try:  # pragma: no cover - optional dependency
+    import httpx  # type: ignore
+except Exception:  # pragma: no cover - httpx may be provided as a stub in tests
+    httpx = None  # type: ignore
 
 from llm_interface import Prompt, Completion, LLMBackend, LLMClient
 
@@ -80,6 +86,71 @@ class _RESTBackend(LLMBackend):
             rate_limit.sleep_with_backoff(attempt)
 
         raise RuntimeError("Failed to obtain completion from local backend")
+
+    async def async_generate(
+        self, prompt: Prompt
+    ) -> AsyncGenerator[str, None]:  # type: ignore[override]
+        """Asynchronously yield streamed chunks for *prompt*.
+
+        The local REST servers used by the backends support server streaming
+        where each line is a JSON object with a ``response`` field.  Some
+        implementations, such as vLLM, use Server Sent Events and prefix each
+        line with ``data:`` while others stream plain JSON.  This coroutine
+        normalises both formats and yields the text portions as they arrive.
+        """
+
+        if httpx is None:  # pragma: no cover - dependency missing
+            raise RuntimeError("httpx is required for async streaming")
+
+        payload = {"model": self.model, "prompt": prompt.text, "stream": True}
+        url = f"{self.base_url.rstrip('/')}/{self.endpoint.lstrip('/')}"
+
+        cfg = llm_config.get_config()
+        retries = cfg.max_retries
+        prompt_tokens = rate_limit.estimate_tokens(prompt.text, model=self.model)
+
+        for attempt in range(retries):
+            self._rate_limiter.update_rate(cfg.tokens_per_minute)
+            self._rate_limiter.consume(prompt_tokens)
+            try:
+                async with httpx.AsyncClient() as client:
+                    async with client.stream(
+                        "POST", url, json=payload, timeout=30
+                    ) as response:
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if not line:
+                                continue
+                            if line.startswith("data:"):
+                                data = line[len("data:"):].strip()
+                                if data == "[DONE]":
+                                    return
+                            else:
+                                data = line
+                            try:
+                                chunk = json.loads(data)
+                            except Exception:
+                                continue
+                            if chunk.get("done"):
+                                return
+                            text = (
+                                chunk.get("response")
+                                or chunk.get("text")
+                                or chunk.get("generated_text")
+                                or chunk.get("delta", {}).get("content", "")
+                            )
+                            if not text:
+                                continue
+                            tokens = rate_limit.estimate_tokens(text, model=self.model)
+                            self._rate_limiter.consume(tokens)
+                            yield text
+                        return
+            except Exception:  # pragma: no cover - request failure
+                if attempt == retries - 1:
+                    raise
+            rate_limit.sleep_with_backoff(attempt)
+
+        raise RuntimeError("Failed to obtain streamed completion from local backend")
 
 
 class OllamaBackend(_RESTBackend):

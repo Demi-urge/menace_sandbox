@@ -420,3 +420,58 @@ def test_openai_provider_streaming_sync_wrapper(monkeypatch):
 
     result = provider.generate(Prompt(text="hi"))
     assert result.text == "Hello"
+
+
+def _setup_fake_local_httpx(monkeypatch):
+    import types
+    import local_backend as lb
+
+    class FakeStream:
+        status_code = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_lines(self):
+            yield '{"response":"Hel"}'
+            yield '{"response":"lo"}'
+            yield '{"done": true}'
+
+        def raise_for_status(self):
+            pass
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url, json=None, timeout=None):
+            return FakeStream()
+
+    monkeypatch.setattr(lb, "httpx", types.SimpleNamespace(AsyncClient=FakeClient))
+    return lb
+
+
+def test_rest_backend_async_stream(monkeypatch):
+    lb = _setup_fake_local_httpx(monkeypatch)
+    from llm_interface import Prompt, LLMClient
+
+    backend = lb.OllamaBackend(model="m", base_url="http://x")
+    client = LLMClient(model="m", backends=[backend], log_prompts=False)
+
+    chunks: list[str] = []
+
+    async def run():
+        async for part in client.async_generate(Prompt(text="hi")):
+            chunks.append(part)
+
+    asyncio.run(run())
+    assert chunks == ["Hel", "lo"]
