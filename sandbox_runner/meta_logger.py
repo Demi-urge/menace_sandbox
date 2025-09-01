@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+"""Utilities for logging sandbox execution metadata.
+
+This module requires telemetry support provided by ``relevancy_radar``. Importing
+will raise :class:`ImportError` if the telemetry dependency is unavailable.
+"""
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence, TYPE_CHECKING
 import json
 import math
-import os
-import asyncio
-import threading
 
 from logging_utils import get_logger, log_record
 from audit_trail import AuditTrail
+
 try:  # optional dependency
     from relevancy_metrics_db import RelevancyMetricsDB
 except ImportError:  # pragma: no cover - optional
@@ -21,46 +25,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 try:  # avoid heavy dependency during light imports
     from .cycle import _async_track_usage
-except Exception as exc:  # pragma: no cover - best effort stub
-    _SUPPRESS_TELEMETRY_WARNING = os.getenv("SANDBOX_SUPPRESS_TELEMETRY_WARNING") == "1"
-    _tmp_logger = get_logger(__name__)
-    _tmp_logger.debug("_async_track_usage import failed: %s", exc, exc_info=exc)
-    try:  # optional relevancy radar dependency
-        from relevancy_radar import track_usage as _radar_track_usage, record_output_impact
-    except ImportError:  # pragma: no cover - optional
-        _radar_track_usage = None  # type: ignore
-        record_output_impact = None  # type: ignore
-
-    def _async_track_usage(module: str, impact: float | None = None) -> None:  # type: ignore
-        if _radar_track_usage is None or record_output_impact is None:
-            if _SUPPRESS_TELEMETRY_WARNING or getattr(_async_track_usage, "_warned", False):
-                return
-            logger.warning(
-                "relevancy radar unavailable; telemetry tracking disabled"
-            )
-            _async_track_usage._warned = True  # type: ignore
-            return
-
-        impact_val = 0.0 if impact is None else float(impact)
-
-        def _track() -> None:
-            try:
-                _radar_track_usage(module, impact_val)
-                record_output_impact(module, impact_val)
-            except Exception as exc:
-                logger.exception(
-                    "relevancy radar usage tracking failed", exc_info=exc
-                )
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            try:
-                threading.Thread(target=_track, daemon=True).start()
-            except (RuntimeError, OSError) as exc:
-                logger.exception("failed to schedule relevancy tracking", exc_info=exc)
-        else:
-            loop.create_task(asyncio.to_thread(_track))
+except Exception as exc:  # pragma: no cover - import-time failure
+    raise ImportError(
+        "sandbox_runner.meta_logger requires telemetry support. "
+        "Ensure 'relevancy_radar' and its dependencies are installed."
+    ) from exc
 
 logger = get_logger(__name__)
 

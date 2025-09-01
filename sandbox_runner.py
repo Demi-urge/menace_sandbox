@@ -222,7 +222,13 @@ from foresight_tracker import ForesightTracker
 from relevancy_metrics_db import RelevancyMetricsDB
 from relevancy_radar import scan as relevancy_radar_scan, radar
 from sandbox_runner.cycle import _async_track_usage
-from sandbox_runner.meta_logger import _SandboxMetaLogger
+try:  # telemetry optional
+    from sandbox_runner.meta_logger import _SandboxMetaLogger
+except ImportError as exc:  # pragma: no cover - meta logger missing
+    _SandboxMetaLogger = None  # type: ignore
+    get_logger(__name__).warning(
+        "sandbox meta logging unavailable: %s", exc
+    )
 
 try:
     from menace.pre_execution_roi_bot import PreExecutionROIBot

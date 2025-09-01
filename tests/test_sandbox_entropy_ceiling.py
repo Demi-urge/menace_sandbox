@@ -1,3 +1,10 @@
+import sys
+import types
+
+stub_cycle = types.ModuleType("sandbox_runner.cycle")
+stub_cycle._async_track_usage = lambda *a, **k: None
+sys.modules["sandbox_runner.cycle"] = stub_cycle
+
 from sandbox_runner.meta_logger import _SandboxMetaLogger
 
 

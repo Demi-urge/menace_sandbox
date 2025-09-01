@@ -1,15 +1,10 @@
-import importlib.util
+import importlib
 import sys
 import types
 import time
-from pathlib import Path
 
 
 def test_async_track_usage_emits(monkeypatch):
-    pkg = types.ModuleType("sandbox_runner")
-    pkg.__path__ = []  # ensure submodules cannot be resolved
-    monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
-
     events: list[tuple[str, str, float]] = []
 
     def track_usage(module: str, impact: float) -> None:
@@ -21,18 +16,21 @@ def test_async_track_usage_emits(monkeypatch):
     rr = types.ModuleType("relevancy_radar")
     rr.track_usage = track_usage
     rr.record_output_impact = record_output_impact
+    rr.RelevancyRadar = object  # placeholder for other imports
+    rr.evaluate_final_contribution = lambda *a, **k: None
+    rr.radar = None
     monkeypatch.setitem(sys.modules, "relevancy_radar", rr)
+    monkeypatch.setenv("SANDBOX_ENABLE_RELEVANCY_RADAR", "1")
 
-    path = Path(__file__).resolve().parent.parent / "sandbox_runner" / "meta_logger.py"
-    spec = importlib.util.spec_from_file_location("sandbox_runner.meta_logger", path)
-    mod = importlib.util.module_from_spec(spec)
-    monkeypatch.setitem(sys.modules, "sandbox_runner.meta_logger", mod)
-    spec.loader.exec_module(mod)
+    arp = types.ModuleType("adaptive_roi_predictor")
+    arp.load_training_data = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "adaptive_roi_predictor", arp)
 
-    mod._async_track_usage("foo", 1.0)
+    cycle = importlib.reload(importlib.import_module("sandbox_runner.cycle"))
+    cycle._async_track_usage("foo", 1.0)
 
     for _ in range(100):  # wait for background thread
-        if len(events) >= 2:
+        if ("track", "foo", 1.0) in events and ("impact", "foo", 1.0) in events:
             break
         time.sleep(0.01)
 
