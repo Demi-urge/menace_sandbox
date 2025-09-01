@@ -1330,7 +1330,9 @@ The Menace integrity model interprets tiers as follows:
 
 See [docs/sandbox_self_improvement.md](docs/sandbox_self_improvement.md) for a
 full walkthrough covering package requirements, environment variables, example
-workflows and troubleshooting tips.
+workflows and troubleshooting tips. For a quickstart on launching the sandbox
+and monitoring metrics, see
+[docs/self_improvement.md](docs/self_improvement.md).
 
 #### Required packages
 
