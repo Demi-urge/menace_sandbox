@@ -89,8 +89,6 @@ def test_retry_succeeds_after_transient_failure():
     assert attempts["count"] == 2
 
 
-
-
 def test_retry_fails_after_all_attempts():
     utils = _load_utils()
     utils["time"].sleep = lambda *a, **k: None
@@ -106,23 +104,23 @@ def test_async_retry_and_backoff_features():
     utils = _load_utils()
     sleeps: list[float] = []
     utils["time"].sleep = lambda t: sleeps.append(t)
-    utils["random"].uniform = lambda a, b: 0.5
+    utils["random"].uniform = lambda a, b: b
     attempts = {"count": 0}
 
     async def flaky_async():
         attempts["count"] += 1
-        if attempts["count"] < 2:
+        if attempts["count"] < 3:
             raise ValueError("boom")
         return "ok"
 
     assert (
         utils["_call_with_retries"](
-            flaky_async, retries=3, delay=1, jitter=1, max_delay=2
+            flaky_async, retries=3, delay=1, jitter=0.1, max_delay=1.5
         )
         == "ok"
     )
-    assert attempts["count"] == 2
-    assert sleeps == [1.5]
+    assert attempts["count"] == 3
+    assert sleeps == [1.1, 1.5]
 
 
 def test_async_context_uses_asyncio_sleep():
