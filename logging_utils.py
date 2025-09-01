@@ -7,6 +7,7 @@ import logging
 import logging.config
 import os
 import base64
+from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict
 from datetime import datetime
@@ -104,6 +105,34 @@ class KafkaLogHandler(logging.Handler):
             self.logger.log(LogEvent("record", payload))
         except Exception:
             pass
+
+
+class _LockedHandlerMixin:
+    """Mixin providing cross-process file locking for handlers."""
+
+    def __init__(self, filename: str, *args, **kwargs) -> None:
+        from lock_utils import SandboxLock
+
+        self._file_lock = SandboxLock(f"{filename}.lock")
+        super().__init__(filename, *args, **kwargs)
+
+    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - simple
+        with self._file_lock:
+            if hasattr(self, "shouldRollover") and self.shouldRollover(record):  # type: ignore[attr-defined]
+                self.doRollover()  # type: ignore[attr-defined]
+            logging.FileHandler.emit(self, record)
+
+
+class LockedRotatingFileHandler(_LockedHandlerMixin, RotatingFileHandler):
+    """Size-based rotating file handler using :class:`SandboxLock`."""
+
+    pass
+
+
+class LockedTimedRotatingFileHandler(_LockedHandlerMixin, TimedRotatingFileHandler):
+    """Time-based rotating file handler using :class:`SandboxLock`."""
+
+    pass
 
 
 def _central_handler() -> logging.Handler | None:
@@ -228,4 +257,6 @@ __all__ = [
     "CorrelationIDFilter",
     "AuditTrailHandler",
     "KafkaLogHandler",
+    "LockedRotatingFileHandler",
+    "LockedTimedRotatingFileHandler",
 ]

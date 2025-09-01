@@ -1389,6 +1389,7 @@ def main(argv: List[str] | None = None) -> None:
     p_autorun = sub.add_parser(
         "full-autonomous-run",
         help="iterate presets until ROI improvements fade",
+        conflict_handler="resolve",
     )
     p_autorun.add_argument("--max-iterations", type=int, help="maximum iterations")
     p_autorun.add_argument(

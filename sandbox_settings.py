@@ -317,6 +317,24 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_CENTRAL_LOGGING",
         description="Enable centralised logging output.",
     )
+    log_rotation_max_bytes: int = Field(
+        5 * 1024 * 1024,
+        env="LOG_ROTATION_MAX_BYTES",
+        ge=0,
+        description="Rotate logs when file exceeds this size in bytes; 0 disables size-based rotation.",
+    )
+    log_rotation_backup_count: int = Field(
+        5,
+        env="LOG_ROTATION_BACKUP_COUNT",
+        ge=0,
+        description="Number of rotated log files to keep.",
+    )
+    log_rotation_seconds: int | None = Field(
+        None,
+        env="LOG_ROTATION_SECONDS",
+        gt=0,
+        description="Rotate logs after this many seconds; when set, overrides size-based rotation.",
+    )
     visual_agent_monitor_interval: float = Field(
         30.0, env="VISUAL_AGENT_MONITOR_INTERVAL"
     )
