@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import re
 from typing import Dict, Any, TYPE_CHECKING
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
@@ -207,6 +208,29 @@ class SelfCodingManager:
                 None,
             )
 
+            def _coverage_ratio(output: str, success: bool) -> float:
+                try:
+                    passed_match = re.search(r"(\d+)\s+passed", output)
+                    failed_match = re.search(r"(\d+)\s+failed", output)
+                    passed = int(passed_match.group(1)) if passed_match else 0
+                    failed = int(failed_match.group(1)) if failed_match else 0
+                    total = passed + failed
+                    return passed / total if total else (1.0 if success else 0.0)
+                except Exception:
+                    return 1.0 if success else 0.0
+
+            def _run(repo: Path, changed: Path | None) -> TestHarnessResult:
+                try:
+                    return run_tests(repo, changed, backend=backend)
+                except TypeError:
+                    return run_tests(repo, changed)
+
+            baseline = _run(clone_root, cloned_path)
+            coverage_before = _coverage_ratio(baseline.stdout, baseline.success)
+            runtime_before = baseline.duration
+            coverage_after = coverage_before
+            runtime_after = runtime_before
+
             while attempt < max_attempts:
                 attempt += 1
                 self.logger.info("patch attempt %s", attempt)
@@ -217,12 +241,15 @@ class SelfCodingManager:
                     reason=description,
                     trigger=path.name,
                     context_meta=ctx_meta,
+                    baseline_coverage=coverage_before,
+                    baseline_runtime=runtime_before,
                 )
-
-                harness_result: TestHarnessResult = run_tests(
-                    clone_root, cloned_path, backend=backend
-                )
+                harness_result: TestHarnessResult = _run(clone_root, cloned_path)
                 if harness_result.success:
+                    coverage_after = _coverage_ratio(
+                        harness_result.stdout, harness_result.success
+                    )
+                    runtime_after = harness_result.duration
                     break
 
                 if attempt >= max_attempts:
@@ -311,6 +338,19 @@ class SelfCodingManager:
             result = self.pipeline.run(self.bot_name, energy=energy)
             after_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
             roi_delta = after_roi - before_roi
+            coverage_delta = coverage_after - coverage_before
+            runtime_improvement = runtime_before - runtime_after
+            self.logger.info(
+                "roi metrics",
+                extra={
+                    "coverage_before": coverage_before,
+                    "coverage_after": coverage_after,
+                    "coverage_delta": coverage_delta,
+                    "runtime_before": runtime_before,
+                    "runtime_after": runtime_after,
+                    "runtime_improvement": runtime_improvement,
+                },
+            )
             patch_logger = getattr(self.engine, "patch_logger", None)
             if patch_logger is not None:
                 try:
