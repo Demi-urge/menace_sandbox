@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import abc
 import atexit
-import hashlib
+import hashlib  # used in _compute_checksum
 from typing import Dict, Tuple, Optional, Callable
 import pickle
 import os
