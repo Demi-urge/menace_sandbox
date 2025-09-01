@@ -181,7 +181,14 @@ class OpenAIClient(LLMClient):
                 response.raise_for_status()
                 raw = response.json()
                 text = self.parse(raw)
-                return LLMResult(raw=raw, text=text)
+                result = LLMResult(raw=raw, text=text)
+                try:
+                    from prompt_db import log_interaction
+
+                    log_interaction(prompt_obj, raw, text, prompt_obj.tags)
+                except Exception:
+                    pass  # Logging should never break generation
+                return result
 
             time.sleep(backoff)
             backoff *= 2
