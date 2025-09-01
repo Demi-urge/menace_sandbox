@@ -212,6 +212,22 @@ def test_background_self_improvement_loop(monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_integration", orphan_mod)
     monkeypatch.setitem(sys.modules, "sandbox_runner.bootstrap", bootstrap_mod)
 
+    quick_fix = types.ModuleType("quick_fix_engine")
+    monkeypatch.setitem(sys.modules, "quick_fix_engine", quick_fix)
+
+    cws_mod = types.ModuleType("composite_workflow_scorer")
+    cws_mod.CompositeWorkflowScorer = object
+    monkeypatch.setitem(sys.modules, "composite_workflow_scorer", cws_mod)
+    monkeypatch.setitem(
+        sys.modules, "menace_sandbox.composite_workflow_scorer", cws_mod
+    )
+    wem = types.ModuleType("workflow_evolution_manager")
+    wem.WorkflowEvolutionManager = object
+    monkeypatch.setitem(sys.modules, "workflow_evolution_manager", wem)
+    monkeypatch.setitem(
+        sys.modules, "menace_sandbox.workflow_evolution_manager", wem
+    )
+
     orphan_disc = types.ModuleType("orphan_discovery")
     orphan_disc.append_orphan_cache = lambda *a, **k: None
     orphan_disc.append_orphan_classifications = lambda *a, **k: None

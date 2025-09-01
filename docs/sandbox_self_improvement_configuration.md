@@ -7,8 +7,8 @@ advice for common setup problems.
 ## Required dependencies
 - Run `./setup_env.sh` or install packages from `requirements.txt` to provide core Python libraries.
 - The self-improvement engine requires optional helpers. Missing modules such as
-  `sandbox_runner` or `quick_fix_engine` raise a runtime error, so ensure they are
-  available before enabling related features.
+  `sandbox_runner.orphan_integration` or `quick_fix_engine` raise a runtime
+  error, so ensure they are available before enabling related features.
 - Some sandbox features rely on external binaries like `ffmpeg` and `tesseract`.
   Verify they are on your `PATH` after installing the Python environment.
 
@@ -31,8 +31,8 @@ advice for common setup problems.
 ## Troubleshooting
 ### Missing modules
 - Self-improvement cycles fail fast when helper modules are missing. Install
-  `sandbox_runner` and `quick_fix_engine` or remove the feature flags that
-  enable them.
+  `sandbox_runner` (with the `sandbox_runner.orphan_integration` module) and
+  `quick_fix_engine` or remove the feature flags that enable them.
 - If Python dependencies are missing, rerun `./setup_env.sh` and check that
   `ffmpeg` and `tesseract` are installed.
 

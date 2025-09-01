@@ -1,3 +1,13 @@
+"""Helpers for the self-improvement subsystem.
+
+The routines expect auxiliary packages to be installed:
+
+* ``quick_fix_engine`` – generates corrective patches.
+* ``sandbox_runner.orphan_integration`` – reintroduces orphaned modules.
+
+Missing dependencies raise :class:`RuntimeError` with guidance on how to
+install them.
+"""
 from __future__ import annotations
 
 import json
@@ -27,6 +37,26 @@ except Exception:  # pragma: no cover - simplified environments
 
 logger = get_logger(__name__)
 settings = SandboxSettings()
+
+
+def verify_dependencies() -> None:
+    """Ensure optional helper packages for self-improvement are installed."""
+
+    try:
+        import quick_fix_engine  # type: ignore # noqa: F401
+    except Exception as exc:  # pragma: no cover - import guidance
+        raise RuntimeError(
+            "quick_fix_engine is required for self-improvement. "
+            "Install it with 'pip install quick_fix_engine'."
+        ) from exc
+
+    try:
+        import sandbox_runner.orphan_integration  # type: ignore # noqa: F401
+    except Exception as exc:  # pragma: no cover - import guidance
+        raise RuntimeError(
+            "sandbox_runner.orphan_integration is required for self-improvement. "
+            "Install the sandbox_runner package or ensure it is on PYTHONPATH."
+        ) from exc
 
 
 def _lock_for(path: Path) -> FileLock:
@@ -246,6 +276,7 @@ def init_self_improvement(new_settings: SandboxSettings | None = None) -> Sandbo
 
     global settings
     settings = new_settings or load_sandbox_settings()
+    verify_dependencies()
     initialize_autonomous_sandbox(settings)
     if getattr(settings, "sandbox_central_logging", False):
         setup_logging()
@@ -271,4 +302,5 @@ __all__ = [
     "_atomic_write",
     "get_default_synergy_weights",
     "reload_synergy_weights",
+    "verify_dependencies",
 ]
