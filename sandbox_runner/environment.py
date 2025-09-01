@@ -112,14 +112,67 @@ except ImportError:  # pragma: no cover - optional dependency
     def _radar_track_module_usage(_module: str) -> None:  # type: ignore
         return None
 
-_radar_queue: queue.Queue[str] | None = None
-_radar_thread: threading.Thread | None = None
-_radar_stop_event: threading.Event | None = None
+
+class _RadarWorker:
+    """Context manager managing the background radar tracking worker."""
+
+    def __init__(self) -> None:
+        self.queue: queue.Queue[str] | None = None
+        self.thread: threading.Thread | None = None
+        self.stop_event: threading.Event | None = None
+
+    def __enter__(self) -> "_RadarWorker":
+        if self.thread is not None and self.thread.is_alive():
+            return self
+        self.queue = queue.Queue()
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(
+            target=_radar_worker, args=(self.queue, self.stop_event),
+            name="radar-track", daemon=True,
+        )
+        try:
+            self.thread.start()
+            logger.info("radar worker started")
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("radar worker failed to start", exc_info=exc)
+            self.thread = None
+            self.stop_event = None
+            self.queue = None
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self.queue is None:
+            return
+        if self.stop_event is not None:
+            self.stop_event.set()
+        try:
+            self.queue.put(None)
+        except queue.Full as exc:  # pragma: no cover - best effort
+            logger.exception("radar worker queue full on shutdown", exc_info=exc)
+        if self.thread and self.thread.is_alive():
+            try:
+                self.thread.join(timeout=1.0)
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.exception("failed joining radar worker", exc_info=exc)
+            if self.thread.is_alive():
+                logger.warning("radar worker did not terminate before timeout")
+            else:
+                logger.info("radar worker terminated")
+
+    def track(self, module: str) -> None:
+        if self.queue is None:
+            raise RuntimeError("radar worker not running")
+        try:
+            self.queue.put_nowait(module)
+        except queue.Full as exc:
+            logger.exception("radar worker queue full", exc_info=exc)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("radar worker queue error", exc_info=exc)
 
 
-def _radar_worker() -> None:
-    while _radar_stop_event is not None and not _radar_stop_event.is_set():
-        module = _radar_queue.get()
+def _radar_worker(q: "queue.Queue[str]", stop: threading.Event) -> None:
+    while not stop.is_set():
+        module = q.get()
         if module is None:
             break
         try:
@@ -128,37 +181,7 @@ def _radar_worker() -> None:
             record_error(exc)
 
 
-def _stop_radar_worker() -> None:
-    if _radar_queue is None:
-        return
-    if _radar_stop_event is not None:
-        _radar_stop_event.set()
-    _radar_queue.put(None)
-    if _radar_thread and _radar_thread.is_alive():
-        _radar_thread.join(timeout=1.0)
-        if _radar_thread.is_alive():
-            logger.warning("radar worker did not terminate before timeout")
-        else:
-            logger.info("radar worker terminated")
-
-
-def _ensure_radar_worker() -> None:
-    global _radar_thread, _radar_queue, _radar_stop_event
-    if _radar_thread is not None and _radar_thread.is_alive():
-        return
-    _radar_queue = queue.Queue()
-    _radar_stop_event = threading.Event()
-    _radar_thread = threading.Thread(
-        target=_radar_worker, name="radar-track", daemon=True
-    )
-    try:
-        _radar_thread.start()
-    except RuntimeError as exc:
-        record_error(exc)
-        _radar_thread = None
-        _radar_stop_event = None
-        return
-    atexit.register(_stop_radar_worker)
+_RADAR_MANAGER = _RadarWorker()
 
 
 def _async_radar_track(module: str) -> None:
@@ -170,16 +193,13 @@ def _async_radar_track(module: str) -> None:
         global _RADAR_WARNING_EMITTED
         if not _RADAR_WARNING_EMITTED:
             logger.warning(
-                "relevancy_radar dependency missing; tracking disabled"
+                "relevancy_radar dependency missing; tracking disabled",
             )
             _RADAR_WARNING_EMITTED = True
         return
-    _ensure_radar_worker()
-    if _radar_queue is None:
-        return
     try:
-        _radar_queue.put_nowait(module)
-    except Exception as exc:  # pragma: no cover - best effort
+        _RADAR_MANAGER.track(module)
+    except RuntimeError as exc:  # pragma: no cover - best effort
         record_error(exc)
 
 import builtins
@@ -213,7 +233,8 @@ def _patched_imports() -> Iterable[None]:
     previous = builtins.__import__
     builtins.__import__ = _tracking_import
     try:
-        yield
+        with _RADAR_MANAGER:
+            yield
     finally:
         builtins.__import__ = previous
 
@@ -289,7 +310,8 @@ def record_module_usage(module_name: str) -> None:
     """
 
     ts = datetime.utcnow().isoformat()
-    _async_radar_track(module_name)
+    with _RADAR_MANAGER:
+        _async_radar_track(module_name)
     with _MODULE_USAGE_LOCK:
         try:
             if MODULE_USAGE_PATH.exists():
@@ -3591,7 +3613,7 @@ def register_signal_handlers() -> None:
 
     def _handler(signum, frame) -> None:  # pragma: no cover - signal path
         try:
-            _stop_radar_worker()
+            _RADAR_MANAGER.__exit__(None, None, None)
             try:
                 from .cycle import _stop_usage_worker
 
