@@ -109,8 +109,23 @@ class RunMetrics:
 
 class EmptyWorkflowError(RuntimeError):
     """Raised when a workflow contains no actionable steps."""
+    def __init__(self, workflow: Any | Mapping[str, Any] | None = None) -> None:
+        """Record the offending workflow and generate a helpful message."""
 
-    pass
+        self.workflow = workflow
+        identifier: str | None = None
+        if isinstance(workflow, Mapping):
+            identifier = workflow.get("id") or workflow.get("name")
+        if not identifier and hasattr(workflow, "__name__"):
+            identifier = getattr(workflow, "__name__")
+        if not identifier and workflow is not None:
+            identifier = str(workflow)
+        message = (
+            f"Workflow {identifier} contained no actionable steps"
+            if identifier
+            else "Workflow contained no actionable steps"
+        )
+        super().__init__(message)
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +313,7 @@ class WorkflowSandboxRunner:
 
             funcs = [workflow] if callable(workflow) else list(workflow)
             if not funcs:
-                raise EmptyWorkflowError("workflow contains no actionable steps")
+                raise EmptyWorkflowError(workflow)
 
             # Copy each module's source file into the sandbox for completeness.
             for fn in funcs:
