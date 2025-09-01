@@ -43,7 +43,12 @@ def test_verify_dependencies_reports_all_missing(monkeypatch):
     def fake_import(name, package=None):
         if name in {"relevancy_radar", "error_logger"}:
             raise ModuleNotFoundError(name)
-        if name in {"quick_fix_engine", "sandbox_runner.orphan_integration"}:
+        if name in {
+            "quick_fix_engine",
+            "sandbox_runner.orphan_integration",
+            "torch",
+            "pytorch",
+        }:
             return types.ModuleType(name)
         return original_import(name, package)
 
@@ -55,3 +60,36 @@ def test_verify_dependencies_reports_all_missing(monkeypatch):
     msg = str(excinfo.value)
     assert "relevancy_radar" in msg and "error_logger" in msg
     assert "quick_fix_engine" not in msg
+
+
+def test_verify_dependencies_requires_torch(monkeypatch):
+    """A clear error is raised when PyTorch is unavailable."""
+
+    bootstrap = types.ModuleType("sandbox_runner.bootstrap")
+    bootstrap.initialize_autonomous_sandbox = lambda *a, **k: None
+    sandbox_runner = types.ModuleType("sandbox_runner")
+    sandbox_runner.bootstrap = bootstrap
+    sys.modules.update({"sandbox_runner": sandbox_runner, "sandbox_runner.bootstrap": bootstrap})
+
+    verify_dependencies = _load_verify_dependencies()
+
+    original_import = importlib.import_module
+
+    def fake_import(name, package=None):
+        if name in {"torch", "pytorch"}:
+            raise ModuleNotFoundError(name)
+        if name in {
+            "quick_fix_engine",
+            "sandbox_runner.orphan_integration",
+            "relevancy_radar",
+            "error_logger",
+        }:
+            return types.ModuleType(name)
+        return original_import(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        verify_dependencies(auto_install=False)
+
+    assert "torch" in str(excinfo.value)

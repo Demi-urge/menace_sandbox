@@ -53,28 +53,39 @@ def verify_dependencies(auto_install: bool = True) -> None:
 
     checks = {
         "quick_fix_engine": (
+            ("quick_fix_engine",),
             "quick_fix_engine",
             "Install it with 'pip install quick_fix_engine'.",
         ),
         "sandbox_runner.orphan_integration": (
+            ("sandbox_runner.orphan_integration",),
             "sandbox_runner",
             "Install the sandbox_runner package or ensure it is on PYTHONPATH.",
         ),
         "relevancy_radar": (
+            ("relevancy_radar",),
             "relevancy_radar",
             "Install it with 'pip install relevancy_radar'.",
         ),
         "error_logger": (
+            ("error_logger",),
             "error_logger",
             "Ensure the error_logger module is available.",
         ),
         "telemetry_feedback": (
+            ("telemetry_feedback",),
             "telemetry_feedback",
             "Ensure telemetry helpers are available.",
         ),
         "telemetry_backend": (
+            ("telemetry_backend",),
             "telemetry_backend",
             "Ensure telemetry helpers are available.",
+        ),
+        "torch": (
+            ("torch", "pytorch"),
+            "torch",
+            "Install PyTorch with 'pip install torch' to enable reinforcement-learning components.",
         ),
     }
 
@@ -91,17 +102,27 @@ def verify_dependencies(auto_install: bool = True) -> None:
         return False
 
     missing: list[str] = []
-    for module, (pkg, guidance) in checks.items():
-        try:  # pragma: no cover - import guidance
-            importlib.import_module(module)
-        except Exception:
-            if auto_install and _pip_install(pkg):
+    for name, (modules, pkg, guidance) in checks.items():
+        if isinstance(modules, str):
+            modules = (modules,)
+        available = False
+        for module in modules:  # pragma: no cover - import guidance
+            try:
+                importlib.import_module(module)
+                available = True
+                break
+            except Exception:
+                continue
+        if not available and auto_install and _pip_install(pkg):
+            for module in modules:
                 try:
                     importlib.import_module(module)
-                    continue
+                    available = True
+                    break
                 except Exception:
-                    pass
-            missing.append(f"{module} – {guidance}")
+                    continue
+        if not available:
+            missing.append(f"{name} – {guidance}")
 
     if missing:
         raise RuntimeError(
