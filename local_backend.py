@@ -7,12 +7,13 @@ servers.  They implement the :class:`LLMBackend` protocol so they can be used
 with :class:`llm_interface.LLMClient`.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict
 import os
 
 import requests
 import rate_limit
+import llm_config
 
 try:  # pragma: no cover - package vs module import
     from .retry_utils import with_retry
@@ -29,6 +30,11 @@ class _RESTBackend(LLMBackend):
     model: str
     base_url: str
     endpoint: str
+    _rate_limiter: rate_limit.TokenBucket = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:  # pragma: no cover - simple initialiser
+        cfg = llm_config.get_config()
+        self._rate_limiter = rate_limit.TokenBucket(cfg.tokens_per_minute)
 
     def _post(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         url = f"{self.base_url.rstrip('/')}/{self.endpoint.lstrip('/')}"
@@ -42,14 +48,19 @@ class _RESTBackend(LLMBackend):
         def do_request() -> Dict[str, Any]:
             return self._post(payload)
 
+        cfg = llm_config.get_config()
+        self._rate_limiter.update_rate(cfg.tokens_per_minute)
+        prompt_tokens = rate_limit.estimate_tokens(prompt.text, model=self.model)
+        self._rate_limiter.consume(prompt_tokens)
+
         raw = with_retry(do_request, exc=requests.RequestException)
         text = (
             raw.get("text")
             or raw.get("response", "")
             or raw.get("generated_text", "")
         )
-        prompt_tokens = rate_limit.estimate_tokens(prompt.text, model=self.model)
         completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
+        self._rate_limiter.consume(completion_tokens)
         return Completion(
             raw=raw,
             text=text,

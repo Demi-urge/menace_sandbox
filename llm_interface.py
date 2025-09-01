@@ -303,13 +303,13 @@ class OpenAIProvider(LLMClient):
 
         cfg = llm_config.get_config()
         retries = cfg.max_retries
+        prompt_tokens_est = rate_limit.estimate_tokens(
+            " ".join(m.get("content", "") for m in payload["messages"]),
+            model=self.model,
+        )
         for attempt in range(retries):
             self._rate_limiter.update_rate(cfg.tokens_per_minute)
-            tokens = rate_limit.estimate_tokens(
-                " ".join(m.get("content", "") for m in payload["messages"]),
-                model=self.model,
-            )
-            self._rate_limiter.consume(tokens)
+            self._rate_limiter.consume(prompt_tokens_est)
             try:
                 start = time.perf_counter()
                 response = self._session.post(
@@ -339,12 +339,20 @@ class OpenAIProvider(LLMClient):
                 except Exception:
                     pass
                 usage = raw.get("usage", {}) if isinstance(raw, dict) else {}
+                prompt_tokens = usage.get("prompt_tokens") or prompt_tokens_est
+                completion_tokens = usage.get("completion_tokens") or rate_limit.estimate_tokens(
+                    text, model=self.model
+                )
+                total = (prompt_tokens or 0) + (completion_tokens or 0)
+                extra = max(0, total - prompt_tokens_est)
+                if extra:
+                    self._rate_limiter.consume(extra)
                 return LLMResult(
                     raw=raw,
                     text=text,
                     parsed=parsed,
-                    prompt_tokens=usage.get("prompt_tokens"),
-                    completion_tokens=usage.get("completion_tokens"),
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
                     latency_ms=latency_ms,
                 )
 
@@ -353,11 +361,11 @@ class OpenAIProvider(LLMClient):
         raise RuntimeError("Failed to obtain completion from OpenAI")
 
     # ------------------------------------------------------------------
-    async def _async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+    async def _async_generate(self, payload: Dict[str, Any]) -> AsyncGenerator[str, None]:
         if httpx is None:  # pragma: no cover - dependency missing
             raise RuntimeError("httpx is required for async streaming")
 
-        payload = self._prepare_payload(prompt)
+        payload = dict(payload)
         payload["stream"] = True
 
         headers = {
@@ -368,12 +376,6 @@ class OpenAIProvider(LLMClient):
         cfg = llm_config.get_config()
         retries = cfg.max_retries
         for attempt in range(retries):
-            self._rate_limiter.update_rate(cfg.tokens_per_minute)
-            tokens = rate_limit.estimate_tokens(
-                " ".join(m.get("content", "") for m in payload["messages"]),
-                model=self.model,
-            )
-            self._rate_limiter.consume(tokens)
             try:
                 async with httpx.AsyncClient() as client:
                     async with client.stream(
@@ -422,16 +424,27 @@ class OpenAIProvider(LLMClient):
     ) -> LLMResult:
         """Synchronously generate a completion aggregating streamed chunks."""
 
+        payload = self._prepare_payload(prompt)
+        prompt_tokens = rate_limit.estimate_tokens(
+            " ".join(m.get("content", "") for m in payload["messages"]),
+            model=self.model,
+        )
+        cfg = llm_config.get_config()
+        self._rate_limiter.update_rate(cfg.tokens_per_minute)
+        self._rate_limiter.consume(prompt_tokens)
+
         text_parts: List[str] = []
 
         async def collect() -> None:
-            async for part in self._async_generate(prompt):
+            async for part in self._async_generate(payload):
                 text_parts.append(part)
 
         start = time.perf_counter()
         asyncio.run(collect())
         latency_ms = (time.perf_counter() - start) * 1000
         text = "".join(text_parts)
+        completion_tokens = rate_limit.estimate_tokens(text, model=self.model)
+        self._rate_limiter.consume(completion_tokens)
         parsed = None
         if parse_fn is not None:
             try:
@@ -439,7 +452,13 @@ class OpenAIProvider(LLMClient):
             except Exception:  # pragma: no cover - best effort
                 parsed = None
 
-        result = LLMResult(text=text, parsed=parsed, latency_ms=latency_ms)
+        result = LLMResult(
+            text=text,
+            parsed=parsed,
+            latency_ms=latency_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
         self._log(prompt, result)
         return result
 
