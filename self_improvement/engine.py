@@ -146,8 +146,8 @@ from .orchestration import (
     start_self_improvement_cycle,
     stop_self_improvement_cycle,
 )
-from .metrics import _update_alignment_baseline
-from .patch_generation import generate_patch
+from .roi_tracking import update_alignment_baseline
+from .patch_application import generate_patch
 
 
 from ..self_test_service import SelfTestService
@@ -2532,7 +2532,7 @@ class SelfImprovementEngine:
                     "alignment severity below warning threshold",
                     extra=log_record(patch_id=patch_id, severity=max_severity),
                 )
-                _update_alignment_baseline(settings)
+                update_alignment_baseline(settings)
                 return
             for idx, issue in enumerate(issues):
                 msg = issue.get("message", "")
@@ -2583,7 +2583,7 @@ class SelfImprovementEngine:
             except Exception:
                 self.logger.exception("alignment flag persistence failed")
             if not escalated:
-                _update_alignment_baseline(settings)
+                update_alignment_baseline(settings)
         except Exception:
             self.logger.exception(
                 "alignment flagging failed", extra=log_record(patch_id=patch_id)
@@ -7223,7 +7223,7 @@ class SelfImprovementEngine:
                     warnings = agent.evaluate_changes(actions, metrics, logs, commit_info)
                     if any(warnings.values()):
                         result.warnings = warnings
-                    _update_alignment_baseline(settings)
+                    update_alignment_baseline(settings)
                 except Exception as exc:
                     self.logger.exception("improvement flagging failed: %s", exc)
             self.logger.info(
