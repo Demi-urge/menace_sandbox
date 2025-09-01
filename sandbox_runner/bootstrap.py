@@ -62,6 +62,21 @@ def _start_optional_services(modules: Iterable[str]) -> None:
                 logger.warning("failed to launch %s", svc_name, exc_info=True)
 
 
+def _self_improvement_warmup() -> None:
+    """Perform basic warm-up steps prior to launching the optimisation loop.
+
+    The warm-up applies default configuration values and attempts to reload
+    sandbox settings.  Any failure is logged and re-raised to ensure that
+    irrecoverable issues prevent the self-improvement cycle from starting."""
+
+    try:
+        DefaultConfigManager().apply_defaults()
+        load_sandbox_settings()
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.error("self-improvement warm-up failed", exc_info=True)
+        raise RuntimeError("self-improvement warm-up failed") from exc
+
+
 def initialize_autonomous_sandbox(
     settings: SandboxSettings | None = None,
 ) -> SandboxSettings:
@@ -183,7 +198,7 @@ def initialize_autonomous_sandbox(
         )
 
         init_self_improvement(settings)
-        thread = start_self_improvement_cycle({"bootstrap": lambda: None})
+        thread = start_self_improvement_cycle({"bootstrap": _self_improvement_warmup})
         thread.start()
         try:
             thread.join(0)
