@@ -39,10 +39,14 @@ def _init_db(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS prompts(
             id INTEGER PRIMARY KEY,
             prompt TEXT,
+            text TEXT,
             completion_raw TEXT,
             completion_parsed TEXT,
+            response_text TEXT,
+            response_parsed TEXT,
             examples TEXT,
             vector_confidence REAL,
+            vector_confidences TEXT,
             outcome_tags TEXT,
             model TEXT,
             timestamp TEXT
@@ -58,7 +62,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
 
 
 def log_interaction(
-    prompt_obj: Prompt, raw: Dict[str, Any], parsed: Any, tags: List[str] | None
+    prompt_obj: Prompt, raw: Dict[str, Any], text: str, tags: List[str] | None
 ) -> None:
     """Record a single prompt/completion pair in the SQLite log."""
 
@@ -67,8 +71,13 @@ def log_interaction(
         raw_json = json.dumps(raw)
     except Exception:  # pragma: no cover - defensive
         raw_json = json.dumps(None)
+    parsed_obj: Any = None
     try:
-        parsed_json = json.dumps(parsed)
+        parsed_obj = json.loads(text)
+    except Exception:
+        pass
+    try:
+        parsed_json = json.dumps(parsed_obj)
     except Exception:  # pragma: no cover - defensive
         parsed_json = json.dumps(None)
 
@@ -76,17 +85,21 @@ def log_interaction(
     cur.execute(
         """
         INSERT INTO prompts(
-            prompt, completion_raw, completion_parsed, examples,
-            vector_confidence, outcome_tags, model, timestamp
+            prompt, text, completion_raw, completion_parsed, response_text, response_parsed,
+            examples, vector_confidence, vector_confidences, outcome_tags, model, timestamp
         )
-        VALUES (?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             prompt_obj.user,
+            prompt_obj.user,
             raw_json,
+            parsed_json,
+            text,
             parsed_json,
             json.dumps(getattr(prompt_obj, "examples", [])),
             getattr(prompt_obj, "vector_confidence", None),
+            json.dumps(getattr(prompt_obj, "vector_confidences", [])),
             json.dumps(list(tags or [])),
             raw.get("model") or getattr(prompt_obj, "model", None),
             datetime.utcnow().isoformat(),
@@ -175,7 +188,40 @@ class PromptDB:
     def log(self, prompt: Prompt, result: Completion) -> None:
         """Persist *prompt* and *result* to the underlying SQLite store."""
 
-        log_interaction(prompt, result.raw, result.parsed, prompt.outcome_tags)
+        raw = result.raw or {}
+        try:
+            raw_json = json.dumps(raw)
+        except Exception:  # pragma: no cover - defensive
+            raw_json = json.dumps(None)
+        try:
+            parsed_json = json.dumps(result.parsed)
+        except Exception:  # pragma: no cover - defensive
+            parsed_json = json.dumps(None)
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO prompts(
+                prompt, text, completion_raw, completion_parsed, response_text, response_parsed,
+                examples, vector_confidence, vector_confidences, outcome_tags, model, timestamp
+            )
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                prompt.user,
+                prompt.user,
+                raw_json,
+                parsed_json,
+                result.text,
+                parsed_json,
+                json.dumps(getattr(prompt, "examples", [])),
+                getattr(prompt, "vector_confidence", None),
+                json.dumps(getattr(prompt, "vector_confidences", [])),
+                json.dumps(list(prompt.outcome_tags)),
+                raw.get("model") or getattr(prompt, "model", None) or self.model,
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        self.conn.commit()
 
     # ------------------------------------------------------------------
     def log_prompt(
