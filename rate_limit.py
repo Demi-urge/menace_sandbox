@@ -10,12 +10,17 @@ retrying requests.
 
 import threading
 import time
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 try:  # pragma: no cover - optional dependency
     import tiktoken
 except Exception:  # pragma: no cover - optional dependency
     tiktoken = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    from transformers import AutoTokenizer  # type: ignore
+except Exception:  # pragma: no cover - transformers may not be installed
+    AutoTokenizer = None  # type: ignore
 
 _ENCODER_CACHE: Dict[str, Any] = {}
 
@@ -75,6 +80,22 @@ def _get_encoder(model: str | None) -> Any | None:
     return enc
 
 
+def _get_hf_tokenizer(model: str | None) -> Any | None:
+    """Return a HuggingFace tokenizer for *model* if available."""
+
+    if not AutoTokenizer or not model:
+        return None
+    key = f"hf::{model}"
+    tok = _ENCODER_CACHE.get(key)
+    if tok is None:
+        try:
+            tok = AutoTokenizer.from_pretrained(model)
+        except Exception:
+            tok = None
+        _ENCODER_CACHE[key] = tok
+    return tok
+
+
 def estimate_tokens(text: str, model: str | None = None) -> int:
     """Estimate token usage for *text* using the model's tokenizer."""
 
@@ -82,6 +103,12 @@ def estimate_tokens(text: str, model: str | None = None) -> int:
     if enc:
         try:
             return len(enc.encode(text))
+        except Exception:
+            pass
+    tok = _get_hf_tokenizer(model)
+    if tok:
+        try:
+            return len(tok.encode(text))
         except Exception:
             pass
     # Fallback heuristic: assume 4 characters per token

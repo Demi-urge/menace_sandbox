@@ -350,6 +350,7 @@ class SandboxSettings(BaseSettings):
             "vllm": "local_client.VLLMClient",
             "mixtral": "local_backend.mixtral_client",
             "llama3": "local_backend.llama3_client",
+            "private": "private_backend.local_weights_client",
         },
         env="AVAILABLE_LLM_BACKENDS",
         description=(
