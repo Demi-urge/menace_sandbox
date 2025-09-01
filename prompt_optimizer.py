@@ -37,6 +37,7 @@ class _Stat:
     example_placement: str
     has_code: bool
     has_bullets: bool
+    has_system: bool
     success: int = 0
     total: int = 0
     roi_sum: float = 0.0
@@ -62,10 +63,19 @@ class _Stat:
             return self.weighted_roi_sum / self.weight_sum
         return self.roi_sum / self.total if self.total else 0.0
 
-    def score(self) -> float:
-        """Combined score used to rank configurations."""
+    def score(self, roi_weight: float = 1.0) -> float:
+        """Combined score used to rank configurations.
 
-        return self.success_rate() * self.weighted_roi()
+        Parameters
+        ----------
+        roi_weight:
+            Exponent applied to the ROI component when calculating the score.
+            Values greater than ``1`` emphasise ROI while values below ``1``
+            make success rate more dominant.
+        """
+
+        roi = max(self.weighted_roi(), 0.0)
+        return self.success_rate() * (roi ** roi_weight)
 
 
 class PromptOptimizer:
@@ -73,8 +83,10 @@ class PromptOptimizer:
 
     Parameters
     ----------
-    log_a, log_b:
-        Paths to prompt experiment log files.
+    success_log, failure_log:
+        Paths to success and failure log files respectively. Each file should
+        contain one JSON object per line describing an experiment entry. If the
+        ``success`` flag is missing it will be inferred from the log type.
     stats_path:
         File used to persist aggregated statistics (JSON format).
     weight_by:
@@ -82,19 +94,23 @@ class PromptOptimizer:
         of each log entry as the weight, ``"runtime"`` uses the
         ``runtime_improvement`` field and ``None`` applies no additional
         weighting.
+    roi_weight:
+        Exponent applied to the ROI component when ranking configurations.
     """
 
     def __init__(
         self,
-        log_a: str | Path,
-        log_b: str | Path,
+        success_log: str | Path,
+        failure_log: str | Path,
         *,
         stats_path: str | Path = "prompt_optimizer_stats.json",
         weight_by: str | None = None,
+        roi_weight: float = 1.0,
     ) -> None:
-        self.log_paths = [Path(log_a), Path(log_b)]
+        self.log_paths = [Path(success_log), Path(failure_log)]
         self.stats_path = Path(stats_path)
         self.weight_by = weight_by
+        self.roi_weight = roi_weight
         self._sentiment = (
             SentimentIntensityAnalyzer() if SentimentIntensityAnalyzer else None
         )
@@ -124,6 +140,7 @@ class PromptOptimizer:
                         example_placement=item.get("example_placement", "none"),
                         has_code=bool(item.get("has_code")),
                         has_bullets=bool(item.get("has_bullets")),
+                        has_system=bool(item.get("has_system")),
                         success=int(item.get("success", 0)),
                         total=int(item.get("total", 0)),
                         roi_sum=float(item.get("roi_sum", 0.0)),
@@ -142,6 +159,7 @@ class PromptOptimizer:
             item.get("example_placement", "none"),
             bool(item.get("has_code")),
             bool(item.get("has_bullets")),
+            bool(item.get("has_system")),
         )
 
     # ------------------------------------------------------------------
@@ -149,7 +167,7 @@ class PromptOptimizer:
         """Read and parse all configured log files."""
 
         entries: List[Dict[str, Any]] = []
-        for path in self.log_paths:
+        for idx, path in enumerate(self.log_paths):
             if not path or not path.exists():
                 continue
             with path.open("r", encoding="utf-8") as fh:
@@ -158,14 +176,19 @@ class PromptOptimizer:
                     if not line:
                         continue
                     try:
-                        entries.append(json.loads(line))
+                        entry = json.loads(line)
                     except Exception:
                         continue
+                    # If success flag is missing, infer from log type
+                    entry.setdefault("success", idx == 0)
+                    entries.append(entry)
         return entries
 
     # ------------------------------------------------------------------
-    def _extract_features(self, prompt: str) -> Dict[str, Any]:
-        """Derive structural features from ``prompt``."""
+    def _extract_features(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Derive structural features from a log ``entry``."""
+
+        prompt = entry.get("prompt", "")
 
         header_matches = list(
             re.finditer(r"^#+\s*(.+)$", prompt, flags=re.MULTILINE)
@@ -194,6 +217,16 @@ class PromptOptimizer:
         has_bullets = bool(
             re.search(r"^\s*(?:[-*]|\d+\.)\s+", prompt, flags=re.MULTILINE)
         )
+        has_system = bool(
+            entry.get("system")
+            or entry.get("system_prompt")
+            or entry.get("system_message")
+            or (
+                isinstance(entry.get("messages"), list)
+                and any(m.get("role") == "system" for m in entry["messages"])
+            )
+            or prompt.lstrip().lower().startswith("system:")
+        )
 
         tone = "neutral"
         if self._sentiment:
@@ -212,6 +245,7 @@ class PromptOptimizer:
             "example_placement": example_placement,
             "has_code": has_code,
             "has_bullets": has_bullets,
+            "has_system": has_system,
         }
 
     # ------------------------------------------------------------------
@@ -230,7 +264,7 @@ class PromptOptimizer:
                 weight = 1.0
             module = entry.get("module", "unknown")
             action = entry.get("action", "unknown")
-            feats = self._extract_features(prompt)
+            feats = self._extract_features(entry)
             key = (
                 module,
                 action,
@@ -239,6 +273,7 @@ class PromptOptimizer:
                 feats["example_placement"],
                 feats["has_code"],
                 feats["has_bullets"],
+                feats["has_system"],
             )
             stat = self.stats.get(key)
             if not stat:
@@ -250,6 +285,7 @@ class PromptOptimizer:
                     example_placement=feats["example_placement"],
                     has_code=feats["has_code"],
                     has_bullets=feats["has_bullets"],
+                    has_system=feats["has_system"],
                 )
                 self.stats[key] = stat
             stat.update(success, roi, weight)
@@ -272,27 +308,46 @@ class PromptOptimizer:
     def select_format(self, module: str, action: str) -> Dict[str, Any]:
         """Return the best performing configuration for ``module`` and ``action``."""
 
-        best: _Stat | None = None
-        best_score = -1.0
-        for stat in self.stats.values():
-            if stat.module != module or stat.action != action:
-                continue
-            score = stat.score()
-            if score > best_score:
-                best_score = score
-                best = stat
-        if not best:
-            return {}
-        return {
-            "tone": best.tone,
-            "structured_sections": list(best.header_set),
-            "example_placement": best.example_placement,
-            "include_code": best.has_code,
-            "use_bullets": best.has_bullets,
-        }
+        suggestions = self.suggest_format(module, action, limit=1)
+        return suggestions[0] if suggestions else {}
 
-    # Backwards compatibility ------------------------------------------------
-    def suggest_format(self, module: str, action: str) -> Dict[str, Any]:
-        """Alias for :meth:`select_format`."""
+    def suggest_format(
+        self, module: str, action: str, *, limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """Return top ``limit`` ranked configurations.
 
-        return self.select_format(module, action)
+        Results are ordered by the combined score of success rate and ROI.
+        Each entry includes additional metadata such as success rate and the
+        weighted ROI to allow callers to make informed choices.
+        """
+
+        ranked = sorted(
+            (s for s in self.stats.values() if s.module == module and s.action == action),
+            key=lambda s: s.score(self.roi_weight),
+            reverse=True,
+        )
+
+        results: List[Dict[str, Any]] = []
+        for stat in ranked[:limit]:
+            results.append(
+                {
+                    "tone": stat.tone,
+                    "structured_sections": list(stat.header_set),
+                    "example_placement": stat.example_placement,
+                    "include_code": stat.has_code,
+                    "use_bullets": stat.has_bullets,
+                    "system_message": stat.has_system,
+                    "success_rate": stat.success_rate(),
+                    "weighted_roi": stat.weighted_roi(),
+                }
+            )
+        return results
+
+    # ------------------------------------------------------------------
+    def refresh(self) -> Dict[Tuple[Any, ...], _Stat]:
+        """Rebuild statistics by re-reading the log files."""
+
+        self.stats.clear()
+        if self.stats_path.exists():
+            self._load_stats()
+        return self.aggregate()
