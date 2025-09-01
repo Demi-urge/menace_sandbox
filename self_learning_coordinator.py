@@ -15,25 +15,11 @@ from sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - simplified environments may lack full init helpers
     from .self_improvement.init import FileLock, _atomic_write
-except Exception:  # pragma: no cover - fallback for stubbed tests
-    from filelock import FileLock  # type: ignore
-
-    def _atomic_write(path: Path, data: str | bytes, *, binary: bool = False, lock: FileLock | None = None) -> None:  # type: ignore
-        """Minimal fallback atomic write used when ``self_improvement`` helpers missing."""
-        mode = "wb" if binary else "w"
-        encoding = None if binary else "utf-8"
-        lock = lock or FileLock(str(path) + ".lock")
-
-        def _write() -> None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, mode, encoding=encoding) as fh:
-                fh.write(data)  # type: ignore[arg-type]
-
-        if lock.is_locked:
-            _write()
-        else:
-            with lock:
-                _write()
+except Exception as exc:  # pragma: no cover - fail fast when helpers unavailable
+    raise ImportError(
+        "self_learning_coordinator requires self_improvement.init._atomic_write for"
+        " atomic file operations"
+    ) from exc
 from .unified_event_bus import EventBus
 from .data_bot import MetricsDB
 from .neuroplasticity import PathwayRecord, Outcome
