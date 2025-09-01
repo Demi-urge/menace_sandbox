@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Protocol
 import os
 import time
 import json
-import random
 import threading
 
 import requests
@@ -229,25 +228,8 @@ class LLMClient:
 
         result = self._generate(prompt)
         if self._log_prompts and self.db:
-            tags = (
-                prompt.outcome_tags
-                or prompt.metadata.get("tags")
-                or prompt.metadata.get("outcome_tags")
-                or []
-            )
-            confs = (
-                prompt.vector_confidences
-                or prompt.metadata.get("vector_confidences")
-                or []
-            )
-            if not isinstance(tags, list):
-                tags = [str(tags)]
             try:
-                confs = [float(c) for c in confs]
-            except Exception:  # pragma: no cover - defensive
-                confs = []
-            try:
-                self.db.log_prompt(prompt, result, tags, confs)
+                self.db.log(prompt, result)
             except Exception:  # pragma: no cover - best effort
                 pass
 

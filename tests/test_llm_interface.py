@@ -9,9 +9,11 @@ from prompt_db import PromptDB
 def test_promptdb_logs_to_memory(tmp_path):
     router = DBRouter("prompts", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
     db = PromptDB(model="test", router=router)
-    prompt = Prompt(text="hi", examples=["ex"])
+    prompt = Prompt(
+        text="hi", examples=["ex"], outcome_tags=["tag"], vector_confidences=[0.4]
+    )
     result = LLMResult(raw={"r": 1}, text="res")
-    db.log_prompt(prompt, result, ["tag"], [0.4])
+    db.log(prompt, result)
     row = db.conn.execute(
         "SELECT text, examples, vector_confidences, outcome_tags, response_text, model FROM prompts"
     ).fetchone()
@@ -76,15 +78,15 @@ def test_openai_provider_retry_and_logging(monkeypatch):
     monkeypatch.setattr(llm_time, "sleep", lambda s: sleeps.append(s))
     monkeypatch.setattr(random, "uniform", lambda a, b: 0)
 
-    # Stub PromptDB to record log_prompt invocations
-    logged: list[tuple[Prompt, LLMResult, list[str], list[float]]] = []
+    # Stub PromptDB to record log invocations
+    logged: list[tuple[Prompt, LLMResult]] = []
 
     class DummyDB:
         def __init__(self, *_a, **_k):
             pass
 
-        def log_prompt(self, prompt, result, tags, confs):
-            logged.append((prompt, result, tags, confs))
+        def log(self, prompt, result):
+            logged.append((prompt, result))
 
     import prompt_db
 
@@ -132,7 +134,7 @@ def test_router_fallback_logs(monkeypatch):
         def __init__(self, *_a, **_k):
             pass
 
-        def log_prompt(self, prompt, *_a, **_k):
+        def log(self, prompt, *_a, **_k):
             logged.append(prompt.text)
 
     import prompt_db

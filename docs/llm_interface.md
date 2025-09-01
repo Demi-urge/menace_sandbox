@@ -47,7 +47,7 @@ class MemoryRouter:
         return self.conn
 
 memory_db = PromptDB(model="demo", router=MemoryRouter())
-memory_db.log_prompt(Prompt("hi"), LLMResult(text="ok", parsed={}), ["tag"], 0.9)
+memory_db.log(Prompt("hi", outcome_tags=["tag"], vector_confidences=[0.9]), LLMResult(text="ok", parsed={}))
 ```
 
 ## Fallback routing
