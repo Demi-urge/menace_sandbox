@@ -85,6 +85,7 @@ class StubProviderConfig:
     cache_path: Path
     fallback_model: str
     max_concurrency: int = 1
+    enabled_backends: Tuple[str, ...] = ()
     rate_limit: asyncio.Semaphore = field(init=False)
 
     def __post_init__(self) -> None:  # pragma: no cover - trivial
@@ -190,7 +191,6 @@ def _load_config(settings: SandboxSettings) -> StubProviderConfig:
         ),
         max_concurrency=_int_env("SANDBOX_STUB_MAX_CONCURRENCY", 1),
     )
-
     model = settings.sandbox_stub_model
     if model:
         available = _available_models(settings)
@@ -204,6 +204,29 @@ def _load_config(settings: SandboxSettings) -> StubProviderConfig:
             logger.warning(
                 "SANDBOX_STUB_MODEL=%s but no stub models are configured", model
             )
+
+    backends: list[str] = []
+    transformers_enabled = _feature_enabled("SANDBOX_ENABLE_TRANSFORMERS")
+    openai_enabled = _feature_enabled("SANDBOX_ENABLE_OPENAI")
+    if transformers_enabled:
+        model_env = os.getenv("SANDBOX_STUB_MODEL", settings.sandbox_stub_model)
+        token_env = os.getenv("SANDBOX_HUGGINGFACE_TOKEN", settings.huggingface_token)
+        if model_env and token_env:
+            backends.append("transformers")
+        elif model_env or token_env:
+            logger.warning(
+                "SANDBOX_ENABLE_TRANSFORMERS set but model or token missing"
+            )
+    if openai_enabled:
+        if os.getenv("OPENAI_API_KEY"):
+            backends.append("openai")
+        else:
+            logger.warning(
+                "SANDBOX_ENABLE_OPENAI set but OPENAI_API_KEY is missing"
+            )
+    if transformers_enabled and cfg.fallback_model:
+        backends.append("fallback")
+    cfg.enabled_backends = tuple(backends)
 
     global FALLBACK_MODEL
     FALLBACK_MODEL = cfg.fallback_model
@@ -494,26 +517,29 @@ def _valid_cache_item(key: Tuple[str, str], value: Dict[str, Any]) -> bool:
 def _save_cache(config: StubProviderConfig | None = None) -> None:
     config = config or get_config()
     path = config.cache_path
+    lock_path = str(path) + ".lock"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with _CACHE_LOCK:
-            items: List[List[Any]] = []
-            invalid: List[Tuple[str, str]] = []
-            for k, v in _CACHE.items():
-                if _valid_cache_item(k, v):
-                    items.append([f"{k[0]}::{k[1]}", v])
-                else:
-                    invalid.append(k)
-            for k in invalid:
-                _CACHE.pop(k, None)
-            data = items
-        tmp = path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(data, fh)
-            fh.flush()
-            os.fsync(fh.fileno())
-        tmp.replace(path)
-    except (OSError, TypeError) as exc:
+        lock = FileLock(lock_path)
+        with lock:
+            with _CACHE_LOCK:
+                items: List[List[Any]] = []
+                invalid: List[Tuple[str, str]] = []
+                for k, v in _CACHE.items():
+                    if _valid_cache_item(k, v):
+                        items.append([f"{k[0]}::{k[1]}", v])
+                    else:
+                        invalid.append(k)
+                for k in invalid:
+                    _CACHE.pop(k, None)
+                data = items
+            tmp = path.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
+                fh.flush()
+                os.fsync(fh.fileno())
+            tmp.replace(path)
+    except (OSError, TypeError, Timeout) as exc:
         logger.exception("failed to save stub cache", exc_info=exc)
         warnings.warn(
             "failed to persist stub cache; using in-memory cache only",
@@ -731,67 +757,48 @@ async def _load_fallback_pipeline(cfg: StubProviderConfig) -> Any:
 
 
 async def _aload_generator(config: StubProviderConfig | None = None) -> Any:
-    """Return a text generation pipeline or raise :class:`ModelLoadError`."""
+    """Return a text generation pipeline or raise :class:`RuntimeError`."""
     global _GENERATOR
     if _GENERATOR is not None:
         return _GENERATOR
-    settings = get_settings()
+
     cfg = config or get_config()
-    model = settings.sandbox_stub_model
-
-    if model == "openai":
-        try:
-            _GENERATOR = await _load_openai_generator()
-            return _GENERATOR
-        except ModelLoadError as exc:
-            logger.warning("openai unavailable: %s; attempting bundled model", exc)
-            _GENERATOR = await _load_fallback_pipeline(cfg)
-            return _GENERATOR
-
-    try:
-        global pipeline
-        if pipeline is None:
-            transformers = importlib.import_module("transformers")
-            pipeline = transformers.pipeline  # type: ignore[attr-defined]
-    except ImportError:
-        logger.warning("transformers library unavailable; attempting OpenAI fallback")
-        _GENERATOR = await _load_openai_generator()
-        return _GENERATOR
-    if pipeline is None:
-        _GENERATOR = await _load_openai_generator()
-        return _GENERATOR
-
-    hf_token = settings.huggingface_token
-    if not model or not hf_token:
-        try:
-            _GENERATOR = await _load_fallback_pipeline(cfg)
-            return _GENERATOR
-        except ModelLoadError as exc:
-            logger.warning("bundled model load failed: %s; attempting OpenAI", exc)
-            _GENERATOR = await _load_openai_generator()
-            return _GENERATOR
-
-    try:
-        _GENERATOR = await asyncio.to_thread(
-            pipeline,
-            "text-generation",
-            model=model,
-            use_auth_token=hf_token,
+    if not cfg.enabled_backends:
+        raise RuntimeError(
+            "No text generation backends are enabled; set SANDBOX_ENABLE_TRANSFORMERS "
+            "or SANDBOX_ENABLE_OPENAI"
         )
-        await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
-        return _GENERATOR
-    except Exception as exc:  # pragma: no cover - model load failures
-        logger.exception(
-            "failed to load model %s; attempting fallback %s", model, cfg.fallback_model,
-            exc_info=exc,
-        )
+
+    settings = get_settings()
+    errors: dict[str, str] = {}
+    for backend in cfg.enabled_backends:
         try:
-            _GENERATOR = await _load_fallback_pipeline(cfg)
-            return _GENERATOR
-        except ModelLoadError as exc2:
-            logger.warning("fallback model unavailable: %s; attempting OpenAI", exc2)
-            _GENERATOR = await _load_openai_generator()
-            return _GENERATOR
+            if backend == "transformers":
+                global pipeline
+                if pipeline is None:
+                    transformers = importlib.import_module("transformers")
+                    pipeline = transformers.pipeline  # type: ignore[attr-defined]
+                _GENERATOR = await asyncio.to_thread(
+                    pipeline,
+                    "text-generation",
+                    model=settings.sandbox_stub_model,
+                    use_auth_token=settings.huggingface_token,
+                )
+                await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
+                return _GENERATOR
+            if backend == "openai":
+                _GENERATOR = await _load_openai_generator()
+                return _GENERATOR
+            if backend == "fallback":
+                _GENERATOR = await _load_fallback_pipeline(cfg)
+                return _GENERATOR
+        except Exception as exc:  # pragma: no cover - backend load failures
+            errors[backend] = str(exc)
+            continue
+    if errors:
+        detail = "; ".join(f"{b}: {e}" for b, e in errors.items())
+        raise RuntimeError(f"No text generation backend could be loaded: {detail}")
+    raise RuntimeError("No text generation backend could be loaded")
 
 
 def _load_generator(config: StubProviderConfig | None = None):
