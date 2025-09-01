@@ -75,6 +75,7 @@ def test_openai_provider_retry_and_logging(monkeypatch):
     """OpenAIProvider retries on 429 responses and logs the interaction."""
 
     from llm_interface import OpenAIProvider, requests, Prompt, LLMResult, rate_limit
+    monkeypatch.setattr(OpenAIProvider, "generate", LLMClient.generate)
 
     # Capture sleep calls to assert backoff behaviour
     sleeps: list[float] = []
@@ -288,6 +289,7 @@ def test_openai_provider_retries_on_server_error(monkeypatch):
     """Server errors trigger retries with exponential backoff."""
 
     from llm_interface import OpenAIProvider, requests, rate_limit
+    monkeypatch.setattr(OpenAIProvider, "generate", LLMClient.generate)
 
     sleeps: list[float] = []
     monkeypatch.setattr(
