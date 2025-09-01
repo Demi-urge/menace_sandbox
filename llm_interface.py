@@ -10,8 +10,7 @@ single :py:meth:`generate` method returning an :class:`LLMResult`.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Protocol
 import os
 import time
 import json
@@ -23,14 +22,37 @@ class Prompt:
     """Input to an LLM generation call.
 
     ``text`` contains the assembled prompt shown to the model while ``examples``
-    stores any illustrative snippets that were used to build the prompt.
-    Additional information such as ROI metrics or tone preferences can be
-    attached via the ``metadata`` mapping.
+    stores any illustrative snippets that were used to build the prompt.  The
+    ``vector_confidences`` and ``outcome_tags`` fields capture metadata about
+    how the prompt was produced.  A free form ``metadata`` mapping is retained
+    for backwards compatibility with older callers.
     """
 
     text: str
     examples: List[str] = field(default_factory=list)
+    vector_confidences: List[float] = field(default_factory=list)
+    outcome_tags: List[str] = field(default_factory=list)
     metadata: Dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:  # pragma: no cover - simple normalisation
+        """Populate structured fields from ``metadata`` if provided."""
+        if not self.vector_confidences:
+            confs = self.metadata.get("vector_confidences")
+            if confs:
+                try:
+                    self.vector_confidences = [float(c) for c in confs]
+                except Exception:  # pragma: no cover - defensive
+                    self.vector_confidences = []
+
+        if not self.outcome_tags:
+            tags = (
+                self.metadata.get("outcome_tags")
+                or self.metadata.get("tags")
+                or []
+            )
+            if isinstance(tags, str):
+                tags = [tags]
+            self.outcome_tags = [str(t) for t in tags]
 
     # The original codebase often treated prompts as raw strings.  To ease the
     # transition to the structured :class:`Prompt` object, the dataclass mimics
@@ -75,14 +97,14 @@ class Prompt:
 
 
 @dataclass(slots=True)
-class LLMResult:
-    """Result returned by an :class:`LLMClient`.
+class Completion:
+    """Model response returned by :class:`LLMClient` or a backend.
 
-    ``text`` holds the raw string produced by the model.  ``parsed`` optionally
-    stores a structured representation of that string (for example JSON
-    decoded from ``text``).  ``raw`` can be used by clients to stash any
-    transport specific payload such as HTTP responses.  ``completions``
-    exposes the raw text of all choices returned by the model.
+    ``text`` contains the primary string produced by the model while ``parsed``
+    optionally exposes a structured interpretation of that text.  ``raw`` holds
+    the transport specific response payload (for example the JSON returned by
+    the OpenAI API).  ``completions`` stores the raw text for every choice
+    returned by the backend which aids debugging but is otherwise optional.
     """
 
     text: str = ""
@@ -91,45 +113,96 @@ class LLMResult:
     completions: List[str] = field(default_factory=list)
 
 
-class LLMClient(ABC):
-    """Base class describing the minimal LLM client interface."""
+# Backwards compatibility ---------------------------------------------------
+# ``LLMResult`` was the previous name of :class:`Completion`.  Export it as an
+# alias so existing imports continue to work without modification.
+LLMResult = Completion
 
-    def __init__(self, model: str, *, log_prompts: bool = True) -> None:
-        self.model = model
+
+class LLMBackend(Protocol):
+    """Minimal protocol that all backend implementations must follow."""
+
+    model: str
+
+    def generate(self, prompt: Prompt) -> Completion:
+        ...
+
+
+class LLMClient:
+    """Thin orchestrator that can wrap any :class:`LLMBackend`.
+
+    The class is still subclassable so existing tests that override
+    :meth:`_generate` continue to work.  Alternatively a backend object
+    implementing :class:`LLMBackend` can be supplied which will be used for
+    generation.
+    """
+
+    def __init__(
+        self,
+        model: str | None = None,
+        *,
+        backend: "LLMBackend" | None = None,
+        log_prompts: bool = True,
+    ) -> None:
+        if model is None and backend is None:
+            raise ValueError("model or backend must be provided")
+        if model is None and backend is not None:
+            model = backend.model
+        self.model = model or "unknown"
+        self.backend = backend
         self._log_prompts = log_prompts
         if log_prompts:
             from prompt_db import PromptDB
 
-            self.db = PromptDB(model)
+            self.db = PromptDB(self.model)
         else:
             self.db = None
 
-    @abstractmethod
-    def _generate(self, prompt: Prompt) -> LLMResult:  # pragma: no cover - interface
-        """Subclasses implement the actual request logic."""
+    # ------------------------------------------------------------------
+    def _generate(self, prompt: Prompt) -> Completion:
+        if self.backend is None:
+            raise NotImplementedError(
+                "Subclasses must implement _generate or provide a backend"
+            )
+        return self.backend.generate(prompt)
 
-    def generate(self, prompt: Prompt) -> LLMResult:
+    # ------------------------------------------------------------------
+    def generate(
+        self, prompt: Prompt, *, return_raw: bool = False
+    ) -> Completion | tuple[Completion, Dict[str, object]]:
         """Generate a response for *prompt* and persist the interaction."""
 
         result = self._generate(prompt)
         if self._log_prompts and self.db:
-            tags = prompt.metadata.get("tags") or prompt.metadata.get("outcome_tags") or []
-            confs = prompt.metadata.get("vector_confidences") or []
+            tags = (
+                prompt.outcome_tags
+                or prompt.metadata.get("tags")
+                or prompt.metadata.get("outcome_tags")
+                or []
+            )
+            confs = (
+                prompt.vector_confidences
+                or prompt.metadata.get("vector_confidences")
+                or []
+            )
             if not isinstance(tags, list):
                 tags = [str(tags)]
             try:
                 confs = [float(c) for c in confs]
-            except Exception:
+            except Exception:  # pragma: no cover - defensive
                 confs = []
             try:
                 self.db.log_prompt(prompt, result, tags, confs)
-            except Exception:
+            except Exception:  # pragma: no cover - best effort
                 pass
+
+        if return_raw:
+            return result, result.raw
         return result
 
 
-class OpenAIProvider(LLMClient):
-    """Minimal OpenAI chat completion client using GPT-4o."""
+class OpenAIBackend(LLMClient):
+    """Minimal OpenAI chat completion backend using GPT-4o."""
 
     api_url = "https://api.openai.com/v1/chat/completions"
 
@@ -182,7 +255,7 @@ class OpenAIProvider(LLMClient):
         raise RuntimeError("Exceeded maximum retries for OpenAI request")
 
     # ------------------------------------------------------------------
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> Completion:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt.text}],
@@ -208,7 +281,11 @@ class OpenAIProvider(LLMClient):
             except (TypeError, ValueError):
                 parsed = None
 
-        return LLMResult(text=text, parsed=parsed, raw=raw, completions=completions)
+        return Completion(text=text, parsed=parsed, raw=raw, completions=completions)
+
+
+# Backwards compatible name -------------------------------------------------
+OpenAIProvider = OpenAIBackend
 
 
 class OllamaProvider(LLMClient):
@@ -230,14 +307,14 @@ class OllamaProvider(LLMClient):
             return False
         return True
 
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> Completion:
         payload = {"model": self.model, "prompt": prompt.text}
         url = self.base_url.rstrip("/") + "/api/generate"
         response = self._session.post(url, json=payload, timeout=30)
         response.raise_for_status()
         raw = response.json()
         text = raw.get("response", "") or raw.get("text", "")
-        return LLMResult(raw=raw, text=text)
+        return Completion(raw=raw, text=text)
 
 
 class VLLMProvider(LLMClient):
@@ -258,14 +335,14 @@ class VLLMProvider(LLMClient):
             return False
         return True
 
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> Completion:
         payload = {"model": self.model, "prompt": prompt.text}
         url = self.base_url.rstrip("/") + "/generate"
         response = self._session.post(url, json=payload, timeout=30)
         response.raise_for_status()
         raw = response.json()
         text = raw.get("text") or raw.get("generated_text", "")
-        return LLMResult(raw=raw, text=text)
+        return Completion(raw=raw, text=text)
 
 
 class HybridProvider(LLMClient):
@@ -293,7 +370,7 @@ class HybridProvider(LLMClient):
         if not self.local and not self.remote:
             raise RuntimeError("No available LLM providers")
 
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> Completion:
         use_local = self.local is not None and (
             self.remote is None or len(prompt.text) <= self.size_threshold
         )
@@ -317,8 +394,11 @@ class HybridProvider(LLMClient):
 
 __all__ = [
     "Prompt",
+    "Completion",
     "LLMResult",
+    "LLMBackend",
     "LLMClient",
+    "OpenAIBackend",
     "OpenAIProvider",
     "OllamaProvider",
     "VLLMProvider",
