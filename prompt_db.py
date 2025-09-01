@@ -31,8 +31,8 @@ class PromptDB:
                 id INTEGER PRIMARY KEY,
                 text TEXT,
                 examples TEXT,
-                confidence REAL,
-                tags TEXT,
+                vector_confidences TEXT,
+                outcome_tags TEXT,
                 response_raw TEXT,
                 response_text TEXT,
                 model TEXT,
@@ -43,13 +43,17 @@ class PromptDB:
         self.conn.commit()
 
     def log_prompt(
-        self, prompt: Prompt, result: LLMResult, tags: List[str], confidence: float
+        self,
+        prompt: Prompt,
+        result: LLMResult,
+        outcome_tags: List[str],
+        vector_confidences: List[float],
     ) -> None:
         cur = self.conn.cursor()
         cur.execute(
             """
             INSERT INTO prompts(
-                text, examples, confidence, tags, response_raw,
+                text, examples, vector_confidences, outcome_tags, response_raw,
                 response_text, model, timestamp
             )
             VALUES (?,?,?,?,?,?,?,?)
@@ -57,8 +61,8 @@ class PromptDB:
             (
                 prompt.text,
                 json.dumps(prompt.examples),
-                confidence,
-                json.dumps(tags),
+                json.dumps(vector_confidences),
+                json.dumps(outcome_tags),
                 json.dumps(result.raw),
                 result.text,
                 self.model,

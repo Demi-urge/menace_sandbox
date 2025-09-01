@@ -5,11 +5,12 @@ from sandbox_settings import SandboxSettings
 
 class StubClient(LLMClient):
     def __init__(self, text: str, *, fail: bool = False) -> None:
+        super().__init__(text, log_prompts=False)
         self.text = text
         self.fail = fail
         self.calls = 0
 
-    def generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> LLMResult:
         self.calls += 1
         if self.fail:
             raise RuntimeError("boom")

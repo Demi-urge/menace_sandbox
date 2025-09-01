@@ -11,13 +11,13 @@ def test_log_prompt(tmp_path):
     db = PromptDB(model="gpt-test")
     prompt = Prompt(text="hi", examples=["ex1"])
     result = LLMResult(raw={"data": 1}, text="hello")
-    db.log_prompt(prompt, result, ["test"], 0.5)
+    db.log_prompt(prompt, result, ["test"], [0.5])
     row = db.conn.execute(
-        "SELECT text, examples, confidence, tags, response_text, model FROM prompts"
+        "SELECT text, examples, vector_confidences, outcome_tags, response_text, model FROM prompts"
     ).fetchone()
     assert row[0] == "hi"
     assert json.loads(row[1]) == ["ex1"]
-    assert row[2] == 0.5
+    assert json.loads(row[2]) == [0.5]
     assert json.loads(row[3]) == ["test"]
     assert row[4] == "hello"
     assert row[5] == "gpt-test"
@@ -32,14 +32,14 @@ def test_openai_client_logs_prompt(monkeypatch, tmp_path):
         return {"choices": [{"message": {"content": "world"}}]}
 
     monkeypatch.setattr(OpenAILLMClient, "_request", fake_request)
-    prompt = Prompt(text="hi", metadata={"tags": ["t"], "confidence": 0.9})
+    prompt = Prompt(text="hi", metadata={"tags": ["t"], "vector_confidences": [0.9]})
     res = client.generate(prompt)
     assert res.text == "world"
     row = client.db.conn.execute(
-        "SELECT text, tags, confidence, response_text, model FROM prompts"
+        "SELECT text, outcome_tags, vector_confidences, response_text, model FROM prompts"
     ).fetchone()
     assert row[0] == "hi"
     assert json.loads(row[1]) == ["t"]
-    assert row[2] == 0.9
+    assert json.loads(row[2]) == [0.9]
     assert row[3] == "world"
     assert row[4] == "gpt-test"

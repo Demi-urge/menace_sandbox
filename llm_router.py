@@ -30,11 +30,12 @@ class LLMRouter(LLMClient):
     """
 
     def __init__(self, remote: LLMClient, local: LLMClient, *, size_threshold: int = 1000) -> None:
+        super().__init__("router", log_prompts=False)
         self.remote = remote
         self.local = local
         self.size_threshold = size_threshold
 
-    def generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> LLMResult:
         primary = self.remote if len(prompt.text) > self.size_threshold else self.local
         fallback = self.local if primary is self.remote else self.remote
         try:

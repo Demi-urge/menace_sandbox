@@ -34,9 +34,10 @@ class OllamaClient(_BaseLocalClient, LLMClient):
     """Client for the `ollama` local LLM server."""
 
     def __init__(self, model: str = "mistral", base_url: str = "http://localhost:11434") -> None:
-        super().__init__(model=model, base_url=base_url)
+        LLMClient.__init__(self, model)
+        _BaseLocalClient.__init__(self, model=model, base_url=base_url)
 
-    def generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> LLMResult:
         payload = {"model": self.model, "prompt": prompt.text}
         raw = self._post("api/generate", payload)
         text = raw.get("response", "") or raw.get("text", "")
@@ -46,10 +47,15 @@ class OllamaClient(_BaseLocalClient, LLMClient):
 class VLLMClient(_BaseLocalClient, LLMClient):
     """Client for a vLLM REST server."""
 
-    def __init__(self, model: str = "facebook/opt-125m", base_url: str = "http://localhost:8000") -> None:
-        super().__init__(model=model, base_url=base_url)
+    def __init__(
+        self,
+        model: str = "facebook/opt-125m",
+        base_url: str = "http://localhost:8000",
+    ) -> None:
+        LLMClient.__init__(self, model)
+        _BaseLocalClient.__init__(self, model=model, base_url=base_url)
 
-    def generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt) -> LLMResult:
         payload = {"model": self.model, "prompt": prompt.text}
         raw = self._post("generate", payload)
         text = raw.get("text") or raw.get("generated_text", "")
