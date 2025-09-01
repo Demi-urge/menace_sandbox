@@ -601,6 +601,13 @@ class SelfCodingEngine:
 
         if not self.llm_client or not self.prompt_engine:
             return _fallback()
+        if metadata is None:
+            builder = getattr(self, "context_builder", None)
+            if builder:
+                try:
+                    metadata = {"retrieval_context": builder.build_context(description)}
+                except Exception:
+                    metadata = None
         repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
         context_block = "\n".join([p for p in (context, repo_layout) if p])
         retrieval_context = (
@@ -626,9 +633,17 @@ class SelfCodingEngine:
             self._last_retry_trace = str(exc)
             self._last_prompt_metadata = {}
             return _fallback()
-        if not isinstance(prompt_obj, Prompt):
-            prompt_obj = Prompt(text=str(prompt_obj))
         self._last_prompt_metadata = getattr(self.prompt_engine, "last_metadata", {})
+        if metadata and metadata.get("retrieval_context"):
+            rc = metadata["retrieval_context"]
+            if not isinstance(rc, str):
+                try:
+                    rc_text = json.dumps(rc, indent=2)
+                except Exception:
+                    rc_text = str(rc)
+            else:
+                rc_text = rc
+            prompt_obj.text += "\n\n### Retrieval context\n" + rc_text
 
         # Incorporate past patch outcomes from memory
         history = ""
@@ -713,6 +728,25 @@ class SelfCodingEngine:
             result = LLMResult()
         text = result.text.strip()
         if text:
+            if self.gpt_memory:
+                try:
+                    meta_payload = json.dumps({
+                        "prompt": prompt_obj.metadata,
+                        "raw": result.raw,
+                    })
+                    self.gpt_memory.log_interaction(
+                        prompt_obj.text, text, tags=[ERROR_FIX]
+                    )
+                    self.gpt_memory.store(
+                        f"{description}:metadata", meta_payload, tags=[INSIGHT]
+                    )
+                except Exception:
+                    self.logger.exception("memory logging failed")
+            if path is not None and hasattr(self.memory_mgr, "store"):
+                try:
+                    self.memory_mgr.store(str(path), text, tags="code")
+                except Exception:
+                    self.logger.exception("memory manager store failed")
             self.logger.info(
                 "gpt_suggestion",
                 extra={
