@@ -3,7 +3,7 @@
 `SelfImprovementEngine` runs a model automation pipeline whenever metrics signal the need for an update. The engine can target any bot by supplying a `bot_name` and pipeline instance.
 
 ```python
-from menace.self_improvement import SelfImprovementEngine, ImprovementEngineRegistry
+from menace.self_improvement.api import SelfImprovementEngine, ImprovementEngineRegistry
 from menace.model_automation_pipeline import ModelAutomationPipeline
 
 engine = SelfImprovementEngine(bot_name="alpha",
@@ -592,7 +592,7 @@ between runs.
 Example using ``TD3SynergyLearner`` and a custom weight file:
 
 ```python
-from menace.self_improvement import SelfImprovementEngine, TD3SynergyLearner
+from menace.self_improvement.api import SelfImprovementEngine, TD3SynergyLearner
 
 engine = SelfImprovementEngine(
     synergy_learner_cls=TD3SynergyLearner,
@@ -689,7 +689,7 @@ Weights stored in `synergy_weights.json` control how much each metric affects th
 reinforcement learner. They can be tweaked programmatically:
 
 ```python
-from menace.self_improvement import SynergyWeightLearner
+from menace.self_improvement.api import SynergyWeightLearner
 
 learner = SynergyWeightLearner(path="synergy_weights.json")
 learner.weights["efficiency"] *= 1.5  # favour efficient interactions

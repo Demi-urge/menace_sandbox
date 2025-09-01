@@ -39,7 +39,7 @@ SANDBOX_REPO_PATH=$(pwd) python sandbox_runner.py --runs 1
 ### Trigger a cycle programmatically
 
 ```python
-from self_improvement import SelfImprovementEngine
+from self_improvement.api import SelfImprovementEngine
 from model_automation_pipeline import ModelAutomationPipeline
 
 engine = SelfImprovementEngine(bot_name="alpha",

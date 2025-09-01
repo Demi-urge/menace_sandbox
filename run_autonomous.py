@@ -1614,7 +1614,7 @@ def main(argv: List[str] | None = None) -> None:
             logger.info("using port %d for SynergyDashboard", synergy_dash_port)
         from threading import Thread
         try:
-            from menace.self_improvement import SynergyDashboard
+            from menace.self_improvement.engine import SynergyDashboard
         except RuntimeError as exc:
             logger.warning("SynergyDashboard unavailable: %s", exc)
         else:
@@ -1984,7 +1984,7 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
     """
     from pydantic import ValidationError
     from sandbox_settings import load_sandbox_settings
-    from self_improvement import init_self_improvement
+    from self_improvement.api import init_self_improvement
     from self_improvement.orchestration import (
         start_self_improvement_cycle,
         stop_self_improvement_cycle,

@@ -1272,7 +1272,7 @@ reinforcement learning you can instantiate `SelfImprovementEngine` with
 `DQNSynergyLearner`:
 
 ```python
-from menace.self_improvement import SelfImprovementEngine, DQNSynergyLearner
+from menace.self_improvement.api import SelfImprovementEngine, DQNSynergyLearner
 
 engine = SelfImprovementEngine(
     synergy_learner_cls=DQNSynergyLearner,
