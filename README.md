@@ -14,6 +14,15 @@ configuration. The generated file includes stub values for critical settings:
 Bootstrap verifies these variables before launching and raises a clear error if
 any required value is missing or the model path does not exist.
 
+Install the auxiliary packages for self-improvement ahead of time:
+
+```
+make install-self-improvement-deps
+```
+
+`verify_dependencies()` merely reports missing or mismatched packages and no
+longer attempts to install them automatically, keeping startup non-interactive.
+
 - Revenue tracking and monetisation helpers
 - **Profit density evaluation** keeping only the most lucrative clips
 - Intelligent culling for clips, accounts and topics
