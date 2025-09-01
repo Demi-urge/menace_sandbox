@@ -4445,7 +4445,7 @@ def _inject_failure_modes(snippet: str, modes: set[str]) -> str:
 
     if "concurrency_spike" in modes:
         parts.append(
-            "import os, threading, asyncio, time, json\n"
+            "import os, threading, asyncio, time, json, sys, traceback\n"
             "def _run():\n"
             "    n_t=int(os.getenv('THREAD_BURST','50'))\n"
             "    n_a=int(os.getenv('ASYNC_TASK_BURST','50'))\n"
@@ -4459,15 +4459,19 @@ def _inject_failure_modes(snippet: str, modes: set[str]) -> str:
             "        await asyncio.gather(*[asyncio.create_task(_noop()) for _ in range(n_a)])\n"
             "    try:\n"
             "        asyncio.run(_burst())\n"
-            "    except Exception:\n"
-            "        pass\n"
+            "    except Exception as exc:\n"
+            "        print(f'concurrency spike burst failed: {exc}', file=sys.stderr)\n"
+            "        traceback.print_exc()\n"
+            "        raise\n"
             "    path=os.getenv('SANDBOX_CONCURRENCY_OUT')\n"
             "    if path:\n"
             "        try:\n"
             "            with open(path,'w') as fh:\n"
             "                json.dump({'threads':len(threads),'tasks':n_a},fh)\n"
-            "        except Exception:\n"
-            "            pass\n"
+            "        except Exception as exc:\n"
+            "            print(f'concurrency spike write failed: {exc}', file=sys.stderr)\n"
+            "            traceback.print_exc()\n"
+            "            raise\n"
             "_run()\n"
         )
 
