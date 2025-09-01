@@ -23,8 +23,8 @@ def test_log(tmp_path):
     row = db.conn.execute(
         (
             "SELECT text, examples, vector_confidences, outcome_tags, "
-            "response_text, model, prompt_tokens, completion_tokens, latency_ms "
-            "FROM prompts"
+            "response_text, model, prompt_tokens, completion_tokens, latency_ms, "
+            "input_tokens, output_tokens, cost, backend FROM prompts"
         )
     ).fetchone()
     assert row[0] == "hi"
@@ -33,7 +33,7 @@ def test_log(tmp_path):
     assert json.loads(row[3]) == ["test"]
     assert row[4] == "hello"
     assert row[5] == "gpt-test"
-    assert row[6:] == (5, 7, 12.5)
+    assert row[6:] == (5, 7, 12.5, 5, 7, None, None)
 
 
 def test_openai_client_logs_prompt(monkeypatch, tmp_path):
