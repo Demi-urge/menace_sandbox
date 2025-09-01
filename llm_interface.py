@@ -247,7 +247,8 @@ class OpenAIProvider(LLMClient):
         for attempt in range(retries):
             self._rate_limiter.update_rate(cfg.tokens_per_minute)
             tokens = rate_limit.estimate_tokens(
-                " ".join(m.get("content", "") for m in payload["messages"])
+                " ".join(m.get("content", "") for m in payload["messages"]),
+                model=self.model,
             )
             self._rate_limiter.consume(tokens)
             try:
