@@ -50,9 +50,29 @@ from foresight_tracker import ForesightTracker
 from .environment import load_presets, simulate_full_environment
 
 try:  # optional import for tests
-    from menace.environment_generator import generate_presets
-except Exception:  # pragma: no cover
-    generate_presets = lambda n=None: [{}]  # type: ignore
+    from menace.environment_generator import generate_presets  # type: ignore
+    _ENV_GEN_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover
+    generate_presets = None  # type: ignore
+    _ENV_GEN_ERROR = exc
+
+
+def _fallback_presets(count: int | None = None) -> list[dict[str, Any]]:
+    """Deterministic presets when :mod:`menace.environment_generator` is absent."""
+
+    base = {
+        "CPU_LIMIT": "1",
+        "MEMORY_LIMIT": "512Mi",
+        "DISK_LIMIT": "1Gi",
+        "NETWORK_LATENCY_MS": 50,
+        "BANDWIDTH_LIMIT": "10Mbps",
+        "PACKET_LOSS": 0.0,
+        "SECURITY_LEVEL": 1,
+        "THREAT_INTENSITY": 10,
+    }
+    if not count or count < 1:
+        count = 1
+    return [base.copy() for _ in range(count)]
 
 logger = get_logger(__name__)
 
@@ -92,15 +112,32 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
 
     presets = load_presets()
     settings = get_settings()
+    source = "SANDBOX_ENV_PRESETS" if presets != [{}] else "default"
     if presets == [{}] and not settings.sandbox_env_presets:
         if settings.sandbox_generate_presets:
-            try:
-                from menace.environment_generator import generate_presets
-
-                count = getattr(args, "preset_count", None)
-                presets = generate_presets(count)
-            except Exception:
-                presets = [{}]
+            count = getattr(args, "preset_count", None)
+            if generate_presets is not None:
+                presets = generate_presets(count)  # type: ignore
+                source = "menace.environment_generator"
+            else:
+                logger.warning(
+                    "menace.environment_generator unavailable; using fallback presets",
+                    extra={"error": str(_ENV_GEN_ERROR)},
+                )
+                presets = _fallback_presets(count)
+                source = "fallback"
+    if not presets or presets == [{}]:
+        logger.error(
+            "no valid presets available; install menace.environment_generator or set SANDBOX_ENV_PRESETS",
+            extra={"preset_source": source},
+        )
+        raise SystemExit(1)
+    logger.info(
+        "loaded %d preset(s) from %s",
+        len(presets),
+        source,
+        extra={"preset_source": source},
+    )
     if len(presets) > 1:
         from menace.roi_tracker import ROITracker
 
