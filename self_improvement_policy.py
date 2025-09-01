@@ -1087,7 +1087,7 @@ class SelfImprovementPolicy:
             ".critic.pt",
             ".actor.opt.pt",
             ".critic.opt.pt",
-            ".replay.pkl",
+            ".replay.json",
         ]:
             fp = base + ext
             if os.path.exists(fp):
@@ -1148,11 +1148,19 @@ class SelfImprovementPolicy:
             torch.save(critic_opt.state_dict(), base + ".critic.opt.pt")
         memory = getattr(strat, "memory", None)
         if memory is not None:
-            if torch is not None:
-                torch.save(memory, base + ".replay.pkl")
-            else:
-                with open(base + ".replay.pkl", "wb") as fh:
-                    pickle.dump(memory, fh)
+            data = []
+            for state, action, reward, next_state, done in memory:
+                data.append(
+                    {
+                        "state": state.tolist(),
+                        "action": int(action),
+                        "reward": float(reward),
+                        "next_state": None if next_state is None else next_state.tolist(),
+                        "done": bool(done),
+                    }
+                )
+            with open(base + ".replay.json", "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
 
     def load_dqn_weights(self, base: str) -> None:
         if torch is None:
@@ -1229,13 +1237,40 @@ class SelfImprovementPolicy:
             critic_opt = getattr(strat, "critic_opt", None)
             if critic_opt is not None:
                 critic_opt.load_state_dict(critic_opt_state)
-        replay_path = base + ".replay.pkl"
+        replay_path = base + ".replay.json"
         if os.path.exists(replay_path) and hasattr(strat, "memory"):
-            if torch is not None:
-                strat.memory = torch.load(replay_path, map_location="cpu")
-            else:
-                with open(replay_path, "rb") as fh:
-                    strat.memory = pickle.load(fh)
+            try:
+                with open(replay_path, "r", encoding="utf-8") as fh:
+                    entries = json.load(fh)
+                if not isinstance(entries, list):
+                    raise ValueError("invalid replay data")
+                memory = []
+                for it in entries:
+                    if not isinstance(it, dict):
+                        raise ValueError("invalid replay item")
+                    state = it.get("state")
+                    action = it.get("action")
+                    reward = it.get("reward")
+                    next_state = it.get("next_state")
+                    done = it.get("done")
+                    if not (
+                        isinstance(state, list)
+                        and isinstance(action, int)
+                        and isinstance(reward, (int, float))
+                        and (next_state is None or isinstance(next_state, list))
+                        and isinstance(done, bool)
+                    ):
+                        raise ValueError("invalid replay item")
+                    s = torch.tensor(state, dtype=torch.float32) if torch is not None else state
+                    ns = (
+                        torch.tensor(next_state, dtype=torch.float32)
+                        if (torch is not None and next_state is not None)
+                        else None
+                    )
+                    memory.append((s, int(action), float(reward), ns, bool(done)))
+                strat.memory = memory
+            except Exception as exc:
+                logger.warning("skipping replay memory: %s", exc)
 
     def save(self, path: Optional[str] = None) -> None:
         fp = path or self.path
