@@ -62,7 +62,9 @@ class TorchReplayStrategy:
     ) -> None:
         if sip_torch is None:  # pragma: no cover - torch not available
             raise RuntimeError("PyTorch required for TorchReplayStrategy")
-        self.model = net_factory(7, 7, **(net_kwargs or {}))
+        dim = len(get_default_synergy_weights())
+        self.dim = dim
+        self.model = net_factory(dim, dim, **(net_kwargs or {}))
         self.optimizer = optimizer_cls(
             self.model.parameters(), lr=lr, **(optimizer_kwargs or {})
         )
@@ -131,9 +133,19 @@ class TorchReplayStrategy:
             model_file = Path(base + ".model.pt")
             optim_file = Path(base + ".optim.pt")
             if model_file.exists():
-                self.model.load_state_dict(sip_torch.load(model_file))
+                state = sip_torch.load(model_file)
+                try:
+                    first = next(iter(state.values()))
+                    if first.shape[-1] != self.dim:
+                        raise ValueError("incompatible checkpoint dimensions")
+                    self.model.load_state_dict(state)
+                except Exception as exc:
+                    logger.warning("skipping model checkpoint: %s", exc)
             if optim_file.exists():
-                self.optimizer.load_state_dict(sip_torch.load(optim_file))
+                try:
+                    self.optimizer.load_state_dict(sip_torch.load(optim_file))
+                except Exception as exc:
+                    logger.warning("skipping optimizer checkpoint: %s", exc)
             replay_file = Path(base + ".replay.pkl")
             if replay_file.exists():
                 with open(replay_file, "rb") as fh:
@@ -185,10 +197,13 @@ class SynergyWeightLearner:
         self.path = Path(path) if path else Path(settings.synergy_weight_file)
         self.lr = lr
         self.weights = get_default_synergy_weights()
+        self.metric_names = list(self.weights.keys())
+        self.state_names = [f"synergy_{n}" for n in self.metric_names]
+        self.dim = len(self.metric_names)
         hp: Dict[str, Any] = dict(hyperparams or {})
         strat_factory = strategy_factory or (lambda **kw: ActorCriticStrategy(**kw))
         self.strategy = strat_factory(**hp)
-        self._state: tuple[float, ...] = (0.0,) * 7
+        self._state: tuple[float, ...] = (0.0,) * self.dim
         self._steps = 0
         self.target_sync = int(hp.get("target_sync", 10))
         self.eval_loss = 0.0
@@ -253,6 +268,7 @@ class SynergyWeightLearner:
         if not self.path or not self.path.exists():
             return
         data: dict[str, Any] | None = None
+        self._checkpoint_compatible = True
         try:
             with open(self.path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -273,6 +289,14 @@ class SynergyWeightLearner:
                         exc2,
                     )
         if isinstance(data, dict):
+            keys = [k for k in data.keys() if k in self.weights]
+            if len(keys) != self.dim:
+                self._checkpoint_compatible = False
+                logger.warning(
+                    "synergy weight checkpoint incompatible: %s metrics (expected %s)",
+                    len(keys),
+                    self.dim,
+                )
             self.weights.update({k: float(v) for k, v in data.items() if k in self.weights})
 
     def save(self) -> None:
@@ -313,15 +337,7 @@ class SynergyWeightLearner:
         deltas: dict[str, float],
         extra: dict[str, float] | None = None,
     ) -> None:
-        names = [
-            "synergy_roi",
-            "synergy_efficiency",
-            "synergy_resilience",
-            "synergy_antifragility",
-            "synergy_reliability",
-            "synergy_maintainability",
-            "synergy_throughput",
-        ]
+        names = self.state_names
         self._state = tuple(float(deltas.get(n, 0.0)) for n in names)
         q_vals_list: list[float] = []
         for idx, name in enumerate(names):
@@ -336,16 +352,7 @@ class SynergyWeightLearner:
         if hasattr(self.strategy, "predict"):
             q_vals = self.strategy.predict(self._state)
             q_vals_list = [float(v.item() if hasattr(v, "item") else v) for v in q_vals]
-        mapping = {
-            "roi": 0,
-            "efficiency": 1,
-            "resilience": 2,
-            "antifragility": 3,
-            "reliability": 4,
-            "maintainability": 5,
-            "throughput": 6,
-        }
-        for key, idx in mapping.items():
+        for idx, key in enumerate(self.metric_names):
             val = q_vals_list[idx]
             self.weights[key] = max(0.0, min(val, 10.0))
         self._steps += 1
@@ -465,16 +472,6 @@ class _BaseRLSynergyLearner(ABC):
     state; by default they are no-ops to provide a safe baseline behaviour.
     """
 
-    names = [
-        "synergy_roi",
-        "synergy_efficiency",
-        "synergy_resilience",
-        "synergy_antifragility",
-        "synergy_reliability",
-        "synergy_maintainability",
-        "synergy_throughput",
-    ]
-
     def __init__(
         self,
         path: Path | None = None,
@@ -502,7 +499,11 @@ class _BaseRLSynergyLearner(ABC):
         self.replay_size = int(sy["replay_size"])
         self.path = Path(path) if path else Path(settings.synergy_weight_file)
         self.weights = get_default_synergy_weights()
-        self._state: tuple[float, ...] = (0.0,) * 7
+        self.metric_names = list(self.weights.keys())
+        self.state_names = [f"synergy_{n}" for n in self.metric_names]
+        self.names = self.state_names
+        self.dim = len(self.metric_names)
+        self._state: tuple[float, ...] = (0.0,) * self.dim
         self._steps = 0
         if target_sync is None:
             target_sync = (
@@ -515,6 +516,7 @@ class _BaseRLSynergyLearner(ABC):
         self.checkpoint_interval = int(sy["checkpoint_interval"])
         self._save_count = 0
         self.checkpoint_path = self.path.with_suffix(self.path.suffix + ".bak")
+        self._checkpoint_compatible = True
         self.load()
 
     # Weight persistence -------------------------------------------------
@@ -534,8 +536,19 @@ class _BaseRLSynergyLearner(ABC):
                 except Exception:
                     data = None
         if isinstance(data, dict):
+            keys = [k for k in data.keys() if k in self.weights]
+            if len(keys) != self.dim:
+                self._checkpoint_compatible = False
+                logger.warning(
+                    "synergy weight checkpoint incompatible: %s metrics (expected %s)",
+                    len(keys),
+                    self.dim,
+                )
             self.weights.update({k: float(v) for k, v in data.items() if k in self.weights})
-        self._load_networks()
+        if self._checkpoint_compatible:
+            self._load_networks()
+        else:
+            logger.warning("skipping network load due to metric mismatch")
 
     def save(self) -> None:
         if not self.path:
@@ -626,9 +639,9 @@ class SACSynergyLearner(_BaseRLSynergyLearner):
             layers_list.append(sip_torch.nn.Linear(last, out_dim))
             return sip_torch.nn.Sequential(*layers_list)
 
-        self.actor = _build_net(7, 7)
-        self.critic = _build_net(14, 7)
-        self.target_critic = _build_net(14, 7)
+        self.actor = _build_net(self.dim, self.dim)
+        self.critic = _build_net(self.dim * 2, self.dim)
+        self.target_critic = _build_net(self.dim * 2, self.dim)
         self.target_critic.load_state_dict(self.critic.state_dict())
         self.actor_opt = sip_torch.optim.Adam(self.actor.parameters(), lr=self.lr)
         self.critic_opt = sip_torch.optim.Adam(self.critic.parameters(), lr=self.lr)
@@ -654,9 +667,23 @@ class SACSynergyLearner(_BaseRLSynergyLearner):
         tgt = Path(base + ".target.pt")
         try:
             if pol.exists():
-                self.actor.load_state_dict(sip_torch.load(pol))
+                state = sip_torch.load(pol)
+                try:
+                    first = next(iter(state.values()))
+                    if first.shape[-1] != self.dim:
+                        raise ValueError("incompatible checkpoint dimensions")
+                    self.actor.load_state_dict(state)
+                except Exception as exc:
+                    logger.warning("skipping actor checkpoint: %s", exc)
             if tgt.exists():
-                self.target_critic.load_state_dict(sip_torch.load(tgt))
+                state = sip_torch.load(tgt)
+                try:
+                    first = next(iter(state.values()))
+                    if first.shape[-1] != self.dim * 2:
+                        raise ValueError("incompatible checkpoint dimensions")
+                    self.target_critic.load_state_dict(state)
+                except Exception as exc:
+                    logger.warning("skipping target checkpoint: %s", exc)
         except Exception as exc:  # pragma: no cover - disk errors
             logger.warning("failed to load SAC models: %s", exc)
 
@@ -667,7 +694,8 @@ class SACSynergyLearner(_BaseRLSynergyLearner):
         extra: Mapping[str, float] | None = None,
     ) -> None:
         state = sip_torch.tensor(
-            [float(deltas.get(n, 0.0)) for n in self.names], dtype=sip_torch.float32
+            [float(deltas.get(n, 0.0)) for n in self.state_names],
+            dtype=sip_torch.float32,
         )
         self._state = tuple(float(s) for s in state.tolist())
         action = self.actor(state)
@@ -680,7 +708,7 @@ class SACSynergyLearner(_BaseRLSynergyLearner):
         ):
             states, actions, rewards = self.buffer.sample(self.batch_size)
             q_pred = self.critic(sip_torch.cat([states, actions], dim=1))
-            target = rewards.repeat(1, 7)
+            target = rewards.repeat(1, self.dim)
             critic_loss = sip_torch.nn.functional.mse_loss(q_pred, target)
             self.critic_opt.zero_grad()
             critic_loss.backward()
@@ -696,16 +724,7 @@ class SACSynergyLearner(_BaseRLSynergyLearner):
             if self._steps % self.target_sync == 0:
                 self.target_critic.load_state_dict(self.critic.state_dict())
         self._steps += 1
-        mapping = {
-            "roi": 0,
-            "efficiency": 1,
-            "resilience": 2,
-            "antifragility": 3,
-            "reliability": 4,
-            "maintainability": 5,
-            "throughput": 6,
-        }
-        for key, idx in mapping.items():
+        for idx, key in enumerate(self.metric_names):
             self.weights[key] = float(action[idx].item())
         self.save()
 
@@ -769,13 +788,13 @@ class TD3SynergyLearner(_BaseRLSynergyLearner):
             layers_list.append(sip_torch.nn.Linear(last, out_dim))
             return sip_torch.nn.Sequential(*layers_list)
 
-        self.actor = _build_net(7, 7)
-        self.target_actor = _build_net(7, 7)
+        self.actor = _build_net(self.dim, self.dim)
+        self.target_actor = _build_net(self.dim, self.dim)
         self.target_actor.load_state_dict(self.actor.state_dict())
-        self.critic1 = _build_net(14, 7)
-        self.critic2 = _build_net(14, 7)
-        self.target_c1 = _build_net(14, 7)
-        self.target_c2 = _build_net(14, 7)
+        self.critic1 = _build_net(self.dim * 2, self.dim)
+        self.critic2 = _build_net(self.dim * 2, self.dim)
+        self.target_c1 = _build_net(self.dim * 2, self.dim)
+        self.target_c2 = _build_net(self.dim * 2, self.dim)
         self.target_c1.load_state_dict(self.critic1.state_dict())
         self.target_c2.load_state_dict(self.critic2.state_dict())
         self.actor_opt = sip_torch.optim.Adam(self.actor.parameters(), lr=self.lr)
@@ -804,9 +823,23 @@ class TD3SynergyLearner(_BaseRLSynergyLearner):
         tgt = Path(base + ".target.pt")
         try:
             if pol.exists():
-                self.actor.load_state_dict(sip_torch.load(pol))
+                state = sip_torch.load(pol)
+                try:
+                    first = next(iter(state.values()))
+                    if first.shape[-1] != self.dim:
+                        raise ValueError("incompatible checkpoint dimensions")
+                    self.actor.load_state_dict(state)
+                except Exception as exc:
+                    logger.warning("skipping actor checkpoint: %s", exc)
             if tgt.exists():
-                self.target_actor.load_state_dict(sip_torch.load(tgt))
+                state = sip_torch.load(tgt)
+                try:
+                    first = next(iter(state.values()))
+                    if first.shape[-1] != self.dim:
+                        raise ValueError("incompatible checkpoint dimensions")
+                    self.target_actor.load_state_dict(state)
+                except Exception as exc:
+                    logger.warning("skipping target checkpoint: %s", exc)
         except Exception as exc:  # pragma: no cover - disk errors
             logger.warning("failed to load TD3 models: %s", exc)
 
@@ -817,7 +850,8 @@ class TD3SynergyLearner(_BaseRLSynergyLearner):
         extra: Mapping[str, float] | None = None,
     ) -> None:
         state = sip_torch.tensor(
-            [float(deltas.get(n, 0.0)) for n in self.names], dtype=sip_torch.float32
+            [float(deltas.get(n, 0.0)) for n in self.state_names],
+            dtype=sip_torch.float32,
         )
         self._state = tuple(float(s) for s in state.tolist())
         action = self.actor(state)
@@ -830,7 +864,7 @@ class TD3SynergyLearner(_BaseRLSynergyLearner):
             target_actions = self.target_actor(states)
             target_q1 = self.target_c1(sip_torch.cat([states, target_actions], dim=1))
             target_q2 = self.target_c2(sip_torch.cat([states, target_actions], dim=1))
-            target_q = rewards.repeat(1, 7)
+            target_q = rewards.repeat(1, self.dim)
             c1_loss = sip_torch.nn.functional.mse_loss(
                 self.critic1(sip_torch.cat([states, actions], dim=1)), target_q
             )
@@ -857,16 +891,7 @@ class TD3SynergyLearner(_BaseRLSynergyLearner):
                 self.target_c1.load_state_dict(self.critic1.state_dict())
                 self.target_c2.load_state_dict(self.critic2.state_dict())
         self._steps += 1
-        mapping = {
-            "roi": 0,
-            "efficiency": 1,
-            "resilience": 2,
-            "antifragility": 3,
-            "reliability": 4,
-            "maintainability": 5,
-            "throughput": 6,
-        }
-        for key, idx in mapping.items():
+        for idx, key in enumerate(self.metric_names):
             self.weights[key] = float(action[idx].item())
         self.save()
 
