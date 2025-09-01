@@ -523,6 +523,7 @@ def check_env() -> None:
         name
         for name, val in (
             ("VISUAL_AGENT_TOKEN", settings.visual_agent_token),
+            ("VISUAL_AGENT_URLS", settings.visual_agent_urls),
             ("SANDBOX_REPO_PATH", settings.sandbox_repo_path),
         )
         if not val

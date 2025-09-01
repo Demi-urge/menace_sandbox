@@ -9,17 +9,22 @@ import sys
 from pathlib import Path
 from typing import Dict, Iterable
 
-logger = logging.getLogger(__name__)
-
+from . import config_discovery as cd
 from .secrets_manager import SecretsManager
 from .vault_secret_provider import VaultSecretProvider
-from . import config_discovery as cd
+
+logger = logging.getLogger(__name__)
 
 # Shared defaults
 RECURSIVE_ISOLATED_DEFAULT = "1"
 RECURSIVE_ISOLATED_VARS = (
     "SANDBOX_RECURSIVE_ISOLATED",
     "SELF_TEST_RECURSIVE_ISOLATED",
+)
+
+SENSITIVE_VARS = (
+    "VISUAL_AGENT_TOKEN",
+    "VISUAL_AGENT_URLS",
 )
 
 # Default environment variables with fallbacks
@@ -38,8 +43,6 @@ DEFAULT_VARS: Dict[str, str] = {
     "AUTO_BACKUP": "0",
     "MAINTENANCE_DB": "maintenance.db",
     "SANDBOX_DATA_DIR": "sandbox_data",
-    "VISUAL_AGENT_TOKEN": "tombalolosvisualagent123",
-    "VISUAL_AGENT_URLS": "http://127.0.0.1:8001",
     "SELF_TEST_DISABLE_ORPHANS": "0",
     "SELF_TEST_DISCOVER_ORPHANS": "1",
     "SELF_TEST_RECURSIVE_ORPHANS": "1",
@@ -142,6 +145,14 @@ def ensure_env(path: str = ".env") -> None:
         existing.setdefault(key, default)
         os.environ.setdefault(key, existing[key])
 
+    # fetch sensitive vars from secrets manager or environment
+    for key in SENSITIVE_VARS:
+        if key in os.environ:
+            existing.setdefault(key, os.environ[key])
+        elif key not in existing:
+            existing[key] = secrets.get(key.lower()) or ""
+        os.environ.setdefault(key, existing.get(key, ""))
+
     # Auto generate tokens for any *_KEY variables
     for key in [k for k in [*existing, *os.environ] if key_needs_secret(k)]:
         if key not in existing:
@@ -164,8 +175,6 @@ def ensure_env(path: str = ".env") -> None:
 
 def key_needs_secret(name: str) -> bool:
     return name.upper().endswith("_KEY")
-
-
 
 
 def interactive_setup(
@@ -241,5 +250,6 @@ def interactive_setup(
         else:
             manager.set(key.lower(), value)
         os.environ[key] = value
+
 
 __all__ = ["ensure_env", "key_needs_secret", "interactive_setup"]
