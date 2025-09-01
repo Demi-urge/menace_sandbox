@@ -15,7 +15,7 @@ engine.apply_patch(Path("utils.py"), "normalize text", threshold=0.5)
 ```
 
 - **suggest_snippets** – fetch related `CodeRecord` objects from `CodeDB`.
-- **generate_helper** – uses `ChatGPTClient` to produce a helper based on the description and snippet context.
+- **generate_helper** – uses `LLMClient` to produce a helper based on the description and snippet context.
 - **apply_patch** – append the helper, run CI checks and revert if ROI or error metrics drop beyond ``threshold``.
 - **Patch metrics** – `PatchHistoryDB` stores ROI delta and error counts for each patch.
 - **Forecasts** – `TrendPredictor` estimates ROI and error trends for rollback decisions.

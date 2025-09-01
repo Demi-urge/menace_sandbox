@@ -20,8 +20,8 @@ from .trend_predictor import TrendPredictor
 from gpt_memory_interface import GPTMemoryInterface
 from .safety_monitor import SafetyMonitor
 from .advanced_error_management import FormalVerifier
-from .chatgpt_idea_bot import ChatGPTClient  # type: ignore
 from .llm_interface import Prompt, LLMResult, LLMClient
+from .llm_router import client_from_settings
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -175,32 +175,18 @@ class SelfCodingEngine:
         self.patch_db = patch_db
         self.trend_predictor = trend_predictor
         self.bot_name = bot_name
-        self.prompt_memory = prompt_memory or PromptMemoryTrainer()
+        if prompt_memory is not None:
+            self.prompt_memory = prompt_memory
+        else:
+            try:
+                self.prompt_memory = PromptMemoryTrainer()
+            except Exception:
+                self.prompt_memory = None
         self.prompt_tone = prompt_tone
         self.safety_monitor = safety_monitor
-        if llm_client is None and _settings.openai_api_key:
+        if llm_client is None:
             try:
-                base_client = ChatGPTClient(
-                    _settings.openai_api_key, gpt_memory=self.gpt_memory
-                )
-
-                class _Adapter:
-                    def __init__(self, inner):
-                        self.inner = inner
-                        self.gpt_memory = getattr(inner, "gpt_memory", None)
-
-                    def generate(self, prompt: Prompt) -> LLMResult:
-                        data = self.inner.ask(
-                            [{"role": "user", "content": prompt.text}]
-                        )
-                        text = (
-                            data.get("choices", [{}])[0]
-                            .get("message", {})
-                            .get("content", "")
-                        )
-                        return LLMResult(raw=data, text=text)
-
-                llm_client = _Adapter(base_client)
+                llm_client = client_from_settings(_settings)
             except Exception:
                 llm_client = None
         self.llm_client = llm_client
