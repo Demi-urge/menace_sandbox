@@ -933,6 +933,16 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_INCLUDE_ORPHANS",
         description="Include orphan modules during testing when set.",
     )
+    orphan_retry_attempts: int = Field(
+        3,
+        env="ORPHAN_RETRY_ATTEMPTS",
+        description="Retry attempts for orphan integration hooks.",
+    )
+    orphan_retry_delay: float = Field(
+        0.1,
+        env="ORPHAN_RETRY_DELAY",
+        description="Delay between retries for orphan integration hooks.",
+    )
     exclude_dirs: str | None = Field(
         None,
         env="SANDBOX_EXCLUDE_DIRS",
