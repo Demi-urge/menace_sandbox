@@ -22,6 +22,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import _thread
 import time
 import urllib.request
 from datetime import datetime
@@ -2066,8 +2067,61 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
 
     cleanup_funcs: list[Callable[[], None]] = []
 
+    class _ExceptionThread(threading.Thread):
+        """Thread subclass that stores exceptions from its target."""
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.exception: BaseException | None = None
+
+        def run(self) -> None:  # pragma: no cover - defensive
+            try:
+                super().run()
+            except BaseException as exc:  # pragma: no cover - runtime safety
+                self.exception = exc
+                raise
+
     learn_start, learn_stop = run_learning_background()
-    learn_start()
+
+    _orig_thread = threading.Thread
+    learn_thread: _ExceptionThread | None = None
+    try:
+        threading.Thread = _ExceptionThread  # type: ignore[assignment]
+        learn_start()
+        if learn_start.__closure__ is not None:
+            for cell in learn_start.__closure__:
+                obj = cell.cell_contents
+                if isinstance(obj, _ExceptionThread):
+                    learn_thread = obj
+                    break
+    finally:
+        threading.Thread = _orig_thread
+
+    monitor_stop = threading.Event()
+
+    def _monitor_learning() -> None:
+        if learn_thread is None:
+            return
+        while not monitor_stop.wait(5.0):
+            if learn_thread.exception is not None:
+                logger.critical(
+                    "self-learning service failed", exc_info=learn_thread.exception
+                )
+                _thread.interrupt_main()
+                return
+            if not learn_thread.is_alive():
+                logger.critical("self-learning service exited unexpectedly")
+                _thread.interrupt_main()
+                return
+
+    monitor_thread = threading.Thread(target=_monitor_learning, daemon=True)
+    monitor_thread.start()
+
+    def _stop_monitor() -> None:
+        monitor_stop.set()
+        monitor_thread.join(timeout=1.0)
+
+    cleanup_funcs.append(_stop_monitor)
     cleanup_funcs.append(learn_stop)
 
     tester = SelfTestService()
@@ -2096,6 +2150,10 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
     cleanup_funcs.append(stop_self_improvement_cycle)
 
     def _cleanup() -> None:
+        if learn_thread is not None and getattr(learn_thread, "exception", None):
+            logger.critical(
+                "self-learning service failed", exc_info=learn_thread.exception
+            )
         for func in cleanup_funcs:
             try:
                 func()
