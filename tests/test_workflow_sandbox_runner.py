@@ -50,8 +50,9 @@ def _no_psutil(monkeypatch):
 
 def test_empty_workflow_errors():
     runner = WorkflowSandboxRunner()
-    with pytest.raises(EmptyWorkflowError):
+    with pytest.raises(EmptyWorkflowError) as exc:
         runner.run([])
+    assert "contained no actionable steps" in str(exc.value)
 
 
 def test_files_confined_to_temp_dir(monkeypatch):
