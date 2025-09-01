@@ -7,6 +7,12 @@ The routines expect auxiliary packages to be installed:
 
 Missing dependencies raise :class:`RuntimeError` with guidance on how to
 install them.
+
+Configuration is provided via :class:`sandbox_settings.SandboxSettings` with
+notable options:
+
+* ``orphan_retry_attempts`` – retry attempts for orphan integration hooks.
+* ``orphan_retry_delay`` – delay between retries for orphan integration hooks.
 """
 from __future__ import annotations
 

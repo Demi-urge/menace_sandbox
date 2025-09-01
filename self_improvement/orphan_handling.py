@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict
 
+from sandbox_settings import SandboxSettings
+
 from .utils import _call_with_retries
 
 
@@ -29,17 +31,29 @@ def _load_orphan_module(attr: str) -> Callable[..., Any]:
 
 
 def integrate_orphans(
-    *args: object, retries: int = 3, delay: float = 0.1, **kwargs: object
+    *args: object,
+    retries: int | None = None,
+    delay: float | None = None,
+    **kwargs: object,
 ) -> list[str]:
     """Invoke sandbox runner orphan integration with safeguards."""
+    settings = SandboxSettings()
+    retries = retries if retries is not None else settings.orphan_retry_attempts
+    delay = delay if delay is not None else settings.orphan_retry_delay
     func = _load_orphan_module("integrate_orphans")
     return _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
 
 
 def post_round_orphan_scan(
-    *args: object, retries: int = 3, delay: float = 0.1, **kwargs: object
+    *args: object,
+    retries: int | None = None,
+    delay: float | None = None,
+    **kwargs: object,
 ) -> Dict[str, object]:
     """Trigger the sandbox post-round orphan scan."""
+    settings = SandboxSettings()
+    retries = retries if retries is not None else settings.orphan_retry_attempts
+    delay = delay if delay is not None else settings.orphan_retry_delay
     func = _load_orphan_module("post_round_orphan_scan")
     return _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
 
