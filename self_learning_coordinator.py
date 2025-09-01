@@ -8,6 +8,7 @@ import asyncio
 import json
 from pathlib import Path
 from datetime import datetime
+import threading
 
 from pydantic import BaseModel, ValidationError
 from sandbox_settings import SandboxSettings
@@ -85,6 +86,7 @@ class SelfLearningCoordinator:
             else getattr(settings, "self_learning_summary_interval", 0)
         )
         self.curriculum_builder = curriculum_builder
+        self._lock = threading.Lock()
         self._summary_count = 0
         self._train_count = 0
         self._last_eval_ts: str | None = None
@@ -103,17 +105,19 @@ class SelfLearningCoordinator:
         try:
             with lock:
                 data = json.loads(self._state_path.read_text())
-            self._train_count = int(data.get("train_count", 0))
-            self._summary_count = int(data.get("summary_count", 0))
-            self._last_eval_ts = data.get("last_eval_ts")
+            with self._lock:
+                self._train_count = int(data.get("train_count", 0))
+                self._summary_count = int(data.get("summary_count", 0))
+                self._last_eval_ts = data.get("last_eval_ts")
         except FileNotFoundError:
             logger.info(
                 "self-learning state file not found at %s; initializing fresh state",
                 self._state_path,
             )
-            self._train_count = 0
-            self._summary_count = 0
-            self._last_eval_ts = None
+            with self._lock:
+                self._train_count = 0
+                self._summary_count = 0
+                self._last_eval_ts = None
             self._save_state()
         except Exception as exc:
             logger.warning(
@@ -121,25 +125,27 @@ class SelfLearningCoordinator:
                 self._state_path,
                 exc,
             )
-            self._train_count = 0
-            self._summary_count = 0
-            self._last_eval_ts = None
+            with self._lock:
+                self._train_count = 0
+                self._summary_count = 0
+                self._last_eval_ts = None
             self._save_state()
 
     def _save_state(self) -> None:
-        payload = {
-            "train_count": self._train_count,
-            "summary_count": self._summary_count,
-            "last_eval_ts": self._last_eval_ts,
-        }
-        lock = FileLock(str(self._state_path) + ".lock")
-        try:
-            _atomic_write(self._state_path, json.dumps(payload), lock=lock)
-        except Exception as exc:
-            logger.warning(
-                "failed to persist self-learning state: %s",
-                exc,
-            )
+        with self._lock:
+            payload = {
+                "train_count": self._train_count,
+                "summary_count": self._summary_count,
+                "last_eval_ts": self._last_eval_ts,
+            }
+            lock = FileLock(str(self._state_path) + ".lock")
+            try:
+                _atomic_write(self._state_path, json.dumps(payload), lock=lock)
+            except Exception as exc:
+                logger.warning(
+                    "failed to persist self-learning state: %s",
+                    exc,
+                )
 
     def _reload_intervals(self) -> None:
         try:
@@ -452,28 +458,36 @@ class SelfLearningCoordinator:
     # --------------------------------------------------------------
     async def _train_all(self, rec: PathwayRecord, *, source: str = "unknown") -> None:
         await self._train_record(rec)
-        self._train_count += 1
+        self._reload_intervals()
+        do_eval = False
+        do_summary = False
+        with self._lock:
+            self._train_count += 1
+            train_count = self._train_count
+            if self.eval_interval and self._train_count >= self.eval_interval:
+                do_eval = True
+                self._train_count = 0
+                self._last_eval_ts = datetime.utcnow().isoformat()
+            if self.summary_interval and self.error_bot:
+                self._summary_count += 1
+                if self._summary_count >= self.summary_interval:
+                    do_summary = True
+                    self._summary_count = 0
         logger.info(
             "processed training record %s from %s (count=%d)",
             getattr(rec, "ts", ""),
             source,
-            self._train_count,
+            train_count,
         )
         if self.metrics_db:
             try:
                 self.metrics_db.log_training_stat(source, True)
             except Exception as exc:
                 logger.exception("metrics_db failed during log_training_stat: %s", exc)
-        self._reload_intervals()
-        if self.eval_interval and self._train_count >= self.eval_interval:
+        if do_eval:
             self._evaluate_all()
-            self._train_count = 0
-            self._last_eval_ts = datetime.utcnow().isoformat()
-        if self.summary_interval and self.error_bot:
-            self._summary_count += 1
-            if self._summary_count >= self.summary_interval:
-                await self._train_from_summary()
-                self._summary_count = 0
+        if do_summary:
+            await self._train_from_summary()
         self._save_state()
 
     async def _train_record(self, rec: PathwayRecord) -> None:
