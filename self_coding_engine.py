@@ -407,9 +407,10 @@ class SelfCodingEngine:
         self,
         patch: str,
         success: bool,
-        ci_result: "TestHarnessResult" | None,
+        exec_result: Any | None,
         roi_delta: float,
         coverage: float,
+        roi_meta: Mapping[str, Any] | None = None,
     ) -> None:
         """Record prompt execution details via :class:`PromptEvolutionLogger`."""
         if not self.prompt_evolution_logger:
@@ -417,13 +418,32 @@ class SelfCodingEngine:
         prompt = getattr(self, "_last_prompt", None)
         if not isinstance(prompt, Prompt):
             prompt = Prompt(getattr(prompt, "text", str(prompt or "")))
-        runtime = getattr(ci_result, "runtime", None) if ci_result else None
-        summary = getattr(ci_result, "stdout", "") if ci_result else ""
+        runtime = getattr(exec_result, "runtime", None) if exec_result else None
+        summary = ""
+        result: Dict[str, Any] = {"patch": patch}
+        if isinstance(exec_result, dict):
+            result.update(exec_result)
+            summary = str(
+                exec_result.get("stdout")
+                or exec_result.get("error")
+                or exec_result.get("summary", "")
+            )
+        else:
+            summary = getattr(exec_result, "stdout", "") if exec_result else ""
+            result.update(
+                {
+                    "stdout": getattr(exec_result, "stdout", ""),
+                    "stderr": getattr(exec_result, "stderr", ""),
+                }
+            )
+        if runtime is not None:
+            result["runtime"] = runtime
         meta = dict(getattr(prompt, "metadata", {}))
         meta.update(getattr(self.prompt_engine, "last_metadata", {}))
         prompt.metadata = meta
-        result = {"patch": patch, "summary": summary, "runtime": runtime}
-        roi = {"roi_delta": roi_delta, "coverage": coverage}
+        roi: Dict[str, Any] = {"roi_delta": roi_delta, "coverage": coverage}
+        if roi_meta:
+            roi.update(roi_meta)
         try:
             self.prompt_evolution_logger.log(prompt, success, result, roi)
         except Exception:
@@ -619,7 +639,14 @@ class SelfCodingEngine:
             )
         self._last_prompt = prompt_obj
         body = prompt_obj.text if isinstance(prompt_obj, Prompt) else str(prompt_obj)
-        self._last_prompt_metadata = getattr(self.prompt_engine, "last_metadata", {})
+        meta = dict(getattr(self.prompt_engine, "last_metadata", {}))
+        meta.update(
+            {
+                "system": getattr(prompt_obj, "system", ""),
+                "examples": getattr(prompt_obj, "examples", []),
+            }
+        )
+        self._last_prompt_metadata = meta
         if VA_PROMPT_TEMPLATE:
             try:
                 text = Path(VA_PROMPT_TEMPLATE).read_text()
@@ -742,7 +769,14 @@ class SelfCodingEngine:
             self._last_prompt_metadata = {}
             return _fallback()
         self._last_prompt = prompt_obj
-        self._last_prompt_metadata = getattr(self.prompt_engine, "last_metadata", {})
+        meta = dict(getattr(self.prompt_engine, "last_metadata", {}))
+        meta.update(
+            {
+                "system": getattr(prompt_obj, "system", ""),
+                "examples": getattr(prompt_obj, "examples", []),
+            }
+        )
+        self._last_prompt_metadata = meta
         if metadata and metadata.get("retrieval_context"):
             rc = metadata["retrieval_context"]
             if not isinstance(rc, str):
@@ -1525,6 +1559,7 @@ class SelfCodingEngine:
             ci_result,
             roi_delta,
             coverage,
+            {"roi_deltas": roi_deltas_map} if roi_deltas_map else None,
         )
         try:
             if self.patch_db and session_id and patch_id is not None:
@@ -1699,7 +1734,14 @@ class SelfCodingEngine:
             except Exception as exc:
                 trace = traceback.format_exc()
                 roi_val = 0.0
-                self._log_prompt_evolution("", False, None, 0.0, 0.0)
+                self._log_prompt_evolution(
+                    "",
+                    False,
+                    {"error": str(exc), "trace": trace},
+                    0.0,
+                    0.0,
+                )
+                self._record_prompt_metadata(False)
                 if log_prompt_attempt and self.data_bot:
                     try:
                         roi_val = self.data_bot.roi(self.bot_name)
