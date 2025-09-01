@@ -355,3 +355,34 @@ def test_prompt_engine_refreshes_after_record(monkeypatch):
     trainer.record(headers=["h"], example_order=["success"], tone="neutral", success=True)
     engine.after_patch_cycle()
     assert called == trainer.style_weights
+
+
+def test_prompt_engine_uses_optimizer_preferences():
+    class StubOptimizer:
+        def __init__(self):
+            self.calls = 0
+
+        def select_format(self, module, action):
+            return {
+                "tone": "friendly",
+                "structured_sections": ["overview"],
+                "example_placement": "start",
+            }
+
+        def aggregate(self):
+            self.calls += 1
+
+    records = [_record(0.9, summary="ok", tests_passed=True, raroi=0.2)]
+    opt = StubOptimizer()
+    engine = PromptEngine(
+        retriever=DummyRetriever(records),
+        patch_retriever=DummyRetriever(records),
+        optimizer=opt,
+        optimizer_refresh_interval=1,
+        confidence_threshold=-1.0,
+    )
+    engine.build_prompt("task")
+    assert engine.tone == "friendly"
+    assert engine.trained_structured_sections == ["overview"]
+    assert engine.trained_example_placement == "start"
+    assert opt.calls == 1
