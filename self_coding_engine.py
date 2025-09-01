@@ -20,11 +20,8 @@ from .trend_predictor import TrendPredictor
 from gpt_memory_interface import GPTMemoryInterface
 from .safety_monitor import SafetyMonitor
 from .advanced_error_management import FormalVerifier
-from .chatgpt_idea_bot import ChatGPTClient
-try:  # pragma: no cover - allow flat imports
-    from .memory_aware_gpt_client import ask_with_memory
-except Exception:  # pragma: no cover - fallback for flat layout
-    from memory_aware_gpt_client import ask_with_memory  # type: ignore
+from .chatgpt_idea_bot import ChatGPTClient  # type: ignore
+from .llm_interface import Prompt, LLMResult, LLMClient
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -152,7 +149,7 @@ class SelfCodingEngine:
         trend_predictor: Optional[TrendPredictor] = None,
         bot_name: str = "menace",
         safety_monitor: Optional[SafetyMonitor] = None,
-        llm_client: Optional[ChatGPTClient] = None,
+        llm_client: Optional[LLMClient] = None,
         rollback_mgr: Optional[RollbackManager] = None,
         formal_verifier: Optional[FormalVerifier] = None,
         patch_suggestion_db: "PatchSuggestionDB" | None = None,
@@ -183,14 +180,35 @@ class SelfCodingEngine:
         self.safety_monitor = safety_monitor
         if llm_client is None and _settings.openai_api_key:
             try:
-                llm_client = ChatGPTClient(
+                base_client = ChatGPTClient(
                     _settings.openai_api_key, gpt_memory=self.gpt_memory
                 )
+
+                class _Adapter:
+                    def __init__(self, inner):
+                        self.inner = inner
+                        self.gpt_memory = getattr(inner, "gpt_memory", None)
+
+                    def generate(self, prompt: Prompt) -> LLMResult:
+                        data = self.inner.ask(
+                            [{"role": "user", "content": prompt.text}]
+                        )
+                        text = (
+                            data.get("choices", [{}])[0]
+                            .get("message", {})
+                            .get("content", "")
+                        )
+                        return LLMResult(raw=data, text=text)
+
+                llm_client = _Adapter(base_client)
             except Exception:
                 llm_client = None
         self.llm_client = llm_client
-        if self.llm_client:
-            self.llm_client.gpt_memory = self.gpt_memory
+        if self.llm_client and getattr(self.llm_client, "gpt_memory", None) is not self.gpt_memory:
+            try:
+                self.llm_client.gpt_memory = self.gpt_memory  # type: ignore[attr-defined]
+            except Exception:
+                pass
         self.rollback_mgr = rollback_mgr
         if formal_verifier is None:
             try:
@@ -493,7 +511,7 @@ class SelfCodingEngine:
         repo_layout = repo_layout or self._get_repo_layout(VA_REPO_LAYOUT_LINES)
         retry_trace = self._last_retry_trace
         try:
-            body = self.prompt_engine.build_prompt(
+            prompt_obj = self.prompt_engine.build_prompt(
                 description,
                 context="\n".join([p for p in (context.strip(), repo_layout) if p]),
                 retrieval_context=retrieval_context or "",
@@ -501,12 +519,13 @@ class SelfCodingEngine:
                 tone=self.prompt_tone,
             )
         except TypeError:
-            body = self.prompt_engine.build_prompt(
+            prompt_obj = self.prompt_engine.build_prompt(
                 description,
                 context="\n".join([p for p in (context.strip(), repo_layout) if p]),
                 retrieval_context=retrieval_context or "",
                 retry_trace=retry_trace,
             )
+        body = prompt_obj.text if isinstance(prompt_obj, Prompt) else str(prompt_obj)
         self._last_prompt_metadata = getattr(self.prompt_engine, "last_metadata", {})
         if VA_PROMPT_TEMPLATE:
             try:
@@ -603,7 +622,7 @@ class SelfCodingEngine:
         )
         retry_trace = self._fetch_retry_trace(metadata)
         try:
-            prompt = self.prompt_engine.build_prompt(
+            prompt_obj = self.prompt_engine.build_prompt(
                 description,
                 context=context_block,
                 retrieval_context=retrieval_context,
@@ -611,7 +630,7 @@ class SelfCodingEngine:
                 tone=self.prompt_tone,
             )
         except TypeError:
-            prompt = self.prompt_engine.build_prompt(
+            prompt_obj = self.prompt_engine.build_prompt(
                 description,
                 context=context_block,
                 retrieval_context=retrieval_context,
@@ -621,6 +640,8 @@ class SelfCodingEngine:
             self._last_retry_trace = str(exc)
             self._last_prompt_metadata = {}
             return _fallback()
+        if not isinstance(prompt_obj, Prompt):
+            prompt_obj = Prompt(text=str(prompt_obj))
         self._last_prompt_metadata = getattr(self.prompt_engine, "last_metadata", {})
 
         # Incorporate past patch outcomes from memory
@@ -697,26 +718,14 @@ class SelfCodingEngine:
                     "tags": [INSIGHT],
                 },
             )
-            prompt += "\n\n### Patch history\n" + combined_history
+            prompt_obj.text += "\n\n### Patch history\n" + combined_history
 
         try:
-            run_id = path.name if path else description.replace(" ", "_")
-            data = ask_with_memory(
-                self.llm_client,
-                f"self_coding_engine.generate_helper.{run_id}",
-                prompt,
-                memory=self.gpt_memory,
-                tags=[ERROR_FIX, IMPROVEMENT_PATH],
-            )
+            result = self.llm_client.generate(prompt_obj)
         except Exception as exc:
             self._last_retry_trace = str(exc)
-            data = {}
-        text = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
+            result = LLMResult()
+        text = result.text.strip()
         if text:
             self.logger.info(
                 "gpt_suggestion",

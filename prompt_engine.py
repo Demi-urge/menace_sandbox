@@ -18,6 +18,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from llm_interface import Prompt
+
 from snippet_compressor import compress_snippets
 
 try:  # pragma: no cover - optional runtime dependency
@@ -502,7 +504,7 @@ class PromptEngine:
         retrieval_context: str | None = None,
         retry_trace: str | None = None,
         tone: str | None = None,
-    ) -> str:
+    ) -> Prompt:
         """Return a prompt for *task* using retrieved patch examples.
 
         ``context`` and ``retrieval_context`` allow callers to prepend
@@ -520,7 +522,7 @@ class PromptEngine:
         retriever = self.patch_retriever or self.retriever
         if retriever is None:
             logging.info("No retriever available; falling back to static template")
-            return self._static_prompt()
+            return Prompt(text=self._static_prompt())
 
         try:
             result = retriever.search(task, top_k=self.top_n)
@@ -530,7 +532,7 @@ class PromptEngine:
                 "prompt_engine_fallback",
                 {"goal": task, "reason": "retrieval_error", "error": str(exc)},
             )
-            return self._static_prompt()
+            return Prompt(text=self._static_prompt())
 
         if isinstance(result, FallbackResult):
             logging.info(
@@ -545,7 +547,7 @@ class PromptEngine:
                     "confidence": result.confidence,
                 },
             )
-            return self._static_prompt()
+            return Prompt(text=self._static_prompt())
 
         if isinstance(result, tuple):
             records = result[0]
@@ -567,7 +569,7 @@ class PromptEngine:
                     "confidence": confidence,
                 },
             )
-            return self._static_prompt()
+            return Prompt(text=self._static_prompt())
 
         snippet_lines = self.build_snippets(ranked)
         lines: List[str] = []
@@ -599,7 +601,8 @@ class PromptEngine:
 
         if retry_trace:
             lines.extend(self._format_retry_trace(retry_trace))
-        return "\n".join(line for line in lines if line)
+        text = "\n".join(line for line in lines if line)
+        return Prompt(text=text, examples=snippet_lines, metadata=self.last_metadata)
 
     # ------------------------------------------------------------------
     def _format_retry_trace(self, retry_trace: str) -> List[str]:
@@ -861,7 +864,7 @@ class PromptEngine:
         failure_header: str = "Avoid {summary} because it caused {outcome}:",
         tone: str = "neutral",
         trainer: PromptMemoryTrainer | None = None,
-    ) -> str:
+    ) -> Prompt:
         """Class method wrapper used by existing callers and tests."""
 
         engine = cls(
@@ -889,13 +892,13 @@ def build_prompt(
     retry_trace: str | None = None,
     *,
     context: str | None = None,
-        retrieval_context: str | None = None,
-        top_n: int = 5,
-        success_header: str = "Given the following pattern:",
-        failure_header: str = "Avoid {summary} because it caused {outcome}:",
-        tone: str = "neutral",
-        trainer: PromptMemoryTrainer | None = None,
-) -> str:
+    retrieval_context: str | None = None,
+    top_n: int = 5,
+    success_header: str = "Given the following pattern:",
+    failure_header: str = "Avoid {summary} because it caused {outcome}:",
+    tone: str = "neutral",
+    trainer: PromptMemoryTrainer | None = None,
+) -> Prompt:
     """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`."""
 
     return PromptEngine.construct_prompt(

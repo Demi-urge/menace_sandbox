@@ -3,6 +3,8 @@ import json
 import sys
 import types
 
+from llm_interface import LLMResult
+
 # Lightweight stub for vector_service to avoid heavy imports
 vec_mod = types.ModuleType("vector_service")
 
@@ -385,9 +387,9 @@ def test_retrieval_context_in_prompt(tmp_path, monkeypatch):
     engine.context_builder = types.SimpleNamespace(build_context=lambda m: context)
 
     class DummyClient:
-        def ask(self, messages, memory_manager=None, tags=None, use_memory=True):
-            DummyClient.prompt = messages[0]["content"]
-            return {"choices": [{"message": {"content": "def auto_test():\n    pass"}}]}
+        def generate(self, prompt):
+            DummyClient.prompt = getattr(prompt, "text", str(prompt))
+            return LLMResult(text="def auto_test():\n    pass")
 
     engine.llm_client = DummyClient()
     monkeypatch.setattr(engine, "suggest_snippets", lambda d, limit=3: [])
@@ -459,15 +461,18 @@ def test_vector_service_metrics_and_fallback(tmp_path, monkeypatch):
     patch_db = cd.PatchHistoryDB(tmp_path / "p.db")
     data_bot = db.DataBot(mdb, patch_db=patch_db)
     mem = mm.MenaceMemoryManager(tmp_path / "mem.db")
+    class DummyClient2:
+        def generate(self, prompt):
+            return LLMResult(text="")
+
     engine = sce.SelfCodingEngine(
         cd.CodeDB(tmp_path / "c.db"),
         mem,
         data_bot=data_bot,
         patch_db=patch_db,
         context_builder=builder,
-        llm_client=object(),
+        llm_client=DummyClient2(),
     )
-    monkeypatch.setattr(sce, "ask_with_memory", lambda *a, **k: {})
     code = engine.generate_helper("demo task")
     assert builder.calls == ["demo task"]
     assert g1.inc_calls == 1
