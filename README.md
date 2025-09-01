@@ -629,6 +629,15 @@ Run the setup helper to install the required system tools and Python
 dependencies.  When ``MENACE_OFFLINE_INSTALL=1`` is set the script
 installs packages from ``MENACE_WHEEL_DIR`` instead of contacting PyPI.
 
+For deterministic environments you can install the pinned Python
+dependencies up front using:
+
+```bash
+scripts/install_pinned_dependencies.sh
+```
+
+This script installs the exact versions listed in ``requirements.txt``.
+
 ```bash
 scripts/setup_autonomous.sh
 ```
