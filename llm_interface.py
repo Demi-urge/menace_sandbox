@@ -117,6 +117,10 @@ class LLMClient:
         self.model = model
         self.backends = list(backends or [])
         self._log_prompts = log_prompts
+        # All clients share a single token bucket to coordinate rate limiting.
+        cfg = llm_config.get_config()
+        self._rate_limiter = rate_limit.SHARED_TOKEN_BUCKET
+        self._rate_limiter.update_rate(getattr(cfg, "tokens_per_minute", 0))
         if log_prompts:
             try:  # pragma: no cover - database may not be available
                 from prompt_db import PromptDB
@@ -283,7 +287,6 @@ class OpenAIProvider(LLMClient):
             raise RuntimeError("OPENAI_API_KEY is required")
         self.max_retries = max_retries or cfg.max_retries
         self._session = requests.Session()
-        self._rate_limiter = rate_limit.TokenBucket(cfg.tokens_per_minute)
 
     # ------------------------------------------------------------------
     def _prepare_payload(self, prompt: Prompt) -> Dict[str, Any]:

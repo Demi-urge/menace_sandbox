@@ -60,6 +60,12 @@ class TokenBucket:
             time.sleep(wait)
 
 
+# Singleton bucket shared by all clients.  Callers should invoke ``update_rate``
+# before consuming tokens to ensure the capacity reflects the current
+# configuration.
+SHARED_TOKEN_BUCKET = TokenBucket()
+
+
 def _get_encoder(model: str | None) -> Any | None:
     """Return a tiktoken encoder for *model* if available."""
 
@@ -122,4 +128,4 @@ def sleep_with_backoff(attempt: int, base: float = 1.0, max_delay: float = 60.0)
     time.sleep(delay)
 
 
-__all__ = ["TokenBucket", "estimate_tokens", "sleep_with_backoff"]
+__all__ = ["TokenBucket", "estimate_tokens", "sleep_with_backoff", "SHARED_TOKEN_BUCKET"]
