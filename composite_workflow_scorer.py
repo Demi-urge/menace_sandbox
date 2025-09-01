@@ -84,7 +84,6 @@ class ROIScorer(BaseROIScorer):
 
             calc = ROICalculator.__new__(ROICalculator)
             calc.profiles = {default_type: default_profile}
-            calc.hard_fail = False
             calc.logger = logging.getLogger(__name__)
             try:
                 calc._validate_profiles()
@@ -309,10 +308,10 @@ class CompositeWorkflowScorer(ROIScorer):
                 "reliability": 1.0 if ok else 0.0,
                 "efficiency": 1.0 / duration if duration > 0 else 0.0,
             }
-            roi_after, _, _ = self.calculator.calculate(metrics, self.profile_type)
+            result = self.calculator.calculate(metrics, self.profile_type)
             self.tracker.update(
                 0.0,
-                roi_after,
+                result.score,
                 modules=[name],
                 metrics=metrics,
                 profile_type=self.profile_type,

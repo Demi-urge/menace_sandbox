@@ -5,10 +5,10 @@ import pytest
 
 sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
 
-from code_database import PatchHistoryDB, PatchRecord
-from vector_service.patch_logger import PatchLogger
-from patch_provenance import get_patch_provenance
-from vector_metrics_db import VectorMetricsDB
+from menace_sandbox.code_database import PatchHistoryDB, PatchRecord
+from menace_sandbox.vector_service.patch_logger import PatchLogger
+from menace_sandbox.patch_provenance import PatchProvenanceService
+from menace_sandbox.vector_metrics_db import VectorMetricsDB
 
 
 def test_patch_logger_logs_ancestry(tmp_path):
@@ -34,7 +34,8 @@ def test_patch_logger_records_provenance(tmp_path):
     rows = db.get_ancestry(pid)
     assert rows[0][3] == "MIT"
     assert json.loads(rows[0][5]) == ["unsafe"]
-    prov = get_patch_provenance(pid, patch_db=db)
+    service = PatchProvenanceService(patch_db=db)
+    prov = service.get_provenance(pid)
     assert prov[0]["origin"] == "o1"
     assert prov[0]["vector_id"] == "v1"
     assert prov[0]["influence"] == pytest.approx(0.8)

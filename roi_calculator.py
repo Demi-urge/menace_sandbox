@@ -2,8 +2,9 @@ from __future__ import annotations
 
 """Profile-driven ROI scoring with configurable veto rules."""
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import logging
 import yaml
@@ -52,6 +53,31 @@ def _load_remediation_hints() -> dict[str, str]:
 REMEDIATION_HINTS = _load_remediation_hints()
 
 
+@dataclass
+class ROIResult:
+    """Structured result returned by :meth:`ROICalculator.calculate`.
+
+    Attributes
+    ----------
+    score:
+        Final ROI score.
+    vetoed:
+        ``True`` when any veto rule triggered.
+    triggers:
+        List of human readable veto descriptions.
+    """
+
+    score: float
+    vetoed: bool
+    triggers: list[str]
+
+    def __iter__(self) -> Iterator[Any]:
+        """Allow tuple unpacking for backward compatibility."""
+        yield self.score
+        yield self.vetoed
+        yield self.triggers
+
+
 class ROICalculator:
     """Calculate ROI scores from weighted metrics and veto rules."""
 
@@ -74,12 +100,9 @@ class ROICalculator:
         with path.open("r", encoding="utf-8") as fh:
             self.profiles: dict[str, dict[str, Any]] = yaml.safe_load(fh) or {}
         self._validate_profiles()
-        self.hard_fail: bool = False
         self.logger = logger or logging.getLogger(__name__)
 
-    def calculate(
-        self, metrics: dict[str, Any], profile_type: str
-    ) -> tuple[float, bool, list[str]]:
+    def calculate(self, metrics: dict[str, Any], profile_type: str) -> ROIResult:
         """Return weighted ROI score and veto information.
 
         Missing metrics default to ``0.0``. When any veto condition is met the
@@ -110,10 +133,9 @@ class ROICalculator:
                 triggers.append(f"{name} equals {rule['equals']}")
 
         vetoed = bool(triggers)
-        self.hard_fail = vetoed
         if vetoed:
-            return (float("-inf"), True, triggers)
-        return (score, False, [])
+            return ROIResult(float("-inf"), True, triggers)
+        return ROIResult(score, False, [])
 
     def _validate_profiles(self) -> None:
         """Validate that profiles contain expected numeric weights."""
@@ -144,21 +166,20 @@ class ROICalculator:
 
     def log_debug(self, metrics: dict[str, Any], profile_type: str) -> None:
         """Log per-metric contributions, final score and veto triggers."""
-        score, vetoed, triggers = self.calculate(metrics, profile_type)
+        result = self.calculate(metrics, profile_type)
         weights = self.profiles[profile_type].get("weights", {})
         for name, weight in weights.items():
             value = float(metrics.get(name, 0.0))
             self.logger.debug("%s * %s = %s", name, weight, value * weight)
-        self.logger.debug("Final score: %s", score)
-        if triggers:
-            self.logger.debug("Veto triggers: %s", triggers)
+        self.logger.debug("Final score: %s", result.score)
+        if result.triggers:
+            self.logger.debug("Veto triggers: %s", result.triggers)
         else:
             self.logger.debug("Veto triggers: none")
 
     def compute(self, metrics: dict[str, Any], profile_type: str) -> float:
         """Backward compatible alias for :meth:`calculate` returning only the score."""
-        score, _, _ = self.calculate(metrics, profile_type)
-        return score
+        return self.calculate(metrics, profile_type).score
 
 
 def propose_fix(
@@ -238,4 +259,4 @@ def propose_fix(
     return suggestions
 
 
-__all__ = ["ROICalculator", "propose_fix"]
+__all__ = ["ROICalculator", "ROIResult", "propose_fix"]

@@ -37,11 +37,12 @@ from menace_sandbox.roi_calculator import ROICalculator
 
 calc = ROICalculator()  # loads configs/roi_profiles.yaml by default
 metrics = {"profitability": 0.8, "security": 0.5}
-score, vetoed, triggers = calc.calculate(metrics, "scraper_bot")
+result = calc.calculate(metrics, "scraper_bot")
+score, vetoed, triggers = result.score, result.vetoed, result.triggers
 ```
-
-The tuple contains the weighted score, a boolean indicating whether any veto
-fired and a list of the triggered veto descriptions.
+The returned :class:`ROIResult` exposes the weighted score, a boolean
+indicating whether any veto fired and a list of the triggered veto descriptions.
+It also supports tuple unpacking for backwards compatibility.
 
 `log_debug()` uses the standard :mod:`logging` module to emit a human readable
 breakdown of each contribution and any veto triggers at ``DEBUG`` level.

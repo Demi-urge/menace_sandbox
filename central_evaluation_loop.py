@@ -180,7 +180,8 @@ def process_action(raw_line: str) -> bool:
     if "metrics" in action and "roi_profile" in action:
         calc = ROICalculator()
         metrics = {**action["metrics"], **action.get("flags", {})}
-        score, vetoed, _ = calc.calculate(metrics, action["roi_profile"])
+        result = calc.calculate(metrics, action["roi_profile"])
+        score, vetoed = result.score, result.vetoed
         low_conf = False
         if TRUTH_ADAPTER is not None:
             try:
