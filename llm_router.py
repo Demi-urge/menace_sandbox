@@ -53,14 +53,60 @@ class LLMRouter(LLMClient):
         tags = set(getattr(prompt, "tags", []))
         meta = getattr(prompt, "metadata", {})
         tags.update(meta.get("tags", []))
+
+        # Base selection on ROI tags and prompt size
         if "low_roi" in tags:
             primary = self.local
         elif "high_roi" in tags:
             primary = self.remote
         else:
             primary = self.remote if tokens > self.size_threshold else self.local
+
+        # Adjust based on vector confidence – high confidence prefers remote
+        vc = getattr(prompt, "vector_confidence", None)
+        if vc is not None:
+            if vc >= 0.8:
+                primary = self.remote
+            elif vc <= 0.2:
+                primary = self.local
+
+        # Incorporate estimated token cost
+        try:
+            from llm_pricing import get_input_rate
+
+            cost_remote = tokens * get_input_rate(self.remote.model)
+            cost_local = tokens * get_input_rate(self.local.model)
+            if primary is self.remote and cost_remote > cost_local:
+                primary = self.local
+            elif primary is self.local and cost_local > cost_remote:
+                primary = self.remote
+        except Exception:  # pragma: no cover - pricing is best effort
+            pass
+
+        # Consider recent latency from PromptDB if available
+        def _avg_latency(backend: LLMClient) -> float | None:
+            db = getattr(self, "db", None)
+            if not db or not hasattr(db, "fetch_logs"):
+                return None
+            try:
+                entries = db.fetch_logs(limit=5, model=backend.model)
+            except Exception:  # pragma: no cover - best effort
+                return None
+            lats = [e.get("latency_ms") for e in entries if e.get("latency_ms") is not None]
+            if not lats:
+                return None
+            return sum(lats) / len(lats)
+
+        lat_primary = _avg_latency(primary)
+        other = self.local if primary is self.remote else self.remote
+        lat_other = _avg_latency(other)
+        if lat_primary is not None and lat_other is not None and lat_primary > lat_other:
+            primary = other
+
+        # Avoid recently failing backend
         if self._recent_failure(primary):
             primary = self.local if primary is self.remote else self.remote
+
         fallback = self.local if primary is self.remote else self.remote
         return primary, fallback
 

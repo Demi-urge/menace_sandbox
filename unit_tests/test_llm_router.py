@@ -27,9 +27,18 @@ def _patch_db(monkeypatch):
     class DummyDB:
         def __init__(self, model):
             self.logged = logged
+            self.latencies = {}
 
         def log(self, prompt, result, backend=None):
             self.logged.append((prompt, result, backend))
+
+        def fetch_logs(self, limit=None, model=None, tag=None):
+            if model is None:
+                return []
+            lat = self.latencies.get(model)
+            if lat is None:
+                return []
+            return [{"backend": model, "latency_ms": lat}]
 
     import llm_router
 
@@ -85,3 +94,41 @@ def test_fallback_on_error():
     result = router.generate(Prompt("hi"))
     assert result.text == "local"
     assert remote.calls == 1 and local.calls == 1
+
+
+def test_token_cost_preference(monkeypatch):
+    remote = DummyBackend("gpt-4o")
+    local = DummyBackend("claude-3-sonnet")
+    router = LLMRouter(remote=remote, local=local, size_threshold=10)
+
+    prompt = Prompt("x" * 100)
+    res = router.generate(prompt)
+    assert res.text == "claude-3-sonnet"
+
+
+def test_latency_preference(monkeypatch):
+    remote = DummyBackend("gpt-4o")
+    local = DummyBackend("claude-3-sonnet")
+    router = LLMRouter(remote=remote, local=local, size_threshold=10)
+    # Equal pricing so latency drives decision
+    monkeypatch.setattr("llm_pricing.get_input_rate", lambda model, overrides=None: 0.0)
+    router.db.latencies = {"gpt-4o": 200.0, "claude-3-sonnet": 50.0}
+
+    prompt = Prompt("x" * 100)
+    res = router.generate(prompt)
+    assert res.text == "claude-3-sonnet"
+
+
+def test_vector_confidence_bias(monkeypatch):
+    remote = DummyBackend("gpt-4o")
+    local = DummyBackend("claude-3-sonnet")
+    router = LLMRouter(remote=remote, local=local, size_threshold=10)
+    monkeypatch.setattr("llm_pricing.get_input_rate", lambda model, overrides=None: 0.0)
+
+    high = Prompt("hi", vector_confidence=0.9)
+    res_high = router.generate(high)
+    assert res_high.text == "gpt-4o"
+
+    low = Prompt("x" * 100, vector_confidence=0.1)
+    res_low = router.generate(low)
+    assert res_low.text == "claude-3-sonnet"
