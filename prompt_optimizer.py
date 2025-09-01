@@ -185,10 +185,8 @@ class PromptOptimizer:
         return entries
 
     # ------------------------------------------------------------------
-    def _extract_features(self, entry: Dict[str, Any]) -> Dict[str, Any]:
-        """Derive structural features from a log ``entry``."""
-
-        prompt = entry.get("prompt", "")
+    def _extract_features(self, prompt: str) -> Dict[str, Any]:
+        """Derive structural features from a prompt string."""
 
         header_matches = list(
             re.finditer(r"^#+\s*(.+)$", prompt, flags=re.MULTILINE)
@@ -217,17 +215,6 @@ class PromptOptimizer:
         has_bullets = bool(
             re.search(r"^\s*(?:[-*]|\d+\.)\s+", prompt, flags=re.MULTILINE)
         )
-        has_system = bool(
-            entry.get("system")
-            or entry.get("system_prompt")
-            or entry.get("system_message")
-            or (
-                isinstance(entry.get("messages"), list)
-                and any(m.get("role") == "system" for m in entry["messages"])
-            )
-            or prompt.lstrip().lower().startswith("system:")
-        )
-
         tone = "neutral"
         if self._sentiment:
             try:
@@ -245,7 +232,6 @@ class PromptOptimizer:
             "example_placement": example_placement,
             "has_code": has_code,
             "has_bullets": has_bullets,
-            "has_system": has_system,
         }
 
     # ------------------------------------------------------------------
@@ -264,7 +250,17 @@ class PromptOptimizer:
                 weight = 1.0
             module = entry.get("module", "unknown")
             action = entry.get("action", "unknown")
-            feats = self._extract_features(entry)
+            feats = self._extract_features(prompt)
+            has_system = bool(
+                entry.get("system")
+                or entry.get("system_prompt")
+                or entry.get("system_message")
+                or (
+                    isinstance(entry.get("messages"), list)
+                    and any(m.get("role") == "system" for m in entry["messages"])
+                )
+                or prompt.lstrip().lower().startswith("system:")
+            )
             key = (
                 module,
                 action,
@@ -273,7 +269,7 @@ class PromptOptimizer:
                 feats["example_placement"],
                 feats["has_code"],
                 feats["has_bullets"],
-                feats["has_system"],
+                has_system,
             )
             stat = self.stats.get(key)
             if not stat:
@@ -285,7 +281,7 @@ class PromptOptimizer:
                     example_placement=feats["example_placement"],
                     has_code=feats["has_code"],
                     has_bullets=feats["has_bullets"],
-                    has_system=feats["has_system"],
+                    has_system=has_system,
                 )
                 self.stats[key] = stat
             stat.update(success, roi, weight)
