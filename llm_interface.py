@@ -12,6 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
+import os
+import time
+import json
+import requests
 
 
 @dataclass(slots=True)
@@ -77,12 +81,14 @@ class LLMResult:
     ``text`` holds the raw string produced by the model.  ``parsed`` optionally
     stores a structured representation of that string (for example JSON
     decoded from ``text``).  ``raw`` can be used by clients to stash any
-    transport specific payload such as HTTP responses.
+    transport specific payload such as HTTP responses.  ``completions``
+    exposes the raw text of all choices returned by the model.
     """
 
     text: str = ""
     parsed: Any | None = None
     raw: Dict[str, object] = field(default_factory=dict)
+    completions: List[str] = field(default_factory=list)
 
 
 class LLMClient(ABC):
@@ -98,4 +104,87 @@ class LLMClient(ABC):
         """
 
 
-__all__ = ["Prompt", "LLMResult", "LLMClient"]
+class OpenAIProvider(LLMClient):
+    """Minimal OpenAI chat completion client using GPT-4o."""
+
+    api_url = "https://api.openai.com/v1/chat/completions"
+
+    def __init__(
+        self,
+        model: str | None = None,
+        api_key: str | None = None,
+        timeout: float = 30.0,
+        max_retries: int = 5,
+    ) -> None:
+        self.model = model or "gpt-4o"
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("OPENAI_API_KEY is required")
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self._session = requests.Session()
+
+    # ------------------------------------------------------------------
+    def _request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """POST *payload* to the OpenAI API with retries/backoff."""
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        backoff = 1.0
+        for attempt in range(self.max_retries):
+            try:
+                response = self._session.post(
+                    self.api_url, headers=headers, json=payload, timeout=self.timeout
+                )
+            except requests.RequestException:
+                if attempt == self.max_retries - 1:
+                    raise
+            else:
+                if response.status_code == 429:
+                    if attempt == self.max_retries - 1:
+                        response.raise_for_status()
+                else:
+                    if response.ok:
+                        return response.json()
+                    if attempt == self.max_retries - 1:
+                        response.raise_for_status()
+
+            time.sleep(backoff)
+            backoff *= 2
+
+        raise RuntimeError("Exceeded maximum retries for OpenAI request")
+
+    # ------------------------------------------------------------------
+    def generate(self, prompt: Prompt) -> LLMResult:
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt.text}],
+        }
+
+        raw = self._request(payload)
+        completions: List[str] = []
+        text = ""
+        try:
+            for choice in raw.get("choices", []):
+                message = choice.get("message", {})
+                content = message.get("content", "")
+                completions.append(content)
+            if completions:
+                text = completions[0]
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+        parsed = None
+        if text:
+            try:
+                parsed = json.loads(text)
+            except (TypeError, ValueError):
+                parsed = None
+
+        return LLMResult(text=text, parsed=parsed, raw=raw, completions=completions)
+
+
+__all__ = ["Prompt", "LLMResult", "LLMClient", "OpenAIProvider"]
