@@ -98,6 +98,8 @@ class SynergySettings(BaseModel):
     weights_lr: float = 0.1
     train_interval: int = 10
     replay_size: int = 100
+    batch_size: int = 32
+    noise: float = 0.1
     hidden_size: int = 32
     layers: int = 1
     optimizer: str = "adam"
@@ -125,6 +127,7 @@ class SynergySettings(BaseModel):
         "ma_window",
         "train_interval",
         "replay_size",
+        "batch_size",
         "hidden_size",
         "layers",
         "checkpoint_interval",
@@ -145,6 +148,7 @@ class SynergySettings(BaseModel):
         "weight_maintainability",
         "weight_throughput",
         "weights_lr",
+        "noise",
     )
     def _synergy_non_negative(cls, v: float, info: Any) -> float:
         if v < 0:
@@ -1344,6 +1348,16 @@ class SandboxSettings(BaseSettings):
         env="SYNERGY_REPLAY_SIZE",
         description="Length of replay buffer for RL strategies.",
     )
+    synergy_batch_size: int = Field(
+        32,
+        env="SYNERGY_BATCH_SIZE",
+        description="Mini-batch size for RL learner updates.",
+    )
+    synergy_noise: float = Field(
+        0.1,
+        env="SYNERGY_NOISE",
+        description="Exploration noise added to learner actions.",
+    )
     synergy_hidden_size: int = Field(
         32,
         env="SYNERGY_HIDDEN_SIZE",
@@ -1718,6 +1732,8 @@ class SandboxSettings(BaseSettings):
             weights_lr=self.synergy_weights_lr,
             train_interval=self.synergy_train_interval,
             replay_size=self.synergy_replay_size,
+            batch_size=self.synergy_batch_size,
+            noise=self.synergy_noise,
             hidden_size=self.synergy_hidden_size,
             layers=self.synergy_layers,
             optimizer=self.synergy_optimizer,

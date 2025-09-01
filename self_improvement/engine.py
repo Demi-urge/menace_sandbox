@@ -390,11 +390,6 @@ from ..self_improvement_policy import (
 )
 from ..pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 from ..env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
-from .learners import (
-    SynergyWeightLearner,
-    DQNSynergyLearner,
-    DoubleDQNSynergyLearner,
-)
 from .dashboards import SynergyDashboard, load_synergy_history
 
 
@@ -441,7 +436,7 @@ class _BaseRLSynergyLearner(ABC):
         lr: float | None = None,
         *,
         settings: SandboxSettings | None = None,
-        target_sync: int = 10,
+        target_sync: int | None = None,
     ) -> None:
         settings = settings or SandboxSettings()
         sy = getattr(settings, "synergy", None)
@@ -450,7 +445,10 @@ class _BaseRLSynergyLearner(ABC):
                 "weights_lr": getattr(settings, "synergy_weights_lr", 0.1),
                 "train_interval": getattr(settings, "synergy_train_interval", 10),
                 "replay_size": getattr(settings, "synergy_replay_size", 100),
-                "checkpoint_interval": getattr(settings, "synergy_checkpoint_interval", 50),
+                "checkpoint_interval": getattr(
+                    settings, "synergy_checkpoint_interval", 50
+                ),
+                "target_sync": getattr(settings, "synergy_target_sync", 10),
             }
         self.lr = float(lr if lr is not None else sy["weights_lr"])
         if self.lr <= 0:  # pragma: no cover - sanity check
@@ -461,6 +459,12 @@ class _BaseRLSynergyLearner(ABC):
         self.weights = get_default_synergy_weights()
         self._state: tuple[float, ...] = (0.0,) * 7
         self._steps = 0
+        if target_sync is None:
+            target_sync = (
+                sy["target_sync"]
+                if isinstance(sy, dict)
+                else getattr(sy, "target_sync", 10)
+            )
         self.target_sync = int(target_sync)
         self.buffer = _ReplayBuffer(self.replay_size)
         self.checkpoint_interval = int(sy["checkpoint_interval"])
@@ -527,31 +531,65 @@ class SACSynergyLearner(_BaseRLSynergyLearner):
         path: Path | None = None,
         lr: float | None = None,
         *,
-        target_sync: int = 10,
+        hidden_sizes: Sequence[int] | None = None,
+        noise: float | None = None,
+        batch_size: int | None = None,
+        target_sync: int | None = None,
         settings: SandboxSettings | None = None,
     ) -> None:
-        super().__init__(path, lr, settings=settings, target_sync=target_sync)
-        hidden = 32
-        self.actor = sip_torch.nn.Sequential(
-            sip_torch.nn.Linear(7, hidden),
-            sip_torch.nn.ReLU(),
-            sip_torch.nn.Linear(hidden, 7),
-        )
-        self.critic = sip_torch.nn.Sequential(
-            sip_torch.nn.Linear(14, hidden),
-            sip_torch.nn.ReLU(),
-            sip_torch.nn.Linear(hidden, 7),
-        )
-        self.target_critic = sip_torch.nn.Sequential(
-            sip_torch.nn.Linear(14, hidden),
-            sip_torch.nn.ReLU(),
-            sip_torch.nn.Linear(hidden, 7),
-        )
+        settings = settings or SandboxSettings()
+        sy = getattr(settings, "synergy", None)
+        if hidden_sizes is None:
+            hidden_size = (
+                getattr(sy, "hidden_size", None)
+                if sy is not None
+                else getattr(settings, "synergy_hidden_size", 32)
+            )
+            layers = (
+                getattr(sy, "layers", None)
+                if sy is not None
+                else getattr(settings, "synergy_layers", 1)
+            )
+            hidden_sizes = [int(hidden_size)] * int(layers)
+        hidden_list = [int(h) for h in hidden_sizes]
+        if noise is None:
+            noise = (
+                getattr(sy, "noise", None)
+                if sy is not None
+                else getattr(settings, "synergy_noise", 0.1)
+            )
+        if batch_size is None:
+            batch_size = (
+                getattr(sy, "batch_size", None)
+                if sy is not None
+                else getattr(settings, "synergy_batch_size", 32)
+            )
+        if target_sync is None:
+            target_sync = (
+                getattr(sy, "target_sync", None)
+                if sy is not None
+                else getattr(settings, "synergy_target_sync", 10)
+            )
+        super().__init__(path, lr, settings=settings, target_sync=int(target_sync))
+
+        def _build_net(in_dim: int, out_dim: int) -> sip_torch.nn.Sequential:
+            layers_list: list[sip_torch.nn.Module] = []
+            last = in_dim
+            for h in hidden_list:
+                layers_list.append(sip_torch.nn.Linear(last, h))
+                layers_list.append(sip_torch.nn.ReLU())
+                last = h
+            layers_list.append(sip_torch.nn.Linear(last, out_dim))
+            return sip_torch.nn.Sequential(*layers_list)
+
+        self.actor = _build_net(7, 7)
+        self.critic = _build_net(14, 7)
+        self.target_critic = _build_net(14, 7)
         self.target_critic.load_state_dict(self.critic.state_dict())
         self.actor_opt = sip_torch.optim.Adam(self.actor.parameters(), lr=self.lr)
         self.critic_opt = sip_torch.optim.Adam(self.critic.parameters(), lr=self.lr)
-        self.noise = 0.1
-        self.batch_size = 32
+        self.noise = float(noise)
+        self.batch_size = int(batch_size)
         self._load_networks()
 
     def _save_networks(self) -> None:
@@ -636,49 +674,71 @@ class TD3SynergyLearner(_BaseRLSynergyLearner):
         path: Path | None = None,
         lr: float | None = None,
         *,
-        target_sync: int = 10,
+        hidden_sizes: Sequence[int] | None = None,
+        noise: float | None = None,
+        batch_size: int | None = None,
+        target_sync: int | None = None,
         settings: SandboxSettings | None = None,
     ) -> None:
-        super().__init__(path, lr, settings=settings, target_sync=target_sync)
-        hidden = 32
-        self.actor = sip_torch.nn.Sequential(
-            sip_torch.nn.Linear(7, hidden),
-            sip_torch.nn.ReLU(),
-            sip_torch.nn.Linear(hidden, 7),
-        )
-        self.target_actor = sip_torch.nn.Sequential(
-            sip_torch.nn.Linear(7, hidden),
-            sip_torch.nn.ReLU(),
-            sip_torch.nn.Linear(hidden, 7),
-        )
+        settings = settings or SandboxSettings()
+        sy = getattr(settings, "synergy", None)
+        if hidden_sizes is None:
+            hidden_size = (
+                getattr(sy, "hidden_size", None)
+                if sy is not None
+                else getattr(settings, "synergy_hidden_size", 32)
+            )
+            layers = (
+                getattr(sy, "layers", None)
+                if sy is not None
+                else getattr(settings, "synergy_layers", 1)
+            )
+            hidden_sizes = [int(hidden_size)] * int(layers)
+        hidden_list = [int(h) for h in hidden_sizes]
+        if noise is None:
+            noise = (
+                getattr(sy, "noise", None)
+                if sy is not None
+                else getattr(settings, "synergy_noise", 0.1)
+            )
+        if batch_size is None:
+            batch_size = (
+                getattr(sy, "batch_size", None)
+                if sy is not None
+                else getattr(settings, "synergy_batch_size", 32)
+            )
+        if target_sync is None:
+            target_sync = (
+                getattr(sy, "target_sync", None)
+                if sy is not None
+                else getattr(settings, "synergy_target_sync", 10)
+            )
+        super().__init__(path, lr, settings=settings, target_sync=int(target_sync))
+
+        def _build_net(in_dim: int, out_dim: int) -> sip_torch.nn.Sequential:
+            layers_list: list[sip_torch.nn.Module] = []
+            last = in_dim
+            for h in hidden_list:
+                layers_list.append(sip_torch.nn.Linear(last, h))
+                layers_list.append(sip_torch.nn.ReLU())
+                last = h
+            layers_list.append(sip_torch.nn.Linear(last, out_dim))
+            return sip_torch.nn.Sequential(*layers_list)
+
+        self.actor = _build_net(7, 7)
+        self.target_actor = _build_net(7, 7)
         self.target_actor.load_state_dict(self.actor.state_dict())
-        self.critic1 = sip_torch.nn.Sequential(
-            sip_torch.nn.Linear(14, hidden),
-            sip_torch.nn.ReLU(),
-            sip_torch.nn.Linear(hidden, 7),
-        )
-        self.critic2 = sip_torch.nn.Sequential(
-            sip_torch.nn.Linear(14, hidden),
-            sip_torch.nn.ReLU(),
-            sip_torch.nn.Linear(hidden, 7),
-        )
-        self.target_c1 = sip_torch.nn.Sequential(
-            sip_torch.nn.Linear(14, hidden),
-            sip_torch.nn.ReLU(),
-            sip_torch.nn.Linear(hidden, 7),
-        )
-        self.target_c2 = sip_torch.nn.Sequential(
-            sip_torch.nn.Linear(14, hidden),
-            sip_torch.nn.ReLU(),
-            sip_torch.nn.Linear(hidden, 7),
-        )
+        self.critic1 = _build_net(14, 7)
+        self.critic2 = _build_net(14, 7)
+        self.target_c1 = _build_net(14, 7)
+        self.target_c2 = _build_net(14, 7)
         self.target_c1.load_state_dict(self.critic1.state_dict())
         self.target_c2.load_state_dict(self.critic2.state_dict())
         self.actor_opt = sip_torch.optim.Adam(self.actor.parameters(), lr=self.lr)
         self.c1_opt = sip_torch.optim.Adam(self.critic1.parameters(), lr=self.lr)
         self.c2_opt = sip_torch.optim.Adam(self.critic2.parameters(), lr=self.lr)
-        self.noise = 0.1
-        self.batch_size = 32
+        self.noise = float(noise)
+        self.batch_size = int(batch_size)
         self.policy_delay = 2
         self._load_networks()
 
@@ -765,6 +825,12 @@ class TD3SynergyLearner(_BaseRLSynergyLearner):
         for key, idx in mapping.items():
             self.weights[key] = float(action[idx].item())
         self.save()
+
+from .learners import (
+    SynergyWeightLearner,
+    DQNSynergyLearner,
+    DoubleDQNSynergyLearner,
+)
 
 POLICY_STATE_LEN = 21
 
