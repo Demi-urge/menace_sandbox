@@ -123,6 +123,10 @@ except Exception:  # pragma: no cover - graceful degradation
         return None
 from .prompt_engine import PromptEngine
 from .prompt_memory_trainer import PromptMemoryTrainer
+try:
+    from .prompt_optimizer import PromptOptimizer
+except Exception:  # pragma: no cover - fallback for flat layout
+    from prompt_optimizer import PromptOptimizer  # type: ignore
 from .error_parser import ErrorParser, ErrorReport, parse_failure, FailureCache
 try:
     from .self_improvement.prompt_memory import log_prompt_attempt
@@ -172,6 +176,7 @@ class SelfCodingEngine:
         gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
         knowledge_service: GPTKnowledgeService | None = None,
         prompt_memory: PromptMemoryTrainer | None = None,
+        prompt_optimizer: PromptOptimizer | None = None,
         prompt_tone: str = "neutral",
         **kwargs: Any,
     ) -> None:
@@ -271,6 +276,14 @@ class SelfCodingEngine:
         self.prompt_engine = PromptEngine(
             roi_tracker=tracker, tone=prompt_tone, trainer=self.prompt_memory
         )
+        if prompt_optimizer is None:
+            try:
+                prompt_optimizer = PromptOptimizer(
+                    "prompt_success_log.json", "prompt_failure_log.json"
+                )
+            except Exception:
+                prompt_optimizer = None
+        self.prompt_optimizer = prompt_optimizer
         self._last_prompt_metadata: Dict[str, Any] = {}
         self._last_prompt: Prompt | None = None
         self.router = kwargs.get("router")
@@ -494,6 +507,26 @@ class SelfCodingEngine:
             lines.append("...")
         return "\n".join(lines)
 
+    def _apply_prompt_style(self, action: str, module: str | None = None) -> None:
+        optimizer = getattr(self, 'prompt_optimizer', None)
+        if not optimizer or not self.prompt_engine:
+            return
+        try:
+            suggestion = optimizer.suggest_format(module or 'self_coding_engine', action)
+        except Exception:
+            return
+        if not suggestion:
+            return
+        tone = suggestion.get('tone')
+        if isinstance(tone, str):
+            self.prompt_engine.tone = tone
+        headers = suggestion.get('headers')
+        if isinstance(headers, list) and headers:
+            self.prompt_engine.trained_headers = [str(h) for h in headers]
+        example_order = suggestion.get('example_order')
+        if isinstance(example_order, list) and example_order:
+            self.prompt_engine.trained_example_order = [str(e) for e in example_order]
+
     def build_visual_agent_prompt(
         self,
         path: str | None,
@@ -505,6 +538,7 @@ class SelfCodingEngine:
         """Return a prompt formatted for :class:`VisualAgentClient`."""
         func = f"auto_{description.replace(' ', '_')}"
         repo_layout = repo_layout or self._get_repo_layout(VA_REPO_LAYOUT_LINES)
+        self._apply_prompt_style(description, module=path or "visual_agent")
         retry_trace = self._last_retry_trace
         try:
             prompt_obj = self.prompt_engine.build_prompt(
@@ -621,6 +655,7 @@ class SelfCodingEngine:
                     metadata = None
         repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
         context_block = "\n".join([p for p in (context, repo_layout) if p])
+        self._apply_prompt_style(description, module=str(path) if path else "generate_helper")
         retrieval_context = (
             str(metadata.get("retrieval_context", "")) if metadata else ""
         )
