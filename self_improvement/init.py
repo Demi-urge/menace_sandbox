@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -39,27 +41,66 @@ logger = get_logger(__name__)
 settings = SandboxSettings()
 
 
-def verify_dependencies() -> None:
-    """Ensure optional helper packages for self-improvement are installed."""
+def verify_dependencies(auto_install: bool = True) -> None:
+    """Ensure optional helper packages for self-improvement are installed.
+
+    When ``auto_install`` is ``True`` missing packages are installed using
+    ``pip`` without user interaction.  Each installation attempt is logged and
+    import failures after installation still raise a :class:`RuntimeError`.
+    """
 
     import importlib
 
     checks = {
-        "quick_fix_engine": "Install it with 'pip install quick_fix_engine'.",
-        "sandbox_runner.orphan_integration": (
-            "Install the sandbox_runner package or ensure it is on PYTHONPATH."
+        "quick_fix_engine": (
+            "quick_fix_engine",
+            "Install it with 'pip install quick_fix_engine'.",
         ),
-        "relevancy_radar": "Install it with 'pip install relevancy_radar'.",
-        "error_logger": "Ensure the error_logger module is available.",
-        "telemetry_feedback": "Ensure telemetry helpers are available.",
-        "telemetry_backend": "Ensure telemetry helpers are available.",
+        "sandbox_runner.orphan_integration": (
+            "sandbox_runner",
+            "Install the sandbox_runner package or ensure it is on PYTHONPATH.",
+        ),
+        "relevancy_radar": (
+            "relevancy_radar",
+            "Install it with 'pip install relevancy_radar'.",
+        ),
+        "error_logger": (
+            "error_logger",
+            "Ensure the error_logger module is available.",
+        ),
+        "telemetry_feedback": (
+            "telemetry_feedback",
+            "Ensure telemetry helpers are available.",
+        ),
+        "telemetry_backend": (
+            "telemetry_backend",
+            "Ensure telemetry helpers are available.",
+        ),
     }
 
+    def _pip_install(pkg: str) -> bool:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", pkg],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            logger.info("installed %s", pkg)
+            return True
+        logger.warning("failed to install %s: %s", pkg, result.stderr.strip())
+        return False
+
     missing: list[str] = []
-    for module, guidance in checks.items():
+    for module, (pkg, guidance) in checks.items():
         try:  # pragma: no cover - import guidance
             importlib.import_module(module)
         except Exception:
+            if auto_install and _pip_install(pkg):
+                try:
+                    importlib.import_module(module)
+                    continue
+                except Exception:
+                    pass
             missing.append(f"{module} – {guidance}")
 
     if missing:
