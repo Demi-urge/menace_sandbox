@@ -1336,6 +1336,20 @@ raises a `RuntimeError` with installation guidance when they are missing.
 SANDBOX_REPO_PATH=$(pwd) python sandbox_runner.py --runs 1
 ```
 
+#### Autonomous bootstrap script
+
+``autonomous_bootstrap.py`` streamlines setup by verifying dependencies via
+``bootstrap_environment`` and ``init_self_improvement`` before starting the
+continuous self-improvement cycle.
+
+```bash
+SANDBOX_REPO_PATH=$(pwd) SANDBOX_DATA_DIR=./sandbox_data python autonomous_bootstrap.py
+```
+
+The script honours the same environment variables as ``sandbox_runner.py``.
+Set at least ``SANDBOX_REPO_PATH`` and ``SANDBOX_DATA_DIR`` to point to the
+repository and writable data directory.
+
 #### Troubleshooting
 
 - ``ModuleNotFoundError`` for `sandbox_runner` or `quick_fix_engine`: install
