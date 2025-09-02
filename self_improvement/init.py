@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import tempfile
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -213,6 +214,39 @@ def _atomic_write(
             _do_write()
 
 
+@dataclass
+class SynergyWeights:
+    """Schema for synergy weight configuration."""
+
+    roi: float
+    efficiency: float
+    resilience: float
+    antifragility: float
+    reliability: float
+    maintainability: float
+    throughput: float
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SynergyWeights":
+        """Validate ``data`` and construct :class:`SynergyWeights`."""
+
+        required = {f.name for f in fields(cls)}
+        missing = sorted(required - data.keys())
+        if missing:
+            raise ValueError(
+                "missing synergy weight(s): " + ", ".join(missing)
+            )
+        values: dict[str, float] = {}
+        for f in fields(cls):
+            raw = data[f.name]
+            if not isinstance(raw, (int, float)):
+                raise ValueError(
+                    f"synergy weight '{f.name}' must be a number, got {raw!r}"
+                )
+            values[f.name] = float(raw)
+        return cls(**values)
+
+
 def get_default_synergy_weights() -> dict[str, float]:
     """Return baseline synergy weights.
 
@@ -317,40 +351,23 @@ def _load_initial_synergy_weights() -> None:
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
-            if isinstance(data, dict):
-                doc = str(data.get("_doc", doc))
-                for key, default in weights.items():
-                    raw = data.get(key)
-                    if isinstance(raw, (int, float)):
-                        value = float(raw)
-                        if not 0.0 <= value <= 10.0:
-                            clipped = min(max(value, 0.0), 10.0)
-                            logger.info(
-                                "normalised synergy weight %s from %s to %s",
-                                key,
-                                value,
-                                clipped,
-                                extra=log_record(weight=key, original=value, normalised=clipped),
-                            )
-                            value = clipped
-                            changed = True
-                        weights[key] = value
-                    else:
-                        logger.warning(
-                            "invalid synergy weight for %s: %r; using default %s",
-                            key,
-                            raw,
-                            default,
-                            extra=log_record(weight=key, original=repr(raw)),
-                        )
-                        changed = True
-            else:
-                logger.warning(
-                    "invalid synergy weights %s",
-                    path,
-                    extra=log_record(path=str(path)),
-                )
-                changed = True
+            if not isinstance(data, dict):
+                raise ValueError("synergy weights file must contain an object")
+            doc = str(data.get("_doc", doc))
+            loaded = SynergyWeights.from_dict(data)
+            for key, value in loaded.__dict__.items():
+                if not 0.0 <= value <= 10.0:
+                    clipped = min(max(value, 0.0), 10.0)
+                    logger.info(
+                        "normalised synergy weight %s from %s to %s",
+                        key,
+                        value,
+                        clipped,
+                        extra=log_record(weight=key, original=value, normalised=clipped),
+                    )
+                    value = clipped
+                    changed = True
+                weights[key] = value
         except FileNotFoundError:
             logger.info(
                 "synergy weights file %s missing; creating defaults",
@@ -367,13 +384,7 @@ def _load_initial_synergy_weights() -> None:
             )
             changed = True
         except ValueError as exc:
-            logger.warning(
-                "invalid synergy weights %s",
-                path,
-                extra=log_record(path=str(path), error=str(exc)),
-                exc_info=exc,
-            )
-            changed = True
+            raise ValueError(f"invalid synergy weights {path}: {exc}") from exc
 
         if changed:
             payload = {"_doc": doc, **weights}
