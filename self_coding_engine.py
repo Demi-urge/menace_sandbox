@@ -2174,15 +2174,46 @@ class SelfCodingEngine:
                 )
                 return pid, reverted, delta
             trace = self._last_retry_trace or ""
-            filename = function_name = error_msg = ""
-            m = re.findall(r'File "([^"]+)", line \d+, in ([^\n]+)', trace)
-            if m:
-                filename, function_name = m[-1]
+            if self._failure_cache.seen(trace):
+                break
+            current = parse_failure(trace)
+            self._failure_cache.add(current)
+            failures.append(current)
+            try:
+                self.audit_trail.record(
+                    {"failure_trace": current.trace, "tags": current.tags}
+                )
+            except Exception:
+                self.logger.exception("audit trail logging failed")
+            error_msg = ""
             m_err = re.findall(r'([\w.]+(?:Error|Exception):.*)', trace)
             if m_err:
                 error_msg = m_err[-1]
+            lineno = 0
+            m_loc = re.findall(r'File "([^"]+)", line (\d+)', trace)
+            if m_loc:
+                for fname, ln in m_loc:
+                    if Path(fname).name == path.name:
+                        lineno = int(ln)
+                        break
+                else:
+                    lineno = int(m_loc[-1][1])
+            function_name = "<module>"
+            if lineno:
+                try:
+                    tree = ast.parse(path.read_text(encoding="utf-8"))
+                    for node in ast.walk(tree):
+                        if isinstance(
+                            node, (ast.FunctionDef, ast.AsyncFunctionDef)
+                        ) and hasattr(node, "lineno"):
+                            end = getattr(node, "end_lineno", node.lineno)
+                            if node.lineno <= lineno <= end:
+                                function_name = node.name
+                                break
+                except Exception:
+                    pass
             fp = FailureFingerprint.from_failure(
-                filename,
+                str(path),
                 function_name,
                 trace,
                 error_msg,
@@ -2213,20 +2244,9 @@ class SelfCodingEngine:
                 best_sim = 0.0
             self.failure_similarity_tracker.update(similarity=best_sim)
             self._save_state()
-            if self._failure_cache.seen(trace):
-                break
-            current = parse_failure(trace)
-            self._failure_cache.add(current)
-            failures.append(current)
-            try:
-                self.audit_trail.record(
-                    {"failure_trace": current.trace, "tags": current.tags}
-                )
-            except Exception:
-                self.logger.exception("audit trail logging failed")
             if len(matches) >= self.failure_similarity_limit:
                 warning = (
-                    f"similar failure limit reached for {filename}:{function_name}"
+                    f"similar failure limit reached for {path}:{function_name}"
                 )
                 try:
                     self.audit_trail.record({"retry_skipped": warning})
