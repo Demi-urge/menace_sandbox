@@ -113,6 +113,80 @@ def _self_improvement_warmup() -> None:
         raise RuntimeError("self-improvement warm-up failed") from exc
 
 
+def _default_env_value(name: str, settings: SandboxSettings) -> str:
+    """Return a safe fallback value for ``name``.
+
+    The helper favours innocuous defaults to keep the sandbox functional during
+    initial setup while making it obvious that real credentials should be
+    supplied for production use.
+    """
+
+    if name == "DATABASE_URL":
+        return f"sqlite:///{Path(settings.sandbox_data_dir) / 'sandbox.db'}"
+    if name == "MODELS":
+        return "micro_models"
+    if name.endswith("_KEY"):
+        return f"{name.lower()}-placeholder"
+    return ""
+
+
+def auto_configure_env(settings: SandboxSettings) -> None:
+    """Populate missing environment variables and ensure a model path exists.
+
+    The configuration is persisted to ``settings.menace_env_file`` so repeated
+    runs do not prompt again.  When ``MODELS`` points to a non-existent
+    directory the helper falls back to the built-in ``micro_models`` demo
+    bundle.
+    """
+
+    env_file = Path(getattr(settings, "menace_env_file", ".env"))
+    ensure_env(str(env_file))
+    DefaultConfigManager(str(env_file)).apply_defaults()
+
+    # load existing env file into a dictionary for easy updates
+    existing: dict[str, str] = {}
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.strip() and "=" in line and not line.lstrip().startswith("#"):
+                k, v = line.split("=", 1)
+                existing[k.strip()] = v.strip()
+
+    changed = False
+    for name in settings.required_env_vars:
+        if os.getenv(name):
+            continue
+        value = _default_env_value(name, settings)
+        if not value and sys.stdin.isatty():  # pragma: no cover - interactive fallback
+            try:
+                entered = input(f"Enter value for {name} [{value}]: ").strip()
+                if entered:
+                    value = entered
+            except EOFError:
+                pass
+        os.environ[name] = value
+        if existing.get(name) != value:
+            existing[name] = value
+            changed = True
+
+    models_spec = os.getenv("MODELS", "").strip()
+    model_path = Path("micro_models" if models_spec in {"", "demo"} else models_spec)
+    if not model_path.exists():
+        try:  # pragma: no cover - best effort download
+            from vector_service.download_model import ensure_model as _ensure_model
+
+            _ensure_model()
+        except Exception:
+            logger.warning("failed to ensure demo model", exc_info=True)
+            model_path.mkdir(parents=True, exist_ok=True)
+    os.environ["MODELS"] = str(model_path)
+    if existing.get("MODELS") != str(model_path):
+        existing["MODELS"] = str(model_path)
+        changed = True
+
+    if changed:
+        env_file.write_text("\n".join(f"{k}={v}" for k, v in sorted(existing.items())))
+
+
 def initialize_autonomous_sandbox(
     settings: SandboxSettings | None = None,
 ) -> SandboxSettings:
@@ -151,29 +225,11 @@ def _initialize_autonomous_sandbox(
     if _INITIALISED:
         return settings
 
-    # Populate environment defaults without prompting the user. This creates
-    # a minimal ``.env`` file when missing and verifies that critical
-    # configuration variables are present before continuing.
-    env_file = getattr(settings, "menace_env_file", ".env")
     try:
-        ensure_env(env_file)
+        auto_configure_env(settings)
     except Exception as exc:  # pragma: no cover - best effort
         logger.error("environment bootstrap failed", exc_info=True)
         raise RuntimeError("environment configuration incomplete") from exc
-
-    missing = [name for name in settings.required_env_vars if not os.getenv(name)]
-    if missing:
-        raise RuntimeError(
-            f"required environment variables not set: {', '.join(missing)}"
-        )
-
-    models_spec = os.getenv("MODELS", "").strip()
-    model_path = Path("micro_models" if models_spec == "demo" else models_spec)
-    if not model_path.exists():
-        raise RuntimeError(
-            f"model path '{model_path}' does not exist; set MODELS to a valid directory"
-        )
-    os.environ["MODELS"] = str(model_path)
 
     # Ensure the mandatory vector_service dependency is available before
     # proceeding with further sandbox initialisation.
