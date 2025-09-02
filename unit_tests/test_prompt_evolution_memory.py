@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from prompt_types import Prompt
+from llm_interface import Prompt
 from prompt_evolution_memory import PromptEvolutionMemory
 
 

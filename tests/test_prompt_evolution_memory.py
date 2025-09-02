@@ -3,7 +3,7 @@ import threading
 from pathlib import Path
 
 from prompt_evolution_memory import PromptEvolutionMemory
-from prompt_types import Prompt
+from llm_interface import Prompt
 
 
 def test_prompt_evolution_memory_records(tmp_path: Path) -> None:
