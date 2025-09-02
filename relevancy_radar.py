@@ -28,6 +28,21 @@ from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
 import math
 
+try:  # shared baseline tracker across modules
+    from self_improvement.baseline_tracker import TRACKER as BASELINE_TRACKER
+except Exception:  # pragma: no cover - fallback stub
+    class _BaselineStub:
+        def update(self, **metrics: float) -> None:
+            pass
+
+        def get(self, metric: str) -> float:
+            return 0.0
+
+        def std(self, metric: str) -> float:
+            return 0.0
+
+    BASELINE_TRACKER = _BaselineStub()
+
 try:  # pragma: no cover - optional dependency
     import networkx as nx
 except Exception:  # pragma: no cover - lightweight fallback
@@ -195,16 +210,21 @@ def evaluate_relevancy(
     relevancy score for each module. Modules absent from either mapping are
     treated as having zero usage/impact.
 
-    Thresholds and module whitelists are sourced from
-    :class:`~sandbox_settings.SandboxSettings` when available:
+    Thresholds are derived from per-module baselines tracked by
+    :class:`~self_improvement.baseline_tracker.BaselineTracker` when
+    available. For each module a moving average and standard deviation are
+    computed and used to derive ``replace`` and ``compress`` thresholds:
 
     - ``retire``  – modules with no recorded score.
-    - ``compress`` – modules with a score fewer than 25% of
-      ``relevancy_threshold``.
-    - ``replace`` – modules with a score fewer than ``relevancy_threshold``.
+    - ``compress`` – score below ``avg - 2 * k * std``.
+    - ``replace`` – score below ``avg - k * std``.
 
-    Results are persisted to :data:`_RELEVANCY_FLAGS_FILE` and cached in
-    memory for access via :func:`flagged_modules`.
+    ``k`` is the ``relevancy_deviation_multiplier`` setting (default ``1``).
+
+    Module whitelists are honoured via
+    :class:`~sandbox_settings.SandboxSettings` when available. Results are
+    persisted to :data:`_RELEVANCY_FLAGS_FILE` and cached in memory for
+    access via :func:`flagged_modules`.
     """
 
     cutoff = _relevancy_cutoff()
@@ -229,12 +249,10 @@ def evaluate_relevancy(
         from sandbox_settings import SandboxSettings
 
         settings = SandboxSettings()
-        replace_threshold = int(settings.relevancy_threshold)
-        compress_threshold = max(1, replace_threshold // 4)
+        k = float(getattr(settings, "relevancy_deviation_multiplier", 1.0))
         whitelist = set(settings.relevancy_whitelist)
     except Exception:  # pragma: no cover - fall back to defaults
-        replace_threshold = 20
-        compress_threshold = 5
+        k = 1.0
         whitelist = set()
 
     flags: Dict[str, str] = {}
@@ -242,11 +260,17 @@ def evaluate_relevancy(
         if mod in whitelist:
             continue
         score = float(usage_stats.get(mod, 0.0))
+        metric_name = f"relevancy:{mod}"
+        BASELINE_TRACKER.update(relevancy=score, **{metric_name: score})
+        avg = BASELINE_TRACKER.get(metric_name)
+        std = BASELINE_TRACKER.std(metric_name)
+        replace_threshold = max(avg - k * std, 0.0)
+        compress_threshold = max(avg - 2 * k * std, 0.0)
         if score == 0:
             flags[mod] = "retire"
-        elif score <= compress_threshold:
+        elif score < compress_threshold:
             flags[mod] = "compress"
-        elif score <= replace_threshold:
+        elif score < replace_threshold:
             flags[mod] = "replace"
 
     _relevancy_flags.clear()
