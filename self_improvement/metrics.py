@@ -9,6 +9,7 @@ import logging
 import os
 import math
 import tokenize
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, Sequence
 
@@ -31,8 +32,13 @@ def _collect_metrics(
     files: Iterable[Path],
     repo: Path,
     settings: SandboxSettings | None = None,
-) -> tuple[Dict[str, Dict[str, float]], int, float, int]:
-    """Return per-file metrics, total complexity, avg maintainability and tests."""
+) -> tuple[Dict[str, Dict[str, float]], int, float, int, float, float]:
+    """Return per-file metrics and aggregated summaries.
+
+    The helper now additionally computes token level entropy and diversity for
+    each file.  The return tuple has been extended with the average entropy and
+    diversity across processed files.
+    """
 
     if settings is None or not hasattr(settings, "metrics_skip_dirs"):
         skip_dirs = set(SandboxSettings().metrics_skip_dirs)
@@ -44,6 +50,8 @@ def _collect_metrics(
     mi_total = 0.0
     mi_count = 0
     test_count = 0
+    entropy_total = 0.0
+    diversity_total = 0.0
 
     for file in files:
         try:
@@ -64,6 +72,51 @@ def _collect_metrics(
 
         file_complexity = 0
         file_mi = 0.0
+
+        # Token statistics used for entropy and maintainability metrics
+        token_counts: Counter[str] = Counter()
+        ops: set[str] = set()
+        operands: set[str] = set()
+        N1 = N2 = 0
+        sloc_lines: set[int] = set()
+        try:
+            for tok in tokenize.generate_tokens(io.StringIO(code).readline):
+                if tok.type in (
+                    tokenize.NL,
+                    tokenize.NEWLINE,
+                    tokenize.INDENT,
+                    tokenize.DEDENT,
+                    tokenize.COMMENT,
+                    tokenize.ENCODING,
+                ):
+                    continue
+                sloc_lines.add(tok.start[0])
+                token_counts[tok.string] += 1
+                if tok.type == tokenize.OP or (
+                    tok.type == tokenize.NAME and tok.string in keyword.kwlist
+                ):
+                    ops.add(tok.string)
+                    N1 += 1
+                elif tok.type in (
+                    tokenize.NAME,
+                    tokenize.NUMBER,
+                    tokenize.STRING,
+                ):
+                    operands.add(tok.string)
+                    N2 += 1
+        except tokenize.TokenError as exc:  # pragma: no cover - best effort
+            logger.warning("Tokenisation failed for %s: %s", rel, exc)
+
+        total_tokens = sum(token_counts.values())
+        if total_tokens:
+            token_entropy = -sum(
+                (count / total_tokens) * math.log2(count / total_tokens)
+                for count in token_counts.values()
+            )
+            token_diversity = len(token_counts) / total_tokens
+        else:
+            token_entropy = 0.0
+            token_diversity = 0.0
 
         if cc_visit and mi_visit:
             try:
@@ -94,34 +147,6 @@ def _collect_metrics(
                                 score += 1
                         file_complexity += score
 
-                ops: set[str] = set()
-                operands: set[str] = set()
-                N1 = N2 = 0
-                sloc_lines: set[int] = set()
-                for tok in tokenize.generate_tokens(io.StringIO(code).readline):
-                    if tok.type in (
-                        tokenize.NL,
-                        tokenize.NEWLINE,
-                        tokenize.INDENT,
-                        tokenize.DEDENT,
-                        tokenize.COMMENT,
-                        tokenize.ENCODING,
-                    ):
-                        continue
-                    sloc_lines.add(tok.start[0])
-                    if tok.type == tokenize.OP or (
-                        tok.type == tokenize.NAME and tok.string in keyword.kwlist
-                    ):
-                        ops.add(tok.string)
-                        N1 += 1
-                    elif tok.type in (
-                        tokenize.NAME,
-                        tokenize.NUMBER,
-                        tokenize.STRING,
-                    ):
-                        operands.add(tok.string)
-                        N2 += 1
-
                 n1, n2 = len(ops), len(operands)
                 n = n1 + n2
                 N = N1 + N2
@@ -144,13 +169,22 @@ def _collect_metrics(
             except (SyntaxError, ValueError) as exc:
                 logger.warning("AST metrics failed for %s: %s", rel, exc)
 
-        per_file[rel] = {"complexity": file_complexity, "maintainability": file_mi}
+        per_file[rel] = {
+            "complexity": file_complexity,
+            "maintainability": file_mi,
+            "token_entropy": token_entropy,
+            "token_diversity": token_diversity,
+        }
         total_complexity += file_complexity
         mi_total += file_mi
         mi_count += 1
+        entropy_total += token_entropy
+        diversity_total += token_diversity
 
     avg_mi = mi_total / mi_count if mi_count else 0.0
-    return per_file, total_complexity, avg_mi, test_count
+    avg_entropy = entropy_total / mi_count if mi_count else 0.0
+    avg_diversity = diversity_total / mi_count if mi_count else 0.0
+    return per_file, total_complexity, avg_mi, test_count, avg_entropy, avg_diversity
 
 
 def get_alignment_metrics(settings: SandboxSettings | None = None) -> Dict[str, Any]:
@@ -236,7 +270,7 @@ def _update_alignment_baseline(
                 p = Path(f)
                 tmp.append(p if p.is_absolute() else repo / p)
             file_iter = tmp
-        per_file, _, _, _ = _collect_metrics(file_iter, repo, settings=settings)
+        per_file, _, _, _, _, _ = _collect_metrics(file_iter, repo, settings=settings)
 
         baseline_path = Path(path_str)
         try:

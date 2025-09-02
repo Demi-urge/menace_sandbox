@@ -27,7 +27,7 @@ def test_ast_fallback_maintainability(monkeypatch, tmp_path):
     src.write_text(code)
     monkeypatch.setattr(metrics, "cc_visit", None)
     monkeypatch.setattr(metrics, "mi_visit", None)
-    per_file, total, avg, tests = metrics._collect_metrics([src], tmp_path)
+    per_file, total, avg, tests, ent, div = metrics._collect_metrics([src], tmp_path)
     assert total == per_file["foo.py"]["complexity"]
     assert avg == per_file["foo.py"]["maintainability"]
     # Expected maintainability calculated using the MI formula
@@ -72,6 +72,7 @@ def test_ast_fallback_maintainability(monkeypatch, tmp_path):
     )
     assert math.isclose(per_file["foo.py"]["maintainability"], expected, rel_tol=1e-6)
     assert tests == 0
+    assert ent >= 0.0 and div >= 0.0
 
 
 def test_radon_metrics_used(monkeypatch, tmp_path):
@@ -96,8 +97,13 @@ def test_radon_metrics_used(monkeypatch, tmp_path):
     monkeypatch.setattr(metrics, "cc_visit", fake_cc)
     monkeypatch.setattr(metrics, "mi_visit", fake_mi)
 
-    per_file, total, avg, tests = metrics._collect_metrics([src], tmp_path)
-    assert per_file["foo.py"] == {"complexity": 7, "maintainability": 88.0}
+    per_file, total, avg, tests, ent, div = metrics._collect_metrics([src], tmp_path)
+    assert per_file["foo.py"] == {
+        "complexity": 7,
+        "maintainability": 88.0,
+        "token_entropy": ent,
+        "token_diversity": div,
+    }
     assert total == 7
     assert avg == 88.0
     assert calls == {"cc": 1, "mi": 1}
@@ -111,14 +117,14 @@ def test_skip_dirs_setting(tmp_path):
     src = build / "foo.py"
     src.write_text("def f():\n    return 1\n")
 
-    per_file, total, avg, tests = metrics._collect_metrics([src], tmp_path)
+    per_file, total, avg, tests, ent, div = metrics._collect_metrics([src], tmp_path)
     assert per_file == {}
     assert total == 0
     assert avg == 0.0
     assert tests == 0
 
     settings = metrics.SandboxSettings(metrics_skip_dirs=[])
-    per_file, total, avg, tests = metrics._collect_metrics(
+    per_file, total, avg, tests, ent, div = metrics._collect_metrics(
         [src], tmp_path, settings=settings
     )
     assert "build/foo.py" in per_file
