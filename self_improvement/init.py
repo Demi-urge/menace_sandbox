@@ -77,8 +77,12 @@ def verify_dependencies(*, auto_install: bool = False) -> None:
     }
     try:  # capture version if package metadata is published
         neurosales_cfg["version"] = f">={metadata.version('neurosales')}"
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug(
+            "failed to read neurosales metadata",
+            extra=log_record(error=str(exc)),
+        )
+        neurosales_cfg["version"] = None
 
     checks: dict[str, dict[str, Any]] = {
         "quick_fix_engine": {
