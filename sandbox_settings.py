@@ -338,6 +338,12 @@ class SandboxSettings(BaseSettings):
             raise ValueError("baseline_window must be positive")
         return v
 
+    @field_validator("relevancy_history_min_length")
+    def _relevancy_history_non_negative(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("relevancy_history_min_length must be non-negative")
+        return v
+
     @field_validator("roi_baseline_window")
     def _roi_baseline_window_positive(cls, v: int) -> int:
         if v <= 0:
@@ -372,6 +378,7 @@ class SandboxSettings(BaseSettings):
         "energy_deviation",
         "roi_deviation",
         "entropy_deviation",
+        "relevancy_deviation_multiplier",
     )
     def _baseline_non_negative(cls, v: float, info: Any) -> float:
         if v < 0:
@@ -1559,6 +1566,16 @@ class SandboxSettings(BaseSettings):
         description=(
             "Automatically process relevancy flags with ModuleRetirementService."
         ),
+    )
+    relevancy_deviation_multiplier: float = Field(
+        1.0,
+        env="RELEVANCY_DEVIATION_MULTIPLIER",
+        description="Multiplier for std deviation when deriving relevancy thresholds.",
+    )
+    relevancy_history_min_length: int = Field(
+        5,
+        env="RELEVANCY_HISTORY_MIN_LENGTH",
+        description="Minimum relevancy history length before auto-processing flags.",
     )
 
     synergy_weight_roi: float = Field(1.0, env="SYNERGY_WEIGHT_ROI")
