@@ -282,7 +282,7 @@ def shutdown_autonomous_sandbox(timeout: float | None = None) -> None:
     _INITIALISED = False
 
 
-def sandbox_health() -> dict[str, bool]:
+def sandbox_health() -> dict[str, bool | dict[str, str]]:
     """Return basic health indicators for the sandbox environment."""
 
     thread = _SELF_IMPROVEMENT_THREAD
@@ -291,7 +291,7 @@ def sandbox_health() -> dict[str, bool]:
 
     settings = load_sandbox_settings()
     data_dir = Path(os.getenv("SANDBOX_DATA_DIR", settings.sandbox_data_dir))
-    db_ok = True
+    db_errors: dict[str, str] = {}
     for name in settings.sandbox_required_db_files:
         db_path = data_dir / name
         try:
@@ -300,8 +300,9 @@ def sandbox_health() -> dict[str, bool]:
             conn.close()
         except Exception as exc:
             logger.error("failed to access database %s: %s", db_path, exc)
-            db_ok = False
-            break
+            db_errors[name] = str(exc)
+
+    db_ok = not db_errors
 
     try:
         from sandbox_runner import generative_stub_provider as _gsp
@@ -313,6 +314,7 @@ def sandbox_health() -> dict[str, bool]:
     return {
         "self_improvement_thread_alive": alive,
         "databases_accessible": db_ok,
+        "database_errors": db_errors,
         "stub_generator_initialized": stub_init,
     }
 

@@ -53,13 +53,16 @@ def test_sandbox_health_databases_ok(tmp_path, monkeypatch):
     sqlite3.connect(path).close()  # noqa: SQL001
     result = bootstrap.sandbox_health()
     assert result["databases_accessible"] is True
+    assert result["database_errors"] == {}
 
 
 def test_sandbox_health_databases_corrupted(tmp_path, monkeypatch, caplog):
-    data = _prepare(monkeypatch, tmp_path, ["bad.db"])
+    data = _prepare(monkeypatch, tmp_path, ["bad.db", "missing.db"])
     path = data / "bad.db"
     path.write_text("not a db", encoding="utf-8")
+    # missing.db is intentionally absent
     with caplog.at_level(logging.ERROR):
         result = bootstrap.sandbox_health()
     assert result["databases_accessible"] is False
-    assert "bad.db" in caplog.text
+    assert set(result["database_errors"]) == {"bad.db", "missing.db"}
+    assert "bad.db" in caplog.text and "missing.db" in caplog.text
