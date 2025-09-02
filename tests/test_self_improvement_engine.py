@@ -382,7 +382,14 @@ sys.modules["analytics.adaptive_roi_model"] = analytics_mod.adaptive_roi_model
 pytest.importorskip("pandas")
 
 import menace.self_improvement as sie
-from menace.self_improvement.engine import BaselineTracker
+
+_BT_SPEC = importlib.util.spec_from_file_location(
+    "baseline_tracker", Path(__file__).resolve().parents[1] / "self_improvement" / "baseline_tracker.py"
+)
+baseline_tracker = importlib.util.module_from_spec(_BT_SPEC)
+assert _BT_SPEC and _BT_SPEC.loader
+_BT_SPEC.loader.exec_module(baseline_tracker)  # type: ignore[attr-defined]
+BaselineTracker = baseline_tracker.BaselineTracker
 import menace.diagnostic_manager as dm
 import menace.error_bot as eb
 import menace.data_bot as db
@@ -541,7 +548,7 @@ def test_schedule_baseline_deviation(tmp_path, monkeypatch):
         baseline_margin=0.1,
     )
 
-    engine.baseline_tracker = BaselineTracker(window=3, scores=[0.8])
+    engine.baseline_tracker = BaselineTracker(window=3, energy=[0.8])
     monkeypatch.setattr(engine, "_should_trigger", lambda: True)
     calls_low: list[int] = []
     monkeypatch.setattr(engine, "run_cycle", lambda energy=1: calls_low.append(energy))
@@ -560,7 +567,7 @@ def test_schedule_baseline_deviation(tmp_path, monkeypatch):
     assert calls_low == [int(round(0.2 * 5))]
 
     engine.capital_bot = DummyCapitalBot(0.8)
-    engine.baseline_tracker = BaselineTracker(window=3, scores=[0.2])
+    engine.baseline_tracker = BaselineTracker(window=3, energy=[0.2])
     calls_high: list[int] = []
     monkeypatch.setattr(engine, "run_cycle", lambda energy=1: calls_high.append(energy))
     monkeypatch.setattr(sie.asyncio, "sleep", fake_sleep)
@@ -601,7 +608,7 @@ def test_schedule_deviation_autoruns(tmp_path, monkeypatch):
         baseline_margin=0.05,
     )
 
-    engine.baseline_tracker = BaselineTracker(window=3, scores=[1.0])
+    engine.baseline_tracker = BaselineTracker(window=3, energy=[1.0])
     monkeypatch.setattr(engine, "_should_trigger", lambda: False)
     calls: list[int] = []
     monkeypatch.setattr(engine, "run_cycle", lambda energy=1: calls.append(energy))

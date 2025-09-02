@@ -2,6 +2,7 @@ import os
 import sys
 import types
 import importlib.util
+from pathlib import Path
 import asyncio
 import pytest
 
@@ -247,8 +248,14 @@ def test_growth_class_alters_action_selection():
         eng.roi_predictor = Predictor(growth)
         eng._collect_action_features = lambda: [[0.5, 0.0]]
         eng.baseline_margin = 0.0
-        from menace.self_improvement.engine import BaselineTracker
-        eng.baseline_tracker = BaselineTracker(window=3, scores=[0.5])
+        _BT_SPEC = importlib.util.spec_from_file_location(
+            "baseline_tracker", Path(__file__).resolve().parents[1] / "self_improvement" / "baseline_tracker.py"
+        )
+        baseline_tracker = importlib.util.module_from_spec(_BT_SPEC)
+        assert _BT_SPEC and _BT_SPEC.loader
+        _BT_SPEC.loader.exec_module(baseline_tracker)  # type: ignore[attr-defined]
+        BaselineTracker = baseline_tracker.BaselineTracker
+        eng.baseline_tracker = BaselineTracker(window=3, energy=[0.5])
         called = {"run": False}
 
         def run_cycle(self, *, energy=1):
