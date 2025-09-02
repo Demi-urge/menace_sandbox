@@ -4,7 +4,6 @@ import sys
 import types
 
 import chunking
-import chunk_summarizer
 from prompt_engine import PromptEngine
 import chunking as pc
 
@@ -88,13 +87,13 @@ class DummyLLM:
 
 
 def test_summary_cache_reused(tmp_path, monkeypatch):
-    monkeypatch.setattr(chunk_summarizer, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(chunking, "SNIPPET_CACHE_DIR", tmp_path)
     llm = DummyLLM()
     code = "print('hello')"
-    s1 = chunk_summarizer.summarize_code(code, llm)
+    s1 = chunking.summarize_code(code, llm)
     assert s1 == "stub"
     assert llm.calls == 1
-    s2 = chunk_summarizer.summarize_code(code, llm)
+    s2 = chunking.summarize_code(code, llm)
     assert s2 == "stub"
     assert llm.calls == 1
 

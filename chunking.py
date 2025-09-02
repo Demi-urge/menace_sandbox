@@ -10,6 +10,8 @@ if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from llm_interface import LLMClient
 import ast
 import hashlib
+import json
+import os
 import threading
 
 try:  # Optional dependency for accurate token counting
@@ -30,6 +32,44 @@ if tiktoken is not None:  # pragma: no branch - simple import logic
         _ENCODER = tiktoken.get_encoding("cl100k_base")
     except Exception:  # pragma: no cover - encoder creation failed
         _ENCODER = None
+
+# Directory used for caching summaries of individual code snippets.  Sharing the
+# directory with :class:`ChunkSummaryCache` keeps cache files in one place and
+# mirrors the behaviour of the removed ``chunk_summarizer`` module.
+SNIPPET_CACHE_DIR = Path(__file__).resolve().parent / "chunk_summary_cache"
+
+
+def _ensure_snippet_cache_dir() -> None:
+    try:
+        SNIPPET_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        if not SNIPPET_CACHE_DIR.is_dir():  # pragma: no cover - defensive
+            raise
+
+
+def _hash_snippet(code: str) -> str:
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+def _load_snippet_summary(digest: str) -> str | None:
+    path = SNIPPET_CACHE_DIR / f"{digest}.json"
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data: Dict[str, str] = json.load(fh)
+    except FileNotFoundError:
+        return None
+    except Exception:  # pragma: no cover - corrupted cache
+        return None
+    return data.get("summary")
+
+
+def _store_snippet_summary(digest: str, summary: str) -> None:
+    _ensure_snippet_cache_dir()
+    path = SNIPPET_CACHE_DIR / f"{digest}.json"
+    tmp_path = path.with_suffix(".json.tmp")
+    with tmp_path.open("w", encoding="utf-8") as fh:
+        json.dump({"hash": digest, "summary": summary}, fh)
+    os.replace(tmp_path, path)
 
 
 def _count_tokens(text: str) -> int:
@@ -159,18 +199,28 @@ def _split_by_lines(lines: List[str], start: int, limit: int) -> List[CodeChunk]
 
 
 def summarize_code(text: str, llm: LLMClient | None = None) -> str:
-    """Return a short summary for ``text`` using available helpers."""
+    """Return a short summary for ``text`` using available helpers with caching."""
 
+    text = text.strip()
+    if not text:
+        return ""
+
+    digest = _hash_snippet(text)
+    cached = _load_snippet_summary(digest)
+    if cached is not None:
+        return cached
+
+    summary = ""
     try:  # pragma: no cover - optional dependency
         from micro_models.diff_summarizer import summarize_diff as _summ
 
         result = _summ("", text)
         if result:
-            return result
+            summary = result
     except Exception:
         pass
 
-    if llm is not None:
+    if not summary and llm is not None:
         from prompt_types import Prompt
 
         prompt = Prompt(
@@ -179,34 +229,42 @@ def summarize_code(text: str, llm: LLMClient | None = None) -> str:
         )
         try:  # pragma: no cover - llm failures
             result = llm.generate(prompt)
-            if result.text.strip():
-                return result.text.strip()
+            if getattr(result, "text", "").strip():
+                summary = result.text.strip()
         except Exception:
             pass
 
-    try:
-        import ast
-        import io
-        import tokenize
-
-        tree = ast.parse(text)
-        lines = text.splitlines()
-        for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                return lines[node.lineno - 1].strip()[:80]
-    except Exception:
+    if not summary:
         try:
-            for tok in tokenize.generate_tokens(io.StringIO(text).readline):
-                if tok.type == tokenize.NAME and tok.string in {"def", "class"}:
-                    return tok.line.strip()[:80]
-        except Exception:
-            pass
+            import ast
+            import io
+            import tokenize
 
-    for line in text.strip().splitlines():
-        line = line.strip()
-        if line:
-            return line[:80]
-    return ""
+            tree = ast.parse(text)
+            lines = text.splitlines()
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    summary = lines[node.lineno - 1].strip()[:80]
+                    break
+        except Exception:
+            try:
+                for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+                    if tok.type == tokenize.NAME and tok.string in {"def", "class"}:
+                        summary = tok.line.strip()[:80]
+                        break
+            except Exception:
+                pass
+
+    if not summary:
+        for line in text.splitlines():
+            line = line.strip()
+            if line:
+                summary = line[:80]
+                break
+
+    if summary:
+        _store_snippet_summary(digest, summary)
+    return summary
 
 
 _SETTINGS = SandboxSettings() if SandboxSettings else None

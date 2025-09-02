@@ -156,7 +156,9 @@ def test_multi_chunk_patch_success(tmp_path, monkeypatch):
             CodeChunk(4, 5, "def b():\n    pass", "h2", 5),
         ],
     )
-    monkeypatch.setattr(sce, "summarize_code", lambda text, llm: text.splitlines()[0])
+    import chunking as pc
+
+    monkeypatch.setattr(pc, "summarize_code", lambda text, llm: text.splitlines()[0])
 
     calls = []
 
@@ -193,7 +195,9 @@ def test_multi_chunk_patch_with_rollback(tmp_path, monkeypatch):
             CodeChunk(4, 5, "def b():\n    pass", "h2", 5),
         ],
     )
-    monkeypatch.setattr(sce, "summarize_code", lambda text, llm: text.splitlines()[0])
+    import chunking as pc
+
+    monkeypatch.setattr(pc, "summarize_code", lambda text, llm: text.splitlines()[0])
 
     calls = []
 

@@ -2,7 +2,7 @@ import hashlib
 
 from llm_interface import LLMClient, LLMResult
 
-import chunk_summarizer
+import chunking as pc
 
 
 class DummyLLM(LLMClient):
@@ -16,17 +16,17 @@ class DummyLLM(LLMClient):
 
 
 def test_summarize_code_uses_cache(monkeypatch, tmp_path):
-    monkeypatch.setattr(chunk_summarizer, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(pc, "SNIPPET_CACHE_DIR", tmp_path)
     llm = DummyLLM()
     code = "print('hello')"
 
-    summary1 = chunk_summarizer.summarize_code(code, llm)
+    summary1 = pc.summarize_code(code, llm)
     assert summary1 == "stub summary"
     assert llm.calls == 1
 
-    summary2 = chunk_summarizer.summarize_code(code, llm)
+    summary2 = pc.summarize_code(code, llm)
     assert summary2 == "stub summary"
     assert llm.calls == 1
 
-    digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
-    assert chunk_summarizer.load_summary(digest) == "stub summary"
+    digest = hashlib.sha256(code.strip().encode("utf-8")).hexdigest()
+    assert pc._load_snippet_summary(digest) == "stub summary"
