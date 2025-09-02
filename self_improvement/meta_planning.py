@@ -24,6 +24,7 @@ from . import init as _init
 from ..workflow_stability_db import WorkflowStabilityDB
 from ..roi_results_db import ROIResultsDB
 from ..lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
+from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
 
 
 _cycle_thread: Any | None = None
@@ -596,11 +597,19 @@ def get_stable_workflows() -> WorkflowStabilityDB:
     return _stable_workflows
 
 
-def _get_entropy_threshold(cfg: SandboxSettings, db: WorkflowStabilityDB) -> float:
+def _get_entropy_threshold(
+    cfg: SandboxSettings, db: WorkflowStabilityDB, tracker: BaselineTracker
+) -> float:
     """Determine entropy threshold from settings or stored metrics."""
     threshold = cfg.meta_entropy_threshold
     if threshold is not None:
         return float(threshold)
+
+    base = tracker.get("entropy")
+    std = tracker.std("entropy")
+    dev = getattr(cfg, "entropy_deviation", 1.0)
+    if base or std:
+        return base + dev * std
 
     entropies: list[float] = []
     try:
@@ -670,7 +679,7 @@ async def self_improvement_cycle(
             setattr(planner, name, value)
 
     stability_db = get_stable_workflows()
-    entropy_threshold = _get_entropy_threshold(cfg, stability_db)
+    entropy_threshold = _get_entropy_threshold(cfg, stability_db, BASELINE_TRACKER)
     setattr(planner, "entropy_threshold", entropy_threshold)
 
     async def _log(record: Mapping[str, Any]) -> None:

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import deque
-import statistics
 from typing import Callable, Optional
 
 from ..model_automation_pipeline import AutomationResult
@@ -20,6 +18,7 @@ except Exception:  # pragma: no cover - fallback
         return logging.getLogger(name)
 
 from .engine import SelfImprovementEngine
+from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
 
 
 class ImprovementEngineRegistry:
@@ -28,8 +27,7 @@ class ImprovementEngineRegistry:
     def __init__(self) -> None:
         self.engines: dict[str, SelfImprovementEngine] = {}
         self.logger = get_logger(self.__class__.__name__)
-        self._energy_history: deque[float] = deque(maxlen=10)
-        self._roi_history: deque[float] = deque(maxlen=10)
+        self.baseline_tracker = BASELINE_TRACKER
         self._lag_count = 0
 
     def register_engine(self, name: str, engine: SelfImprovementEngine) -> None:
@@ -113,16 +111,13 @@ class ImprovementEngineRegistry:
             self.logger.exception("autoscale trend fetch failed: %s", exc)
             trend = 0.0
 
-        energy_avg = (
-            statistics.mean(self._energy_history) if self._energy_history else energy
-        )
-        roi_avg = (
-            statistics.mean(self._roi_history) if self._roi_history else trend
-        )
+        energy_avg = self.baseline_tracker.get("energy")
+        roi_avg = self.baseline_tracker.get("roi")
+        energy_std = self.baseline_tracker.std("energy")
+        roi_std = self.baseline_tracker.std("roi")
         energy_dev = energy - energy_avg
         roi_dev = trend - roi_avg
-        self._energy_history.append(energy)
-        self._roi_history.append(trend)
+        self.baseline_tracker.update(energy=energy, roi=trend)
 
         if energy_dev < 0 or roi_dev < 0:
             self._lag_count += 1
@@ -145,9 +140,12 @@ class ImprovementEngineRegistry:
             return
 
         projected_roi = roi_dev - cost_per_engine
+        create_thresh = create_energy * energy_std
+        remove_thresh = -remove_energy * energy_std
+        roi_thresh = roi_threshold * roi_std
         if (
-            energy_dev >= create_energy
-            and roi_dev > roi_threshold
+            energy_dev >= create_thresh
+            and roi_dev > roi_thresh
             and projected_roi > 0.0
             and len(self.engines) < max_engines
         ):
@@ -157,8 +155,8 @@ class ImprovementEngineRegistry:
             self.register_engine(name, factory(name))
             return
         if (
-            energy_dev <= -remove_energy
-            or roi_dev <= -roi_threshold
+            energy_dev <= remove_thresh
+            or roi_dev <= -roi_thresh
             or projected_roi <= 0.0
         ) and len(self.engines) > min_engines:
             name = next(iter(self.engines))
