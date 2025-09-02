@@ -14,6 +14,7 @@ import py_compile
 import re
 import traceback
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
 from .unified_event_bus import UnifiedEventBus
@@ -1188,13 +1189,31 @@ class SelfCodingEngine:
             except SyntaxError:
                 return False
 
+        def _generate(idx: int) -> str:
+            try:
+                return self.generate_helper(
+                    description,
+                    path=path,
+                    metadata=context_meta,
+                    chunk_index=idx,
+                )
+            except Exception:
+                self.logger.exception("chunk generation failed", extra={"chunk": idx})
+                return ""
+
+        with ThreadPoolExecutor(max_workers=min(len(chunks), 4) or 1) as ex:
+            futures = {ex.submit(_generate, i): i for i in range(len(chunks))}
+            generated_chunks: Dict[int, str] = {i: "" for i in range(len(chunks))}
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    generated_chunks[idx] = fut.result() or ""
+                except Exception:
+                    self.logger.exception("chunk generation failed", extra={"chunk": idx})
+                    generated_chunks[idx] = ""
+
         for idx, ch in enumerate(chunks):
-            generated = self.generate_helper(
-                description,
-                path=path,
-                metadata=context_meta,
-                chunk_index=idx,
-            )
+            generated = generated_chunks.get(idx, "")
             if not generated.strip() or not _verify(generated):
                 continue
 
