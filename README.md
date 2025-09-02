@@ -1391,6 +1391,13 @@ raises a `RuntimeError` with installation guidance when they are missing.
 - `AUTO_TRAIN_INTERVAL`, `SYNERGY_TRAIN_INTERVAL`, `ADAPTIVE_ROI_RETRAIN_INTERVAL`
   – control retraining frequency
 - `ENABLE_META_PLANNER` – require meta-planning support when set to ``true``
+- `BASELINE_WINDOW` – number of recent scores used for the moving average baseline
+- `STAGNATION_ITERS` – cycles with no improvement before the baseline resets
+- `DELTA_MARGIN` – minimum positive delta over baseline needed to accept a patch
+
+Self-improvement compares ROI gains against this moving baseline and escalates
+an internal urgency tier when momentum stalls, encouraging more aggressive
+mutations.
 
 #### Example workflow
 
