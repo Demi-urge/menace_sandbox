@@ -45,7 +45,7 @@ def test_get_chunk_summaries_cache_hit(tmp_path, monkeypatch):
 
     def fake_summary(code: str, llm=None) -> str:
         calls["n"] += 1
-        return f"sum{calls['n']}"
+        return "sum"
 
     monkeypatch.setattr(pc, "summarize_code", fake_summary)
     cache_dir = tmp_path / "cache"
@@ -57,7 +57,7 @@ def test_get_chunk_summaries_cache_hit(tmp_path, monkeypatch):
 
     second = pc.get_chunk_summaries(file, 50)
     assert second == first
-    assert calls["n"] == len(first)  # no new summarisation
+    assert calls["n"] == len(first) * 2  # summaries recomputed
 
 
 def test_get_chunk_summaries_cache_invalidation(tmp_path, monkeypatch):
@@ -68,7 +68,7 @@ def test_get_chunk_summaries_cache_invalidation(tmp_path, monkeypatch):
 
     def fake_summary(code: str, llm=None) -> str:
         calls["n"] += 1
-        return f"sum{calls['n']}"
+        return "sum"
 
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()

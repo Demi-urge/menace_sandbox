@@ -43,6 +43,6 @@ def test_ast_boundary_accuracy(tmp_path):
 
 
 def test_summarize_code_fallback():
-    code = 'def foo():\n    pass\n'
+    code = '# comment\n\nclass Foo:\n    pass\n'
     summary = summarize_code(code, None)
-    assert summary.startswith('def foo():')
+    assert summary.startswith('class Foo')

@@ -34,7 +34,26 @@ def _truncate_tokens(text: str, limit: int) -> str:
 
 
 def _heuristic_summary(code: str, limit: int) -> str:
-    """Return a simple summary derived from the first non-empty line."""
+    """Return a simple summary using AST/tokenisation heuristics."""
+
+    try:
+        import ast
+        import io
+        import tokenize
+
+        tree = ast.parse(code)
+        lines = code.splitlines()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                line = lines[node.lineno - 1].strip()
+                return _truncate_tokens(line, limit)
+    except Exception:
+        try:
+            for tok in tokenize.generate_tokens(io.StringIO(code).readline):
+                if tok.type == tokenize.NAME and tok.string in {"def", "class"}:
+                    return _truncate_tokens(tok.line.strip(), limit)
+        except Exception:
+            pass
 
     lines = [ln.strip() for ln in code.splitlines() if ln.strip()]
     if not lines:
