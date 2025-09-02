@@ -72,8 +72,9 @@ utilities so that callers can track environment issues.
 
 Large files are summarised in smaller chunks when their token count exceeds
 `prompt_chunk_token_threshold`. Chunk summaries are cached under
-`prompt_chunk_cache_dir` to speed up subsequent runs. Both settings are
+`chunk_summary_cache_dir` to speed up subsequent runs. Both settings are
 configurable through `SandboxSettings` or environment variables
-(`PROMPT_CHUNK_TOKEN_THRESHOLD` and `PROMPT_CHUNK_CACHE_DIR`).
+(`PROMPT_CHUNK_TOKEN_THRESHOLD` and `CHUNK_SUMMARY_CACHE_DIR`, with
+`PROMPT_CHUNK_CACHE_DIR` accepted for backward compatibility).
 
 

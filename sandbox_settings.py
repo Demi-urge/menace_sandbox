@@ -592,17 +592,24 @@ class SandboxSettings(BaseSettings):
     prompt_chunk_token_threshold: int = Field(
         3500,
         env="PROMPT_CHUNK_TOKEN_THRESHOLD",
-        description="Token limit for individual code chunks when summarizing large files.",
+        description=(
+            "Token limit for individual code chunks handled by the consolidated "
+            "chunking helpers. Falls back to naive line splitting when tokenisation "
+            "is unavailable."
+        ),
     )
     chunk_token_threshold: int = Field(
         3500,
         env="CHUNK_TOKEN_THRESHOLD",
-        description="Token limit for chunked prompting operations.",
+        description="Token limit for chunked prompting operations after summarisation.",
     )
     chunk_summary_cache_dir: Path = Field(
         Path("chunk_summary_cache"),
         env=["CHUNK_SUMMARY_CACHE_DIR", "PROMPT_CHUNK_CACHE_DIR"],
-        description="Directory for cached summaries used in chunked prompting.",
+        description=(
+            "Directory for cached summaries. Remove to force regeneration or relocate "
+            "with an environment variable."
+        ),
     )
 
     @property

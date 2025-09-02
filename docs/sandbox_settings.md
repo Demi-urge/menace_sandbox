@@ -83,9 +83,13 @@ These weights influence the risk score produced by `_analyse_module`.
 
 ## Prompt chunking defaults
 - `prompt_chunk_token_threshold`: `3500` (`PROMPT_CHUNK_TOKEN_THRESHOLD`)
-- `prompt_chunk_cache_dir`: `chunk_summary_cache` (`PROMPT_CHUNK_CACHE_DIR`)
+- `chunk_summary_cache_dir`: `chunk_summary_cache` (`CHUNK_SUMMARY_CACHE_DIR`,
+  `PROMPT_CHUNK_CACHE_DIR` for backward compatibility)
 
-These settings control token limits and caching for code chunk summaries.
+These settings control token limits and caching for code chunk summaries. Lower
+token thresholds produce smaller chunks while raising the value preserves more
+context. The cache directory can be cleared at any time to force regeneration of
+summaries when they become stale or disk space is tight.
 
 See [`sandbox_config.sample.yaml`](sandbox_config.sample.yaml) for a complete
 example configuration file.
