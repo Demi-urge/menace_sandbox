@@ -5590,15 +5590,40 @@ class SelfImprovementEngine:
         """Evaluate module usage and record relevancy recommendations."""
         try:
             settings = SandboxSettings()
-            replace_threshold = float(getattr(settings, "relevancy_threshold", 20))
-            compress_threshold = max(1.0, replace_threshold / 4)
+            k = float(getattr(settings, "relevancy_deviation_multiplier", 1.0))
+            min_history = int(getattr(settings, "relevancy_history_min_length", 0))
             auto_process = getattr(
                 settings, "auto_process_relevancy_flags", True
             )
+            metrics_db_path = getattr(
+                settings, "relevancy_metrics_db_path", "sandbox_data/relevancy_metrics.db"
+            )
         except Exception:
-            replace_threshold = 20.0
-            compress_threshold = 5.0
+            k = 1.0
+            min_history = 0
             auto_process = True
+            metrics_db_path = "sandbox_data/relevancy_metrics.db"
+
+        for counts in getattr(self.relevancy_radar, "_metrics", {}).values():
+            impact_val = float(counts.get("impact", 0.0)) + float(
+                counts.get("output_impact", 0.0)
+            )
+            score = (
+                float(counts.get("imports", 0.0))
+                + float(counts.get("executions", 0.0))
+                + impact_val
+            )
+            self.baseline_tracker.update(relevancy=score)
+
+        avg = self.baseline_tracker.get("relevancy")
+        std = self.baseline_tracker.std("relevancy")
+        replace_threshold = max(avg - k * std, 0.0)
+        compress_threshold = max(avg - 2 * k * std, 0.0)
+
+        history_len = len(self.baseline_tracker.to_dict().get("relevancy", []))
+        if history_len < min_history:
+            auto_process = False
+
         flags: dict[str, str] = dict(self.relevancy_flags)
         try:
             radar_flags = self.relevancy_radar.evaluate_final_contribution(
@@ -5608,7 +5633,7 @@ class SelfImprovementEngine:
         except Exception:
             self.logger.exception("relevancy evaluation failed")
         try:
-            metrics_db = Path(settings.relevancy_metrics_db_path)
+            metrics_db = Path(metrics_db_path)
             if not metrics_db.is_absolute():
                 metrics_db = _repo_path() / metrics_db
             scan_flags = radar_scan(metrics_db)
