@@ -12,10 +12,10 @@ from typing import Any, Dict, List, Tuple, Callable, Awaitable
 import asyncio
 import inspect
 import json
-import logging
 import os
 import re
 import warnings
+import uuid
 from pathlib import Path
 from collections import Counter, OrderedDict, defaultdict
 import atexit
@@ -27,6 +27,20 @@ from contextlib import AbstractAsyncContextManager
 from typing import get_origin, get_args, Union
 from dataclasses import dataclass, field
 from filelock import FileLock, Timeout
+
+from logging_utils import get_logger, set_correlation_id, log_record
+try:  # pragma: no cover - allow flat import
+    from metrics_exporter import (
+        stub_generation_requests_total,
+        stub_generation_failures_total,
+        stub_generation_retries_total,
+    )
+except Exception:  # pragma: no cover - fallback when packaged
+    from .metrics_exporter import (  # type: ignore
+        stub_generation_requests_total,
+        stub_generation_failures_total,
+        stub_generation_retries_total,
+    )
 
 from .input_history_db import InputHistoryDB
 from sandbox_settings import SandboxSettings
@@ -40,7 +54,7 @@ ROOT = Path(__file__).resolve().parents[1]
 pipeline = None  # type: ignore
 openai = None  # type: ignore
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class StubCacheWarning(UserWarning):
@@ -241,6 +255,7 @@ async def _call_with_retry(
         except Exception as exc:
             if attempt == config.retries - 1:
                 raise
+            stub_generation_retries_total.inc()
             logger.warning("generation attempt %d failed: %s", attempt + 1, exc)
             jitter = random.uniform(0, delay)
             await asyncio.sleep(jitter)
@@ -573,6 +588,9 @@ atexit.register(_atexit_save_cache)
 def flush_caches(config: StubProviderConfig | None = None) -> None:
     """Persist and clear in-memory caches."""
 
+    cid = f"stub-flush-{uuid.uuid4()}"
+    set_correlation_id(cid)
+    logger.info("flush caches start", extra=log_record(event="shutdown"))
     cfg = config or get_config()
 
     async def _wait() -> None:
@@ -619,14 +637,21 @@ def flush_caches(config: StubProviderConfig | None = None) -> None:
         finally:
             _CACHE.clear()
             _TARGET_STATS.clear()
+    logger.info("flush caches complete", extra=log_record(event="shutdown"))
+    set_correlation_id(None)
 
 
 def cleanup_cache_files(config: StubProviderConfig | None = None) -> None:
     """Remove obsolete on-disk cache artefacts."""
 
+    cid = f"stub-clean-{uuid.uuid4()}"
+    set_correlation_id(cid)
+    logger.info("cleanup cache files start", extra=log_record(event="shutdown"))
+
     cfg = config or get_config()
     with _CACHE_LOCK:
         if _CACHE:
+            set_correlation_id(None)
             return
 
     paths = [
@@ -641,6 +666,10 @@ def cleanup_cache_files(config: StubProviderConfig | None = None) -> None:
             continue
         except Exception as exc:  # pragma: no cover - best effort
             logger.debug("failed to remove cache file %s: %s", path, exc)
+    logger.info(
+        "cleanup cache files complete", extra=log_record(event="shutdown")
+    )
+    set_correlation_id(None)
 
 
 def _cache_key(func_name: str, stub: Dict[str, Any]) -> Tuple[str, str]:
@@ -760,6 +789,27 @@ def _aggregate(records: List[dict[str, Any]]) -> dict[str, Any]:
 async def async_generate_stubs(
     stubs: List[Dict[str, Any]], ctx: dict, config: StubProviderConfig | None = None
 ) -> List[Dict[str, Any]]:
+    cid = ctx.get("correlation_id") or f"stub-{uuid.uuid4()}"
+    set_correlation_id(cid)
+    stub_generation_requests_total.inc()
+    logger.info(
+        "stub generation start", extra=log_record(strategy=ctx.get("strategy"))
+    )
+    try:
+        return await _async_generate_stubs(stubs, ctx, config)
+    except Exception:
+        stub_generation_failures_total.inc()
+        logger.exception(
+            "stub generation failure", extra=log_record(event="failure")
+        )
+        raise
+    finally:
+        set_correlation_id(None)
+
+
+async def _async_generate_stubs(
+    stubs: List[Dict[str, Any]], ctx: dict, config: StubProviderConfig | None = None
+) -> List[Dict[str, Any]]:
     """Generate or enhance ``stubs`` using recent history or a language model."""
     config = config or get_config()
 
@@ -868,10 +918,15 @@ async def async_generate_stubs(
         prompt = template.format(name=name, args=args)
 
         async def _invoke() -> str:
-            result = gen.generate(Prompt(prompt))  # type: ignore[attr-defined]
+            call = getattr(gen, "generate", gen)
+            result = call(Prompt(prompt))  # type: ignore[attr-defined]
             if isinstance(result, asyncio.Task):
                 result = await result
-            return result.text
+            if hasattr(result, "text"):
+                return result.text
+            if isinstance(result, list) and result and isinstance(result[0], dict):
+                return result[0].get("generated_text", "")
+            return str(result)
 
         try:
             text = await _call_with_retry(_invoke, config)

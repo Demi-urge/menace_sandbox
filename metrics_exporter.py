@@ -710,6 +710,15 @@ sandbox_memory_mb = Gauge(
 sandbox_crashes_total = Gauge(
     "sandbox_crashes_total", "Total sandbox cycle crashes"
 )
+stub_generation_requests_total = Gauge(
+    "stub_generation_requests_total", "Total stub generation requests"
+)
+stub_generation_failures_total = Gauge(
+    "stub_generation_failures_total", "Total stub generation failures"
+)
+stub_generation_retries_total = Gauge(
+    "stub_generation_retries_total", "Total stub generation retries"
+)
 environment_failure_total = Gauge(
     "environment_failure_total",
     "Total number of sandbox environment failures",
@@ -906,6 +915,9 @@ __all__ = [
     "sandbox_cpu_percent",
     "sandbox_memory_mb",
     "sandbox_crashes_total",
+    "stub_generation_requests_total",
+    "stub_generation_failures_total",
+    "stub_generation_retries_total",
     "cleanup_idle",
     "cleanup_unhealthy",
     "cleanup_lifetime",

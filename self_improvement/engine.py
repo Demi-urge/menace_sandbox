@@ -6971,9 +6971,18 @@ class SelfImprovementEngine:
                 extra=log_record(roi=roi_realish, predicted_roi=pred_realish),
             )
             return result
+        except Exception:
+            self_improvement_failure_total.labels(reason="run_cycle").inc()
+            self.logger.exception(
+                "cycle failure", extra=log_record(event="failure")
+            )
+            raise
         finally:
             self._cycle_running = False
             set_correlation_id(None)
+            self.logger.info(
+                "cycle shutdown", extra=log_record(event="shutdown")
+            )
 
     async def _schedule_loop(self, energy: int = 1) -> None:
         while not self._stop_event.is_set():

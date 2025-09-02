@@ -2,19 +2,33 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import logging
-import sqlite3
 import os
+import sqlite3
 import shutil
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+from logging_utils import get_logger, set_correlation_id, log_record
 
 from packaging.version import Version
 
 from menace.auto_env_setup import ensure_env
 from menace.default_config_manager import DefaultConfigManager
 from sandbox_settings import SandboxSettings, load_sandbox_settings
+try:  # pragma: no cover - allow flat import
+    from metrics_exporter import (
+        sandbox_restart_total,
+        environment_failure_total,
+        sandbox_crashes_total,
+    )
+except Exception:  # pragma: no cover - fallback for package execution
+    from .metrics_exporter import (  # type: ignore
+        sandbox_restart_total,
+        environment_failure_total,
+        sandbox_crashes_total,
+    )
 
 from .cli import main as _cli_main
 from .cycle import ensure_vector_service
@@ -24,7 +38,7 @@ _SELF_IMPROVEMENT_THREAD: Any | None = None
 _INITIALISED = False
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _ensure_sqlite_db(path: Path) -> None:
@@ -102,6 +116,28 @@ def _self_improvement_warmup() -> None:
 def initialize_autonomous_sandbox(
     settings: SandboxSettings | None = None,
 ) -> SandboxSettings:
+    cid = f"bootstrap-init-{uuid.uuid4()}"
+    set_correlation_id(cid)
+    sandbox_restart_total.labels(service="bootstrap", reason="init").inc()
+    logger.info("initialize sandbox start", extra=log_record(event="start"))
+    try:
+        result = _initialize_autonomous_sandbox(settings)
+        logger.info("initialize sandbox complete", extra=log_record(event="shutdown"))
+        return result
+    except Exception:
+        environment_failure_total.labels(reason="init").inc()
+        sandbox_crashes_total.inc()
+        logger.exception(
+            "initialize sandbox failure", extra=log_record(event="failure")
+        )
+        raise
+    finally:
+        set_correlation_id(None)
+
+
+def _initialize_autonomous_sandbox(
+    settings: SandboxSettings | None = None,
+) -> SandboxSettings:
     """Prepare data directories, baseline metrics and optional services.
 
     The helper creates ``sandbox_data`` and baseline metric files when missing,
@@ -146,10 +182,14 @@ def initialize_autonomous_sandbox(
     # Verify optional modules referenced in the docstring.  Missing modules are
     # collected so the version check below can skip them and avoid duplicate
     # warnings.
-    missing_optional = _verify_optional_modules(
-        ("relevancy_radar", "quick_fix_engine"),
-        settings.optional_service_versions,
-    )
+    try:
+        missing_optional = _verify_optional_modules(
+            ("relevancy_radar", "quick_fix_engine"),
+            settings.optional_service_versions,
+        )
+    except Exception:  # pragma: no cover - best effort
+        logger.warning("optional module verification failed", exc_info=True)
+        missing_optional = set()
 
     data_dir = Path(settings.sandbox_data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -251,35 +291,53 @@ def initialize_autonomous_sandbox(
 def shutdown_autonomous_sandbox(timeout: float | None = None) -> None:
     """Stop background self-improvement thread and reset globals."""
 
-    global _SELF_IMPROVEMENT_THREAD, _INITIALISED
-    thread = _SELF_IMPROVEMENT_THREAD
-    if thread is None:
+    cid = f"bootstrap-shutdown-{uuid.uuid4()}"
+    set_correlation_id(cid)
+    logger.info("shutdown sandbox start", extra=log_record(event="start"))
+    try:
+        global _SELF_IMPROVEMENT_THREAD, _INITIALISED
+        thread = _SELF_IMPROVEMENT_THREAD
+        if thread is None:
+            _INITIALISED = False
+            logger.info(
+                "shutdown sandbox complete", extra=log_record(event="shutdown")
+            )
+            return
+        from self_improvement.api import stop_self_improvement_cycle
+
+        stop_self_improvement_cycle()
+        if hasattr(thread, "join"):
+            thread.join(timeout)
+        inner = getattr(thread, "_thread", thread)
+        if hasattr(inner, "is_alive") and inner.is_alive():
+            raise RuntimeError("self-improvement thread failed to shut down")
+        try:
+            from sandbox_runner import generative_stub_provider as _gsp
+
+            _gsp.flush_caches()
+            _gsp.cleanup_cache_files()
+        except Exception:  # pragma: no cover - best effort cleanup
+            logger.debug("stub cache cleanup failed", exc_info=True)
+        try:
+            from self_improvement import utils as _si_utils
+
+            _si_utils.clear_import_cache()
+            _si_utils.remove_import_cache_files()
+        except Exception:  # pragma: no cover - best effort cleanup
+            logger.debug("self-improvement cache cleanup failed", exc_info=True)
+        _SELF_IMPROVEMENT_THREAD = None
         _INITIALISED = False
-        return
-    from self_improvement.api import stop_self_improvement_cycle
-
-    stop_self_improvement_cycle()
-    if hasattr(thread, "join"):
-        thread.join(timeout)
-    inner = getattr(thread, "_thread", thread)
-    if hasattr(inner, "is_alive") and inner.is_alive():
-        raise RuntimeError("self-improvement thread failed to shut down")
-    try:
-        from sandbox_runner import generative_stub_provider as _gsp
-
-        _gsp.flush_caches()
-        _gsp.cleanup_cache_files()
-    except Exception:  # pragma: no cover - best effort cleanup
-        logger.debug("stub cache cleanup failed", exc_info=True)
-    try:
-        from self_improvement import utils as _si_utils
-
-        _si_utils.clear_import_cache()
-        _si_utils.remove_import_cache_files()
-    except Exception:  # pragma: no cover - best effort cleanup
-        logger.debug("self-improvement cache cleanup failed", exc_info=True)
-    _SELF_IMPROVEMENT_THREAD = None
-    _INITIALISED = False
+        logger.info(
+            "shutdown sandbox complete", extra=log_record(event="shutdown")
+        )
+    except Exception:
+        sandbox_crashes_total.inc()
+        logger.exception(
+            "shutdown sandbox failure", extra=log_record(event="failure")
+        )
+        raise
+    finally:
+        set_correlation_id(None)
 
 
 def sandbox_health() -> dict[str, bool | dict[str, str]]:
@@ -380,6 +438,35 @@ def bootstrap_environment(
     *,
     auto_install: bool = True,
 ) -> SandboxSettings:
+    cid = f"bootstrap-env-{uuid.uuid4()}"
+    set_correlation_id(cid)
+    sandbox_restart_total.labels(service="bootstrap", reason="bootstrap").inc()
+    logger.info("bootstrap environment start", extra=log_record(event="start"))
+    try:
+        result = _bootstrap_environment(
+            settings, verifier, auto_install=auto_install
+        )
+        logger.info(
+            "bootstrap environment complete", extra=log_record(event="shutdown")
+        )
+        return result
+    except Exception:
+        environment_failure_total.labels(reason="bootstrap").inc()
+        sandbox_crashes_total.inc()
+        logger.exception(
+            "bootstrap environment failure", extra=log_record(event="failure")
+        )
+        raise
+    finally:
+        set_correlation_id(None)
+
+
+def _bootstrap_environment(
+    settings: SandboxSettings | None = None,
+    verifier: Callable[..., dict[str, list[str]]] | None = None,
+    *,
+    auto_install: bool = True,
+) -> SandboxSettings:
     """Fully prepare the autonomous sandbox environment.
 
     This convenience routine ensures the environment file exists, verifies
@@ -431,8 +518,21 @@ def launch_sandbox(
     verifier: Callable[..., None] | None = None,
 ) -> None:
     """Run the sandbox runner using ``settings`` for configuration."""
-    settings = bootstrap_environment(settings, verifier)
-    # propagate core settings through environment variables
-    os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
-    os.environ.setdefault("SANDBOX_DATA_DIR", settings.sandbox_data_dir)
-    _cli_main([])
+    cid = f"bootstrap-launch-{uuid.uuid4()}"
+    set_correlation_id(cid)
+    sandbox_restart_total.labels(service="bootstrap", reason="launch").inc()
+    logger.info("launch sandbox start", extra=log_record(event="start"))
+    try:
+        settings = bootstrap_environment(settings, verifier)
+        os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
+        os.environ.setdefault("SANDBOX_DATA_DIR", settings.sandbox_data_dir)
+        _cli_main([])
+        logger.info("launch sandbox shutdown", extra=log_record(event="shutdown"))
+    except Exception:
+        sandbox_crashes_total.inc()
+        logger.exception(
+            "launch sandbox failure", extra=log_record(event="failure")
+        )
+        raise
+    finally:
+        set_correlation_id(None)
