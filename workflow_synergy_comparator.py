@@ -15,10 +15,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import logging
 import math
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from collections import Counter
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Optional dependencies
@@ -272,7 +275,7 @@ class WorkflowSynergyComparator:
                     cls._embed_cache[key] = vec
                     return vec
                 except Exception:
-                    pass
+                    logger.warning("Node2Vec embedding failed", exc_info=True)
 
             if np is not None:
                 try:  # pragma: no cover - optional dependency
@@ -289,7 +292,7 @@ class WorkflowSynergyComparator:
                     cls._embed_cache[key] = vec
                     return vec
                 except Exception:
-                    pass
+                    logger.warning("Spectral embedding failed", exc_info=True)
 
         if WorkflowVectorizer is not None:
             try:  # pragma: no cover - optional dependency
@@ -298,7 +301,7 @@ class WorkflowSynergyComparator:
                 cls._embed_cache[key] = list(vec)
                 return list(vec)
             except Exception:
-                pass
+                logger.warning("WorkflowVectorizer embedding failed", exc_info=True)
 
         counts: Dict[str, int] = {}
         for step in spec.get("steps", []):
@@ -337,7 +340,9 @@ class WorkflowSynergyComparator:
                 if hist:
                     return float(hist[-1])
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to retrieve entropy from ROITracker", exc_info=True
+                )
         modules = WorkflowSynergyComparator._extract_modules(spec)
         counts: Dict[str, int] = {}
         for m in modules:
@@ -360,14 +365,18 @@ class WorkflowSynergyComparator:
                 if isinstance(loaded, dict):
                     data.update(loaded)
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to read best practices from %s", path, exc_info=True
+                )
         seqs = data.setdefault("sequences", [])
         if modules not in seqs:
             seqs.append(modules)
             try:
                 path.write_text(json.dumps(data, indent=2))
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to write best practices to %s", path, exc_info=True
+                )
 
     @classmethod
     def best_practice_match(cls, spec: Dict[str, Any]) -> Tuple[float, List[str]]:
@@ -386,6 +395,9 @@ class WorkflowSynergyComparator:
         try:
             data = json.loads(path.read_text())
         except Exception:
+            logger.warning(
+                "Failed to load best practices from %s", path, exc_info=True
+            )
             return 0.0, []
 
         sequences = data.get("sequences", []) if isinstance(data, dict) else []
@@ -458,7 +470,9 @@ class WorkflowSynergyComparator:
                     if communities:
                         modularity = float(nx_comm.modularity(undirected, communities))
             except Exception:
-                pass
+                logger.warning(
+                    "Community modularity computation failed", exc_info=True
+                )
 
         if not modularity and modules:
             modularity = len(set(modules)) / float(len(modules))
@@ -486,7 +500,9 @@ class WorkflowSynergyComparator:
                     if latest.runtime:
                         return float(latest.roi_gain) / float(latest.runtime)
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to fetch efficiency from ROIResultsDB", exc_info=True
+                )
         if ROITracker is not None:
             try:  # pragma: no cover - optional dependency
                 tracker = ROITracker()
@@ -494,7 +510,9 @@ class WorkflowSynergyComparator:
                 if eff_hist:
                     return float(eff_hist[-1])
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to fetch efficiency from ROITracker", exc_info=True
+                )
         return 0.0
 
     @classmethod
@@ -709,7 +727,9 @@ def merge_duplicate(
         try:
             workflow_run_summary.save_all_summaries(directory)
         except Exception:
-            pass
+            logger.warning(
+                "Failed to save workflow run summaries to %s", directory, exc_info=True
+            )
 
     return merged
 
