@@ -15,7 +15,6 @@ notable options:
 * ``orphan_retry_attempts`` – retry attempts for orphan integration hooks.
 * ``orphan_retry_delay`` – delay between retries for orphan integration hooks.
 """
-from __future__ import annotations
 
 import json
 import logging
@@ -61,6 +60,15 @@ def verify_dependencies() -> None:
     from importlib import metadata
     from packaging.specifiers import SpecifierSet
 
+    neurosales_cfg: dict[str, Any] = {
+        "modules": ("neurosales",),
+        "install": "pip install neurosales",
+    }
+    try:  # capture version if package metadata is published
+        neurosales_cfg["version"] = f">={metadata.version('neurosales')}"
+    except Exception:
+        pass
+
     checks: dict[str, dict[str, Any]] = {
         "quick_fix_engine": {
             "modules": ("quick_fix_engine",),
@@ -80,10 +88,7 @@ def verify_dependencies() -> None:
             "modules": ("sandbox_runner.environment",),
             "install": "pip install sandbox_runner",
         },
-        "neurosales": {
-            "modules": ("neurosales",),
-            "install": "pip install neurosales",
-        },
+        "neurosales": neurosales_cfg,
         "relevancy_radar": {
             "modules": ("relevancy_radar",),
             "install": "pip install relevancy_radar",
@@ -147,6 +152,7 @@ def verify_dependencies() -> None:
             lines.append(
                 "Missing dependencies for self-improvement:\n  - "
                 + "\n  - ".join(missing)
+                + "\nInstall the missing packages before launching."
             )
         if mismatched:
             lines.append("Version mismatches:\n  - " + "\n  - ".join(mismatched))
