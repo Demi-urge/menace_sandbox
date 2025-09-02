@@ -57,6 +57,7 @@ class ROISettings(BaseModel):
     stagnation_threshold: float = 0.01
     momentum_window: int = 5
     stagnation_cycles: int = 3
+    momentum_dev_multiplier: float = 1.0
 
     @field_validator(
         "threshold",
@@ -81,7 +82,7 @@ class ROISettings(BaseModel):
             raise ValueError(f"{info.field_name} must be non-negative")
         return v
 
-    @field_validator("deviation_tolerance", "stagnation_threshold")
+    @field_validator("deviation_tolerance", "stagnation_threshold", "momentum_dev_multiplier")
     def _check_positive_float(cls, v: float, info: Any) -> float:
         if v <= 0:
             raise ValueError(f"{info.field_name} must be positive")
@@ -355,7 +356,11 @@ class SandboxSettings(BaseSettings):
             raise ValueError("roi_stagnation_cycles must be positive")
         return v
 
-    @field_validator("roi_deviation_tolerance", "roi_stagnation_threshold")
+    @field_validator(
+        "roi_deviation_tolerance",
+        "roi_stagnation_threshold",
+        "roi_momentum_dev_multiplier",
+    )
     def _roi_positive_float(cls, v: float, info: Any) -> float:
         if v <= 0:
             raise ValueError(f"{info.field_name} must be positive")
@@ -1569,6 +1574,7 @@ class SandboxSettings(BaseSettings):
     roi_compounding_weight: float = Field(1.0, env="ROI_COMPOUNDING_WEIGHT")
     roi_baseline_window: int = Field(5, env="ROI_BASELINE_WINDOW")
     roi_momentum_window: int = Field(5, env="ROI_MOMENTUM_WINDOW")
+    roi_momentum_dev_multiplier: float = Field(1.0, env="ROI_MOMENTUM_DEV_MULTIPLIER")
     roi_stagnation_cycles: int = Field(3, env="ROI_STAGNATION_CYCLES")
     roi_deviation_tolerance: float = Field(0.05, env="ROI_DEVIATION_TOLERANCE")
     roi_stagnation_threshold: float = Field(0.01, env="ROI_STAGNATION_THRESHOLD")
@@ -1977,6 +1983,7 @@ class SandboxSettings(BaseSettings):
             stagnation_threshold=self.roi_stagnation_threshold,
             momentum_window=self.roi_momentum_window,
             stagnation_cycles=self.roi_stagnation_cycles,
+            momentum_dev_multiplier=self.roi_momentum_dev_multiplier,
             min_integration_roi=self.min_integration_roi,
             entropy_threshold=self.entropy_threshold,
             entropy_plateau_threshold=self.entropy_plateau_threshold,

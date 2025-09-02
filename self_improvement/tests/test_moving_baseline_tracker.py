@@ -1,7 +1,9 @@
 import importlib
 
 utils = importlib.import_module("menace.self_improvement.utils")
+baseline = importlib.import_module("menace.self_improvement.baseline_tracker")
 MovingBaselineTracker = utils.MovingBaselineTracker
+BaselineTracker = baseline.BaselineTracker
 
 
 def _apply(tracker: MovingBaselineTracker, score: float, margin: float = 0.0) -> tuple[bool, float]:
@@ -28,3 +30,13 @@ def test_reject_and_persist_on_negative_delta():
     accepted, delta = _apply(tracker, 0.6)
     assert not accepted and delta < 0
     assert tracker.composite_history[-1] == 0.6
+
+
+def test_momentum_history_recorded():
+    tracker = BaselineTracker(window=3)
+    for roi in [1.0, 0.8, 1.2]:
+        tracker.update(roi=roi)
+    hist = tracker.to_dict()["momentum"]
+    assert len(hist) == 3
+    assert hist[-1] == tracker.momentum
+    assert tracker.get("momentum") == sum(hist) / len(hist)

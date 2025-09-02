@@ -540,7 +540,12 @@ class SelfImprovementEngine:
         )
         self.baseline_tracker = GLOBAL_BASELINE_TRACKER
         self.baseline_tracker.window = self.baseline_window
-        self.momentum_window = getattr(getattr(cfg, "roi", None), "momentum_window", self.baseline_window)
+        self.momentum_window = getattr(
+            getattr(cfg, "roi", None), "momentum_window", self.baseline_window
+        )
+        self.momentum_dev_multiplier = getattr(
+            getattr(cfg, "roi", None), "momentum_dev_multiplier", 1.0
+        )
         self.roi_baseline_window = (
             roi_baseline_window
             if roi_baseline_window is not None
@@ -2005,9 +2010,10 @@ class SelfImprovementEngine:
         """Escalate urgency when momentum stays below baseline."""
 
         current_momentum = self.momentum_coefficient
-        baseline_momentum = self.baseline_tracker.momentum
-        delta = current_momentum - baseline_momentum
-        if delta < 0:
+        base = self.baseline_tracker.get("momentum")
+        std = self.baseline_tracker.std("momentum")
+        threshold = base - self.momentum_dev_multiplier * std
+        if current_momentum < threshold:
             self._momentum_streak += 1
             if self._momentum_streak >= self.stagnation_cycles:
                 self.urgency_tier += 1
@@ -2016,8 +2022,8 @@ class SelfImprovementEngine:
                     extra=log_record(
                         tier=self.urgency_tier,
                         momentum=current_momentum,
-                        baseline=baseline_momentum,
-                        delta=delta,
+                        base=base,
+                        std=std,
                         streak=self._momentum_streak,
                     ),
                 )
