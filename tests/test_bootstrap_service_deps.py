@@ -1,12 +1,14 @@
 import importlib
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
 # Stub out heavy modules before importing bootstrap
 menace = types.ModuleType("menace")
 menace.RAISE_ERRORS = False
+menace.__path__ = [str(Path(__file__).resolve().parents[1])]
 auto_env_setup = types.ModuleType("menace.auto_env_setup")
 auto_env_setup.ensure_env = lambda _path: None
 menace.auto_env_setup = auto_env_setup
@@ -22,6 +24,46 @@ sys.modules["menace.config_discovery"] = _cd
 
 sandbox_settings = types.ModuleType("sandbox_settings")
 
+# Stub predictor dependency pulled in by cycle module
+adp = types.ModuleType("adaptive_roi_predictor")
+adp.load_training_data = lambda *a, **k: []
+sys.modules.setdefault("adaptive_roi_predictor", adp)
+
+# Minimal environment module required by cycle imports
+env_stub = types.ModuleType("sandbox_runner.environment")
+env_stub.record_error = lambda *a, **k: None
+env_stub.SANDBOX_ENV_PRESETS = [{}]
+env_stub.run_scenarios = lambda *a, **k: None
+env_stub.ERROR_CATEGORY_COUNTS = {}
+env_stub.auto_include_modules = lambda *a, **k: []
+sys.modules["sandbox_runner.environment"] = env_stub
+
+# Minimal self_improvement API to avoid heavy imports
+si_api = types.ModuleType("self_improvement.api")
+si_api.init_self_improvement = lambda settings: None
+
+class _DummyThread:
+    def __init__(self):
+        self._alive = True
+
+    def start(self):
+        self._alive = True
+
+    def join(self, timeout=None):
+        if timeout is None:
+            self._alive = False
+
+    def is_alive(self):
+        return self._alive
+
+
+si_api.start_self_improvement_cycle = lambda *a, **k: _DummyThread()
+si_api.stop_self_improvement_cycle = lambda: None
+sys.modules["self_improvement.api"] = si_api
+si_pkg = types.ModuleType("self_improvement")
+si_pkg.api = si_api
+sys.modules["self_improvement"] = si_pkg
+
 
 class SandboxSettings:
     def __init__(self, sandbox_data_dir="", alignment_baseline_metrics_path=""):
@@ -35,6 +77,7 @@ class SandboxSettings:
         }
         self.patch_retries = 3
         self.patch_retry_delay = 0.1
+        self.usage_queue_maxsize = 100
 
 
 sandbox_settings.SandboxSettings = SandboxSettings
@@ -57,6 +100,8 @@ def _stub_services(monkeypatch, versions, missing=frozenset()):
         if name in versions:
             mod = types.ModuleType(name)
             mod.__version__ = versions[name]
+            if name == "relevancy_radar":
+                mod.RelevancyRadar = type("RelevancyRadar", (), {})
             monkeypatch.setitem(sys.modules, name, mod)
             return mod
         return original_import(name, package)
@@ -69,20 +114,46 @@ def _settings(tmp_path):
 
 
 def test_missing_service_warns(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("STRIPE_API_KEY", "x")
+    monkeypatch.setenv("MODELS", str(tmp_path))
     _stub_services(monkeypatch, {"quick_fix_engine": "1.0.0"}, missing={"relevancy_radar"})
     caplog.set_level("WARNING")
     bootstrap.initialize_autonomous_sandbox(_settings(tmp_path))
     assert any("relevancy_radar" in r.getMessage() for r in caplog.records)
+    bootstrap.shutdown_autonomous_sandbox()
+
+
+def test_missing_quick_fix_engine_warns(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("STRIPE_API_KEY", "x")
+    monkeypatch.setenv("MODELS", str(tmp_path))
+    _stub_services(monkeypatch, {"relevancy_radar": "1.0.0"}, missing={"quick_fix_engine"})
+    caplog.set_level("WARNING")
+    bootstrap.initialize_autonomous_sandbox(_settings(tmp_path))
+    assert any("quick_fix_engine" in r.getMessage() for r in caplog.records)
+    bootstrap.shutdown_autonomous_sandbox()
 
 
 def test_version_too_old_warns(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("STRIPE_API_KEY", "x")
+    monkeypatch.setenv("MODELS", str(tmp_path))
     _stub_services(monkeypatch, {"quick_fix_engine": "1.0.0", "relevancy_radar": "0.0.1"})
     caplog.set_level("WARNING")
     bootstrap.initialize_autonomous_sandbox(_settings(tmp_path))
     assert any("too old" in r.getMessage() for r in caplog.records)
+    bootstrap.shutdown_autonomous_sandbox()
 
 
 def test_unwritable_data_dir(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("STRIPE_API_KEY", "x")
+    monkeypatch.setenv("MODELS", str(tmp_path))
     _stub_services(monkeypatch, {"quick_fix_engine": "1.0.0", "relevancy_radar": "1.0.0"})
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -93,3 +164,4 @@ def test_unwritable_data_dir(monkeypatch, tmp_path, caplog):
     with pytest.raises(RuntimeError, match="not writable"):
         bootstrap.initialize_autonomous_sandbox(settings)
     assert any("not writable" in r.getMessage() for r in caplog.records)
+    bootstrap.shutdown_autonomous_sandbox()

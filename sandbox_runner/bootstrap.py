@@ -62,6 +62,33 @@ def _start_optional_services(modules: Iterable[str]) -> None:
                 logger.warning("failed to launch %s", svc_name, exc_info=True)
 
 
+def _verify_optional_modules(
+    modules: Iterable[str], versions: dict[str, str]
+) -> set[str]:
+    """Attempt to import optional modules and warn when missing.
+
+    Returns a set of modules that could not be imported.  The caller may use
+    this information to skip further checks for those modules and avoid
+    duplicate warnings.
+    """
+
+    missing: set[str] = set()
+    for mod in modules:
+        try:
+            importlib.import_module(mod)
+        except ModuleNotFoundError:
+            missing.add(mod)
+            min_ver = versions.get(mod, "")
+            ver_hint = f">={min_ver}" if min_ver else ""
+            logger.warning(
+                "%s module not found; install with 'pip install %s%s' to enable it",
+                mod,
+                mod,
+                ver_hint,
+            )
+    return missing
+
+
 def _self_improvement_warmup() -> None:
     """Perform basic warm-up steps prior to launching the optimisation loop.
 
@@ -122,6 +149,14 @@ def initialize_autonomous_sandbox(
     # proceeding with further sandbox initialisation.
     ensure_vector_service()
 
+    # Verify optional modules referenced in the docstring.  Missing modules are
+    # collected so the version check below can skip them and avoid duplicate
+    # warnings.
+    missing_optional = _verify_optional_modules(
+        ("relevancy_radar", "quick_fix_engine"),
+        settings.optional_service_versions,
+    )
+
     data_dir = Path(settings.sandbox_data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -156,6 +191,9 @@ def initialize_autonomous_sandbox(
     from importlib import metadata
 
     for mod, min_version in settings.optional_service_versions.items():
+        if mod in missing_optional:
+            # Already warned about the missing module above.
+            continue
         try:
             module = importlib.import_module(mod)
         except ModuleNotFoundError:
