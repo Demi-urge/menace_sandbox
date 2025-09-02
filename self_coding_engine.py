@@ -207,6 +207,7 @@ class SelfCodingEngine:
         failure_similarity_threshold: float | None = None,
         failure_similarity_limit: int = 3,
         failure_similarity_k: float = 1.0,
+        skip_retry_on_similarity: bool = False,
         baseline_window: int | None = None,
         **kwargs: Any,
     ) -> None:
@@ -246,6 +247,7 @@ class SelfCodingEngine:
         self._failure_similarity_threshold = failure_similarity_threshold
         self.failure_similarity_limit = failure_similarity_limit
         self.failure_similarity_k = failure_similarity_k
+        self.skip_retry_on_similarity = skip_retry_on_similarity
         if baseline_window is None:
             baseline_window = getattr(_settings, "baseline_window", 5)
         self.failure_similarity_tracker = BaselineTracker(
@@ -2082,11 +2084,80 @@ class SelfCodingEngine:
         current = report
         failures: List[ErrorReport] = []
         context_meta = kwargs.pop("context_meta", None)
+        last_fp: FailureFingerprint | None = None
+        warning = ""
         while attempts < max_attempts:
+            warning = ""
+            if attempts > 0 and last_fp is not None:
+                threshold = self.failure_similarity_threshold
+                try:
+                    all_matches = find_similar(last_fp.embedding, 0.0)
+                    best_sim = 0.0
+                    matches: List[FailureFingerprint] = []
+                    for m in all_matches:
+                        try:
+                            sim = cosine_similarity(last_fp.embedding, m.embedding)
+                        except Exception:
+                            sim = 0.0
+                        if m.timestamp == last_fp.timestamp:
+                            continue
+                        if sim > best_sim:
+                            best_sim = sim
+                        if sim >= threshold:
+                            matches.append(m)
+                except Exception:
+                    matches = []
+                    best_sim = 0.0
+                self.failure_similarity_tracker.update(similarity=best_sim)
+                self._save_state()
+                if matches:
+                    prior = matches[0]
+                    warning = (
+                        f"Previous similar failure '{prior.error_message}' "
+                        f"in {prior.filename}:{prior.function_name}"
+                    )
+                    if (
+                        len(matches) >= self.failure_similarity_limit
+                        or self.skip_retry_on_similarity
+                    ):
+                        try:
+                            self.audit_trail.record({"retry_skipped": warning})
+                        except Exception:
+                            self.logger.exception("audit trail logging failed")
+                        if self.patch_db:
+                            try:
+                                conn = self.patch_db.router.get_connection("patch_history")
+                                conn.execute(
+                                    "INSERT INTO patch_history(filename, description, outcome) "
+                                    "VALUES(?,?,?)",
+                                    (str(path), description, "retry_skipped"),
+                                )
+                                conn.commit()
+                            except Exception:
+                                self.logger.exception("failed to record retry status")
+                        break
+                    description = description + f"\n\nWARNING: {warning}"
+                    try:
+                        self.audit_trail.record({"retry_adjusted": warning})
+                    except Exception:
+                        self.logger.exception("audit trail logging failed")
+                    if self.patch_db:
+                        try:
+                            conn = self.patch_db.router.get_connection("patch_history")
+                            conn.execute(
+                                "INSERT INTO patch_history(filename, description, outcome) "
+                                "VALUES(?,?,?)",
+                                (str(path), description, "retry_adjusted"),
+                            )
+                            conn.commit()
+                        except Exception:
+                            self.logger.exception("failed to record retry status")
             attempts += 1
             meta = context_meta if attempts == 1 and context_meta is not None else None
             if current or meta is None:
                 meta = self._build_retry_context(description, current)
+            if warning:
+                meta = {**(meta or {}), "warning": warning}
             try:
                 pid, reverted, delta = self.apply_patch(
                     path,
@@ -2223,69 +2294,7 @@ class SelfCodingEngine:
                 log_fingerprint(fp)
             except Exception:
                 self.logger.exception("failed to log failure fingerprint")
-            threshold = self.failure_similarity_threshold
-            try:
-                all_matches = find_similar(fp.embedding, 0.0)
-                best_sim = 0.0
-                matches = []
-                for m in all_matches:
-                    try:
-                        sim = cosine_similarity(fp.embedding, m.embedding)
-                    except Exception:
-                        sim = 0.0
-                    if m.timestamp == fp.timestamp:
-                        continue
-                    if sim > best_sim:
-                        best_sim = sim
-                    if sim >= threshold:
-                        matches.append(m)
-            except Exception:
-                matches = []
-                best_sim = 0.0
-            self.failure_similarity_tracker.update(similarity=best_sim)
-            self._save_state()
-            if len(matches) >= self.failure_similarity_limit:
-                warning = (
-                    f"similar failure limit reached for {path}:{function_name}"
-                )
-                try:
-                    self.audit_trail.record({"retry_skipped": warning})
-                except Exception:
-                    self.logger.exception("audit trail logging failed")
-                if self.patch_db:
-                    try:
-                        conn = self.patch_db.router.get_connection("patch_history")
-                        conn.execute(
-                            "INSERT INTO patch_history(filename, description, outcome) "
-                            "VALUES(?,?,?)",
-                            (str(path), description, "retry_skipped"),
-                        )
-                        conn.commit()
-                    except Exception:
-                        self.logger.exception("failed to record retry status")
-                break
-            if matches:
-                prior = matches[0]
-                warning = (
-                    f"Previous similar failure '{prior.error_message}' "
-                    f"in {prior.filename}:{prior.function_name}"
-                )
-                description = description + f"\n\nWARNING: {warning}"
-                try:
-                    self.audit_trail.record({"retry_adjusted": warning})
-                except Exception:
-                    self.logger.exception("audit trail logging failed")
-                if self.patch_db:
-                    try:
-                        conn = self.patch_db.router.get_connection("patch_history")
-                        conn.execute(
-                            "INSERT INTO patch_history(filename, description, outcome) "
-                            "VALUES(?,?,?)",
-                            (str(path), description, "retry_adjusted"),
-                        )
-                        conn.commit()
-                    except Exception:
-                        self.logger.exception("failed to record retry status")
+            last_fp = fp
         roi_val = 0.0
         if self.data_bot:
             try:
