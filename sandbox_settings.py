@@ -613,6 +613,16 @@ class SandboxSettings(BaseSettings):
         env="PROMPT_FAILURE_LOG_PATH",
         description="Path for recording failed prompt executions.",
     )
+    failure_fingerprint_path: str = Field(
+        "failure_fingerprints.jsonl",
+        env="FAILURE_FINGERPRINT_PATH",
+        description="Path for storing failure fingerprint records.",
+    )
+    fingerprint_similarity_threshold: float = Field(
+        0.8,
+        env="FINGERPRINT_SIMILARITY_THRESHOLD",
+        description="Default cosine similarity threshold for matching failure fingerprints.",
+    )
     prompt_chunk_token_threshold: int = Field(
         3500,
         env="PROMPT_CHUNK_TOKEN_THRESHOLD",
