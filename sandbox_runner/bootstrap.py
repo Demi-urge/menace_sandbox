@@ -21,12 +21,6 @@ from .cycle import ensure_vector_service
 
 _SELF_IMPROVEMENT_THREAD: Any | None = None
 _INITIALISED = False
-# SQLite databases required for a healthy sandbox
-REQUIRED_DB_FILES = (
-    "metrics.db",
-    "patch_history.db",
-    "visual_agent_queue.db",
-)
 
 
 logger = logging.getLogger(__name__)
@@ -183,7 +177,7 @@ def initialize_autonomous_sandbox(
             baseline_path.write_text("{}\n", encoding="utf-8")
 
     # Create expected SQLite databases
-    for name in REQUIRED_DB_FILES:
+    for name in settings.sandbox_required_db_files:
         _ensure_sqlite_db(data_dir / name)
 
     # Verify optional services are importable and meet version requirements
@@ -294,11 +288,10 @@ def sandbox_health() -> dict[str, bool]:
     inner = getattr(thread, "_thread", thread) if thread is not None else None
     alive = bool(getattr(inner, "is_alive", lambda: False)())
 
-    data_dir = Path(
-        os.getenv("SANDBOX_DATA_DIR", load_sandbox_settings().sandbox_data_dir)
-    )
+    settings = load_sandbox_settings()
+    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", settings.sandbox_data_dir))
     db_ok = True
-    for name in REQUIRED_DB_FILES:
+    for name in settings.sandbox_required_db_files:
         try:
             with open(data_dir / name, "a"):
                 pass

@@ -307,6 +307,15 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_REQUIRED_ENV_VARS",
         description="Environment variables required for sandbox initialisation.",
     )
+    sandbox_required_db_files: list[str] = Field(
+        default_factory=lambda: [
+            "metrics.db",
+            "patch_history.db",
+            "visual_agent_queue.db",
+        ],
+        env="SANDBOX_REQUIRED_DB_FILES",
+        description="SQLite database files expected in the sandbox data directory.",
+    )
     sandbox_repo_path: str = Field(
         ".",
         env="SANDBOX_REPO_PATH",
@@ -487,6 +496,7 @@ class SandboxSettings(BaseSettings):
             "required_python_packages",
             "optional_python_packages",
             "required_env_vars",
+            "sandbox_required_db_files",
             mode="before",
         )
         def _parse_dependency_list(cls, v: Any) -> Any:
@@ -523,6 +533,7 @@ class SandboxSettings(BaseSettings):
             "required_python_packages",
             "optional_python_packages",
             "required_env_vars",
+            "sandbox_required_db_files",
             pre=True,
         )
         def _parse_dependency_list(cls, v: Any) -> Any:  # type: ignore[override]
