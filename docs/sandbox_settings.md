@@ -81,6 +81,12 @@ These weights influence the risk score produced by `_analyse_module`.
 - `prompt_success_log_path`: `prompt_success_log.json` (`PROMPT_SUCCESS_LOG_PATH`)
 - `prompt_failure_log_path`: `prompt_failure_log.json` (`PROMPT_FAILURE_LOG_PATH`)
 
+## Prompt chunking defaults
+- `prompt_chunk_token_threshold`: `200` (`PROMPT_CHUNK_TOKEN_THRESHOLD`)
+- `chunk_summary_cache_dir`: `chunk_summary_cache` (`CHUNK_SUMMARY_CACHE_DIR`)
+
+These settings control token limits and caching for code chunk summaries.
+
 See [`sandbox_config.sample.yaml`](sandbox_config.sample.yaml) for a complete
 example configuration file.
 

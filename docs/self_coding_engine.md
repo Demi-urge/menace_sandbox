@@ -68,4 +68,12 @@ with create_ephemeral_env(Path(".")) as (repo, run):
 Startup time and installation failures are logged via the sandbox logging
 utilities so that callers can track environment issues.
 
+## Prompt chunking and caching
+
+Large files are summarised in smaller chunks when their token count exceeds
+`prompt_chunk_token_threshold`. Chunk summaries are cached under
+`chunk_summary_cache_dir` to speed up subsequent runs. Both settings are
+configurable through `SandboxSettings` or environment variables
+(`PROMPT_CHUNK_TOKEN_THRESHOLD` and `CHUNK_SUMMARY_CACHE_DIR`).
+
 
