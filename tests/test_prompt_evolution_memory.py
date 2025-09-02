@@ -2,12 +2,12 @@ import json
 import threading
 from pathlib import Path
 
-from prompt_evolution_logger import PromptEvolutionLogger
+from prompt_evolution_memory import PromptEvolutionMemory
 from prompt_types import Prompt
 
 
-def test_prompt_evolution_logger_records(tmp_path: Path) -> None:
-    logger = PromptEvolutionLogger(
+def test_prompt_evolution_memory_records(tmp_path: Path) -> None:
+    logger = PromptEvolutionMemory(
         success_path=tmp_path / "success.json",
         failure_path=tmp_path / "failure.json",
     )
@@ -36,8 +36,8 @@ def test_prompt_evolution_logger_records(tmp_path: Path) -> None:
     assert failure_record["roi"] == {"roi_delta": -0.3, "coverage": 0.1}
 
 
-def test_prompt_evolution_logger_locking(tmp_path: Path) -> None:
-    logger = PromptEvolutionLogger(success_path=tmp_path / "success.json")
+def test_prompt_evolution_memory_locking(tmp_path: Path) -> None:
+    logger = PromptEvolutionMemory(success_path=tmp_path / "success.json")
     prompt = Prompt(user="hi")
 
     def worker(i: int) -> None:
