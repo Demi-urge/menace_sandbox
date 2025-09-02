@@ -857,7 +857,9 @@ class SelfImprovementPolicy:
         self.alpha = alpha
         self.gamma = gamma
         self.adaptive = adaptive
+        self.base_epsilon = epsilon
         self.epsilon = epsilon
+        self.urgency = 0.0
         self.temperature = temperature
         self.exploration = exploration
         self.epsilon_schedule = epsilon_schedule
@@ -886,6 +888,18 @@ class SelfImprovementPolicy:
         atexit.register(self._graceful_shutdown)
         if self.path:
             self.load(self.path)
+
+    # ------------------------------------------------------------------
+    def adjust_for_momentum(self, momentum: float) -> None:
+        """Adjust exploration and urgency based on momentum."""
+        if momentum < 0:
+            delta = -momentum
+            self.urgency = min(1.0, self.urgency + delta)
+            self.epsilon = min(1.0, self.base_epsilon + delta)
+        else:
+            delta = momentum
+            self.urgency = max(0.0, self.urgency - delta)
+            self.epsilon = max(self.base_epsilon, self.epsilon - delta)
 
     # ------------------------------------------------------------------
     def update(
