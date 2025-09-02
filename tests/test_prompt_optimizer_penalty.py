@@ -44,3 +44,47 @@ def test_failure_fingerprints_penalize(tmp_path):
     assert stat.success == 1
     assert stat.total == 2
     assert stat.roi_sum == 0.0
+
+def test_failure_fingerprints_reduce_score(tmp_path):
+    success = tmp_path / "success.jsonl"
+    failure = tmp_path / "failure.jsonl"
+    success.write_text(
+        json.dumps({
+            "module": "m",
+            "action": "a",
+            "prompt": "# H\nExample",
+            "success": True,
+            "roi": 1.0,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    failure.write_text("", encoding="utf-8")
+    key = (
+        "m",
+        "a",
+        "neutral",
+        ("H",),
+        "start",
+        False,
+        False,
+        False,
+    )
+    opt_base = PromptOptimizer(success, failure, stats_path=tmp_path / "s1.json")
+    score_base = opt_base.stats[key].score()
+    fp = tmp_path / "failure_fingerprints.jsonl"
+    fp.write_text(
+        json.dumps({
+            "filename": "m",
+            "function_name": "a",
+            "prompt_text": "# H\nExample",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    opt_pen = PromptOptimizer(
+        success,
+        failure,
+        stats_path=tmp_path / "s2.json",
+        failure_fingerprint_path=fp,
+    )
+    score_pen = opt_pen.stats[key].score()
+    assert score_pen < score_base
