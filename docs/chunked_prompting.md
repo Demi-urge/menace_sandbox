@@ -26,3 +26,21 @@ rm -rf chunk_summary_cache
 
 The directory is recreated automatically on demand. Periodic cleanup prevents stale summaries from accumulating.
 
+### Cleaning utilities for CI and local runs
+
+Continuous integration jobs should start from a clean cache to avoid reusing
+stale summaries.  Removing the directory is sufficient:
+
+```bash
+rm -rf chunk_summary_cache
+```
+
+Developers can use the same command locally when forcing regeneration.  The
+retrieval cache maintained by the CLI can be cleared with:
+
+```bash
+menace cache clear
+```
+
+Both operations are safe and the caches are recreated on demand.
+
