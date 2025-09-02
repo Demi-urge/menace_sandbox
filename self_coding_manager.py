@@ -35,6 +35,8 @@ from .data_bot import DataBot
 from .advanced_error_management import FormalVerifier, AutomatedRollbackManager
 from . import mutation_logger as MutationLogger
 from .rollback_manager import RollbackManager
+from .self_improvement.baseline_tracker import BaselineTracker
+from .sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - allow package/flat imports
     from .patch_suggestion_db import PatchSuggestionDB
@@ -98,6 +100,7 @@ class SelfCodingManager:
         enhancement_classifier: "EnhancementClassifier" | None = None,
         failure_store: FailureFingerprintStore | None = None,
         skip_similarity: float = 0.95,
+        baseline_window: int | None = None,
     ) -> None:
         self.engine = self_coding_engine
         self.pipeline = pipeline
@@ -114,6 +117,14 @@ class SelfCodingManager:
         )
         self.failure_store = failure_store
         self.skip_similarity = skip_similarity
+        if baseline_window is None:
+            try:
+                baseline_window = getattr(SandboxSettings(), "baseline_window", 5)
+            except Exception:
+                baseline_window = 5
+        self.baseline_tracker = BaselineTracker(
+            window=int(baseline_window), metrics=["confidence", "similarity"]
+        )
         if enhancement_classifier and not getattr(self.engine, "enhancement_classifier", None):
             try:
                 self.engine.enhancement_classifier = enhancement_classifier
@@ -250,29 +261,33 @@ class SelfCodingManager:
                         matches = self.failure_store.find_similar(last_fp)
                     except Exception:
                         matches = []
-                    if matches:
-                        best = 0.0
-                        for m in matches:
-                            try:
-                                sim = cosine_similarity(last_fp.embedding, m.embedding)
-                            except Exception:
-                                sim = 0.0
-                            if sim > best:
-                                best = sim
-                        if best >= self.skip_similarity:
-                            self.logger.info(
-                                "failure fingerprint decision",
-                                extra={"action": "skip", "similarity": best},
-                            )
-                            raise RuntimeError("similar failure detected")
-                        warning = (
-                            f"avoid repeating failure: {last_fp.error_message}"
-                        )
-                        desc = f"{desc}; {warning}"
+                    best = 0.0
+                    for m in matches:
+                        try:
+                            sim = cosine_similarity(last_fp.embedding, m.embedding)
+                        except Exception:
+                            sim = 0.0
+                        if sim > best:
+                            best = sim
+                    sim_avg = self.baseline_tracker.get("similarity")
+                    sim_std = self.baseline_tracker.std("similarity")
+                    sim_threshold = max(self.skip_similarity, sim_avg + sim_std)
+                    if best >= sim_threshold:
                         self.logger.info(
                             "failure fingerprint decision",
-                            extra={"action": "warning", "similarity": best},
+                            extra={"action": "skip", "similarity": best},
                         )
+                        self.baseline_tracker.update(similarity=best)
+                        raise RuntimeError("similar failure detected")
+                    warning = f"avoid repeating failure: {last_fp.error_message}"
+                    desc = f"{desc}; {warning}"
+                    self.logger.info(
+                        "failure fingerprint decision",
+                        extra={"action": "warning", "similarity": best},
+                    )
+                    self.baseline_tracker.update(similarity=best)
+                else:
+                    self.baseline_tracker.update(similarity=0.0)
                 patch_id, reverted, _ = self.engine.apply_patch(
                     cloned_path,
                     desc,
@@ -476,7 +491,10 @@ class SelfCodingManager:
                     self.logger.exception("rollback failed")
                 raise
 
-            if auto_merge and conf >= confidence_threshold:
+            conf_avg = self.baseline_tracker.get("confidence")
+            conf_std = self.baseline_tracker.std("confidence")
+            dynamic_conf = max(confidence_threshold, conf_avg + conf_std)
+            if auto_merge and conf >= dynamic_conf:
                 try:
                     subprocess.run(
                         ["git", "checkout", "main"],
@@ -512,6 +530,7 @@ class SelfCodingManager:
                         RollbackManager().rollback(str(patch_id), requesting_bot=self.bot_name)
                     except Exception:
                         self.logger.exception("rollback failed")
+            self.baseline_tracker.update(confidence=conf)
         event_id = MutationLogger.log_mutation(
             change=f"self_coding_patch_{patch_id}",
             reason=description,
