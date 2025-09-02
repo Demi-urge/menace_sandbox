@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
+import statistics
 from typing import Callable, Optional
 
 from ..model_automation_pipeline import AutomationResult
@@ -26,6 +28,9 @@ class ImprovementEngineRegistry:
     def __init__(self) -> None:
         self.engines: dict[str, SelfImprovementEngine] = {}
         self.logger = get_logger(self.__class__.__name__)
+        self._energy_history: deque[float] = deque(maxlen=10)
+        self._roi_history: deque[float] = deque(maxlen=10)
+        self._lag_count = 0
 
     def register_engine(self, name: str, engine: SelfImprovementEngine) -> None:
         """Add *engine* under *name*."""
@@ -107,14 +112,42 @@ class ImprovementEngineRegistry:
         except Exception as exc:
             self.logger.exception("autoscale trend fetch failed: %s", exc)
             trend = 0.0
+
+        energy_avg = (
+            statistics.mean(self._energy_history) if self._energy_history else energy
+        )
+        roi_avg = (
+            statistics.mean(self._roi_history) if self._roi_history else trend
+        )
+        energy_dev = energy - energy_avg
+        roi_dev = trend - roi_avg
+        self._energy_history.append(energy)
+        self._roi_history.append(trend)
+
+        if energy_dev < 0 or roi_dev < 0:
+            self._lag_count += 1
+        else:
+            self._lag_count = 0
+        if self._lag_count >= 3:
+            if len(self.engines) > min_engines:
+                name = next(iter(self.engines))
+                self.unregister_engine(name)
+            else:
+                self.logger.warning(
+                    "ROI or energy below baseline for three cycles; escalating"
+                )
+            self._lag_count = 0
+            return
+
         if not capital_bot.check_budget():
             return
         if max_instances is not None and len(self.engines) >= max_instances:
             return
-        projected_roi = trend - cost_per_engine
+
+        projected_roi = roi_dev - cost_per_engine
         if (
-            energy >= create_energy
-            and trend > roi_threshold
+            energy_dev >= create_energy
+            and roi_dev > roi_threshold
             and projected_roi > 0.0
             and len(self.engines) < max_engines
         ):
@@ -124,7 +157,9 @@ class ImprovementEngineRegistry:
             self.register_engine(name, factory(name))
             return
         if (
-            energy <= remove_energy or trend <= roi_threshold or projected_roi <= 0.0
+            energy_dev <= -remove_energy
+            or roi_dev <= -roi_threshold
+            or projected_roi <= 0.0
         ) and len(self.engines) > min_engines:
             name = next(iter(self.engines))
             self.unregister_engine(name)
@@ -147,4 +182,3 @@ def auto_x(
 
 
 __all__ = ["ImprovementEngineRegistry", "auto_x"]
-

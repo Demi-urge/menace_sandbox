@@ -1,9 +1,8 @@
 import pytest
-
-pytest.importorskip("pandas")
-
 import types
 import sys
+
+pytest.importorskip("pandas")
 
 od_stub = types.ModuleType("sandbox_runner.orphan_discovery")
 for _fn in (
@@ -19,14 +18,23 @@ neuro_stub = types.ModuleType("neurosales")
 neuro_stub.add_message = lambda *a, **k: None
 sys.modules.setdefault("neurosales", neuro_stub)
 
-import menace.self_improvement as sie
-import asyncio
-import menace.diagnostic_manager as dm
-import menace.error_bot as eb
-import menace.data_bot as db
-import menace.research_aggregator_bot as rab
-import menace.pre_execution_roi_bot as prb
-import menace.model_automation_pipeline as mp
+boot_stub = types.ModuleType("sandbox_runner.bootstrap")
+boot_stub.initialize_autonomous_sandbox = lambda *a, **k: None
+sys.modules.setdefault("sandbox_runner.bootstrap", boot_stub)
+
+sts_stub = types.ModuleType("menace.self_test_service")
+sts_stub.SelfTestService = object
+sys.modules.setdefault("menace.self_test_service", sts_stub)
+
+import menace.self_improvement as sie  # noqa: E402
+import asyncio  # noqa: E402
+import menace.diagnostic_manager as dm  # noqa: E402
+import menace.error_bot as eb  # noqa: E402
+import menace.data_bot as db  # noqa: E402
+import menace.research_aggregator_bot as rab  # noqa: E402
+import menace.pre_execution_roi_bot as prb  # noqa: E402
+import menace.model_automation_pipeline as mp  # noqa: E402
+
 
 class StubPipeline:
     def __init__(self):
@@ -38,6 +46,7 @@ class StubPipeline:
             package=None,
             roi=prb.ROIResult(1.0, 0.0, 0.0, 1.0, 0.0),
         )
+
 
 def _make_engine(tmp_path, name: str, monkeypatch):
     mdb = db.MetricsDB(tmp_path / f"{name}.m.db")
@@ -55,6 +64,7 @@ def _make_engine(tmp_path, name: str, monkeypatch):
     )
     return engine, pipe
 
+
 def test_registry_runs_multiple(tmp_path, monkeypatch):
     eng1, pipe1 = _make_engine(tmp_path, "menace", monkeypatch)
     eng2, pipe2 = _make_engine(tmp_path, "alpha", monkeypatch)
@@ -67,6 +77,7 @@ def test_registry_runs_multiple(tmp_path, monkeypatch):
     assert set(res) == {"menace", "alpha"}
     assert isinstance(res["menace"], mp.AutomationResult)
     assert pipe1.calls and pipe2.calls
+
 
 def test_engine_custom_name(tmp_path, monkeypatch):
     eng, pipe = _make_engine(tmp_path, "beta", monkeypatch)
@@ -98,24 +109,28 @@ def test_registry_autoscale(tmp_path, monkeypatch):
     def factory(name: str):
         return _make_engine(tmp_path, name, monkeypatch)[0]
 
+    # establish baseline
+    reg.autoscale(capital_bot=Cap(0.5), data_bot=Data(0.1), factory=factory)
+
     reg.autoscale(
         capital_bot=Cap(0.9),
-        data_bot=Data(0.5),
+        data_bot=Data(0.6),
         factory=factory,
         max_engines=2,
-        create_energy=0.8,
-        roi_threshold=0.1,
+        create_energy=0.3,
+        roi_threshold=0.2,
     )
     assert len(reg.engines) == 2
 
-    reg.autoscale(
-        capital_bot=Cap(0.2),
-        data_bot=Data(-0.2),
-        factory=factory,
-        min_engines=1,
-        remove_energy=0.3,
-        roi_threshold=0.0,
-    )
+    for _ in range(3):
+        reg.autoscale(
+            capital_bot=Cap(0.1),
+            data_bot=Data(-0.5),
+            factory=factory,
+            min_engines=1,
+            remove_energy=0.2,
+            roi_threshold=0.2,
+        )
     assert len(reg.engines) == 1
 
 
