@@ -63,6 +63,13 @@ class BaselineTracker:
                 delta_hist.append(float(value) - avg)
             hist.append(float(value))
 
+        # Record current momentum so moving averages and deviations can be
+        # computed like other metrics.  This is appended after processing the
+        # provided metrics so ``roi`` updates influence the momentum history in
+        # the same cycle.
+        momentum_hist = self._history.setdefault("momentum", deque(maxlen=self.window))
+        momentum_hist.append(self.momentum)
+
     # ------------------------------------------------------------------
     def get(self, metric: str) -> float:
         """Return the moving average for *metric*."""

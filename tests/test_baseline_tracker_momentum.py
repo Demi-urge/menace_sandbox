@@ -17,3 +17,7 @@ def test_momentum_tracking():
     assert bt.success_count == 3
     assert bt.cycle_count == 4
     assert bt.momentum == pytest.approx(3 / 5)
+    hist = bt.to_dict()["momentum"]
+    assert len(hist) == 4
+    assert hist[-1] == bt.momentum
+    assert bt.get("momentum") == sum(hist) / len(hist)

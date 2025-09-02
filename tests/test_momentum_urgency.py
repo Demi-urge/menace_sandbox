@@ -31,7 +31,10 @@ def _make_engine():
     eng.momentum_window = 4
     eng.urgency_tier = 0
     eng.logger = types.SimpleNamespace(warning=lambda *a, **k: None)
-    eng.baseline_tracker = types.SimpleNamespace(momentum=0.75)
+    eng.baseline_tracker = types.SimpleNamespace(
+        get=lambda m: 0.75, std=lambda m: 0.05
+    )
+    eng.momentum_dev_multiplier = 1.0
     eng.stagnation_cycles = 2
     eng._momentum_streak = 0
     return eng
