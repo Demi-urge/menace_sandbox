@@ -7,6 +7,8 @@ sandbox_required_db_files:
   - metrics.db
   - patch_history.db
   - visual_agent_queue.db
+prompt_chunk_token_threshold: 200
+chunk_summary_cache_dir: chunk_summary_cache
 roi:
   threshold: null
   confidence: null

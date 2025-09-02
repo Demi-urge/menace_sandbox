@@ -586,6 +586,17 @@ class SandboxSettings(BaseSettings):
         env="PROMPT_FAILURE_LOG_PATH",
         description="Path for recording failed prompt executions.",
     )
+    prompt_chunk_token_threshold: int = Field(
+        200,
+        env="PROMPT_CHUNK_TOKEN_THRESHOLD",
+        description=
+        "Token limit for individual code chunks when summarizing large files.",
+    )
+    chunk_summary_cache_dir: str = Field(
+        "chunk_summary_cache",
+        env="CHUNK_SUMMARY_CACHE_DIR",
+        description="Directory for cached summaries of code chunks.",
+    )
     stub_timeout: float = Field(
         10.0,
         env="SANDBOX_STUB_TIMEOUT",

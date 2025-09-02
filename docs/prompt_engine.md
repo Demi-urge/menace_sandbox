@@ -41,6 +41,13 @@ Outcome: works (tests passed)
   <trace>
   Please attempt a different solution.
   ```
+* `token_threshold` – Maximum number of tokens permitted for the assembled prompt.
+  Text exceeding this limit is trimmed and long files are summarised when
+  included as context.
+* `chunk_token_threshold` – Token limit for individual code chunks when large files
+  are summarised (defaults to `PROMPT_CHUNK_TOKEN_THRESHOLD`).
+* `chunk_summary_cache_dir` – Directory used to store cached summaries of
+  chunked code (`CHUNK_SUMMARY_CACHE_DIR`).
 * `success_header` and `failure_header` – control the section titles for
   successful and failing examples.  The defaults are
   `"Given the following pattern:"` and

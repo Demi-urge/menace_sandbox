@@ -24,6 +24,8 @@ try:  # pragma: no cover - optional settings dependency
 except Exception:  # pragma: no cover - allow running without settings
     SandboxSettings = None  # type: ignore
 
+_SETTINGS = SandboxSettings() if SandboxSettings else None
+
 from llm_interface import Prompt
 
 from snippet_compressor import compress_snippets
@@ -160,6 +162,16 @@ class PromptEngine:
     top_n: int = 5
     max_tokens: int = 200
     token_threshold: int = 3500
+    chunk_token_threshold: int = field(
+        default_factory=lambda: _SETTINGS.prompt_chunk_token_threshold
+        if _SETTINGS
+        else 200
+    )
+    chunk_summary_cache_dir: Path = field(
+        default_factory=lambda: Path(_SETTINGS.chunk_summary_cache_dir)
+        if _SETTINGS
+        else Path("chunk_summary_cache")
+    )
     roi_weight: float = 1.0
     recency_weight: float = 0.1
     roi_tag_weights: Dict[str, float] = field(
@@ -245,6 +257,13 @@ class PromptEngine:
         self._load_trained_config()
         # Apply persisted optimiser preferences
         self.apply_optimizer_format(__name__, "build_prompt")
+        try:
+            import prompt_chunking as _pc
+
+            self.chunk_summary_cache_dir = Path(self.chunk_summary_cache_dir)
+            _pc.CACHE_DIR = self.chunk_summary_cache_dir
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def _load_trained_config(
