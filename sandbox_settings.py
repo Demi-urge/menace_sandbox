@@ -50,6 +50,7 @@ class ROISettings(BaseModel):
     entropy_plateau_consecutive: int | None = None
     entropy_ceiling_threshold: float | None = None
     entropy_ceiling_consecutive: int | None = None
+    baseline_window: int = 5
 
     @field_validator(
         "threshold",
@@ -75,7 +76,6 @@ class ROISettings(BaseModel):
         if v is not None and v <= 0:
             raise ValueError(f"{info.field_name} must be a positive integer")
         return v
-
 
 class SynergySettings(BaseModel):
     """Settings for module synergy calculations."""
@@ -305,6 +305,12 @@ class SandboxSettings(BaseSettings):
     def _baseline_window_positive(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("baseline_window must be positive")
+        return v
+
+    @field_validator("roi_baseline_window")
+    def _roi_baseline_window_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("roi_baseline_window must be positive")
         return v
 
     @field_validator(
@@ -1501,6 +1507,7 @@ class SandboxSettings(BaseSettings):
     synergy_weight_throughput: float = Field(1.0, env="SYNERGY_WEIGHT_THROUGHPUT")
     roi_ema_alpha: float = Field(0.1, env="ROI_EMA_ALPHA")
     roi_compounding_weight: float = Field(1.0, env="ROI_COMPOUNDING_WEIGHT")
+    roi_baseline_window: int = Field(5, env="ROI_BASELINE_WINDOW")
     sandbox_score_db: str = Field("score_history.db", env="SANDBOX_SCORE_DB")
     synergy_weights_lr: float = Field(
         0.1,
@@ -1899,6 +1906,7 @@ class SandboxSettings(BaseSettings):
             confidence=self.roi_confidence,
             ema_alpha=self.roi_ema_alpha,
             compounding_weight=self.roi_compounding_weight,
+            baseline_window=self.roi_baseline_window,
             min_integration_roi=self.min_integration_roi,
             entropy_threshold=self.entropy_threshold,
             entropy_plateau_threshold=self.entropy_plateau_threshold,

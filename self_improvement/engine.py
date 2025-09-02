@@ -407,6 +407,37 @@ from .learners import (
 
 POLICY_STATE_LEN = 21
 
+
+class MovingBaseline:
+    """Lightweight moving-average tracker for recent ROI scores.
+
+    The helper maintains a fixed-size window of the most recent values and
+    exposes the current moving average.  It is intentionally simple to avoid
+    pulling in the full :mod:`baseline_tracker` machinery when only a single
+    metric needs to be tracked.
+    """
+
+    def __init__(self, window: int = 5) -> None:
+        self.window = max(1, int(window))
+        self._scores: deque[float] = deque(maxlen=self.window)
+
+    def append(self, value: float) -> None:
+        """Record a new ROI *value* for baseline calculations."""
+
+        self._scores.append(float(value))
+
+    def average(self) -> float:
+        """Return the current moving average of recorded values."""
+
+        if not self._scores:
+            return 0.0
+        return sum(self._scores) / len(self._scores)
+
+    def to_list(self) -> list[float]:
+        """Expose recorded values for persistence."""
+
+        return list(self._scores)
+
 __all__ = [
     "SelfImprovementEngine",
     "SACSynergyLearner",
@@ -427,6 +458,7 @@ class SelfImprovementEngine:
         capital_bot: "CapitalManagementBot" | None = None,
         energy_threshold: float | None = None,
         baseline_window: int | None = None,
+        roi_baseline_window: int | None = None,
         baseline_margin: float = 0.0,
         recovery_threshold: float = 0.0,
         learning_engine: LearningEngine | None = None,
@@ -506,6 +538,12 @@ class SelfImprovementEngine:
         )
         self.baseline_tracker = GLOBAL_BASELINE_TRACKER
         self.baseline_tracker.window = self.baseline_window
+        self.roi_baseline_window = (
+            roi_baseline_window
+            if roi_baseline_window is not None
+            else getattr(getattr(cfg, "roi", None), "baseline_window", 5)
+        )
+        self.roi_baseline = MovingBaseline(self.roi_baseline_window)
         self.baseline_margin = baseline_margin
         self.urgency_recovery_threshold = recovery_threshold
         self.mae_dev_multiplier = getattr(cfg, "mae_deviation", 1.0)
@@ -1450,7 +1488,7 @@ class SelfImprovementEngine:
     # ------------------------------------------------------------------
     def _raroi_threshold(self) -> float:
         """Dynamic borderline ROI threshold based on baseline statistics."""
-        base = self.baseline_tracker.get("roi")
+        base = self.roi_baseline.average()
         std = self.baseline_tracker.std("roi")
         momentum = self.baseline_tracker.momentum
         scale = 1.0 + (0.5 - momentum)
@@ -1475,6 +1513,10 @@ class SelfImprovementEngine:
             self.baseline_tracker.window = self.baseline_window
             for s in scores:
                 self.baseline_tracker.update(score=s)
+            roi_scores = [float(x) for x in data.get("roi_baseline", [])]
+            self.roi_baseline = MovingBaseline(self.roi_baseline_window)
+            for v in roi_scores:
+                self.roi_baseline.append(v)
             successes = [bool(x) for x in data.get("success_history", [])]
             self.success_history = deque(successes, maxlen=self.baseline_window)
         except Exception as exc:
@@ -1498,6 +1540,7 @@ class SelfImprovementEngine:
                         "roi_delta_ema": self.roi_delta_ema,
                         "sandbox_scores": self.baseline_tracker.to_dict().get("score", []),
                         "success_history": list(self.success_history),
+                        "roi_baseline": self.roi_baseline.to_list(),
                     },
                     fh,
                 )
@@ -7095,12 +7138,13 @@ class SelfImprovementEngine:
             files = list(_repo_path.rglob("*.py"))
             entropy = _si_metrics.compute_code_entropy(files)
             score_avg = self.baseline_tracker.get("score")
-            roi_avg = self.baseline_tracker.get("roi")
+            roi_avg = self.roi_baseline.average()
             entropy_avg = self.baseline_tracker.get("entropy")
             energy_avg = self.baseline_tracker.get("energy")
             self.baseline_tracker.update(
                 score=score, roi=roi_realish, entropy=entropy, energy=energy
             )
+            self.roi_baseline.append(roi_realish)
             self._check_roi_stagnation()
             score_delta = score - score_avg
             roi_delta = roi_realish - roi_avg
