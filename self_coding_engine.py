@@ -131,6 +131,7 @@ try:
 except Exception:  # pragma: no cover - fallback for flat layout
     from prompt_optimizer import PromptOptimizer  # type: ignore
 from .error_parser import ErrorParser, ErrorReport, parse_failure, FailureCache
+from .vector_utils import cosine_similarity
 try:
     from .self_improvement.prompt_memory import log_prompt_attempt
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -140,6 +141,11 @@ except Exception:  # pragma: no cover - fallback for flat layout
         def log_prompt_attempt(*_a: Any, **_k: Any) -> None:  # type: ignore
             return None
 from .failure_fingerprint import FailureFingerprint, log_fingerprint, find_similar
+from .self_improvement.baseline_tracker import BaselineTracker
+try:  # pragma: no cover - optional dependency
+    from .self_improvement.init import FileLock, _atomic_write
+except Exception:  # pragma: no cover - fallback for flat layout
+    from self_improvement.init import FileLock, _atomic_write  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -198,8 +204,10 @@ class SelfCodingEngine:
         prompt_chunk_token_threshold: int | None = None,
         chunk_summary_cache_dir: str | Path | None = None,
         prompt_chunk_cache_dir: str | Path | None = None,
-        failure_similarity_threshold: float = 0.95,
+        failure_similarity_threshold: float | None = None,
         failure_similarity_limit: int = 3,
+        failure_similarity_k: float = 1.0,
+        baseline_window: int | None = None,
         **kwargs: Any,
     ) -> None:
         self.code_db = code_db
@@ -235,8 +243,16 @@ class SelfCodingEngine:
         self.chunk_summary_cache_dir = Path(cache_dir)
         # backward compatibility
         self.prompt_chunk_cache_dir = self.chunk_summary_cache_dir
-        self.failure_similarity_threshold = failure_similarity_threshold
+        self._failure_similarity_threshold = failure_similarity_threshold
         self.failure_similarity_limit = failure_similarity_limit
+        self.failure_similarity_k = failure_similarity_k
+        if baseline_window is None:
+            baseline_window = getattr(_settings, "baseline_window", 5)
+        self.failure_similarity_tracker = BaselineTracker(
+            window=int(baseline_window), metrics=["similarity"]
+        )
+        data_dir = getattr(_settings, "sandbox_data_dir", ".")
+        self._state_path = Path(data_dir) / "self_coding_engine_state.json"
         self.safety_monitor = safety_monitor
         if llm_client is None:
             try:
@@ -347,6 +363,48 @@ class SelfCodingEngine:
         # store tracebacks from failed attempts for retry prompts
         self._last_retry_trace: str | None = None
         self._failure_cache = FailureCache()
+        self._load_state()
+
+    # ------------------------------------------------------------------
+    def _load_state(self) -> None:
+        lock = FileLock(str(self._state_path) + ".lock")
+        try:
+            with lock:
+                data = json.loads(self._state_path.read_text())
+            for v in data.get("similarity", []):
+                try:
+                    self.failure_similarity_tracker.update(similarity=float(v))
+                except Exception:
+                    continue
+        except FileNotFoundError:
+            self._save_state()
+        except Exception:
+            self.logger.warning("failed to load self-coding engine state")
+
+    def _save_state(self) -> None:
+        lock = FileLock(str(self._state_path) + ".lock")
+        try:
+            payload = {
+                "similarity": self.failure_similarity_tracker.to_dict().get(
+                    "similarity", []
+                )
+            }
+            _atomic_write(self._state_path, json.dumps(payload), lock=lock)
+        except Exception:
+            self.logger.warning("failed to persist self-coding engine state")
+
+    @property
+    def failure_similarity_threshold(self) -> float:
+        avg = self.failure_similarity_tracker.get("similarity")
+        std = self.failure_similarity_tracker.std("similarity")
+        threshold = avg + self.failure_similarity_k * std
+        if self._failure_similarity_threshold is not None:
+            threshold = max(self._failure_similarity_threshold, threshold)
+        return threshold
+
+    @failure_similarity_threshold.setter
+    def failure_similarity_threshold(self, value: float | None) -> None:
+        self._failure_similarity_threshold = value
 
     @property
     def last_prompt_text(self) -> str:
@@ -2134,16 +2192,27 @@ class SelfCodingEngine:
                 log_fingerprint(fp)
             except Exception:
                 self.logger.exception("failed to log failure fingerprint")
+            threshold = self.failure_similarity_threshold
             try:
-                matches = [
-                    m
-                    for m in find_similar(
-                        fp.embedding, self.failure_similarity_threshold
-                    )
-                    if m.timestamp != fp.timestamp
-                ]
+                all_matches = find_similar(fp.embedding, 0.0)
+                best_sim = 0.0
+                matches = []
+                for m in all_matches:
+                    try:
+                        sim = cosine_similarity(fp.embedding, m.embedding)
+                    except Exception:
+                        sim = 0.0
+                    if m.timestamp == fp.timestamp:
+                        continue
+                    if sim > best_sim:
+                        best_sim = sim
+                    if sim >= threshold:
+                        matches.append(m)
             except Exception:
                 matches = []
+                best_sim = 0.0
+            self.failure_similarity_tracker.update(similarity=best_sim)
+            self._save_state()
             if self._failure_cache.seen(trace):
                 break
             current = parse_failure(trace)

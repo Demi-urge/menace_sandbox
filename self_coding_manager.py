@@ -99,7 +99,7 @@ class SelfCodingManager:
         suggestion_db: PatchSuggestionDB | None = None,
         enhancement_classifier: "EnhancementClassifier" | None = None,
         failure_store: FailureFingerprintStore | None = None,
-        skip_similarity: float = 0.95,
+        skip_similarity: float | None = None,
         baseline_window: int | None = None,
     ) -> None:
         self.engine = self_coding_engine
@@ -123,7 +123,7 @@ class SelfCodingManager:
             except Exception:
                 baseline_window = 5
         self.baseline_tracker = BaselineTracker(
-            window=int(baseline_window), metrics=["confidence", "similarity"]
+            window=int(baseline_window), metrics=["confidence"]
         )
         if enhancement_classifier and not getattr(self.engine, "enhancement_classifier", None):
             try:
@@ -269,15 +269,16 @@ class SelfCodingManager:
                             sim = 0.0
                         if sim > best:
                             best = sim
-                    sim_avg = self.baseline_tracker.get("similarity")
-                    sim_std = self.baseline_tracker.std("similarity")
-                    sim_threshold = max(self.skip_similarity, sim_avg + sim_std)
-                    if best >= sim_threshold:
+                    threshold = getattr(
+                        self.engine, "failure_similarity_threshold", self.skip_similarity or 0.95
+                    )
+                    if self.skip_similarity is not None:
+                        threshold = max(threshold, self.skip_similarity)
+                    if best >= threshold:
                         self.logger.info(
                             "failure fingerprint decision",
                             extra={"action": "skip", "similarity": best},
                         )
-                        self.baseline_tracker.update(similarity=best)
                         raise RuntimeError("similar failure detected")
                     warning = f"avoid repeating failure: {last_fp.error_message}"
                     desc = f"{desc}; {warning}"
@@ -285,9 +286,6 @@ class SelfCodingManager:
                         "failure fingerprint decision",
                         extra={"action": "warning", "similarity": best},
                     )
-                    self.baseline_tracker.update(similarity=best)
-                else:
-                    self.baseline_tracker.update(similarity=0.0)
                 patch_id, reverted, _ = self.engine.apply_patch(
                     cloned_path,
                     desc,
