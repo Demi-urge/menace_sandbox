@@ -8,6 +8,8 @@ import pytest
 
 # ---------------------------------------------------------------------------
 # dummy vector service used for fingerprint store and manager tests
+
+
 class DummyVectorStore:
     def __init__(self):
         self.records: dict[str, list[float]] = {}
@@ -36,8 +38,8 @@ vec_module = types.ModuleType("vector_service")
 vec_module.SharedVectorService = DummyVectorService
 sys.modules.setdefault("vector_service", vec_module)
 
-from failure_fingerprint_store import FailureFingerprint, FailureFingerprintStore
-from prompt_optimizer import PromptOptimizer
+from failure_fingerprint_store import FailureFingerprint, FailureFingerprintStore  # noqa: E402
+from prompt_optimizer import PromptOptimizer  # noqa: E402
 
 
 def make_store(tmp_path: Path) -> FailureFingerprintStore:
@@ -164,7 +166,12 @@ def _load_manager(
 
     ps_mod = types.ModuleType("menace_sandbox.patch_suggestion_db")
     ps_mod.PatchSuggestionDB = type(
-        "PatchSuggestionDB", (), {"log_repo_scan": lambda self: None, "add_failed_strategy": lambda self, tag: None}
+        "PatchSuggestionDB",
+        (),
+        {
+            "log_repo_scan": lambda self: None,
+            "add_failed_strategy": lambda self, tag: None,
+        },
     )
     monkeypatch.setitem(sys.modules, "menace_sandbox.patch_suggestion_db", ps_mod)
 
@@ -196,41 +203,143 @@ def _load_manager(
     return manager, store, engine
 
 
-def test_run_patch_skips_on_high_similarity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_patch_skips_on_high_similarity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     initial = [
         TestResult("1 passed", "", True),
         TestResult(
             "File \"mod.py\", line 1, in bad\nValueError: boom",
             "",
             False,
-            failure={"stack": 'File "mod.py", line 1, in bad\nValueError: boom', "strategy_tag": "tag"},
+            failure={
+                "stack": 'File "mod.py", line 1, in bad\nValueError: boom',
+                "strategy_tag": "tag",
+            },
         ),
     ]
     manager, store, _engine = _load_manager(monkeypatch, tmp_path, initial)
 
     target = Path("dummy_patch_target.py")
     target.write_text("x = 1", encoding="utf-8")
+    import subprocess
+
+    def fake_run(cmd, check=True, cwd=None):
+        if cmd[:2] == ["git", "clone"]:
+            dest = Path(cmd[-1])
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / target.name).write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
+        return None
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    import failure_fingerprint as fp_mod
+
+    def fake_from_failure(filename, function_name, stack, error, prompt):
+        return fp_mod.FailureFingerprint(
+            filename, function_name, error, stack, prompt, embedding=[1.0, 0.0]
+        )
+
+    monkeypatch.setattr(
+        fp_mod.FailureFingerprint, "from_failure", staticmethod(fake_from_failure)
+    )
     try:
-        fp_match = FailureFingerprint("mod.py", "bad", "ValueError: boom", "trace", "prompt", embedding=[1.0, 0.0])
-        store.find_similar = lambda fp, threshold=None: [fp_match]
+        fp_match = FailureFingerprint(
+            "mod.py", "bad", "ValueError: boom", "trace", "prompt", embedding=[1.0, 0.0]
+        )
+        calls = {"n": 0}
+
+        def fake_find(fp, threshold=None):
+            calls["n"] += 1
+            return [] if calls["n"] == 1 else [fp_match]
+
+        store.find_similar = fake_find
         with pytest.raises(RuntimeError):
             manager.run_patch(target, "desc", max_attempts=2)
     finally:
         target.unlink(missing_ok=True)
 
 
-def test_run_patch_warns_on_low_similarity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_patch_warns_on_low_similarity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     initial = [
         TestResult("1 passed", "", True),
         TestResult(
             "File \"mod.py\", line 1, in bad\nValueError: boom",
             "",
             False,
-            failure={"stack": 'File "mod.py", line 1, in bad\nValueError: boom', "strategy_tag": "tag"},
+            failure={
+                "stack": 'File "mod.py", line 1, in bad\nValueError: boom',
+                "strategy_tag": "tag",
+            },
         ),
         TestResult("1 passed", "", True),
     ]
     manager, store, engine = _load_manager(monkeypatch, tmp_path, initial)
+
+    target = Path("dummy_patch_target.py")
+    target.write_text("x = 1", encoding="utf-8")
+    import subprocess
+
+    def fake_run(cmd, check=True, cwd=None):
+        if cmd[:2] == ["git", "clone"]:
+            dest = Path(cmd[-1])
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / target.name).write_text(
+                target.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        return None
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    import failure_fingerprint as fp_mod
+
+    def fake_from_failure(filename, function_name, stack, error, prompt):
+        return fp_mod.FailureFingerprint(
+            filename, function_name, error, stack, prompt, embedding=[1.0, 0.0]
+        )
+
+    monkeypatch.setattr(
+        fp_mod.FailureFingerprint, "from_failure", staticmethod(fake_from_failure)
+    )
+    try:
+        fp_match = FailureFingerprint(
+            "mod.py", "bad", "ValueError: boom", "trace", "prompt", embedding=[0.0, 1.0]
+        )
+        calls = {"n": 0}
+
+        def fake_find(fp, threshold=None):
+            calls["n"] += 1
+            return [] if calls["n"] == 1 else [fp_match]
+
+        store.find_similar = fake_find
+        manager.run_patch(target, "desc", max_attempts=3)
+        assert any("avoid repeating failure" in d for d in engine.calls)
+    finally:
+        target.unlink(missing_ok=True)
+
+
+def test_provisional_fingerprint_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, store, engine = _load_manager(monkeypatch, tmp_path, [])
+
+    import failure_fingerprint as fp_mod
+
+    def fake_from_failure(filename, function_name, stack, error, prompt):
+        return fp_mod.FailureFingerprint(
+            filename, function_name, error, stack, prompt, embedding=[1.0, 0.0]
+        )
+
+    monkeypatch.setattr(
+        fp_mod.FailureFingerprint, "from_failure", staticmethod(fake_from_failure)
+    )
+
+    def fake_find(fp, threshold=None):
+        return [
+            fp_mod.FailureFingerprint("f.py", "", "e", "t", "p", embedding=[1.0, 0.0])
+        ]
+
+    store.find_similar = fake_find
 
     target = Path("dummy_patch_target.py")
     target.write_text("x = 1", encoding="utf-8")
@@ -245,9 +354,51 @@ def test_run_patch_warns_on_low_similarity(tmp_path: Path, monkeypatch: pytest.M
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     try:
-        fp_match = FailureFingerprint("mod.py", "bad", "ValueError: boom", "trace", "prompt", embedding=[0.0, 1.0])
-        store.find_similar = lambda fp, threshold=None: [fp_match]
-        manager.run_patch(target, "desc", max_attempts=3)
+        with pytest.raises(RuntimeError):
+            manager.run_patch(target, "desc", max_attempts=1)
+        assert not engine.calls
+    finally:
+        target.unlink(missing_ok=True)
+
+
+def test_provisional_fingerprint_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initial = [TestResult("1 passed", "", True), TestResult("1 passed", "", True)]
+    manager, store, engine = _load_manager(monkeypatch, tmp_path, initial)
+
+    import failure_fingerprint as fp_mod
+
+    def fake_from_failure(filename, function_name, stack, error, prompt):
+        return fp_mod.FailureFingerprint(
+            filename, function_name, error, stack, prompt, embedding=[1.0, 0.0]
+        )
+
+    monkeypatch.setattr(
+        fp_mod.FailureFingerprint, "from_failure", staticmethod(fake_from_failure)
+    )
+
+    def fake_find(fp, threshold=None):
+        return [
+            fp_mod.FailureFingerprint("f.py", "", "e", "t", "p", embedding=[0.0, 1.0])
+        ]
+
+    store.find_similar = fake_find
+
+    target = Path("dummy_patch_target.py")
+    target.write_text("x = 1", encoding="utf-8")
+    import subprocess
+
+    def fake_run(cmd, check=True, cwd=None):
+        if cmd[:2] == ["git", "clone"]:
+            dest = Path(cmd[-1])
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / target.name).write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
+        return None
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    try:
+        manager.run_patch(target, "desc", max_attempts=1)
         assert any("avoid repeating failure" in d for d in engine.calls)
     finally:
         target.unlink(missing_ok=True)

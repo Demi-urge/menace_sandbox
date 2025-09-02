@@ -245,6 +245,44 @@ class SelfCodingManager:
             while attempt < max_attempts:
                 attempt += 1
                 self.logger.info("patch attempt %s", attempt)
+                provisional_fp: FailureFingerprint | None = None
+                if self.failure_store:
+                    try:
+                        provisional_fp = FailureFingerprint.from_failure(
+                            path.name,
+                            "",
+                            desc,
+                            "",
+                            desc,
+                        )
+                        matches = self.failure_store.find_similar(provisional_fp)
+                    except Exception:
+                        matches = []
+                    if matches:
+                        best = 0.0
+                        best_match = matches[0]
+                        for m in matches:
+                            try:
+                                sim = cosine_similarity(
+                                    provisional_fp.embedding, m.embedding
+                                )
+                            except Exception:
+                                sim = 0.0
+                            if sim > best:
+                                best = sim
+                                best_match = m
+                        advisory = f"avoid repeating failure: {best_match.error_message}"
+                        if best >= self.skip_similarity:
+                            self.logger.info(
+                                "failure fingerprint decision",
+                                extra={"action": "abort", "similarity": best},
+                            )
+                            raise RuntimeError("similar failure detected")
+                        desc = f"{desc}; {advisory}"
+                        self.logger.info(
+                            "failure fingerprint decision",
+                            extra={"action": "warn", "similarity": best},
+                        )
                 if last_fp and self.failure_store:
                     try:
                         matches = self.failure_store.find_similar(last_fp)
