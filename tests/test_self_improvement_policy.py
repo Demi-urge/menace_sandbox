@@ -61,7 +61,14 @@ def test_convergence_simple_task():
 
 
 def test_policy_config_serialization(tmp_path):
-    cfg = PolicyConfig(alpha=0.3, gamma=0.8, epsilon=0.2, temperature=1.5, exploration="softmax", adaptive=True)
+    cfg = PolicyConfig(
+        alpha=0.3,
+        gamma=0.8,
+        epsilon=0.2,
+        temperature=1.5,
+        exploration="softmax",
+        adaptive=True,
+    )
     policy = SelfImprovementPolicy(config=cfg)
     path = tmp_path / "policy.json"
     policy.save_model(str(path))
@@ -83,3 +90,14 @@ def test_policy_config_defaults_from_settings():
     assert cfg.epsilon == settings.policy_epsilon
     assert cfg.temperature == settings.policy_temperature
     assert cfg.exploration == settings.policy_exploration
+
+
+def test_momentum_adjusts_urgency():
+    policy = SelfImprovementPolicy(epsilon=0.1)
+    policy.adjust_for_momentum(-0.3)
+    assert policy.urgency > 0.0
+    assert policy.epsilon > policy.base_epsilon
+    prev_urgency = policy.urgency
+    policy.adjust_for_momentum(0.2)
+    assert policy.urgency < prev_urgency
+    assert policy.epsilon >= policy.base_epsilon

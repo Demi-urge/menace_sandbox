@@ -22,6 +22,7 @@ import threading
 import importlib
 from contextlib import contextmanager
 from typing import Callable, Mapping
+from collections import deque
 from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
 from .knowledge_graph import KnowledgeGraph
@@ -47,8 +48,6 @@ from .error_parser import ErrorReport, FailureCache, parse_failure
 try:
     from self_improvement.utils import MovingBaselineTracker
 except Exception:  # pragma: no cover - test fallback
-    from collections import deque
-
     class MovingBaselineTracker:
         def __init__(self, window_size: int) -> None:
             self.composite_history = deque(maxlen=int(window_size))
@@ -185,6 +184,14 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._history_lock = threading.Lock()
         self._history_conn: sqlite3.Connection | None = None
         self._history_records: list[tuple[float, float, float, float, float, float]] = []
+        self._recent_outcomes: deque[int] = deque(
+            maxlen=getattr(self._settings, "success_window", 20)
+        )
+        self._total_attempts = 0
+        self._total_successes = 0
+        self.recent_success_rate = 0.0
+        self.long_term_success_rate = 0.0
+        self.momentum = 0.0
         try:
             self._history_conn = router.get_connection("flakiness_history")
             with self._history_lock:
@@ -341,6 +348,24 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             record_failed_tags(list(report.tags))
         except Exception:
             self.logger.exception("failed to record failed tags")
+
+    # ------------------------------------------------------------------
+    def _update_success_metrics(self, result: str) -> None:
+        """Update success rate statistics and momentum from ``result``."""
+        success = 1 if result == "success" else 0
+        self._recent_outcomes.append(success)
+        self._total_attempts += 1
+        self._total_successes += success
+        self.recent_success_rate = sum(self._recent_outcomes) / len(self._recent_outcomes)
+        self.long_term_success_rate = (
+            self._total_successes / self._total_attempts if self._total_attempts else 0.0
+        )
+        self.momentum = self.recent_success_rate - self.long_term_success_rate
+        if self.policy is not None:
+            try:
+                self.policy.adjust_for_momentum(self.momentum)
+            except Exception:
+                self.logger.exception("momentum policy adjustment failed")
 
     # ------------------------------------------------------------------
     def preemptive_fix_high_risk_modules(self, limit: int = 5) -> None:
@@ -1291,6 +1316,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 self.logger.exception("patch score persistence failed")
         except Exception:
             self.logger.exception("audit trail logging failed")
+        finally:
+            self._update_success_metrics(result)
 
     # ------------------------------------------------------------------
     def analyse_and_fix(
