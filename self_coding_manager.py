@@ -307,9 +307,14 @@ class SelfCodingManager:
                             sim = 0.0
                         if sim > best:
                             best = sim
-                    threshold = getattr(
-                        self.engine, "failure_similarity_threshold", self.skip_similarity or 0.95
-                    )
+                    threshold = getattr(self.engine, "failure_similarity_threshold", None)
+                    if threshold is None and self.failure_store is not None:
+                        try:
+                            threshold = self.failure_store.adaptive_threshold()
+                        except Exception:
+                            threshold = None
+                    if threshold is None:
+                        threshold = self.skip_similarity or 0.95
                     if self.skip_similarity is not None:
                         threshold = max(threshold, self.skip_similarity)
                     if best >= threshold:

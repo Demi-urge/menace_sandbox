@@ -6,6 +6,7 @@ import json
 import os
 from dataclasses import asdict
 from pathlib import Path
+from statistics import mean, pstdev
 from typing import Any, Dict, List
 
 from failure_fingerprint import FailureFingerprint
@@ -59,6 +60,7 @@ class FailureFingerprintStore:
         self.compact_interval = compact_interval or 0
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, FailureFingerprint] = {}
+        self._similarity_history: List[float] = []
         if self.path.exists():
             with self.path.open("r", encoding="utf-8") as fh:
                 for line in fh:
@@ -120,6 +122,9 @@ class FailureFingerprintStore:
                 best_sim = sim
                 best_id = cid
 
+        if best_sim >= 0:
+            self._similarity_history.append(best_sim)
+
         thresh = self.similarity_threshold
         if best_id is None or best_sim < thresh:
             cid = self._next_cluster_id
@@ -148,6 +153,26 @@ class FailureFingerprintStore:
         for record_id, fp in self._cache.items():
             self._ensure_embedding(fp)
             self._assign_cluster(record_id, fp)
+
+    def similarity_stats(self, window: int = 50) -> tuple[float, float]:
+        """Return moving average and deviation of recent similarities."""
+
+        hist = self._similarity_history[-window:]
+        if not hist:
+            return 0.0, 0.0
+        if len(hist) == 1:
+            return hist[0], 0.0
+        avg = mean(hist)
+        dev = pstdev(hist)
+        return avg, dev
+
+    def adaptive_threshold(self, window: int = 50, multiplier: float = 1.0) -> float:
+        """Adaptive similarity threshold based on history."""
+
+        avg, dev = self.similarity_stats(window)
+        if avg == 0.0 and dev == 0.0:
+            return self.similarity_threshold
+        return avg + multiplier * dev
 
     # ----------------------------------------------------------------- public
     def add(self, fingerprint: FailureFingerprint) -> None:
