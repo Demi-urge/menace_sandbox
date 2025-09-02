@@ -14,11 +14,21 @@ class BaselineTracker:
     names on first update.
     """
 
-    def __init__(self, window: int = 10, metrics: Iterable[str] | None = None) -> None:
+    def __init__(
+        self,
+        window: int = 10,
+        metrics: Iterable[str] | None = None,
+        **initial: Iterable[float],
+    ) -> None:
         self.window = window
         self._history: Dict[str, Deque[float]] = {
             m: deque(maxlen=window) for m in (metrics or [])
         }
+        self._success_history: Deque[bool] = deque(maxlen=window)
+        for name, values in initial.items():
+            hist = self._history.setdefault(name, deque(maxlen=window))
+            for v in values:
+                hist.append(float(v))
 
     # ------------------------------------------------------------------
     def update(self, **metrics: float) -> None:
@@ -42,7 +52,9 @@ class BaselineTracker:
                 delta_hist = self._history.setdefault(
                     "roi_delta", deque(maxlen=self.window)
                 )
-                delta_hist.append(float(value) - prev)
+                delta = float(value) - prev
+                delta_hist.append(delta)
+                self._success_history.append(delta > 0)
             elif name == "entropy":
                 avg = sum(hist) / len(hist) if hist else 0.0
                 delta_hist = self._history.setdefault(
@@ -82,6 +94,26 @@ class BaselineTracker:
     def delta_history(self, metric: str) -> list[float]:
         """Return recorded deltas for *metric* if available."""
         return list(self._history.get(f"{metric}_delta", []))
+
+    # ------------------------------------------------------------------
+    @property
+    def success_count(self) -> int:
+        """Number of positive ROI deltas within the window."""
+        return sum(1 for s in self._success_history if s)
+
+    # ------------------------------------------------------------------
+    @property
+    def cycle_count(self) -> int:
+        """Total ROI cycles considered in the window."""
+        return len(self._success_history)
+
+    # ------------------------------------------------------------------
+    @property
+    def momentum(self) -> float:
+        """Recent success ratio normalised by window size."""
+        if not self._success_history:
+            return 0.0
+        return self.success_count / self.window
 
 
 # Shared tracker used across self-improvement modules

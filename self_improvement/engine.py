@@ -768,6 +768,7 @@ class SelfImprovementEngine:
         self.roi_group_history: dict[int, list[float]] = {}
         self.roi_delta_ema: float = 0.0
         self.success_history: deque[bool] = deque(maxlen=baseline_window)
+        self._last_momentum: float = 0.0
         self.urgency_tier: int = 0
         self._last_growth_type: str | None = None
         self._synergy_cache: dict | None = None
@@ -1451,7 +1452,9 @@ class SelfImprovementEngine:
         """Dynamic borderline ROI threshold based on baseline statistics."""
         base = self.baseline_tracker.get("roi")
         std = self.baseline_tracker.std("roi")
-        return base - self.borderline_dev_multiplier * std
+        momentum = self.baseline_tracker.momentum
+        scale = 1.0 + (0.5 - momentum)
+        return base - self.borderline_dev_multiplier * scale * std
 
     def _load_state(self) -> None:
         if not self.state_path or not self.state_path.exists():
@@ -1507,9 +1510,7 @@ class SelfImprovementEngine:
     @property
     def momentum_coefficient(self) -> float:
         """Return recent success ratio for scheduling momentum."""
-        if not self.success_history:
-            return 0.0
-        return sum(1 for s in self.success_history if s) / len(self.success_history)
+        return self.baseline_tracker.momentum
 
     # ------------------------------------------------------------------
     def _load_synergy_weights(self) -> None:
@@ -7198,13 +7199,20 @@ class SelfImprovementEngine:
             else:
                 self._last_growth_type = None
             momentum = self.momentum_coefficient
+            if momentum != self._last_momentum:
+                self.logger.info(
+                    "momentum update",
+                    extra=log_record(value=momentum, previous=self._last_momentum),
+                )
+                self._last_momentum = momentum
             current_energy *= 1 + momentum
             moving_avg = self.baseline_tracker.get("energy")
             std = self.baseline_tracker.std("energy")
             delta = current_energy - moving_avg
             self.baseline_tracker.update(energy=current_energy)
             self._save_state()
-            threshold = moving_avg - self.energy_threshold * std
+            scale = 1.0 + (0.5 - momentum)
+            threshold = moving_avg - self.energy_threshold * scale * std
             if current_energy < threshold and not self._cycle_running:
                 try:
                     await asyncio.to_thread(
