@@ -11,6 +11,8 @@ from collections import Counter
 import json
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 # Ensure this module is a single instance regardless of import path
 _ALIASES = (
     "metrics_exporter",
@@ -42,14 +44,18 @@ try:
             try:
                 _PROM_REGISTRY.unregister(existing)
             except Exception:
-                pass
+                logger.warning(
+                    "failed to unregister collector %s; removing manually",
+                    name,
+                    exc_info=True,
+                )
+                _PROM_REGISTRY._names_to_collectors.pop(name, None)
         return _PromGauge(name, documentation, labelnames=labelnames or (), **kw)
 
     CollectorRegistry = _PromCollectorRegistry  # type: ignore
     start_http_server = _start_http_server  # type: ignore
     _USING_STUB = False
 except Exception as exc:  # pragma: no cover - optional dependency missing
-    logger = logging.getLogger(__name__)
     logger.warning(
         "prometheus_client missing; using lightweight metrics server. "
         "Advanced features disabled: %s",
