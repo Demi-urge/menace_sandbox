@@ -392,6 +392,7 @@ from ..self_improvement_policy import (
 from ..pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 from ..env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
 from .dashboards import SynergyDashboard, load_synergy_history
+from . import metrics as _si_metrics
 
 
 from .learners import (
@@ -2835,23 +2836,21 @@ class SelfImprovementEngine:
         if getattr(self, "_force_rerun", False):
             self._force_rerun = False
             return True
-        if time.time() - self.last_run >= self.interval:
+        if time.time() - self.last_run < self.interval:
+            return False
+        roi_delta = getattr(self, "roi_delta_ema", 0.0)
+        entropy_delta = self._metric_delta("token_entropy")
+        success_momentum = self._metric_delta("success_rate")
+        tracker = getattr(self, "roi_tracker", None)
+        if (
+            roi_delta == 0.0
+            and entropy_delta == 0.0
+            and success_momentum == 0.0
+            and (tracker is None or not tracker.metrics_history.get("token_entropy"))
+        ):
             return True
-        if self.policy:
-            try:
-                if self.policy.score(self._policy_state()) > 0:
-                    return True
-            except Exception as exc:
-                self.logger.exception("policy scoring failed: %s", exc)
-        if self.pre_roi_bot:
-            try:
-                forecast = self.pre_roi_bot.predict_model_roi(self.bot_name, [])
-                if forecast.roi > self.pre_roi_bias:
-                    return True
-            except Exception as exc:
-                self.logger.exception("pre ROI forecast failed: %s", exc)
-        issues = self.diagnostics.diagnose()
-        return bool(issues)
+        score = (roi_delta - entropy_delta + success_momentum) / 3.0
+        return score > 0.0
 
     def _record_state(self) -> None:
         """Store metrics and discrepancies as research items."""
@@ -3301,14 +3300,24 @@ class SelfImprovementEngine:
                     patch_id, {"trigger": "optimize_self", "patch_id": patch_id}
                 )
             roi_delta = after_metric - before_metric
-            if tracker:
+            if tracker and hasattr(tracker, "update"):
                 try:
+                    token_metrics: dict[str, float] = {}
+                    file_path = _repo_path / module_rel
+                    stats, *_rest = _si_metrics._collect_metrics([file_path], _repo_path)
+                    info = stats.get(module_rel)
+                    if info:
+                        token_metrics = {
+                            "token_entropy": float(info.get("token_entropy", 0.0)),
+                            "token_diversity": float(info.get("token_diversity", 0.0)),
+                        }
                     tracker.update(
                         before_metric,
                         after_metric,
                         modules=[module_rel],
                         category=growth,
                         confidence=confidence,
+                        metrics=token_metrics or None,
                     )
                 except Exception:
                     self.logger.exception("roi tracker update failed")
@@ -6135,12 +6144,22 @@ class SelfImprovementEngine:
                         )
                     roi_delta = after_metric - before_metric
                     tracker = getattr(self, "roi_tracker", None)
-                    if tracker:
+                    if tracker and hasattr(tracker, "update"):
                         try:
+                            token_metrics: dict[str, float] = {}
+                            file_path = _repo_path / mod_path
+                            stats, *_rest = _si_metrics._collect_metrics([file_path], _repo_path)
+                            info = stats.get(mod_path.as_posix())
+                            if info:
+                                token_metrics = {
+                                    "token_entropy": float(info.get("token_entropy", 0.0)),
+                                    "token_diversity": float(info.get("token_diversity", 0.0)),
+                                }
                             tracker.update(
                                 before_metric,
                                 after_metric,
                                 modules=[mod_path.as_posix()],
+                                metrics=token_metrics or None,
                             )
                         except Exception:
                             self.logger.exception("roi tracker update failed")
