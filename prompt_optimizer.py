@@ -2,9 +2,11 @@
 
 This module analyses prompt experiment logs to discover which formatting
 styles yield the best outcomes. Logs are expected to be line delimited JSON
-containing at least ``module``, ``action``, ``prompt``, ``success`` and
-``roi`` fields. Additional optional fields such as ``coverage`` or
-``runtime_improvement`` can be used to weight ROI calculations.
+containing at least ``module``, ``action``, ``prompt`` (or ``prompt_text``),
+``success`` and ``roi`` fields. The ``prompt`` field may be a flat string or a
+structured object with ``system``/``user`` parts. Additional optional fields
+such as ``coverage`` or ``runtime_improvement`` can be used to weight ROI
+calculations.
 
 The optimiser groups prompts by structural features – tone, header set and
 example placement – and computes success rates as well as weighted ROI
@@ -239,13 +241,34 @@ class PromptOptimizer:
         """Aggregate statistics from all logs and persist them."""
 
         for entry in self._load_logs():
-            prompt = entry.get("prompt", "")
+            prompt_data = entry.get("prompt", "")
+            if isinstance(prompt_data, dict):
+                parts = [
+                    prompt_data.get("system", ""),
+                    *prompt_data.get("examples", []),
+                    prompt_data.get("user", ""),
+                ]
+                prompt = "\n".join([p for p in parts if p])
+            else:
+                prompt = str(prompt_data)
+            if not prompt and isinstance(entry.get("prompt_text"), str):
+                prompt = entry["prompt_text"]
             success = bool(entry.get("success"))
-            roi = float(entry.get("roi", 1.0))
+            roi_field = entry.get("roi", 0.0)
+            coverage_val = None
+            runtime_val = None
+            if isinstance(roi_field, dict):
+                roi = float(roi_field.get("roi_delta", 0.0))
+                coverage_val = roi_field.get("coverage")
+                runtime_val = roi_field.get("runtime_improvement")
+            else:
+                roi = float(roi_field)
+                coverage_val = entry.get("coverage")
+                runtime_val = entry.get("runtime_improvement")
             if self.weight_by == "coverage":
-                weight = float(entry.get("coverage", 1.0))
+                weight = float(coverage_val if coverage_val is not None else 1.0)
             elif self.weight_by == "runtime":
-                weight = float(entry.get("runtime_improvement", 1.0))
+                weight = float(runtime_val if runtime_val is not None else 1.0)
             else:
                 weight = 1.0
             module = entry.get("module", "unknown")
@@ -259,6 +282,7 @@ class PromptOptimizer:
                     isinstance(entry.get("messages"), list)
                     and any(m.get("role") == "system" for m in entry["messages"])
                 )
+                or (isinstance(prompt_data, dict) and prompt_data.get("system"))
                 or prompt.lstrip().lower().startswith("system:")
             )
             key = (
@@ -348,6 +372,7 @@ class PromptOptimizer:
             self._load_stats()
         return self.aggregate()
 
+
 DEFAULT_WEIGHTS_PATH = Path("prompt_format_weights.json")
 
 
@@ -417,4 +442,3 @@ def select_format() -> Dict[str, Any]:
 
     ranked = rank_formats()
     return ranked[0] if ranked else {}
-
