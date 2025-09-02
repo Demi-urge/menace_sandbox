@@ -1,8 +1,10 @@
-"""Dependency verification tests for the self-improvement module.
+"""Unit tests for :func:`self_improvement.init.verify_dependencies`.
 
-The module no longer performs automatic installations; dependencies must be
-installed ahead of time using ``make install-self-improvement-deps``.
+The verifier can optionally install missing dependencies when the
+``auto_install`` flag is enabled.  These tests ensure the default behaviour is
+non-installing and that opt-in installation behaves as expected.
 """
+
 import importlib
 import importlib.util
 import subprocess
@@ -21,7 +23,7 @@ def _load_module(name: str, path: Path):
     return module
 
 
-def _prepare_modules(*, missing: tuple[str, ...] = ()):  # pragma: no cover - setup helper
+def _prepare_modules(*, missing: tuple[str, ...] = ()):  # pragma: no cover - helper
     deps = [
         "quick_fix_engine",
         "sandbox_runner",
@@ -59,10 +61,10 @@ def test_verify_dependencies_does_not_attempt_install(monkeypatch):
         "menace.self_improvement.init", Path("self_improvement/init.py")
     )
 
-    def fail_pip(*args, **kwargs):
+    def fail_run(*args, **kwargs):
         raise AssertionError("pip install attempted")
 
-    monkeypatch.setattr(subprocess, "check_call", fail_pip)
+    monkeypatch.setattr(subprocess, "run", fail_run)
 
     calls = {"import": 0}
 
@@ -81,23 +83,66 @@ def test_verify_dependencies_does_not_attempt_install(monkeypatch):
     assert calls["import"] == 1
 
 
-def test_verify_dependencies_does_not_install_even_when_enabled(monkeypatch):
+def test_verify_dependencies_attempts_install_when_enabled(monkeypatch):
     _prepare_modules(missing=("quick_fix_engine",))
     init_mod = _load_module(
         "menace.self_improvement.init", Path("self_improvement/init.py")
     )
 
-    def fail_pip(*args, **kwargs):
-        raise AssertionError("pip install attempted")
+    cmds: list[list[str]] = []
 
-    monkeypatch.setattr(subprocess, "check_call", fail_pip)
-    init_mod.settings.auto_install_dependencies = True
-    init_mod.settings.menace_offline_install = False
+    def fake_run(cmd, check):
+        cmds.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
 
-    with pytest.raises(RuntimeError) as err:
-        init_mod.verify_dependencies()
+    monkeypatch.setattr(subprocess, "run", fake_run)
 
-    assert "quick_fix_engine" in str(err.value)
+    def fake_version(name: str) -> str:
+        versions = {
+            "quick_fix_engine": "1.1",
+            "sandbox_runner": "1.0",
+            "torch": "2.0",
+        }
+        return versions.get(name, "0")
+
+    monkeypatch.setattr(importlib.metadata, "version", fake_version)
+
+    calls = {"import": 0}
+
+    def fake_import(name, package=None):
+        if name == "quick_fix_engine" and calls["import"] == 0:
+            calls["import"] += 1
+            raise ModuleNotFoundError(name)
+        return sys.modules.setdefault(name, types.ModuleType(name))
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+
+    init_mod.verify_dependencies(auto_install=True)
+
+    assert cmds and "pip" in cmds[0][0]
+    assert calls["import"] == 1  # initial failure only; second import succeeds
+
+
+def test_verify_dependencies_install_failure_raises(monkeypatch):
+    _prepare_modules(missing=("quick_fix_engine",))
+    init_mod = _load_module(
+        "menace.self_improvement.init", Path("self_improvement/init.py")
+    )
+
+    def failing_run(cmd, check):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(subprocess, "run", failing_run)
+
+    def fake_import(name, package=None):
+        if name == "quick_fix_engine":
+            raise ModuleNotFoundError(name)
+        return sys.modules.setdefault(name, types.ModuleType(name))
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+
+    with pytest.raises(RuntimeError):
+        init_mod.verify_dependencies(auto_install=True)
 
 
 def test_verify_dependencies_reports_version_mismatch(monkeypatch):

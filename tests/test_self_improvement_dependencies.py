@@ -1,7 +1,8 @@
 """Integration tests for self-improvement dependency checks.
 
 Dependencies are expected to be installed separately via
-``make install-self-improvement-deps``; the verifier only reports problems.
+``make install-self-improvement-deps``; the verifier reports problems by
+default but can optionally install missing packages when enabled.
 """
 import importlib
 import importlib.util

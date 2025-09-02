@@ -1,8 +1,8 @@
 """Dependency verification tests for self-improvement helpers.
 
 These tests assume required packages are installed separately using
-``make install-self-improvement-deps``.  The runtime does not perform
-automatic installation.
+``make install-self-improvement-deps``.  Automatic installation is available
+but disabled for these tests.
 """
 import importlib
 import importlib.util
