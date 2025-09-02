@@ -386,3 +386,15 @@ def test_prompt_engine_uses_optimizer_preferences():
     assert engine.trained_structured_sections == ["overview"]
     assert engine.trained_example_placement == "start"
     assert opt.calls == 1
+
+
+def test_build_prompt_trims_final_text():
+    records = [_record(1.0, summary="good", tests_passed=True, ts=1)]
+    engine = PromptEngine(
+        patch_retriever=DummyRetriever(records),
+        token_threshold=5,
+        confidence_threshold=-1.0,
+    )
+    long_context = "word " * 100
+    prompt = engine.build_prompt("desc", context=long_context)
+    assert str(prompt).endswith("...")

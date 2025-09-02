@@ -122,7 +122,8 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - graceful degradation
     def record_patch_metadata(*_a: Any, **_k: Any) -> None:  # type: ignore
         return None
-from .prompt_engine import PromptEngine
+from .prompt_engine import PromptEngine, _ENCODER
+from .prompt_chunking import get_chunk_summaries
 from .prompt_memory_trainer import PromptMemoryTrainer
 try:
     from .prompt_optimizer import PromptOptimizer
@@ -147,6 +148,15 @@ _settings = SandboxSettings()
 VA_PROMPT_TEMPLATE = _settings.va_prompt_template
 VA_PROMPT_PREFIX = _settings.va_prompt_prefix
 VA_REPO_LAYOUT_LINES = _settings.va_repo_layout_lines
+
+# Reuse prompt encoder for token counting if available
+def _count_tokens(text: str) -> int:
+    if _ENCODER is not None:
+        try:
+            return len(_ENCODER.encode(text))
+        except Exception:
+            pass
+    return len(text.split())
 
 
 class SelfCodingEngine:
@@ -180,6 +190,7 @@ class SelfCodingEngine:
         prompt_optimizer: PromptOptimizer | None = None,
         prompt_evolution_memory: PromptEvolutionMemory | None = None,
         prompt_tone: str = "neutral",
+        token_threshold: int = 3500,
         **kwargs: Any,
     ) -> None:
         self.code_db = code_db
@@ -199,6 +210,7 @@ class SelfCodingEngine:
             except Exception:
                 self.prompt_memory = None
         self.prompt_tone = prompt_tone
+        self.token_threshold = token_threshold
         self.safety_monitor = safety_monitor
         if llm_client is None:
             try:
@@ -289,6 +301,7 @@ class SelfCodingEngine:
             tone=prompt_tone,
             trainer=self.prompt_memory,
             optimizer=self.prompt_optimizer,
+            token_threshold=token_threshold,
         )
         if prompt_evolution_memory is None:
             try:
@@ -593,6 +606,30 @@ class SelfCodingEngine:
             lines.append("...")
         return "\n".join(lines)
 
+    def _build_file_context(self, path: Path) -> str:
+        """Return file content or chunk summaries depending on size."""
+        try:
+            code = path.read_text(encoding="utf-8")
+        except Exception:
+            return ""
+        if _count_tokens(code) > self.token_threshold:
+            try:
+                chunks = get_chunk_summaries(
+                    path,
+                    getattr(self.prompt_engine, "max_tokens", 200),
+                )
+                summary = "\n".join(c.get("summary", "") for c in chunks)
+                if self.prompt_engine:
+                    summary = self.prompt_engine._trim_tokens(
+                        summary, self.token_threshold
+                    )
+                return summary
+            except Exception:
+                pass
+        if self.prompt_engine:
+            return self.prompt_engine._trim_tokens(code, self.token_threshold)
+        return code
+
     def _apply_prompt_style(self, action: str, module: str | None = None) -> None:
         if not self.prompt_engine:
             return
@@ -683,7 +720,9 @@ class SelfCodingEngine:
     ) -> str:
         """Create helper text by asking an LLM using snippet context and retrieval context."""
         snippets = self.suggest_snippets(description, limit=3)
-        context = "\n\n".join(s.code for s in snippets)
+        snippet_context = "\n\n".join(s.code for s in snippets)
+        file_context = self._build_file_context(path) if path else ""
+        context = "\n\n".join(p for p in (file_context, snippet_context) if p)
 
         def _fallback() -> str:
             """Return a minimal helper implementation."""

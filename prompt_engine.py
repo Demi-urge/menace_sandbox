@@ -134,6 +134,10 @@ class PromptEngine:
         prompts.
     max_tokens:
         Maximum number of tokens allowed for each snippet block.
+    token_threshold:
+        Maximum number of tokens permitted for the assembled prompt. Text
+        exceeding this limit is trimmed and long files are summarised when
+        included as context.
     success_header:
         Header inserted before successful examples. Defaults to
         ``"Given the following pattern:"``.
@@ -155,6 +159,7 @@ class PromptEngine:
     confidence_threshold: float = 0.3
     top_n: int = 5
     max_tokens: int = 200
+    token_threshold: int = 3500
     roi_weight: float = 1.0
     recency_weight: float = 0.1
     roi_tag_weights: Dict[str, float] = field(
@@ -745,6 +750,7 @@ class PromptEngine:
         if retry_trace:
             lines.extend(self._format_retry_trace(retry_trace))
         text = "\n".join(line for line in lines if line)
+        text = self._trim_tokens(text, self.token_threshold)
         prompt_obj = Prompt(
             system="",
             user=text,
