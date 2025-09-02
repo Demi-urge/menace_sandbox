@@ -25,6 +25,8 @@ import inspect
 import random
 import threading
 import shutil
+from collections import deque
+from statistics import mean, pstdev
 from pathlib import Path
 from functools import lru_cache
 from typing import Any, Callable
@@ -207,3 +209,41 @@ def _call_with_retries(
     assert last_exc is not None
     self_improvement_failure_total.labels(reason="call_retry_failure").inc()
     raise last_exc
+
+
+class MovingBaselineTracker:
+    """Track a moving average baseline of composite scores.
+
+    Parameters
+    ----------
+    window_size:
+        Number of recent scores to retain when computing the baseline.
+
+    Notes
+    -----
+    Scores are stored in ``composite_history`` and trimmed to ``window_size``.
+    Calling :meth:`update` appends a score and returns the current moving
+    average and population standard deviation of the window.
+    """
+
+    def __init__(self, window_size: int) -> None:
+        self.window_size = max(1, int(window_size))
+        self.composite_history: deque[float] = deque(maxlen=self.window_size)
+
+    def update(self, score: float) -> tuple[float, float]:
+        """Add ``score`` to history and return ``(avg, deviation)``."""
+
+        self.composite_history.append(float(score))
+        return self.stats()
+
+    def stats(self) -> tuple[float, float]:
+        """Return the current moving average and deviation."""
+
+        if not self.composite_history:
+            return 0.0, 0.0
+        avg = mean(self.composite_history)
+        if len(self.composite_history) > 1:
+            dev = pstdev(self.composite_history)
+        else:
+            dev = 0.0
+        return avg, dev

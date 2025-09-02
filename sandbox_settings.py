@@ -1763,10 +1763,15 @@ class SandboxSettings(BaseSettings):
     )
 
     # self debugger scoring configuration
-    score_threshold: float = Field(
-        0.5,
-        env="SCORE_THRESHOLD",
-        description="Minimum composite score required for patch acceptance.",
+    baseline_window: int = Field(
+        5,
+        env="BASELINE_WINDOW",
+        description="Number of recent scores used for moving average baseline.",
+    )
+    delta_margin: float = Field(
+        0.0,
+        env="DELTA_MARGIN",
+        description="Minimum positive delta over baseline required for patch acceptance.",
     )
     score_weights: tuple[float, float, float, float, float, float] = Field(
         (1.0, 1.0, 1.0, 1.0, 1.0, 1.0),
@@ -1774,10 +1779,16 @@ class SandboxSettings(BaseSettings):
         description="Weights for coverage, errors, ROI, complexity, synergy ROI and efficiency.",
     )
 
-    @field_validator("score_threshold")
-    def _check_score_threshold(cls, v: float) -> float:
+    @field_validator("baseline_window")
+    def _check_baseline_window(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("baseline_window must be a positive integer")
+        return v
+
+    @field_validator("delta_margin")
+    def _check_delta_margin(cls, v: float) -> float:
         if not 0 <= v <= 1:
-            raise ValueError("score_threshold must be between 0 and 1")
+            raise ValueError("delta_margin must be between 0 and 1")
         return v
 
     @field_validator(
