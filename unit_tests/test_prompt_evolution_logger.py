@@ -2,23 +2,12 @@ import json
 from pathlib import Path
 import types
 
+import json
+from pathlib import Path
+
 import pytest
 
-import sys
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-
-# Provide a lightweight stand-in for the heavy llm_interface module
-if "llm_interface" not in sys.modules:
-    class _Prompt:
-        def __init__(self, system: str = "", user: str = "", examples=None, **kwargs):
-            self.system = system
-            self.user = user
-            self.examples = examples or []
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-
-    sys.modules["llm_interface"] = types.SimpleNamespace(Prompt=_Prompt)
-
+from prompt_types import Prompt
 from prompt_evolution_logger import PromptEvolutionLogger
 
 
@@ -47,25 +36,9 @@ def test_log_prompt_records_success_and_failure(tmp_path: Path):
     failure = tmp_path / "failure.json"
     logger = PromptEvolutionLogger(success_path=success, failure_path=failure)
 
-    class P:
-        system = "sys"
-        user = "u"
-        examples = ["e"]
-
-    logger.log(
-        P(),
-        True,
-        {"out": "ok"},
-        {"roi": 1},
-        format_meta={"fmt": "a"},
-    )
-    logger.log(
-        P(),
-        False,
-        {"out": "bad"},
-        {"roi": -1},
-        format_meta={"fmt": "b"},
-    )
+    prompt = Prompt(system="sys", user="u", examples=["e"])
+    logger.log(prompt, True, {"out": "ok"}, {"roi": 1}, format_meta={"fmt": "a"})
+    logger.log(prompt, False, {"out": "bad"}, {"roi": -1}, format_meta={"fmt": "b"})
 
     s = read_lines(success)
     f = read_lines(failure)
