@@ -91,6 +91,7 @@ class SynergyDashboard:
         exporter_port: int = 8003,
         refresh_interval: float = 5.0,
         max_history: int | None = None,
+        metrics_timeout: float = 1.0,
     ) -> None:
         from flask import Flask, jsonify  # type: ignore
 
@@ -101,6 +102,7 @@ class SynergyDashboard:
         self.exporter_port = exporter_port
         self.refresh_interval = float(refresh_interval)
         self.max_history = max_history
+        self.metrics_timeout = float(metrics_timeout)
         self._history: list[dict[str, float]] = []
         self._last_metrics: dict[str, float] = {}
         self._stop = threading.Event()
@@ -138,11 +140,15 @@ class SynergyDashboard:
         return metrics
 
     def _fetch_exporter_metrics(self) -> dict[str, float]:
-        import requests  # type: ignore
+        try:
+            import requests  # type: ignore
+        except ImportError:  # pragma: no cover - missing dependency
+            self.logger.warning("requests package missing; cannot fetch metrics")
+            return dict(self._last_metrics) if self._last_metrics else {}
 
         url = f"http://{self.exporter_host}:{self.exporter_port}/metrics"
         try:
-            resp = requests.get(url, timeout=1.0)
+            resp = requests.get(url, timeout=self.metrics_timeout)
             if resp.status_code != 200:
                 raise RuntimeError(f"status {resp.status_code}")
             metrics = self._parse_metrics(resp.text)
@@ -151,7 +157,7 @@ class SynergyDashboard:
             return metrics
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.warning("failed to fetch metrics from %s: %s", url, exc)
-            return dict(self._last_metrics)
+            return dict(self._last_metrics) if self._last_metrics else {}
 
     def _update_loop(self) -> None:
         while not self._stop.is_set():
