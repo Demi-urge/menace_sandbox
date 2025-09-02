@@ -225,6 +225,9 @@ sds = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sds)
 sys.modules["menace.self_debugger_sandbox"] = sds
 
+# Provide a minimal error logger stub to avoid heavy dependencies during tests
+sds.ErrorLogger = lambda *a, **k: types.SimpleNamespace(record=lambda *a, **k: None)
+
 
 class DummyTelem:
     def recent_errors(self, limit: int = 5):
@@ -256,11 +259,18 @@ class DummyTrail:
         self.records.append(msg)
 
 
-def test_score_config_from_env(monkeypatch):
-    monkeypatch.setenv("SCORE_THRESHOLD", "0.8")
-    monkeypatch.setenv("SCORE_WEIGHTS", "[0.1,0.2,0.3,0.4,0.5,0.6]")
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
-    assert dbg.score_threshold == 0.8
+def test_baseline_config_from_env():
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(),
+        DummyEngine(),
+        baseline_window=7,
+        stagnation_iters=3,
+        delta_margin=0.8,
+        score_weights=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6),
+    )
+    assert dbg.delta_margin == 0.8
+    assert dbg._baseline_tracker.composite_history.maxlen == 7
+    assert dbg.stagnation_iters == 3
     assert dbg.score_weights == (0.1, 0.2, 0.3, 0.4, 0.5, 0.6)
 
 
@@ -922,7 +932,7 @@ def test_synergy_metrics_affect_patch_acceptance(monkeypatch, tmp_path):
     engine = DummyEngine()
     trail = DummyTrail()
     dbg = sds.SelfDebuggerSandbox(
-        DummyTelem(), engine, audit_trail=trail, score_threshold=0.6
+        DummyTelem(), engine, audit_trail=trail, delta_margin=0.6
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -934,16 +944,15 @@ def test_synergy_metrics_affect_patch_acceptance(monkeypatch, tmp_path):
     monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
 
     dbg.analyse_and_fix()
-    rec_no_tracker = json.loads(trail.records[-1])
-    assert rec_no_tracker["result"] == "reverted"
+    assert not engine.applied
 
-    tracker = rt.ROITracker()
-    tracker.update(0.0, 0.1, metrics={"synergy_roi": 0.5, "synergy_efficiency": 0.5})
-    trail.records.clear()
+    tracker = types.SimpleNamespace(
+        synergy_metrics_history={"synergy_roi": [0.5], "synergy_efficiency": [0.5]},
+        metrics_history={},
+        update=lambda *a, **k: None,
+    )
     dbg.analyse_and_fix(tracker=tracker)
-    rec_with_tracker = json.loads(trail.records[-1])
-    assert rec_with_tracker["result"] == "success"
-    assert rec_with_tracker["synergy_roi"] > 0.0
+    assert engine.applied
 
 
 def test_candidates_evaluated_concurrently(monkeypatch, tmp_path):

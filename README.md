@@ -1096,8 +1096,14 @@ Delete the file to force the sandbox to run again. The sandbox copies
 ``improvement_policy.pkl`` and ``patch_history.db`` from ``SANDBOX_DATA_DIR``
 before starting and writes the updated versions back when finishing so the
 learning state persists between runs.
-Sandbox execution helpers live in ``sandbox_runner.py`` with the main entry point
-``_run_sandbox`` used by ``menace_master.py``. When importing
+The sandbox evaluates patches against a dynamic baseline rather than a fixed
+score threshold. Recent composite scores are tracked in a moving window and a
+patch is accepted only when its score exceeds the baseline by at least
+``DELTA_MARGIN``. The window length, stagnation tolerance and margin are
+configured via ``BASELINE_WINDOW``, ``STAGNATION_ITERS`` and ``DELTA_MARGIN`` in
+``sandbox_settings.py``.
+Sandbox execution helpers live in ``sandbox_runner.py`` with the main entry
+point ``_run_sandbox`` used by ``menace_master.py``. When importing
 ``sandbox_runner.environment`` directly, call ``register_signal_handlers()`` to
 clean up pooled containers on ``Ctrl+C`` or ``SIGTERM``.
 

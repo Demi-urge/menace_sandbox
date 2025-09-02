@@ -1775,6 +1775,14 @@ class SandboxSettings(BaseSettings):
         env="BASELINE_WINDOW",
         description="Number of recent scores used for moving average baseline.",
     )
+    stagnation_iters: int = Field(
+        10,
+        env="STAGNATION_ITERS",
+        description=(
+            "Iterations with no improvement before the baseline resets to the "
+            "current average."
+        ),
+    )
     delta_margin: float = Field(
         0.0,
         env="DELTA_MARGIN",
@@ -1786,10 +1794,10 @@ class SandboxSettings(BaseSettings):
         description="Weights for coverage, errors, ROI, complexity, synergy ROI and efficiency.",
     )
 
-    @field_validator("baseline_window")
-    def _check_baseline_window(cls, v: int) -> int:
+    @field_validator("baseline_window", "stagnation_iters")
+    def _check_positive_int(cls, v: int, info: Any) -> int:
         if v <= 0:
-            raise ValueError("baseline_window must be a positive integer")
+            raise ValueError(f"{info.field_name} must be a positive integer")
         return v
 
     @field_validator("delta_margin")

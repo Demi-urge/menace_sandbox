@@ -50,7 +50,8 @@ try:
 except Exception:  # pragma: no cover - test fallback
     class MovingBaselineTracker:
         def __init__(self, window_size: int) -> None:
-            self.composite_history = deque(maxlen=int(window_size))
+            self.window_size = int(window_size)
+            self.composite_history = deque(maxlen=self.window_size)
 
         def update(self, score: float) -> tuple[float, float]:
             self.composite_history.append(float(score))
@@ -125,6 +126,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     weight_update_interval:
         Minimum seconds between score weight recalculations. Can also be set
         via the ``WEIGHT_UPDATE_INTERVAL`` environment variable.
+    baseline_window:
+        Number of recent composite scores used when computing the dynamic
+        baseline.
+    stagnation_iters:
+        Iterations without improvement before the baseline resets to the
+        current average.
+    delta_margin:
+        Minimum positive delta over the moving baseline required for patch
+        acceptance.
     """
 
     def __init__(
@@ -136,14 +146,14 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         state_getter: Callable[[], tuple[int, ...]] | None = None,
         error_predictor: ErrorClusterPredictor | None = None,
         *,
-        score_threshold: float | None = None,
-        merge_threshold: float | None = None,
         score_weights: tuple[float, float, float, float, float, float] | None = None,
         flakiness_runs: int | None = None,
         smoothing_factor: float = 0.5,
         weight_update_interval: float | None = None,
         baseline_window: int | None = None,
+        stagnation_iters: int | None = None,
         delta_margin: float | None = None,
+        merge_threshold: float | None = None,
         settings: SandboxSettings | None = None,
     ) -> None:
         super().__init__(telemetry_db, engine)
@@ -155,28 +165,33 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._settings = settings or SandboxSettings()
         if baseline_window is None:
             baseline_window = getattr(self._settings, "baseline_window", 5)
+        if stagnation_iters is None:
+            stagnation_iters = getattr(self._settings, "stagnation_iters", 10)
         if delta_margin is None:
-            if score_threshold is not None:
-                delta_margin = score_threshold
-            else:
-                delta_margin = getattr(self._settings, "delta_margin", 0.0)
-        if score_threshold is None:
-            score_threshold = getattr(self._settings, "score_threshold", 0.0)
+            delta_margin = getattr(self._settings, "delta_margin", 0.0)
         if score_weights is None:
-            score_weights = tuple(self._settings.score_weights)
+            score_weights = tuple(
+                getattr(
+                    self._settings,
+                    "score_weights",
+                    (1.0, 1.0, 1.0, 1.0, 1.0, 1.0),
+                )
+            )
         if merge_threshold is None:
-            merge_threshold = score_threshold
-        self.score_threshold = float(score_threshold)
+            merge_threshold = delta_margin
         self.delta_margin = float(delta_margin)
         self.merge_threshold = float(merge_threshold)
         self.score_weights = tuple(score_weights)
+        self.stagnation_iters = int(stagnation_iters)
         self._baseline_tracker = MovingBaselineTracker(int(baseline_window))
         if flakiness_runs is None:
-            flakiness_runs = self._settings.flakiness_runs
+            flakiness_runs = getattr(self._settings, "flakiness_runs", 1)
         self.flakiness_runs = max(1, int(flakiness_runs))
         self.smoothing_factor = max(0.0, min(1.0, float(smoothing_factor))) or 0.5
         if weight_update_interval is None:
-            weight_update_interval = self._settings.weight_update_interval
+            weight_update_interval = getattr(
+                self._settings, "weight_update_interval", 0.0
+            )
         self._last_weights_update = 0.0
         self._weight_update_interval = max(0.0, float(weight_update_interval))
         self._score_db: PatchHistoryDB | None = None
@@ -258,11 +273,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         except Exception:
             self.logger.exception("score history init failed")
             self._history_conn = None
-        self._test_timeout = float(self._settings.test_run_timeout)
-        self._test_retries = int(self._settings.test_run_retries)
+        self._test_timeout = float(getattr(self._settings, "test_run_timeout", 1))
+        self._test_retries = int(getattr(self._settings, "test_run_retries", 0))
         self._score_backend = None
         backend_spec = (
-            self._settings.patch_score_backend or self._settings.patch_score_backend_url
+            getattr(self._settings, "patch_score_backend", None)
+            or getattr(self._settings, "patch_score_backend_url", None)
         )
         if backend_spec:
             try:
