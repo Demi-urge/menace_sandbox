@@ -7,6 +7,7 @@ import time
 import logging
 from typing import Optional
 from threading import Event, Thread
+from contextlib import ExitStack
 
 from pydantic import ValidationError
 
@@ -78,7 +79,6 @@ def main(
     coord = SelfLearningCoordinator(
         bus, learning_engine=le, unified_engine=ule, action_engine=ale
     )
-    coord.start()
 
     # Determine the effective prune interval from argument or configuration.
     if prune_interval is None:
@@ -86,9 +86,9 @@ def main(
     if prune_interval <= 0:
         raise ValueError("prune_interval must be positive")
 
-    def _prune_task() -> None:
+    def _prune_task(evt: Event | None) -> None:
         last = 0
-        while stop_event is None or not stop_event.is_set():
+        while evt is None or not evt.is_set():
             try:
                 cur = gpt_mem.conn.execute("SELECT COUNT(*) FROM interactions")
                 count = cur.fetchone()[0]
@@ -103,27 +103,30 @@ def main(
                 last = count
             time.sleep(1)
 
-    prune_thread = Thread(target=_prune_task, daemon=True)
-    prune_thread.start()
+    with ExitStack() as stack:
+        coord.start()
+        stack.callback(coord.stop)
 
-    try:
-        while stop_event is None or not stop_event.is_set():
-            time.sleep(1)
-    except KeyboardInterrupt:
-        if stop_event is not None:
-            stop_event.set()
-    finally:
-        coord.stop()
-        prune_thread.join(timeout=0)
-        if persist_progress:
-            try:
-                results = coord.evaluation_manager.evaluate_all()
-                import json
+        prune_thread = Thread(target=_prune_task, args=(stop_event,), daemon=True)
+        prune_thread.start()
+        stack.callback(lambda: prune_thread.join())
 
-                with open(persist_progress, "w", encoding="utf-8") as fh:
-                    json.dump(results, fh)
-            except Exception as exc:  # pragma: no cover - persistence failures
-                logger.exception("failed to persist progress: %s", exc)
+        try:
+            while stop_event is None or not stop_event.is_set():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            if stop_event is not None:
+                stop_event.set()
+
+    if persist_progress:
+        try:
+            results = coord.evaluation_manager.evaluate_all()
+            import json
+
+            with open(persist_progress, "w", encoding="utf-8") as fh:
+                json.dump(results, fh)
+        except Exception as exc:  # pragma: no cover - persistence failures
+            logger.exception("failed to persist progress: %s", exc)
 
 
 __all__ = ["main"]
@@ -168,7 +171,7 @@ def run_background(
     def stop() -> None:
         stop_event.set()
         if thread is not None:
-            thread.join(timeout=0)
+            thread.join()
 
     return start, stop
 
