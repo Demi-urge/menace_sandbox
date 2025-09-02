@@ -174,6 +174,10 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
         prompt_chunk_token_threshold=50,
         chunk_summary_cache_dir=tmp_path,
     )
+    engine.formal_verifier = None
+    engine.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
+    engine.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
+    engine.formal_verifier = None
 
     monkeypatch.setattr(engine, "suggest_snippets", lambda desc, limit=3: [])
     monkeypatch.setattr(engine, "_get_repo_layout", lambda lines: "")
@@ -249,3 +253,55 @@ def test_generate_helper_resummarizes_cached_chunks(monkeypatch, tmp_path):
     engine.generate_helper("do something", path=target)
 
     assert calls["n"] == 4  # two chunks per call, called twice
+
+
+def test_patch_file_uses_chunk_summaries(monkeypatch, tmp_path):
+    monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
+
+    def fake_split(code: str, limit: int):
+        return [
+            CodeChunk(1, 2, "code1", "h1", 5),
+            CodeChunk(3, 4, "code2", "h2", 5),
+        ]
+
+    monkeypatch.setattr(sce, "split_into_chunks", fake_split)
+    monkeypatch.setattr(sce, "summarize_code", lambda text, llm: f"sum:{text}")
+
+    captured: dict[str, object] = {}
+
+    class DummyPrompt:
+        def __init__(self, text: str = "") -> None:
+            self.text = text
+            self.system = ""
+            self.examples: list[str] = []
+
+    class DummyLLM:
+        gpt_memory = None
+
+        def generate(self, prompt):
+            return types.SimpleNamespace(text="")
+
+    engine = sce.SelfCodingEngine(
+        object(),
+        object(),
+        llm_client=DummyLLM(),
+        prompt_chunk_token_threshold=50,
+        chunk_summary_cache_dir=tmp_path,
+    )
+    engine.formal_verifier = None
+    engine.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
+
+    def fake_build_prompt(goal, *, context=None, **kwargs):
+        captured["context"] = context
+        return DummyPrompt()
+
+    monkeypatch.setattr(engine.prompt_engine, "build_prompt", fake_build_prompt)
+
+    target = tmp_path / "big.py"
+    target.write_text("print('hi')\n")
+
+    engine.patch_file(target, "desc")
+
+    assert "sum:code1" in captured["context"]
+    assert "sum:code2" in captured["context"]
+    assert "print('hi')" not in captured["context"]

@@ -8,7 +8,8 @@ sys.modules.setdefault("gpt_memory", types.SimpleNamespace(GPTMemoryManager=obje
 sys.modules.setdefault("code_database", types.SimpleNamespace(PatchHistoryDB=object))
 
 from prompt_engine import PromptEngine  # noqa: E402
-import chunking as pc  # noqa: E402
+import prompt_engine as pe  # noqa: E402
+import chunk_summarizer as cs  # noqa: E402
 
 
 class DummyRetriever:
@@ -19,19 +20,26 @@ class DummyRetriever:
         return self.records
 
 
-def test_prompt_engine_uses_file_summaries_when_limit_exceeded(tmp_path, monkeypatch):
-    file = tmp_path / "big.py"
+def test_prompt_engine_auto_summarises_when_limit_exceeded(monkeypatch):
     code = "def big():\n" + "    x = 0\n" * 2000
-    file.write_text(code)
 
-    summaries = [{"summary": "sumA"}, {"summary": "sumB"}]
-    called: list[tuple[Path, int]] = []
+    def fake_split(text: str, limit: int):
+        Chunk = types.SimpleNamespace
+        return [
+            Chunk(text="chunkA", start_line=1, end_line=1, hash="h1", token_count=10),
+            Chunk(text="chunkB", start_line=2, end_line=2, hash="h2", token_count=10),
+        ]
 
-    def fake_get_chunk_summaries(path: Path, limit: int):
-        called.append((path, limit))
-        return summaries
+    monkeypatch.setattr(pe, "split_into_chunks", fake_split)
 
-    monkeypatch.setattr(pc, "get_chunk_summaries", fake_get_chunk_summaries)
+    calls: list[str] = []
+
+    def fake_summarize(text: str, llm: object) -> str:
+        calls.append(text)
+        return f"sum:{text}"
+
+    monkeypatch.setattr(cs, "summarize_code", fake_summarize)
+    monkeypatch.setattr(pe, "summarize_code", fake_summarize)
 
     records = [{"score": 0.9, "metadata": {"summary": "irrelevant", "tests_passed": True}}]
     engine = PromptEngine(
@@ -40,15 +48,10 @@ def test_prompt_engine_uses_file_summaries_when_limit_exceeded(tmp_path, monkeyp
         confidence_threshold=-1.0,
         token_threshold=50,
         chunk_token_threshold=20,
+        llm=object(),
     )
 
-    if pc._count_tokens(code) > engine.token_threshold:
-        chunks = pc.get_chunk_summaries(file, engine.chunk_token_threshold)
-        ctx = engine._trim_tokens("\n".join(c["summary"] for c in chunks), engine.token_threshold)
-    else:
-        ctx = code
-
-    prompt = engine.build_prompt("do something", context=ctx)
-    assert called
-    assert "sumA" in prompt and "sumB" in prompt
+    prompt = engine.build_prompt("do something", context=code)
+    assert calls == ["chunkA", "chunkB"]
+    assert "sum:chunkA" in prompt and "sum:chunkB" in prompt
     assert "x = 0" not in prompt

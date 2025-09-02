@@ -125,7 +125,8 @@ except Exception:  # pragma: no cover - graceful degradation
         return None
 from .prompt_engine import PromptEngine, _ENCODER
 from .prompt_memory_trainer import PromptMemoryTrainer
-from chunking import summarize_code, split_into_chunks
+from chunking import split_into_chunks
+from chunk_summarizer import summarize_code
 from chunk_summary_cache import ChunkSummaryCache
 try:
     from .prompt_optimizer import PromptOptimizer
@@ -333,6 +334,7 @@ class SelfCodingEngine:
             token_threshold=token_threshold,
             chunk_token_threshold=self.chunk_token_threshold,
             chunk_summary_cache_dir=self.chunk_summary_cache_dir,
+            llm=self.llm_client,
         )
         if prompt_evolution_memory is None:
             try:
