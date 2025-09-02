@@ -52,6 +52,7 @@ class ROISettings(BaseModel):
     entropy_ceiling_consecutive: int | None = None
     baseline_window: int = 5
     deviation_tolerance: float = 0.0
+    stagnation_cycles: int = 3
 
     @field_validator(
         "threshold",
@@ -76,6 +77,12 @@ class ROISettings(BaseModel):
     def _check_positive(cls, v: int | None, info: Any) -> int | None:
         if v is not None and v <= 0:
             raise ValueError(f"{info.field_name} must be a positive integer")
+        return v
+
+    @field_validator("stagnation_cycles")
+    def _check_stagnation(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("stagnation_cycles must be a positive integer")
         return v
 
 
@@ -315,6 +322,12 @@ class SandboxSettings(BaseSettings):
     def _roi_baseline_window_positive(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("roi_baseline_window must be positive")
+        return v
+
+    @field_validator("roi_stagnation_cycles")
+    def _roi_stagnation_cycles_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("roi_stagnation_cycles must be positive")
         return v
 
     @field_validator(
@@ -1522,6 +1535,7 @@ class SandboxSettings(BaseSettings):
     roi_ema_alpha: float = Field(0.1, env="ROI_EMA_ALPHA")
     roi_compounding_weight: float = Field(1.0, env="ROI_COMPOUNDING_WEIGHT")
     roi_baseline_window: int = Field(5, env="ROI_BASELINE_WINDOW")
+    roi_stagnation_cycles: int = Field(3, env="ROI_STAGNATION_CYCLES")
     sandbox_score_db: str = Field("score_history.db", env="SANDBOX_SCORE_DB")
     synergy_weights_lr: float = Field(
         0.1,
@@ -1921,6 +1935,7 @@ class SandboxSettings(BaseSettings):
             ema_alpha=self.roi_ema_alpha,
             compounding_weight=self.roi_compounding_weight,
             baseline_window=self.roi_baseline_window,
+            stagnation_cycles=self.roi_stagnation_cycles,
             min_integration_roi=self.min_integration_roi,
             entropy_threshold=self.entropy_threshold,
             entropy_plateau_threshold=self.entropy_plateau_threshold,

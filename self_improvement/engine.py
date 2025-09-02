@@ -808,6 +808,8 @@ class SelfImprovementEngine:
         self.success_history: deque[bool] = deque(maxlen=baseline_window)
         self._last_momentum: float = 0.0
         self.urgency_tier: int = 0
+        self.stagnation_cycles: int = getattr(settings.roi, "stagnation_cycles", 3)
+        self._stagnation_streak: int = 0
         self._last_growth_type: str | None = None
         self._synergy_cache: dict | None = None
         self.alignment_flagger = HumanAlignmentFlagger()
@@ -1943,27 +1945,41 @@ class SelfImprovementEngine:
                 self.logger.exception("failed to dispatch ROI chain alert")
 
     # ------------------------------------------------------------------
-    def _check_roi_stagnation(self, min_window: int = 3) -> None:
-        """Escalate urgency when recent ROI deltas are non-positive."""
+    def _check_roi_stagnation(self) -> None:
+        """Escalate urgency when ROI fails to improve over consecutive cycles."""
 
         deltas = self.baseline_tracker.delta_history("roi")
-        if len(deltas) >= min_window and all(d <= 0 for d in deltas[-min_window:]):
-            self.urgency_tier += 1
-            self.logger.warning(
-                "ROI momentum non-positive; increasing urgency tier",
-                extra=log_record(tier=self.urgency_tier, window=deltas[-min_window:]),
-            )
-            try:
-                dispatch_alert(
-                    "roi_negative_trend",
-                    2,
+        if not deltas:
+            return
+        last_delta = deltas[-1]
+        if last_delta <= 0:
+            self._stagnation_streak += 1
+            if self._stagnation_streak >= self.stagnation_cycles:
+                self.urgency_tier += 1
+                self.logger.warning(
                     "ROI momentum non-positive; increasing urgency tier",
-                    {"tier": self.urgency_tier, "window": deltas[-min_window:]},
+                    extra=log_record(
+                        tier=self.urgency_tier, streak=self._stagnation_streak
+                    ),
                 )
-            except Exception:
-                self.logger.exception("failed to dispatch ROI trend alert")
-        elif self.urgency_tier > 0 and deltas:
-            if deltas[-1] > self.urgency_recovery_threshold:
+                try:
+                    dispatch_alert(
+                        "roi_negative_trend",
+                        2,
+                        "ROI momentum non-positive; increasing urgency tier",
+                        {
+                            "tier": self.urgency_tier,
+                            "streak": self._stagnation_streak,
+                        },
+                    )
+                except Exception:
+                    self.logger.exception("failed to dispatch ROI trend alert")
+        else:
+            self._stagnation_streak = 0
+            if (
+                self.urgency_tier > 0
+                and last_delta > self.urgency_recovery_threshold
+            ):
                 self.urgency_tier = 0
 
     # ------------------------------------------------------------------
