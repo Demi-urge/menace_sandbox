@@ -73,6 +73,7 @@ _setmod(
             va_prompt_prefix="",
             va_repo_layout_lines=0,
             prompt_chunk_token_threshold=20,
+            chunk_summary_cache_dir="cache",
             prompt_chunk_cache_dir="cache",
             audit_log_path="audit.log",
             audit_privkey=None,
@@ -106,7 +107,7 @@ def _setup_engine(tmp_path, monkeypatch):
         object(),
         llm_client=DummyLLM(),
         prompt_chunk_token_threshold=50,
-        prompt_chunk_cache_dir=tmp_path,
+        chunk_summary_cache_dir=tmp_path,
     )
     engine.data_bot = None
     engine.trend_predictor = None

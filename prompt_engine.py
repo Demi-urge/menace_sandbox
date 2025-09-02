@@ -166,8 +166,8 @@ class PromptEngine:
         if _SETTINGS
         else 3500
     )
-    prompt_chunk_cache_dir: Path = field(
-        default_factory=lambda: Path(_SETTINGS.prompt_chunk_cache_dir)
+    chunk_summary_cache_dir: Path = field(
+        default_factory=lambda: Path(_SETTINGS.chunk_summary_cache_dir)
         if _SETTINGS
         else Path("chunk_summary_cache")
     )
@@ -218,6 +218,17 @@ class PromptEngine:
     _optimizer_counter: int = field(default=0, init=False)
     _optimizer_applied: bool = field(default=False, init=False)
 
+    @property
+    def prompt_chunk_cache_dir(self) -> Path:  # pragma: no cover - backward compat
+        """Alias for :attr:`chunk_summary_cache_dir`.
+
+        The prompt engine historically exposed ``prompt_chunk_cache_dir``.  The
+        attribute is retained for compatibility but proxies to the new
+        :attr:`chunk_summary_cache_dir` setting.
+        """
+
+        return self.chunk_summary_cache_dir
+
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
         if self.retriever is None:
             try:
@@ -259,8 +270,8 @@ class PromptEngine:
         try:
             import prompt_chunking as _pc
 
-            self.prompt_chunk_cache_dir = Path(self.prompt_chunk_cache_dir)
-            _pc.CACHE_DIR = self.prompt_chunk_cache_dir
+            self.chunk_summary_cache_dir = Path(self.chunk_summary_cache_dir)
+            _pc.CACHE_DIR = self.chunk_summary_cache_dir
         except Exception:
             pass
 
