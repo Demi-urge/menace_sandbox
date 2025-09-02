@@ -162,3 +162,30 @@ def test_verify_dependencies_reports_version_mismatch(monkeypatch):
         init_mod.verify_dependencies()
 
     assert "torch" in str(err.value)
+
+
+def test_logs_when_neurosales_metadata_missing(monkeypatch, caplog):
+    _prepare_modules()
+    sys.modules["neurosales"] = types.ModuleType("neurosales")
+    init_mod = _load_module(
+        "menace.self_improvement.init", Path("self_improvement/init.py")
+    )
+
+    def fake_version(name: str) -> str:
+        if name == "neurosales":
+            raise importlib.metadata.PackageNotFoundError(name)
+        versions = {
+            "quick_fix_engine": "1.0",
+            "sandbox_runner": "1.0",
+            "torch": "2.0",
+        }
+        return versions.get(name, "0")
+
+    monkeypatch.setattr(importlib.metadata, "version", fake_version)
+
+    with caplog.at_level("DEBUG"):
+        init_mod.verify_dependencies()
+
+    assert any(
+        "failed to read neurosales metadata" in rec.message for rec in caplog.records
+    )
