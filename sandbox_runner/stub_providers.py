@@ -84,13 +84,27 @@ def discover_stub_providers(settings: Any | None = None) -> List[StubProvider]:
     enabled = set(getattr(settings, "stub_providers", []) or [])
     disabled = set(getattr(settings, "disabled_stub_providers", []) or [])
 
+    eps = {ep.name: ep for ep in _iter_entry_points()}
     providers: List[StubProvider] = []
-    for ep in _iter_entry_points():
-        if enabled and ep.name not in enabled:
-            continue
-        if ep.name in disabled:
-            continue
-        func = _load_entry_point(ep)
-        if func:
+    if enabled:
+        missing = sorted(enabled - eps.keys())
+        if missing:
+            raise RuntimeError(f"stub providers not found: {missing}")
+        for name in enabled:
+            if name in disabled:
+                raise RuntimeError(f"stub provider {name} is disabled")
+            func = _load_entry_point(eps[name])
+            if func is None:
+                raise RuntimeError(f"stub provider {name} misconfigured")
             providers.append(func)
+    else:
+        for name, ep in eps.items():
+            if name in disabled:
+                continue
+            func = _load_entry_point(ep)
+            if func is None:
+                raise RuntimeError(f"stub provider {name} misconfigured")
+            providers.append(func)
+    if not providers:
+        raise RuntimeError("no stub providers discovered")
     return providers

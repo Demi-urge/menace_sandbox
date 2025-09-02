@@ -3,8 +3,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
-
 sys.modules.setdefault(
     "db_router",
     types.SimpleNamespace(GLOBAL_ROUTER=None, init_db_router=lambda *a, **k: None),
@@ -13,6 +11,7 @@ sys.modules.setdefault(
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from sandbox_runner import generative_stub_provider as gsp  # noqa: E402
+import pytest
 
 
 class _StubSettings:
@@ -51,10 +50,14 @@ def test_llm_client_used(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result == [{"a": 1}]
 
 
-def test_rule_based_when_no_model(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_history_fallback_when_no_model(monkeypatch: pytest.MonkeyPatch) -> None:
     _reset(monkeypatch)
     monkeypatch.delenv("SANDBOX_STUB_MODEL", raising=False)
-    sentinel = {"x": 1}
-    monkeypatch.setattr(gsp, "_rule_based_stub", lambda s, f: sentinel)
+
+    class HistDB:
+        def recent(self, n):
+            return [{"x": 1}]
+
+    monkeypatch.setattr(gsp, "_get_history_db", lambda: HistDB())
     result = gsp.generate_stubs([{}], {"target": None})
-    assert result == [sentinel]
+    assert result == [{"x": 1}]

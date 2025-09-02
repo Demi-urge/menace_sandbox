@@ -25,8 +25,6 @@ import random
 import threading
 from contextlib import AbstractAsyncContextManager
 from typing import get_origin, get_args, Union
-import ast
-import dataclasses
 from dataclasses import dataclass, field
 from filelock import FileLock, Timeout
 
@@ -249,122 +247,6 @@ async def _call_with_retry(
             delay = min(delay * 2, config.retry_max)
 
 
-def _rule_based_stub(stub: Dict[str, Any], func: Any | None) -> Dict[str, Any]:
-    """Fill missing fields using deterministic rules with type awareness."""
-
-    def _example_from_doc(doc: str, param_name: str) -> Any | None:
-        pattern = re.compile(
-            rf"{re.escape(param_name)}[^\n]*?e\.g\.[\s]*([^\n\.]+)", re.IGNORECASE
-        )
-        match = pattern.search(doc)
-        if not match:
-            return None
-        text = match.group(1).strip().rstrip(",;.")
-        try:
-            return ast.literal_eval(text)
-        except (ValueError, SyntaxError):
-            return text.strip("'\"")
-
-    def _value_from_annotation(annotation: Any, name: str) -> Any:
-        origin = get_origin(annotation)
-        if origin is None:
-            lname = name.lower()
-            if annotation in (int, "int"):
-                if any(t in lname for t in ["count", "num", "size", "len", "quantity"]):
-                    return 1
-                return 0
-            if annotation in (float, "float"):
-                if any(t in lname for t in ["ratio", "rate", "percent", "percentage"]):
-                    return 0.5
-                return float(
-                    1
-                    if any(
-                        t in lname for t in ["count", "num", "size", "len", "quantity"]
-                    )
-                    else 0
-                )
-            if annotation in (bool, "bool"):
-                return any(
-                    t in lname
-                    for t in ["is", "has", "can", "should", "enabled", "active"]
-                )
-            if annotation in (str, "str"):
-                if any(t in lname for t in ["name", "title", "id"]):
-                    return f"{lname}_example"
-                return f"{lname}_value"
-            if dataclasses.is_dataclass(annotation):
-                kwargs = {
-                    f.name: _value_from_annotation(f.type, f.name)
-                    for f in dataclasses.fields(annotation)
-                }
-                return annotation(**kwargs)
-            if inspect.isclass(annotation) and annotation not in (
-                int,
-                float,
-                bool,
-                str,
-            ):
-                try:
-                    sig = inspect.signature(annotation)
-                    kwargs: dict[str, Any] = {}
-                    for p_name, param in sig.parameters.items():
-                        if p_name == "self":
-                            continue
-                        if param.default is not inspect._empty:
-                            kwargs[p_name] = param.default
-                        else:
-                            kwargs[p_name] = _value_from_annotation(
-                                param.annotation, p_name
-                            )
-                    return annotation(**kwargs)
-                except (TypeError, ValueError) as exc:
-                    logger.debug("failed to instantiate %s: %s", annotation, exc)
-                    return None
-            return None
-        args = get_args(annotation)
-        if origin is list:
-            (arg,) = args or (Any,)
-            return [_value_from_annotation(arg, name)]
-        if origin is set:
-            (arg,) = args or (Any,)
-            return {_value_from_annotation(arg, name)}
-        if origin is tuple:
-            if len(args) == 2 and args[1] is Ellipsis:
-                return (_value_from_annotation(args[0], name),)
-            return tuple(_value_from_annotation(a, name) for a in args)
-        if origin is dict:
-            key_ann, val_ann = args or (str, Any)
-            key = _value_from_annotation(key_ann, f"{name}_key")
-            val = _value_from_annotation(val_ann, name)
-            return {key: val}
-        if origin is Union:
-            non_none = [a for a in args if a is not type(None)]
-            return _value_from_annotation(non_none[0], name) if non_none else None
-        return None
-
-    if func is None:
-        return dict(stub)
-    try:
-        sig = inspect.signature(func)
-        doc = inspect.getdoc(func) or ""
-    except (TypeError, ValueError) as exc:
-        logger.debug("signature inspection failed for %s: %s", func, exc)
-        return dict(stub)
-    result = dict(stub)
-    for name, param in sig.parameters.items():
-        if name in result and result[name] is not None:
-            continue
-        if param.default is not inspect._empty:
-            result[name] = param.default
-            continue
-        example = _example_from_doc(doc, name)
-        if example is not None:
-            result[name] = example
-            continue
-        result[name] = _value_from_annotation(param.annotation, name)
-    return result
-
-
 def _type_matches(value: Any, annotation: Any) -> bool:
     """Return True if *value* conforms to *annotation* (best effort)."""
     if annotation in (inspect._empty, Any):
@@ -406,6 +288,33 @@ def _type_matches(value: Any, annotation: Any) -> bool:
         return isinstance(value, set) and all(_type_matches(v, arg) for v in value)
     if origin is Union:
         return any(_type_matches(value, arg) for arg in get_args(annotation))
+    return True
+
+
+def _validate_stub_signature(stub: Dict[str, Any], func: Any) -> bool:
+    """Return True if ``stub`` matches the signature of ``func``."""
+    if func is None:
+        return True
+    try:
+        sig = inspect.signature(func)
+    except (TypeError, ValueError) as exc:
+        logger.debug("signature inspection failed for %s: %s", func, exc)
+        return True
+    params = [
+        (n, p)
+        for n, p in sig.parameters.items()
+        if p.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+    ]
+    for name, param in params:
+        if name not in stub:
+            return False
+        if not _type_matches(stub[name], param.annotation):
+            return False
     return True
 
 
@@ -873,6 +782,9 @@ async def async_generate_stubs(
             records = []
         if records:
             hist = _aggregate(records)
+            func = ctx.get("target")
+            if not _validate_stub_signature(hist, func):
+                raise RuntimeError("historical stub does not match target signature")
             return [dict(hist) for _ in range(max(1, len(stubs)))]
         return stubs
 
@@ -880,11 +792,31 @@ async def async_generate_stubs(
         gen = await _aload_generator()
     except ModelLoadError as exc:
         logger.error("stub generation unavailable: %s", exc)
+        try:
+            records = _get_history_db().recent(50)
+        except Exception as exc2:
+            logger.exception("failed to load input history", exc_info=exc2)
+            records = []
+        if records:
+            hist = _aggregate(records)
+            func = ctx.get("target")
+            if not _validate_stub_signature(hist, func):
+                raise RuntimeError("historical stub does not match target signature")
+            return [dict(hist) for _ in range(max(1, len(stubs)))]
         return stubs
     if gen is None:
-        func = ctx.get("target")
-        base = stubs or [{}]
-        return [_rule_based_stub(s, func) for s in base]
+        try:
+            records = _get_history_db().recent(50)
+        except Exception as exc:
+            logger.exception("failed to load input history", exc_info=exc)
+            records = []
+        if records:
+            hist = _aggregate(records)
+            func = ctx.get("target")
+            if not _validate_stub_signature(hist, func):
+                raise RuntimeError("historical stub does not match target signature")
+            return [dict(hist) for _ in range(max(1, len(stubs)))]
+        return stubs
 
     template: str = ctx.get(
         "prompt_template",
@@ -916,17 +848,22 @@ async def async_generate_stubs(
                     stub_key = json.dumps(cached, sort_keys=True, default=str)
                 except TypeError:
                     stub_key = repr(cached)
+        func = ctx.get("target")
         if cached is not None:
-            with _CACHE_LOCK:
-                stats = _TARGET_STATS.setdefault(name, Counter())
-                if stub_key is None:
-                    try:
-                        stub_key = json.dumps(cached, sort_keys=True, default=str)
-                    except TypeError:
-                        stub_key = repr(cached)
-                stats[stub_key] += 1
-            new_stubs.append(dict(cached))
-            continue
+            if not _validate_stub_signature(cached, func):
+                with _CACHE_LOCK:
+                    _CACHE.pop(key, None)
+            else:
+                with _CACHE_LOCK:
+                    stats = _TARGET_STATS.setdefault(name, Counter())
+                    if stub_key is None:
+                        try:
+                            stub_key = json.dumps(cached, sort_keys=True, default=str)
+                        except TypeError:
+                            stub_key = repr(cached)
+                    stats[stub_key] += 1
+                new_stubs.append(dict(cached))
+                continue
         args = ", ".join(f"{k}={v!r}" for k, v in stub.items())
         prompt = template.format(name=name, args=args)
 
@@ -943,28 +880,8 @@ async def async_generate_stubs(
                 data = json.loads(match.group(0))
                 if isinstance(data, dict):
                     func = ctx.get("target")
-                    params: List[Tuple[str, inspect.Parameter]] = []
-                    if func is not None:
-                        try:
-                            sig = inspect.signature(func)
-                            params = [
-                                (n, p)
-                                for n, p in sig.parameters.items()
-                                if p.kind
-                                in (
-                                    inspect.Parameter.POSITIONAL_ONLY,
-                                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                                    inspect.Parameter.KEYWORD_ONLY,
-                                )
-                            ]
-                        except (TypeError, ValueError) as exc:
-                            logger.debug("signature inspection failed for %s: %s", func, exc)
-                            params = []
-                    for p_name, param in params:
-                        if p_name not in data:
-                            raise ValueError("missing field")
-                        if not _type_matches(data[p_name], param.annotation):
-                            raise ValueError("type mismatch")
+                    if not _validate_stub_signature(data, func):
+                        raise ValueError("type mismatch")
                     with _CACHE_LOCK:
                         _CACHE[key] = data
                         try:
