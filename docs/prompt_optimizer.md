@@ -7,9 +7,9 @@ runtime improvements to suggest high-performing configurations.
 ## Failure Fingerprint Penalties
 
 Pass a path to `failure_fingerprints.jsonl` via the
-`failure_fingerprint_path` argument when constructing `PromptOptimizer`.
-During aggregation, each fingerprint entry's `prompt_text` is matched against
-the collected prompt statistics. A synthetic failure with negative ROI is
-applied for the corresponding configuration, reducing its overall score. This
-ensures prompts that frequently produce bad failure fingerprints rank lower in
-suggestions.
+`failure_fingerprints_path` argument when constructing `PromptOptimizer`.
+Fingerprints are grouped by their prompt text and counted. If the number of
+fingerprints associated with a prompt configuration exceeds the
+`fingerprint_threshold`, the optimiser reduces that configuration's recorded
+successes accordingly. This allows repeated failures to bias the success rate
+without needing corresponding log entries.

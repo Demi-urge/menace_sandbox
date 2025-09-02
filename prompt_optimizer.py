@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -113,10 +114,12 @@ class PromptOptimizer:
         weighting.
     roi_weight:
         Exponent applied to the ROI component when ranking configurations.
-    failure_fingerprint_path:
-        Optional path to a ``failure_fingerprints.jsonl`` file. Entries from
-        this file are used to penalise prompt configurations associated with
-        frequent failures.
+    failure_fingerprints_path:
+        Optional path to a ``failure_fingerprints.jsonl`` file. Entries are
+        grouped by prompt and, if their count exceeds ``fingerprint_threshold``,
+        the corresponding prompt configuration is penalised.
+    fingerprint_threshold:
+        Minimum number of fingerprints before a penalty is applied.
     """
 
     def __init__(
@@ -127,15 +130,19 @@ class PromptOptimizer:
         stats_path: str | Path = "prompt_optimizer_stats.json",
         weight_by: str | None = None,
         roi_weight: float = 1.0,
-        failure_fingerprint_path: str | Path | None = None,
+        failure_fingerprints_path: str | Path | None = None,
+        fingerprint_threshold: int = 3,
     ) -> None:
         self.log_paths = [Path(success_log), Path(failure_log)]
         self.stats_path = Path(stats_path)
         self.weight_by = weight_by
         self.roi_weight = roi_weight
-        self.failure_fingerprint_path = (
-            Path(failure_fingerprint_path) if failure_fingerprint_path else None
+        self.failure_fingerprints_path = (
+            Path(failure_fingerprints_path)
+            if failure_fingerprints_path
+            else None
         )
+        self.fingerprint_threshold = fingerprint_threshold
         self._sentiment = (
             SentimentIntensityAnalyzer() if SentimentIntensityAnalyzer else None
         )
@@ -337,8 +344,12 @@ class PromptOptimizer:
             stat.update(success, roi, weight, runtime_val)
 
         # Apply penalties from failure fingerprints if provided
-        if self.failure_fingerprint_path and self.failure_fingerprint_path.exists():
-            with self.failure_fingerprint_path.open("r", encoding="utf-8") as fh:
+        if (
+            self.failure_fingerprints_path
+            and self.failure_fingerprints_path.exists()
+        ):
+            counts: Counter[Tuple[Any, ...]] = Counter()
+            with self.failure_fingerprints_path.open("r", encoding="utf-8") as fh:
                 for line in fh:
                     line = line.strip()
                     if not line:
@@ -364,21 +375,24 @@ class PromptOptimizer:
                         feats["has_bullets"],
                         has_system,
                     )
+                    counts[key] += 1
+            for key, count in counts.items():
+                if count > self.fingerprint_threshold:
+                    penalty = count - self.fingerprint_threshold
                     stat = self.stats.get(key)
                     if not stat:
                         stat = _Stat(
-                            module=module,
-                            action=action,
-                            tone=feats["tone"],
-                            header_set=feats["header_set"],
-                            example_placement=feats["example_placement"],
-                            has_code=feats["has_code"],
-                            has_bullets=feats["has_bullets"],
-                            has_system=has_system,
+                            module=key[0],
+                            action=key[1],
+                            tone=key[2],
+                            header_set=key[3],
+                            example_placement=key[4],
+                            has_code=key[5],
+                            has_bullets=key[6],
+                            has_system=key[7],
                         )
                         self.stats[key] = stat
-                    # treat fingerprint as a negative outcome
-                    stat.update(False, -1.0, 1.0)
+                    stat.success = max(0, stat.success - penalty)
         self.persist_statistics()
         return self.stats
 
