@@ -594,31 +594,17 @@ class SelfCodingEngine:
         return "\n".join(lines)
 
     def _apply_prompt_style(self, action: str, module: str | None = None) -> None:
-        optimizer = getattr(self, 'prompt_optimizer', None)
-        if not optimizer or not self.prompt_engine:
+        if not self.prompt_engine:
             return
         try:
-            suggestion = optimizer.suggest_format(module or 'self_coding_engine', action)
+            self.prompt_engine.apply_optimizer_format(
+                module or "self_coding_engine", action
+            )
         except Exception:
             return
-        if not suggestion:
-            return
-        tone = suggestion.get('tone')
-        if isinstance(tone, str):
-            self.prompt_tone = tone
-            self.prompt_engine.tone = tone
-        headers = suggestion.get('headers')
-        if isinstance(headers, list) and headers:
-            self.prompt_engine.trained_headers = [str(h) for h in headers]
-        example_order = suggestion.get('example_order')
-        if isinstance(example_order, list) and example_order:
-            self.prompt_engine.trained_example_order = [str(e) for e in example_order]
-        struct = suggestion.get('structured_sections')
-        if isinstance(struct, list) and struct:
-            self.prompt_engine.trained_structured_sections = [str(s) for s in struct]
-        placement = suggestion.get('example_placement')
-        if isinstance(placement, str):
-            self.prompt_engine.trained_example_placement = placement
+        self.prompt_tone = self.prompt_engine.tone
+        # store metadata so that failures before prompt construction can be logged
+        self._last_prompt_metadata = dict(getattr(self.prompt_engine, "last_metadata", {}))
 
     def build_visual_agent_prompt(
         self,

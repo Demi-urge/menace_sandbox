@@ -200,6 +200,7 @@ class PromptEngine:
     trained_length: str | None = field(default=None, init=False)
     style_version: int = field(default=0, init=False)
     _optimizer_counter: int = field(default=0, init=False)
+    _optimizer_applied: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
         if self.retriever is None:
@@ -238,21 +239,7 @@ class PromptEngine:
                 self.optimizer = None
         self._load_trained_config()
         # Apply persisted optimiser preferences
-        fmt: Dict[str, Any] = {}
-        if self.optimizer and hasattr(self.optimizer, "select_format"):
-            try:  # pragma: no cover - best effort
-                fmt = self.optimizer.select_format(__name__, "build_prompt")
-            except Exception:
-                fmt = {}
-        else:
-            try:  # pragma: no cover - best effort
-                fmt = _select_optimizer_format()
-                if fmt.get("headers") and "structured_sections" not in fmt:
-                    fmt["structured_sections"] = fmt.pop("headers")
-            except Exception:
-                fmt = {}
-        if fmt:
-            self._apply_optimizer_preferences(fmt)
+        self.apply_optimizer_format(__name__, "build_prompt")
 
     # ------------------------------------------------------------------
     def _load_trained_config(
@@ -397,6 +384,35 @@ class PromptEngine:
                     self.max_tokens = max(self.max_tokens, 300)
 
     # ------------------------------------------------------------------
+    def apply_optimizer_format(self, module: str, action: str) -> Dict[str, Any]:
+        """Fetch optimiser preferences and apply them to the engine."""
+
+        prefs: Dict[str, Any] = {}
+        if self.optimizer and hasattr(self.optimizer, "select_format"):
+            try:  # pragma: no cover - best effort
+                prefs = self.optimizer.select_format(module, action)
+            except Exception:
+                prefs = {}
+        else:
+            try:  # pragma: no cover - best effort
+                prefs = _select_optimizer_format()
+                if prefs.get("headers") and "structured_sections" not in prefs:
+                    prefs["structured_sections"] = prefs.pop("headers")
+            except Exception:
+                prefs = {}
+        if prefs:
+            self._apply_optimizer_preferences(prefs)
+            self.last_metadata = {
+                "tone": self.tone,
+                "headers": self.trained_headers or [],
+                "structured_sections": self.trained_structured_sections or [],
+                "example_order": self.trained_example_order or [],
+                "example_placement": self.trained_example_placement or "end",
+            }
+            self._optimizer_applied = True
+        return prefs
+
+    # ------------------------------------------------------------------
     def _apply_optimizer_preferences(self, prefs: Dict[str, Any]) -> None:
         """Update formatting parameters from optimiser ``prefs``.
 
@@ -444,21 +460,7 @@ class PromptEngine:
         self._load_trained_config(
             summary, version=getattr(self.trainer, "STYLE_VERSION", 0)
         )
-        prefs: Dict[str, Any] = {}
-        if self.optimizer and hasattr(self.optimizer, "select_format"):
-            try:  # pragma: no cover - best effort suggestions
-                prefs = self.optimizer.select_format(__name__, "build_prompt")
-            except Exception:
-                prefs = {}
-        else:
-            try:  # pragma: no cover - best effort suggestions
-                prefs = _select_optimizer_format()
-                if prefs.get("headers") and "structured_sections" not in prefs:
-                    prefs["structured_sections"] = prefs.pop("headers")
-            except Exception:
-                prefs = {}
-        if prefs:
-            self._apply_optimizer_preferences(prefs)
+        self.apply_optimizer_format(__name__, "build_prompt")
 
     # ------------------------------------------------------------------
     def refresh_optimizer(self) -> None:
@@ -640,26 +642,14 @@ class PromptEngine:
         ``confidence_threshold`` a static fallback template is returned.
         """
         self._maybe_refresh_optimizer()
-        prefs: Dict[str, Any] = {}
-        if self.optimizer and hasattr(self.optimizer, "select_format"):
-            try:  # pragma: no cover - best effort
-                prefs = self.optimizer.select_format(__name__, "build_prompt")
-            except Exception:
-                prefs = {}
-        else:
-            try:  # pragma: no cover - best effort
-                prefs = _select_optimizer_format()
-                if prefs.get("headers") and "structured_sections" not in prefs:
-                    prefs["structured_sections"] = prefs.pop("headers")
-            except Exception:
-                prefs = {}
-        if prefs:
-            self._apply_optimizer_preferences(prefs)
+        if not self._optimizer_applied:
+            self.apply_optimizer_format(__name__, "build_prompt")
         if tone is not None:
             self.tone = tone
         retriever = self.patch_retriever or self.retriever
         if retriever is None:
             logging.info("No retriever available; falling back to static template")
+            self._optimizer_applied = False
             return self._static_prompt()
 
         try:
@@ -670,6 +660,7 @@ class PromptEngine:
                 "prompt_engine_fallback",
                 {"goal": task, "reason": "retrieval_error", "error": str(exc)},
             )
+            self._optimizer_applied = False
             return self._static_prompt()
 
         if isinstance(result, FallbackResult):
@@ -685,6 +676,7 @@ class PromptEngine:
                     "confidence": result.confidence,
                 },
             )
+            self._optimizer_applied = False
             return self._static_prompt()
 
         if isinstance(result, tuple):
@@ -707,6 +699,7 @@ class PromptEngine:
                     "confidence": confidence,
                 },
             )
+            self._optimizer_applied = False
             return self._static_prompt()
 
         examples: List[str] = []
@@ -752,7 +745,7 @@ class PromptEngine:
         if retry_trace:
             lines.extend(self._format_retry_trace(retry_trace))
         text = "\n".join(line for line in lines if line)
-        return Prompt(
+        prompt_obj = Prompt(
             system="",
             user=text,
             examples=examples,
@@ -761,6 +754,8 @@ class PromptEngine:
             tags=outcome_tags,
             metadata={"vector_confidences": scores},
         )
+        self._optimizer_applied = False
+        return prompt_obj
 
     # ------------------------------------------------------------------
     def _format_retry_trace(self, retry_trace: str) -> List[str]:
