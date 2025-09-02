@@ -15,7 +15,13 @@ This guide walks you through the common Menace workflows using the new `menace` 
    ```
    The command wraps `scripts/setup_autonomous.sh` and creates a basic `.env` file.
    This installs all required packages, including the `foresight_tracker`
-   module used for stability forecasting.
+   module used for stability forecasting. The generated file includes stub
+   values for critical settings:
+
+   - `DATABASE_URL` defaults to `sqlite:///menace.db`
+   - `SANDBOX_DATA_DIR` defaults to `sandbox_data`
+   - `PROMPT_CHUNK_TOKEN_THRESHOLD` and `PROMPT_CHUNK_CACHE_DIR` control code
+     chunking token limits and caching for large file summaries
 3. **Run the tests** (optional)
    ```bash
    menace test

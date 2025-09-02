@@ -164,10 +164,10 @@ class PromptEngine:
     chunk_token_threshold: int = field(
         default_factory=lambda: _SETTINGS.prompt_chunk_token_threshold
         if _SETTINGS
-        else 200
+        else 3500
     )
-    chunk_summary_cache_dir: Path = field(
-        default_factory=lambda: Path(_SETTINGS.chunk_summary_cache_dir)
+    prompt_chunk_cache_dir: Path = field(
+        default_factory=lambda: Path(_SETTINGS.prompt_chunk_cache_dir)
         if _SETTINGS
         else Path("chunk_summary_cache")
     )
@@ -259,8 +259,8 @@ class PromptEngine:
         try:
             import prompt_chunking as _pc
 
-            self.chunk_summary_cache_dir = Path(self.chunk_summary_cache_dir)
-            _pc.CACHE_DIR = self.chunk_summary_cache_dir
+            self.prompt_chunk_cache_dir = Path(self.prompt_chunk_cache_dir)
+            _pc.CACHE_DIR = self.prompt_chunk_cache_dir
         except Exception:
             pass
 

@@ -340,7 +340,10 @@ class SandboxSettings(BaseSettings):
         5 * 1024 * 1024,
         env="LOG_ROTATION_MAX_BYTES",
         ge=0,
-        description="Rotate logs when file exceeds this size in bytes; 0 disables size-based rotation.",
+        description=(
+            "Rotate logs when file exceeds this size in bytes; "
+            "0 disables size-based rotation."
+        ),
     )
     log_rotation_backup_count: int = Field(
         5,
@@ -587,14 +590,13 @@ class SandboxSettings(BaseSettings):
         description="Path for recording failed prompt executions.",
     )
     prompt_chunk_token_threshold: int = Field(
-        200,
+        3500,
         env="PROMPT_CHUNK_TOKEN_THRESHOLD",
-        description=
-        "Token limit for individual code chunks when summarizing large files.",
+        description="Token limit for individual code chunks when summarizing large files.",
     )
-    chunk_summary_cache_dir: str = Field(
-        "chunk_summary_cache",
-        env="CHUNK_SUMMARY_CACHE_DIR",
+    prompt_chunk_cache_dir: Path = Field(
+        Path("chunk_summary_cache"),
+        env="PROMPT_CHUNK_CACHE_DIR",
         description="Directory for cached summaries of code chunks.",
     )
     stub_timeout: float = Field(

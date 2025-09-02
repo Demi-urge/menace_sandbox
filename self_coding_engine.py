@@ -194,7 +194,7 @@ class SelfCodingEngine:
         prompt_tone: str = "neutral",
         token_threshold: int = 3500,
         prompt_chunk_token_threshold: int | None = None,
-        chunk_summary_cache_dir: str | Path | None = None,
+        prompt_chunk_cache_dir: str | Path | None = None,
         **kwargs: Any,
     ) -> None:
         self.code_db = code_db
@@ -220,8 +220,8 @@ class SelfCodingEngine:
             if prompt_chunk_token_threshold is not None
             else _settings.prompt_chunk_token_threshold
         )
-        self.chunk_summary_cache_dir = Path(
-            chunk_summary_cache_dir or _settings.chunk_summary_cache_dir
+        self.prompt_chunk_cache_dir = Path(
+            prompt_chunk_cache_dir or _settings.prompt_chunk_cache_dir
         )
         self.safety_monitor = safety_monitor
         if llm_client is None:
@@ -315,7 +315,7 @@ class SelfCodingEngine:
             optimizer=self.prompt_optimizer,
             token_threshold=token_threshold,
             chunk_token_threshold=self.prompt_chunk_token_threshold,
-            chunk_summary_cache_dir=self.chunk_summary_cache_dir,
+            prompt_chunk_cache_dir=self.prompt_chunk_cache_dir,
         )
         if prompt_evolution_memory is None:
             try:
