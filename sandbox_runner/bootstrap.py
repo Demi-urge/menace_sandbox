@@ -130,8 +130,7 @@ def initialize_autonomous_sandbox(
         logger.error("environment bootstrap failed", exc_info=True)
         raise RuntimeError("environment configuration incomplete") from exc
 
-    required = ["OPENAI_API_KEY", "DATABASE_URL", "STRIPE_API_KEY", "MODELS"]
-    missing = [name for name in required if not os.getenv(name)]
+    missing = [name for name in settings.required_env_vars if not os.getenv(name)]
     if missing:
         raise RuntimeError(
             f"required environment variables not set: {', '.join(missing)}"

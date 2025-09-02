@@ -78,6 +78,12 @@ class SandboxSettings:
         self.patch_retries = 3
         self.patch_retry_delay = 0.1
         self.usage_queue_maxsize = 100
+        self.required_env_vars = [
+            "OPENAI_API_KEY",
+            "DATABASE_URL",
+            "STRIPE_API_KEY",
+            "MODELS",
+        ]
 
 
 sandbox_settings.SandboxSettings = SandboxSettings

@@ -297,6 +297,16 @@ class SandboxSettings(BaseSettings):
     menace_env_file: str = Field(".env", env="MENACE_ENV_FILE")
     sandbox_data_dir: str = Field("sandbox_data", env="SANDBOX_DATA_DIR")
     sandbox_env_presets: str | None = Field(None, env="SANDBOX_ENV_PRESETS")
+    required_env_vars: list[str] = Field(
+        default_factory=lambda: [
+            "OPENAI_API_KEY",
+            "DATABASE_URL",
+            "STRIPE_API_KEY",
+            "MODELS",
+        ],
+        env="SANDBOX_REQUIRED_ENV_VARS",
+        description="Environment variables required for sandbox initialisation.",
+    )
     sandbox_repo_path: str = Field(
         ".",
         env="SANDBOX_REPO_PATH",
@@ -476,6 +486,7 @@ class SandboxSettings(BaseSettings):
             "required_system_tools",
             "required_python_packages",
             "optional_python_packages",
+            "required_env_vars",
             mode="before",
         )
         def _parse_dependency_list(cls, v: Any) -> Any:
@@ -511,6 +522,7 @@ class SandboxSettings(BaseSettings):
             "required_system_tools",
             "required_python_packages",
             "optional_python_packages",
+            "required_env_vars",
             pre=True,
         )
         def _parse_dependency_list(cls, v: Any) -> Any:  # type: ignore[override]
