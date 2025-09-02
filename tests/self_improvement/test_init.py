@@ -1,6 +1,7 @@
 import json
 import sys
 import types
+import importlib
 import importlib.util
 from pathlib import Path
 
@@ -99,12 +100,19 @@ def test_init_creates_synergy_weights(tmp_path, monkeypatch):
 
     init_module = _load_module("menace.self_improvement.init", Path("self_improvement/init.py"))
 
+    monkeypatch.setattr(
+        importlib.metadata,
+        "version",
+        lambda name: {"quick_fix_engine": "1.0", "sandbox_runner": "1.0", "torch": "2.0"}.get(name, "0"),
+    )
+
     settings = SandboxSettings()
     settings.sandbox_data_dir = str(tmp_path)
     settings.synergy_weight_file = str(tmp_path / "synergy_weights.json")
     settings.sandbox_central_logging = False
 
     monkeypatch.setattr(init_module, "load_sandbox_settings", lambda: settings)
+    monkeypatch.setattr(init_module.sys.stdin, "isatty", lambda: True)
 
     result = init_module.init_self_improvement()
 
@@ -145,12 +153,19 @@ def test_init_meta_planning_failure(tmp_path, monkeypatch, caplog):
 
     init_module = _load_module("menace.self_improvement.init", Path("self_improvement/init.py"))
 
+    monkeypatch.setattr(
+        importlib.metadata,
+        "version",
+        lambda name: {"quick_fix_engine": "1.0", "sandbox_runner": "1.0", "torch": "2.0"}.get(name, "0"),
+    )
+
     settings = SandboxSettings()
     settings.sandbox_data_dir = str(tmp_path)
     settings.synergy_weight_file = str(tmp_path / "synergy_weights.json")
     settings.sandbox_central_logging = False
 
     monkeypatch.setattr(init_module, "load_sandbox_settings", lambda: settings)
+    monkeypatch.setattr(init_module.sys.stdin, "isatty", lambda: True)
 
     caplog.set_level("ERROR")
     with pytest.raises(RuntimeError) as err:
@@ -161,3 +176,39 @@ def test_init_meta_planning_failure(tmp_path, monkeypatch, caplog):
         r for r in caplog.records if r.message == "failed to reload meta_planning settings"
     )
     assert record.error == "boom"
+
+
+def test_init_enables_auto_install_when_unattended(tmp_path, monkeypatch):
+    _stub_deps()
+    menace_pkg = types.ModuleType("menace")
+    menace_pkg.__path__ = []
+    sys.modules["menace"] = menace_pkg
+    si_pkg = types.ModuleType("menace.self_improvement")
+    si_pkg.__path__ = [str(Path("self_improvement"))]
+    sys.modules["menace.self_improvement"] = si_pkg
+
+    meta_stub = types.ModuleType("menace.self_improvement.meta_planning")
+    meta_stub.reload_settings = lambda cfg: None
+    sys.modules["menace.self_improvement.meta_planning"] = meta_stub
+
+    init_module = _load_module("menace.self_improvement.init", Path("self_improvement/init.py"))
+
+    settings = SandboxSettings()
+    settings.sandbox_data_dir = str(tmp_path)
+    settings.synergy_weight_file = str(tmp_path / "weights.json")
+    settings.sandbox_central_logging = False
+    settings.auto_install_dependencies = False
+
+    monkeypatch.setattr(init_module, "load_sandbox_settings", lambda: settings)
+
+    called: dict[str, bool] = {}
+
+    def fake_verify(*, auto_install: bool = False) -> None:
+        called["auto_install"] = auto_install
+
+    monkeypatch.setattr(init_module, "verify_dependencies", fake_verify)
+    monkeypatch.setattr(init_module.sys.stdin, "isatty", lambda: False)
+
+    init_module.init_self_improvement()
+
+    assert called.get("auto_install") is True

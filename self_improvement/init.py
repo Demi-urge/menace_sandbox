@@ -9,7 +9,10 @@ The routines expect auxiliary packages to be installed:
 Missing dependencies raise :class:`RuntimeError` with guidance on how to
 install or upgrade them.  When the ``auto_install`` flag is enabled the
 verifier attempts to install missing or mismatched packages automatically and
-only raises an error if those installations fail.
+only raises an error if those installations fail.  The
+``init_self_improvement`` routine enables this behaviour automatically when the
+process is running without an interactive terminal, allowing unattended
+deployments to bootstrap required packages on first run.
 
 Configuration is provided via :class:`sandbox_settings.SandboxSettings` with
 notable options:
@@ -22,6 +25,7 @@ import json
 import logging
 import os
 import tempfile
+import sys
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
@@ -466,11 +470,17 @@ def reload_synergy_weights() -> None:
 
 
 def init_self_improvement(new_settings: SandboxSettings | None = None) -> SandboxSettings:
-    """Initialise the self-improvement subsystem explicitly."""
+    """Initialise the self-improvement subsystem explicitly.
+
+    The function enables automatic dependency installation when running
+    without an interactive terminal unless explicitly disabled via
+    ``SandboxSettings.auto_install_dependencies``.
+    """
 
     global settings
     settings = new_settings or load_sandbox_settings()
-    verify_dependencies(auto_install=settings.auto_install_dependencies)
+    auto_install = settings.auto_install_dependencies or not sys.stdin.isatty()
+    verify_dependencies(auto_install=auto_install)
     initialize_autonomous_sandbox(settings)
     if getattr(settings, "sandbox_central_logging", False):
         setup_logging()
