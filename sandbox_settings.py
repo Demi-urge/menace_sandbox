@@ -53,8 +53,9 @@ class ROISettings(BaseModel):
     entropy_ceiling_threshold: float | None = None
     entropy_ceiling_consecutive: int | None = None
     baseline_window: int = 5
+    deviation_tolerance: float = 0.05
+    stagnation_threshold: float = 0.01
     momentum_window: int = 5
-    deviation_tolerance: float = 0.0
     stagnation_cycles: int = 3
 
     @field_validator(
@@ -73,12 +74,17 @@ class ROISettings(BaseModel):
     @field_validator(
         "compounding_weight",
         "min_integration_roi",
-        "deviation_tolerance",
         "entropy_weight",
     )
     def _check_non_negative(cls, v: float, info: Any) -> float:
         if v < 0:
             raise ValueError(f"{info.field_name} must be non-negative")
+        return v
+
+    @field_validator("deviation_tolerance", "stagnation_threshold")
+    def _check_positive_float(cls, v: float, info: Any) -> float:
+        if v <= 0:
+            raise ValueError(f"{info.field_name} must be positive")
         return v
 
     @field_validator("entropy_plateau_consecutive", "entropy_ceiling_consecutive")
@@ -87,22 +93,15 @@ class ROISettings(BaseModel):
             raise ValueError(f"{info.field_name} must be a positive integer")
         return v
 
-    @field_validator("entropy_window")
-    def _check_entropy_window(cls, v: int) -> int:
+    @field_validator(
+        "baseline_window",
+        "entropy_window",
+        "stagnation_cycles",
+        "momentum_window",
+    )
+    def _check_positive_int(cls, v: int, info: Any) -> int:
         if v <= 0:
-            raise ValueError("entropy_window must be a positive integer")
-        return v
-
-    @field_validator("stagnation_cycles")
-    def _check_stagnation(cls, v: int) -> int:
-        if v <= 0:
-            raise ValueError("stagnation_cycles must be a positive integer")
-        return v
-
-    @field_validator("momentum_window")
-    def _check_momentum_window(cls, v: int) -> int:
-        if v <= 0:
-            raise ValueError("momentum_window must be a positive integer")
+            raise ValueError(f"{info.field_name} must be a positive integer")
         return v
 
 
@@ -354,6 +353,12 @@ class SandboxSettings(BaseSettings):
     def _roi_stagnation_cycles_positive(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("roi_stagnation_cycles must be positive")
+        return v
+
+    @field_validator("roi_deviation_tolerance", "roi_stagnation_threshold")
+    def _roi_positive_float(cls, v: float, info: Any) -> float:
+        if v <= 0:
+            raise ValueError(f"{info.field_name} must be positive")
         return v
 
     @field_validator(
@@ -1565,6 +1570,8 @@ class SandboxSettings(BaseSettings):
     roi_baseline_window: int = Field(5, env="ROI_BASELINE_WINDOW")
     roi_momentum_window: int = Field(5, env="ROI_MOMENTUM_WINDOW")
     roi_stagnation_cycles: int = Field(3, env="ROI_STAGNATION_CYCLES")
+    roi_deviation_tolerance: float = Field(0.05, env="ROI_DEVIATION_TOLERANCE")
+    roi_stagnation_threshold: float = Field(0.01, env="ROI_STAGNATION_THRESHOLD")
     sandbox_score_db: str = Field("score_history.db", env="SANDBOX_SCORE_DB")
     synergy_weights_lr: float = Field(
         0.1,
@@ -1966,6 +1973,8 @@ class SandboxSettings(BaseSettings):
             entropy_window=self.entropy_window,
             entropy_weight=self.entropy_weight,
             baseline_window=self.roi_baseline_window,
+            deviation_tolerance=self.roi_deviation_tolerance,
+            stagnation_threshold=self.roi_stagnation_threshold,
             momentum_window=self.roi_momentum_window,
             stagnation_cycles=self.roi_stagnation_cycles,
             min_integration_roi=self.min_integration_roi,
