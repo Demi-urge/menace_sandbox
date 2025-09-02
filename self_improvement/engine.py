@@ -490,6 +490,8 @@ class SelfImprovementEngine:
         state_path: Path | str | None = None,
         roi_ema_alpha: float | None = None,
         roi_compounding_weight: float | None = None,
+        entropy_window: int | None = None,
+        entropy_weight: float | None = None,
         synergy_weights_path: Path | str | None = None,
         synergy_weights_lr: float | None = None,
         synergy_learner_cls: Type[SynergyWeightLearner] = SynergyWeightLearner,
@@ -679,6 +681,18 @@ class SelfImprovementEngine:
             if roi_compounding_weight is not None
             else getattr(settings, "roi_compounding_weight", 0.0)
         )
+        self.entropy_weight = (
+            entropy_weight
+            if entropy_weight is not None
+            else getattr(settings, "entropy_weight", 0.1)
+        )
+        self.entropy_window = (
+            entropy_window
+            if entropy_window is not None
+            else getattr(settings, "entropy_window", 5)
+        )
+        self.entropy_baseline = MovingBaseline(self.entropy_window)
+        self.entropy_delta_ema = 0.0
         self.growth_weighting = getattr(settings, "roi_growth_weighting", True)
         self.growth_multipliers = {
             "exponential": getattr(settings, "growth_multiplier_exponential", 3.0),
@@ -2973,8 +2987,13 @@ class SelfImprovementEngine:
         if time.time() - self.last_run < self.interval:
             return False
         roi_delta = getattr(self, "roi_delta_ema", 0.0)
-        hist = self.baseline_tracker.delta_history("entropy")
-        entropy_delta = hist[-1] if hist else 0.0
+        entropy_delta = abs(getattr(self, "entropy_delta_ema", 0.0))
+        entropy_std = self.baseline_tracker.std("entropy")
+        entropy_threshold = self.entropy_dev_multiplier * entropy_std
+        if entropy_delta <= entropy_threshold:
+            entropy_delta = 0.0
+        else:
+            entropy_delta -= entropy_threshold
         success_momentum = self._metric_delta("success_rate")
         if roi_delta == 0.0 and entropy_delta == 0.0 and success_momentum == 0.0:
             return True
@@ -7165,16 +7184,21 @@ class SelfImprovementEngine:
             entropy = _si_metrics.compute_code_entropy(files)
             score_avg = self.baseline_tracker.get("score")
             roi_avg = self.roi_baseline.average()
-            entropy_avg = self.baseline_tracker.get("entropy")
+            entropy_avg = self.entropy_baseline.average()
             energy_avg = self.baseline_tracker.get("energy")
             self.baseline_tracker.update(
                 score=score, roi=roi_realish, entropy=entropy, energy=energy
             )
             self.roi_baseline.append(roi_realish)
+            self.entropy_baseline.append(entropy)
             self._check_roi_stagnation()
             score_delta = score - score_avg
             roi_delta = roi_realish - roi_avg
             entropy_delta = entropy - entropy_avg
+            self.entropy_delta_ema = (
+                (1 - self.entropy_weight) * self.entropy_delta_ema
+                + self.entropy_weight * entropy_delta
+            )
             energy_delta = energy - energy_avg
             roi_db = getattr(self, "roi_db", None)
             if roi_db is None:
