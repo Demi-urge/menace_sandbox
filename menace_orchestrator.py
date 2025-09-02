@@ -33,7 +33,6 @@ from .discrepancy_detection_bot import DiscrepancyDetectionBot
 from .efficiency_bot import EfficiencyBot
 from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
 from .ad_integration import AdIntegration
-from .startup_checks import run_startup_checks
 from .watchdog import Watchdog
 from .error_bot import ErrorDB
 from .resource_allocation_optimizer import ROIDB
@@ -55,11 +54,18 @@ from db_router import DBRouter
 class _RemoteVisualAgent:
     """Minimal client polling the remote visual agent service."""
 
-    def __init__(self, url: str | None = None, token: str | None = None, poll_interval: float | None = None) -> None:
+    def __init__(
+        self,
+        url: str | None = None,
+        token: str | None = None,
+        poll_interval: float | None = None,
+    ) -> None:
         default_url = os.getenv("VISUAL_DESKTOP_URL", "http://127.0.0.1:8001")
         self.url = (url or default_url).rstrip("/")
         self.token = token or os.getenv("VISUAL_AGENT_TOKEN", "")
-        self.poll_interval = poll_interval or float(os.getenv("VISUAL_AGENT_POLL_INTERVAL", "5"))
+        self.poll_interval = poll_interval or float(
+            os.getenv("VISUAL_AGENT_POLL_INTERVAL", "5")
+        )
         self.logger = logging.getLogger("RemoteVisualAgent")
 
     def _poll_status(self, tid: str) -> str:
@@ -174,6 +180,7 @@ class _SimpleScheduler:
         if self.thread:
             self.thread.join(timeout=0)
 
+
 try:  # pragma: no cover - optional dependency
     from apscheduler.schedulers.background import BackgroundScheduler
 except Exception:  # pragma: no cover - APScheduler missing
@@ -207,7 +214,6 @@ class MenaceOrchestrator:
         auto_bootstrap: bool | None = None,
         visual_agent_client: object | None = None,
     ) -> None:
-        #run_startup_checks()
         menace_id = menace_id or uuid.uuid4().hex
         self.menace_id = menace_id
         if router is None:
@@ -218,7 +224,9 @@ class MenaceOrchestrator:
             )
         db_router.GLOBAL_ROUTER = router
         self.router = router
-        self.pipeline = ModelAutomationPipeline(pathway_db=pathway_db, myelination_threshold=myelination_threshold)
+        self.pipeline = ModelAutomationPipeline(
+            pathway_db=pathway_db, myelination_threshold=myelination_threshold
+        )
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
         self.ad_client = ad_client or AdIntegration()
@@ -400,7 +408,7 @@ class MenaceOrchestrator:
         return bot
 
     def apply_patch_all(
-        self, node_paths: Dict[str, Path], description: str, *, threshold: float = 0.0
+        self, node_paths: Dict[str, Path], description: str
     ) -> Dict[str, tuple[int | None, bool]]:
         """Apply the same patch to multiple nodes and rollback if any fails."""
         results: Dict[str, tuple[int | None, bool]] = {}
@@ -424,7 +432,6 @@ class MenaceOrchestrator:
                 pid, reverted, _ = eng.apply_patch(
                     path,
                     description,
-                    threshold=threshold,
                     reason=description,
                     trigger="menace_orchestrator",
                 )
@@ -567,7 +574,9 @@ class MenaceOrchestrator:
                 run_ids.append(pid)
 
                 next_pid = self.pathway_db.next_pathway(pid)
-                if next_pid and self.pathway_db.is_highly_myelinated(next_pid, self.myelination_threshold):
+                if next_pid and self.pathway_db.is_highly_myelinated(
+                    next_pid, self.myelination_threshold
+                ):
                     row = self.pathway_db.conn.execute(
                         "SELECT actions FROM pathways WHERE id=?",
                         (next_pid,),
@@ -643,7 +652,6 @@ class MenaceOrchestrator:
         except Exception:
             self.logger.exception("learning job failed")
         self._heartbeat("learning")
-
 
     def _seed_job(self) -> None:
         url = os.getenv("SIGNUP_URL")
@@ -722,10 +730,18 @@ class MenaceOrchestrator:
         s_int = int(os.getenv("IDENTITY_SEED_INTERVAL", "3600"))
         if BackgroundScheduler:
             self.scheduler = BackgroundScheduler()
-            self.scheduler.add_job(self._trending_job, "interval", seconds=t_int, id="trending_scan")
-            self.scheduler.add_job(self._learning_job, "interval", seconds=l_int, id="learning")
-            self.scheduler.add_job(self._planning_job, "interval", seconds=p_int, id="planning")
-            self.scheduler.add_job(self._seed_job, "interval", seconds=s_int, id="identity_seed")
+            self.scheduler.add_job(
+                self._trending_job, "interval", seconds=t_int, id="trending_scan"
+            )
+            self.scheduler.add_job(
+                self._learning_job, "interval", seconds=l_int, id="learning"
+            )
+            self.scheduler.add_job(
+                self._planning_job, "interval", seconds=p_int, id="planning"
+            )
+            self.scheduler.add_job(
+                self._seed_job, "interval", seconds=s_int, id="identity_seed"
+            )
             self.scheduler.start()
         else:
             self.scheduler = _SimpleScheduler()

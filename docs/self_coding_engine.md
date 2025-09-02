@@ -11,12 +11,12 @@ from menace.code_database import CodeDB
 from menace.menace_memory_manager import MenaceMemoryManager
 
 engine = SelfCodingEngine(CodeDB("code.db"), MenaceMemoryManager("mem.db"))
-engine.apply_patch(Path("utils.py"), "normalize text", threshold=0.5)
+engine.apply_patch(Path("utils.py"), "normalize text")
 ```
 
 - **suggest_snippets** – fetch related `CodeRecord` objects from `CodeDB`.
 - **generate_helper** – uses `LLMClient` to produce a helper based on the description and snippet context.
-- **apply_patch** – append the helper, run CI checks and revert if ROI or error metrics drop beyond ``threshold``.
+- **apply_patch** – append the helper, run CI checks and revert when ROI, error or complexity deltas fall below historical baselines.
 - **Patch metrics** – `PatchHistoryDB` stores ROI delta and error counts for each patch.
 - **Forecasts** – `TrendPredictor` estimates ROI and error trends for rollback decisions.
 - **Safety** – integrates with `SafetyMonitor` and records patch history so that problematic patches can be rolled back.

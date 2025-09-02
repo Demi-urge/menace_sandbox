@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import sys
+# flake8: noqa
 import types
 
 from llm_interface import LLMResult
@@ -236,7 +237,14 @@ def test_apply_patch_reverts_on_complexity(tmp_path, monkeypatch):
     patch_db = cd.PatchHistoryDB(tmp_path / "p.db")
     data_bot = db.DataBot(mdb, patch_db=patch_db)
     mem = mm.MenaceMemoryManager(tmp_path / "mem.db")
-    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, data_bot=data_bot, patch_db=patch_db)
+    tracker = sce.BaselineTracker()
+    engine = sce.SelfCodingEngine(
+        cd.CodeDB(tmp_path / "c.db"),
+        mem,
+        data_bot=data_bot,
+        patch_db=patch_db,
+        delta_tracker=tracker,
+    )
 
     class OkVerifier:
         def verify(self, path: Path) -> bool:
@@ -260,7 +268,15 @@ def test_apply_patch_reverts_on_complexity(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mdb, "fetch", fetch_stub)
 
-    patch_id, reverted, _ = engine.apply_patch(path, "test", threshold=0.1)
+    tracker.update(
+        roi_delta=1.0,
+        error_delta=0.0,
+        complexity_delta=0.0,
+        pred_roi_delta=1.0,
+        pred_err_delta=0.0,
+    )
+
+    patch_id, reverted, _ = engine.apply_patch(path, "test")
     assert patch_id is not None
     assert reverted
     assert "auto_x" not in path.read_text()
