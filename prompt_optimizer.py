@@ -28,6 +28,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - allow running without dependency
     SentimentIntensityAnalyzer = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from failure_fingerprint_store import FailureFingerprintStore
+except Exception:  # pragma: no cover - allow running without dependency
+    FailureFingerprintStore = None  # type: ignore
+
 
 @dataclass
 class _Stat:
@@ -48,6 +53,7 @@ class _Stat:
     weight_sum: float = 0.0
 
     runtime_improvement_sum: float = 0.0
+    penalty_factor: float = 1.0
 
     def update(
         self,
@@ -93,7 +99,8 @@ class _Stat:
         """
 
         roi = max(self.weighted_roi(), 0.0)
-        return self.success_rate() * (roi ** roi_weight)
+        base = self.success_rate() * (roi ** roi_weight)
+        return base * self.penalty_factor
 
 
 class PromptOptimizer:
@@ -114,10 +121,14 @@ class PromptOptimizer:
         weighting.
     roi_weight:
         Exponent applied to the ROI component when ranking configurations.
+    failure_store:
+        Optional :class:`FailureFingerprintStore` instance providing access to
+        previously recorded failure fingerprints. When supplied, prompts that
+        belong to high-frequency failure clusters receive a score penalty.
     failure_fingerprints_path:
-        Optional path to a ``failure_fingerprints.jsonl`` file. Entries are
-        grouped by prompt and, if their count exceeds ``fingerprint_threshold``,
-        the corresponding prompt configuration is penalised.
+        Deprecated path to a ``failure_fingerprints.jsonl`` file. If provided
+        and ``failure_store`` is ``None`` the file will be read directly for
+        backwards compatibility.
     fingerprint_threshold:
         Minimum number of fingerprints before a penalty is applied.
     """
@@ -130,6 +141,7 @@ class PromptOptimizer:
         stats_path: str | Path = "prompt_optimizer_stats.json",
         weight_by: str | None = None,
         roi_weight: float = 1.0,
+        failure_store: FailureFingerprintStore | None = None,
         failure_fingerprints_path: str | Path | None = None,
         fingerprint_threshold: int = 3,
     ) -> None:
@@ -137,6 +149,7 @@ class PromptOptimizer:
         self.stats_path = Path(stats_path)
         self.weight_by = weight_by
         self.roi_weight = roi_weight
+        self.failure_store = failure_store
         self.failure_fingerprints_path = (
             Path(failure_fingerprints_path)
             if failure_fingerprints_path
@@ -181,6 +194,7 @@ class PromptOptimizer:
                         runtime_improvement_sum=float(
                             item.get("runtime_improvement_sum", 0.0)
                         ),
+                        penalty_factor=float(item.get("penalty_factor", 1.0)),
                     )
                 except Exception:
                     continue
@@ -344,7 +358,9 @@ class PromptOptimizer:
             stat.update(success, roi, weight, runtime_val)
 
         # Apply penalties from failure fingerprints if provided
-        if (
+        if self.failure_store is not None:
+            self._apply_store_penalties()
+        elif (
             self.failure_fingerprints_path
             and self.failure_fingerprints_path.exists()
         ):
@@ -393,8 +409,64 @@ class PromptOptimizer:
                         )
                         self.stats[key] = stat
                     stat.success = max(0, stat.success - penalty)
+                    factor = 1 / (1 + penalty)
+                    stat.penalty_factor *= factor
         self.persist_statistics()
         return self.stats
+
+    # ------------------------------------------------------------------
+    def _apply_store_penalties(self) -> None:
+        """Apply score penalties using a :class:`FailureFingerprintStore`."""
+
+        store = self.failure_store
+        if not store:
+            return
+        try:
+            clusters = getattr(store, "_clusters", {})
+            cache = getattr(store, "_cache", {})
+        except Exception:  # pragma: no cover - best effort
+            return
+        for cid, ids in clusters.items():
+            count = len(ids)
+            if count <= self.fingerprint_threshold:
+                continue
+            penalty = count - self.fingerprint_threshold
+            factor = 1 / (1 + penalty)
+            for record_id in ids:
+                fp = cache.get(record_id)
+                if not fp:
+                    continue
+                prompt = getattr(fp, "prompt_text", "")
+                if not prompt:
+                    continue
+                module = getattr(fp, "filename", "unknown")
+                action = getattr(fp, "function", getattr(fp, "function_name", "unknown"))
+                feats = self._extract_features(prompt)
+                has_system = prompt.lstrip().lower().startswith("system:")
+                key = (
+                    module,
+                    action,
+                    feats["tone"],
+                    feats["header_set"],
+                    feats["example_placement"],
+                    feats["has_code"],
+                    feats["has_bullets"],
+                    has_system,
+                )
+                stat = self.stats.get(key)
+                if not stat:
+                    stat = _Stat(
+                        module=module,
+                        action=action,
+                        tone=feats["tone"],
+                        header_set=feats["header_set"],
+                        example_placement=feats["example_placement"],
+                        has_code=feats["has_code"],
+                        has_bullets=feats["has_bullets"],
+                        has_system=has_system,
+                    )
+                    self.stats[key] = stat
+                stat.penalty_factor *= factor
 
     # ------------------------------------------------------------------
     def persist_statistics(self) -> None:
@@ -405,6 +477,7 @@ class PromptOptimizer:
             item = asdict(stat)
             # convert tuple to list for JSON serialisation
             item["header_set"] = list(stat.header_set)
+            item["score"] = stat.score(self.roi_weight)
             data.append(item)
         self.stats_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -506,7 +579,12 @@ def rank_formats() -> List[Dict[str, Any]]:
             weighted_roi = weighted_roi_sum / weight_sum
         else:
             weighted_roi = roi_sum / total
-        score = success_rate * max(weighted_roi, 0.0)
+        penalty_factor = float(item.get("penalty_factor", 1.0))
+        stored_score = item.get("score")
+        if stored_score is not None:
+            score = float(stored_score)
+        else:
+            score = success_rate * max(weighted_roi, 0.0) * penalty_factor
         ranked.append(
             {
                 "headers": item.get("header_set", []),
@@ -515,6 +593,7 @@ def rank_formats() -> List[Dict[str, Any]]:
                 "success_rate": success_rate,
                 "weighted_roi": weighted_roi,
                 "score": score,
+                "penalty_factor": penalty_factor,
             }
         )
 

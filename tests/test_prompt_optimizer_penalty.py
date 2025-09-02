@@ -1,43 +1,64 @@
 import json
+import sys
 
+from failure_fingerprint import FailureFingerprint
+from failure_fingerprint_store import FailureFingerprintStore
+
+sys.modules.pop("prompt_optimizer", None)
 from prompt_optimizer import PromptOptimizer
+
+
+class _DummyVectorStore:
+    def add(self, *args, **kwargs):
+        pass
+
+    def query(self, *args, **kwargs):
+        return []
+
+
+class _DummyVectorService:
+    def __init__(self) -> None:
+        self.vector_store = _DummyVectorStore()
+
+    def vectorise(self, kind, record):  # pragma: no cover - trivial
+        text = record.get("text", "")
+        return [float(len(text))]
+
+
+def _make_store() -> FailureFingerprintStore:
+    svc = _DummyVectorService()
+    return FailureFingerprintStore(path=None, vector_service=svc, similarity_threshold=0.0)
 
 
 def test_failure_fingerprints_penalize(tmp_path):
     success = tmp_path / "success.jsonl"
     failure = tmp_path / "failure.jsonl"
-    fp = tmp_path / "failure_fingerprints.jsonl"
     success.write_text(
-        json.dumps({
-            "module": "m",
-            "action": "a",
-            "prompt": "# H\nExample",
-            "success": True,
-            "roi": 1.0,
-        }) + "\n",
-        encoding="utf-8",
-    )
-    failure.write_text("", encoding="utf-8")
-    fp.write_text(
-        json.dumps({
-            "filename": "m",
-            "function_name": "a",
-            "prompt_text": "# H\nExample",
-        })
-        + "\n"
-        + json.dumps({
-            "filename": "m",
-            "function_name": "a",
-            "prompt_text": "# H\nExample",
-        })
+        json.dumps(
+            {
+                "module": "m",
+                "action": "a",
+                "prompt": "# H\nExample",
+                "success": True,
+                "roi": 1.0,
+            }
+        )
         + "\n",
         encoding="utf-8",
     )
+    failure.write_text("", encoding="utf-8")
+
+    store = _make_store()
+    fp1 = FailureFingerprint("m", "a", "err", "trace", "# H\nExample")
+    fp2 = FailureFingerprint("m", "a", "err", "trace", "# H\nExample")
+    store.add(fp1)
+    store.add(fp2)
+
     opt = PromptOptimizer(
         success,
         failure,
         stats_path=tmp_path / "stats.json",
-        failure_fingerprints_path=fp,
+        failure_store=store,
         fingerprint_threshold=1,
     )
     key = (
@@ -51,22 +72,23 @@ def test_failure_fingerprints_penalize(tmp_path):
         False,
     )
     stat = opt.stats[key]
-    assert stat.success == 0
-    assert stat.total == 1
-    assert stat.roi_sum == 1.0
+    assert stat.penalty_factor < 1.0
 
 
 def test_failure_fingerprints_reduce_score(tmp_path):
     success = tmp_path / "success.jsonl"
     failure = tmp_path / "failure.jsonl"
     success.write_text(
-        json.dumps({
-            "module": "m",
-            "action": "a",
-            "prompt": "# H\nExample",
-            "success": True,
-            "roi": 1.0,
-        }) + "\n",
+        json.dumps(
+            {
+                "module": "m",
+                "action": "a",
+                "prompt": "# H\nExample",
+                "success": True,
+                "roi": 1.0,
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     failure.write_text("", encoding="utf-8")
@@ -82,27 +104,18 @@ def test_failure_fingerprints_reduce_score(tmp_path):
     )
     opt_base = PromptOptimizer(success, failure, stats_path=tmp_path / "s1.json")
     score_base = opt_base.stats[key].score()
-    fp = tmp_path / "failure_fingerprints.jsonl"
-    fp.write_text(
-        json.dumps({
-            "filename": "m",
-            "function_name": "a",
-            "prompt_text": "# H\nExample",
-        })
-        + "\n"
-        + json.dumps({
-            "filename": "m",
-            "function_name": "a",
-            "prompt_text": "# H\nExample",
-        })
-        + "\n",
-        encoding="utf-8",
-    )
+
+    store = _make_store()
+    fp1 = FailureFingerprint("m", "a", "err", "trace", "# H\nExample")
+    fp2 = FailureFingerprint("m", "a", "err", "trace", "# H\nExample")
+    store.add(fp1)
+    store.add(fp2)
+
     opt_pen = PromptOptimizer(
         success,
         failure,
         stats_path=tmp_path / "s2.json",
-        failure_fingerprints_path=fp,
+        failure_store=store,
         fingerprint_threshold=1,
     )
     score_pen = opt_pen.stats[key].score()

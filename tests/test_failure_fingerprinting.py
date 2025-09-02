@@ -454,39 +454,30 @@ def test_provisional_fingerprint_warns(
 def test_prompt_optimizer_penalty(tmp_path: Path) -> None:
     success = tmp_path / "success.jsonl"
     failure = tmp_path / "failure.jsonl"
-    fp_path = tmp_path / "failure_fingerprints.jsonl"
     success.write_text(
-        json.dumps({
-            "module": "m",
-            "action": "a",
-            "prompt": "# H\nExample",
-            "success": True,
-            "roi": 1.0,
-        })
+        json.dumps(
+            {
+                "module": "m",
+                "action": "a",
+                "prompt": "# H\nExample",
+                "success": True,
+                "roi": 1.0,
+            }
+        )
         + "\n",
         encoding="utf-8",
     )
     failure.write_text("", encoding="utf-8")
-    fp_path.write_text(
-        json.dumps({
-            "filename": "m",
-            "function_name": "a",
-            "prompt_text": "# H\nExample",
-        })
-        + "\n"
-        + json.dumps({
-            "filename": "m",
-            "function_name": "a",
-            "prompt_text": "# H\nExample",
-        })
-        + "\n",
-        encoding="utf-8",
-    )
+    store = make_store(tmp_path)
+    fp1 = FailureFingerprint("m", "a", "err", "trace", "# H\nExample")
+    fp2 = FailureFingerprint("m", "a", "err", "trace", "# H\nExample")
+    store.add(fp1)
+    store.add(fp2)
     opt = PromptOptimizer(
         success,
         failure,
         stats_path=tmp_path / "stats.json",
-        failure_fingerprints_path=fp_path,
+        failure_store=store,
         fingerprint_threshold=1,
     )
     key = (
@@ -499,4 +490,4 @@ def test_prompt_optimizer_penalty(tmp_path: Path) -> None:
         False,
         False,
     )
-    assert opt.stats[key].success == 0
+    assert opt.stats[key].penalty_factor < 1.0
