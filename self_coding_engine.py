@@ -125,7 +125,7 @@ except Exception:  # pragma: no cover - graceful degradation
         return None
 from .prompt_engine import PromptEngine, _ENCODER
 from .prompt_memory_trainer import PromptMemoryTrainer
-from chunking import chunk_file, summarize_code
+from chunking import summarize_code
 from prompt_chunker import split_into_chunks
 from chunk_summary_cache import ChunkSummaryCache
 try:
@@ -1154,61 +1154,128 @@ class SelfCodingEngine:
         return 0
 
     def _apply_patch_chunked(
-        self, path: Path, description: str, *, context_meta: Dict[str, Any] | None = None
+        self,
+        path: Path,
+        description: str,
+        *,
+        context_meta: Dict[str, Any] | None = None,
+        requesting_bot: str | None = None,
     ) -> tuple[int | None, bool, float]:
         """Apply patches sequentially to each chunk in a large file.
 
-        When the file exceeds the configured ``chunk_token_threshold`` this helper
-        splits the file into token sized chunks and applies patches to each chunk
-        individually.  ``chunk_file`` returns the exact line numbers for each chunk
-        which we preserve so that new code is inserted at the correct location.
-
-        The rollback logic reverts a chunk immediately when CI fails, allowing
-        the process to continue with subsequent chunks.  ROI tracking, when
-        available, is updated after every successful chunk patch.
+        For every chunk we craft a prompt that contains the raw source of the
+        selected chunk along with summaries of the other chunks.  Generated code
+        is spliced back into the original file at the chunk boundary.  Each
+        chunk is verified and CI-tested independently; failures trigger an
+        immediate rollback of that chunk so processing can continue with the
+        remaining chunks.
         """
 
+        # Snapshot of original file to merge patches into
         original_lines = path.read_text(encoding="utf-8").splitlines()
-        chunks = chunk_file(path, self.chunk_token_threshold)
-        summary_map: list[tuple[str, int, int, str]] = []
-        for ch in chunks:
-            summary = summarize_code(ch.text, self.llm_client)
-            summary_map.append((summary, ch.start_line, ch.end_line, ch.text))
-
+        code = "\n".join(original_lines)
+        chunks = split_into_chunks(code, self.chunk_token_threshold)
         offset = 0
         success_any = False
-        for summary, start, end, text in summary_map:
-            with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
-                fh.write(text + "\n")
-                tmp_path = Path(fh.name)
-            try:
-                generated, _ = self.patch_file(
-                    tmp_path, f"{description} ({summary})", context_meta=context_meta
-                )
-            finally:
+        last_patch_id: int | None = None
+
+        def _verify(snippet: str) -> bool:
+            if self.formal_verifier:
+                with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
+                    fh.write(snippet)
+                    tmp_path = Path(fh.name)
                 try:
-                    tmp_path.unlink()
-                except Exception:
-                    pass
-            if not generated.strip():
+                    return self.formal_verifier.verify(tmp_path)
+                finally:
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
+            try:
+                ast.parse(snippet)
+                return True
+            except SyntaxError:
+                return False
+
+        for idx, ch in enumerate(chunks):
+            generated = self.generate_helper(
+                description,
+                path=path,
+                metadata=context_meta,
+                chunk_index=idx,
+            )
+            if not generated.strip() or not _verify(generated):
                 continue
-            insert_at = end + offset
+
+            insert_at = ch.end_line + offset
             patch_lines = generated.rstrip().splitlines()
             original_lines[insert_at:insert_at] = patch_lines
             path.write_text("\n".join(original_lines) + "\n", encoding="utf-8")
+
+            patch_key = f"{path}:{description}:{idx}"
+            if self.rollback_mgr:
+                try:
+                    self.rollback_mgr.register_patch(patch_key, self.bot_name)
+                except Exception:
+                    self.logger.exception("failed to register patch")
+
             ci_result = self._run_ci(path)
             if not ci_result.success:
                 del original_lines[insert_at:insert_at + len(patch_lines)]
                 path.write_text("\n".join(original_lines) + "\n", encoding="utf-8")
+                if self.rollback_mgr:
+                    try:
+                        self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
+                    except Exception:
+                        self.logger.exception("chunk rollback failed")
+                if self.patch_db:
+                    try:
+                        pid = self.patch_db.add(
+                            PatchRecord(
+                                filename=str(path),
+                                description=f"{description} [chunk {idx}]",
+                                roi_before=0.0,
+                                roi_after=0.0,
+                                reverted=True,
+                            )
+                        )
+                        record_patch_metadata(pid, {"chunk": idx}, patch_db=self.patch_db)
+                    except Exception:
+                        self.logger.exception("failed to record chunk metadata")
                 continue
-            offset += len(patch_lines)
+
             success_any = True
+            offset += len(patch_lines)
+            if self.patch_db:
+                try:
+                    last_patch_id = self.patch_db.add(
+                        PatchRecord(
+                            filename=str(path),
+                            description=f"{description} [chunk {idx}]",
+                            roi_before=0.0,
+                            roi_after=0.0,
+                            reverted=False,
+                        )
+                    )
+                    record_patch_metadata(
+                        last_patch_id, {"chunk": idx}, patch_db=self.patch_db
+                    )
+                except Exception:
+                    self.logger.exception("failed to record chunk metadata")
+
             if self.roi_tracker:
                 try:
                     self.roi_tracker.update(0.0, 0.0)
                 except Exception:
                     pass
-        return None, success_any, 0.0
+
+            if self.memory_mgr:
+                try:
+                    self.memory_mgr.store(str(path), generated, tags="code")
+                except Exception:
+                    self.logger.exception("memory store failed")
+
+        return last_patch_id, success_any, 0.0
 
     def apply_patch(
         self,
@@ -1310,7 +1377,10 @@ class SelfCodingEngine:
         original = path.read_text(encoding="utf-8")
         if _count_tokens(original) > self.chunk_token_threshold:
             return self._apply_patch_chunked(
-                path, description, context_meta=context_meta
+                path,
+                description,
+                context_meta=context_meta,
+                requesting_bot=requesting_bot,
             )
         generated_code, pre_verified = self.patch_file(
             path, description, context_meta=context_meta
