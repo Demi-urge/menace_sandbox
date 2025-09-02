@@ -621,28 +621,11 @@ class SelfCodingEngine:
         return "\n".join(lines)
 
     def _build_file_context(self, path: Path) -> str:
-        """Return file content or chunk summaries depending on size."""
+        """Return file content trimmed to the token limit."""
         try:
             code = path.read_text(encoding="utf-8")
         except Exception:
             return ""
-        if _count_tokens(code) > self.token_threshold:
-            self.logger.debug("using chunk summaries for %s", path)
-            try:
-                chunks = get_chunk_summaries(
-                    path,
-                    self.prompt_chunk_token_threshold,
-                )
-                summary = "\n".join(c.get("summary", "") for c in chunks)
-                if self.prompt_engine:
-                    summary = self.prompt_engine._trim_tokens(
-                        summary, self.token_threshold
-                    )
-                return summary
-            except Exception:
-                self.logger.exception("failed to summarise %s", path)
-        else:
-            self.logger.debug("using full source for %s", path)
         if self.prompt_engine:
             return self.prompt_engine._trim_tokens(code, self.token_threshold)
         return code
@@ -738,7 +721,24 @@ class SelfCodingEngine:
         """Create helper text by asking an LLM using snippet context and retrieval context."""
         snippets = self.suggest_snippets(description, limit=3)
         snippet_context = "\n\n".join(s.code for s in snippets)
-        file_context = self._build_file_context(path) if path else ""
+        summaries: List[str] | None = None
+        file_context = ""
+        if path:
+            try:
+                code = path.read_text(encoding="utf-8")
+            except Exception:
+                code = ""
+            if code and _count_tokens(code) > self.token_threshold:
+                self.logger.debug("using chunk summaries for %s", path)
+                try:
+                    chunks = get_chunk_summaries(
+                        path, self.prompt_chunk_token_threshold
+                    )
+                    summaries = [c.get("summary", "") for c in chunks if c.get("summary")]
+                except Exception:
+                    self.logger.exception("failed to summarise %s", path)
+            else:
+                file_context = self._build_file_context(path)
         context = "\n\n".join(p for p in (file_context, snippet_context) if p)
 
         def _fallback() -> str:
@@ -809,6 +809,7 @@ class SelfCodingEngine:
                 retrieval_context=retrieval_context,
                 retry_trace=retry_trace,
                 tone=self.prompt_tone,
+                summaries=summaries,
             )
         except TypeError:
             prompt_obj = self.prompt_engine.build_prompt(
@@ -846,13 +847,13 @@ class SelfCodingEngine:
         try:
             entries = get_feedback(self.gpt_memory, description, limit=5)
             if entries:
-                summaries: List[str] = []
+                hist_summaries: List[str] = []
                 for ent in entries:
                     resp = (getattr(ent, "response", "") or "").strip()
                     tag = "success" if "status=success" in resp else "failure"
                     snippet = resp.splitlines()[0]
-                    summaries.append(f"{tag}: {snippet}")
-                history = "\n".join(summaries)
+                    hist_summaries.append(f"{tag}: {snippet}")
+                history = "\n".join(hist_summaries)
         except Exception:
             history = ""
         fix_history = ""

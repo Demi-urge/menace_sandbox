@@ -19,16 +19,15 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from llm_interface import Prompt
+from snippet_compressor import compress_snippets
+
 try:  # pragma: no cover - optional settings dependency
     from sandbox_settings import SandboxSettings  # type: ignore
 except Exception:  # pragma: no cover - allow running without settings
     SandboxSettings = None  # type: ignore
 
 _SETTINGS = SandboxSettings() if SandboxSettings else None
-
-from llm_interface import Prompt
-
-from snippet_compressor import compress_snippets
 
 try:  # pragma: no cover - optional runtime dependency
     from prompt_optimizer import (
@@ -650,6 +649,7 @@ class PromptEngine:
         task: str,
         *,
         context: str | None = None,
+        summaries: List[str] | None = None,
         retrieval_context: str | None = None,
         retry_trace: str | None = None,
         tone: str | None = None,
@@ -658,7 +658,9 @@ class PromptEngine:
 
         ``context`` and ``retrieval_context`` allow callers to prepend
         additional information such as the snippet body, repository layout or
-        metadata from vector retrieval.  ``retry_trace`` may contain failure
+        metadata from vector retrieval.  ``summaries`` may contain short
+        descriptions of file chunks when the full source is too large to
+        include.  ``retry_trace`` may contain failure
         logs or tracebacks from a prior attempt.  When supplied a "Previous
         failure" section is appended and the details are de-duplicated so
         repeated retries do not accumulate duplicate traces.  When retrieval
@@ -740,6 +742,11 @@ class PromptEngine:
 
         snippet_lines = self.build_snippets(ranked)
         lines: List[str] = []
+        if summaries:
+            summary_text = "\n".join(summaries).strip()
+            if summary_text:
+                lines.append(summary_text)
+                lines.append("")
 
         for section in self.trained_structured_sections or []:
             lines.append(f"{section.capitalize()}:")
@@ -1033,6 +1040,7 @@ class PromptEngine:
         *,
         context: str | None = None,
         retrieval_context: str | None = None,
+        summaries: List[str] | None = None,
         top_n: int = 5,
         confidence_threshold: float = 0.3,
         retriever: Retriever | None = None,
@@ -1066,6 +1074,7 @@ class PromptEngine:
             retrieval_context=retrieval_context,
             retry_trace=retry_trace,
             tone=tone,
+            summaries=summaries,
         )
 
 
@@ -1075,6 +1084,7 @@ def build_prompt(
     *,
     context: str | None = None,
     retrieval_context: str | None = None,
+    summaries: List[str] | None = None,
     top_n: int = 5,
     success_header: str = "Given the following pattern:",
     failure_header: str = "Avoid {summary} because it caused {outcome}:",
@@ -1094,6 +1104,7 @@ def build_prompt(
         retry_trace,
         context=context,
         retrieval_context=retrieval_context,
+        summaries=summaries,
         top_n=top_n,
         success_header=success_header,
         failure_header=failure_header,
