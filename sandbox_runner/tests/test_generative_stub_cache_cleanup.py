@@ -10,7 +10,9 @@ sys.modules.setdefault(
     "db_router", types.SimpleNamespace(GLOBAL_ROUTER=None, init_db_router=lambda *a, **k: None)
 )
 class _DummySettings:
+    menace_light_imports = True
     stub_timeout = 1.0
+    stub_save_timeout = 1.0
     stub_retries = 1
     stub_retry_base = 0.1
     stub_retry_max = 0.2
@@ -20,6 +22,19 @@ class _DummySettings:
 sys.modules.setdefault(
     "sandbox_settings", types.SimpleNamespace(SandboxSettings=_DummySettings)
 )
+sys.modules.setdefault(
+    "model_registry", types.SimpleNamespace(get_client=lambda *a, **k: object())
+)
+sys.modules.setdefault(
+    "llm_interface", types.SimpleNamespace(Prompt=str)
+)
+menace_env = types.ModuleType("environment_generator")
+menace_env._CPU_LIMITS = []
+menace_env._MEMORY_LIMITS = []
+menace_pkg = types.ModuleType("menace")
+menace_pkg.environment_generator = menace_env
+sys.modules.setdefault("menace.environment_generator", menace_env)
+sys.modules.setdefault("menace", menace_pkg)
 
 from sandbox_runner import generative_stub_provider as gsp
 
@@ -33,6 +48,7 @@ def _make_cfg(tmp_path: Path) -> gsp.StubProviderConfig:
         cache_max=10,
         cache_path=tmp_path / "cache.json",
         fallback_model="none",
+        save_timeout=1.0,
     )
 
 
