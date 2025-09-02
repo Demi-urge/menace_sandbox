@@ -10,6 +10,7 @@ configuration. The generated file includes stub values for critical settings:
 - `MODELS` resolves to the bundled `micro_models` directory when set to `demo`
 - `OPENAI_API_KEY` and `STRIPE_API_KEY` placeholders
 - `SANDBOX_DATA_DIR` defaults to `sandbox_data`
+- `SANDBOX_LOG_LEVEL` defaults to `INFO` (use `--log-level` to override)
 
 Bootstrap verifies these variables before launching and raises a clear error if
 any required value is missing or the model path does not exist.
