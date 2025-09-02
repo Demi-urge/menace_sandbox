@@ -123,8 +123,9 @@ except Exception:  # pragma: no cover - graceful degradation
     def record_patch_metadata(*_a: Any, **_k: Any) -> None:  # type: ignore
         return None
 from .prompt_engine import PromptEngine, _ENCODER
-from .prompt_chunking import get_chunk_summaries
 from .prompt_memory_trainer import PromptMemoryTrainer
+from chunking import chunk_file, summarize_code
+from chunk_summary_cache import ChunkSummaryCache
 try:
     from .prompt_optimizer import PromptOptimizer
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -215,14 +216,17 @@ class SelfCodingEngine:
                 self.prompt_memory = None
         self.prompt_tone = prompt_tone
         self.token_threshold = token_threshold
-        self.prompt_chunk_token_threshold = (
+        self.chunk_token_threshold = (
             prompt_chunk_token_threshold
             if prompt_chunk_token_threshold is not None
             else _settings.prompt_chunk_token_threshold
         )
+        # maintain backward compatibility
+        self.prompt_chunk_token_threshold = self.chunk_token_threshold
         self.prompt_chunk_cache_dir = Path(
             prompt_chunk_cache_dir or _settings.prompt_chunk_cache_dir
         )
+        self.chunk_cache = ChunkSummaryCache(self.prompt_chunk_cache_dir)
         self.safety_monitor = safety_monitor
         if llm_client is None:
             try:
@@ -314,7 +318,7 @@ class SelfCodingEngine:
             trainer=self.prompt_memory,
             optimizer=self.prompt_optimizer,
             token_threshold=token_threshold,
-            chunk_token_threshold=self.prompt_chunk_token_threshold,
+            chunk_token_threshold=self.chunk_token_threshold,
             prompt_chunk_cache_dir=self.prompt_chunk_cache_dir,
         )
         if prompt_evolution_memory is None:
@@ -728,13 +732,32 @@ class SelfCodingEngine:
                 code = path.read_text(encoding="utf-8")
             except Exception:
                 code = ""
-            if code and _count_tokens(code) > self.token_threshold:
+            if code and _count_tokens(code) > self.chunk_token_threshold:
                 self.logger.debug("using chunk summaries for %s", path)
                 try:
-                    chunks = get_chunk_summaries(
-                        path, self.prompt_chunk_token_threshold
-                    )
-                    summaries = [c.get("summary", "") for c in chunks if c.get("summary")]
+                    path_hash = self.chunk_cache.hash_path(path)
+                    cached = self.chunk_cache.get(path_hash) or {}
+                    cached_summaries = list(cached.get("summaries", [])) if cached else []
+                    cache_map = {c.get("hash"): c for c in cached_summaries}
+                    chunks = chunk_file(path, self.chunk_token_threshold)
+                    summaries = []
+                    updated = False
+                    for ch in chunks:
+                        entry = cache_map.get(ch.hash)
+                        if entry is None:
+                            summary_text = summarize_code(ch.text, self.llm_client)
+                            entry = {
+                                "start_line": ch.start_line,
+                                "end_line": ch.end_line,
+                                "hash": ch.hash,
+                                "summary": summary_text,
+                            }
+                            cached_summaries.append(entry)
+                            updated = True
+                        summaries.append(entry.get("summary", ""))
+                    if updated or not cached:
+                        self.chunk_cache.set(path_hash, cached_summaries)
+                    file_context = "\n".join(summaries)
                 except Exception:
                     self.logger.exception("failed to summarise %s", path)
             else:
