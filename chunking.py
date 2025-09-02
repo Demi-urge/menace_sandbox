@@ -10,12 +10,19 @@ if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from llm_interface import LLMClient
 import ast
 import hashlib
-import json
+import threading
 
 try:  # Optional dependency for accurate token counting
     import tiktoken  # type: ignore
 except Exception:  # pragma: no cover - tiktoken may be missing
     tiktoken = None  # type: ignore
+
+try:  # pragma: no cover - optional settings dependency
+    from sandbox_settings import SandboxSettings  # type: ignore
+except Exception:  # pragma: no cover - allow running without settings
+    SandboxSettings = None  # type: ignore
+
+from chunk_summary_cache import ChunkSummaryCache
 
 _ENCODER = None
 if tiktoken is not None:  # pragma: no branch - simple import logic
@@ -202,47 +209,56 @@ def summarize_code(text: str, llm: LLMClient | None = None) -> str:
     return ""
 
 
-CACHE_DIR = Path("chunk_summary_cache")
-CACHE_DIR.mkdir(exist_ok=True)
+_SETTINGS = SandboxSettings() if SandboxSettings else None
+
+# Global cache instance used by :func:`get_chunk_summaries`.  The directory can
+# be overridden by reassigning ``CHUNK_CACHE`` or by providing a custom cache
+# instance to :func:`get_chunk_summaries`.
+CHUNK_CACHE = ChunkSummaryCache(
+    (_SETTINGS.chunk_summary_cache_dir if _SETTINGS else Path("chunk_summary_cache"))
+)
+
+# Per-path locks to avoid duplicate work when multiple threads request summaries
+# simultaneously for the same file.
+_CACHE_LOCKS: Dict[str, threading.Lock] = {}
 
 
 def get_chunk_summaries(
-    path: Path, max_tokens: int, llm: LLMClient | None = None
+    path: Path,
+    max_tokens: int,
+    llm: LLMClient | None = None,
+    *,
+    cache: ChunkSummaryCache | None = None,
 ) -> List[Dict[str, str]]:
     """Return cached summaries for ``path`` split into ``max_tokens`` chunks."""
 
-    source = path.read_text()
-    file_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
-    cache_file = CACHE_DIR / f"{file_hash}.json"
+    cache_obj = cache or CHUNK_CACHE
+    path_hash = cache_obj.hash_path(path)
+    cached = cache_obj.get(path_hash)
+    if cached:
+        return list(cached.get("summaries", []))
 
-    cached: Dict[str, Dict[str, str]] = {}
-    if cache_file.exists():
-        try:
-            data = json.loads(cache_file.read_text())
-            if data.get("hash") == file_hash:
-                for c in data.get("chunks", []):
-                    if isinstance(c, dict) and "hash" in c:
-                        cached[c["hash"]] = c
-        except Exception:  # pragma: no cover - corrupted cache
-            pass
+    lock = _CACHE_LOCKS.setdefault(path_hash, threading.Lock())
+    with lock:
+        cached = cache_obj.get(path_hash)
+        if cached:
+            return list(cached.get("summaries", []))
 
-    chunks = chunk_file(path, max_tokens)
-    summaries: List[Dict[str, str]] = []
-    updated = False
-    for ch in chunks:
-        summary = summarize_code(ch.text, llm)
-        entry = cached.get(ch.hash)
-        if entry is None or entry.get("summary") != summary:
-            entry = {"hash": ch.hash, "summary": summary}
-            cached[ch.hash] = entry
-            updated = True
-        summaries.append({"hash": ch.hash, "summary": summary})
+        chunks = chunk_file(path, max_tokens)
+        summaries: List[Dict[str, str]] = []
+        for ch in chunks:
+            summary = summarize_code(ch.text, llm)
+            summaries.append(
+                {
+                    "start_line": ch.start_line,
+                    "end_line": ch.end_line,
+                    "hash": ch.hash,
+                    "summary": summary,
+                }
+            )
 
-    if updated or not cache_file.exists():
-        cache_file.write_text(
-            json.dumps({"hash": file_hash, "chunks": summaries}, indent=2, sort_keys=True)
-        )
-    return summaries
+        cache_obj.set(path_hash, summaries)
+        return summaries
 
 
 __all__ = [

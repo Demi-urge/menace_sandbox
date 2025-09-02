@@ -21,9 +21,8 @@ more than the configured token budget. The pipeline consists of:
 
 1. `chunk_file` – walks a module and produces token‑bounded chunks.
 2. `summarize_code` – generates a short natural‑language blurb for each chunk.
-3. `get_chunk_summaries` – stores the code and summary in
-   `chunk_summary_cache/` keyed by a SHA256 hash of the chunk. Cached entries are
-   reused until the source changes.
+3. `get_chunk_summaries` – uses a disk-backed cache to persist chunk summaries
+   and automatically invalidates them when the source file changes.
 
 `PROMPT_CHUNK_TOKEN_THRESHOLD` sets the maximum tokens per chunk and
 `PROMPT_CHUNK_CACHE_DIR` relocates the cache directory.

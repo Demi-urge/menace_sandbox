@@ -68,7 +68,7 @@ Populate the summary cache ahead of time to avoid first‑run latency:
 from pathlib import Path
 from chunking import get_chunk_summaries
 
-# Writes JSON files into chunk_summary_cache/
+# Populate chunk_summary_cache/ with summaries
 get_chunk_summaries(Path("bots/example.py"), 800)
 ```
 

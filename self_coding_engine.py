@@ -234,6 +234,12 @@ class SelfCodingEngine:
         # backward compatibility
         self.prompt_chunk_cache_dir = self.chunk_summary_cache_dir
         self.chunk_cache = ChunkSummaryCache(self.chunk_summary_cache_dir)
+        try:
+            import chunking as _pc
+
+            _pc.CHUNK_CACHE = self.chunk_cache
+        except Exception:
+            pass
         self.safety_monitor = safety_monitor
         if llm_client is None:
             try:
@@ -774,7 +780,11 @@ class SelfCodingEngine:
                             cached_summaries.append(entry)
                             cache_map[ch_hash] = entry
                             updated = True
-                        elif entry.get("summary") != summary_text or entry.get("start_line") != ch.start_line or entry.get("end_line") != ch.end_line:
+                        elif (
+                            entry.get("summary") != summary_text
+                            or entry.get("start_line") != ch.start_line
+                            or entry.get("end_line") != ch.end_line
+                        ):
                             entry.update(
                                 {
                                     "start_line": ch.start_line,
