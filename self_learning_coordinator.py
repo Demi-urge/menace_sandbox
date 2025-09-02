@@ -29,6 +29,7 @@ from .action_learning_engine import ActionLearningEngine
 from .evaluation_manager import EvaluationManager
 from .error_bot import ErrorBot
 from .curriculum_builder import CurriculumBuilder
+from .self_improvement.baseline_tracker import BaselineTracker
 
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class SelfLearningCoordinator:
             else getattr(settings, "self_learning_summary_interval", 0)
         )
         self.curriculum_builder = curriculum_builder
+        self._success_tracker = BaselineTracker()
         self._lock = threading.Lock()
         self._summary_count = 0
         self._train_count = 0
@@ -524,23 +526,40 @@ class SelfLearningCoordinator:
         )
         summary.sort(key=lambda s: s.get("success_rate", 0.0))
         for idx, item in enumerate(summary, start=1):
+            rate = float(item.get("success_rate", 0.0))
+            avg = self._success_tracker.get("success_rate")
+            delta = rate - avg
+            self._success_tracker.update(
+                success_rate=rate, success_rate_delta=delta
+            )
+            history = self._success_tracker.delta_history("success_rate")
+            streak = 0
+            for d in reversed(history):
+                if d <= 0:
+                    streak += 1
+                else:
+                    break
+            outcome = (
+                Outcome.FAILURE if delta < 0 and streak >= 3 else Outcome.SUCCESS
+            )
             rec = PathwayRecord(
                 actions=str(item.get("error_type", "")),
                 inputs="",
                 outputs="",
                 exec_time=0.0,
                 resources="",
-                outcome=Outcome.FAILURE
-                if item.get("success_rate", 0.0) < 0.5
-                else Outcome.SUCCESS,
+                outcome=outcome,
                 roi=0.0,
             )
             await self._train_record(rec)
             logger.info(
-                "processed summary training record %s (%d/%d)",
+                "processed summary training record %s (%d/%d) baseline=%.3f delta=%.3f streak=%d",
                 getattr(rec, "ts", ""),
                 idx,
                 len(summary),
+                avg,
+                delta,
+                streak,
             )
 
     def _evaluate_all(self) -> None:
