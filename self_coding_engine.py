@@ -1107,6 +1107,63 @@ class SelfCodingEngine:
                     return int(row.get("errors", 0))
         return 0
 
+    def _apply_patch_chunked(
+        self, path: Path, description: str, *, context_meta: Dict[str, Any] | None = None
+    ) -> tuple[int | None, bool, float]:
+        """Apply patches sequentially to each chunk in a large file.
+
+        When the file exceeds the configured ``chunk_token_threshold`` this helper
+        splits the file into token sized chunks and applies patches to each chunk
+        individually.  ``chunk_file`` returns the exact line numbers for each chunk
+        which we preserve so that new code is inserted at the correct location.
+
+        The rollback logic reverts a chunk immediately when CI fails, allowing
+        the process to continue with subsequent chunks.  ROI tracking, when
+        available, is updated after every successful chunk patch.
+        """
+
+        original_lines = path.read_text(encoding="utf-8").splitlines()
+        chunks = chunk_file(path, self.chunk_token_threshold)
+        summary_map: list[tuple[str, int, int, str]] = []
+        for ch in chunks:
+            summary = summarize_code(ch.text, self.llm_client)
+            summary_map.append((summary, ch.start_line, ch.end_line, ch.text))
+
+        offset = 0
+        success_any = False
+        for summary, start, end, text in summary_map:
+            with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
+                fh.write(text + "\n")
+                tmp_path = Path(fh.name)
+            try:
+                generated, _ = self.patch_file(
+                    tmp_path, f"{description} ({summary})", context_meta=context_meta
+                )
+            finally:
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+            if not generated.strip():
+                continue
+            insert_at = end + offset
+            patch_lines = generated.rstrip().splitlines()
+            original_lines[insert_at:insert_at] = patch_lines
+            path.write_text("\n".join(original_lines) + "\n", encoding="utf-8")
+            ci_result = self._run_ci(path)
+            if not ci_result.success:
+                del original_lines[insert_at:insert_at + len(patch_lines)]
+                path.write_text("\n".join(original_lines) + "\n", encoding="utf-8")
+                continue
+            offset += len(patch_lines)
+            success_any = True
+            if self.roi_tracker:
+                try:
+                    self.roi_tracker.update(0.0, 0.0)
+                except Exception:
+                    pass
+        return None, success_any, 0.0
+
     def apply_patch(
         self,
         path: Path,
@@ -1205,6 +1262,10 @@ class SelfCodingEngine:
                     "retrieval_session_id": "",
                 }
         original = path.read_text(encoding="utf-8")
+        if _count_tokens(original) > self.chunk_token_threshold:
+            return self._apply_patch_chunked(
+                path, description, context_meta=context_meta
+            )
         generated_code, pre_verified = self.patch_file(
             path, description, context_meta=context_meta
         )
