@@ -11,8 +11,9 @@ configuration. The generated file includes stub values for critical settings:
 - `OPENAI_API_KEY` and `STRIPE_API_KEY` placeholders
 - `SANDBOX_DATA_DIR` defaults to `sandbox_data`
 - `SANDBOX_LOG_LEVEL` defaults to `INFO` (use `--log-level` to override)
-- `PROMPT_CHUNK_TOKEN_THRESHOLD` and `PROMPT_CHUNK_CACHE_DIR` control code
-  chunking token limits and caching for large file summaries
+- `PROMPT_CHUNK_TOKEN_THRESHOLD` and `CHUNK_SUMMARY_CACHE_DIR` control code
+  chunking token limits and caching for large file summaries (see
+  [prompt chunking docs](docs/prompt_chunking.md))
 
 ### Chunking pipeline
 
@@ -25,7 +26,8 @@ more than the configured token budget. The pipeline consists of:
    and automatically invalidates them when the source file changes.
 
 `PROMPT_CHUNK_TOKEN_THRESHOLD` sets the maximum tokens per chunk and
-`PROMPT_CHUNK_CACHE_DIR` relocates the cache directory.
+`CHUNK_SUMMARY_CACHE_DIR` relocates the cache directory. See
+[chunked prompting](docs/chunked_prompting.md) for configuration details.
 
 Bootstrap verifies these variables before launching and raises a clear error if
 any required value is missing or the model path does not exist.
