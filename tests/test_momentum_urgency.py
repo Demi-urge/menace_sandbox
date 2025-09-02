@@ -27,12 +27,10 @@ SelfImprovementEngine = ns["SelfImprovementEngine"]
 
 def _make_engine():
     eng = SelfImprovementEngine.__new__(SelfImprovementEngine)
-    eng.success_history = [False, False, True, False]
-    eng.momentum_window = 4
     eng.urgency_tier = 0
     eng.logger = types.SimpleNamespace(warning=lambda *a, **k: None)
     eng.baseline_tracker = types.SimpleNamespace(
-        get=lambda m: 0.75, std=lambda m: 0.05
+        get=lambda m: 0.75, std=lambda m: 0.05, momentum=0.25
     )
     eng.momentum_dev_multiplier = 1.0
     eng.stagnation_cycles = 2
