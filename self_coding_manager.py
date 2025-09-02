@@ -12,6 +12,11 @@ import re
 from typing import Dict, Any, TYPE_CHECKING
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
+from .failure_fingerprint_store import (
+    FailureFingerprint,
+    FailureFingerprintStore,
+)
+from .vector_utils import cosine_similarity
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import record_failed_tags, load_failed_tags
 except Exception:  # pragma: no cover - optional dependency
@@ -91,6 +96,8 @@ class SelfCodingManager:
         approval_policy: "PatchApprovalPolicy | None" = None,
         suggestion_db: PatchSuggestionDB | None = None,
         enhancement_classifier: "EnhancementClassifier" | None = None,
+        failure_store: FailureFingerprintStore | None = None,
+        skip_similarity: float = 0.95,
     ) -> None:
         self.engine = self_coding_engine
         self.pipeline = pipeline
@@ -105,6 +112,8 @@ class SelfCodingManager:
         self.enhancement_classifier = (
             enhancement_classifier or getattr(self.engine, "enhancement_classifier", None)
         )
+        self.failure_store = failure_store
+        self.skip_similarity = skip_similarity
         if enhancement_classifier and not getattr(self.engine, "enhancement_classifier", None):
             try:
                 self.engine.enhancement_classifier = enhancement_classifier
@@ -207,6 +216,8 @@ class SelfCodingManager:
                 "context_builder",
                 None,
             )
+            desc = description
+            last_fp: FailureFingerprint | None = None
 
             def _coverage_ratio(output: str, success: bool) -> float:
                 try:
@@ -234,11 +245,39 @@ class SelfCodingManager:
             while attempt < max_attempts:
                 attempt += 1
                 self.logger.info("patch attempt %s", attempt)
+                if last_fp and self.failure_store:
+                    try:
+                        matches = self.failure_store.find_similar(last_fp)
+                    except Exception:
+                        matches = []
+                    if matches:
+                        best = 0.0
+                        for m in matches:
+                            try:
+                                sim = cosine_similarity(last_fp.embedding, m.embedding)
+                            except Exception:
+                                sim = 0.0
+                            if sim > best:
+                                best = sim
+                        if best >= self.skip_similarity:
+                            self.logger.info(
+                                "failure fingerprint decision",
+                                extra={"action": "skip", "similarity": best},
+                            )
+                            raise RuntimeError("similar failure detected")
+                        warning = (
+                            f"avoid repeating failure: {last_fp.error_message}"
+                        )
+                        desc = f"{desc}; {warning}"
+                        self.logger.info(
+                            "failure fingerprint decision",
+                            extra={"action": "warning", "similarity": best},
+                        )
                 patch_id, reverted, _ = self.engine.apply_patch(
                     cloned_path,
-                    description,
+                    desc,
                     parent_patch_id=self._last_patch_id,
-                    reason=description,
+                    reason=desc,
                     trigger=path.name,
                     context_meta=ctx_meta,
                     baseline_coverage=coverage_before,
@@ -294,7 +333,7 @@ class SelfCodingManager:
                 if not builder or not tags:
                     raise RuntimeError("patch tests failed")
                 try:
-                    ctx, sid = builder.query(description, exclude_tags=tags)
+                    ctx, sid = builder.query(desc, exclude_tags=tags)
                     ctx_meta = {
                         "retrieval_context": ctx,
                         "retrieval_session_id": sid,
@@ -303,6 +342,22 @@ class SelfCodingManager:
                     self.logger.error("context rebuild failed: %s", exc)
                     raise RuntimeError("patch tests failed")
 
+                filename = function_name = error_msg = ""
+                m = re.findall(r'File "([^"]+)", line \d+, in ([^\n]+)', trace)
+                if m:
+                    filename, function_name = m[-1]
+                m_err = re.findall(r'([\w.]+(?:Error|Exception):.*)', trace)
+                if m_err:
+                    error_msg = m_err[-1]
+                last_fp = FailureFingerprint(
+                    filename,
+                    function_name,
+                    error_msg,
+                    trace,
+                    desc,
+                )
+
+            description = desc
             path.write_text(cloned_path.read_text(encoding="utf-8"), encoding="utf-8")
             branch_name = review_branch or f"review/{patch_id}"
             try:
