@@ -14,6 +14,20 @@ configuration. The generated file includes stub values for critical settings:
 - `PROMPT_CHUNK_TOKEN_THRESHOLD` and `PROMPT_CHUNK_CACHE_DIR` control code
   chunking token limits and caching for large file summaries
 
+### Chunking pipeline
+
+Large modules are split and summarised before prompting so the LLM never sees
+more than the configured token budget. The pipeline consists of:
+
+1. `chunk_code` – walks a module and produces token‑bounded chunks.
+2. `summarize_code` – generates a short natural‑language blurb for each chunk.
+3. `get_chunk_summaries` – stores the code and summary in
+   `chunk_summary_cache/` keyed by a SHA256 hash of the chunk. Cached entries are
+   reused until the source changes.
+
+`PROMPT_CHUNK_TOKEN_THRESHOLD` sets the maximum tokens per chunk and
+`PROMPT_CHUNK_CACHE_DIR` relocates the cache directory.
+
 Bootstrap verifies these variables before launching and raises a clear error if
 any required value is missing or the model path does not exist.
 

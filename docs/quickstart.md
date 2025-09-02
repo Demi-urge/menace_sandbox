@@ -60,6 +60,33 @@ menace new-db demo
 
 `retrieve` caches results on disk and reuses them until the underlying databases change. When the vector retriever raises an error, database-specific full-text helpers are consulted as a fallback.
 
+### Precomputing summaries
+
+Populate the summary cache ahead of time to avoid first‑run latency:
+
+```python
+from pathlib import Path
+from prompt_chunking import get_chunk_summaries
+
+# Writes JSON files into chunk_summary_cache/
+get_chunk_summaries(Path("bots/example.py"), 800)
+```
+
+When building prompts the self‑coding engine loads these summaries and passes
+them to the prompt engine:
+
+```python
+from prompt_chunking import get_chunk_summaries
+from prompt_engine import PromptEngine
+
+engine = PromptEngine()
+chunks = get_chunk_summaries(Path("bots/example.py"), 800)
+prompt = engine.build_prompt(
+    "refactor helper",
+    summaries=[c["summary"] for c in chunks],
+)
+```
+
 ### Recursive module discovery
 
 Passing modules are merged into the sandbox automatically and a simple
