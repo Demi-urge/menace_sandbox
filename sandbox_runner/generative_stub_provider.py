@@ -694,8 +694,22 @@ def flush_caches(config: StubProviderConfig | None = None) -> None:
     cfg = config or get_config()
 
     async def _wait() -> None:
-        async with _SAVE_TASKS:
-            pass
+        # gather pending save tasks and log any failures
+        with _SAVE_TASKS._lock:
+            tasks = list(_SAVE_TASKS._tasks)
+            _SAVE_TASKS._tasks.clear()
+        if not tasks:
+            return
+        try:
+            results = await asyncio.gather(
+                *(asyncio.shield(t) for t in tasks), return_exceptions=True
+            )
+        except Exception as exc:
+            logger.exception("cache save task await failed", exc_info=exc)
+        else:
+            for res in results:
+                if isinstance(res, Exception):
+                    logger.exception("cache save task failed", exc_info=res)
 
     try:
         try:
