@@ -62,6 +62,7 @@ class FailureFingerprint:
     embedding: List[float] = field(default_factory=list)
     embedding_metadata: Dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=lambda: time())
+    count: int = 1
 
     # ``function`` is used by ``FailureFingerprintStore``; keep ``function_name`` for
     # backwards compatibility with existing callers.
