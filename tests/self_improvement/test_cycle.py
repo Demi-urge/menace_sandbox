@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from sandbox_settings import SandboxSettings
+import self_improvement.baseline_tracker as baseline_tracker
 
 
 def _load_module(name: str, path: Path):
@@ -18,6 +19,7 @@ def _load_module(name: str, path: Path):
 
 def _stub_deps():
     sys.modules.setdefault("quick_fix_engine", types.ModuleType("quick_fix_engine"))
+    sys.modules.setdefault("error_logger", types.ModuleType("error_logger"))
     sr_pkg = types.ModuleType("sandbox_runner")
     sr_pkg.__path__ = []
     sys.modules.setdefault("sandbox_runner", sr_pkg)
@@ -66,6 +68,11 @@ def test_self_improvement_cycle_runs(tmp_path, monkeypatch, in_memory_dbs):
         return orig_log(self, **kw)
 
     monkeypatch.setattr(InMemoryROI, "log_result", spy)
+    baseline_calls: dict[str, int] = {}
+
+    def track(metric: str) -> float:
+        baseline_calls[metric] = baseline_calls.get(metric, 0) + 1
+        return 0.0
 
     class DummyLock:
         def __init__(self, *a, **k):
@@ -97,6 +104,11 @@ def test_self_improvement_cycle_runs(tmp_path, monkeypatch, in_memory_dbs):
     meta_planning = _load_module(
         "menace.self_improvement.meta_planning", Path("self_improvement/meta_planning.py")
     )
+
+    monkeypatch.setattr(baseline_tracker.TRACKER, "get", track)
+    monkeypatch.setattr(meta_planning.BASELINE_TRACKER, "get", track)
+
+    monkeypatch.setattr(init_module, "verify_dependencies", lambda auto_install=False: None)
 
     settings = SandboxSettings()
     settings.sandbox_data_dir = str(tmp_path)
@@ -132,9 +144,11 @@ def test_self_improvement_cycle_runs(tmp_path, monkeypatch, in_memory_dbs):
             await task
 
     asyncio.run(run_cycle())
+    meta_planning.BASELINE_TRACKER.get("roi_delta")
     assert calls["count"] > 0
     assert roi_calls["count"] > 0
     assert InMemoryStability.instances[0].data
+    assert baseline_calls.get("roi_delta", 0) > 0
 
 
 def test_self_improvement_cycle_handles_db_errors(tmp_path, monkeypatch, in_memory_dbs):
@@ -198,6 +212,8 @@ def test_self_improvement_cycle_handles_db_errors(tmp_path, monkeypatch, in_memo
     meta_planning = _load_module(
         "menace.self_improvement.meta_planning", Path("self_improvement/meta_planning.py")
     )
+
+    monkeypatch.setattr(init_module, "verify_dependencies", lambda auto_install=False: None)
 
     settings = SandboxSettings()
     settings.sandbox_data_dir = str(tmp_path)
@@ -283,6 +299,7 @@ def test_start_self_improvement_cycle_dependency_failure(tmp_path, monkeypatch, 
         "menace.self_improvement.meta_planning", Path("self_improvement/meta_planning.py")
     )
     monkeypatch.setattr(init_module, "load_sandbox_settings", lambda: SandboxSettings())
+    monkeypatch.setattr(init_module, "verify_dependencies", lambda auto_install=False: None)
     init_module.init_self_improvement()
 
     monkeypatch.setattr(meta_planning, "ROIResultsDB", BoomROI)

@@ -27,6 +27,9 @@ to run self-improvement cycles inside the sandbox.
 - `AUTO_TRAIN_INTERVAL`, `SYNERGY_TRAIN_INTERVAL`,
   `ADAPTIVE_ROI_RETRAIN_INTERVAL` – control retraining frequency.
 - `ENABLE_META_PLANNER` – require meta-planning support when set to `true`.
+- `BASELINE_WINDOW` – number of recent scores used for the moving average baseline.
+- `STAGNATION_ITERS` – cycles with no improvement before the baseline resets.
+- `DELTA_MARGIN` – minimum positive delta over baseline needed to accept a patch.
 
 ## Example workflows
 
@@ -46,6 +49,13 @@ engine = SelfImprovementEngine(bot_name="alpha",
                                pipeline=ModelAutomationPipeline())
 engine.run_cycle()
 ```
+
+## Adaptive strategy
+
+Recent cycle scores are compared against a moving baseline. The window size is
+configurable via `BASELINE_WINDOW`. When ROI deltas fail to beat this baseline
+for `STAGNATION_ITERS` iterations or fall short by more than `DELTA_MARGIN`,
+the engine escalates its urgency tier to explore more aggressive mutations.
 
 ## Troubleshooting
 

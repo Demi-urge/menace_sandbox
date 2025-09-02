@@ -2,6 +2,8 @@ import json
 
 from menace_sandbox.foresight_tracker import ForesightTracker
 import asyncio
+from collections import deque
+from statistics import mean
 import pytest
 
 
@@ -22,13 +24,19 @@ class DummyROITracker:
 
 
 class MiniSelfImprovementEngine:
-    def __init__(self, tracker, foresight_tracker):
+    def __init__(self, tracker, foresight_tracker, window: int = 3):
         self.tracker = tracker
         self.foresight_tracker = foresight_tracker
         self.workflow_ready = False
+        self.baseline: deque[float] = deque(maxlen=window)
+        self.urgency_tier = 0
 
     def run_cycle(self, workflow_id="wf"):
         delta = self.tracker.next_delta()
+        avg = mean(self.baseline) if self.baseline else 0.0
+        if self.baseline and delta <= avg:
+            self.urgency_tier += 1
+        self.baseline.append(delta)
         raroi_delta = self.tracker.raroi_history[-1] - self.tracker.raroi_history[-2]
         confidence = self.tracker.confidence_history[-1]
         resilience = self.tracker.metrics_history["synergy_resilience"][-1]
@@ -47,9 +55,7 @@ class MiniSelfImprovementEngine:
 
     def attempt_promotion(self, workflow_id="wf"):
         risk = self.foresight_tracker.predict_roi_collapse(workflow_id)
-        if risk.get("risk") == "Immediate collapse risk" or risk.get(
-            "brittle"
-        ):
+        if risk.get("risk") == "Immediate collapse risk" or risk.get("brittle"):
             self.workflow_ready = False
         else:
             self.workflow_ready = True
@@ -65,12 +71,15 @@ def test_run_cycle_records_and_stability():
     # initial positive trend
     assert ft.is_stable("wf")
     assert all("stability" in entry for entry in ft.history["wf"])
+    assert eng.urgency_tier == 0
 
     eng.run_cycle()  # negative slope but low volatility
     history = ft.history["wf"]
     assert len(history) == 3
     assert [entry["roi_delta"] for entry in history] == [2.0, 3.0, 0.0]
     assert [entry["raroi_delta"] for entry in history] == [1.0, 1.5, 0.0]
+    assert list(eng.baseline) == [2.0, 3.0, 0.0]
+    assert eng.urgency_tier == 1
     assert not ft.is_stable("wf")
 
 
@@ -139,6 +148,8 @@ def test_risky_workflow_not_promoted():
 
     eng.attempt_promotion()
     assert not eng.workflow_ready
+    assert eng.urgency_tier == 2
+    assert list(eng.baseline) == [1.0, 0.0, -2.0]
 
 
 def test_background_self_improvement_loop(monkeypatch):
@@ -190,7 +201,8 @@ def test_background_self_improvement_loop(monkeypatch):
                 {"chain": ["a", "b"], "roi_gain": 0.5, "failures": 0, "entropy": 0.0}
             ]
 
-    import sys, types
+    import sys
+    import types
 
     dummy_mod = types.ModuleType("run_autonomous")
     dummy_mod.LOCAL_KNOWLEDGE_MODULE = None
@@ -240,7 +252,9 @@ def test_background_self_improvement_loop(monkeypatch):
     neuro.get_recent_messages = lambda *a, **k: []
     neuro.push_chain = lambda *a, **k: None
     neuro.peek_chain = lambda *a, **k: []
-    class _Dummy: ...
+
+    class _Dummy:
+        ...
     neuro.MessageEntry = _Dummy
     neuro.CTAChain = _Dummy
     monkeypatch.setitem(sys.modules, "neurosales", neuro)
@@ -265,6 +279,7 @@ def test_background_self_improvement_loop(monkeypatch):
     data_bot.ErrorDB = object
     data_bot.ErrorLogger = object
     data_bot.KnowledgeGraph = object
+    data_bot.MetricRecord = object
     monkeypatch.setitem(sys.modules, "data_bot", data_bot)
     monkeypatch.setitem(sys.modules, "menace_sandbox.data_bot", data_bot)
 
@@ -276,6 +291,7 @@ def test_background_self_improvement_loop(monkeypatch):
     log_utils = types.ModuleType("logging_utils")
     log_utils.log_record = lambda **kw: kw
     log_utils.get_logger = lambda name: types.SimpleNamespace(
+        info=lambda *a, **k: None,
         warning=lambda *a, **k: None,
         exception=lambda *a, **k: None,
         debug=lambda *a, **k: None,
@@ -283,21 +299,32 @@ def test_background_self_improvement_loop(monkeypatch):
     )
     log_utils.setup_logging = lambda: None
     log_utils.set_correlation_id = lambda _: None
+    log_utils.LockedRotatingFileHandler = object
+    log_utils.LockedTimedRotatingFileHandler = object
     monkeypatch.setitem(sys.modules, "logging_utils", log_utils)
     monkeypatch.setitem(sys.modules, "menace_sandbox.logging_utils", log_utils)
 
     js = types.ModuleType("jsonschema")
+
     class _VE(Exception):
         pass
     js.ValidationError = _VE
     js.validate = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "jsonschema", js)
+    violation_logger = types.ModuleType("violation_logger")
+    violation_logger.log_violation = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "violation_logger", violation_logger)
+
+    info_bot = types.ModuleType("menace.information_synthesis_bot")
+    info_bot.SynthesisTask = type("SynthesisTask", (), {})
+    monkeypatch.setitem(sys.modules, "menace.information_synthesis_bot", info_bot)
 
     from menace_sandbox import self_improvement as sie  # delayed import
+    monkeypatch.setattr(sie.init, "verify_dependencies", lambda auto_install=False: None)
     sie.init_self_improvement()
 
     planner = DummyPlanner()
-    monkeypatch.setattr(sie, "MetaWorkflowPlanner", lambda: planner)
+    monkeypatch.setattr(sie.meta_planning, "MetaWorkflowPlanner", lambda: planner)
 
     async def run():
         task = asyncio.create_task(
@@ -310,6 +337,6 @@ def test_background_self_improvement_loop(monkeypatch):
 
     asyncio.run(run())
 
-    assert {"mutate", "split", "remerge"}.issubset(events)
+    assert {"roi", "stability"}.issubset(events)
     assert planner.roi_db.logged
     assert planner.stability_db.recorded
