@@ -326,25 +326,28 @@ class SelfCodingManager:
                             self.engine.patch_suggestion_db.add_failed_strategy(tag)
                         except Exception:  # pragma: no cover - best effort
                             self.logger.exception("failed to store failed strategy tag")
+
+                parsed = ErrorParser.parse(trace)
+                stack_trace = parsed.get("trace", trace)
                 function_name = ""
                 error_msg = ""
-                m = re.findall(r'File "[^"]+", line \d+, in ([^\n]+)', trace)
+                m = re.findall(r'File "[^"]+", line \d+, in ([^\n]+)', stack_trace)
                 if m:
                     function_name = m[-1]
-                m_err = re.findall(r'([\w.]+(?:Error|Exception):.*)', trace)
+                m_err = re.findall(r'([\w.]+(?:Error|Exception):.*)', stack_trace)
                 if m_err:
                     error_msg = m_err[-1]
-                fingerprint = FailureFingerprint(
+                fingerprint = FailureFingerprint.from_failure(
                     path.name,
                     function_name,
+                    stack_trace,
                     error_msg,
-                    trace,
                     self.engine.last_prompt_text,
                 )
                 last_fp = fingerprint
                 if self.failure_store:
                     try:
-                        self.failure_store.log(fingerprint)
+                        self.failure_store.add(fingerprint)
                     except Exception:  # pragma: no cover - best effort
                         self.logger.exception("failed to log failure fingerprint")
                 self.logger.info(
