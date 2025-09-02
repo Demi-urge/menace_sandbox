@@ -403,6 +403,7 @@ class SelfCodingEngine:
         roi_delta: float,
         coverage: float,
         roi_meta: Mapping[str, Any] | None = None,
+        baseline_runtime: float | None = None,
         *,
         module: str = "self_coding_engine",
         action: str = "apply_patch",
@@ -417,6 +418,7 @@ class SelfCodingEngine:
         flat_prompt = "\n".join([p for p in parts if p])
         runtime = getattr(exec_result, "runtime", None) if exec_result else None
         result: Dict[str, Any] = {"patch": patch}
+        runtime_improvement = 0.0
         if isinstance(exec_result, dict):
             result.update(exec_result)
         else:
@@ -428,13 +430,22 @@ class SelfCodingEngine:
             )
         if runtime is not None:
             result["runtime"] = runtime
+            baseline = (
+                baseline_runtime
+                if baseline_runtime is not None
+                else getattr(self, "_prev_runtime", None)
+            )
+            if baseline is not None:
+                runtime_improvement = baseline - runtime
+            self._prev_runtime = runtime
         meta = dict(getattr(prompt, "metadata", {}))
         meta.update(getattr(self.prompt_engine, "last_metadata", {}))
         meta.update(getattr(self, "_last_prompt_metadata", {}))
         prompt.metadata = meta
         roi: Dict[str, Any] = {"roi_delta": roi_delta, "coverage": coverage}
         if roi_meta:
-            roi.update(roi_meta)
+            roi.update({k: v for k, v in roi_meta.items() if k != "runtime_improvement"})
+        roi["runtime_improvement"] = runtime_improvement
         try:
             self.prompt_evolution_memory.log(
                 prompt,
@@ -1158,14 +1169,8 @@ class SelfCodingEngine:
                 "apply_patch_result",
                 {"path": str(path), "success": False},
             )
-            runtime_after = getattr(ci_result, "duration", 0.0)
             roi_meta = {
                 "coverage_delta": (0.0 - (baseline_coverage or 0.0)),
-                "runtime_improvement": (
-                    baseline_runtime - runtime_after
-                    if baseline_runtime is not None
-                    else 0.0
-                ),
             }
             self._log_prompt_evolution(
                 generated_code,
@@ -1174,6 +1179,7 @@ class SelfCodingEngine:
                 0.0,
                 0.0,
                 roi_meta,
+                baseline_runtime=baseline_runtime,
                 module=str(path),
                 action=description,
             )
@@ -1278,14 +1284,8 @@ class SelfCodingEngine:
                 "apply_patch_result",
                 {"path": str(path), "success": False, "patch_id": patch_id},
             )
-            runtime_after = getattr(ci_result, "duration", 0.0)
             roi_meta = {
                 "coverage_delta": (0.0 - (baseline_coverage or 0.0)),
-                "runtime_improvement": (
-                    baseline_runtime - runtime_after
-                    if baseline_runtime is not None
-                    else 0.0
-                ),
             }
             self._log_prompt_evolution(
                 generated_code,
@@ -1294,6 +1294,7 @@ class SelfCodingEngine:
                 roi_delta,
                 0.0,
                 roi_meta,
+                baseline_runtime=baseline_runtime,
                 module=str(path),
                 action=description,
             )
@@ -1341,14 +1342,8 @@ class SelfCodingEngine:
                 "apply_patch_result",
                 {"path": str(path), "success": False},
             )
-            runtime_after = getattr(ci_result, "duration", 0.0)
             roi_meta = {
                 "coverage_delta": (0.0 - (baseline_coverage or 0.0)),
-                "runtime_improvement": (
-                    baseline_runtime - runtime_after
-                    if baseline_runtime is not None
-                    else 0.0
-                ),
             }
             self._log_prompt_evolution(
                 generated_code,
@@ -1357,6 +1352,7 @@ class SelfCodingEngine:
                 0.0,
                 0.0,
                 roi_meta,
+                baseline_runtime=baseline_runtime,
                 module=str(path),
                 action=description,
             )
@@ -1402,14 +1398,8 @@ class SelfCodingEngine:
                 "apply_patch_result",
                 {"path": str(path), "success": False},
             )
-            runtime_after = getattr(ci_result, "duration", 0.0)
             roi_meta = {
                 "coverage_delta": (0.0 - (baseline_coverage or 0.0)),
-                "runtime_improvement": (
-                    baseline_runtime - runtime_after
-                    if baseline_runtime is not None
-                    else 0.0
-                ),
             }
             self._log_prompt_evolution(
                 generated_code,
@@ -1418,6 +1408,7 @@ class SelfCodingEngine:
                 0.0,
                 0.0,
                 roi_meta,
+                baseline_runtime=baseline_runtime,
                 module=str(path),
                 action=description,
             )
@@ -1603,16 +1594,11 @@ class SelfCodingEngine:
             },
         )
         self._store_patch_memory(path, description, generated_code, not reverted, roi_delta)
-        runtime_after = getattr(ci_result, "duration", 0.0)
         coverage_delta = (
             coverage - baseline_coverage if baseline_coverage is not None else 0.0
         )
-        runtime_improvement = (
-            baseline_runtime - runtime_after if baseline_runtime is not None else 0.0
-        )
         roi_meta = {
             "coverage_delta": coverage_delta,
-            "runtime_improvement": runtime_improvement,
         }
         if roi_deltas_map:
             roi_meta["roi_deltas"] = roi_deltas_map
@@ -1623,6 +1609,7 @@ class SelfCodingEngine:
             roi_delta,
             coverage,
             roi_meta,
+            baseline_runtime=baseline_runtime,
             module=str(path),
             action=description,
         )

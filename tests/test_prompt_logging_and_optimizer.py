@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import json
 
 from menace_sandbox.prompt_types import Prompt
 from menace_sandbox.prompt_optimizer import PromptOptimizer
@@ -106,11 +107,13 @@ def test_prompt_evolution_logging(tmp_path):
     assert s["prompt_text"]
     assert "tone" in s["prompt"]["metadata"]
     assert "roi_delta" in s["roi"] and "coverage" in s["roi"]
+    assert s["roi"].get("runtime_improvement") == 0.0
 
     assert f["module"] == "mod2"
     assert f["action"] == "act2"
     assert f["prompt"]["user"] == "fail"
     assert f["prompt"]["examples"] == ["ex2"]
+    assert f["roi"].get("runtime_improvement") == -1.0
 
     entries = optimizer._load_logs()
     successes = {e["success"] for e in entries}
@@ -155,3 +158,59 @@ def test_prompt_optimizer_ranking(tmp_path):
     assert suggestions[1]["structured_sections"] == ["H1"]
     assert suggestions[0]["success_rate"] > suggestions[1]["success_rate"]
     assert suggestions[0]["weighted_roi"] > suggestions[1]["weighted_roi"]
+    assert "avg_runtime_improvement" in suggestions[0]
+
+
+def test_prompt_optimizer_runtime_weighting(tmp_path):
+    success_log = tmp_path / "success.json"
+    failure_log = tmp_path / "failure.json"
+
+    # Two configurations with differing runtime improvements
+    s_entries = [
+        {
+            "module": "m",
+            "action": "a",
+            "prompt": "# H1\nExample: foo",
+            "success": True,
+            "roi": 1.0,
+            "runtime_improvement": 1.0,
+        },
+        {
+            "module": "m",
+            "action": "a",
+            "prompt": "# H1\nExample: foo",
+            "success": True,
+            "roi": 3.0,
+            "runtime_improvement": 1.0,
+        },
+        {
+            "module": "m",
+            "action": "a",
+            "prompt": "# H2\nExample: foo",
+            "success": True,
+            "roi": 1.0,
+            "runtime_improvement": 0.5,
+        },
+        {
+            "module": "m",
+            "action": "a",
+            "prompt": "# H2\nExample: foo",
+            "success": True,
+            "roi": 3.0,
+            "runtime_improvement": 2.0,
+        },
+    ]
+    success_log.write_text("\n".join(json.dumps(e) for e in s_entries))
+    failure_log.write_text("")
+
+    opt = PromptOptimizer(
+        success_log,
+        failure_log,
+        stats_path=tmp_path / "stats.json",
+        weight_by="runtime",
+    )
+    suggestions = opt.suggest_format("m", "a", limit=2)
+    assert suggestions[0]["structured_sections"] == ["H2"]
+    assert suggestions[1]["structured_sections"] == ["H1"]
+    assert suggestions[0]["weighted_roi"] > suggestions[1]["weighted_roi"]
+    assert suggestions[0]["avg_runtime_improvement"] > suggestions[1]["avg_runtime_improvement"]
