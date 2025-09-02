@@ -1,5 +1,7 @@
 import json
+
 from prompt_optimizer import PromptOptimizer
+
 
 def test_failure_fingerprints_penalize(tmp_path):
     success = tmp_path / "success.jsonl"
@@ -21,14 +23,22 @@ def test_failure_fingerprints_penalize(tmp_path):
             "filename": "m",
             "function_name": "a",
             "prompt_text": "# H\nExample",
-        }) + "\n",
+        })
+        + "\n"
+        + json.dumps({
+            "filename": "m",
+            "function_name": "a",
+            "prompt_text": "# H\nExample",
+        })
+        + "\n",
         encoding="utf-8",
     )
     opt = PromptOptimizer(
         success,
         failure,
         stats_path=tmp_path / "stats.json",
-        failure_fingerprint_path=fp,
+        failure_fingerprints_path=fp,
+        fingerprint_threshold=1,
     )
     key = (
         "m",
@@ -41,9 +51,10 @@ def test_failure_fingerprints_penalize(tmp_path):
         False,
     )
     stat = opt.stats[key]
-    assert stat.success == 1
-    assert stat.total == 2
-    assert stat.roi_sum == 0.0
+    assert stat.success == 0
+    assert stat.total == 1
+    assert stat.roi_sum == 1.0
+
 
 def test_failure_fingerprints_reduce_score(tmp_path):
     success = tmp_path / "success.jsonl"
@@ -77,14 +88,22 @@ def test_failure_fingerprints_reduce_score(tmp_path):
             "filename": "m",
             "function_name": "a",
             "prompt_text": "# H\nExample",
-        }) + "\n",
+        })
+        + "\n"
+        + json.dumps({
+            "filename": "m",
+            "function_name": "a",
+            "prompt_text": "# H\nExample",
+        })
+        + "\n",
         encoding="utf-8",
     )
     opt_pen = PromptOptimizer(
         success,
         failure,
         stats_path=tmp_path / "s2.json",
-        failure_fingerprint_path=fp,
+        failure_fingerprints_path=fp,
+        fingerprint_threshold=1,
     )
     score_pen = opt_pen.stats[key].score()
     assert score_pen < score_base
