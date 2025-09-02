@@ -505,6 +505,8 @@ The generative stub provider exposes several knobs via environment variables:
 - `SANDBOX_STUB_RETRY_BASE` – initial delay for exponential back-off in seconds.
 - `SANDBOX_STUB_RETRY_MAX` – ceiling for the back-off delay.
 - `SANDBOX_STUB_CACHE_MAX` – maximum number of cached stub responses.
+- `SANDBOX_STUB_MODEL` – model name used for stub generation. When unset a
+  deterministic rule-based strategy is used.
 - `SANDBOX_STUB_FALLBACK_MODEL` – model name used when the preferred provider is unavailable.
 
 The `concurrency_spike` failure mode starts bursts of threads and async tasks. The sandbox records how many threads and tasks were spawned in the metrics.

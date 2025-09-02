@@ -1,23 +1,11 @@
 from __future__ import annotations
 
-"""Stub provider using a language model via ``transformers`` or OpenAI.
+"""Stub provider using a language model selected via configuration.
 
 The module persists generated stubs on disk and coordinates concurrent access
-to the cache using a :class:`filelock.FileLock`.  Loads and saves retry lock
-acquisition briefly and emit log messages when contention is encountered so
-that potential concurrency issues can be diagnosed.
-
-Required configuration:
-
-* ``SANDBOX_ENABLE_TRANSFORMERS`` with ``SANDBOX_STUB_MODEL`` and
-  ``SANDBOX_HUGGINGFACE_TOKEN`` to load a HuggingFace model via
-  :func:`transformers.pipeline`.
-* ``SANDBOX_ENABLE_OPENAI`` with ``OPENAI_API_KEY`` to use the ``openai``
-  backend.
-* When neither backend is available a lightweight bundled model specified by
-  ``SANDBOX_STUB_FALLBACK_MODEL`` is attempted.  If that model cannot be
-  loaded a :class:`RuntimeError` is raised describing the missing
-  dependencies.
+to the cache using a :class:`filelock.FileLock`.  Set ``SANDBOX_STUB_MODEL`` to
+the desired model name understood by the active backend.  When no model is
+configured deterministic rule based stubs are produced.
 """
 
 from typing import Any, Dict, List, Tuple, Callable, Awaitable
@@ -44,6 +32,8 @@ from filelock import FileLock, Timeout
 
 from .input_history_db import InputHistoryDB
 from sandbox_settings import SandboxSettings
+from model_registry import get_client
+from llm_interface import Prompt
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -205,28 +195,7 @@ def _load_config(settings: SandboxSettings) -> StubProviderConfig:
                 "SANDBOX_STUB_MODEL=%s but no stub models are configured", model
             )
 
-    backends: list[str] = []
-    transformers_enabled = _feature_enabled("SANDBOX_ENABLE_TRANSFORMERS")
-    openai_enabled = _feature_enabled("SANDBOX_ENABLE_OPENAI")
-    if transformers_enabled:
-        model_env = os.getenv("SANDBOX_STUB_MODEL", settings.sandbox_stub_model)
-        token_env = os.getenv("SANDBOX_HUGGINGFACE_TOKEN", settings.huggingface_token)
-        if model_env and token_env:
-            backends.append("transformers")
-        elif model_env or token_env:
-            logger.warning(
-                "SANDBOX_ENABLE_TRANSFORMERS set but model or token missing"
-            )
-    if openai_enabled:
-        if os.getenv("OPENAI_API_KEY"):
-            backends.append("openai")
-        else:
-            logger.warning(
-                "SANDBOX_ENABLE_OPENAI set but OPENAI_API_KEY is missing"
-            )
-    if transformers_enabled and cfg.fallback_model:
-        backends.append("fallback")
-    cfg.enabled_backends = tuple(backends)
+    cfg.enabled_backends = ()
 
     global FALLBACK_MODEL
     FALLBACK_MODEL = cfg.fallback_model
@@ -787,7 +756,6 @@ async def _load_openai_generator() -> Any:
             "openai library unavailable; install the 'openai' package"
         ) from exc
     openai.api_key = os.getenv("OPENAI_API_KEY")
-    await asyncio.to_thread(_seed_generator_from_history, openai)
     return openai
 
 
@@ -816,7 +784,6 @@ async def _load_fallback_pipeline(cfg: StubProviderConfig) -> Any:
             model=cfg.fallback_model,
             local_files_only=True,
         )
-        await asyncio.to_thread(_seed_generator_from_history, gen)
         return gen
     except Exception as exc:  # pragma: no cover - model load failures
         raise ModelLoadError(
@@ -825,48 +792,21 @@ async def _load_fallback_pipeline(cfg: StubProviderConfig) -> Any:
 
 
 async def _aload_generator(config: StubProviderConfig | None = None) -> Any:
-    """Return a text generation pipeline or raise :class:`RuntimeError`."""
+    """Return an :class:`LLMClient` for stub generation."""
     global _GENERATOR
     if _GENERATOR is not None:
         return _GENERATOR
 
-    cfg = config or get_config()
-    if not cfg.enabled_backends:
-        raise RuntimeError(
-            "No text generation backends are enabled; set SANDBOX_ENABLE_TRANSFORMERS "
-            "or SANDBOX_ENABLE_OPENAI"
-        )
-
     settings = get_settings()
-    errors: dict[str, str] = {}
-    for backend in cfg.enabled_backends:
-        try:
-            if backend == "transformers":
-                global pipeline
-                if pipeline is None:
-                    transformers = importlib.import_module("transformers")
-                    pipeline = transformers.pipeline  # type: ignore[attr-defined]
-                _GENERATOR = await asyncio.to_thread(
-                    pipeline,
-                    "text-generation",
-                    model=settings.sandbox_stub_model,
-                    use_auth_token=settings.huggingface_token,
-                )
-                await asyncio.to_thread(_seed_generator_from_history, _GENERATOR)
-                return _GENERATOR
-            if backend == "openai":
-                _GENERATOR = await _load_openai_generator()
-                return _GENERATOR
-            if backend == "fallback":
-                _GENERATOR = await _load_fallback_pipeline(cfg)
-                return _GENERATOR
-        except Exception as exc:  # pragma: no cover - backend load failures
-            errors[backend] = str(exc)
-            continue
-    if errors:
-        detail = "; ".join(f"{b}: {e}" for b, e in errors.items())
-        raise RuntimeError(f"No text generation backend could be loaded: {detail}")
-    raise RuntimeError("No text generation backend could be loaded")
+    model = settings.sandbox_stub_model
+    if not model:
+        return None
+    backend = getattr(settings, "llm_backend", "openai")
+    try:
+        _GENERATOR = get_client(backend, model=model)
+        return _GENERATOR
+    except Exception as exc:  # pragma: no cover - backend load failures
+        raise ModelLoadError(f"stub model {model!r} could not be loaded") from exc
 
 
 def _load_generator(config: StubProviderConfig | None = None):
@@ -879,25 +819,6 @@ def _get_history_db() -> InputHistoryDB:
         "SANDBOX_INPUT_HISTORY", str(ROOT / "sandbox_data" / "input_history.db")
     )
     return InputHistoryDB(path)
-
-
-def _seed_generator_from_history(gen: Any) -> None:
-    """Seed *gen* with stored input examples when possible."""
-    try:
-        records = _get_history_db().recent(100)
-    except Exception as exc:
-        logger.debug("failed to load history for seeding: %s", exc, exc_info=exc)
-        return
-    if not records:
-        return
-    payload = "\n".join(json.dumps(r) for r in records)
-    for attr in ("seed", "train", "fit"):
-        if hasattr(gen, attr):
-            try:
-                getattr(gen, attr)(payload)
-            except Exception as exc:
-                logger.debug("stub generator %s failed: %s", attr, exc, exc_info=exc)
-            break
 
 
 def _aggregate(records: List[dict[str, Any]]) -> dict[str, Any]:
@@ -955,7 +876,6 @@ async def async_generate_stubs(
         func = ctx.get("target")
         base = stubs or [{}]
         return [_rule_based_stub(s, func) for s in base]
-    use_openai = gen is openai
 
     template: str = ctx.get(
         "prompt_template",
@@ -964,9 +884,6 @@ async def async_generate_stubs(
             "Return only the JSON object."
         ),
     )
-    temperature = ctx.get("temperature")
-    top_p = ctx.get("top_p")
-    use_stream = ctx.get("stream", False)
 
     new_stubs: List[Dict[str, Any]] = []
     changed = False
@@ -1004,39 +921,11 @@ async def async_generate_stubs(
         args = ", ".join(f"{k}={v!r}" for k, v in stub.items())
         prompt = template.format(name=name, args=args)
 
-        gen_kwargs = {"max_length": 64, "num_return_sequences": 1}
-        if temperature is not None:
-            gen_kwargs["temperature"] = temperature
-        if top_p is not None:
-            gen_kwargs["top_p"] = top_p
-
         async def _invoke() -> str:
-            if use_openai:
-                comp_kwargs = {
-                    "model": os.getenv(
-                        "OPENAI_STUB_COMPLETION_MODEL", "text-davinci-003"
-                    ),
-                    "prompt": prompt,
-                    "max_tokens": 64,
-                }
-                if temperature is not None:
-                    comp_kwargs["temperature"] = temperature
-                if top_p is not None:
-                    comp_kwargs["top_p"] = top_p
-                result = await asyncio.to_thread(gen.Completion.create, **comp_kwargs)
-                return result["choices"][0]["text"]  # type: ignore
-            if use_stream and hasattr(gen, "stream"):
-                stream_res = gen.stream(prompt, **gen_kwargs)
-                if inspect.isasyncgen(stream_res):
-                    parts = [p async for p in stream_res]
-                else:
-                    parts = list(stream_res)
-                return "".join(parts)
-            if inspect.iscoroutinefunction(getattr(gen, "__call__", gen)):
-                result = await gen(prompt, **gen_kwargs)
-            else:
-                result = await asyncio.to_thread(gen, prompt, **gen_kwargs)
-            return result[0].get("generated_text", "")
+            result = gen.generate(Prompt(prompt))  # type: ignore[attr-defined]
+            if isinstance(result, asyncio.Task):
+                result = await result
+            return result.text
 
         try:
             text = await _call_with_retry(_invoke, config)

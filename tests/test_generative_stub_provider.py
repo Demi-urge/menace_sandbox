@@ -444,35 +444,6 @@ async def test_concurrent_stub_generation(monkeypatch, tmp_path):
     assert dummy.calls >= 1
 
 
-def test_load_generator_openai_missing_key(monkeypatch):
-    monkeypatch.setenv("SANDBOX_ENABLE_OPENAI", "1")
-    monkeypatch.setenv("SANDBOX_STUB_MODEL", "openai")
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setitem(sys.modules, "openai", types.ModuleType("openai"))
-    gsp_mod = importlib.reload(gsp)
-    with pytest.raises(gsp_mod.ModelLoadError):
-        asyncio.run(gsp_mod._aload_generator())
-
-
-def test_load_generator_transformers_disabled(monkeypatch):
-    monkeypatch.setenv("SANDBOX_ENABLE_TRANSFORMERS", "0")
-    gsp_mod = importlib.reload(gsp)
-    with pytest.raises(gsp_mod.ModelLoadError):
-        asyncio.run(gsp_mod._aload_generator())
-
-
-def test_load_generator_fallback_failure(monkeypatch):
-    monkeypatch.setenv("SANDBOX_ENABLE_TRANSFORMERS", "1")
-    gsp_mod = importlib.reload(gsp)
-
-    def bad_pipeline(*_a, **_k):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(gsp_mod, "pipeline", bad_pipeline)
-    with pytest.raises(gsp_mod.ModelLoadError):
-        asyncio.run(gsp_mod._aload_generator())
-
-
 def test_stub_generation_aborts_on_model_error(monkeypatch):
     gsp_mod = importlib.reload(gsp)
 
@@ -495,7 +466,7 @@ def test_env_reload_updates_retries(monkeypatch, tmp_path):
         def __init__(self):
             self.calls = 0
 
-        def __call__(self, *a, **k):
+        def generate(self, *a, **k):
             self.calls += 1
             raise RuntimeError("boom")
 
