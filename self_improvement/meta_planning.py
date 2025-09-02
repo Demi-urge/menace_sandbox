@@ -384,7 +384,9 @@ class _FallbackPlanner:
                     )
                     stable = True
 
-            if delta_roi <= 0.0 or not stable:
+            roi_base = BASELINE_TRACKER.get("roi_delta")
+            roi_tol = getattr(getattr(_init.settings, "roi", None), "deviation_tolerance", 0.0)
+            if delta_roi < roi_base - roi_tol or not stable:
                 self.logger.debug(
                     "rejecting chain %s", "->".join(chain), extra=log_record(workflow_id=wid)
                 )

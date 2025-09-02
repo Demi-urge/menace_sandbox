@@ -18,7 +18,8 @@ except Exception:  # pragma: no cover - fallback
         return logging.getLogger(name)
 
 from .engine import SelfImprovementEngine
-from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
+from .baseline_tracker import TRACKER as BASELINE_TRACKER
+from .init import settings
 
 
 class ImprovementEngineRegistry:
@@ -118,8 +119,10 @@ class ImprovementEngineRegistry:
         energy_dev = energy - energy_avg
         roi_dev = trend - roi_avg
         self.baseline_tracker.update(energy=energy, roi=trend)
+        roi_tol = getattr(getattr(settings, "roi", None), "deviation_tolerance", 0.0)
+        syn_tol = getattr(getattr(settings, "synergy", None), "deviation_tolerance", 0.0)
 
-        if energy_dev < 0 or roi_dev < 0:
+        if energy_dev < -syn_tol or roi_dev < -roi_tol:
             self._lag_count += 1
         else:
             self._lag_count = 0
@@ -146,7 +149,7 @@ class ImprovementEngineRegistry:
         if (
             energy_dev >= create_thresh
             and roi_dev > roi_thresh
-            and projected_roi > 0.0
+            and projected_roi > roi_tol
             and len(self.engines) < max_engines
         ):
             if approval_callback and not approval_callback():
@@ -157,7 +160,7 @@ class ImprovementEngineRegistry:
         if (
             energy_dev <= remove_thresh
             or roi_dev <= -roi_thresh
-            or projected_roi <= 0.0
+            or projected_roi <= -roi_tol
         ) and len(self.engines) > min_engines:
             name = next(iter(self.engines))
             self.unregister_engine(name)
